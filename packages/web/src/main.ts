@@ -7,6 +7,7 @@ import {
   DatabaseLive,
   LlmLive,
   PostgresCaptureStoreLive,
+  PostgresConversationStoreLive,
 } from "@agent/adapters"
 
 import { chatStreamRoute } from "./routes/chat.js"
@@ -21,11 +22,16 @@ const router = HttpRouter.empty.pipe(
 
 const AppLive = Layer.mergeAll(
   PostgresCaptureStoreLive.pipe(Layer.provide(DatabaseLive)),
+  PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
   LlmLive,
 )
 
+// idleTimeout 0 disables Bun's per-request timeout — agent calls + render
+// can run ~5–15s and the default 10s would drop the SSE connection.
 const HttpLive = HttpServer.serve(router).pipe(
-  Layer.provide(BunHttpServer.layer({ port: PORT })),
+  Layer.provide(
+    BunHttpServer.layer({ port: PORT, idleTimeout: 0 }),
+  ),
   Layer.provide(AppLive),
   Layer.provide(BunContext.layer),
 )

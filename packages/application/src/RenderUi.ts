@@ -1,40 +1,28 @@
 import { Effect, Stream } from "effect"
-import { CaptureStore, Llm } from "@agent/core"
+import { type AgentResult, Llm } from "@agent/core"
 import { renderUiPrompt } from "./_prompts/render-ui.js"
 
-const buildContext = (
-  captures: ReadonlyArray<{
-    readonly id: string
-    readonly title: string
-    readonly body: string
-    readonly createdAt: Date
-  }>,
-): string =>
-  JSON.stringify(
-    captures.slice(0, 50).map((c) => ({
-      id: c.id,
-      title: c.title,
-      body_excerpt: c.body.length > 400 ? `${c.body.slice(0, 400)}...` : c.body,
-      created_at: c.createdAt.toISOString(),
-    })),
-    null,
-    2,
-  )
+const summariseToolCalls = (
+  result: AgentResult,
+): string => {
+  if (result.toolCalls.length === 0) return "(no tools called)"
+  return result.toolCalls
+    .map((tc) => `- ${tc.toolName}(${JSON.stringify(tc.args)})`)
+    .join("\n")
+}
 
 /**
- * UI agent: takes the user's request, pre-fetches all captures, asks the
- * LLM for a single HTML fragment, streams chunks back.
+ * Second-pass renderer: takes the agent's final answer and produces one
+ * HTML fragment matching the base template vocabulary. Streams chunks.
  */
-export const renderUi = (userPrompt: string) =>
+export const renderUi = (userPrompt: string, agentResult: AgentResult) =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const store = yield* CaptureStore
       const llm = yield* Llm
-      const captures = yield* store.list()
-      const context = buildContext(captures)
       const prompt =
-        `User request: ${userPrompt.trim()}\n\n` +
-        `Available captures (JSON):\n${context}`
+        `User prompt: ${userPrompt.trim()}\n\n` +
+        `Agent's final answer (markdown):\n${agentResult.finalText}\n\n` +
+        `Tools the agent invoked:\n${summariseToolCalls(agentResult)}`
       return llm.streamGenerate({
         system: renderUiPrompt,
         prompt,

@@ -1,4 +1,7 @@
+export * from "./domain/AgentTool.js"
 export * from "./domain/Capture.js"
 export * from "./domain/Classification.js"
+export * from "./domain/Conversation.js"
 export * from "./ports/CaptureStore.js"
+export * from "./ports/ConversationStore.js"
 export * from "./ports/Llm.js"

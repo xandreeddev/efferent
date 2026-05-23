@@ -507,15 +507,26 @@ const clientJs = `
       // LLM token chunks can split mid-tag. Buffer until '<' and '>'
       // counts balance before committing to innerHTML — otherwise the
       // browser paints partial markup (e.g. "<span") as text.
+      // Also strip stray markdown fences the render LLM sometimes emits
+      // despite the system prompt forbidding them.
       let buffer = '';
       let lastRendered = '';
+      function cleanBuffer(s) {
+        // Strip stray markdown fences the render LLM sometimes emits even
+        // though the system prompt forbids them. Idempotent so repeated
+        // calls during streaming converge as the closing fence arrives.
+        return s
+          .replace(/^\\s*\\\`\\\`\\\`(?:html)?\\s*\\n?/, '')
+          .replace(/\\n?\\s*\\\`\\\`\\\`\\s*$/, '');
+      }
       function tryCommit() {
-        const opens = (buffer.match(/</g) || []).length;
-        const closes = (buffer.match(/>/g) || []).length;
+        const cleaned = cleanBuffer(buffer);
+        const opens = (cleaned.match(/</g) || []).length;
+        const closes = (cleaned.match(/>/g) || []).length;
         if (opens !== closes) return;
-        if (buffer === lastRendered) return;
-        lastRendered = buffer;
-        assistant.innerHTML = buffer;
+        if (cleaned === lastRendered) return;
+        lastRendered = cleaned;
+        assistant.innerHTML = cleaned;
       }
 
       es.addEventListener('ui', function (msg) {
@@ -523,7 +534,8 @@ const clientJs = `
         tryCommit();
       });
       es.addEventListener('ui-done', function () {
-        if (buffer !== lastRendered) assistant.innerHTML = buffer;
+        const finalBuffer = cleanBuffer(buffer);
+        if (finalBuffer !== lastRendered) assistant.innerHTML = finalBuffer;
         turn.classList.remove('turn--streaming');
         turn.classList.add('turn--done');
         endStream();
