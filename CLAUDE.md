@@ -10,7 +10,7 @@ packages/
 ├── application/  use cases (Effect.gen)       depends on @agent/core
 ├── adapters/     Layer impls of ports         depends on @agent/core + external SDKs
 ├── cli/          @effect/cli driver           composition root
-└── web/          htmx + SSE driver            placeholder (not built yet)
+└── web/          htmx + SSE driver            generative UI server
 ```
 
 **Dependency direction is strictly inward.** `cli` / `web` → `adapters` + `application` → `core`. `core` imports nothing from siblings. `application` imports only `@agent/core`. `adapters` imports `@agent/core` + the external SDK it wraps. Drivers compose the layers at the very edge and hand off to `BunRuntime.runMain`.
@@ -38,6 +38,8 @@ agent capture <path-or-->                            # extract markdown via LLM 
 agent ls                                             # list saved captures
 agent show <id-or-prefix>                            # print one
 agent rm <id-or-prefix>                              # delete one
+
+bun --hot packages/web/src/main.ts                   # web UI on :3000 (hot reload)
 ```
 
 Required env (`.env`):
@@ -46,6 +48,8 @@ Required env (`.env`):
 - Optional `AGENT_MODEL` (default `gemini-3.5-flash`)
 
 **Deployed Postgres** (Neon / Supabase / Railway / etc.): same code path — only `AGENT_DB_URL` changes. The `@effect/sql-pg` `PgClient` reads it, the migrator runs the same TS migrations from `packages/adapters/src/storage/migrations/`.
+
+**Web / generative UI**: a chat-style page at `/` accepts a prompt; the server pre-fetches all captures, runs `RenderUi` (a UI-agent use case in `@agent/application`) which streams an HTML fragment via `Llm.streamGenerate`, and the client appends chunks into `#ui-area` via SSE. Base components are class-named (`recipe-card`, `recipe-list-item`, `capture-card`, `empty-state`); the LLM uses them by reference from its system prompt. Local-only — no script-sanitisation yet, do not expose publicly.
 
 ## Deferred (do not build until they hurt)
 

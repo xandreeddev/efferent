@@ -16,6 +16,13 @@ coverage/
 .vscode/
 
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Local Postgres data dir from docker-compose.yml
 pg-data/
+
+# Playwright MCP scratch dir (snapshots, console logs)
+.playwright-mcp/
+
+# Local debug screenshots
+*.png
