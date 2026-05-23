@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@agent/core": ["packages/core/src/index.ts"],
+      "@agent/core/*": ["packages/core/src/*"],
+      "@agent/application": ["packages/application/src/index.ts"],
+      "@agent/application/*": ["packages/application/src/*"],
+      "@agent/adapters": ["packages/adapters/src/index.ts"],
+      "@agent/adapters/*": ["packages/adapters/src/*"]
+    }
+  }
+}
