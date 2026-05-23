@@ -43,27 +43,55 @@ bun --hot packages/web/src/main.ts                   # web UI on :3000 (hot relo
 ```
 
 Required env (`.env`):
-- `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call (capture, classify)
+- `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call (capture, agent, render)
 - `AGENT_DB_URL` — Postgres URL. Local default points at `postgres://agent:agent@localhost:5434/agent`
-- Optional `AGENT_MODEL` (default `gemini-3.5-flash`)
+- Optional `AGENT_MODEL`. Tool-calling currently requires a model whose responses don't need `thought_signature` round-tripping. `gemini-2.5-flash-lite` works; `gemini-3.5-flash` fails on multi-step tool calls with the installed `@ai-sdk/google` version.
 
 **Deployed Postgres** (Neon / Supabase / Railway / etc.): same code path — only `AGENT_DB_URL` changes. The `@effect/sql-pg` `PgClient` reads it, the migrator runs the same TS migrations from `packages/adapters/src/storage/migrations/`.
 
-**Web / generative UI**: a ChatGPT-style page at `/` accepts a prompt (textarea, Enter to send, Shift+Enter newline); the server pre-fetches all captures, runs `RenderUi` (a UI-agent use case in `@agent/application`) which streams an HTML fragment via `Llm.streamGenerate`, and the client appends chunks into the latest turn's response container via SSE. Each turn = right-aligned user bubble + assistant content. The composer's Send button doubles as a Stop button during streaming.
+## Agent loop (web)
 
-Base components are class-named (`recipe-card`, `recipe-list-item`, `capture-card`, `empty-state`) and live as a CSS *vocabulary* in `packages/web/src/views/shell.ts`; the LLM is shown the same shapes as HTML snippets in `packages/application/src/_prompts/render-ui.ts` and emits final HTML matching them. There's no template engine yet — moving the components to `views/components/*.html` and/or switching to a `{component, props}` JSON contract is a future slice.
+Both `/` and `/ui/stream` are thin entrypoints into one use case: **`runAgent`**. The agent — not the route handler — decides what to do.
 
-Streaming smoothing in the client: chunks are buffered until `<`/`>` counts balance before each `innerHTML` commit, so the browser never paints a partial tag as literal text. Per-element fade-up animations only fire on `.turn--done` so token-level re-renders during streaming don't replay them.
+```
+browser prompt
+  ↓ GET /ui/stream?prompt=… (cookie carries conversation_id)
+runAgent(conversationId, prompt)
+  ├── ConversationStore.append(user)
+  ├── ConversationStore.list → message history
+  ├── Llm.runAgent({ system, messages, tools: [list_captures, get_capture, save_capture, delete_capture] })
+  │     └── AI SDK loops: model → tool execute (Effect, runs in caller's runtime) → result fed back → … (maxSteps=5)
+  ├── ConversationStore.append(assistant + tool messages)
+  └── return AgentResult { finalText, toolCalls, toolResults }
+       ↓
+renderUi(prompt, agentResult)   ← second-pass: stream HTML via Llm.streamGenerate
+       ↓ SSE: event: ui / event: ui-done / event: ui-error
+browser appends chunks
+```
+
+Two LLM calls per turn: the agent step (with tools, returns markdown) and the render step (streams HTML matching the `recipe-card` / `recipe-list` / `capture-card` / `empty-state` class vocabulary). Cookie-bound `conversation_id` makes follow-ups work ("now just the steps" → agent reads prior turns).
+
+Tool definitions live in `packages/application/src/_tools/captureTools.ts` as domain `AgentTool` records (name + description + Effect Schema parameters + Effect-returning `execute`). The adapter (`gemini.ts`) translates them to Vercel AI SDK tools and uses `Effect.runtime` to bridge tool Effects back into the SDK's async `execute` callback.
+
+The CLI (`agent capture` / `ls` / `show` / `rm`) bypasses the agent — direct verb commands hitting use cases. Useful for testing individual tools / direct ops, not part of the agent loop.
+
+Base components are class-named (`recipe-card`, `recipe-list-item`, `capture-card`, `empty-state`) and live as a CSS *vocabulary* in `packages/web/src/views/shell.ts`; the render LLM is shown the same shapes as HTML snippets in `packages/application/src/_prompts/render-ui.ts` and emits final HTML matching them. There's no template engine yet — moving the components to `views/components/*.html` and/or switching to a `{component, props}` JSON contract is a future slice.
+
+Streaming smoothing in the client: chunks are buffered until `<`/`>` counts balance before each `innerHTML` commit, so the browser never paints a partial tag as literal text. Per-element fade-up animations only fire on `.turn--done` so token-level re-renders during streaming don't replay them. The client also strips stray markdown fences (```\`\`\`html```) that the render LLM sometimes emits despite the prompt.
+
+Known soft failure: when conversation history is long, the agent sometimes hallucinates tool calls (claims to have saved/deleted without invoking the tool). Mitigated by terser system prompts; properly fixed by trimming history or moving to a model with stricter tool-use grounding.
 
 Local-only — no script-sanitisation yet, do not expose publicly.
 
 ## Deferred (do not build until they hurt)
 
-- Web frontend (placeholder dir only)
 - Evals / Evalite
-- Persistence port — todos live in memory or nowhere until restart-loss is a real problem
-- Streaming / SSE — `generateObject` returns one value
-- Acting on classified intents (this round classifies only)
+- Streaming the agent phase (right now the browser sees no chunks until the agent finishes its tool round-trips; render is what streams)
+- Interactive components — buttons inside rendered cards that fire `hx-post` to typed action routes (htmx finally earns its keep)
+- Image capture from the web (today only the CLI accepts images)
+- `classify` + `Classification` cleanup — the legacy CLI verb still references dead intent literals
+- `{component, props}` typed render contract
+- Script-injection sanitisation (do not expose publicly before this lands)
 - Additional LLM providers, telemetry, structured logging
 
 ## OPSEC reminder
