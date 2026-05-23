@@ -28,11 +28,24 @@ packages/
 ```bash
 bun install                                          # from agent/ root only
 bun run typecheck                                    # cross-package via path mappings
-bun packages/cli/src/main.ts --help                  # CLI help
-bun packages/cli/src/main.ts classify "buy milk"     # vertical-slice smoke test
+
+docker compose up -d                                 # start local Postgres (host port 5434)
+docker compose down                                  # stop it
+docker compose exec postgres psql -U agent -d agent  # poke at the DB
+
+agent --help                                         # via direnv bin/agent shim
+agent capture <path-or-->                            # extract markdown via LLM and save
+agent ls                                             # list saved captures
+agent show <id-or-prefix>                            # print one
+agent rm <id-or-prefix>                              # delete one
 ```
 
-Requires `GOOGLE_GENERATIVE_AI_API_KEY` in `.env` for the `classify` call. Default model is `gemini-3.5-flash`, override with `AGENT_MODEL`.
+Required env (`.env`):
+- `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call (capture, classify)
+- `AGENT_DB_URL` — Postgres URL. Local default points at `postgres://agent:agent@localhost:5434/agent`
+- Optional `AGENT_MODEL` (default `gemini-3.5-flash`)
+
+**Deployed Postgres** (Neon / Supabase / Railway / etc.): same code path — only `AGENT_DB_URL` changes. The `@effect/sql-pg` `PgClient` reads it, the migrator runs the same TS migrations from `packages/adapters/src/storage/migrations/`.
 
 ## Deferred (do not build until they hurt)
 

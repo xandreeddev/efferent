@@ -16,3 +16,6 @@ coverage/
 .vscode/
 
 .claude/settings.local.json
+
+# Local Postgres data dir from docker-compose.yml
+pg-data/
