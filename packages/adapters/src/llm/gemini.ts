@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google"
-import { generateObject } from "ai"
+import { generateObject, generateText } from "ai"
 import { Config, Effect, Layer, Redacted, Schema } from "effect"
 import { z } from "zod"
 import { Classification, Llm, LlmError } from "@agent/core"
@@ -56,6 +56,30 @@ export const LlmLive = Layer.effect(
             ),
           ),
         ),
+
+      generate: (input) =>
+        Effect.tryPromise({
+          try: () =>
+            generateText({
+              model,
+              ...(input.system !== undefined ? { system: input.system } : {}),
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: input.prompt },
+                    ...(input.images ?? []).map((img) => ({
+                      type: "image" as const,
+                      image: img.bytes,
+                      mimeType: img.mimeType,
+                    })),
+                  ],
+                },
+              ],
+            }),
+          catch: (cause) =>
+            new LlmError({ cause, message: "Gemini generate failed" }),
+        }).pipe(Effect.map((res) => res.text)),
     })
   }),
 )
