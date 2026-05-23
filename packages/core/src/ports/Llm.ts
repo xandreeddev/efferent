@@ -1,4 +1,4 @@
-import { Context, Data, type Effect } from "effect"
+import { Context, Data, type Effect, type Stream } from "effect"
 import type { Classification } from "../domain/Classification.js"
 
 export class LlmError extends Data.TaggedError("LlmError")<{
@@ -26,5 +26,8 @@ export class Llm extends Context.Tag("@agent/core/Llm")<
     readonly generate: (
       input: LlmGenerateInput,
     ) => Effect.Effect<string, LlmError>
+    readonly streamGenerate: (
+      input: LlmGenerateInput,
+    ) => Stream.Stream<string, LlmError>
   }
 >() {}

@@ -57,6 +57,14 @@
     "packages/web": {
       "name": "@agent/web",
       "version": "0.0.0",
+      "dependencies": {
+        "@agent/adapters": "workspace:*",
+        "@agent/application": "workspace:*",
+        "@agent/core": "workspace:*",
+        "@effect/platform": "^0.96.0",
+        "@effect/platform-bun": "^0.89.0",
+        "effect": "^3.21.0",
+      },
     },
   },
   "packages": {

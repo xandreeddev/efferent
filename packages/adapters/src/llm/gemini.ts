@@ -1,8 +1,26 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google"
-import { generateObject, generateText } from "ai"
-import { Config, Effect, Layer, Redacted, Schema } from "effect"
+import { generateObject, generateText, streamText } from "ai"
+import { Config, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { z } from "zod"
-import { Classification, Llm, LlmError } from "@agent/core"
+import {
+  Classification,
+  Llm,
+  LlmError,
+  type LlmGenerateInput,
+} from "@agent/core"
+
+const buildUserMessage = (input: LlmGenerateInput) =>
+  ({
+    role: "user" as const,
+    content: [
+      { type: "text" as const, text: input.prompt },
+      ...(input.images ?? []).map((img) => ({
+        type: "image" as const,
+        image: img.bytes,
+        mimeType: img.mimeType,
+      })),
+    ],
+  })
 
 const ZClassification = z.object({
   intent: z.enum([
@@ -63,23 +81,33 @@ export const LlmLive = Layer.effect(
             generateText({
               model,
               ...(input.system !== undefined ? { system: input.system } : {}),
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    { type: "text", text: input.prompt },
-                    ...(input.images ?? []).map((img) => ({
-                      type: "image" as const,
-                      image: img.bytes,
-                      mimeType: img.mimeType,
-                    })),
-                  ],
-                },
-              ],
+              messages: [buildUserMessage(input)],
             }),
           catch: (cause) =>
             new LlmError({ cause, message: "Gemini generate failed" }),
         }).pipe(Effect.map((res) => res.text)),
+
+      streamGenerate: (input: LlmGenerateInput) =>
+        Stream.fromAsyncIterable(
+          (async function* () {
+            const result = streamText({
+              model,
+              ...(input.system !== undefined ? { system: input.system } : {}),
+              messages: [buildUserMessage(input)],
+            })
+            // Consume fullStream so error parts surface as thrown errors
+            // (textStream silently ends on errors in AI SDK v4).
+            for await (const part of result.fullStream) {
+              if (part.type === "text-delta") {
+                yield part.textDelta
+              } else if (part.type === "error") {
+                throw part.error
+              }
+            }
+          })(),
+          (cause) =>
+            new LlmError({ cause, message: "Gemini stream failed" }),
+        ),
     })
   }),
 )
