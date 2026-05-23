@@ -49,7 +49,13 @@ Required env (`.env`):
 
 **Deployed Postgres** (Neon / Supabase / Railway / etc.): same code path — only `AGENT_DB_URL` changes. The `@effect/sql-pg` `PgClient` reads it, the migrator runs the same TS migrations from `packages/adapters/src/storage/migrations/`.
 
-**Web / generative UI**: a chat-style page at `/` accepts a prompt; the server pre-fetches all captures, runs `RenderUi` (a UI-agent use case in `@agent/application`) which streams an HTML fragment via `Llm.streamGenerate`, and the client appends chunks into `#ui-area` via SSE. Base components are class-named (`recipe-card`, `recipe-list-item`, `capture-card`, `empty-state`); the LLM uses them by reference from its system prompt. Local-only — no script-sanitisation yet, do not expose publicly.
+**Web / generative UI**: a ChatGPT-style page at `/` accepts a prompt (textarea, Enter to send, Shift+Enter newline); the server pre-fetches all captures, runs `RenderUi` (a UI-agent use case in `@agent/application`) which streams an HTML fragment via `Llm.streamGenerate`, and the client appends chunks into the latest turn's response container via SSE. Each turn = right-aligned user bubble + assistant content. The composer's Send button doubles as a Stop button during streaming.
+
+Base components are class-named (`recipe-card`, `recipe-list-item`, `capture-card`, `empty-state`) and live as a CSS *vocabulary* in `packages/web/src/views/shell.ts`; the LLM is shown the same shapes as HTML snippets in `packages/application/src/_prompts/render-ui.ts` and emits final HTML matching them. There's no template engine yet — moving the components to `views/components/*.html` and/or switching to a `{component, props}` JSON contract is a future slice.
+
+Streaming smoothing in the client: chunks are buffered until `<`/`>` counts balance before each `innerHTML` commit, so the browser never paints a partial tag as literal text. Per-element fade-up animations only fire on `.turn--done` so token-level re-renders during streaming don't replay them.
+
+Local-only — no script-sanitisation yet, do not expose publicly.
 
 ## Deferred (do not build until they hurt)
 
