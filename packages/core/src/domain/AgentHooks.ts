@@ -1,0 +1,76 @@
+import type { Effect } from "effect"
+import type { ConversationMessage, ToolCall } from "./Conversation.js"
+
+/**
+ * Decision returned by `onBeforeToolCall`: either let the call proceed
+ * or block it with a reason that's reported back to the model as a
+ * tool result.
+ */
+export type BeforeToolCallDecision =
+  | { readonly action: "continue" }
+  | { readonly action: "block"; readonly reason: string }
+
+export interface AgentTurnStartEvent {
+  readonly turnIndex: number
+  readonly messages: ReadonlyArray<ConversationMessage>
+}
+
+export interface AgentAssistantMessageEvent {
+  readonly turnIndex: number
+  readonly text: string
+  readonly toolCalls: ReadonlyArray<ToolCall>
+}
+
+export interface AgentBeforeToolCallEvent {
+  readonly turnIndex: number
+  readonly toolName: string
+  readonly args: unknown
+}
+
+export interface AgentAfterToolCallEvent {
+  readonly turnIndex: number
+  readonly toolName: string
+  readonly args: unknown
+  readonly ok: boolean
+  readonly result: unknown
+}
+
+export interface AgentShouldStopEvent {
+  readonly turnIndex: number
+  readonly finishReason: string
+}
+
+export interface AgentEndEvent {
+  readonly messages: ReadonlyArray<ConversationMessage>
+  readonly finalText: string
+}
+
+/**
+ * Hook surface that lets the application (and the route layer above it)
+ * observe and influence the agent loop without owning the loop itself.
+ *
+ * Modeled after Pi's `AgentLoopConfig` callbacks (`transformContext`,
+ * `prepareNextTurn`, `shouldStopAfterTurn`, plus event emission). Every
+ * hook is optional; `R` is the union of port requirements each hook's
+ * Effect needs — it flows up to the caller through `Llm.runAgent`'s
+ * generic signature.
+ */
+export interface AgentHooks<R = never> {
+  readonly onTurnStart?: (event: AgentTurnStartEvent) => Effect.Effect<void, never, R>
+  readonly onAssistantMessage?: (
+    event: AgentAssistantMessageEvent,
+  ) => Effect.Effect<void, never, R>
+  readonly onBeforeToolCall?: (
+    event: AgentBeforeToolCallEvent,
+  ) => Effect.Effect<BeforeToolCallDecision, never, R>
+  readonly onAfterToolCall?: (
+    event: AgentAfterToolCallEvent,
+  ) => Effect.Effect<void, never, R>
+  readonly onTransformContext?: (
+    messages: ReadonlyArray<ConversationMessage>,
+  ) => Effect.Effect<ReadonlyArray<ConversationMessage>, never, R>
+  readonly onShouldStopAfterTurn?: (
+    event: AgentShouldStopEvent,
+  ) => Effect.Effect<boolean, never, R>
+  readonly onAgentEnd?: (event: AgentEndEvent) => Effect.Effect<void, never, R>
+}

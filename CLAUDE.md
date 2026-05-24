@@ -51,25 +51,34 @@ Required env (`.env`):
 
 ## Agent loop (web)
 
-Both `/` and `/ui/stream` are thin entrypoints into one use case: **`runAgent`**. The agent — not the route handler — decides what to do.
+Both `/` and `/ui/stream` are thin entrypoints into one use case: **`runAgent`**. The agent — not the route handler — decides what to do. The loop itself is hand-rolled in `packages/adapters/src/llm/gemini.ts` (modelled on Pi's `agent-loop.ts`) — we drive the SDK one step at a time with `maxSteps: 1` so we own the iteration and can fire hooks between rounds.
 
 ```
 browser prompt
   ↓ GET /ui/stream?prompt=… (cookie carries conversation_id)
-runAgent(conversationId, prompt)
+runAgent(conversationId, prompt, hooks?)
   ├── ConversationStore.append(user)
   ├── ConversationStore.list → message history
-  ├── Llm.runAgent({ system, messages, tools: [list_captures, get_capture, save_capture, delete_capture] })
-  │     └── AI SDK loops: model → tool execute (Effect, runs in caller's runtime) → result fed back → … (maxSteps=5)
-  ├── ConversationStore.append(assistant + tool messages)
+  ├── Llm.runAgent({ system, messages, tools, hooks, maxSteps: 5 })
+  │     ├── turn 0: onTurnStart → generateText({maxSteps:1}) → onAssistantMessage
+  │     │           ├── per tool call: onBeforeToolCall (allow/block) → execute (graceful AgentToolError) → onAfterToolCall
+  │     │           └── append assistant + tool messages to working buffer (using SDK's response.messages)
+  │     ├── if finishReason !== "tool-calls" → break
+  │     ├── onShouldStopAfterTurn (optional early exit)
+  │     └── turn 1, 2, …  until maxSteps or no more tool calls
+  ├── ConversationStore.append(assistant)
   └── return AgentResult { finalText, toolCalls, toolResults }
        ↓
 renderUi(prompt, agentResult)   ← second-pass: stream HTML via Llm.streamGenerate
-       ↓ SSE: event: ui / event: ui-done / event: ui-error
-browser appends chunks
+       ↓ merged into one SSE stream with step events: event: step / event: ui / event: ui-done / event: ui-error
+browser appends chunks (cards) and renders pills (tool-call progress)
 ```
 
 Two LLM calls per turn: the agent step (with tools, returns markdown) and the render step (streams HTML matching the `recipe-card` / `recipe-list` / `capture-card` / `empty-state` class vocabulary). Cookie-bound `conversation_id` makes follow-ups work ("now just the steps" → agent reads prior turns).
+
+**Hooks** (`@agent/core/AgentHooks`): seven optional callbacks that the route layer attaches per-request. `RunAgent.ts` always installs a built-in `onAfterToolCall` to persist each tool result to `ConversationStore` as it happens (no end-of-turn batch). `chat.ts` adds `onBeforeToolCall` / `onAfterToolCall` that enqueue `event: step\ndata: {type, toolName, args|ok}` SSE frames. The client renders these as `tool-pill` chips above the streaming turn — orange-pulsing while running, green when done, red on error.
+
+**Graceful tool errors**: the loop catches `AgentToolError` inside the SDK's `execute` callback and returns a structured `{ ok: false, tool, error, message }` payload instead of throwing. This means one tool failure (e.g. `CaptureNotFound` on a double-delete) no longer aborts the whole `generateText` call — the model sees the failure as data and recovers.
 
 Tool definitions live in `packages/application/src/_tools/captureTools.ts` as domain `AgentTool` records (name + description + Effect Schema parameters + Effect-returning `execute`). The adapter (`gemini.ts`) translates them to Vercel AI SDK tools and uses `Effect.runtime` to bridge tool Effects back into the SDK's async `execute` callback.
 
@@ -86,7 +95,10 @@ Local-only — no script-sanitisation yet, do not expose publicly.
 ## Deferred (do not build until they hurt)
 
 - Evals / Evalite
-- Streaming the agent phase (right now the browser sees no chunks until the agent finishes its tool round-trips; render is what streams)
+- Compaction (Pi-style `transformContext`-based summarisation of old turns once context grows; the `onTransformContext` hook is already wired)
+- Skills (markdown files in `.agent/skills/` discovered at startup; only name+description+location in the system prompt; bodies loaded on demand via a `read_skill` tool — the bloat-avoidance pattern from Pi)
+- AGENTS.md cascade (replacing the static prompt with `~/.agent/AGENTS.md` → `.agent/AGENTS.md` → session)
+- TS file extension loader (`.agent/extensions/*.ts` registering hooks/tools at startup)
 - Interactive components — buttons inside rendered cards that fire `hx-post` to typed action routes (htmx finally earns its keep)
 - Image capture from the web (today only the CLI accepts images)
 - `classify` + `Classification` cleanup — the legacy CLI verb still references dead intent literals

@@ -210,6 +210,59 @@ const css = `
     animation: fade-up 0.4s ease-out backwards;
   }
 
+  /* step pills — surfaced while the agent is mid-tool-call */
+  .turn__pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+  .turn__pills:empty { display: none; }
+  .turn--done .turn__pills {
+    opacity: 0.5;
+    transform: scale(0.96);
+    transition: opacity 0.5s ease 0.3s, transform 0.5s ease 0.3s;
+  }
+  .tool-pill {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--ink-dim);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem;
+    background: var(--paper);
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    animation: fade-up 0.25s ease-out backwards;
+  }
+  .tool-pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+    transition: background 0.2s;
+  }
+  .tool-pill--running {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .tool-pill--running::before {
+    background: var(--accent);
+    animation: pulse 0.9s ease-in-out infinite;
+  }
+  .tool-pill--ok { color: var(--ink-dim); }
+  .tool-pill--ok::before { background: #6ec07f; }
+  .tool-pill--err { color: #ff7d4a; border-color: #ff7d4a; }
+  .tool-pill--err::before { background: #ff7d4a; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1;   transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.7); }
+  }
+
   /* ──── base components rendered by the LLM ───────────────────── */
 
   .recipe-card,
@@ -474,13 +527,17 @@ const clientJs = `
       bubble.textContent = prompt;
       userRow.appendChild(bubble);
 
+      const pills = document.createElement('div');
+      pills.className = 'turn__pills';
+
       const assistant = document.createElement('div');
       assistant.className = 'turn__assistant';
 
       turn.appendChild(userRow);
+      turn.appendChild(pills);
       turn.appendChild(assistant);
       ui.appendChild(turn);
-      return { turn, assistant };
+      return { turn, pills, assistant };
     }
 
     function send(prompt) {
@@ -489,7 +546,8 @@ const clientJs = `
       const welcome = ui.querySelector('.welcome');
       if (welcome) welcome.remove();
 
-      const { turn, assistant } = appendTurn(prompt);
+      const { turn, pills, assistant } = appendTurn(prompt);
+      const pendingPills = [];
       document.body.classList.add('streaming');
       ta.disabled = true;
       ta.value = '';
@@ -529,6 +587,24 @@ const clientJs = `
         assistant.innerHTML = cleaned;
       }
 
+      es.addEventListener('step', function (msg) {
+        let payload;
+        try { payload = JSON.parse(msg.data); } catch (_) { return; }
+        if (payload.type === 'tool_call') {
+          const pill = document.createElement('span');
+          pill.className = 'tool-pill tool-pill--running';
+          pill.textContent = payload.toolName;
+          pills.appendChild(pill);
+          pendingPills.push({ toolName: payload.toolName, el: pill });
+        } else if (payload.type === 'tool_result') {
+          const idx = pendingPills.findIndex(function (p) { return p.toolName === payload.toolName; });
+          const entry = idx >= 0 ? pendingPills.splice(idx, 1)[0] : null;
+          if (entry) {
+            entry.el.classList.remove('tool-pill--running');
+            entry.el.classList.add(payload.ok ? 'tool-pill--ok' : 'tool-pill--err');
+          }
+        }
+      });
       es.addEventListener('ui', function (msg) {
         buffer += msg.data;
         tryCommit();

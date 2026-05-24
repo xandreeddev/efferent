@@ -1,3 +1,4 @@
+export * from "./domain/AgentHooks.js"
 export * from "./domain/AgentTool.js"
 export * from "./domain/Capture.js"
 export * from "./domain/Classification.js"
