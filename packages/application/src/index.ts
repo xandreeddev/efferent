@@ -1,5 +1,4 @@
 export * from "./Capture.js"
-export * from "./ClassifyMessage.js"
 export * from "./DeleteCapture.js"
 export * from "./GetCapture.js"
 export * from "./ListCaptures.js"

@@ -1,80 +1,52 @@
 import { Effect } from "effect"
 import {
   type AgentHooks,
+  type AgentMessage,
   type AgentResult,
   type CaptureStore,
   type ConversationId,
-  type ConversationMessage,
   ConversationStore,
   Llm,
+  type LlmCacheHint,
 } from "@agent/core"
 
+import { runAgentLoop } from "./_loop/agentLoop.js"
 import { agentSystemPrompt } from "./_prompts/agent.js"
 import { buildCaptureTools } from "./_tools/captureTools.js"
 
 type AgentR = CaptureStore | Llm | ConversationStore
 
 /**
- * Merge two hook bundles so both handlers fire per event. For decision-
- * style hooks, `extra` runs first and can short-circuit: if it blocks, the
- * built-in handler doesn't see the call. For boolean-style hooks (stop),
- * the OR of both wins. For transform-context, they compose left-to-right.
+ * In-process per-conversation cache hints. Each `runAgent` call:
+ *  - reads the hint for this conversation (if any) and threads it
+ *    through the loop so every `runTurn` references the same cache.
+ *  - after the loop, asks the adapter for a fresh snapshot covering
+ *    the full conversation through this turn. If we got a hint, store
+ *    it — the next `runAgent` for this conversation will reference a
+ *    bigger cache.
+ *
+ * In-memory: dies on process restart. Cache TTL is 1h so a long-lived
+ * hint would 404 anyway; treating the map as ephemeral is fine. A
+ * Postgres-backed version is a future slice when conversations need
+ * to survive deploys.
  */
-const mergeHooks = <R>(
-  base: AgentHooks<R>,
-  extra: AgentHooks<R> | undefined,
-): AgentHooks<R> => {
-  if (!extra) return base
-  return {
-    onTurnStart: (e) =>
-      Effect.gen(function* () {
-        if (extra.onTurnStart) yield* extra.onTurnStart(e)
-        if (base.onTurnStart) yield* base.onTurnStart(e)
-      }),
-    onAssistantMessage: (e) =>
-      Effect.gen(function* () {
-        if (extra.onAssistantMessage) yield* extra.onAssistantMessage(e)
-        if (base.onAssistantMessage) yield* base.onAssistantMessage(e)
-      }),
-    onBeforeToolCall: (e) =>
-      Effect.gen(function* () {
-        if (extra.onBeforeToolCall) {
-          const d = yield* extra.onBeforeToolCall(e)
-          if (d.action === "block") return d
-        }
-        if (base.onBeforeToolCall) return yield* base.onBeforeToolCall(e)
-        return { action: "continue" } as const
-      }),
-    onAfterToolCall: (e) =>
-      Effect.gen(function* () {
-        if (extra.onAfterToolCall) yield* extra.onAfterToolCall(e)
-        if (base.onAfterToolCall) yield* base.onAfterToolCall(e)
-      }),
-    onTransformContext: (msgs) =>
-      Effect.gen(function* () {
-        let out = msgs
-        if (extra.onTransformContext) out = yield* extra.onTransformContext(out)
-        if (base.onTransformContext) out = yield* base.onTransformContext(out)
-        return out
-      }),
-    onShouldStopAfterTurn: (e) =>
-      Effect.gen(function* () {
-        const a = extra.onShouldStopAfterTurn
-          ? yield* extra.onShouldStopAfterTurn(e)
-          : false
-        if (a) return true
-        return base.onShouldStopAfterTurn
-          ? yield* base.onShouldStopAfterTurn(e)
-          : false
-      }),
-    onAgentEnd: (e) =>
-      Effect.gen(function* () {
-        if (extra.onAgentEnd) yield* extra.onAgentEnd(e)
-        if (base.onAgentEnd) yield* base.onAgentEnd(e)
-      }),
-  }
-}
+const cacheHintsByConversation = new Map<string, LlmCacheHint>()
 
+/**
+ * Run the agent for one user prompt.
+ *
+ *   1. Load persisted history.
+ *   2. Append the new user message (persist immediately for audit on
+ *      crash).
+ *   3. Run the loop with `messages = stored + user`. Each iteration
+ *      sends the full buffer to `Llm.runTurn`, appends the response.
+ *      A `cacheHint` (if available) is threaded through so every turn
+ *      sees the same provider-side cache for the prior conversation.
+ *   4. Persist the new tail.
+ *   5. Snapshot the full final buffer into a fresh cache, store the
+ *      hint for the next call. Best-effort; failures don't affect
+ *      correctness.
+ */
 export const runAgent = (
   conversationId: ConversationId,
   userPrompt: string,
@@ -84,46 +56,43 @@ export const runAgent = (
     const store = yield* ConversationStore
     const llm = yield* Llm
 
-    const userMsg: ConversationMessage = {
+    yield* store.ensure(conversationId)
+
+    const stored = yield* store.list(conversationId)
+
+    const userMsg: AgentMessage = {
       role: "user",
       content: userPrompt,
     }
     yield* store.append(conversationId, userMsg)
-    const history = yield* store.list(conversationId)
-
-    // Built-in hook: persist each tool result to ConversationStore as it
-    // happens, instead of batching at the end. This means a crash mid-loop
-    // still leaves a faithful audit trail in Postgres. Persistence errors
-    // are swallowed — they shouldn't crash the agent loop; at worst we
-    // lose an audit row.
-    const persistenceHooks: AgentHooks<AgentR> = {
-      onAfterToolCall: (e) =>
-        store
-          .append(conversationId, {
-            role: "tool",
-            toolName: e.toolName,
-            result: e.result,
-          })
-          .pipe(
-            Effect.catchAll((err) =>
-              Effect.logError("Failed to persist tool result", err),
-            ),
-          ),
-    }
 
     const tools = buildCaptureTools()
-    const result: AgentResult = yield* llm.runAgent({
+    const cacheHint = cacheHintsByConversation.get(conversationId)
+    const result: AgentResult = yield* runAgentLoop({
       system: agentSystemPrompt,
-      messages: history,
+      messages: [...stored, userMsg],
       tools,
-      hooks: mergeHooks(persistenceHooks, extraHooks),
+      ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
+      ...(cacheHint !== undefined ? { cacheHint } : {}),
     })
 
-    yield* store.append(conversationId, {
-      role: "assistant",
-      content: result.finalText,
-      toolCalls: result.toolCalls,
+    // Persist new tail.
+    const newTail = result.messages.slice(stored.length + 1)
+    for (const m of newTail) {
+      yield* store.append(conversationId, m)
+    }
+
+    // Snapshot the full buffer for the NEXT runAgent in this
+    // conversation. Best-effort: failures (e.g. content below the
+    // model's minimum) leave the prior hint in place.
+    const newHint = yield* llm.snapshot({
+      system: agentSystemPrompt,
+      messages: result.messages,
+      tools,
     })
+    if (newHint !== undefined) {
+      cacheHintsByConversation.set(conversationId, newHint)
+    }
 
     return result
   })

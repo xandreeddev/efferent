@@ -1,7 +1,7 @@
 import { Context, Data, type Effect } from "effect"
 import type {
+  AgentMessage,
   ConversationId,
-  ConversationMessage,
 } from "../domain/Conversation.js"
 
 export class ConversationStoreError extends Data.TaggedError(
@@ -26,14 +26,22 @@ export class ConversationStore extends Context.Tag(
       ConversationId,
       ConversationStoreError
     >
+    /**
+     * Idempotent: create the conversation if it doesn't exist. Used by
+     * the web route to materialise the conversation referenced by the
+     * client's cookie before any messages are appended.
+     */
+    readonly ensure: (
+      id: ConversationId,
+    ) => Effect.Effect<void, ConversationStoreError>
     readonly append: (
       id: ConversationId,
-      msg: ConversationMessage,
+      msg: AgentMessage,
     ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
     readonly list: (
       id: ConversationId,
     ) => Effect.Effect<
-      ReadonlyArray<ConversationMessage>,
+      ReadonlyArray<AgentMessage>,
       ConversationStoreError
     >
   }

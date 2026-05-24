@@ -4,7 +4,6 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
 import {
   capture,
-  classifyMessage,
   deleteCapture,
   getCapture,
   listCaptures,
@@ -32,22 +31,6 @@ const AppLive = Layer.mergeAll(
 )
 
 const StoreOnlyLive = PostgresCaptureStoreLive.pipe(Layer.provide(DatabaseLive))
-
-/* ------------------------------------------------------------------ */
-/* classify  (legacy toy command — kept for now)                      */
-/* ------------------------------------------------------------------ */
-
-const messageArg = Args.text({ name: "message" })
-
-const classify = Command.make(
-  "classify",
-  { message: messageArg },
-  ({ message }) =>
-    classifyMessage(message).pipe(
-      Effect.flatMap((c) => Console.log(JSON.stringify(c, null, 2))),
-      Effect.provide(LlmLive),
-    ),
-)
 
 /* ------------------------------------------------------------------ */
 /* capture <source>  — extract via LLM and save to Postgres            */
@@ -170,7 +153,7 @@ const rmCmd = Command.make("rm", { id: idArg }, ({ id }) =>
 /* ------------------------------------------------------------------ */
 
 const root = Command.make("agent").pipe(
-  Command.withSubcommands([classify, captureCmd, lsCmd, showCmd, rmCmd]),
+  Command.withSubcommands([captureCmd, lsCmd, showCmd, rmCmd]),
 )
 
 const cli = Command.run(root, { name: "agent", version: "0.0.0" })

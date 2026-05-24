@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "@agent/core": "workspace:*",
-    "@ai-sdk/google": "^1.2.0",
+    "@ai-sdk/google": "^3.0.0",
     "@effect/experimental": "^0.60.0",
     "@effect/platform": "^0.96.0",
     "@effect/sql": "^0.51.0",
     "@effect/sql-pg": "^0.52.0",
-    "ai": "^4.3.0",
-    "effect": "^3.21.0",
-    "zod": "^3.23.0"
+    "@google/genai": "^2.6.0",
+    "ai": "^6.0.0",
+    "effect": "^3.21.0"
   }
 }
