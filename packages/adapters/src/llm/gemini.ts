@@ -19,6 +19,7 @@ import {
 } from "effect"
 import { z } from "zod"
 import {
+  type AgentHooks,
   type AgentResult,
   type AgentTool,
   Classification,
@@ -26,6 +27,8 @@ import {
   LlmError,
   type LlmGenerateInput,
   type ConversationMessage,
+  type ToolCall,
+  type ToolResult,
 } from "@agent/core"
 
 const buildUserMessage = (input: LlmGenerateInput) =>
@@ -55,9 +58,11 @@ const ZClassification = z.object({
 
 /**
  * Map persisted ConversationMessages to the AI SDK's CoreMessage shape.
- * Tool messages are dropped — the assistant's `content` field already
- * summarises what happened, and our domain doesn't yet track toolCallIds
- * (which the SDK requires to thread tool-result messages).
+ * Tool messages from prior chat turns are dropped — our domain doesn't
+ * track toolCallIds across runAgent invocations. Within ONE invocation,
+ * proper tool/assistant threading is maintained via the SDK's own
+ * `response.messages` (a CoreMessage[] with real toolCallIds) which we
+ * append to the working buffer between loop iterations.
  */
 const toCoreMessages = (
   messages: ReadonlyArray<ConversationMessage>,
@@ -72,6 +77,26 @@ const toCoreMessages = (
 
 const toToolParameters = <I>(schema: Schema.Schema<I, any>) =>
   jsonSchema(JSONSchema.make(schema) as any)
+
+type GracefulToolError = {
+  readonly ok: false
+  readonly tool: string
+  readonly error: string
+  readonly message: string
+}
+type BlockedToolResult = {
+  readonly ok: false
+  readonly blocked: true
+  readonly reason: string
+}
+
+const isToolFailure = (
+  v: unknown,
+): v is GracefulToolError | BlockedToolResult =>
+  typeof v === "object" &&
+  v !== null &&
+  "ok" in v &&
+  (v as { ok: unknown }).ok === false
 
 export const LlmLive = Layer.effect(
   Llm,
@@ -148,17 +173,26 @@ export const LlmLive = Layer.effect(
             new LlmError({ cause, message: "Gemini stream failed" }),
         ),
 
+      /**
+       * Hand-rolled agent loop. Drives the SDK one step at a time with
+       * `maxSteps: 1`, so we own the iteration and can emit hooks between
+       * rounds. Tool execution still happens inside the SDK's `execute`
+       * callback — we wrap it to consult `onBeforeToolCall`/`onAfterToolCall`
+       * and to map AgentToolError into a structured result so a single
+       * tool failure doesn't abort the whole turn.
+       */
       runAgent: <R>(input: {
         readonly system: string
         readonly messages: ReadonlyArray<ConversationMessage>
         readonly tools: ReadonlyArray<AgentTool<any, any, R>>
         readonly maxSteps?: number
+        readonly hooks?: AgentHooks<R>
       }) =>
         Effect.gen(function* () {
-          // Capture the caller's runtime so we can run tool Effects (which
-          // carry R requirements) from inside the SDK's sync `execute`
-          // callbacks. Typed as Runtime<R> via the method's signature.
           const runtime = yield* Effect.runtime<R>()
+          const hooks = input.hooks
+          const maxSteps = input.maxSteps ?? 5
+
           const sdkTools = Object.fromEntries(
             input.tools.map((t) => [
               t.name,
@@ -166,48 +200,166 @@ export const LlmLive = Layer.effect(
                 description: t.description,
                 parameters: toToolParameters(t.parameters),
                 execute: async (rawArgs: unknown) => {
-                  const validated = Schema.decodeUnknownSync(t.parameters)(
-                    rawArgs,
+                  // Hook: onBeforeToolCall can block the call.
+                  if (hooks?.onBeforeToolCall) {
+                    const decision = await Runtime.runPromise(runtime)(
+                      hooks.onBeforeToolCall({
+                        turnIndex: -1, // not tracked at SDK callback level
+                        toolName: t.name,
+                        args: rawArgs,
+                      }),
+                    )
+                    if (decision.action === "block") {
+                      const blocked: BlockedToolResult = {
+                        ok: false,
+                        blocked: true,
+                        reason: decision.reason,
+                      }
+                      if (hooks.onAfterToolCall) {
+                        await Runtime.runPromise(runtime)(
+                          hooks.onAfterToolCall({
+                            turnIndex: -1,
+                            toolName: t.name,
+                            args: rawArgs,
+                            ok: false,
+                            result: blocked,
+                          }),
+                        )
+                      }
+                      return blocked
+                    }
+                  }
+                  // Execute. Catch AgentToolError → structured failure so
+                  // the SDK doesn't promote it to AI_ToolExecutionError
+                  // (which aborts the whole generateText call).
+                  const validated = Schema.decodeUnknownSync(t.parameters)(rawArgs)
+                  const result = await Runtime.runPromise(runtime)(
+                    t.execute(validated).pipe(
+                      Effect.catchTag("AgentToolError", (err) => {
+                        const errTag =
+                          err.cause !== undefined &&
+                          err.cause !== null &&
+                          typeof err.cause === "object" &&
+                          "_tag" in err.cause
+                            ? String((err.cause as { _tag: unknown })._tag)
+                            : "AgentToolError"
+                        const errMsg =
+                          err.cause instanceof Error
+                            ? err.cause.message
+                            : String(err.cause)
+                        const failure: GracefulToolError = {
+                          ok: false,
+                          tool: err.tool,
+                          error: errTag,
+                          message: errMsg,
+                        }
+                        return Effect.succeed(failure)
+                      }),
+                    ),
                   )
-                  return Runtime.runPromise(runtime)(t.execute(validated))
+                  if (hooks?.onAfterToolCall) {
+                    await Runtime.runPromise(runtime)(
+                      hooks.onAfterToolCall({
+                        turnIndex: -1,
+                        toolName: t.name,
+                        args: rawArgs,
+                        ok: !isToolFailure(result),
+                        result,
+                      }),
+                    )
+                  }
+                  return result
                 },
               }),
             ]),
           )
-          const result = yield* Effect.tryPromise({
-            try: () =>
-              generateText({
-                model,
-                system: input.system,
-                messages: toCoreMessages(input.messages),
-                tools: sdkTools,
-                maxSteps: input.maxSteps ?? 5,
-              }),
-            catch: (cause) =>
-              new LlmError({ cause, message: "Gemini agent step failed" }),
-          })
-          // result.toolCalls/result.toolResults only reflect the final step.
-          // Walk all steps to surface every tool the agent invoked.
-          const allToolCalls = result.steps.flatMap((s) => s.toolCalls)
-          const allToolResults = result.steps.flatMap((s) => s.toolResults)
-          // Pick the last non-empty text across steps as the assistant's
-          // final reply — some models call a tool as their last act and
-          // leave result.text empty.
-          const finalText =
-            result.text && result.text.length > 0
-              ? result.text
-              : [...result.steps].reverse().find((s) => s.text && s.text.length > 0)?.text ??
-                ""
-          const agentResult: AgentResult = {
-            finalText,
-            toolCalls: allToolCalls.map((tc) => ({
+
+          // Working state, mutated each turn.
+          let workingMessages = input.messages
+          let coreMessages: CoreMessage[] = toCoreMessages(workingMessages)
+          const collectedToolCalls: ToolCall[] = []
+          const collectedToolResults: ToolResult[] = []
+          let finalText = ""
+
+          for (let turnIndex = 0; turnIndex < maxSteps; turnIndex++) {
+            if (hooks?.onTransformContext) {
+              const transformed = yield* hooks.onTransformContext(workingMessages)
+              if (transformed !== workingMessages) {
+                workingMessages = transformed
+                coreMessages = toCoreMessages(workingMessages)
+              }
+            }
+            if (hooks?.onTurnStart) {
+              yield* hooks.onTurnStart({ turnIndex, messages: workingMessages })
+            }
+
+            const step = yield* Effect.tryPromise({
+              try: () =>
+                generateText({
+                  model,
+                  system: input.system,
+                  messages: coreMessages,
+                  tools: sdkTools,
+                  maxSteps: 1,
+                }),
+              catch: (cause) =>
+                new LlmError({
+                  cause,
+                  message: `Gemini turn ${turnIndex} failed`,
+                }),
+            })
+
+            const turnCalls: ToolCall[] = step.toolCalls.map((tc) => ({
               toolName: tc.toolName,
               args: tc.args,
-            })),
-            toolResults: allToolResults.map((tr) => ({
+            }))
+            const turnResults: ToolResult[] = step.toolResults.map((tr) => ({
               toolName: tr.toolName,
               result: tr.result,
-            })),
+            }))
+            collectedToolCalls.push(...turnCalls)
+            collectedToolResults.push(...turnResults)
+            if (step.text && step.text.length > 0) {
+              finalText = step.text
+            }
+
+            if (hooks?.onAssistantMessage) {
+              yield* hooks.onAssistantMessage({
+                turnIndex,
+                text: step.text ?? "",
+                toolCalls: turnCalls,
+              })
+            }
+
+            // Thread this round's assistant + tool messages back into the
+            // SDK's view for the next iteration.
+            coreMessages = [...coreMessages, ...step.response.messages]
+
+            // Loop exit when the model stops calling tools.
+            if (step.finishReason !== "tool-calls" || turnCalls.length === 0) {
+              break
+            }
+
+            if (hooks?.onShouldStopAfterTurn) {
+              const stop = yield* hooks.onShouldStopAfterTurn({
+                turnIndex,
+                finishReason: step.finishReason,
+              })
+              if (stop) break
+            }
+          }
+
+          if (hooks?.onAgentEnd) {
+            yield* hooks.onAgentEnd({
+              messages: workingMessages,
+              finalText,
+            })
+          }
+
+          const agentResult: AgentResult = {
+            finalText,
+            toolCalls: collectedToolCalls,
+            toolResults: collectedToolResults,
           }
           return agentResult
         }),

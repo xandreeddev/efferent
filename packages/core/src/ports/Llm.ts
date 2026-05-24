@@ -1,4 +1,5 @@
 import { Context, Data, type Effect, type Stream } from "effect"
+import type { AgentHooks } from "../domain/AgentHooks.js"
 import type { AgentTool } from "../domain/AgentTool.js"
 import type { Classification } from "../domain/Classification.js"
 import type {
@@ -27,6 +28,7 @@ export interface LlmRunAgentInput<R> {
   readonly messages: ReadonlyArray<ConversationMessage>
   readonly tools: ReadonlyArray<AgentTool<any, any, R>>
   readonly maxSteps?: number
+  readonly hooks?: AgentHooks<R>
 }
 
 export class Llm extends Context.Tag("@agent/core/Llm")<

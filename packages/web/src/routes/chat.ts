@@ -1,9 +1,10 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform"
-import { Effect, Schema, Stream } from "effect"
+import { Effect, Queue, Schema, Stream } from "effect"
 import { renderUi, runAgent } from "@agent/application"
 import {
-  ConversationId,
+  type AgentHooks,
   type CaptureStore,
+  ConversationId,
   type ConversationStore,
   type Llm,
 } from "@agent/core"
@@ -16,9 +17,31 @@ const sseEncode = (event: string, data: string): string => {
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
 
+const errFrame = (err: unknown): string => {
+  const tag =
+    typeof err === "object" && err !== null && "_tag" in err
+      ? String((err as { _tag: unknown })._tag)
+      : "UnknownError"
+  const message =
+    typeof err === "object" && err !== null && "message" in err
+      ? String((err as { message: unknown }).message)
+      : "Unknown error generating response"
+  const cause =
+    typeof err === "object" && err !== null && "cause" in err
+      ? (err as { cause: unknown }).cause
+      : undefined
+  console.error("[chat] stream error:", tag, message, cause)
+  return sseEncode("ui-error", `${tag}: ${message}`)
+}
+
+const truncateArgs = (args: unknown): unknown => {
+  const json = JSON.stringify(args)
+  if (json.length > 240) return `${json.slice(0, 240)}…`
+  return args
+}
+
 export const chatStreamRoute = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
-  const runtime = yield* Effect.runtime<Llm | CaptureStore | ConversationStore>()
   const url = new URL(request.url, "http://placeholder")
   const prompt = url.searchParams.get("prompt") ?? ""
 
@@ -41,33 +64,60 @@ export const chatStreamRoute = Effect.gen(function* () {
   }
   const conversationId = parsedId.right
 
-  // Two-pass: (1) await runAgent → (2) stream renderUi over its result.
-  const body = Stream.unwrap(
+  // SSE frames flow through this queue. The agent's hooks enqueue
+  // step frames as tool calls happen; the render pass enqueues ui
+  // frames; we end with ui-done and shut the queue down.
+  const queue = yield* Queue.unbounded<string>()
+
+  type SseR = CaptureStore | Llm | ConversationStore
+  const sseHooks: AgentHooks<SseR> = {
+    onBeforeToolCall: (e) =>
+      Queue.offer(
+        queue,
+        sseEncode(
+          "step",
+          JSON.stringify({
+            type: "tool_call",
+            toolName: e.toolName,
+            args: truncateArgs(e.args),
+          }),
+        ),
+      ).pipe(Effect.as({ action: "continue" as const })),
+    onAfterToolCall: (e) =>
+      Queue.offer(
+        queue,
+        sseEncode(
+          "step",
+          JSON.stringify({
+            type: "tool_result",
+            toolName: e.toolName,
+            ok: e.ok,
+          }),
+        ),
+      ).pipe(Effect.asVoid),
+  }
+
+  // Fork the agent + render work so the response stream can start
+  // emitting (heartbeat / step frames) without waiting for runAgent.
+  yield* Effect.forkScoped(
     Effect.gen(function* () {
-      const agentResult = yield* runAgent(conversationId, prompt)
-      return renderUi(prompt, agentResult)
-    }),
-  ).pipe(
-    Stream.provideContext(runtime.context),
-    Stream.map((chunk) => sseEncode("ui", chunk)),
-    Stream.concat(Stream.succeed(sseEncode("ui-done", ""))),
-    Stream.catchAll((err: unknown) => {
-      const tag =
-        typeof err === "object" && err !== null && "_tag" in err
-          ? String((err as { _tag: unknown })._tag)
-          : "UnknownError"
-      const message =
-        typeof err === "object" && err !== null && "message" in err
-          ? String((err as { message: unknown }).message)
-          : "Unknown error generating response"
-      const cause =
-        typeof err === "object" && err !== null && "cause" in err
-          ? (err as { cause: unknown }).cause
-          : undefined
-      // Surface cause to server logs for triage; SSE keeps it terse.
-      console.error("[chat] stream error:", tag, message, cause)
-      return Stream.succeed(sseEncode("ui-error", `${tag}: ${message}`))
-    }),
+      const result = yield* runAgent(conversationId, prompt, sseHooks)
+      yield* renderUi(prompt, result).pipe(
+        Stream.runForEach((chunk) =>
+          Queue.offer(queue, sseEncode("ui", chunk)),
+        ),
+      )
+      yield* Queue.offer(queue, sseEncode("ui-done", ""))
+    }).pipe(
+      Effect.catchAll((err) =>
+        Queue.offer(queue, errFrame(err)).pipe(Effect.asVoid),
+      ),
+      // Always end the queue so the HTTP stream terminates cleanly.
+      Effect.ensuring(Queue.shutdown(queue)),
+    ),
+  )
+
+  const body = Stream.fromQueue(queue, { shutdown: true }).pipe(
     Stream.encodeText,
   )
 
