@@ -1,102 +1,155 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import {
-  type CoreMessage,
-  generateObject,
-  generateText,
-  jsonSchema,
-  streamText,
-  tool,
-} from "ai"
+  type Content,
+  type FunctionDeclaration,
+  GoogleGenAI,
+  type Part,
+} from "@google/genai"
+import { Config, Effect, JSONSchema, Layer, Redacted, Ref } from "effect"
 import {
-  Config,
-  Effect,
-  JSONSchema,
-  Layer,
-  Redacted,
-  Runtime,
-  Schema,
-  Stream,
-} from "effect"
-import { z } from "zod"
-import {
-  type AgentHooks,
-  type AgentResult,
+  type AgentMessage,
   type AgentTool,
-  Classification,
   Llm,
-  LlmError,
-  type LlmGenerateInput,
-  type ConversationMessage,
-  type ToolCall,
-  type ToolResult,
+  type LlmCacheHint,
+  type LlmSnapshotInput,
 } from "@agent/core"
 
-const buildUserMessage = (input: LlmGenerateInput) =>
-  ({
-    role: "user" as const,
-    content: [
-      { type: "text" as const, text: input.prompt },
-      ...(input.images ?? []).map((img) => ({
-        type: "image" as const,
-        image: img.bytes,
-        mimeType: img.mimeType,
-      })),
-    ],
-  })
+import { buildLlm, type CacheStrategy } from "./vercel-ai.js"
 
-const ZClassification = z.object({
-  intent: z.enum([
-    "add_todo",
-    "list_todos",
-    "complete_todo",
-    "ask",
-    "other",
-  ]),
-  confidence: z.number().min(0).max(1),
-  reasoning: z.string(),
+/**
+ * Google Generative AI provider wiring.
+ *
+ * Two caches in play:
+ *   - **Static cache** (lazy, process-lifetime): created on the first
+ *     `runTurn` from `(system + tools)`. Used as the fallback when no
+ *     per-conversation cache hint is set. Reused across all
+ *     conversations within this LlmLive's lifetime.
+ *   - **Per-conversation snapshot caches** (created on demand): the
+ *     application calls `Llm.snapshot` at the end of every `runAgent`,
+ *     which creates a fresh cache from `(system + tools + full
+ *     conversation up through this turn)` and returns an opaque hint.
+ *     The application persists the hint per conversation and passes it
+ *     back via `cacheHint` on subsequent `runTurn` calls. Each turn in
+ *     the next user prompt then references this bigger cache, sending
+ *     only the new messages on top.
+ *
+ * Caches are immutable in content; "growing" the cache = creating a new
+ * resource. We tolerate creation failures (content too small for the
+ * model's minimum, network blip, etc.) — caching is a cost optimisation,
+ * never a correctness requirement.
+ */
+
+const STRIPPED_SCHEMA_KEYS = new Set([
+  "$schema",
+  "$defs",
+  "$ref",
+  "additionalProperties",
+])
+
+const sanitizeSchema = (schema: unknown): unknown => {
+  if (Array.isArray(schema)) return schema.map(sanitizeSchema)
+  if (typeof schema !== "object" || schema === null) return schema
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(schema)) {
+    if (STRIPPED_SCHEMA_KEYS.has(k)) continue
+    out[k] = sanitizeSchema(v)
+  }
+  return out
+}
+
+const toFunctionDeclaration = (
+  t: AgentTool<any, any, any>,
+): FunctionDeclaration => ({
+  name: t.name,
+  description: t.description,
+  parameters: sanitizeSchema(JSONSchema.make(t.parameters)) as Record<
+    string,
+    unknown
+  >,
 })
 
 /**
- * Map persisted ConversationMessages to the AI SDK's CoreMessage shape.
- * Tool messages from prior chat turns are dropped — our domain doesn't
- * track toolCallIds across runAgent invocations. Within ONE invocation,
- * proper tool/assistant threading is maintained via the SDK's own
- * `response.messages` (a CoreMessage[] with real toolCallIds) which we
- * append to the working buffer between loop iterations.
+ * Translate domain `AgentMessage` to the Google GenAI `Content` shape
+ * for `caches.create({ contents })`. Vercel SDK uses the same
+ * conceptual shape but a slightly different field layout — the Google
+ * SDK's `Content` is `{ role: "user" | "model" | "function", parts: Part[] }`
+ * with the assistant role called "model" and tool results encoded as
+ * `functionResponse` parts.
  */
-const toCoreMessages = (
-  messages: ReadonlyArray<ConversationMessage>,
-): CoreMessage[] =>
-  messages.flatMap((m): CoreMessage[] => {
-    if (m.role === "user") return [{ role: "user", content: m.content }]
-    if (m.role === "assistant") {
-      return [{ role: "assistant", content: m.content }]
+const toGoogleContent = (m: AgentMessage): Content => {
+  if (m.role === "user") {
+    return { role: "user", parts: [{ text: m.content }] }
+  }
+  if (m.role === "assistant") {
+    return {
+      role: "model",
+      parts: m.content.flatMap((part): Part[] => {
+        if (part.type === "text") return [{ text: part.text }]
+        if (part.type === "reasoning") {
+          // Carry the provider-private signature through if present.
+          const sig =
+            part.providerOptions !== undefined &&
+            typeof part.providerOptions === "object" &&
+            part.providerOptions !== null &&
+            "google" in part.providerOptions &&
+            typeof (part.providerOptions as Record<string, unknown>).google ===
+              "object"
+              ? ((part.providerOptions as Record<string, unknown>).google as {
+                  thoughtSignature?: string
+                })
+              : undefined
+          return [
+            {
+              thought: true,
+              text: part.text,
+              ...(sig?.thoughtSignature !== undefined
+                ? { thoughtSignature: sig.thoughtSignature }
+                : {}),
+            },
+          ]
+        }
+        if (part.type === "tool-call") {
+          return [
+            {
+              functionCall: {
+                id: part.toolCallId,
+                name: part.toolName,
+                args: (part.input ?? {}) as Record<string, unknown>,
+              },
+            },
+          ]
+        }
+        return []
+      }),
     }
-    return []
-  })
-
-const toToolParameters = <I>(schema: Schema.Schema<I, any>) =>
-  jsonSchema(JSONSchema.make(schema) as any)
-
-type GracefulToolError = {
-  readonly ok: false
-  readonly tool: string
-  readonly error: string
-  readonly message: string
+  }
+  // tool
+  return {
+    role: "user", // Google represents tool results as user-role with functionResponse parts
+    parts: m.content.map(
+      (part): Part => ({
+        functionResponse: {
+          id: part.toolCallId,
+          name: part.toolName,
+          response: (typeof part.output === "object" && part.output !== null
+            ? (part.output as Record<string, unknown>)
+            : { result: part.output }) as Record<string, unknown>,
+        },
+      }),
+    ),
+  }
 }
-type BlockedToolResult = {
-  readonly ok: false
-  readonly blocked: true
-  readonly reason: string
+
+type GeminiCacheHint = {
+  readonly cachedContent: string
+  readonly skipMessages: number
 }
 
-const isToolFailure = (
-  v: unknown,
-): v is GracefulToolError | BlockedToolResult =>
-  typeof v === "object" &&
-  v !== null &&
-  "ok" in v &&
-  (v as { ok: unknown }).ok === false
+const isGeminiHint = (h: unknown): h is GeminiCacheHint =>
+  typeof h === "object" &&
+  h !== null &&
+  typeof (h as Record<string, unknown>).cachedContent === "string" &&
+  typeof (h as Record<string, unknown>).skipMessages === "number"
 
 export const LlmLive = Layer.effect(
   Llm,
@@ -105,264 +158,150 @@ export const LlmLive = Layer.effect(
     const modelName = yield* Config.string("AGENT_MODEL").pipe(
       Config.withDefault("gemini-3.5-flash"),
     )
+    const rawKey = Redacted.value(apiKey)
+
+    // Strip `systemInstruction` / `tools` / `toolConfig` from requests
+    // that carry `cachedContent` — Gemini rejects duplicates ("must come
+    // from the cache"). The Vercel SDK always sends them; the cache
+    // contains the right values; this just removes the dupes on the
+    // wire. The SDK's in-memory `tools` (for matching tool-call
+    // execution) is untouched.
+    const stripDuplicateFetch = async (
+      url: URL | RequestInfo,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      if (
+        init?.body !== undefined &&
+        typeof init.body === "string" &&
+        init.body.includes('"cachedContent"')
+      ) {
+        try {
+          const body = JSON.parse(init.body) as Record<string, unknown>
+          if (body.cachedContent != null) {
+            delete body.systemInstruction
+            delete body.tools
+            delete body.toolConfig
+            init = { ...init, body: JSON.stringify(body) }
+          }
+        } catch {
+          // body wasn't JSON we could parse; let it through unchanged
+        }
+      }
+      return fetch(url, init)
+    }
+
     const provider = createGoogleGenerativeAI({
-      apiKey: Redacted.value(apiKey),
+      apiKey: rawKey,
+      fetch: stripDuplicateFetch as typeof fetch,
     })
-    const model = provider(modelName)
+    const genai = new GoogleGenAI({ apiKey: rawKey })
 
-    return Llm.of({
-      classify: (message: string) =>
-        Effect.tryPromise({
+    // null = not yet attempted; "" = attempted and failed (don't retry);
+    // string = active static cache resource name.
+    const staticCacheRef = yield* Ref.make<string | null>(null)
+
+    const staticOptionsFor: CacheStrategy["staticOptionsFor"] = (input) =>
+      Effect.gen(function* () {
+        const existing = yield* Ref.get(staticCacheRef)
+        if (existing === "") return undefined
+        if (existing !== null) return { google: { cachedContent: existing } }
+
+        const created = yield* Effect.tryPromise({
           try: () =>
-            generateObject({
-              model,
-              schema: ZClassification,
-              prompt:
-                `Classify the user message into exactly one intent from the schema.\n` +
-                `Return your best guess with a confidence in [0,1] and a one-sentence reasoning.\n` +
-                `Message: ${JSON.stringify(message)}`,
-            }),
-          catch: (cause) =>
-            new LlmError({ cause, message: "Gemini classification failed" }),
-        }).pipe(
-          Effect.flatMap((res) =>
-            Schema.decodeUnknown(Classification)(res.object).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new LlmError({
-                    cause,
-                    message:
-                      "LLM returned a value that violates the Classification schema",
-                  }),
-              ),
-            ),
-          ),
-        ),
-
-      generate: (input) =>
-        Effect.tryPromise({
-          try: () =>
-            generateText({
-              model,
-              ...(input.system !== undefined ? { system: input.system } : {}),
-              messages: [buildUserMessage(input)],
-            }),
-          catch: (cause) =>
-            new LlmError({ cause, message: "Gemini generate failed" }),
-        }).pipe(Effect.map((res) => res.text)),
-
-      streamGenerate: (input: LlmGenerateInput) =>
-        Stream.fromAsyncIterable(
-          (async function* () {
-            const result = streamText({
-              model,
-              ...(input.system !== undefined ? { system: input.system } : {}),
-              messages: [buildUserMessage(input)],
-            })
-            // Consume fullStream so error parts surface as thrown errors
-            // (textStream silently ends on errors in AI SDK v4).
-            for await (const part of result.fullStream) {
-              if (part.type === "text-delta") {
-                yield part.textDelta
-              } else if (part.type === "error") {
-                throw part.error
-              }
-            }
-          })(),
-          (cause) =>
-            new LlmError({ cause, message: "Gemini stream failed" }),
-        ),
-
-      /**
-       * Hand-rolled agent loop. Drives the SDK one step at a time with
-       * `maxSteps: 1`, so we own the iteration and can emit hooks between
-       * rounds. Tool execution still happens inside the SDK's `execute`
-       * callback — we wrap it to consult `onBeforeToolCall`/`onAfterToolCall`
-       * and to map AgentToolError into a structured result so a single
-       * tool failure doesn't abort the whole turn.
-       */
-      runAgent: <R>(input: {
-        readonly system: string
-        readonly messages: ReadonlyArray<ConversationMessage>
-        readonly tools: ReadonlyArray<AgentTool<any, any, R>>
-        readonly maxSteps?: number
-        readonly hooks?: AgentHooks<R>
-      }) =>
-        Effect.gen(function* () {
-          const runtime = yield* Effect.runtime<R>()
-          const hooks = input.hooks
-          const maxSteps = input.maxSteps ?? 5
-
-          const sdkTools = Object.fromEntries(
-            input.tools.map((t) => [
-              t.name,
-              tool({
-                description: t.description,
-                parameters: toToolParameters(t.parameters),
-                execute: async (rawArgs: unknown) => {
-                  // Hook: onBeforeToolCall can block the call.
-                  if (hooks?.onBeforeToolCall) {
-                    const decision = await Runtime.runPromise(runtime)(
-                      hooks.onBeforeToolCall({
-                        turnIndex: -1, // not tracked at SDK callback level
-                        toolName: t.name,
-                        args: rawArgs,
-                      }),
-                    )
-                    if (decision.action === "block") {
-                      const blocked: BlockedToolResult = {
-                        ok: false,
-                        blocked: true,
-                        reason: decision.reason,
-                      }
-                      if (hooks.onAfterToolCall) {
-                        await Runtime.runPromise(runtime)(
-                          hooks.onAfterToolCall({
-                            turnIndex: -1,
-                            toolName: t.name,
-                            args: rawArgs,
-                            ok: false,
-                            result: blocked,
-                          }),
-                        )
-                      }
-                      return blocked
-                    }
-                  }
-                  // Execute. Catch AgentToolError → structured failure so
-                  // the SDK doesn't promote it to AI_ToolExecutionError
-                  // (which aborts the whole generateText call).
-                  const validated = Schema.decodeUnknownSync(t.parameters)(rawArgs)
-                  const result = await Runtime.runPromise(runtime)(
-                    t.execute(validated).pipe(
-                      Effect.catchTag("AgentToolError", (err) => {
-                        const errTag =
-                          err.cause !== undefined &&
-                          err.cause !== null &&
-                          typeof err.cause === "object" &&
-                          "_tag" in err.cause
-                            ? String((err.cause as { _tag: unknown })._tag)
-                            : "AgentToolError"
-                        const errMsg =
-                          err.cause instanceof Error
-                            ? err.cause.message
-                            : String(err.cause)
-                        const failure: GracefulToolError = {
-                          ok: false,
-                          tool: err.tool,
-                          error: errTag,
-                          message: errMsg,
-                        }
-                        return Effect.succeed(failure)
-                      }),
+            genai.caches.create({
+              model: modelName,
+              config: {
+                systemInstruction: input.system,
+                tools: [
+                  {
+                    functionDeclarations: input.tools.map(
+                      toFunctionDeclaration,
                     ),
-                  )
-                  if (hooks?.onAfterToolCall) {
-                    await Runtime.runPromise(runtime)(
-                      hooks.onAfterToolCall({
-                        turnIndex: -1,
-                        toolName: t.name,
-                        args: rawArgs,
-                        ok: !isToolFailure(result),
-                        result,
-                      }),
-                    )
-                  }
-                  return result
-                },
-              }),
-            ]),
+                  },
+                ],
+                ttl: "3600s",
+                displayName: `agent-static-${modelName}`,
+              },
+            }),
+          catch: (cause) => cause,
+        }).pipe(Effect.either)
+
+        if (created._tag === "Left") {
+          yield* Effect.logWarning(
+            `[llm.cache] static create failed, continuing uncached: ${String(
+              created.left,
+            )}`,
           )
+          yield* Ref.set(staticCacheRef, "")
+          return undefined
+        }
 
-          // Working state, mutated each turn.
-          let workingMessages = input.messages
-          let coreMessages: CoreMessage[] = toCoreMessages(workingMessages)
-          const collectedToolCalls: ToolCall[] = []
-          const collectedToolResults: ToolResult[] = []
-          let finalText = ""
+        const name = created.right.name ?? ""
+        if (name === "") {
+          yield* Ref.set(staticCacheRef, "")
+          return undefined
+        }
 
-          for (let turnIndex = 0; turnIndex < maxSteps; turnIndex++) {
-            if (hooks?.onTransformContext) {
-              const transformed = yield* hooks.onTransformContext(workingMessages)
-              if (transformed !== workingMessages) {
-                workingMessages = transformed
-                coreMessages = toCoreMessages(workingMessages)
-              }
-            }
-            if (hooks?.onTurnStart) {
-              yield* hooks.onTurnStart({ turnIndex, messages: workingMessages })
-            }
+        yield* Effect.log(
+          `[llm.cache] static created ${name} model=${modelName} ttl=3600s`,
+        )
+        yield* Ref.set(staticCacheRef, name)
+        return { google: { cachedContent: name } }
+      })
 
-            const step = yield* Effect.tryPromise({
-              try: () =>
-                generateText({
-                  model,
-                  system: input.system,
-                  messages: coreMessages,
-                  tools: sdkTools,
-                  maxSteps: 1,
-                }),
-              catch: (cause) =>
-                new LlmError({
-                  cause,
-                  message: `Gemini turn ${turnIndex} failed`,
-                }),
-            })
+    const snapshot = <R>(
+      input: LlmSnapshotInput<R>,
+    ): Effect.Effect<LlmCacheHint | undefined, never> =>
+      Effect.gen(function* () {
+        const contents = input.messages.map(toGoogleContent)
+        const created = yield* Effect.tryPromise({
+          try: () =>
+            genai.caches.create({
+              model: modelName,
+              config: {
+                systemInstruction: input.system,
+                tools: [
+                  {
+                    functionDeclarations: input.tools.map(
+                      toFunctionDeclaration,
+                    ),
+                  },
+                ],
+                contents,
+                ttl: "3600s",
+                displayName: `agent-conv-${modelName}`,
+              },
+            }),
+          catch: (cause) => cause,
+        }).pipe(Effect.either)
 
-            const turnCalls: ToolCall[] = step.toolCalls.map((tc) => ({
-              toolName: tc.toolName,
-              args: tc.args,
-            }))
-            const turnResults: ToolResult[] = step.toolResults.map((tr) => ({
-              toolName: tr.toolName,
-              result: tr.result,
-            }))
-            collectedToolCalls.push(...turnCalls)
-            collectedToolResults.push(...turnResults)
-            if (step.text && step.text.length > 0) {
-              finalText = step.text
-            }
+        if (created._tag === "Left") {
+          yield* Effect.logWarning(
+            `[llm.cache] snapshot failed, conversation continues uncached: ${String(
+              created.left,
+            )}`,
+          )
+          return undefined
+        }
+        const name = created.right.name ?? ""
+        if (name === "") return undefined
 
-            if (hooks?.onAssistantMessage) {
-              yield* hooks.onAssistantMessage({
-                turnIndex,
-                text: step.text ?? "",
-                toolCalls: turnCalls,
-              })
-            }
+        const hint: GeminiCacheHint = {
+          cachedContent: name,
+          skipMessages: input.messages.length,
+        }
+        yield* Effect.log(
+          `[llm.cache] snapshot created ${name} messages=${input.messages.length} ttl=3600s`,
+        )
+        return hint as LlmCacheHint
+      })
 
-            // Thread this round's assistant + tool messages back into the
-            // SDK's view for the next iteration.
-            coreMessages = [...coreMessages, ...step.response.messages]
+    const cacheStrategy: CacheStrategy = {
+      staticOptionsFor,
+      interpretHint: (hint) => (isGeminiHint(hint) ? hint : undefined),
+      snapshot,
+    }
 
-            // Loop exit when the model stops calling tools.
-            if (step.finishReason !== "tool-calls" || turnCalls.length === 0) {
-              break
-            }
-
-            if (hooks?.onShouldStopAfterTurn) {
-              const stop = yield* hooks.onShouldStopAfterTurn({
-                turnIndex,
-                finishReason: step.finishReason,
-              })
-              if (stop) break
-            }
-          }
-
-          if (hooks?.onAgentEnd) {
-            yield* hooks.onAgentEnd({
-              messages: workingMessages,
-              finalText,
-            })
-          }
-
-          const agentResult: AgentResult = {
-            finalText,
-            toolCalls: collectedToolCalls,
-            toolResults: collectedToolResults,
-          }
-          return agentResult
-        }),
-    })
+    return buildLlm(provider(modelName), { cacheStrategy })
   }),
 )

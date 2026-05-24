@@ -1,5 +1,5 @@
 import type { Effect } from "effect"
-import type { ConversationMessage, ToolCall } from "./Conversation.js"
+import type { AgentMessage, ToolCall } from "./Conversation.js"
 
 /**
  * Decision returned by `onBeforeToolCall`: either let the call proceed
@@ -12,7 +12,7 @@ export type BeforeToolCallDecision =
 
 export interface AgentTurnStartEvent {
   readonly turnIndex: number
-  readonly messages: ReadonlyArray<ConversationMessage>
+  readonly messages: ReadonlyArray<AgentMessage>
 }
 
 export interface AgentAssistantMessageEvent {
@@ -41,7 +41,7 @@ export interface AgentShouldStopEvent {
 }
 
 export interface AgentEndEvent {
-  readonly messages: ReadonlyArray<ConversationMessage>
+  readonly messages: ReadonlyArray<AgentMessage>
   readonly finalText: string
 }
 
@@ -67,8 +67,8 @@ export interface AgentHooks<R = never> {
     event: AgentAfterToolCallEvent,
   ) => Effect.Effect<void, never, R>
   readonly onTransformContext?: (
-    messages: ReadonlyArray<ConversationMessage>,
-  ) => Effect.Effect<ReadonlyArray<ConversationMessage>, never, R>
+    messages: ReadonlyArray<AgentMessage>,
+  ) => Effect.Effect<ReadonlyArray<AgentMessage>, never, R>
   readonly onShouldStopAfterTurn?: (
     event: AgentShouldStopEvent,
   ) => Effect.Effect<boolean, never, R>

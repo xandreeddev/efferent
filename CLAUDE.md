@@ -45,13 +45,13 @@ bun --hot packages/web/src/main.ts                   # web UI on :3000 (hot relo
 Required env (`.env`):
 - `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call (capture, agent, render)
 - `AGENT_DB_URL` — Postgres URL. Local default points at `postgres://agent:agent@localhost:5434/agent`
-- Optional `AGENT_MODEL`. Tool-calling currently requires a model whose responses don't need `thought_signature` round-tripping. `gemini-2.5-flash-lite` works; `gemini-3.5-flash` fails on multi-step tool calls with the installed `@ai-sdk/google` version.
+- Optional `AGENT_MODEL`. Defaults to `gemini-3.5-flash`. Provider is `@ai-sdk/google@3.x` (round-trips Gemini `thought_signature` fields, so multi-step tool calls work on 3.x models).
 
 **Deployed Postgres** (Neon / Supabase / Railway / etc.): same code path — only `AGENT_DB_URL` changes. The `@effect/sql-pg` `PgClient` reads it, the migrator runs the same TS migrations from `packages/adapters/src/storage/migrations/`.
 
 ## Agent loop (web)
 
-Both `/` and `/ui/stream` are thin entrypoints into one use case: **`runAgent`**. The agent — not the route handler — decides what to do. The loop itself is hand-rolled in `packages/adapters/src/llm/gemini.ts` (modelled on Pi's `agent-loop.ts`) — we drive the SDK one step at a time with `maxSteps: 1` so we own the iteration and can fire hooks between rounds.
+Both `/` and `/ui/stream` are thin entrypoints into one use case: **`runAgent`**. The agent — not the route handler — decides what to do. The loop is hand-rolled in `packages/adapters/src/llm/gemini.ts` as a functional pipeline: an immutable `LoopState` record is threaded through composed `LoopState => Effect<LoopState>` step functions (transformContext → turnStart → takeTurn → assistantMessage → decideContinuation → consultShouldStop → advanceTurn), and `Effect.iterate` drives turns until `stopRequested` or `maxSteps`. Each `takeTurn` calls `generateText({ stopWhen: stepCountIs(1) })` — the SDK does one step, the pipeline owns the rest.
 
 ```
 browser prompt
@@ -60,12 +60,13 @@ runAgent(conversationId, prompt, hooks?)
   ├── ConversationStore.append(user)
   ├── ConversationStore.list → message history
   ├── Llm.runAgent({ system, messages, tools, hooks, maxSteps: 5 })
-  │     ├── turn 0: onTurnStart → generateText({maxSteps:1}) → onAssistantMessage
-  │     │           ├── per tool call: onBeforeToolCall (allow/block) → execute (graceful AgentToolError) → onAfterToolCall
-  │     │           └── append assistant + tool messages to working buffer (using SDK's response.messages)
-  │     ├── if finishReason !== "tool-calls" → break
-  │     ├── onShouldStopAfterTurn (optional early exit)
-  │     └── turn 1, 2, …  until maxSteps or no more tool calls
+  │     ├── turn 0: applyTransformContext → emitTurnStart
+  │     │           → takeTurn: generateText({ stopWhen: stepCountIs(1) })
+  │     │             ├── per tool call (inside SDK execute): onBeforeToolCall (allow/block) → execute (graceful AgentToolError) → onAfterToolCall
+  │     │             └── append response.messages onto LoopState.modelMessages
+  │     │           → emitAssistantMessage → decideContinuation (stopRequested if finishReason !== "tool-calls" or no calls)
+  │     │           → consultShouldStop (optional early exit) → advanceTurn
+  │     └── Effect.iterate loops until stopRequested or turnIndex >= maxSteps
   ├── ConversationStore.append(assistant)
   └── return AgentResult { finalText, toolCalls, toolResults }
        ↓
@@ -101,7 +102,6 @@ Local-only — no script-sanitisation yet, do not expose publicly.
 - TS file extension loader (`.agent/extensions/*.ts` registering hooks/tools at startup)
 - Interactive components — buttons inside rendered cards that fire `hx-post` to typed action routes (htmx finally earns its keep)
 - Image capture from the web (today only the CLI accepts images)
-- `classify` + `Classification` cleanup — the legacy CLI verb still references dead intent literals
 - `{component, props}` typed render contract
 - Script-injection sanitisation (do not expose publicly before this lands)
 - Additional LLM providers, telemetry, structured logging

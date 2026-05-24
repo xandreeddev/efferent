@@ -1,13 +1,20 @@
 import { Effect, Stream } from "effect"
-import { type AgentResult, Llm } from "@agent/core"
+import { type AgentMessage, type AgentResult, Llm } from "@agent/core"
 import { renderUiPrompt } from "./_prompts/render-ui.js"
 
-const summariseToolCalls = (
-  result: AgentResult,
-): string => {
-  if (result.toolCalls.length === 0) return "(no tools called)"
-  return result.toolCalls
-    .map((tc) => `- ${tc.toolName}(${JSON.stringify(tc.args)})`)
+const summariseToolCalls = (messages: ReadonlyArray<AgentMessage>): string => {
+  const calls: { toolName: string; input: unknown }[] = []
+  for (const m of messages) {
+    if (m.role !== "assistant") continue
+    for (const part of m.content) {
+      if (part.type === "tool-call") {
+        calls.push({ toolName: part.toolName, input: part.input })
+      }
+    }
+  }
+  if (calls.length === 0) return "(no tools called)"
+  return calls
+    .map((c) => `- ${c.toolName}(${JSON.stringify(c.input)})`)
     .join("\n")
 }
 
@@ -22,7 +29,7 @@ export const renderUi = (userPrompt: string, agentResult: AgentResult) =>
       const prompt =
         `User prompt: ${userPrompt.trim()}\n\n` +
         `Agent's final answer (markdown):\n${agentResult.finalText}\n\n` +
-        `Tools the agent invoked:\n${summariseToolCalls(agentResult)}`
+        `Tools the agent invoked:\n${summariseToolCalls(agentResult.messages)}`
       return llm.streamGenerate({
         system: renderUiPrompt,
         prompt,

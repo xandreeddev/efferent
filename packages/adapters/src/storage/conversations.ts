@@ -3,7 +3,7 @@ import { Effect, Layer, Schema } from "effect"
 
 import {
   ConversationId,
-  ConversationMessage,
+  AgentMessage,
   ConversationNotFound,
   ConversationStore,
   ConversationStoreError,
@@ -30,7 +30,7 @@ const decodeMessage = (row: MessageRow) => {
     row.content !== null && typeof row.content === "object"
       ? { role: row.role, ...(row.content as Record<string, unknown>) }
       : row.content
-  return Schema.decodeUnknown(ConversationMessage)(raw).pipe(
+  return Schema.decodeUnknown(AgentMessage)(raw).pipe(
     Effect.mapError(
       (cause) =>
         new ConversationStoreError({
@@ -41,7 +41,7 @@ const decodeMessage = (row: MessageRow) => {
   )
 }
 
-const encodeMessageContent = (msg: ConversationMessage): string => {
+const encodeMessageContent = (msg: AgentMessage): string => {
   // Store role in its own column; everything else goes in jsonb.
   const { role: _role, ...rest } = msg as Record<string, unknown>
   return JSON.stringify(rest)
@@ -71,6 +71,16 @@ export const PostgresConversationStoreLive = Layer.effect(
             ),
           )
         }),
+
+      ensure: (id) =>
+        wrapSql(
+          sql`
+            INSERT INTO conversations (id, created_at)
+            VALUES (${id}::uuid, ${Date.now()})
+            ON CONFLICT (id) DO NOTHING
+          `,
+          "Failed to ensure conversation",
+        ).pipe(Effect.asVoid),
 
       append: (conversationId, msg) =>
         Effect.gen(function* () {
