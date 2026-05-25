@@ -108,4 +108,4 @@ Local-only — no script-sanitisation yet, do not expose publicly.
 
 ## OPSEC reminder
 
-Every commit under this tree must be authored as `Xandre Reed <xandreed@proton.me>`. Verify with `git config user.email`. Parent CLAUDE.md is non-negotiable on this — never reference the real name in any file, commit, comment, or screenshot.
+Every commit under this tree must be authored as `Xand Reed <xandreed@proton.me>`. Verify with `git config user.email`. Parent CLAUDE.md is non-negotiable on this — never reference the real name in any file, commit, comment, or screenshot.

@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect"
 import { type AgentMessage, type AgentResult, Llm } from "@agent/core"
-import { renderUiPrompt } from "./_prompts/render-ui.js"
+import { renderUiPrompt } from "../../prompts/renderUi.js"
 
 const summariseToolCalls = (messages: ReadonlyArray<AgentMessage>): string => {
   const calls: { toolName: string; input: unknown }[] = []

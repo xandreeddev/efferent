@@ -14,7 +14,7 @@ import {
   type LlmSnapshotInput,
 } from "@agent/core"
 
-import { buildLlm, type CacheStrategy } from "./vercel-ai.js"
+import { buildLlm, type CacheStrategy } from "./vercelAi.js"
 
 /**
  * Google Generative AI provider wiring.

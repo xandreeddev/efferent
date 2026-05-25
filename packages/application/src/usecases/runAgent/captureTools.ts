@@ -6,7 +6,7 @@ import {
   type Llm,
 } from "@agent/core"
 
-import { capture } from "../Capture.js"
+import { capture } from "../capture/Capture.js"
 import { deleteCapture } from "../DeleteCapture.js"
 import { getCapture } from "../GetCapture.js"
 import { listCaptures } from "../ListCaptures.js"

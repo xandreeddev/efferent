@@ -10,9 +10,9 @@ import {
   type LlmCacheHint,
 } from "@agent/core"
 
-import { runAgentLoop } from "./_loop/agentLoop.js"
-import { agentSystemPrompt } from "./_prompts/agent.js"
-import { buildCaptureTools } from "./_tools/captureTools.js"
+import { runAgentLoop } from "./agentLoop.js"
+import { agentSystemPrompt } from "../../prompts/agent.js"
+import { buildCaptureTools } from "./captureTools.js"
 
 type AgentR = CaptureStore | Llm | ConversationStore
 
