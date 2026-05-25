@@ -2,7 +2,7 @@ import { Context, Data, type Effect } from "effect"
 import type {
   AgentMessage,
   ConversationId,
-} from "../domain/Conversation.js"
+} from "../entities/Conversation.js"
 
 export class ConversationStoreError extends Data.TaggedError(
   "ConversationStoreError",

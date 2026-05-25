@@ -1,7 +1,7 @@
 import { Context, Data, type Effect, type Stream } from "effect"
-import type { AgentHooks } from "../domain/AgentHooks.js"
-import type { AgentTool } from "../domain/AgentTool.js"
-import type { AgentMessage, ToolCall } from "../domain/Conversation.js"
+import type { AgentHooks } from "../entities/AgentHooks.js"
+import type { AgentTool } from "../entities/AgentTool.js"
+import type { AgentMessage, ToolCall } from "../entities/Conversation.js"
 
 export class LlmError extends Data.TaggedError("LlmError")<{
   readonly cause: unknown

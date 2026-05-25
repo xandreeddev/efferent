@@ -26,7 +26,7 @@ import {
  * Vercel AI SDK adapter for the `Llm` port. Provider-agnostic over any
  * `LanguageModel` the SDK accepts — Google, OpenAI, Anthropic, etc.
  *
- * The agent loop lives in `@agent/application/_loop/agentLoop.ts` and
+ * The agent loop lives in `@agent/application/usecases/runAgent/agentLoop.ts` and
  * drives one turn at a time through `Llm.runTurn`. Each call sends the
  * full message buffer (`[...messages]`); the SDK executes tool calls in
  * its `execute` callback (where we wire `onBeforeToolCall` /

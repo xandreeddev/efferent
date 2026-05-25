@@ -1,5 +1,5 @@
 import { Context, Data, type Effect } from "effect"
-import type { Capture, CaptureId, NewCapture } from "../domain/Capture.js"
+import type { Capture, CaptureId, NewCapture } from "../entities/Capture.js"
 
 export class CaptureStoreError extends Data.TaggedError("CaptureStoreError")<{
   readonly cause: unknown

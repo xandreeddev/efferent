@@ -1,42 +1,13 @@
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
-
 import { SqlClient } from "@effect/sql"
-import { PgClient, PgMigrator } from "@effect/sql-pg"
-import { Config, Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 
 import {
   Capture,
-  type CaptureId,
   CaptureAmbiguous,
   CaptureNotFound,
   CaptureStore,
   CaptureStoreError,
 } from "@agent/core"
-
-const migrationsDir = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "migrations",
-)
-
-const PgLive = PgClient.layerConfig({
-  url: Config.redacted("AGENT_DB_URL"),
-})
-
-const MigratorLive = PgMigrator.layer({
-  loader: PgMigrator.fromFileSystem(migrationsDir),
-})
-
-/**
- * Composed database layer: provides PgClient + SqlClient and runs migrations
- * on acquire. The CLI/web driver provides this once; CaptureStore (and future
- * stores) consume the SqlClient it surfaces.
- */
-export const DatabaseLive = MigratorLive.pipe(Layer.provideMerge(PgLive))
-
-/* ------------------------------------------------------------------ */
-/* CaptureStore implementation                                         */
-/* ------------------------------------------------------------------ */
 
 interface CaptureRow {
   readonly id: string
@@ -159,6 +130,3 @@ export const PostgresCaptureStoreLive = Layer.effect(
     })
   }),
 )
-
-/** Re-exports for the CaptureId type so adapter consumers don't need to know about it. */
-export type { CaptureId }
