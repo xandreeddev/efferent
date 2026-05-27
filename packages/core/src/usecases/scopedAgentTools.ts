@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+import type { AgentHooks } from "../entities/AgentHooks.js"
 import { type AgentTool, AgentToolError } from "../entities/AgentTool.js"
 import type { ScopedAgentConfig } from "../entities/ScopedAgent.js"
 import type { FileSystem } from "../ports/FileSystem.js"
@@ -14,18 +15,15 @@ const DelegationInput = Schema.Struct({
 })
 
 /**
- * Build a `delegate_to_<name>` tool that, when invoked, spawns a fresh
- * scoped agent loop with the given config and returns the sub-agent's
- * one-line summary + the list of files it actually wrote.
- *
- * From the parent's perspective this is one tool call. Internally the
- * sub-agent may take many turns; those turns do NOT fire the parent's
- * hooks (no scrollback noise, no token-gauge updates), so the TUI
- * shows one opaque pill while the delegation runs.
+ * Build a `delegate_to_<name>` tool. When `parentHooks` is passed in,
+ * the sub-agent emits `onSubAgentStart`/`onSubAgentEnd` via those hooks
+ * and its inner tool calls fire the parent's tool-call hooks — so the
+ * parent TUI's side pane can show what the sub-agent is doing live.
  */
-export const buildScopedAgentDelegationTool = (
+export const buildScopedAgentDelegationTool = <R = never>(
   config: ScopedAgentConfig,
-): AgentTool<any, any, FileSystem | Shell | Llm> => ({
+  parentHooks?: AgentHooks<R>,
+): AgentTool<any, any, FileSystem | Shell | Llm | R> => ({
   name: `delegate_to_${config.name}`,
   description:
     `Delegate a focused task to the '${config.name}' sub-agent. ${config.description} ` +
@@ -34,7 +32,7 @@ export const buildScopedAgentDelegationTool = (
     `Returns { summary, filesChanged }.`,
   parameters: DelegationInput,
   execute: ({ task }: { task: string }) =>
-    runScopedAgent(config, task).pipe(
+    runScopedAgent(config, task, parentHooks).pipe(
       Effect.mapError(
         (cause) =>
           new AgentToolError({

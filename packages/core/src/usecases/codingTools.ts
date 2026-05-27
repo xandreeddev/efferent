@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path"
 import { Effect, Schema } from "effect"
+import type { AgentHooks } from "../entities/AgentHooks.js"
 import { type AgentTool, AgentToolError } from "../entities/AgentTool.js"
 import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
@@ -119,9 +120,10 @@ const ReadSkillInput = Schema.Struct({
   }),
 })
 
-const buildReadSkillTool = (
+const buildReadSkillTool = <R = never>(
   skills: ReadonlyArray<Skill>,
-): AgentTool<any, any, FileSystem> => {
+  parentHooks?: AgentHooks<R>,
+): AgentTool<any, any, FileSystem | R> => {
   const byName = new Map(skills.map((s) => [s.name, s] as const))
   return {
     name: "read_skill",
@@ -142,6 +144,9 @@ const buildReadSkillTool = (
         }
         const fs = yield* FileSystem
         const read = yield* fs.read(skill.sourcePath)
+        if (parentHooks?.onSkillLoad !== undefined) {
+          yield* parentHooks.onSkillLoad({ name: skill.name })
+        }
         return {
           name: skill.name,
           sourcePath: skill.sourcePath,
@@ -232,11 +237,12 @@ const formatReadOutput = (
 const truncateOutput = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}\n... (truncated, ${s.length - max} more bytes)`
 
-export const buildCodingTools = (
+export const buildCodingTools = <R = never>(
   cwd: string,
   skills: ReadonlyArray<Skill> = [],
-): ReadonlyArray<AgentTool<any, any, FileSystem | Shell>> => [
-  ...(skills.length > 0 ? [buildReadSkillTool(skills)] : []),
+  parentHooks?: AgentHooks<R>,
+): ReadonlyArray<AgentTool<any, any, FileSystem | Shell | R>> => [
+  ...(skills.length > 0 ? [buildReadSkillTool<R>(skills, parentHooks)] : []),
   {
     name: "read_file",
     description:

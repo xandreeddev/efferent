@@ -140,6 +140,8 @@ const handleSend = (
         defaults.skills,
         defaults.scopedAgents,
         defaults.instructionFiles,
+        undefined,
+        hooks,
       ),
       cid,
       prompt,

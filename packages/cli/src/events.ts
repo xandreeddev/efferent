@@ -32,6 +32,19 @@ export type AgentEvent =
       readonly result: unknown
     }
   | {
+      readonly type: "subagent_start"
+      readonly name: string
+      readonly task: string
+    }
+  | {
+      readonly type: "subagent_end"
+      readonly name: string
+      readonly ok: boolean
+      readonly summary: string
+      readonly filesChanged: ReadonlyArray<string>
+    }
+  | { readonly type: "skill_load"; readonly name: string }
+  | {
       readonly type: "agent_end"
       readonly finalText: string
       readonly messages: ReadonlyArray<AgentMessage>
@@ -84,6 +97,25 @@ export const makeEventHooks = <R = never>(
       toolName: event.toolName,
       ok: event.ok,
       result: event.result,
+    }).pipe(Effect.asVoid),
+  onSubAgentStart: (event) =>
+    Queue.offer(queue, {
+      type: "subagent_start",
+      name: event.name,
+      task: event.task,
+    }).pipe(Effect.asVoid),
+  onSubAgentEnd: (event) =>
+    Queue.offer(queue, {
+      type: "subagent_end",
+      name: event.name,
+      ok: event.ok,
+      summary: event.summary,
+      filesChanged: event.filesChanged,
+    }).pipe(Effect.asVoid),
+  onSkillLoad: (event) =>
+    Queue.offer(queue, {
+      type: "skill_load",
+      name: event.name,
     }).pipe(Effect.asVoid),
   onAgentEnd: (event) =>
     Queue.offer(queue, {

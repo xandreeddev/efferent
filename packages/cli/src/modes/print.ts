@@ -102,6 +102,8 @@ export const runPrintMode = (
         input.skills,
         input.scopedAgents,
         input.instructionFiles,
+        undefined,
+        hooks,
       ),
       cid,
       input.prompt,

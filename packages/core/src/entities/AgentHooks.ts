@@ -47,6 +47,22 @@ export interface AgentEndEvent {
   readonly finalText: string
 }
 
+export interface AgentSubAgentStartEvent {
+  readonly name: string
+  readonly task: string
+}
+
+export interface AgentSubAgentEndEvent {
+  readonly name: string
+  readonly ok: boolean
+  readonly summary: string
+  readonly filesChanged: ReadonlyArray<string>
+}
+
+export interface AgentSkillLoadEvent {
+  readonly name: string
+}
+
 /**
  * Hook surface that lets the application (and the route layer above it)
  * observe and influence the agent loop without owning the loop itself.
@@ -75,4 +91,13 @@ export interface AgentHooks<R = never> {
     event: AgentShouldStopEvent,
   ) => Effect.Effect<boolean, never, R>
   readonly onAgentEnd?: (event: AgentEndEvent) => Effect.Effect<void, never, R>
+  readonly onSubAgentStart?: (
+    event: AgentSubAgentStartEvent,
+  ) => Effect.Effect<void, never, R>
+  readonly onSubAgentEnd?: (
+    event: AgentSubAgentEndEvent,
+  ) => Effect.Effect<void, never, R>
+  readonly onSkillLoad?: (
+    event: AgentSkillLoadEvent,
+  ) => Effect.Effect<void, never, R>
 }
