@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
+import { SettingsStore } from "../ports/SettingsStore.js"
 import { Llm, type LlmCacheHint } from "../ports/Llm.js"
 import { LlmCache } from "../ports/LlmCache.js"
 
@@ -44,11 +45,13 @@ export const runAgent = <R>(
   config: AgentConfig<R>,
   conversationId: ConversationId,
   userPrompt: string,
-  extraHooks?: AgentHooks<R | ConversationStore | Llm | LlmCache>,
+  extraHooks?: AgentHooks<R | ConversationStore | Llm | LlmCache | SettingsStore>,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const cache = yield* LlmCache
+    const settingsStore = yield* SettingsStore
+    const settings = yield* settingsStore.get()
 
     yield* store.ensure(conversationId)
 
@@ -66,6 +69,7 @@ export const runAgent = <R>(
       system: config.systemPrompt,
       messages: [...stored, userMsg],
       tools: config.tools,
+      maxSteps: settings.maxSteps,
       ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
       ...(cacheHint !== undefined ? { cacheHint } : {}),
     })

@@ -7,6 +7,8 @@ import {
   DatabaseLive,
   GeminiFastLive,
   GeminiLive,
+  LocalFileSystemLive,
+  LocalSettingsStoreLive,
   PostgresCaptureStoreLive,
   PostgresConversationStoreLive,
 } from "@agent/adapters"
@@ -26,6 +28,11 @@ const AppLive = Layer.mergeAll(
   PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
   GeminiLive,
   GeminiFastLive,
+  LocalFileSystemLive,
+).pipe(
+  Layer.provideMerge(
+    LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
+  ),
 )
 
 // idleTimeout 0 disables Bun's per-request timeout — agent calls + render

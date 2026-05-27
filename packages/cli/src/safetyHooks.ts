@@ -1,8 +1,6 @@
 import { Effect } from "effect"
-import type {
-  AgentBeforeToolCallEvent,
-  BeforeToolCallDecision,
-} from "@agent/core"
+import { type BeforeToolCallDecision, SettingsStore } from "@agent/core"
+import type { AgentBeforeToolCallEvent } from "@agent/core"
 
 /**
  * Returns an `onBeforeToolCall` implementation that, when the model wants
@@ -14,7 +12,9 @@ export const bashConfirmHook =
   <R = never>(
     prompt: (cmd: string, cwd: string) => Effect.Effect<boolean, never, R>,
     cwd: string,
-  ): ((event: AgentBeforeToolCallEvent) => Effect.Effect<BeforeToolCallDecision, never, R>) =>
+  ): ((
+    event: AgentBeforeToolCallEvent,
+  ) => Effect.Effect<BeforeToolCallDecision, never, R | SettingsStore>) =>
   (event) => {
     if (event.toolName !== "bash") {
       return Effect.succeed({ action: "continue" as const })
@@ -25,17 +25,21 @@ export const bashConfirmHook =
       "command" in event.args
         ? String((event.args as { command: unknown }).command)
         : "<unknown>"
-    return prompt(command, cwd).pipe(
-      Effect.map((ok) =>
-        ok
-          ? ({ action: "continue" as const } satisfies BeforeToolCallDecision)
-          : ({
-              action: "block" as const,
-              reason:
-                "user denied execution of this command in the TUI confirm prompt",
-            } satisfies BeforeToolCallDecision),
-      ),
-    )
+    return Effect.gen(function* () {
+      const settingsStore = yield* SettingsStore
+      const settings = yield* settingsStore.get()
+      if (settings.allowBash) {
+        return { action: "continue" as const } satisfies BeforeToolCallDecision
+      }
+      const ok = yield* prompt(command, cwd)
+      return ok
+        ? ({ action: "continue" as const } satisfies BeforeToolCallDecision)
+        : ({
+            action: "block" as const,
+            reason:
+              "user denied execution of this command in the TUI confirm prompt",
+          } satisfies BeforeToolCallDecision)
+    })
   }
 
 /**

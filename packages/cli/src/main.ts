@@ -7,12 +7,14 @@ import {
   discoverInstructionFiles,
   discoverScopedAgents,
   loadSkills,
+  SettingsStore,
 } from "@agent/core"
 import {
   DatabaseLive,
   GeminiFastLive,
   GeminiLive,
   LocalFileSystemLive,
+  LocalSettingsStoreLive,
   LocalShellLive,
   PostgresConversationStoreLive,
 } from "@agent/adapters"
@@ -32,6 +34,10 @@ const AppLive = Layer.mergeAll(
   GeminiFastLive,
   LocalFileSystemLive,
   LocalShellLive,
+).pipe(
+  Layer.provideMerge(
+    LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
+  ),
 )
 
 /* ------------------------------------------------------------------ */
@@ -155,6 +161,11 @@ const root = Command.make(
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
+      // Load settings
+      const settingsStore = yield* SettingsStore
+      const settings = yield* settingsStore.load(workspace, homedir())
+      const effectiveAllowBash = allowBash || settings.allowBash
+
       // Discover scoped sub-agents from SCOPE.md files anywhere in the
       // workspace (gitignore-respecting glob). Returns [] when none —
       // coder agent then runs without delegation tools.
@@ -185,7 +196,7 @@ const root = Command.make(
             skills,
             scopedAgents,
             instructionFiles,
-            allowBash,
+            allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return
@@ -205,7 +216,7 @@ const root = Command.make(
             skills,
             scopedAgents,
             instructionFiles,
-            allowBash,
+            allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return
@@ -215,7 +226,7 @@ const root = Command.make(
             skills,
             scopedAgents,
             instructionFiles,
-            allowBash,
+            allowBash: effectiveAllowBash,
           })
           return
         case "tui":

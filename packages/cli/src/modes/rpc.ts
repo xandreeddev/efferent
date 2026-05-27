@@ -5,6 +5,7 @@ import {
   FileSystem,
   Llm,
   LlmCache,
+  SettingsStore,
   Shell,
   coderAgentConfig,
   runAgent,
@@ -75,7 +76,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -127,7 +128,7 @@ const handleSend = (
     )
 
     const hooks = makeEventHooks<
-      FileSystem | Shell | ConversationStore | Llm | LlmCache
+      FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore
     >(
       queue,
       denyBashHook(allowBash),
@@ -174,7 +175,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -204,7 +205,7 @@ export const runRpcMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes
