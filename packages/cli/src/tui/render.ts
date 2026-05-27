@@ -139,14 +139,15 @@ export class FrameRenderer {
       }
     }
 
-    // Cursor: inside the input region. Computed from the bottom:
-    // status (1) + sep (1) + input (inputRows) → input starts at
-    // rows - 1 - 1 - inputRows + 1 = rows - inputRows - 1
+    // Cursor: inside the input region. From the bottom up, the last
+    // three rows are: status (1) | separator (1) | input (inputRows).
+    // So the first input row's 1-indexed screen position is
+    // `rows - inputRows - 1`, and visual cursor row 0 maps to it.
     if (!state.modal.visible && !state.input.locked) {
       const inputStartRow = rows - inputRows - 1
       const cursorRow = Math.min(inputResult.cursorRow, inputRows - 1)
       out +=
-        moveTo(inputStartRow + cursorRow + 1, inputResult.cursorCol + 1) +
+        moveTo(inputStartRow + cursorRow, inputResult.cursorCol + 1) +
         showCursor
     } else {
       out += hideCursor
