@@ -4,9 +4,11 @@ import {
   ConversationStore,
   FileSystem,
   Llm,
+  LlmCache,
   Shell,
   coderAgentConfig,
   runAgent,
+  type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -63,13 +65,18 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 export interface PrintModeInput {
   readonly prompt: string
   readonly cwd: string
+  readonly skills: ReadonlyArray<Skill>
   readonly allowBash: boolean
   readonly resumeConversationId?: string
 }
 
 export const runPrintMode = (
   input: PrintModeInput,
-): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> =>
+): Effect.Effect<
+  void,
+  never,
+  FileSystem | Shell | Llm | LlmCache | ConversationStore
+> =>
   Effect.gen(function* () {
     const conversationIdRaw =
       input.resumeConversationId ?? crypto.randomUUID()
@@ -85,7 +92,7 @@ export const runPrintMode = (
     )
 
     const result = yield* runAgent(
-      coderAgentConfig(input.cwd),
+      coderAgentConfig(input.cwd, input.skills),
       cid,
       input.prompt,
       hooks,

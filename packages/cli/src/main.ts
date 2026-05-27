@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
+import { homedir } from "node:os"
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
+import { loadSkills } from "@agent/core"
 import {
   DatabaseLive,
-  LlmLive,
+  GeminiFastLive,
+  GeminiLive,
   LocalFileSystemLive,
   LocalShellLive,
   PostgresConversationStoreLive,
@@ -21,7 +24,8 @@ import { runTuiMode } from "./modes/tui.js"
 
 const AppLive = Layer.mergeAll(
   PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
-  LlmLive,
+  GeminiLive,
+  GeminiFastLive,
   LocalFileSystemLive,
   LocalShellLive,
 )
@@ -142,6 +146,11 @@ const root = Command.make(
         effectivePrompt !== undefined,
       )
 
+      // Discover skills once at startup. `.agent/skills/*.md` walked from
+      // cwd → parents → ~/.agent/skills. Closer-to-cwd shadows farther.
+      // Failures fall back to an empty list — never breaks the agent.
+      const skills = yield* loadSkills(workspace, homedir())
+
       switch (chosen) {
         case "print":
           if (effectivePrompt === undefined) {
@@ -156,6 +165,7 @@ const root = Command.make(
           yield* runPrintMode({
             prompt: effectivePrompt,
             cwd: workspace,
+            skills,
             allowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
@@ -173,16 +183,18 @@ const root = Command.make(
           yield* runJsonMode({
             prompt: effectivePrompt,
             cwd: workspace,
+            skills,
             allowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return
         case "rpc":
-          yield* runRpcMode({ cwd: workspace, allowBash })
+          yield* runRpcMode({ cwd: workspace, skills, allowBash })
           return
         case "tui":
           yield* runTuiMode({
             cwd: workspace,
+            skills,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return

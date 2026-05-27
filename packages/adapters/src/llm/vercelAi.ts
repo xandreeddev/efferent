@@ -12,7 +12,6 @@ import {
   type AgentHooks,
   type AgentMessage,
   type AgentTool,
-  Llm,
   type LlmCacheHint,
   LlmError,
   type LlmGenerateInput,
@@ -248,10 +247,10 @@ export const buildLlm = (
     contextWindow: options.contextWindow ?? 1_000_000,
   }
 
-  return Llm.of({
+  return {
     metadata: Effect.succeed(metadataValue),
 
-    generate: (input) =>
+    generate: (input: LlmGenerateInput) =>
       Effect.tryPromise({
         try: () =>
           generateText({
@@ -398,5 +397,5 @@ export const buildLlm = (
         R
       >
     },
-  })
+  }
 }

@@ -1,6 +1,6 @@
 import type { AgentTool } from "../entities/AgentTool.js"
 import type { CaptureStore } from "../ports/CaptureStore.js"
-import type { Llm } from "../ports/Llm.js"
+import type { LlmFast } from "../ports/LlmFast.js"
 import { buildCaptureTools } from "./captureTools.js"
 import { notesSystemPrompt } from "../prompts/notes.js"
 
@@ -11,7 +11,7 @@ export interface AgentConfig<R> {
   readonly tools: ReadonlyArray<AgentTool<any, any, R>>
 }
 
-export const notesAgentConfig: AgentConfig<CaptureStore | Llm> = {
+export const notesAgentConfig: AgentConfig<CaptureStore | LlmFast> = {
   key: "notes",
   systemPrompt: notesSystemPrompt,
   tools: buildCaptureTools(),

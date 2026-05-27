@@ -1,4 +1,3 @@
-import { appendFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
@@ -7,10 +6,13 @@ import {
   ConversationStore,
   FileSystem,
   Llm,
+  LlmCache,
+  LlmInfo,
   Shell,
   coderAgentConfig,
   runAgent,
   type AgentHooks,
+  type Skill,
 } from "@agent/core"
 
 import type { AgentEvent } from "../events.js"
@@ -41,6 +43,7 @@ import {
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
 import { LogBuffer } from "../tui/logBuffer.js"
+import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 
 interface MutableAppState {
@@ -60,7 +63,7 @@ const HELP_LINES = [
   "Keybindings:",
   "  Enter         submit",
   "  Ctrl-J        newline within input",
-  "  Ctrl-C        cancel turn (during) / clear input (idle)",
+  "  Ctrl-C        exit",
   "  Ctrl-D        exit (when input is empty)",
   "  Ctrl-L        clear scrollback",
   "  ↑/↓           navigate input lines or palette",
@@ -88,6 +91,7 @@ const newConversationId = (): ConversationId =>
 
 export interface TuiModeInput {
   readonly cwd: string
+  readonly skills: ReadonlyArray<Skill>
   readonly resumeConversationId?: string
 }
 
@@ -109,10 +113,14 @@ const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
 const runTuiModeCore = (
   input: TuiModeInput,
   logBuffer: LogBuffer,
-): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> =>
+): Effect.Effect<
+  void,
+  never,
+  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore
+> =>
   Effect.gen(function* () {
-    const llm = yield* Llm
-    const meta = yield* llm.metadata
+    const info = yield* LlmInfo
+    const meta = yield* info.metadata
 
     const initialCid =
       input.resumeConversationId !== undefined
@@ -156,7 +164,7 @@ const runTuiModeCore = (
       })
       s.scrollback.push({
         kind: "info",
-        text: "type / for commands · Enter to submit · Ctrl-D to exit",
+        text: "type / for commands · Enter to submit · Ctrl-C to exit",
       })
       return s
     })
@@ -164,26 +172,15 @@ const runTuiModeCore = (
     enterTui()
     const restoreRaw = setupRawMode()
 
-    // Belt-and-suspenders: Effect's default logger is still firing
-    // alongside our Logger.replace, writing to console.log/.error and
-    // corrupting frames. Capture those writes too so the TUI owns the
-    // terminal.
+    // Silence default Effect logger output (which writes to
+    // console.log/.error and would corrupt rendered frames). The added
+    // JSON logger layer above handles persistence and the buffer; we
+    // don't want a second copy of the same event going to stdout.
     const origConsoleLog = console.log
     const origConsoleError = console.error
-    const captureConsole = (...args: unknown[]) => {
-      const line = args
-        .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
-        .join(" ")
-      logBuffer.push(line)
-      try {
-        // Mirror to the log file too so `tail -f` matches what's on-screen.
-        appendFileSync(logFilePath(), line + "\n")
-      } catch {
-        // best-effort
-      }
-    }
-    console.log = captureConsole as typeof console.log
-    console.error = captureConsole as typeof console.error
+    const noop = (() => {}) as typeof console.log
+    console.log = noop
+    console.error = noop
 
     const cleanup = (): void => {
       console.log = origConsoleLog
@@ -330,7 +327,7 @@ const runTuiModeCore = (
         return result
       })
 
-    type R = FileSystem | Shell | ConversationStore | Llm
+    type R = FileSystem | Shell | ConversationStore | Llm | LlmCache
     const safetyHook = bashConfirmHook<R>(promptForBash, input.cwd)
     const baseHooks = makeEventHooks<R>(eventQueue, safetyHook)
 
@@ -346,7 +343,7 @@ const runTuiModeCore = (
         yield* requestRender
 
         const cid = cur.conversationId
-        yield* runAgent(coderAgentConfig(input.cwd), cid, text, baseHooks).pipe(
+        yield* runAgent(coderAgentConfig(input.cwd, input.skills), cid, text, baseHooks).pipe(
           Effect.catchAll((err) => {
             const msg =
               typeof err === "object" && err !== null && "message" in err
@@ -513,24 +510,6 @@ const runTuiModeCore = (
           switch (update.action.type) {
             case "exit":
               return "exit" as const
-            case "cancel":
-              if (s.input.locked) {
-                // TODO: AbortController plumbing through runAgent
-                yield* Ref.update(stateRef, (st) => {
-                  st.scrollback.push({
-                    kind: "info",
-                    text: "(cancel requested — currently in-flight turns finish)",
-                  })
-                  return st
-                })
-              } else {
-                yield* Ref.update(stateRef, (st) => {
-                  st.input = emptyInput
-                  return st
-                })
-              }
-              yield* requestRender
-              return "stay" as const
             case "clearScrollback":
               yield* Ref.update(stateRef, (st) => {
                 st.scrollback.clear()
@@ -582,12 +561,17 @@ const runTuiModeCore = (
 
 export const runTuiMode = (
   input: TuiModeInput,
-): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> => {
+): Effect.Effect<
+  void,
+  never,
+  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore
+> => {
   const logBuffer = new LogBuffer()
-  // No Logger.replace layer: empirically, Effect 3.21 doesn't swap out
-  // the default logger via `Logger.replace(Logger.defaultLogger, ...)`
-  // — both fire. Instead we let the default logger run as usual and
-  // monkey-patch `console.log` inside `runTuiModeCore` so its output
-  // lands in our file + buffer instead of stdout.
-  return runTuiModeCore(input, logBuffer)
+  // Add our JSON+buffer logger. The default Effect logger still fires
+  // (Effect 3.21 `Logger.replace` empirically adds rather than swaps),
+  // so we silence its output by monkey-patching console.log/.error
+  // inside runTuiModeCore.
+  return runTuiModeCore(input, logBuffer).pipe(
+    Effect.provide(fileLoggerLayer(logFilePath(), logBuffer)),
+  )
 }

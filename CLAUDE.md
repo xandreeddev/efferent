@@ -49,7 +49,8 @@ bun --hot packages/web/src/main.ts                   # web UI on :3000 (notes fl
 Required env (`.env`):
 - `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call.
 - `AGENT_DB_URL` — Postgres URL for conversation history. Local default: `postgres://agent:agent@localhost:5434/agent`.
-- Optional `AGENT_MODEL` — defaults to `gemini-3.5-flash`. Provider is `@ai-sdk/google@3.x` (round-trips Gemini `thought_signature`, so multi-step tool calls work on 3.x).
+- Optional `AGENT_MODEL` — smart tier (agent loop). Defaults to `gemini-3.5-flash`. Provider is `@ai-sdk/google@3.x` (round-trips Gemini `thought_signature`, so multi-step tool calls work on 3.x).
+- Optional `AGENT_FAST_MODEL` — fast tier for non-loop calls (web's `renderUi` second pass + capture extraction; eventually compaction / session titles). Defaults to `gemini-3.5-flash-lite`.
 
 ## Coding tools (CLI)
 
@@ -114,10 +115,26 @@ Modes share one `AgentEvent` union (`packages/cli/src/events.ts`); the loop's ho
 
 `packages/web/src/routes/chat.ts` passes `notesAgentConfig` to `runAgent`. Two LLM calls per turn: the agent step (notes-flavoured prompt + capture tools) and a second-pass `renderUi` that streams HTML matching the `recipe-card` / `capture-card` / `empty-state` class vocabulary. Cookie-bound `conversation_id`. Local-only — no script-sanitisation yet, do not expose publicly.
 
+## Skills
+
+`.agent/skills/*.md` files are auto-discovered at startup. The search path walks `cwd → parents → ~/.agent/skills/`; closer-to-cwd shadows farther on name collisions. Each skill file has YAML-ish frontmatter and a free-form markdown body:
+
+```
+---
+name: <slug>
+description: <one-line summary for the prompt>
+---
+
+(detailed procedure for the agent to follow)
+```
+
+At startup, names + descriptions are injected into the coder system prompt under a `# Skills` section. The bodies are lazy-loaded by the model via `read_skill({ name })` only when relevant. Pi-pattern; lets you ship reusable procedures without changing the code.
+
+Loader: `loadSkills(cwd, homeDir)` in `@agent/core/usecases/loadSkills.ts`. Failures (missing dirs, malformed frontmatter) are silently skipped — a broken skill never breaks the agent.
+
 ## Deferred (do not build until they hurt)
 
 - **Settings UI / config files / `/model` slash command** — knobs hardcoded in `main.ts` composition.
-- **Skills system** — markdown files in `.agent/skills/` discovered at startup, names+descriptions in the prompt, bodies lazy-loaded via a `read_skill` tool. Pi pattern.
 - **Compaction** — Pi-style `transformContext` summarisation of old turns when context grows. The `onTransformContext` hook is already wired.
 - **Token-level assistant streaming** — v1 paints the assistant block once per turn after the model finishes.
 - **Streaming tool output** — bash stdout chunks back to the model live.

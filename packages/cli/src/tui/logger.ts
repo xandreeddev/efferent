@@ -8,47 +8,66 @@ const stringifyMessage = (message: unknown): string => {
   return String(message)
 }
 
-const stringifyAnnotations = (
+const collectAnnotations = (
   annotations: HashMap.HashMap<string, unknown>,
-): string => {
-  if (HashMap.size(annotations) === 0) return ""
-  const parts: string[] = []
-  for (const [k, v] of annotations) parts.push(`${k}=${String(v)}`)
-  return " " + parts.join(" ")
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of annotations) out[k] = v
+  return out
 }
 
-const formatLine = (
-  opts: Parameters<Parameters<typeof Logger.make>[0]>[0],
-): string => {
-  const ts = opts.date.toISOString().slice(11, 19) // HH:MM:SS for compactness
-  const level = opts.logLevel.label
-  const msg = stringifyMessage(opts.message)
-  const annos = stringifyAnnotations(opts.annotations)
-  return `${ts} ${level} ${msg}${annos}`
+const renderAnnotationsHuman = (annos: Record<string, unknown>): string => {
+  const entries = Object.entries(annos)
+  if (entries.length === 0) return ""
+  return " " + entries.map(([k, v]) => `${k}=${String(v)}`).join(" ")
 }
 
 /**
- * A Logger that appends each log entry as one line to the given file
- * AND (optionally) into an in-memory ring buffer the TUI renders in its
- * right pane. Tail the file (`tail -f ~/.agent/agent.log`) for the same
- * stream outside the TUI.
+ * A Logger that:
+ *   - Appends one JSON object per log entry to `path` (newline-delimited,
+ *     `jq`-friendly).
+ *   - Pushes a compact human-readable line into `buffer` for the TUI's
+ *     right pane.
+ *
+ * Both formats encode the same event; the file is for tooling, the
+ * buffer is for the eye. Tail the file (`tail -f ~/.agent/agent.log | jq`)
+ * outside the TUI for the same stream.
  */
 export const createFileLogger = (path: string, buffer?: LogBuffer) => {
   try {
     mkdirSync(dirname(path), { recursive: true })
   } catch {
-    // best-effort; if mkdir fails we'll fail per-write below
+    // best-effort; per-write append will fail if it really can't write
   }
   return Logger.make((opts) => {
-    const line = formatLine(opts)
+    const isoTs = opts.date.toISOString()
+    const level = opts.logLevel.label
+    const msg = stringifyMessage(opts.message)
+    const annos = collectAnnotations(opts.annotations)
+
+    // 1) JSON to file
     try {
-      appendFileSync(path, line + "\n")
+      appendFileSync(
+        path,
+        JSON.stringify({ ts: isoTs, level, msg, ...annos }) + "\n",
+      )
     } catch {
-      // dropping a log line is fine; never throw from the logger
+      // never throw from the logger
     }
-    if (buffer !== undefined) buffer.push(line)
+
+    // 2) Human-readable to buffer
+    if (buffer !== undefined) {
+      const compactTs = isoTs.slice(11, 19) // HH:MM:SS
+      buffer.push(`${compactTs} ${level} ${msg}${renderAnnotationsHuman(annos)}`)
+    }
   })
 }
 
+/**
+ * Layer that ADDS our logger to the current set. (We tried
+ * `Logger.replace` — empirically the default still fires alongside it
+ * in Effect 3.21, producing duplicate output. `Logger.add` plus a
+ * console.log absorber in the TUI driver gives clean one-per-event.)
+ */
 export const fileLoggerLayer = (path: string, buffer?: LogBuffer) =>
-  Logger.replace(Logger.defaultLogger, createFileLogger(path, buffer))
+  Logger.add(createFileLogger(path, buffer))

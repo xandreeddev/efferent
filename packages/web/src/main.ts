@@ -5,7 +5,8 @@ import { Layer } from "effect"
 
 import {
   DatabaseLive,
-  LlmLive,
+  GeminiFastLive,
+  GeminiLive,
   PostgresCaptureStoreLive,
   PostgresConversationStoreLive,
 } from "@agent/adapters"
@@ -23,7 +24,8 @@ const router = HttpRouter.empty.pipe(
 const AppLive = Layer.mergeAll(
   PostgresCaptureStoreLive.pipe(Layer.provide(DatabaseLive)),
   PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
-  LlmLive,
+  GeminiLive,
+  GeminiFastLive,
 )
 
 // idleTimeout 0 disables Bun's per-request timeout — agent calls + render

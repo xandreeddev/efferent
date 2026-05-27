@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect"
 import { type AgentTool, AgentToolError } from "../entities/AgentTool.js"
 import type { CaptureStore } from "../ports/CaptureStore.js"
-import type { Llm } from "../ports/Llm.js"
+import type { LlmFast } from "../ports/LlmFast.js"
 
 import { capture } from "./capture.js"
 import { deleteCapture } from "./deleteCapture.js"
@@ -39,7 +39,7 @@ const DeleteCaptureInput = Schema.Struct({
 })
 
 export const buildCaptureTools = (): ReadonlyArray<
-  AgentTool<any, any, CaptureStore | Llm>
+  AgentTool<any, any, CaptureStore | LlmFast>
 > => [
   {
     name: "list_captures",

@@ -4,9 +4,11 @@ import {
   ConversationStore,
   FileSystem,
   Llm,
+  LlmCache,
   Shell,
   coderAgentConfig,
   runAgent,
+  type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -51,6 +53,7 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 
 export interface RpcModeInput {
   readonly cwd: string
+  readonly skills: ReadonlyArray<Skill>
   readonly allowBash: boolean
 }
 
@@ -68,7 +71,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -119,13 +122,15 @@ const handleSend = (
       }),
     )
 
-    const hooks = makeEventHooks<FileSystem | Shell | ConversationStore | Llm>(
+    const hooks = makeEventHooks<
+      FileSystem | Shell | ConversationStore | Llm | LlmCache
+    >(
       queue,
       denyBashHook(allowBash),
     )
 
     const ran = yield* runAgent(
-      coderAgentConfig(cwd),
+      coderAgentConfig(cwd, defaults.skills),
       cid,
       prompt,
       hooks,
@@ -160,7 +165,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -187,7 +192,11 @@ const dispatch = (
 
 export const runRpcMode = (
   input: RpcModeInput,
-): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> =>
+): Effect.Effect<
+  void,
+  never,
+  FileSystem | Shell | Llm | LlmCache | ConversationStore
+> =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes
     // `Bun.stdin.stream()`; for portability we read raw bytes via

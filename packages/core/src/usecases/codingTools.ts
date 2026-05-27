@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path"
 import { Effect, Schema } from "effect"
 import { type AgentTool, AgentToolError } from "../entities/AgentTool.js"
+import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Shell } from "../ports/Shell.js"
 
@@ -111,6 +112,56 @@ const LsInput = Schema.Struct({
   ),
 })
 
+const ReadSkillInput = Schema.Struct({
+  name: Schema.String.annotations({
+    description:
+      "Skill name (the value listed in the system prompt's Skills section).",
+  }),
+})
+
+const buildReadSkillTool = (
+  skills: ReadonlyArray<Skill>,
+): AgentTool<any, any, FileSystem> => {
+  const byName = new Map(skills.map((s) => [s.name, s] as const))
+  return {
+    name: "read_skill",
+    description:
+      "Read the full body of a named skill (a markdown procedure). Use when a skill's name and one-line description in the prompt suggest it applies to the current task — then follow the steps described in the body.",
+    parameters: ReadSkillInput,
+    execute: ({ name }: { name: string }) =>
+      Effect.gen(function* () {
+        const skill = byName.get(name)
+        if (skill === undefined) {
+          return {
+            ok: false as const,
+            error: "UnknownSkill",
+            message: `No skill named '${name}'. Available: ${
+              [...byName.keys()].join(", ") || "(none)"
+            }`,
+          }
+        }
+        const fs = yield* FileSystem
+        const read = yield* fs.read(skill.sourcePath)
+        return {
+          name: skill.name,
+          sourcePath: skill.sourcePath,
+          body: stripFrontmatter(read.content),
+        }
+      }).pipe(wrap("read_skill")),
+  }
+}
+
+const stripFrontmatter = (content: string): string => {
+  if (!content.startsWith("---")) return content
+  const rest = content.slice(3)
+  const lfIndex = rest.indexOf("\n")
+  if (lfIndex === -1) return content
+  const afterFirstFence = rest.slice(lfIndex + 1)
+  const closeIndex = afterFirstFence.indexOf("\n---")
+  if (closeIndex === -1) return content
+  return afterFirstFence.slice(closeIndex + 4).replace(/^\n+/, "")
+}
+
 const applyEditsToContent = (
   content: string,
   edits: ReadonlyArray<{ oldText: string; newText: string }>,
@@ -183,7 +234,9 @@ const truncateOutput = (s: string, max: number): string =>
 
 export const buildCodingTools = (
   cwd: string,
+  skills: ReadonlyArray<Skill> = [],
 ): ReadonlyArray<AgentTool<any, any, FileSystem | Shell>> => [
+  ...(skills.length > 0 ? [buildReadSkillTool(skills)] : []),
   {
     name: "read_file",
     description:
