@@ -166,7 +166,7 @@ export const runAgentLoop = <R>(
   const ctx: LoopCtx<R> = {
     system: input.system,
     tools: input.tools,
-    maxSteps: input.maxSteps ?? 5,
+    maxSteps: input.maxSteps ?? 20,
     ...(input.hooks !== undefined ? { hooks: input.hooks } : {}),
     ...(input.cacheHint !== undefined ? { cacheHint: input.cacheHint } : {}),
   }

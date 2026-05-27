@@ -125,10 +125,10 @@ const root = Command.make(
       const resumeId = resume._tag === "Some" ? resume.value : undefined
       const promptArgValue = prompt._tag === "Some" ? prompt.value : undefined
 
-      // For non-RPC modes, if stdin is piped and no prompt arg, swallow
-      // stdin as the prompt. RPC mode needs stdin for its own protocol,
-      // so we never read it here.
-      const skipStdin = mode === "rpc"
+      // For non-RPC/TUI modes, if stdin is piped and no prompt arg,
+      // swallow stdin as the prompt. RPC needs stdin for its protocol;
+      // TUI needs stdin for keystrokes.
+      const skipStdin = mode === "rpc" || mode === "tui"
       const piped =
         skipStdin || promptArgValue !== undefined
           ? undefined
