@@ -1,4 +1,6 @@
 export * from "./database/migrator.js"
 export * from "./captureStore/postgres.js"
 export * from "./conversationStore/postgres.js"
+export * from "./fileSystem/local.js"
 export * from "./llm/gemini.js"
+export * from "./shell/local.js"

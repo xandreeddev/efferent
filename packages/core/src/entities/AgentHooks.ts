@@ -1,4 +1,5 @@
 import type { Effect } from "effect"
+import type { TokenUsage } from "../ports/Llm.js"
 import type { AgentMessage, ToolCall } from "./Conversation.js"
 
 /**
@@ -19,6 +20,7 @@ export interface AgentAssistantMessageEvent {
   readonly turnIndex: number
   readonly text: string
   readonly toolCalls: ReadonlyArray<ToolCall>
+  readonly usage?: TokenUsage
 }
 
 export interface AgentBeforeToolCallEvent {

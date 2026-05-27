@@ -1,12 +1,14 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import { Effect, Queue, Schema, Stream } from "effect"
-import { renderUi, runAgent } from "@agent/application"
 import {
   type AgentHooks,
   type CaptureStore,
   ConversationId,
   type ConversationStore,
   type Llm,
+  notesAgentConfig,
+  renderUi,
+  runAgent,
 } from "@agent/core"
 
 const sseEncode = (event: string, data: string): string => {
@@ -101,7 +103,12 @@ export const chatStreamRoute = Effect.gen(function* () {
   // emitting (heartbeat / step frames) without waiting for runAgent.
   yield* Effect.forkScoped(
     Effect.gen(function* () {
-      const result = yield* runAgent(conversationId, prompt, sseHooks)
+      const result = yield* runAgent(
+        notesAgentConfig,
+        conversationId,
+        prompt,
+        sseHooks,
+      )
       yield* renderUi(prompt, result).pipe(
         Stream.runForEach((chunk) =>
           Queue.offer(queue, sseEncode("ui", chunk)),

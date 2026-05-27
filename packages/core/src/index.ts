@@ -1,7 +1,25 @@
+// Entities
 export * from "./entities/AgentHooks.js"
 export * from "./entities/AgentTool.js"
 export * from "./entities/Capture.js"
 export * from "./entities/Conversation.js"
+
+// Ports
 export * from "./ports/CaptureStore.js"
 export * from "./ports/ConversationStore.js"
+export * from "./ports/FileSystem.js"
 export * from "./ports/Llm.js"
+export * from "./ports/Shell.js"
+
+// Use cases
+export * from "./usecases/capture.js"
+export * from "./usecases/captureTools.js"
+export * from "./usecases/coderAgentConfig.js"
+export * from "./usecases/codingTools.js"
+export * from "./usecases/deleteCapture.js"
+export * from "./usecases/getCapture.js"
+export * from "./usecases/listCaptures.js"
+export * from "./usecases/notesAgentConfig.js"
+export * from "./usecases/renderUi.js"
+export * from "./usecases/runAgent.js"
+export * from "./usecases/saveCapture.js"

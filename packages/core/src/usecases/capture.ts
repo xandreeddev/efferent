@@ -1,6 +1,6 @@
 import { Effect } from "effect"
-import { Llm, type LlmImage } from "@agent/core"
-import { capturePrompt } from "../../prompts/capture.js"
+import { Llm, type LlmImage } from "../ports/Llm.js"
+import { capturePrompt } from "../prompts/capture.js"
 import { extractTitle } from "./extractTitle.js"
 
 export interface CaptureInput {

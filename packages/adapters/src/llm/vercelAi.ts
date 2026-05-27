@@ -16,9 +16,11 @@ import {
   type LlmCacheHint,
   LlmError,
   type LlmGenerateInput,
+  type LlmMetadata,
   type LlmRunTurnInput,
   type LlmRunTurnResult,
   type LlmSnapshotInput,
+  type TokenUsage,
   type ToolCall,
 } from "@agent/core"
 
@@ -73,6 +75,17 @@ export interface CacheStrategy {
 
 export interface BuildLlmOptions {
   readonly cacheStrategy?: CacheStrategy
+  /**
+   * Total context window in tokens for the configured model. Surfaced
+   * through `Llm.metadata` so drivers (e.g. the TUI status bar) can
+   * draw a usage gauge.
+   */
+  readonly contextWindow?: number
+  /**
+   * Overrides `model.modelId` for display. Useful when the SDK reports
+   * an internal id different from what the user typed in env.
+   */
+  readonly modelIdOverride?: string
 }
 
 /**
@@ -220,11 +233,24 @@ const buildSdkTools = <R>(
     ]),
   )
 
+const readModelId = (model: LanguageModel): string => {
+  if (typeof model === "string") return model
+  const m = model as { modelId?: unknown }
+  return typeof m.modelId === "string" ? m.modelId : "unknown"
+}
+
 export const buildLlm = (
   model: LanguageModel,
   options: BuildLlmOptions = {},
-) =>
-  Llm.of({
+) => {
+  const metadataValue: LlmMetadata = {
+    modelId: options.modelIdOverride ?? readModelId(model),
+    contextWindow: options.contextWindow ?? 1_000_000,
+  }
+
+  return Llm.of({
+    metadata: Effect.succeed(metadataValue),
+
     generate: (input) =>
       Effect.tryPromise({
         try: () =>
@@ -323,14 +349,22 @@ export const buildLlm = (
         const u = step.usage
         const inDet = u.inputTokenDetails
         const outDet = u.outputTokenDetails
+        const cacheReadTokens = inDet?.cacheReadTokens ?? 0
+        const usage: TokenUsage = {
+          inputTokens: u.inputTokens ?? 0,
+          outputTokens: u.outputTokens ?? 0,
+          totalTokens:
+            u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+          cacheReadTokens,
+        }
         yield* Effect.log(
           `[llm.turn=${input.turnIndex}] ` +
-            `in=${u.inputTokens ?? "?"} (cache=${
-              inDet.cacheReadTokens ?? 0
-            } fresh=${inDet.noCacheTokens ?? 0}) ` +
+            `in=${u.inputTokens ?? "?"} (cache=${cacheReadTokens} fresh=${
+              inDet?.noCacheTokens ?? 0
+            }) ` +
             `out=${u.outputTokens ?? "?"} (text=${
-              outDet.textTokens ?? 0
-            } think=${outDet.reasoningTokens ?? 0}) ` +
+              outDet?.textTokens ?? 0
+            } think=${outDet?.reasoningTokens ?? 0}) ` +
             `finish=${step.finishReason}`,
         )
 
@@ -348,6 +382,7 @@ export const buildLlm = (
           finishReason: step.finishReason,
           assistantText,
           toolCalls,
+          usage,
         }
       }),
 
@@ -364,3 +399,4 @@ export const buildLlm = (
       >
     },
   })
+}

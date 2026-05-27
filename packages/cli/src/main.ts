@@ -1,164 +1,198 @@
 #!/usr/bin/env bun
-import { Args, Command } from "@effect/cli"
+import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { Console, Effect, Layer } from "effect"
-import {
-  capture,
-  deleteCapture,
-  getCapture,
-  listCaptures,
-  saveCapture,
-} from "@agent/application"
+import { Effect, Layer } from "effect"
 import {
   DatabaseLive,
   LlmLive,
-  PostgresCaptureStoreLive,
+  LocalFileSystemLive,
+  LocalShellLive,
+  PostgresConversationStoreLive,
 } from "@agent/adapters"
-import type { LlmImage } from "@agent/core"
+
+import { runPrintMode } from "./modes/print.js"
+import { runJsonMode } from "./modes/json.js"
+import { runRpcMode } from "./modes/rpc.js"
+import { runTuiMode } from "./modes/tui.js"
 
 /* ------------------------------------------------------------------ */
-/* Shared infrastructure                                               */
+/* Composition root                                                    */
 /* ------------------------------------------------------------------ */
 
-/**
- * One composed Layer for any subcommand that needs the store + LLM.
- * Layers are built once when a command's handler runs (so --help never
- * touches the DB or LLM credentials).
- */
 const AppLive = Layer.mergeAll(
-  PostgresCaptureStoreLive.pipe(Layer.provide(DatabaseLive)),
+  PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
   LlmLive,
+  LocalFileSystemLive,
+  LocalShellLive,
 )
 
-const StoreOnlyLive = PostgresCaptureStoreLive.pipe(Layer.provide(DatabaseLive))
-
 /* ------------------------------------------------------------------ */
-/* capture <source>  — extract via LLM and save to Postgres            */
+/* CLI                                                                  */
 /* ------------------------------------------------------------------ */
 
-const IMAGE_MIME: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-  gif: "image/gif",
-}
-
-const extOf = (path: string): string => {
-  const i = path.lastIndexOf(".")
-  return i === -1 ? "" : path.slice(i + 1).toLowerCase()
-}
-
-interface CaptureInputs {
-  readonly text?: string
-  readonly image?: LlmImage
-  readonly source: string
-}
-
-const readInput = (source: string): Effect.Effect<CaptureInputs, Error> =>
-  Effect.tryPromise({
-    try: async (): Promise<CaptureInputs> => {
-      if (source === "-") {
-        return { text: await Bun.stdin.text(), source: "-" }
-      }
-      const mime = IMAGE_MIME[extOf(source)]
-      if (mime !== undefined) {
-        const bytes = new Uint8Array(await Bun.file(source).arrayBuffer())
-        return { image: { bytes, mimeType: mime }, source }
-      }
-      return { text: await Bun.file(source).text(), source }
-    },
-    catch: (cause) =>
-      cause instanceof Error
-        ? cause
-        : new Error(`Failed to read input from ${source}`),
-  })
-
-const sourceArg = Args.text({ name: "source" }).pipe(
+const promptArg = Args.text({ name: "prompt" }).pipe(
+  Args.optional,
   Args.withDescription(
-    "Path to a text or image file, or `-` to read text from stdin.",
+    "Initial prompt. If present (or piped via stdin), runs print mode and exits.",
   ),
 )
 
-const captureCmd = Command.make(
-  "capture",
-  { source: sourceArg },
-  ({ source }) =>
+const modeOption = Options.choice("mode", [
+  "auto",
+  "tui",
+  "print",
+  "json",
+  "rpc",
+]).pipe(
+  Options.withDefault("auto" as const),
+  Options.withDescription(
+    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print.",
+  ),
+)
+
+const printOption = Options.boolean("print").pipe(
+  Options.withAlias("p"),
+  Options.withDescription("Shortcut for --mode print."),
+)
+
+const allowBashOption = Options.boolean("allow-bash").pipe(
+  Options.withDescription(
+    "In non-interactive modes, allow the agent to run bash without confirmation.",
+  ),
+)
+
+const resumeOption = Options.text("resume").pipe(
+  Options.optional,
+  Options.withDescription("Resume an existing conversation by id (UUID)."),
+)
+
+const cwdOption = Options.text("cwd").pipe(
+  Options.optional,
+  Options.withDescription(
+    "Override the workspace directory. Defaults to process.cwd().",
+  ),
+)
+
+type Mode = "tui" | "print" | "json" | "rpc"
+
+const resolveMode = (
+  modeFlag: "auto" | Mode,
+  printFlag: boolean,
+  hasPromptArg: boolean,
+): Mode => {
+  if (modeFlag !== "auto") return modeFlag
+  if (printFlag) return "print"
+  if (hasPromptArg) return "print"
+  const isTty = Boolean((process.stdout as { isTTY?: boolean }).isTTY)
+  return isTty ? "tui" : "print"
+}
+
+const readStdinIfPiped = (): Promise<string | undefined> =>
+  new Promise((resolve) => {
+    const stdin = process.stdin as NodeJS.ReadStream
+    if (stdin.isTTY) {
+      resolve(undefined)
+      return
+    }
+    let buf = ""
+    stdin.setEncoding("utf8")
+    stdin.on("data", (chunk: string) => {
+      buf += chunk
+    })
+    stdin.on("end", () => resolve(buf))
+    stdin.on("error", () => resolve(undefined))
+  })
+
+const root = Command.make(
+  "agent",
+  {
+    prompt: promptArg,
+    mode: modeOption,
+    print: printOption,
+    allowBash: allowBashOption,
+    resume: resumeOption,
+    cwd: cwdOption,
+  },
+  ({ prompt, mode, print, allowBash, resume, cwd }) =>
     Effect.gen(function* () {
-      const inputs = yield* readInput(source)
-      const result = yield* capture({
-        ...(inputs.text !== undefined ? { text: inputs.text } : {}),
-        ...(inputs.image !== undefined ? { image: inputs.image } : {}),
-      })
-      const saved = yield* saveCapture({
-        title: result.title,
-        body: result.body,
-        source: inputs.source,
-      })
-      yield* Console.log(`saved ${saved.id.slice(0, 8)}  ${saved.title}\n`)
-      yield* Console.log(saved.body)
+      const workspace =
+        resume._tag === "Some" || cwd._tag === "Some"
+          ? cwd._tag === "Some"
+            ? cwd.value
+            : process.cwd()
+          : process.cwd()
+
+      const resumeId = resume._tag === "Some" ? resume.value : undefined
+      const promptArgValue = prompt._tag === "Some" ? prompt.value : undefined
+
+      // For non-RPC modes, if stdin is piped and no prompt arg, swallow
+      // stdin as the prompt. RPC mode needs stdin for its own protocol,
+      // so we never read it here.
+      const skipStdin = mode === "rpc"
+      const piped =
+        skipStdin || promptArgValue !== undefined
+          ? undefined
+          : yield* Effect.promise(() => readStdinIfPiped())
+      const effectivePrompt =
+        promptArgValue ?? (piped !== undefined && piped.trim().length > 0 ? piped : undefined)
+
+      const chosen: Mode = resolveMode(
+        mode,
+        print,
+        effectivePrompt !== undefined,
+      )
+
+      switch (chosen) {
+        case "print":
+          if (effectivePrompt === undefined) {
+            yield* Effect.sync(() => {
+              process.stderr.write(
+                "agent: print mode needs a prompt (argv or stdin)\n",
+              )
+              process.exit(1)
+            })
+            return
+          }
+          yield* runPrintMode({
+            prompt: effectivePrompt,
+            cwd: workspace,
+            allowBash,
+            ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
+          })
+          return
+        case "json":
+          if (effectivePrompt === undefined) {
+            yield* Effect.sync(() => {
+              process.stderr.write(
+                "agent: json mode needs a prompt (argv or stdin)\n",
+              )
+              process.exit(1)
+            })
+            return
+          }
+          yield* runJsonMode({
+            prompt: effectivePrompt,
+            cwd: workspace,
+            allowBash,
+            ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
+          })
+          return
+        case "rpc":
+          yield* runRpcMode({ cwd: workspace, allowBash })
+          return
+        case "tui":
+          yield* runTuiMode({
+            cwd: workspace,
+            ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
+          })
+          return
+      }
     }).pipe(Effect.provide(AppLive)),
 )
 
-/* ------------------------------------------------------------------ */
-/* ls / show / rm — direct CRUD against the store (no LLM)             */
-/* ------------------------------------------------------------------ */
+const cli = Command.run(root, {
+  name: "agent",
+  version: "0.0.0",
+})
 
-const formatRow = (row: {
-  id: string
-  title: string
-  createdAt: Date
-}): string => {
-  const ts = row.createdAt.toISOString().slice(0, 16).replace("T", " ")
-  const shortId = row.id.slice(0, 8)
-  const title =
-    row.title.length > 60 ? `${row.title.slice(0, 57)}...` : row.title
-  return `${ts}  ${shortId}  ${title}`
-}
-
-const lsCmd = Command.make("ls", {}, () =>
-  Effect.gen(function* () {
-    const rows = yield* listCaptures()
-    if (rows.length === 0) {
-      yield* Console.log("(no captures yet — try `agent capture <path>`)")
-      return
-    }
-    yield* Console.log("created           id        title")
-    for (const row of rows) {
-      yield* Console.log(formatRow(row))
-    }
-  }).pipe(Effect.provide(StoreOnlyLive)),
-)
-
-const idArg = Args.text({ name: "id" }).pipe(
-  Args.withDescription("Full UUID or an unambiguous prefix (≥4 chars)."),
-)
-
-const showCmd = Command.make("show", { id: idArg }, ({ id }) =>
-  getCapture(id).pipe(
-    Effect.flatMap((c) => Console.log(c.body)),
-    Effect.provide(StoreOnlyLive),
-  ),
-)
-
-const rmCmd = Command.make("rm", { id: idArg }, ({ id }) =>
-  deleteCapture(id).pipe(
-    Effect.flatMap(() => Console.log(`removed ${id}`)),
-    Effect.provide(StoreOnlyLive),
-  ),
-)
-
-/* ------------------------------------------------------------------ */
-/* Root                                                                */
-/* ------------------------------------------------------------------ */
-
-const root = Command.make("agent").pipe(
-  Command.withSubcommands([captureCmd, lsCmd, showCmd, rmCmd]),
-)
-
-const cli = Command.run(root, { name: "agent", version: "0.0.0" })
-
-cli(process.argv).pipe(
-  Effect.provide(BunContext.layer),
-  BunRuntime.runMain,
-)
+cli(process.argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)

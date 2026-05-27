@@ -1,16 +1,13 @@
 import { Effect, Schema } from "effect"
-import {
-  type AgentTool,
-  AgentToolError,
-  type CaptureStore,
-  type Llm,
-} from "@agent/core"
+import { type AgentTool, AgentToolError } from "../entities/AgentTool.js"
+import type { CaptureStore } from "../ports/CaptureStore.js"
+import type { Llm } from "../ports/Llm.js"
 
-import { capture } from "../capture/Capture.js"
-import { deleteCapture } from "../DeleteCapture.js"
-import { getCapture } from "../GetCapture.js"
-import { listCaptures } from "../ListCaptures.js"
-import { saveCapture } from "../SaveCapture.js"
+import { capture } from "./capture.js"
+import { deleteCapture } from "./deleteCapture.js"
+import { getCapture } from "./getCapture.js"
+import { listCaptures } from "./listCaptures.js"
+import { saveCapture } from "./saveCapture.js"
 
 const wrap = (toolName: string) =>
   Effect.mapError((cause: unknown) => new AgentToolError({ tool: toolName, cause }))

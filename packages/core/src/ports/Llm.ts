@@ -48,6 +48,19 @@ export interface LlmRunTurnInput<R> {
   readonly cacheHint?: LlmCacheHint
 }
 
+/**
+ * Per-turn token usage as reported by the LLM provider. `totalTokens` is
+ * the provider's own field where present; otherwise it's
+ * `inputTokens + outputTokens`. `cacheReadTokens` is the portion of
+ * `inputTokens` that hit the provider-side cache (0 when no cache).
+ */
+export interface TokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens: number
+  readonly cacheReadTokens: number
+}
+
 export interface LlmRunTurnResult {
   readonly newMessages: ReadonlyArray<AgentMessage>
   readonly finishReason: string
@@ -55,6 +68,14 @@ export interface LlmRunTurnResult {
   readonly assistantText: string
   /** Tool-call summaries the assistant emitted this turn. */
   readonly toolCalls: ReadonlyArray<ToolCall>
+  /** Token accounting for the turn. */
+  readonly usage: TokenUsage
+}
+
+export interface LlmMetadata {
+  readonly modelId: string
+  /** Total context window the model accepts (input + output). */
+  readonly contextWindow: number
 }
 
 export interface LlmSnapshotInput<R> {
@@ -86,5 +107,10 @@ export class Llm extends Context.Tag("@agent/core/Llm")<
     readonly snapshot: <R>(
       input: LlmSnapshotInput<R>,
     ) => Effect.Effect<LlmCacheHint | undefined, never, R>
+    /**
+     * Static description of the configured model. Read once at startup
+     * by drivers that surface it (e.g., the TUI status bar).
+     */
+    readonly metadata: Effect.Effect<LlmMetadata, never>
   }
 >() {}

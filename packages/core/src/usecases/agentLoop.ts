@@ -1,14 +1,12 @@
 import { Effect, pipe } from "effect"
-import {
-  type AgentHooks,
-  type AgentMessage,
-  type AgentResult,
-  type AgentTool,
-  type LlmCacheHint,
-  type ToolCall,
-  Llm,
-  LlmError,
-} from "@agent/core"
+import type { AgentHooks } from "../entities/AgentHooks.js"
+import type { AgentTool } from "../entities/AgentTool.js"
+import type {
+  AgentMessage,
+  AgentResult,
+  ToolCall,
+} from "../entities/Conversation.js"
+import { Llm, LlmError, type LlmCacheHint, type TokenUsage } from "../ports/Llm.js"
 
 /**
  * Provider-agnostic agent loop. Drives turns through `Llm.runTurn` via a
@@ -30,6 +28,8 @@ type LoopState = {
   readonly lastTurnAssistantText: string
   /** Tool calls the assistant emitted on the most recent turn. */
   readonly lastTurnToolCalls: ReadonlyArray<ToolCall>
+  /** Token accounting for the most recent turn. */
+  readonly lastTurnUsage: TokenUsage | undefined
   /** Running last non-empty assistant text — the agent's final answer. */
   readonly finalText: string
   readonly stopRequested: boolean
@@ -97,6 +97,7 @@ const takeTurn =
         lastFinishReason: result.finishReason,
         lastTurnAssistantText: result.assistantText,
         lastTurnToolCalls: result.toolCalls,
+        lastTurnUsage: result.usage,
         finalText:
           result.assistantText.length > 0 ? result.assistantText : s.finalText,
       }
@@ -111,6 +112,7 @@ const emitAssistantMessage =
       turnIndex: s.turnIndex,
       text: s.lastTurnAssistantText,
       toolCalls: s.lastTurnToolCalls,
+      ...(s.lastTurnUsage !== undefined ? { usage: s.lastTurnUsage } : {}),
     }).pipe(Effect.as(s))
   }
 
@@ -175,6 +177,7 @@ export const runAgentLoop = <R>(
     lastFinishReason: undefined,
     lastTurnAssistantText: "",
     lastTurnToolCalls: [],
+    lastTurnUsage: undefined,
     finalText: "",
     stopRequested: false,
   }
