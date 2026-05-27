@@ -7,6 +7,8 @@ import {
   moveTo,
   padRight,
   showCursor,
+  truncate,
+  visibleLength,
   write,
 } from "./terminal.js"
 import type { StatusState } from "./statusBar.js"
@@ -18,6 +20,7 @@ import type { PaletteState } from "./slashPalette.js"
 import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
 import { renderModal } from "./modal.js"
+import type { LogBuffer } from "./logBuffer.js"
 
 export interface AppState {
   readonly status: StatusState
@@ -25,9 +28,51 @@ export interface AppState {
   readonly input: InputState
   readonly palette: PaletteState
   readonly modal: ModalState
+  /** Optional live log feed shown in the right pane. */
+  readonly logBuffer?: LogBuffer
 }
 
 const PALETTE_MAX_ROWS = 6
+const DIVIDER = `${ansi.fgGray}│${ansi.reset}`
+const RIGHT_HEADER = (cols: number): string =>
+  `${ansi.bold}${ansi.fgGray}logs${ansi.reset}` +
+  (cols > 30
+    ? ` ${ansi.dim}(tail -f ~/.agent/agent.log)${ansi.reset}`
+    : "")
+
+/** Reserve at least 30 cols for the right pane, but never more than 40% of width. */
+const computeLogPaneWidth = (cols: number): number => {
+  if (cols < 100) return Math.max(0, Math.min(30, Math.floor(cols * 0.35)))
+  return Math.min(50, Math.max(36, Math.floor(cols * 0.4)))
+}
+
+/**
+ * Render log lines for the right pane. Wraps long lines by truncating
+ * (we want to see the latest tail, not full history). Returns exactly
+ * `rows` lines, padded right.
+ */
+const renderLogPane = (
+  buffer: LogBuffer | undefined,
+  rows: number,
+  cols: number,
+): string[] => {
+  if (buffer === undefined || rows <= 0 || cols <= 0) {
+    return Array.from({ length: Math.max(0, rows) }, () => "")
+  }
+  const out: string[] = []
+  // Header (1 row): "logs (tail -f ...)"
+  out.push(padRight(truncate(RIGHT_HEADER(cols), cols), cols))
+  // Separator (1 row)
+  out.push(`${ansi.fgGray}${"─".repeat(cols)}${ansi.reset}`)
+  const remaining = rows - out.length
+  if (remaining <= 0) return out.slice(0, rows)
+  const recent = buffer.tail(remaining)
+  for (const line of recent) {
+    out.push(`${ansi.dim}${padRight(truncate(line, cols), cols)}${ansi.reset}`)
+  }
+  while (out.length < rows) out.push(padRight("", cols))
+  return out.slice(0, rows)
+}
 
 /**
  * Render the whole TUI as one frame. Diffs against the previous frame
@@ -52,21 +97,36 @@ export class FrameRenderer {
       ? Math.min(PALETTE_MAX_ROWS, state.palette.matches.length)
       : 0
     const inputRegionHeight = Math.max(1, inputLines) + lockedLine
-    const scrollRows = Math.max(
+    const middleRows = Math.max(
       0,
       rows - 1 /* status */ - paletteRows - inputRegionHeight,
     )
 
-    // 1) Status (row 1)
+    const logPaneWidth = state.logBuffer !== undefined ? computeLogPaneWidth(cols) : 0
+    const dividerWidth = logPaneWidth > 0 ? 1 : 0
+    const leftWidth = Math.max(10, cols - logPaneWidth - dividerWidth)
+
+    // 1) Status (row 1, full width)
     const statusLine = renderStatusBar(state.status, cols)
 
-    // 2) Scrollback (rows 2 .. 2 + scrollRows - 1)
-    const scrollLines = state.scrollback.render(scrollRows, cols)
+    // 2) Middle: scrollback (left) | divider | log feed (right)
+    const scrollLines = state.scrollback.render(middleRows, leftWidth)
+    const logLines = renderLogPane(state.logBuffer, middleRows, logPaneWidth)
+    const middleLines: string[] = []
+    for (let i = 0; i < middleRows; i++) {
+      const left = scrollLines[i] ?? padRight("", leftWidth)
+      if (logPaneWidth > 0) {
+        const right = logLines[i] ?? padRight("", logPaneWidth)
+        middleLines.push(left + DIVIDER + right)
+      } else {
+        middleLines.push(left)
+      }
+    }
 
-    // 3) Palette (just above input)
+    // 3) Palette (just above input, full width)
     const paletteLines = renderPalette(state.palette, cols, PALETTE_MAX_ROWS)
 
-    // 4) Input region (last `inputRegionHeight` rows)
+    // 4) Input region (last `inputRegionHeight` rows, full width)
     const inputResult = renderInput(state.input, cols)
     const inputLinesPadded: string[] = inputResult.lines.slice(0)
     while (inputLinesPadded.length < inputRegionHeight) {
@@ -75,7 +135,7 @@ export class FrameRenderer {
 
     const frame: string[] = []
     frame.push(statusLine)
-    for (const l of scrollLines) frame.push(l)
+    for (const l of middleLines) frame.push(l)
     for (const l of paletteLines) frame.push(l)
     for (const l of inputLinesPadded) frame.push(l)
     while (frame.length < rows) frame.push(padRight("", cols))
@@ -118,3 +178,6 @@ export class FrameRenderer {
     this.prevSize = { rows: 0, cols: 0 }
   }
 }
+
+// `visibleLength` is exported here to keep the public surface stable.
+export { visibleLength }

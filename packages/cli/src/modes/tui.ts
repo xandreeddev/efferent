@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
 import {
   ConversationId,
@@ -37,6 +40,7 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
+import { LogBuffer } from "../tui/logBuffer.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 
 interface MutableAppState {
@@ -49,6 +53,7 @@ interface MutableAppState {
   modalAnswer?: Deferred.Deferred<boolean, never>
   /** ConversationId for this TUI session. */
   conversationId: ConversationId
+  logBuffer: LogBuffer
 }
 
 const HELP_LINES = [
@@ -73,6 +78,7 @@ const snapshot = (s: MutableAppState): AppState => ({
   input: s.input,
   palette: s.palette,
   modal: s.modal,
+  logBuffer: s.logBuffer,
 })
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
@@ -98,8 +104,11 @@ const renderArgsForPill = (args: unknown): string => {
   }
 }
 
-export const runTuiMode = (
+const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
+
+const runTuiModeCore = (
   input: TuiModeInput,
+  logBuffer: LogBuffer,
 ): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> =>
   Effect.gen(function* () {
     const llm = yield* Llm
@@ -125,6 +134,7 @@ export const runTuiMode = (
       palette: hiddenPalette,
       modal: hiddenModal,
       conversationId: initialCid,
+      logBuffer,
     })
 
     const renderer = new FrameRenderer()
@@ -142,6 +152,10 @@ export const runTuiMode = (
       })
       s.scrollback.push({
         kind: "info",
+        text: `logs: tail -f ${logFilePath()}`,
+      })
+      s.scrollback.push({
+        kind: "info",
         text: "type / for commands · Enter to submit · Ctrl-D to exit",
       })
       return s
@@ -150,7 +164,30 @@ export const runTuiMode = (
     enterTui()
     const restoreRaw = setupRawMode()
 
+    // Belt-and-suspenders: Effect's default logger is still firing
+    // alongside our Logger.replace, writing to console.log/.error and
+    // corrupting frames. Capture those writes too so the TUI owns the
+    // terminal.
+    const origConsoleLog = console.log
+    const origConsoleError = console.error
+    const captureConsole = (...args: unknown[]) => {
+      const line = args
+        .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+        .join(" ")
+      logBuffer.push(line)
+      try {
+        // Mirror to the log file too so `tail -f` matches what's on-screen.
+        appendFileSync(logFilePath(), line + "\n")
+      } catch {
+        // best-effort
+      }
+    }
+    console.log = captureConsole as typeof console.log
+    console.error = captureConsole as typeof console.error
+
     const cleanup = (): void => {
+      console.log = origConsoleLog
+      console.error = origConsoleError
       restoreRaw()
       exitTui()
       process.stdout.write(showCursor + ansi.reset + "\n")
@@ -161,6 +198,15 @@ export const runTuiMode = (
       void Effect.runPromise(requestRender as Effect.Effect<void, never, never>)
     }
     process.stdout.on("resize", onResize)
+
+    // Tick a re-render periodically so async log lines and any
+    // background-pushed state changes appear without waiting for an
+    // input key. 4 Hz: cheap (diffs against last frame).
+    const tickTimer = setInterval(() => {
+      void Effect.runPromise(
+        requestRender as Effect.Effect<void, never, never>,
+      ).catch(() => {})
+    }, 250)
 
     yield* requestRender
 
@@ -174,6 +220,13 @@ export const runTuiMode = (
           const event = yield* Queue.take(eventQueue)
           yield* Ref.update(stateRef, (s) => {
             switch (event.type) {
+              case "turn_start": {
+                s.status = {
+                  ...s.status,
+                  note: `thinking (turn ${event.turnIndex + 1})`,
+                }
+                break
+              }
               case "tool_call_start": {
                 toolSeq++
                 const id = `t${toolSeq}`
@@ -185,6 +238,10 @@ export const runTuiMode = (
                   arg: renderArgsForPill(event.args),
                   state: "running",
                 })
+                s.status = {
+                  ...s.status,
+                  note: `running ${event.toolName}`,
+                }
                 break
               }
               case "tool_call_end": {
@@ -203,6 +260,10 @@ export const runTuiMode = (
                   })
                   currentToolByName.delete(event.toolName)
                 }
+                s.status = {
+                  ...s.status,
+                  note: `thinking`,
+                }
                 break
               }
               case "assistant_message": {
@@ -215,6 +276,18 @@ export const runTuiMode = (
                     inputTokens: event.usage.inputTokens,
                     cacheReadTokens: event.usage.cacheReadTokens,
                   }
+                }
+                break
+              }
+              case "agent_end": {
+                const status = { ...s.status }
+                delete (status as { note?: string }).note
+                s.status = status
+                if (event.finalText.trim().length === 0) {
+                  s.scrollback.push({
+                    kind: "info",
+                    text: `(agent stopped without a final answer — see ~/.agent/agent.log)`,
+                  })
                 }
                 break
               }
@@ -502,6 +575,19 @@ export const runTuiMode = (
 
     process.stdin.off("data", onData)
     process.stdout.off("resize", onResize)
+    clearInterval(tickTimer)
     yield* Fiber.interrupt(consumer)
     cleanup()
   })
+
+export const runTuiMode = (
+  input: TuiModeInput,
+): Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore> => {
+  const logBuffer = new LogBuffer()
+  // No Logger.replace layer: empirically, Effect 3.21 doesn't swap out
+  // the default logger via `Logger.replace(Logger.defaultLogger, ...)`
+  // — both fire. Instead we let the default logger run as usual and
+  // monkey-patch `console.log` inside `runTuiModeCore` so its output
+  // lands in our file + buffer instead of stdout.
+  return runTuiModeCore(input, logBuffer)
+}
