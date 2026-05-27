@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "@agent/adapters": "workspace:*",
-    "@agent/application": "workspace:*",
     "@agent/core": "workspace:*",
     "@effect/cli": "^0.75.0",
     "@effect/platform": "^0.96.0",

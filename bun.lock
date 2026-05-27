@@ -23,14 +23,6 @@
         "effect": "^3.21.0",
       },
     },
-    "packages/application": {
-      "name": "@agent/application",
-      "version": "0.0.0",
-      "dependencies": {
-        "@agent/core": "workspace:*",
-        "effect": "^3.21.0",
-      },
-    },
     "packages/cli": {
       "name": "@agent/cli",
       "version": "0.0.0",
@@ -39,7 +31,6 @@
       },
       "dependencies": {
         "@agent/adapters": "workspace:*",
-        "@agent/application": "workspace:*",
         "@agent/core": "workspace:*",
         "@effect/cli": "^0.75.0",
         "@effect/platform": "^0.96.0",
@@ -59,7 +50,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@agent/adapters": "workspace:*",
-        "@agent/application": "workspace:*",
         "@agent/core": "workspace:*",
         "@effect/platform": "^0.96.0",
         "@effect/platform-bun": "^0.89.0",
@@ -69,8 +59,6 @@
   },
   "packages": {
     "@agent/adapters": ["@agent/adapters@workspace:packages/adapters"],
-
-    "@agent/application": ["@agent/application@workspace:packages/application"],
 
     "@agent/cli": ["@agent/cli@workspace:packages/cli"],
 

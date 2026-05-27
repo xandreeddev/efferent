@@ -1,6 +1,7 @@
 import { Effect, Stream } from "effect"
-import { type AgentMessage, type AgentResult, Llm } from "@agent/core"
-import { renderUiPrompt } from "../../prompts/renderUi.js"
+import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
+import { Llm } from "../ports/Llm.js"
+import { renderUiPrompt } from "../prompts/renderUi.js"
 
 const summariseToolCalls = (messages: ReadonlyArray<AgentMessage>): string => {
   const calls: { toolName: string; input: unknown }[] = []

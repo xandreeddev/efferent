@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { CaptureStore } from "@agent/core"
+import { CaptureStore } from "../ports/CaptureStore.js"
 
 export const getCapture = (idOrPrefix: string) =>
   Effect.gen(function* () {

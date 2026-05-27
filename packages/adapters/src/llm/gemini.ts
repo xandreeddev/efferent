@@ -302,6 +302,10 @@ export const LlmLive = Layer.effect(
       snapshot,
     }
 
-    return buildLlm(provider(modelName), { cacheStrategy })
+    return buildLlm(provider(modelName), {
+      cacheStrategy,
+      modelIdOverride: modelName,
+      contextWindow: 1_000_000,
+    })
   }),
 )

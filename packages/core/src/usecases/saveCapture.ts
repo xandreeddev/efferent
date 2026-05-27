@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import { CaptureStore, type NewCapture } from "@agent/core"
+import { CaptureStore } from "../ports/CaptureStore.js"
+import type { NewCapture } from "../entities/Capture.js"
 
 export const saveCapture = (input: NewCapture) =>
   Effect.gen(function* () {
