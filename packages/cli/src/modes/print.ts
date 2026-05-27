@@ -8,6 +8,8 @@ import {
   Shell,
   coderAgentConfig,
   runAgent,
+  type InstructionFile,
+  type ScopedAgentConfig,
   type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
@@ -66,6 +68,8 @@ export interface PrintModeInput {
   readonly prompt: string
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly allowBash: boolean
   readonly resumeConversationId?: string
 }
@@ -92,7 +96,12 @@ export const runPrintMode = (
     )
 
     const result = yield* runAgent(
-      coderAgentConfig(input.cwd, input.skills),
+      coderAgentConfig(
+        input.cwd,
+        input.skills,
+        input.scopedAgents,
+        input.instructionFiles,
+      ),
       cid,
       input.prompt,
       hooks,

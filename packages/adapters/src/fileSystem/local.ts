@@ -108,31 +108,47 @@ const walkDir = (
     const out: DirEntryOut[] = []
     const walk = (
       dir: string,
+      isRoot: boolean,
     ): Effect.Effect<
       void,
       FileNotFound | NotADirectory | FileSystemError
     > =>
       Effect.gen(function* () {
-        const names = yield* Effect.tryPromise({
+        // EACCES on a SUB-directory must not kill the walk — return
+        // gracefully and let the parent keep iterating. EACCES on the
+        // ROOT we asked about does surface, since the user requested
+        // exactly that path.
+        const namesResult = yield* Effect.tryPromise({
           try: () => readdir(dir),
           catch: (cause) => tryListError(cause, dir),
-        })
-        for (const name of names) {
+        }).pipe(
+          Effect.either,
+        )
+        if (namesResult._tag === "Left") {
+          // Sub-dir we can't enumerate (EACCES, NotADirectory, transient
+          // errors) — skip and let the parent walk continue.
+          if (!isRoot) return
+          // Root: surface the error to the caller.
+          return yield* Effect.fail(namesResult.left)
+        }
+        for (const name of namesResult.right) {
           if (name === ".git" || name === "node_modules") continue
           const full = join(dir, name)
-          const st = yield* Effect.tryPromise({
+          const stResult = yield* Effect.tryPromise({
             try: () => stat(full),
             catch: (cause) => tryListError(cause, full),
-          })
+          }).pipe(Effect.either)
+          if (stResult._tag === "Left") continue
+          const st = stResult.right
           if (st.isDirectory()) {
             out.push({ path: full, type: "dir" })
-            if (recursive) yield* walk(full)
+            if (recursive) yield* walk(full, false)
           } else {
             out.push({ path: full, type: "file" })
           }
         }
       })
-    yield* walk(path)
+    yield* walk(path, true)
     return out
   })
 
@@ -153,7 +169,25 @@ const collectGlob = async (
   }).Glob
   const glob = new GlobCtor(pattern)
   const matches: string[] = []
-  for await (const m of glob.scan({ cwd: root, onlyFiles: false, dot: false })) {
+  // Use an explicit iterator so a single unreadable directory (e.g.
+  // root-owned `pg-data/` from docker-compose, or anything with EACCES
+  // on read) doesn't kill the whole scan. Without this, one
+  // EACCES throws out of the for-await and the caller sees [].
+  const iter = glob.scan({
+    cwd: root,
+    onlyFiles: false,
+    dot: false,
+  })[Symbol.asyncIterator]()
+  while (true) {
+    let next: IteratorResult<string>
+    try {
+      next = await iter.next()
+    } catch (cause) {
+      if (errCode(cause) === "EACCES" || errCode(cause) === "EPERM") continue
+      throw cause
+    }
+    if (next.done) break
+    const m = next.value
     if (m.split(sep).some((part) => part === "node_modules" || part === ".git"))
       continue
     matches.push(m)

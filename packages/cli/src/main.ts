@@ -3,7 +3,11 @@ import { homedir } from "node:os"
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
-import { loadSkills } from "@agent/core"
+import {
+  discoverInstructionFiles,
+  discoverScopedAgents,
+  loadSkills,
+} from "@agent/core"
 import {
   DatabaseLive,
   GeminiFastLive,
@@ -151,6 +155,19 @@ const root = Command.make(
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
+      // Discover scoped sub-agents from SCOPE.md files anywhere in the
+      // workspace (gitignore-respecting glob). Returns [] when none —
+      // coder agent then runs without delegation tools.
+      const scopedAgents = yield* discoverScopedAgents(workspace)
+
+      // Auto-inject AGENT.md / AGENT.local.md from the ancestor chain
+      // (root → workspace → home). Per-file 4k char cap; total 12k char
+      // cap; dedupe by normalized content. Returns [] when none.
+      const instructionFiles = yield* discoverInstructionFiles(
+        workspace,
+        homedir(),
+      )
+
       switch (chosen) {
         case "print":
           if (effectivePrompt === undefined) {
@@ -166,6 +183,8 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            scopedAgents,
+            instructionFiles,
             allowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
@@ -184,17 +203,27 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            scopedAgents,
+            instructionFiles,
             allowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return
         case "rpc":
-          yield* runRpcMode({ cwd: workspace, skills, allowBash })
+          yield* runRpcMode({
+            cwd: workspace,
+            skills,
+            scopedAgents,
+            instructionFiles,
+            allowBash,
+          })
           return
         case "tui":
           yield* runTuiMode({
             cwd: workspace,
             skills,
+            scopedAgents,
+            instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
           return

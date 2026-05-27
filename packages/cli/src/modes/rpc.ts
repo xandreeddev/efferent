@@ -8,6 +8,8 @@ import {
   Shell,
   coderAgentConfig,
   runAgent,
+  type InstructionFile,
+  type ScopedAgentConfig,
   type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
@@ -54,6 +56,8 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 export interface RpcModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly allowBash: boolean
 }
 
@@ -130,7 +134,12 @@ const handleSend = (
     )
 
     const ran = yield* runAgent(
-      coderAgentConfig(cwd, defaults.skills),
+      coderAgentConfig(
+        cwd,
+        defaults.skills,
+        defaults.scopedAgents,
+        defaults.instructionFiles,
+      ),
       cid,
       prompt,
       hooks,
