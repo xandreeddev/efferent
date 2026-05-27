@@ -40,16 +40,34 @@ const RIGHT_HEADER = (cols: number): string =>
     ? ` ${ansi.dim}(tail -f ~/.agent/agent.log)${ansi.reset}`
     : "")
 
-/** Reserve at least 30 cols for the right pane, but never more than 40% of width. */
+/** Half the terminal width. Disappears on very narrow terminals so the
+ *  scrollback isn't squeezed to nothing. */
 const computeLogPaneWidth = (cols: number): number => {
-  if (cols < 100) return Math.max(0, Math.min(30, Math.floor(cols * 0.35)))
-  return Math.min(50, Math.max(36, Math.floor(cols * 0.4)))
+  if (cols < 60) return 0
+  return Math.floor(cols / 2)
 }
 
 /**
- * Render log lines for the right pane. Wraps long lines by truncating
- * (we want to see the latest tail, not full history). Returns exactly
- * `rows` lines, padded right.
+ * Wrap a plain (no-ANSI) string into chunks that each fit `width`.
+ * Continuation chunks are indented two spaces so wrapped entries are
+ * visually contiguous.
+ */
+const wrapPlain = (s: string, width: number): string[] => {
+  if (width <= 0) return []
+  if (s.length <= width) return [s]
+  const out: string[] = [s.slice(0, width)]
+  const contWidth = Math.max(1, width - 2)
+  for (let i = width; i < s.length; i += contWidth) {
+    out.push("  " + s.slice(i, i + contWidth))
+  }
+  return out
+}
+
+/**
+ * Render the right pane: header + separator + wrapped log lines from
+ * the buffer. Lines that overflow `cols` wrap onto additional visual
+ * rows instead of truncating, so log content is never cut off — only
+ * older entries get pushed off the top.
  */
 const renderLogPane = (
   buffer: LogBuffer | undefined,
@@ -60,15 +78,29 @@ const renderLogPane = (
     return Array.from({ length: Math.max(0, rows) }, () => "")
   }
   const out: string[] = []
-  // Header (1 row): "logs (tail -f ...)"
+  // Header (1 row)
   out.push(padRight(truncate(RIGHT_HEADER(cols), cols), cols))
   // Separator (1 row)
   out.push(`${ansi.fgGray}${"─".repeat(cols)}${ansi.reset}`)
-  const remaining = rows - out.length
-  if (remaining <= 0) return out.slice(0, rows)
-  const recent = buffer.tail(remaining)
-  for (const line of recent) {
-    out.push(`${ansi.dim}${padRight(truncate(line, cols), cols)}${ansi.reset}`)
+  const dataRows = rows - out.length
+  if (dataRows <= 0) return out.slice(0, rows)
+
+  // Build wrapped visual lines from newest → oldest so we stop early
+  // when we have enough to fill `dataRows`.
+  const all = buffer.tail(buffer.size())
+  const visual: string[] = []
+  for (let i = all.length - 1; i >= 0; i--) {
+    const entry = all[i] ?? ""
+    const wrapped = wrapPlain(entry, cols)
+    // Prepend so order remains chronological (oldest at top of window).
+    visual.unshift(...wrapped)
+    if (visual.length >= dataRows) break
+  }
+  // Bottom-anchored window: keep the most recent `dataRows` visual lines.
+  const start = Math.max(0, visual.length - dataRows)
+  const window = visual.slice(start)
+  for (const line of window) {
+    out.push(`${ansi.dim}${padRight(line, cols)}${ansi.reset}`)
   }
   while (out.length < rows) out.push(padRight("", cols))
   return out.slice(0, rows)

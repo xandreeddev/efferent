@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import { Llm, type LlmImage } from "../ports/Llm.js"
+import type { LlmImage } from "../ports/Llm.js"
+import { LlmFast } from "../ports/LlmFast.js"
 import { capturePrompt } from "../prompts/capture.js"
 import { extractTitle } from "./extractTitle.js"
 
@@ -15,7 +16,7 @@ export interface CaptureResult {
 
 export const capture = (input: CaptureInput) =>
   Effect.gen(function* () {
-    const llm = yield* Llm
+    const llm = yield* LlmFast
     const userText =
       input.text !== undefined && input.text.length > 0
         ? input.text

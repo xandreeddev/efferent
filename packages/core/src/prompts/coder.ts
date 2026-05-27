@@ -1,3 +1,5 @@
+import type { Skill } from "../entities/Skill.js"
+
 const guidelines = `Hard rules:
 - Use tools to read the workspace. NEVER answer questions about files, directories, or commands from memory — the filesystem is the source of truth, and your conversation history goes stale fast.
 - Prefer 'grep' for searching content and 'glob' for finding files by name. Reach for 'bash' only when the other tools can't do the job.
@@ -10,7 +12,22 @@ Tool-error handling:
 
 After tool calls, write a final text message that answers the user's actual question. If you only ran read-shaped tools and there's nothing to add, a one-line confirmation is enough. If the question can't be served by these tools, say so in one line.`
 
-export const coderSystemPrompt = (cwd: string, now: Date = new Date()): string =>
+const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
+  if (skills.length === 0) return ""
+  const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
+  return `
+# Skills
+The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
+
+${lines}
+`
+}
+
+export const coderSystemPrompt = (
+  cwd: string,
+  now: Date = new Date(),
+  skills: ReadonlyArray<Skill> = [],
+): string =>
   `You are a coding assistant operating inside a terminal harness called 'agent'. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there.
 
 # Workspace
@@ -24,6 +41,6 @@ date: ${now.toISOString().slice(0, 10)}
 - bash({ command, timeout? }) — run a shell command in cwd. Confirmation may be required.
 - grep({ pattern, dir?, flags?, context? }) — regex search across files. Respects .gitignore.
 - glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
-- ls({ path?, recursive? }) — list a directory.
-
+- ls({ path?, recursive? }) — list a directory.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
+${renderSkillsSection(skills)}
 ${guidelines}`

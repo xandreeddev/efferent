@@ -3,6 +3,7 @@ import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { Llm, type LlmCacheHint } from "../ports/Llm.js"
+import { LlmCache } from "../ports/LlmCache.js"
 
 import { runAgentLoop } from "./agentLoop.js"
 import type { AgentConfig } from "./notesAgentConfig.js"
@@ -43,11 +44,11 @@ export const runAgent = <R>(
   config: AgentConfig<R>,
   conversationId: ConversationId,
   userPrompt: string,
-  extraHooks?: AgentHooks<R | ConversationStore | Llm>,
+  extraHooks?: AgentHooks<R | ConversationStore | Llm | LlmCache>,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
-    const llm = yield* Llm
+    const cache = yield* LlmCache
 
     yield* store.ensure(conversationId)
 
@@ -78,7 +79,7 @@ export const runAgent = <R>(
     // Snapshot the full buffer for the NEXT runAgent in this conversation.
     // Best-effort: failures (e.g. content below the model's minimum) leave
     // the prior hint in place.
-    const newHint = yield* llm.snapshot({
+    const newHint = yield* cache.snapshot({
       system: config.systemPrompt,
       messages: result.messages,
       tools: config.tools,

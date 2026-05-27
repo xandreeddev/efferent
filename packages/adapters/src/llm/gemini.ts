@@ -5,12 +5,14 @@ import {
   GoogleGenAI,
   type Part,
 } from "@google/genai"
-import { Config, Effect, JSONSchema, Layer, Redacted, Ref } from "effect"
+import { Config, Context, Effect, JSONSchema, Layer, Redacted, Ref } from "effect"
 import {
   type AgentMessage,
   type AgentTool,
   Llm,
+  LlmCache,
   type LlmCacheHint,
+  LlmInfo,
   type LlmSnapshotInput,
 } from "@agent/core"
 
@@ -151,8 +153,20 @@ const isGeminiHint = (h: unknown): h is GeminiCacheHint =>
   typeof (h as Record<string, unknown>).cachedContent === "string" &&
   typeof (h as Record<string, unknown>).skipMessages === "number"
 
-export const LlmLive = Layer.effect(
-  Llm,
+/**
+ * Adapter-internal services tag. One Gemini setup (provider, static
+ * cache, snapshot strategy, metadata) is built once and parcelled out to
+ * the three public Layers (`Llm`, `LlmCache`, `LlmInfo`) via the bundled
+ * `GeminiLive` Layer below. Effect's Layer memoization ensures the
+ * setup Effect runs exactly once per `GeminiLive` provision, regardless
+ * of how many of the three ports the caller asks for.
+ */
+class GeminiServices extends Context.Tag(
+  "@agent/adapters/internal/GeminiServices",
+)<GeminiServices, ReturnType<typeof buildLlm>>() {}
+
+const GeminiServicesLive = Layer.effect(
+  GeminiServices,
   Effect.gen(function* () {
     const apiKey = yield* Config.redacted("GOOGLE_GENERATIVE_AI_API_KEY")
     const modelName = yield* Config.string("AGENT_MODEL").pipe(
@@ -309,3 +323,35 @@ export const LlmLive = Layer.effect(
     })
   }),
 )
+
+/* ------------------------------------------------------------------ */
+/* Public layers — each picks a subset of methods out of the shared    */
+/* services and binds them to the corresponding port. Drivers should   */
+/* prefer `GeminiLive` below, which provides all three at once.        */
+/* ------------------------------------------------------------------ */
+
+const LlmFromGemini = Layer.effect(
+  Llm,
+  Effect.map(GeminiServices, (svc) => ({ runTurn: svc.runTurn })),
+)
+
+const LlmCacheFromGemini = Layer.effect(
+  LlmCache,
+  Effect.map(GeminiServices, (svc) => ({ snapshot: svc.snapshot })),
+)
+
+const LlmInfoFromGemini = Layer.effect(
+  LlmInfo,
+  Effect.map(GeminiServices, (svc) => ({ metadata: svc.metadata })),
+)
+
+/**
+ * Smart-tier Gemini bundle: provides `Llm`, `LlmCache`, and `LlmInfo`
+ * from a single shared setup (one provider, one static cache, one
+ * snapshot strategy).
+ */
+export const GeminiLive = Layer.mergeAll(
+  LlmFromGemini,
+  LlmCacheFromGemini,
+  LlmInfoFromGemini,
+).pipe(Layer.provide(GeminiServicesLive))

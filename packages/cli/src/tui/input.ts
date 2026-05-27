@@ -24,7 +24,6 @@ export const isEmpty = (s: InputState): boolean =>
 
 export type InputAction =
   | { readonly type: "submit"; readonly text: string }
-  | { readonly type: "cancel" }
   | { readonly type: "exit" }
   | { readonly type: "clearScrollback" }
 
@@ -36,7 +35,7 @@ export interface InputUpdate {
 export const applyKey = (state: InputState, key: Key): InputUpdate => {
   if (state.locked) {
     if (key.type === "ctrl" && key.char === "c") {
-      return { state, action: { type: "cancel" } }
+      return { state, action: { type: "exit" } }
     }
     return { state }
   }
@@ -113,7 +112,7 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
     case "ctrl": {
       switch (key.char) {
         case "c":
-          return { state, action: { type: "cancel" } }
+          return { state, action: { type: "exit" } }
         case "d":
           if (isEmpty(state)) return { state, action: { type: "exit" } }
           return { state }

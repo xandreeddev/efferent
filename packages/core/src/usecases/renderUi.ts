@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
-import { Llm } from "../ports/Llm.js"
+import { LlmFast } from "../ports/LlmFast.js"
 import { renderUiPrompt } from "../prompts/renderUi.js"
 
 const summariseToolCalls = (messages: ReadonlyArray<AgentMessage>): string => {
@@ -26,7 +26,7 @@ const summariseToolCalls = (messages: ReadonlyArray<AgentMessage>): string => {
 export const renderUi = (userPrompt: string, agentResult: AgentResult) =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const llm = yield* Llm
+      const llm = yield* LlmFast
       const prompt =
         `User prompt: ${userPrompt.trim()}\n\n` +
         `Agent's final answer (markdown):\n${agentResult.finalText}\n\n` +

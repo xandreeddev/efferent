@@ -26,3 +26,6 @@ pg-data/
 
 # Local debug screenshots
 *.png
+
+# Skills are local to each workspace; agents read them, repos don't carry them.
+.agent/
