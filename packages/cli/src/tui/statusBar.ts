@@ -1,5 +1,7 @@
 import { ansi, padRight, truncate } from "./terminal.js"
 
+export type EditorModeLabel = "INS" | "NOR"
+
 export interface StatusState {
   readonly modelId: string
   readonly contextWindow: number
@@ -8,6 +10,8 @@ export interface StatusState {
   readonly cwd: string
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
   readonly note?: string
+  /** Editor mode label, shown leftmost when set. Hidden in plain insert mode. */
+  readonly mode?: EditorModeLabel
 }
 
 const formatTokens = (n: number): string => {
@@ -33,7 +37,16 @@ const homeDir = (() => {
 const prettyCwd = (cwd: string): string =>
   homeDir !== "" && cwd.startsWith(homeDir) ? `~${cwd.slice(homeDir.length)}` : cwd
 
+const renderMode = (mode: EditorModeLabel | undefined): string => {
+  if (mode === undefined) return ""
+  if (mode === "NOR") {
+    return `${ansi.bold}${ansi.bgBlue}${ansi.fgWhite} NOR ${ansi.reset}  `
+  }
+  return `${ansi.bold}${ansi.fgGray} INS ${ansi.reset}  `
+}
+
 export const renderStatusBar = (state: StatusState, cols: number): string => {
+  const mode = renderMode(state.mode)
   const left = `${ansi.bold}${ansi.fgBrightCyan}${state.modelId}${ansi.reset}`
   const used = state.inputTokens
   const cached = state.cacheReadTokens
@@ -50,7 +63,7 @@ export const renderStatusBar = (state: StatusState, cols: number): string => {
       ? `  ${ansi.fgYellow}· ${state.note}${ansi.reset}`
       : ""
 
-  const composed = `${left}  ${middle}${note}  ${right}`
+  const composed = `${mode}${left}  ${middle}${note}  ${right}`
   const truncated = truncate(composed, cols)
   return `${ansi.bgDarkGray}${padRight(truncated, cols)}${ansi.reset}`
 }

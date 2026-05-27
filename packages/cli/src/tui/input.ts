@@ -1,9 +1,10 @@
-import { ansi, padRight, truncate, visibleLength } from "./terminal.js"
+import { ansi, padRight } from "./terminal.js"
 import type { Key } from "./keys.js"
 
 export interface InputState {
-  /** Lines of the current input (multi-line via Shift-Enter). */
+  /** Logical lines of the current input (newlines via Ctrl-J or paste). */
   readonly lines: ReadonlyArray<string>
+  /** Cursor position in logical coordinates. */
   readonly row: number
   readonly col: number
   /** Locked while a turn is in flight — keys are ignored except Ctrl-C. */
@@ -32,7 +33,128 @@ export interface InputUpdate {
   readonly action?: InputAction
 }
 
-export const applyKey = (state: InputState, key: Key): InputUpdate => {
+const PROMPT = "❯ "
+const CONT = "  "
+const PREFIX_WIDTH = 2
+
+/** Per-logical-line wrap: visible chars per visual row, sliced at spaces when possible. */
+const wrapLine = (text: string, contentWidth: number): string[] => {
+  if (contentWidth <= 0) return [text]
+  if (text.length <= contentWidth) return [text]
+  const out: string[] = []
+  let rest = text
+  while (rest.length > contentWidth) {
+    let breakAt = rest.lastIndexOf(" ", contentWidth)
+    if (breakAt <= 0) breakAt = contentWidth
+    out.push(rest.slice(0, breakAt))
+    rest = rest.slice(breakAt === contentWidth ? breakAt : breakAt + 1)
+  }
+  if (rest.length > 0) out.push(rest)
+  return out
+}
+
+/** Visual chunks per logical line, plus cumulative starts so we can map cursor. */
+interface LineLayout {
+  /** Visual chunks for the logical line (text only, prefix not included). */
+  readonly chunks: ReadonlyArray<string>
+  /** Char offset within the logical line at which each chunk starts. */
+  readonly chunkStarts: ReadonlyArray<number>
+  /** Index into the global visualLines array of the first chunk. */
+  readonly visualStartRow: number
+}
+
+interface InputLayout {
+  readonly visualLines: ReadonlyArray<string>
+  readonly lineLayouts: ReadonlyArray<LineLayout>
+  readonly cursorVisualRow: number
+  readonly cursorVisualCol: number
+}
+
+export const layoutInput = (state: InputState, cols: number): InputLayout => {
+  const contentWidth = Math.max(1, cols - PREFIX_WIDTH)
+  const visualLines: string[] = []
+  const lineLayouts: LineLayout[] = []
+
+  for (let row = 0; row < state.lines.length; row++) {
+    const text = state.lines[row] ?? ""
+    const chunks = wrapLine(text, contentWidth)
+    const chunkStarts: number[] = []
+    let cursor = 0
+    for (let i = 0; i < chunks.length; i++) {
+      chunkStarts.push(cursor)
+      cursor += chunks[i]!.length
+      // If we broke at a space, the broken character is consumed (not shown
+      // at the start of the next chunk) — bump the next start by 1.
+      if (i < chunks.length - 1 && text[cursor] === " ") cursor += 1
+    }
+    const visualStartRow = visualLines.length
+    for (let i = 0; i < chunks.length; i++) {
+      const prefix = row === 0 && i === 0 ? PROMPT : CONT
+      visualLines.push(prefix + chunks[i]!)
+    }
+    lineLayouts.push({
+      chunks,
+      chunkStarts,
+      visualStartRow,
+    })
+  }
+
+  const layout = lineLayouts[state.row] ?? lineLayouts[0]!
+  const { chunks, chunkStarts, visualStartRow } = layout
+
+  // Find which chunk contains state.col.
+  let chunkIdx = 0
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (state.col >= chunkStarts[i]!) {
+      chunkIdx = i
+      break
+    }
+  }
+  const offsetInChunk = state.col - (chunkStarts[chunkIdx] ?? 0)
+  const cursorVisualRow = visualStartRow + chunkIdx
+  const cursorVisualCol =
+    PREFIX_WIDTH + Math.min(offsetInChunk, (chunks[chunkIdx] ?? "").length)
+
+  return {
+    visualLines,
+    lineLayouts,
+    cursorVisualRow,
+    cursorVisualCol,
+  }
+}
+
+const positionAtVisualRow = (
+  state: InputState,
+  cols: number,
+  visualRow: number,
+): { row: number; col: number } | undefined => {
+  const layout = layoutInput(state, cols)
+  if (visualRow < 0 || visualRow >= layout.visualLines.length) return undefined
+  for (let r = 0; r < layout.lineLayouts.length; r++) {
+    const ll = layout.lineLayouts[r]!
+    if (
+      visualRow >= ll.visualStartRow &&
+      visualRow < ll.visualStartRow + ll.chunks.length
+    ) {
+      const chunkIdx = visualRow - ll.visualStartRow
+      const baseCol = ll.chunkStarts[chunkIdx] ?? 0
+      const targetVisualCol = Math.max(
+        PREFIX_WIDTH,
+        layout.cursorVisualCol,
+      )
+      const within = Math.max(0, targetVisualCol - PREFIX_WIDTH)
+      const chunkLen = (ll.chunks[chunkIdx] ?? "").length
+      return { row: r, col: baseCol + Math.min(within, chunkLen) }
+    }
+  }
+  return undefined
+}
+
+export const applyKey = (
+  state: InputState,
+  key: Key,
+  cols: number,
+): InputUpdate => {
   if (state.locked) {
     if (key.type === "ctrl" && key.char === "c") {
       return { state, action: { type: "exit" } }
@@ -67,13 +189,7 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
       const first = incoming[0]!
       const last = incoming[incoming.length - 1]!
       const middle = incoming.slice(1, -1)
-      lines.splice(
-        state.row,
-        1,
-        before + first,
-        ...middle,
-        last + after,
-      )
+      lines.splice(state.row, 1, before + first, ...middle, last + after)
       return {
         state: {
           ...state,
@@ -99,9 +215,6 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
       return { state: { ...state, lines, col: state.col - 1 } }
     }
     case "enter": {
-      // Plain Enter submits when there's content; Shift-Enter inserts a newline.
-      // (Most terminals don't distinguish Shift-Enter without protocol opt-in;
-      // we use Ctrl-J / Alt-Enter convention via the "ctrl" path below.)
       const text = inputText(state)
       if (text.trim().length === 0) return { state }
       return {
@@ -119,7 +232,6 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
         case "l":
           return { state, action: { type: "clearScrollback" } }
         case "j": {
-          // Newline within input.
           const lines = state.lines.slice()
           const cur = lines[state.row] ?? ""
           const before = cur.slice(0, state.col)
@@ -148,7 +260,6 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
           return { state: { ...state, lines } }
         }
         case "w": {
-          // delete word
           const lines = state.lines.slice()
           const cur = lines[state.row] ?? ""
           let i = state.col
@@ -177,22 +288,22 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
           }
           return { state }
         }
-        case "up":
-          if (state.row > 0) {
-            const prev = state.lines[state.row - 1] ?? ""
-            return {
-              state: { ...state, row: state.row - 1, col: Math.min(state.col, prev.length) },
-            }
+        case "up": {
+          const layout = layoutInput(state, cols)
+          const target = positionAtVisualRow(state, cols, layout.cursorVisualRow - 1)
+          if (target !== undefined) {
+            return { state: { ...state, row: target.row, col: target.col } }
           }
           return { state }
-        case "down":
-          if (state.row < state.lines.length - 1) {
-            const nxt = state.lines[state.row + 1] ?? ""
-            return {
-              state: { ...state, row: state.row + 1, col: Math.min(state.col, nxt.length) },
-            }
+        }
+        case "down": {
+          const layout = layoutInput(state, cols)
+          const target = positionAtVisualRow(state, cols, layout.cursorVisualRow + 1)
+          if (target !== undefined) {
+            return { state: { ...state, row: target.row, col: target.col } }
           }
           return { state }
+        }
       }
       return { state }
     }
@@ -221,29 +332,56 @@ export const applyKey = (state: InputState, key: Key): InputUpdate => {
   }
 }
 
-const PROMPT = `${ansi.fgBrightGreen}❯${ansi.reset} `
-const CONT = "  "
+const PROMPT_COLORED = `${ansi.fgBrightGreen}❯${ansi.reset} `
+const PROMPT_VISIBLE_PREFIX_LEN = 2
 
 /**
- * Render the input region. Returns an array of lines exactly `rows` rows
- * tall, with the cursor position (row, col) within the rendered region —
- * the caller positions the real terminal cursor accordingly.
+ * Render the input region. Returns visual rows with the (visual) cursor
+ * position. The caller positions the real terminal cursor accordingly.
+ *
+ * Lines wrap visually at terminal width. If the rendered region exceeds
+ * `maxRows`, the window scrolls so the cursor is visible.
  */
 export const renderInput = (
   state: InputState,
   cols: number,
-): { readonly lines: string[]; readonly cursorRow: number; readonly cursorCol: number } => {
-  const lines: string[] = []
-  for (let r = 0; r < state.lines.length; r++) {
-    const prefix = r === 0 ? PROMPT : CONT
-    const visible = padRight(prefix + (state.lines[r] ?? ""), cols)
-    lines.push(truncate(visible, cols))
+  maxRows = 8,
+): {
+  readonly lines: string[]
+  readonly cursorRow: number
+  readonly cursorCol: number
+} => {
+  const layout = layoutInput(state, cols)
+  const styled = layout.visualLines.map((line, i) => {
+    if (i === 0 && line.startsWith(PROMPT)) {
+      return padRight(PROMPT_COLORED + line.slice(PROMPT.length), cols)
+    }
+    return padRight(line, cols)
+  })
+
+  let cursorRow = layout.cursorVisualRow
+  let lines = styled
+
+  if (lines.length > maxRows) {
+    // Scroll window so cursor is visible; prefer trailing tail.
+    let start = Math.max(0, cursorRow - maxRows + 1)
+    if (start + maxRows > lines.length) start = lines.length - maxRows
+    lines = lines.slice(start, start + maxRows)
+    cursorRow = cursorRow - start
   }
+
   if (state.locked) {
-    lines[lines.length - 1] = `${ansi.dim}${ansi.fgGray}thinking…${ansi.reset}`
+    lines = [`${ansi.dim}${ansi.fgGray}thinking…${ansi.reset}`]
+    cursorRow = 0
+    return { lines, cursorRow, cursorCol: 0 }
   }
-  const cursorRow = state.row
-  const cursorCol =
-    visibleLength(state.row === 0 ? PROMPT : CONT) + state.col
-  return { lines, cursorRow, cursorCol }
+
+  return {
+    lines,
+    cursorRow,
+    cursorCol: layout.cursorVisualCol,
+  }
 }
+
+// Keep an unused export marker so consumers know this is exposed.
+export { PROMPT_VISIBLE_PREFIX_LEN }

@@ -12,7 +12,6 @@ import {
   Shell,
   coderAgentConfig,
   runAgent,
-  type AgentHooks,
   type InstructionFile,
   type ScopedAgentConfig,
   type Skill,
@@ -26,6 +25,7 @@ import {
   ansi,
   enterTui,
   exitTui,
+  getTermSize,
   setupRawMode,
   showCursor,
 } from "../tui/terminal.js"
@@ -45,9 +45,13 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
-import { LogBuffer } from "../tui/logBuffer.js"
+import {
+  type AgentStackFrame,
+  type SidePaneState,
+} from "../tui/sidePane.js"
 import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
+import { applyViKey, initialVi, type ViState } from "../tui/viMode.js"
 
 interface MutableAppState {
   status: StatusState
@@ -55,11 +59,10 @@ interface MutableAppState {
   input: InputState
   palette: PaletteState
   modal: ModalState
-  /** Resolved when the active modal closes; the value is the user's choice. */
   modalAnswer?: Deferred.Deferred<boolean, never>
-  /** ConversationId for this TUI session. */
   conversationId: ConversationId
-  logBuffer: LogBuffer
+  sidePane: SidePaneState
+  vi: ViState
 }
 
 const HELP_LINES = [
@@ -69,6 +72,7 @@ const HELP_LINES = [
   "  Ctrl-C        exit",
   "  Ctrl-D        exit (when input is empty)",
   "  Ctrl-L        clear scrollback",
+  "  PgUp / PgDn   scroll the conversation",
   "  ↑/↓           navigate input lines or palette",
   "Slash commands:",
   "  /exit /quit   quit",
@@ -86,7 +90,7 @@ const snapshot = (s: MutableAppState): AppState => ({
   input: s.input,
   palette: s.palette,
   modal: s.modal,
-  logBuffer: s.logBuffer,
+  sidePane: s.sidePane,
 })
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
@@ -108,6 +112,7 @@ const renderArgsForPill = (args: unknown): string => {
   if (typeof obj.path === "string") return obj.path
   if (typeof obj.command === "string") return obj.command
   if (typeof obj.pattern === "string") return obj.pattern
+  if (typeof obj.task === "string") return obj.task
   try {
     return JSON.stringify(obj).slice(0, 80)
   } catch {
@@ -117,9 +122,30 @@ const renderArgsForPill = (args: unknown): string => {
 
 const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
 
+const seedSidePane = (
+  instructions: ReadonlyArray<InstructionFile>,
+): SidePaneState => ({
+  stack: [{ name: "coder", status: "idle" }],
+  skillsLoaded: [],
+  instructions: instructions.map((f) => ({
+    path: f.path,
+    scope: f.path,
+  })),
+})
+
+const updateTopFrame = (
+  stack: ReadonlyArray<AgentStackFrame>,
+  patch: Partial<AgentStackFrame>,
+): ReadonlyArray<AgentStackFrame> => {
+  if (stack.length === 0) return stack
+  const next = stack.slice()
+  const top = next[next.length - 1]!
+  next[next.length - 1] = { ...top, ...patch }
+  return next
+}
+
 const runTuiModeCore = (
   input: TuiModeInput,
-  logBuffer: LogBuffer,
 ): Effect.Effect<
   void,
   never,
@@ -149,7 +175,8 @@ const runTuiModeCore = (
       palette: hiddenPalette,
       modal: hiddenModal,
       conversationId: initialCid,
-      logBuffer,
+      sidePane: seedSidePane(input.instructionFiles),
+      vi: initialVi,
     })
 
     const renderer = new FrameRenderer()
@@ -159,7 +186,6 @@ const runTuiModeCore = (
       renderer.draw(snapshot(s))
     })
 
-    // Initial paint with a hello block
     yield* Ref.update(stateRef, (s) => {
       s.scrollback.push({
         kind: "info",
@@ -171,7 +197,7 @@ const runTuiModeCore = (
       })
       s.scrollback.push({
         kind: "info",
-        text: "type / for commands · Enter to submit · Ctrl-C to exit",
+        text: "type / for commands · Enter to submit · PgUp/PgDn to scroll · Ctrl-C to exit",
       })
       return s
     })
@@ -179,10 +205,6 @@ const runTuiModeCore = (
     enterTui()
     const restoreRaw = setupRawMode()
 
-    // Silence default Effect logger output (which writes to
-    // console.log/.error and would corrupt rendered frames). The added
-    // JSON logger layer above handles persistence and the buffer; we
-    // don't want a second copy of the same event going to stdout.
     const origConsoleLog = console.log
     const origConsoleError = console.error
     const noop = (() => {}) as typeof console.log
@@ -203,9 +225,6 @@ const runTuiModeCore = (
     }
     process.stdout.on("resize", onResize)
 
-    // Tick a re-render periodically so async log lines and any
-    // background-pushed state changes appear without waiting for an
-    // input key. 4 Hz: cheap (diffs against last frame).
     const tickTimer = setInterval(() => {
       void Effect.runPromise(
         requestRender as Effect.Effect<void, never, never>,
@@ -214,7 +233,7 @@ const runTuiModeCore = (
 
     yield* requestRender
 
-    // ---- Event consumer: agent events → scrollback updates ----
+    // ---- Event consumer: agent events → scrollback / side pane ----
     const eventQueue = yield* Queue.unbounded<AgentEvent>()
     const currentToolByName = new Map<string, string>()
     let toolSeq = 0
@@ -229,44 +248,115 @@ const runTuiModeCore = (
                   ...s.status,
                   note: `thinking (turn ${event.turnIndex + 1})`,
                 }
+                s.sidePane = {
+                  ...s.sidePane,
+                  stack: updateTopFrame(s.sidePane.stack, {
+                    status: "running",
+                  }),
+                }
                 break
               }
               case "tool_call_start": {
-                toolSeq++
-                const id = `t${toolSeq}`
-                currentToolByName.set(event.toolName, id)
-                s.scrollback.push({
-                  kind: "tool",
-                  id,
-                  toolName: event.toolName,
-                  arg: renderArgsForPill(event.args),
-                  state: "running",
-                })
-                s.status = {
-                  ...s.status,
-                  note: `running ${event.toolName}`,
+                const inSubAgent = s.sidePane.stack.length > 1
+                if (inSubAgent) {
+                  // Route to side pane only; no scrollback pill.
+                  s.sidePane = {
+                    ...s.sidePane,
+                    stack: updateTopFrame(s.sidePane.stack, {
+                      currentTool: event.toolName,
+                    }),
+                  }
+                } else {
+                  toolSeq++
+                  const id = `t${toolSeq}`
+                  currentToolByName.set(event.toolName, id)
+                  s.scrollback.push({
+                    kind: "tool",
+                    id,
+                    toolName: event.toolName,
+                    arg: renderArgsForPill(event.args),
+                    state: "running",
+                  })
+                  s.sidePane = {
+                    ...s.sidePane,
+                    stack: updateTopFrame(s.sidePane.stack, {
+                      currentTool: event.toolName,
+                    }),
+                  }
+                  s.status = {
+                    ...s.status,
+                    note: `running ${event.toolName}`,
+                  }
                 }
                 break
               }
               case "tool_call_end": {
-                const id = currentToolByName.get(event.toolName)
-                if (id !== undefined) {
-                  const nextState: ToolPillState = event.ok ? "ok" : "error"
-                  let detail: string | undefined
-                  if (!event.ok && typeof event.result === "object") {
-                    const r = event.result as Record<string, unknown>
-                    if (typeof r.message === "string") detail = r.message
-                    else if (typeof r.reason === "string") detail = r.reason
+                const inSubAgent = s.sidePane.stack.length > 1
+                if (!inSubAgent) {
+                  const id = currentToolByName.get(event.toolName)
+                  if (id !== undefined) {
+                    const nextState: ToolPillState = event.ok ? "ok" : "error"
+                    let detail: string | undefined
+                    if (!event.ok && typeof event.result === "object") {
+                      const r = event.result as Record<string, unknown>
+                      if (typeof r.message === "string") detail = r.message
+                      else if (typeof r.reason === "string") detail = r.reason
+                    }
+                    s.scrollback.updateTool(id, {
+                      state: nextState,
+                      ...(detail !== undefined ? { detail } : {}),
+                    })
+                    currentToolByName.delete(event.toolName)
                   }
-                  s.scrollback.updateTool(id, {
-                    state: nextState,
-                    ...(detail !== undefined ? { detail } : {}),
-                  })
-                  currentToolByName.delete(event.toolName)
+                  s.status = { ...s.status, note: "thinking" }
+                }
+                s.sidePane = {
+                  ...s.sidePane,
+                  stack: updateTopFrame(s.sidePane.stack, {
+                    currentTool: undefined,
+                  }),
+                }
+                break
+              }
+              case "subagent_start": {
+                s.sidePane = {
+                  ...s.sidePane,
+                  stack: [
+                    ...s.sidePane.stack,
+                    { name: event.name, status: "running" },
+                  ],
                 }
                 s.status = {
                   ...s.status,
-                  note: `thinking`,
+                  note: `delegating → ${event.name}`,
+                }
+                break
+              }
+              case "subagent_end": {
+                const stack = s.sidePane.stack.slice()
+                stack.pop()
+                s.sidePane = { ...s.sidePane, stack }
+                const tag = event.ok ? "⤴" : "✗"
+                const filesNote =
+                  event.filesChanged.length > 0
+                    ? ` (${event.filesChanged.length} file${
+                        event.filesChanged.length === 1 ? "" : "s"
+                      } changed)`
+                    : ""
+                s.scrollback.push({
+                  kind: "info",
+                  text: `${tag} ${event.name} finished${filesNote}`,
+                })
+                s.status = { ...s.status, note: "thinking" }
+                break
+              }
+              case "skill_load": {
+                const exists = s.sidePane.skillsLoaded.includes(event.name)
+                if (!exists) {
+                  s.sidePane = {
+                    ...s.sidePane,
+                    skillsLoaded: [...s.sidePane.skillsLoaded, event.name],
+                  }
                 }
                 break
               }
@@ -287,6 +377,13 @@ const runTuiModeCore = (
                 const status = { ...s.status }
                 delete (status as { note?: string }).note
                 s.status = status
+                s.sidePane = {
+                  ...s.sidePane,
+                  stack: updateTopFrame(s.sidePane.stack, {
+                    status: "idle",
+                    currentTool: undefined,
+                  }),
+                }
                 if (event.finalText.trim().length === 0) {
                   s.scrollback.push({
                     kind: "info",
@@ -308,7 +405,7 @@ const runTuiModeCore = (
       }),
     )
 
-    // ---- Bash confirm hook (modal) ----
+    // ---- Bash confirm hook ----
     const promptForBash = (cmd: string, cwd: string) =>
       Effect.gen(function* () {
         const def = yield* Deferred.make<boolean, never>()
@@ -342,6 +439,7 @@ const runTuiModeCore = (
       Effect.gen(function* () {
         const cur = yield* Ref.get(stateRef)
         cur.scrollback.push({ kind: "user", text })
+        cur.scrollback.stickToBottom()
         yield* Ref.update(stateRef, (s) => {
           s.input = { ...emptyInput, locked: true }
           s.status = { ...s.status, note: "running" }
@@ -356,6 +454,8 @@ const runTuiModeCore = (
             input.skills,
             input.scopedAgents,
             input.instructionFiles,
+            undefined,
+            baseHooks,
           ),
           cid,
           text,
@@ -369,7 +469,7 @@ const runTuiModeCore = (
             return Queue.offer(eventQueue, { type: "error", message: msg })
           }),
         )
-        yield* Effect.sleep("50 millis") // give consumer a beat to drain
+        yield* Effect.sleep("50 millis")
         yield* Ref.update(stateRef, (s) => {
           s.input = emptyInput
           const status = { ...s.status }
@@ -452,7 +552,7 @@ const runTuiModeCore = (
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
 
-            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps"]
+            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps", "editorMode"]
             if (!validKeys.includes(k as any)) {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({ kind: "error", text: `Unknown setting: ${k}. Valid settings: ${validKeys.join(", ")}` })
@@ -489,6 +589,16 @@ const runTuiModeCore = (
                 yield* requestRender
                 return "stay" as const
               }
+            } else if (key === "editorMode") {
+              if (v !== "insert" && v !== "vi") {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be 'insert' or 'vi'` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = v
             } else {
               typedVal = v as any
             }
@@ -527,7 +637,6 @@ const runTuiModeCore = (
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
-        // Modal capture: y/n/Esc resolves the deferred.
         if (s.modal.visible && s.modalAnswer !== undefined) {
           if (key.type === "char") {
             if (key.char === s.modal.yes) {
@@ -550,7 +659,24 @@ const runTuiModeCore = (
           return "stay" as const
         }
 
-        // Palette navigation
+        // PageUp/PageDown: scroll the scrollback regardless of palette state.
+        if (key.type === "pageUp") {
+          yield* Ref.update(stateRef, (st) => {
+            st.scrollback.scrollBy(5)
+            return st
+          })
+          yield* requestRender
+          return "stay" as const
+        }
+        if (key.type === "pageDown") {
+          yield* Ref.update(stateRef, (st) => {
+            st.scrollback.scrollBy(-5)
+            return st
+          })
+          yield* requestRender
+          return "stay" as const
+        }
+
         if (s.palette.visible) {
           if (key.type === "arrow" && key.dir === "up") {
             yield* Ref.update(stateRef, (st) => {
@@ -598,19 +724,52 @@ const runTuiModeCore = (
             }
             return "stay" as const
           }
-          // fall through: regular editing also updates palette
         }
 
-        const update = applyKey(s.input, key)
-        const newPalette = computePalette(inputText(update.state))
+        const settingsStore = yield* SettingsStore
+        const settings = yield* settingsStore.get()
+        const cols = getTermSize().cols
+
+        let nextInput: InputState
+        let nextVi: ViState = s.vi
+        let action = undefined as
+          | undefined
+          | { readonly type: "submit"; readonly text: string }
+          | { readonly type: "exit" }
+          | { readonly type: "clearScrollback" }
+
+        if (settings.editorMode === "vi") {
+          const r = applyViKey(s.vi, s.input, key, cols)
+          nextInput = r.input
+          nextVi = r.vi
+          action = r.action
+        } else {
+          if (s.vi.mode !== "insert") nextVi = { mode: "insert" }
+          const r = applyKey(s.input, key, cols)
+          nextInput = r.state
+          action = r.action
+        }
+
+        const newPalette = computePalette(inputText(nextInput))
         yield* Ref.update(stateRef, (st) => {
-          st.input = update.state
+          st.input = nextInput
           st.palette = newPalette
+          st.vi = nextVi
+          if (settings.editorMode === "vi") {
+            st.status = {
+              ...st.status,
+              mode: nextVi.mode === "normal" ? "NOR" : "INS",
+            }
+          } else {
+            const ns = { ...st.status }
+            delete (ns as { mode?: unknown }).mode
+            st.status = ns
+          }
           return st
         })
 
-        if (update.action !== undefined) {
-          switch (update.action.type) {
+        if (action !== undefined) {
+          switch (action.type) {
             case "exit":
               return "exit" as const
             case "clearScrollback":
@@ -621,12 +780,12 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             case "submit": {
-              if (update.action.text.startsWith("/")) {
-                const outcome = yield* handleSlash(update.action.text.trim())
+              if (action.text.startsWith("/")) {
+                const outcome = yield* handleSlash(action.text.trim())
                 if (outcome === "exit") return "exit" as const
                 return "stay" as const
               }
-              yield* submit(update.action.text)
+              yield* submit(action.text)
               return "stay" as const
             }
           }
@@ -646,9 +805,7 @@ const runTuiModeCore = (
               void Effect.runPromise(Deferred.succeed(exitDeferred, undefined))
             }
           })
-          .catch(() => {
-            // swallow; render loop will paint any error
-          })
+          .catch(() => {})
       }
     }
     process.stdin.on("data", onData)
@@ -668,13 +825,7 @@ export const runTuiMode = (
   void,
   never,
   FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore | SettingsStore
-> => {
-  const logBuffer = new LogBuffer()
-  // Add our JSON+buffer logger. The default Effect logger still fires
-  // (Effect 3.21 `Logger.replace` empirically adds rather than swaps),
-  // so we silence its output by monkey-patching console.log/.error
-  // inside runTuiModeCore.
-  return runTuiModeCore(input, logBuffer).pipe(
-    Effect.provide(fileLoggerLayer(logFilePath(), logBuffer)),
+> =>
+  runTuiModeCore(input).pipe(
+    Effect.provide(fileLoggerLayer(logFilePath())),
   )
-}

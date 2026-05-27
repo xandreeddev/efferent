@@ -77,11 +77,15 @@ const renderBlock = (block: ScrollbackBlock, cols: number): string[] => {
 
 /**
  * Append-only stack of blocks. Mutated by callers (the TUI driver).
- * Pure render → array of strings that fit `rows` × `cols`.
+ * Renders a bottom-anchored window into the block sequence, with an
+ * optional `scrollOffset` measured in visual lines — `0` = stuck to
+ * the latest content; positive values reveal older content above.
  */
 export class Scrollback {
   private blocks: ScrollbackBlock[] = []
   private toolIndex = new Map<string, number>()
+  private scrollOffset = 0
+  private lastTotalVisualLines = 0
 
   push(block: ScrollbackBlock): void {
     if (block.kind === "tool") {
@@ -108,6 +112,28 @@ export class Scrollback {
   clear(): void {
     this.blocks = []
     this.toolIndex.clear()
+    this.scrollOffset = 0
+    this.lastTotalVisualLines = 0
+  }
+
+  /** Shift the view by `delta` visual lines (positive = older content). */
+  scrollBy(delta: number): void {
+    const next = this.scrollOffset + delta
+    this.scrollOffset = Math.max(0, next)
+  }
+
+  /** Snap back to the bottom (newest content). */
+  stickToBottom(): void {
+    this.scrollOffset = 0
+  }
+
+  isAtBottom(): boolean {
+    return this.scrollOffset === 0
+  }
+
+  /** Total visual lines from the most recent render — used by the driver. */
+  totalLines(): number {
+    return this.lastTotalVisualLines
   }
 
   render(rows: number, cols: number): string[] {
@@ -115,14 +141,33 @@ export class Scrollback {
     for (let i = 0; i < this.blocks.length; i++) {
       const block = this.blocks[i]!
       allLines.push(...renderBlock(block, cols))
-      // Spacer between blocks (except after a tool pill that has no detail).
       if (i < this.blocks.length - 1) {
         allLines.push("")
       }
     }
-    // Bottom-anchored window
-    const start = Math.max(0, allLines.length - rows)
-    const window = allLines.slice(start, start + rows)
+    this.lastTotalVisualLines = allLines.length
+
+    if (allLines.length <= rows) {
+      this.scrollOffset = 0
+      const window = allLines.slice()
+      while (window.length < rows) window.push("")
+      return window.map((l) => padRight(truncate(l, cols), cols))
+    }
+
+    const maxOffset = allLines.length - rows
+    if (this.scrollOffset > maxOffset) this.scrollOffset = maxOffset
+    const end = allLines.length - this.scrollOffset
+    const start = Math.max(0, end - rows)
+    const window = allLines.slice(start, end)
+
+    if (this.scrollOffset > 0) {
+      const indicator = `${ansi.dim}${ansi.fgYellow}↑ ${this.scrollOffset} more · PgDn to follow${ansi.reset}`
+      window[0] = indicator
+    } else if (start > 0) {
+      const above = start
+      window[0] = `${ansi.dim}↑ ${above} more above${ansi.reset}`
+    }
+
     while (window.length < rows) window.push("")
     return window.map((l) => padRight(truncate(l, cols), cols))
   }

@@ -68,6 +68,7 @@ export const LocalSettingsStoreLive = Layer.effect(
           const merged: Settings = {
             allowBash: localConfig?.allowBash ?? homeConfig?.allowBash ?? DefaultSettings.allowBash,
             maxSteps: localConfig?.maxSteps ?? homeConfig?.maxSteps ?? DefaultSettings.maxSteps,
+            editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
           }
 
           yield* Ref.set(stateRef, merged)
