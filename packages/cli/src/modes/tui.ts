@@ -12,6 +12,8 @@ import {
   coderAgentConfig,
   runAgent,
   type AgentHooks,
+  type InstructionFile,
+  type ScopedAgentConfig,
   type Skill,
 } from "@agent/core"
 
@@ -92,6 +94,8 @@ const newConversationId = (): ConversationId =>
 export interface TuiModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly resumeConversationId?: string
 }
 
@@ -343,7 +347,17 @@ const runTuiModeCore = (
         yield* requestRender
 
         const cid = cur.conversationId
-        yield* runAgent(coderAgentConfig(input.cwd, input.skills), cid, text, baseHooks).pipe(
+        yield* runAgent(
+          coderAgentConfig(
+            input.cwd,
+            input.skills,
+            input.scopedAgents,
+            input.instructionFiles,
+          ),
+          cid,
+          text,
+          baseHooks,
+        ).pipe(
           Effect.catchAll((err) => {
             const msg =
               typeof err === "object" && err !== null && "message" in err

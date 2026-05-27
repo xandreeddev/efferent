@@ -5,7 +5,8 @@ import {
   GoogleGenAI,
   type Part,
 } from "@google/genai"
-import { Config, Context, Effect, JSONSchema, Layer, Redacted, Ref } from "effect"
+import { createHash } from "node:crypto"
+import { Config, Context, Effect, HashMap, JSONSchema, Layer, Redacted, Ref } from "effect"
 import {
   type AgentMessage,
   type AgentTool,
@@ -210,15 +211,35 @@ const GeminiServicesLive = Layer.effect(
     })
     const genai = new GoogleGenAI({ apiKey: rawKey })
 
-    // null = not yet attempted; "" = attempted and failed (don't retry);
-    // string = active static cache resource name.
-    const staticCacheRef = yield* Ref.make<string | null>(null)
+    /**
+     * Static cache keyed by content hash of `(system + tool names)`.
+     * One process can drive multiple distinct (system, tools) pairs — the
+     * main coder agent, scoped sub-agents, the notes flow — and each
+     * needs its own provider-side cache. A single Ref<string | null>
+     * (the prior shape) only worked when one pair was ever in play.
+     *
+     * Sentinel `""` per hash means "create failed, don't retry".
+     */
+    const staticCachesByContent = yield* Ref.make(HashMap.empty<string, string>())
+
+    const cacheKeyFor = (input: { system: string; tools: ReadonlyArray<{ name: string }> }) =>
+      createHash("sha1")
+        .update(
+          JSON.stringify({
+            system: input.system,
+            toolNames: input.tools.map((t) => t.name).sort(),
+          }),
+        )
+        .digest("hex")
 
     const staticOptionsFor: CacheStrategy["staticOptionsFor"] = (input) =>
       Effect.gen(function* () {
-        const existing = yield* Ref.get(staticCacheRef)
-        if (existing === "") return undefined
-        if (existing !== null) return { google: { cachedContent: existing } }
+        const key = cacheKeyFor(input)
+        const existing = HashMap.get(yield* Ref.get(staticCachesByContent), key)
+        if (existing._tag === "Some") {
+          if (existing.value === "") return undefined
+          return { google: { cachedContent: existing.value } }
+        }
 
         const created = yield* Effect.tryPromise({
           try: () =>
@@ -234,7 +255,7 @@ const GeminiServicesLive = Layer.effect(
                   },
                 ],
                 ttl: "3600s",
-                displayName: `agent-static-${modelName}`,
+                displayName: `agent-static-${modelName}-${key.slice(0, 8)}`,
               },
             }),
           catch: (cause) => cause,
@@ -242,24 +263,24 @@ const GeminiServicesLive = Layer.effect(
 
         if (created._tag === "Left") {
           yield* Effect.logWarning(
-            `[llm.cache] static create failed, continuing uncached: ${String(
+            `[llm.cache] static create failed (key=${key.slice(0, 8)}), continuing uncached: ${String(
               created.left,
             )}`,
           )
-          yield* Ref.set(staticCacheRef, "")
+          yield* Ref.update(staticCachesByContent, HashMap.set(key, ""))
           return undefined
         }
 
         const name = created.right.name ?? ""
         if (name === "") {
-          yield* Ref.set(staticCacheRef, "")
+          yield* Ref.update(staticCachesByContent, HashMap.set(key, ""))
           return undefined
         }
 
         yield* Effect.log(
-          `[llm.cache] static created ${name} model=${modelName} ttl=3600s`,
+          `[llm.cache] static created ${name} model=${modelName} key=${key.slice(0, 8)} ttl=3600s`,
         )
-        yield* Ref.set(staticCacheRef, name)
+        yield* Ref.update(staticCachesByContent, HashMap.set(key, name))
         return { google: { cachedContent: name } }
       })
 
