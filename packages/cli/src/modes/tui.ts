@@ -8,6 +8,7 @@ import {
   Llm,
   LlmCache,
   LlmInfo,
+  SettingsStore,
   Shell,
   coderAgentConfig,
   runAgent,
@@ -75,6 +76,8 @@ const HELP_LINES = [
   "  /help         show this help",
   "  /cwd          print workspace path",
   "  /reset        start a new conversation",
+  "  /settings     show configuration settings",
+  "  /set <k> <v>  update setting (e.g. /set maxSteps 15)",
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
@@ -120,7 +123,7 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
@@ -331,9 +334,9 @@ const runTuiModeCore = (
         return result
       })
 
-    type R = FileSystem | Shell | ConversationStore | Llm | LlmCache
-    const safetyHook = bashConfirmHook<R>(promptForBash, input.cwd)
-    const baseHooks = makeEventHooks<R>(eventQueue, safetyHook)
+    type R_Base = FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore
+    const safetyHook = bashConfirmHook<R_Base>(promptForBash, input.cwd)
+    const baseHooks = makeEventHooks<R_Base>(eventQueue, safetyHook)
 
     const submit = (text: string) =>
       Effect.gen(function* () {
@@ -379,7 +382,9 @@ const runTuiModeCore = (
 
     const handleSlash = (cmd: string) =>
       Effect.gen(function* () {
-        switch (cmd) {
+        const parts = cmd.trim().split(/\s+/)
+        const baseCmd = parts[0]
+        switch (baseCmd) {
           case "/exit":
           case "/quit":
             return "exit" as const
@@ -417,7 +422,90 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
-          default:
+          case "/settings": {
+            const settingsStore = yield* SettingsStore
+            const current = yield* settingsStore.get()
+            yield* Ref.update(stateRef, (s) => {
+              s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
+              s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
+              s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          case "/set": {
+            const k = parts[1]
+            const v = parts.slice(2).join(" ")
+            if (!k || !v) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "error",
+                  text: "Usage: /set <key> <value> (e.g. /set maxSteps 15)",
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            const settingsStore = yield* SettingsStore
+            const current = yield* settingsStore.get()
+
+            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps"]
+            if (!validKeys.includes(k as any)) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({ kind: "error", text: `Unknown setting: ${k}. Valid settings: ${validKeys.join(", ")}` })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            const key = k as keyof typeof current
+            let typedVal: typeof current[typeof key]
+
+            if (key === "maxSteps") {
+              const num = Number(v)
+              if (Number.isNaN(num) || !Number.isFinite(num)) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be a finite number` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = num
+            } else if (key === "allowBash") {
+              if (v === "true") {
+                typedVal = true
+              } else if (v === "false") {
+                typedVal = false
+              } else {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be 'true' or 'false'` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+            } else {
+              typedVal = v as any
+            }
+
+            yield* settingsStore.update((curr) => ({
+              ...curr,
+              [key]: typedVal,
+            }))
+
+            yield* Ref.update(stateRef, (s) => {
+              s.scrollback.push({ kind: "info", text: `Updated setting '${k}' to: ${typedVal}` })
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          default: {
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({
                 kind: "error",
@@ -427,6 +515,7 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
+          }
         }
       })
 
@@ -434,7 +523,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, R> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -546,7 +635,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<R>()
+    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore>()
 
     const onData = (chunk: Buffer): void => {
       const keys = parser.feed(chunk)
@@ -578,7 +667,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore | SettingsStore
 > => {
   const logBuffer = new LogBuffer()
   // Add our JSON+buffer logger. The default Effect logger still fires

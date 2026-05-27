@@ -5,6 +5,7 @@ import {
   FileSystem,
   Llm,
   LlmCache,
+  SettingsStore,
   Shell,
   coderAgentConfig,
   runAgent,
@@ -46,7 +47,7 @@ export const runJsonMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore
+  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =

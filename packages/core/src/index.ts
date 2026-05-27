@@ -5,6 +5,7 @@ export * from "./entities/Capture.js"
 export * from "./entities/Conversation.js"
 export * from "./entities/ScopedAgent.js"
 export * from "./entities/Skill.js"
+export * from "./entities/Settings.js"
 
 // Ports
 export * from "./ports/CaptureStore.js"
@@ -15,6 +16,7 @@ export * from "./ports/LlmCache.js"
 export * from "./ports/LlmFast.js"
 export * from "./ports/LlmInfo.js"
 export * from "./ports/Shell.js"
+export * from "./ports/SettingsStore.js"
 
 // Use cases
 export * from "./usecases/capture.js"
