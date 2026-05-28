@@ -4,6 +4,7 @@ import {
   ConversationId,
   ConversationStore,
   FileSystem,
+  Http,
   SettingsStore,
   Shell,
   coderAgentConfig,
@@ -47,6 +48,7 @@ export const runJsonMode = (
   void,
   never,
   | FileSystem
+  | Http
   | Shell
   | LanguageModel.LanguageModel
   | ConversationStore

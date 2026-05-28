@@ -15,6 +15,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "/settings", description: "Show current configuration settings" },
   { name: "/set", description: "Update a config setting, e.g. /set maxSteps 30" },
   { name: "/model", description: "List models, or /model <#|id> to switch" },
+  { name: "/vi", description: "Toggle vi editing mode (Esc → normal, i → insert)" },
 ]
 
 export interface PaletteState {

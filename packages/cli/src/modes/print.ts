@@ -4,6 +4,7 @@ import {
   ConversationId,
   ConversationStore,
   FileSystem,
+  Http,
   SettingsStore,
   Shell,
   coderAgentConfig,
@@ -80,6 +81,7 @@ export const runPrintMode = (
   void,
   never,
   | FileSystem
+  | Http
   | Shell
   | LanguageModel.LanguageModel
   | ConversationStore

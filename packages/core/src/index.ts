@@ -9,6 +9,7 @@ export * from "./entities/Settings.js"
 // Ports
 export * from "./ports/ConversationStore.js"
 export * from "./ports/FileSystem.js"
+export * from "./ports/Http.js"
 export * from "./ports/LlmInfo.js"
 export * from "./ports/ModelRegistry.js"
 export * from "./ports/Shell.js"

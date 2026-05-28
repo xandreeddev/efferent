@@ -235,7 +235,8 @@ const normalKey = (
     case "0":
       return { vi, input: setCursor(s, s.row, 0) }
     case "$":
-      return { vi, input: setCursor(s, s.row, lineAt(s, s.row).length) }
+      // Land on the last character (vim), not the column past it.
+      return { vi, input: setCursor(s, s.row, lineAt(s, s.row).length - 1) }
     case "g":
       return { vi: { ...vi, pending: "g" }, input: s }
     case "G":
@@ -312,9 +313,12 @@ const insertKey = (
   cols: number,
 ): ViUpdate => {
   if (key.type === "escape") {
+    // vim parks the normal-mode cursor *on* a character, not past the end:
+    // leaving insert moves it left one so the first edit (x / dw / ...)
+    // operates on the text just typed instead of empty space.
     return {
       vi: { mode: "normal", lastUndo: captureSnapshot(s) },
-      input: s,
+      input: setCursor(s, s.row, s.col - 1),
     }
   }
   const update: InputUpdate = applyKey(s, key, cols)

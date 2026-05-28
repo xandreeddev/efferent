@@ -6,6 +6,7 @@ import {
   ConversationId,
   ConversationStore,
   FileSystem,
+  Http,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
@@ -55,7 +56,11 @@ import {
   onToolStart as treeToolStart,
   onTurnStart as treeTurnStart,
 } from "../tui/executionTree.js"
-import { describeToolCall, describeToolResult } from "../tui/toolDescribe.js"
+import {
+  describeToolCall,
+  describeToolResult,
+  toolArtifacts,
+} from "../tui/toolDescribe.js"
 import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 import { applyViKey, initialVi, type ViState } from "../tui/viMode.js"
@@ -111,6 +116,7 @@ const HELP_LINES = [
   "  Ctrl-C        quit (press twice)",
   "  Ctrl-D        quit (when input is empty)",
   "  Ctrl-L        clear scrollback",
+  "  Ctrl-R        expand/collapse tool output & diffs",
   "  PgUp / PgDn   scroll the conversation",
   "  ↑/↓           navigate input lines or palette",
   "Slash commands:",
@@ -120,8 +126,9 @@ const HELP_LINES = [
   "  /cwd          print workspace path",
   "  /reset        start a new conversation",
   "  /settings     show configuration settings",
-  "  /set <k> <v>  update setting (e.g. /set maxSteps 15)",
+  "  /set <k> <v>  update setting (e.g. /set maxSteps 15, /set editorMode vi)",
   "  /model        list models; /model <#|id> switches provider/model",
+  "  /vi           toggle vi editing (Esc → normal mode, i/a → insert)",
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
@@ -165,7 +172,7 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
@@ -375,9 +382,18 @@ const runTuiModeCore = (
                 }
                 const sid = toolScrollId.get(event.toolName)
                 if (sid !== undefined) {
+                  const artifacts = toolArtifacts(
+                    event.toolName,
+                    event.ok,
+                    event.result,
+                  )
                   s.scrollback.updateTool(sid, {
                     state: event.ok ? "ok" : "error",
                     ...(detail !== undefined ? { arg: detail } : {}),
+                    ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
+                    ...(artifacts.output !== undefined
+                      ? { output: artifacts.output }
+                      : {}),
                   })
                   toolScrollId.delete(event.toolName)
                 }
@@ -495,7 +511,7 @@ const runTuiModeCore = (
         return result
       })
 
-    type R_Base = FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry
+    type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry
     const baseHooks = makeEventHooks(eventQueue)
 
     const submit = (
@@ -637,6 +653,7 @@ const runTuiModeCore = (
               s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
               s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
               s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
+              s.scrollback.push({ kind: "info", text: `editorMode: ${current.editorMode}` })
               s.scrollback.push({ kind: "info", text: `model: ${current.model}` })
               return s
             })
@@ -719,6 +736,46 @@ const runTuiModeCore = (
 
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({ kind: "info", text: `Updated setting '${k}' to: ${typedVal}` })
+              // editorMode change takes effect immediately: reset the modal
+              // state + surface the mode indicator so it's visibly engaged.
+              if (key === "editorMode") {
+                s.vi = initialVi
+                if (typedVal === "vi") {
+                  s.status = { ...s.status, mode: "INS" }
+                  s.scrollback.push({
+                    kind: "info",
+                    text: "vi mode ON — starts in INSERT; Esc → normal, i/a → insert, hjkl move, x/dd/dw edit",
+                  })
+                } else {
+                  const ns = { ...s.status }
+                  delete (ns as { mode?: unknown }).mode
+                  s.status = ns
+                }
+              }
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          case "/vi": {
+            const settingsStore = yield* SettingsStore
+            const current = yield* settingsStore.get()
+            const next = current.editorMode === "vi" ? "insert" : "vi"
+            yield* settingsStore.update((c) => ({ ...c, editorMode: next }))
+            yield* Ref.update(stateRef, (s) => {
+              s.vi = initialVi
+              if (next === "vi") {
+                s.status = { ...s.status, mode: "INS" }
+                s.scrollback.push({
+                  kind: "info",
+                  text: "vi mode ON — starts in INSERT; Esc → normal, i/a → insert, hjkl move, x/dd/dw edit, Enter submits",
+                })
+              } else {
+                const ns = { ...s.status }
+                delete (ns as { mode?: unknown }).mode
+                s.status = ns
+                s.scrollback.push({ kind: "info", text: "vi mode OFF (default insert editing)" })
+              }
               return s
             })
             yield* requestRender
@@ -856,7 +913,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -906,6 +963,20 @@ const runTuiModeCore = (
           yield* Fiber.interruptFork(s.runningFiber)
           yield* Ref.update(stateRef, (st) => {
             st.scrollback.push({ kind: "info", text: "⨯ interrupted" })
+            return st
+          })
+          yield* requestRender
+          return "stay" as const
+        }
+
+        // Ctrl-R: expand/collapse full tool output + diffs in the scrollback.
+        if (key.type === "ctrl" && key.char === "r") {
+          yield* Ref.update(stateRef, (st) => {
+            const on = st.scrollback.toggleExpanded()
+            st.scrollback.push({
+              kind: "info",
+              text: on ? "tool output expanded (Ctrl-R to collapse)" : "tool output collapsed",
+            })
             return st
           })
           yield* requestRender
@@ -1047,7 +1118,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry>()
+    const runtime = yield* Effect.runtime<FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry>()
 
     const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
@@ -1098,7 +1169,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
 > =>
   runTuiModeCore(input).pipe(
     Effect.provide(fileLoggerLayer(logFilePath())),
