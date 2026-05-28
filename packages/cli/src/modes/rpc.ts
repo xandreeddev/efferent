@@ -4,6 +4,7 @@ import {
   ConversationId,
   ConversationStore,
   FileSystem,
+  Http,
   SettingsStore,
   Shell,
   coderAgentConfig,
@@ -75,7 +76,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -174,7 +175,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -204,7 +205,7 @@ export const runRpcMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes

@@ -52,6 +52,8 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       return `ls ${str(a.path) ? base(str(a.path)!) : "."}`
     case "read_skill":
       return `skill ${str(a.name) ?? "?"}`
+    case "web_fetch":
+      return `fetch ${truncate(str(a.url) ?? "", 60)}`
     default:
       return toolName
   }
@@ -130,5 +132,44 @@ export const describeToolResult = (
     }
     default:
       return undefined
+  }
+}
+
+/**
+ * Rich artifacts to render below a tool pill: a unified `diff` (edit_file)
+ * or full textual `output` (bash/grep/read_file). Empty when nothing to show.
+ */
+export const toolArtifacts = (
+  toolName: string,
+  ok: boolean,
+  result: unknown,
+): { diff?: string; output?: string } => {
+  if (!ok) return {}
+  const r = (typeof result === "object" && result !== null ? result : {}) as Record<
+    string,
+    unknown
+  >
+  switch (toolName) {
+    case "edit_file": {
+      const diff = str(r.diff)
+      return diff !== undefined && diff.length > 0 ? { diff } : {}
+    }
+    case "bash": {
+      const stdout = str(r.stdout) ?? ""
+      const stderr = str(r.stderr) ?? ""
+      const out =
+        stderr.trim().length > 0 ? `${stdout}\n[stderr]\n${stderr}` : stdout
+      return out.trim().length > 0 ? { output: out } : {}
+    }
+    case "grep": {
+      const o = str(r.output)
+      return o !== undefined && o.trim().length > 0 ? { output: o } : {}
+    }
+    case "read_file": {
+      const c = str(r.content)
+      return c !== undefined && c.length > 0 ? { output: c } : {}
+    }
+    default:
+      return {}
   }
 }

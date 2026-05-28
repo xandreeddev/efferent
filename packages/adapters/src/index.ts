@@ -1,6 +1,7 @@
 export * from "./database/migrator.js"
 export * from "./conversationStore/postgres.js"
 export * from "./fileSystem/local.js"
+export * from "./http/fetch.js"
 export * from "./llm/clients.js"
 export * from "./llm/modelRegistry.js"
 export * from "./llm/router.js"

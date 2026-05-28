@@ -11,6 +11,7 @@ import {
 } from "@agent/core"
 import {
   DatabaseLive,
+  HttpLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
@@ -32,6 +33,7 @@ const AppLive = Layer.mergeAll(
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
+  HttpLive,
 ).pipe(
   Layer.provideMerge(
     LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),

@@ -3,6 +3,7 @@ import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
+import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
 
 /**
@@ -59,26 +60,35 @@ const applyEditsToContent = (
   return { result: current }
 }
 
-const unifiedDiff = (before: string, after: string, path: string): string => {
+/**
+ * Minimal unified diff: trim the common prefix + suffix, then report only
+ * the changed span between them as removed/added lines. Far better than
+ * dumping the whole file when one line changes (and keeps the model's view
+ * tight too). Multi-region edits over-report the gap between the first and
+ * last change — acceptable; a full LCS is a later refinement.
+ */
+export const unifiedDiff = (before: string, after: string, path: string): string => {
   const a = before.split("\n")
   const b = after.split("\n")
-  const lines: string[] = [`--- ${path}`, `+++ ${path}`]
-  let i = 0
-  let j = 0
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) {
-      i++
-      j++
-      continue
-    }
-    const aStart = i
-    const bStart = j
-    while (i < a.length && (j >= b.length || a[i] !== b[j])) i++
-    while (j < b.length && (i >= a.length || a[i] !== b[j])) j++
-    lines.push(`@@ -${aStart + 1},${i - aStart} +${bStart + 1},${j - bStart} @@`)
-    for (let k = aStart; k < i; k++) lines.push(`-${a[k]}`)
-    for (let k = bStart; k < j; k++) lines.push(`+${b[k]}`)
+  let start = 0
+  const maxStart = Math.min(a.length, b.length)
+  while (start < maxStart && a[start] === b[start]) start++
+  let endA = a.length - 1
+  let endB = b.length - 1
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
+    endA--
+    endB--
   }
+  const removed = a.slice(start, endA + 1)
+  const added = b.slice(start, endB + 1)
+  if (removed.length === 0 && added.length === 0) return ""
+  const lines: string[] = [
+    `--- ${path}`,
+    `+++ ${path}`,
+    `@@ -${start + 1},${removed.length} +${start + 1},${added.length} @@`,
+  ]
+  for (const l of removed) lines.push(`-${l}`)
+  for (const l of added) lines.push(`+${l}`)
   return lines.join("\n")
 }
 
@@ -100,6 +110,22 @@ const formatReadOutput = (
 
 const truncateOutput = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}\n... (truncated, ${s.length - max} more bytes)`
+
+/** Reduce HTML to readable text — drop script/style/tags, decode common entities. */
+const htmlToText = (html: string): string =>
+  html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim()
 
 // ---- shared failure shape ----
 
@@ -321,6 +347,29 @@ export const ReadSkill = Tool.make("read_skill", {
   failureMode: "return",
 })
 
+export const WebFetch = Tool.make("web_fetch", {
+  description:
+    "Fetch a URL over HTTP(S) and return its content as readable text (HTML is reduced to text). Use for documentation, references, or pages the user links.",
+  parameters: {
+    url: Schema.String.annotations({
+      description: "Absolute http(s) URL to fetch.",
+    }),
+    maxBytes: Schema.optional(
+      Schema.Number.annotations({
+        description: "Max bytes of body to read. Defaults to 50000.",
+      }),
+    ),
+  },
+  success: Schema.Struct({
+    url: Schema.String,
+    status: Schema.Number,
+    contentType: Schema.String,
+    content: Schema.String,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const codingToolkit = Toolkit.make(
   ReadFile,
   WriteFile,
@@ -330,6 +379,7 @@ export const codingToolkit = Toolkit.make(
   Glob,
   Ls,
   ReadSkill,
+  WebFetch,
 )
 
 /**
@@ -346,6 +396,7 @@ export const codingToolkitLayer = (
     Effect.gen(function* () {
       const fs = yield* FileSystem
       const shell = yield* Shell
+      const http = yield* Http
       const allowBash = options.allowBash ?? true
       const skillByName = new Map(skills.map((s) => [s.name, s] as const))
 
@@ -472,6 +523,27 @@ export const codingToolkitLayer = (
               })),
               truncated: entries.length > 500,
               total: entries.length,
+            }
+          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+        web_fetch: ({ url, maxBytes }) =>
+          Effect.gen(function* () {
+            if (!/^https?:\/\//i.test(url)) {
+              return yield* Effect.fail({
+                error: "InvalidUrl",
+                message: "url must be an absolute http:// or https:// URL",
+              })
+            }
+            const cap = maxBytes ?? 50_000
+            const res = yield* http.get(url, { maxBytes: cap })
+            const text = res.contentType.includes("html")
+              ? htmlToText(res.body)
+              : res.body
+            return {
+              url,
+              status: res.status,
+              contentType: res.contentType,
+              content: truncateOutput(text, cap),
             }
           }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
