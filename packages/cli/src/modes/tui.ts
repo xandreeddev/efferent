@@ -7,12 +7,15 @@ import {
   ConversationStore,
   FileSystem,
   LlmInfo,
+  ModelRegistry,
   SettingsStore,
   Shell,
   coderAgentConfig,
   codingToolkitLayer,
+  parseModel,
   runAgent,
   type InstructionFile,
+  type ModelInfo,
   type ScopedAgentConfig,
   type Skill,
 } from "@agent/core"
@@ -81,6 +84,12 @@ interface MutableAppState {
   currentTurn: number
   /** ms timestamp of the last Ctrl-C, for 2×-to-quit. */
   ctrlCArmedAt?: number
+  /** Last `/model` listing, so `/model <#>` can resolve a numbered choice. */
+  modelList?: ReadonlyArray<ModelInfo>
+  /** The active model's provider, to warn on a mid-conversation switch. */
+  activeProvider: "google" | "openai"
+  /** Whether the current conversation already has at least one turn. */
+  conversationHasTurns: boolean
 }
 
 /** Build the status-bar note: spinner + elapsed + turn + queued, or none. */
@@ -112,6 +121,7 @@ const HELP_LINES = [
   "  /reset        start a new conversation",
   "  /settings     show configuration settings",
   "  /set <k> <v>  update setting (e.g. /set maxSteps 15)",
+  "  /model        list models; /model <#|id> switches provider/model",
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
@@ -155,11 +165,13 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
     const meta = yield* info.metadata
+    const registry = yield* ModelRegistry
+    const initialSel = yield* registry.current
 
     const initialCid =
       input.resumeConversationId !== undefined
@@ -188,6 +200,8 @@ const runTuiModeCore = (
       turnStartedAt: 0,
       spinnerFrame: 0,
       currentTurn: 0,
+      activeProvider: initialSel.provider,
+      conversationHasTurns: false,
     })
 
     const renderer = new FrameRenderer()
@@ -481,7 +495,7 @@ const runTuiModeCore = (
         return result
       })
 
-    type R_Base = FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore
+    type R_Base = FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry
     const baseHooks = makeEventHooks(eventQueue)
 
     const submit = (
@@ -509,6 +523,7 @@ const runTuiModeCore = (
           s.turnStartedAt = Date.now()
           s.spinnerFrame = 0
           s.currentTurn = 0
+          s.conversationHasTurns = true
           return s
         })
         startSpinner()
@@ -606,6 +621,7 @@ const runTuiModeCore = (
             yield* Ref.update(stateRef, (s) => {
               s.conversationId = newConversationId()
               s.sidePane = { ...s.sidePane, tree: emptyTree }
+              s.conversationHasTurns = false
               s.scrollback.push({
                 kind: "info",
                 text: `new conversation: ${s.conversationId.slice(0, 8)}`,
@@ -621,6 +637,7 @@ const runTuiModeCore = (
               s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
               s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
               s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
+              s.scrollback.push({ kind: "info", text: `model: ${current.model}` })
               return s
             })
             yield* requestRender
@@ -707,6 +724,120 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
           }
+          case "/model": {
+            const registry = yield* ModelRegistry
+            const arg = parts.slice(1).join(" ").trim()
+
+            // No arg → fetch the live list and cache it for numbered picks.
+            if (arg.length === 0) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({ kind: "info", text: "fetching models…" })
+                return s
+              })
+              yield* requestRender
+              const models = yield* registry.list.pipe(
+                Effect.catchAll((e) =>
+                  Ref.update(stateRef, (s) => {
+                    s.scrollback.push({
+                      kind: "error",
+                      text: `failed to list ${e.provider} models: ${e.message}`,
+                    })
+                    return s
+                  }).pipe(Effect.as([] as ReadonlyArray<ModelInfo>)),
+                ),
+              )
+              const cur = yield* registry.current
+              yield* Ref.update(stateRef, (s) => {
+                s.modelList = models
+                if (models.length === 0) {
+                  s.scrollback.push({
+                    kind: "info",
+                    text: "no models available — set GOOGLE_GENERATIVE_AI_API_KEY and/or OPENAI_API_KEY",
+                  })
+                } else {
+                  s.scrollback.push({
+                    kind: "info",
+                    text: "--- Models (/model <#> to switch) ---",
+                  })
+                  models.forEach((m, i) => {
+                    const active =
+                      m.provider === cur.provider && m.modelId === cur.modelId
+                        ? " ◀ active"
+                        : ""
+                    s.scrollback.push({
+                      kind: "info",
+                      text: `${String(i + 1).padStart(2)}. ${m.provider}:${m.modelId}${active}`,
+                    })
+                  })
+                }
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            // Resolve a choice: a number indexes the last listing; otherwise
+            // treat it as a (possibly provider-prefixed) id.
+            const list = (yield* Ref.get(stateRef)).modelList ?? []
+            let chosen: ModelInfo | undefined
+            const asNum = Number(arg)
+            if (Number.isInteger(asNum) && asNum >= 1 && asNum <= list.length) {
+              chosen = list[asNum - 1]
+            } else {
+              const { provider, modelId } = parseModel(arg)
+              chosen =
+                list.find((m) => m.provider === provider && m.modelId === modelId) ??
+                list.find((m) => m.modelId === modelId)
+              if (chosen === undefined && arg.includes(":")) {
+                chosen = { provider, modelId, displayName: modelId, contextWindow: 0 }
+              }
+            }
+
+            if (chosen === undefined) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "error",
+                  text: `unknown model '${arg}'. Run /model to list, then /model <#>.`,
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            const prev = yield* registry.current
+            const sel = yield* registry.select({
+              provider: chosen.provider,
+              modelId: chosen.modelId,
+              ...(chosen.contextWindow > 0
+                ? { contextWindow: chosen.contextWindow }
+                : {}),
+            })
+            const st = yield* Ref.get(stateRef)
+            const crossProvider =
+              prev.provider !== sel.provider && st.conversationHasTurns
+            yield* Ref.update(stateRef, (s) => {
+              s.status = {
+                ...s.status,
+                modelId: sel.modelId,
+                contextWindow: sel.contextWindow,
+              }
+              s.activeProvider = sel.provider
+              s.scrollback.push({
+                kind: "info",
+                text: `switched to ${sel.provider}:${sel.modelId}`,
+              })
+              if (crossProvider) {
+                s.scrollback.push({
+                  kind: "info",
+                  text: "note: switched provider mid-conversation; if the next turn errors, /reset (Gemini needs its own tool-call history).",
+                })
+              }
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
           default: {
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({
@@ -725,7 +856,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -916,7 +1047,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore>()
+    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry>()
 
     const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
@@ -967,7 +1098,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
 > =>
   runTuiModeCore(input).pipe(
     Effect.provide(fileLoggerLayer(logFilePath())),

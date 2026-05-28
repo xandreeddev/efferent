@@ -12,6 +12,7 @@
     "@agent/core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/ai-google": "^0.14.0",
+    "@effect/ai-openai": "^0.39.2",
     "@effect/experimental": "^0.60.0",
     "@effect/platform": "^0.96.1",
     "@effect/sql": "^0.51.1",

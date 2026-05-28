@@ -7,7 +7,7 @@ Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent t
 ```
 packages/
 ├── core/         pure domain: entities, ports, use cases, prompts — depends on `effect` + `@effect/ai`
-├── adapters/     Layer impls of ports — depends on @agent/core + external SDKs (@effect/ai-google, Postgres)
+├── adapters/     Layer impls of ports — depends on @agent/core + external SDKs (@effect/ai-google, @effect/ai-openai, Postgres)
 └── cli/          coding-agent driver: TUI + print + json + rpc modes
 ```
 
@@ -17,7 +17,7 @@ packages/
 
 - **Ports** are `Context.Tag` services in `@agent/core/ports/`. Each ships its tagged errors next to it.
 - **Adapters** provide one `Layer.effect` per port. External promises go through `Effect.tryPromise`, mapped into the port's tagged error. Config via `Config.string` — never hardcode.
-- **Use cases** live in `@agent/core/usecases/` returning `Effect.Effect<A, E, …>`. No IO; the only SDK allowed in `core` is `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`). Provider packages (`@effect/ai-google`) live in `adapters`.
+- **Use cases** live in `@agent/core/usecases/` returning `Effect.Effect<A, E, …>`. No IO; the only SDK allowed in `core` is `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`). Provider packages (`@effect/ai-google`, `@effect/ai-openai`) live in `adapters`.
 - **Agent configs** (`@agent/core/usecases/{agentConfig,coderAgentConfig}.ts`) bundle a system prompt + an `@effect/ai` `Toolkit` into an `AgentConfig<Tools>`. `runAgent` is parameterized by config; the CLI picks `coderAgentConfig(cwd)`. The toolkit's handler `Layer` (`codingToolkitLayer(cwd, skills, { allowBash })`) is provided at the driver's composition root — it carries the runtime deps (`cwd`, `FileSystem`, `Shell`).
 - **Schema** lives in `effect` itself: `import { Schema } from "effect"`.
 - Bun runs `.ts` directly. No build step, no emit. `tsc --noEmit` is purely a typecheck gate.
@@ -44,9 +44,9 @@ agent --cwd <path>                                   # override workspace (defau
 ```
 
 Required env (`.env`):
-- `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call.
+- `GOOGLE_GENERATIVE_AI_API_KEY` and/or `OPENAI_API_KEY` — at least one for any LLM call. The set keys gate which providers `/model` offers. Either key is optional at startup (a missing key only fails if you actually select that provider).
 - `AGENT_DB_URL` — Postgres URL for conversation history. Local default: `postgres://agent:agent@localhost:5434/agent`.
-- Optional `AGENT_MODEL` — the Gemini model for the agent loop. Defaults to `gemini-3.5-flash`. Provider is `@effect/ai-google`, which surfaces Gemini `thought_signature` on response/prompt part metadata so multi-step tool calls round-trip (see `promptMapping.ts`).
+- Optional `AGENT_MODEL` — seeds the active model when no `.agent/config.json` pins one. Accepts `"<provider>:<modelId>"` (e.g. `openai:gpt-4o`) or a bare id (provider inferred; defaults to Google). Default `google:gemini-3.5-flash`. An explicit `/model` switch is persisted to `.agent/config.json` and wins over `AGENT_MODEL`.
 
 ## Coding tools (CLI)
 
@@ -97,16 +97,30 @@ runAgent(coderAgentConfig(cwd), conversationId, prompt, hooks)
 
 Composition root: `packages/cli/src/main.ts`. Four modes under `packages/cli/src/modes/`:
 
-- **`tui.ts`** — default in a TTY. Hand-rolled three-region layout: status bar (model, live token gauge, cwd), scrollback (user / assistant / tool pills / info / error blocks), and a multi-line input editor with slash-command palette (`/exit`, `/clear`, `/help`, `/cwd`, `/reset`). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
+- **`tui.ts`** — default in a TTY. Hand-rolled three-region layout: status bar (model, live token gauge, cwd), scrollback (user / assistant / tool pills / info / error blocks), and a multi-line input editor with slash-command palette (`/exit`, `/clear`, `/help`, `/cwd`, `/reset`, `/settings`, `/set`, `/model`). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
 - **`print.ts`** — one-shot. Prompt from argv or stdin (`-`). Final text on stdout, tool log on stderr. Exits when done.
 - **`json.ts`** — same control flow as print, but every `AgentEvent` is JSONL on stdout.
 - **`rpc.ts`** — bidirectional JSON-RPC on stdin/stdout. Method: `agent.send({ prompt, conversationId? })` → emits `agent.event` notifications, resolves with `{ conversationId, finalText }`.
 
 Modes share one `AgentEvent` union (`packages/cli/src/events.ts`); the loop's hooks push events onto a queue; each mode renders differently.
 
+## Models & providers (multi-provider router)
+
+The agent loop talks to one provider-agnostic `LanguageModel`; which provider/model backs it is a **runtime selection**, not a compile-time layer choice.
+
+- **Router** (`adapters/src/llm/router.ts`, `RouterLanguageModelLive`): a `LanguageModel` whose `generateText`/`streamText`/`generateObject` read `ModelRegistry.current` on every call and delegate to the chosen provider's `@effect/ai` service, built on the fly from the captured `GoogleClient`/`OpenAiClient`. Switching model/provider needs no rebuild — the next turn reads the new selection.
+- **Selection** lives in `SettingsStore` as `settings.model = "<provider>:<modelId>"` (the single source of truth, persisted to `.agent/config.json`). `parseModel`/`formatModel`/`contextWindowFor` are pure helpers in `@agent/core/entities/Model.ts`.
+- **`ModelRegistry`** port (`@agent/core/ports/ModelRegistry.ts`): `current` (parsed selection), `list` (live catalogue), `select` (persist + return). `ModelRegistryLive` (`adapters/src/llm/modelRegistry.ts`) fetches the catalogue over **raw HTTP** (Google `…/v1beta/models`, OpenAI `…/v1/models`) and parses defensively — the `@effect/ai-*` generated list schemas are stricter than the live APIs (Google omits `baseModelId`) and fail to decode through the SDK clients. Filters drop embeddings/image/tts/audio; only providers whose key is set are queried.
+- **Clients** (`adapters/src/llm/clients.ts`): both `GoogleClient` + `OpenAiClient` built with **key-optional** config (`Config.option` → `undefined`), so a missing `OPENAI_API_KEY` never blocks a Google-only user; an absent key only 401s if that provider is actually used.
+- **`ModelLive`** bundles router + `ModelRegistry` + dynamic `LlmInfo`; requires only `SettingsStore`. Replaces the old single-provider `GoogleLive`.
+
+**`/model`** (TUI): no arg lists the live catalogue numbered + caches it; `/model <#|id>` switches, persists, updates the status bar. Switching provider mid-conversation applies going forward and surfaces a one-line hint (Gemini 400s on prior non-Gemini tool-calls that lack a `thought_signature` — `/reset` if it errors).
+
+**Caching** is aggressive but provider-native: OpenAI gets automatic prompt-prefix caching + a stable `prompt_cache_key`; Gemini relies on implicit context caching (stable prefix → `cachedContentTokenCount`). Explicit Gemini `cachedContent` is not expressible through `@effect/ai-google` today (it always sends full `contents`), so we don't fake it.
+
 ## Token & model display
 
-`LlmInfo.metadata` (provided by `GoogleLive`) exposes `{ modelId, contextWindow }`; the TUI status bar reads it at startup. After each turn, `onAssistantMessage` carries a `TokenUsage` (input / output / total / cacheRead) for the gauge; `cacheReadTokens` comes from Gemini's `usageMetadata.cachedContentTokenCount`. Cache-read tokens shown dim: `18k (12k cached) / 1M`.
+`LlmInfo.metadata` (provided by `ModelLive`, following the live `ModelRegistry.current`) exposes `{ modelId, contextWindow }`; the TUI status bar reads it at startup and `/model` updates it on switch. After each turn, `onAssistantMessage` carries a `TokenUsage` (input / output / total / cacheRead) for the gauge; `cacheReadTokens` comes from Gemini's `usageMetadata.cachedContentTokenCount`. Cache-read tokens shown dim: `18k (12k cached) / 1M`.
 
 ## Skills
 
@@ -128,12 +142,13 @@ Loader: `loadSkills(cwd, homeDir)` in `@agent/core/usecases/loadSkills.ts`. Fail
 ## Deferred (do not build until they hurt)
 
 Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
-- **Gemini context caching** — was the `LlmCache` port. Reimplement via `@effect/ai-google`'s `GoogleLanguageModel.Config` `cachedContent` field + the client's `CachedContent` create API. Cost optimisation, not correctness.
+- **Explicit Gemini context caching** — implicit caching is live (see Models & providers). Explicit `cachedContent` resources would need `@effect/ai-google` to let us send a trimmed `contents` + suppress system/tools; it can't today, so deferred. Cost optimisation, not correctness.
 - **Scoped sub-agent delegation** — was `scopedAgentTools`/`runScopedAgent` (depended on the old `Llm` port). Re-add as `@effect/ai` tools whose handlers run a nested loop.
 - **Interactive TUI bash confirm** — bash is now gated by the `allowBash` flag in the handler; the per-command y/n modal needs re-wiring through the handler (e.g. an approval service).
 - **Live token streaming** — the loop uses `generateText` per turn; switch to `streamText` and map stream parts to events for token-level TUI updates.
+- **Per-conversation OpenAI `prompt_cache_key`** — currently a stable static key; threading the conversation id would tighten cache routing.
 
-- **Settings UI / config files / `/model` slash command** — knobs hardcoded in `main.ts` composition.
+- **Settings UI / config files** — a few knobs still hardcoded in `main.ts` composition (`/model` + `/set` cover model + the core settings).
 - **Compaction** — `onTransformContext` summarisation of old turns when context grows (hook is wired).
 - **Streaming tool output** — bash stdout chunks back to the model live.
 - **Branch / fork / session tree**; **extension system**; **parallel tool execution**.
