@@ -7,7 +7,7 @@ import { Llm, type LlmCacheHint } from "../ports/Llm.js"
 import { LlmCache } from "../ports/LlmCache.js"
 
 import { runAgentLoop } from "./agentLoop.js"
-import type { AgentConfig } from "./notesAgentConfig.js"
+import type { AgentConfig } from "./agentConfig.js"
 
 /**
  * In-process per-(conversation, config) cache hints. Each `runAgent` call:

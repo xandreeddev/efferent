@@ -11,6 +11,8 @@
   "dependencies": {
     "@agent/core": "workspace:*",
     "@ai-sdk/google": "^3.0.79",
+    "@effect/ai": "^0.35.0",
+    "@effect/ai-google": "^0.14.0",
     "@effect/experimental": "^0.60.0",
     "@effect/platform": "^0.96.1",
     "@effect/sql": "^0.51.1",

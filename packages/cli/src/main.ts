@@ -11,7 +11,6 @@ import {
 } from "@agent/core"
 import {
   DatabaseLive,
-  GeminiFastLive,
   GeminiLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
@@ -31,7 +30,6 @@ import { runTuiMode } from "./modes/tui.js"
 const AppLive = Layer.mergeAll(
   PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
   GeminiLive,
-  GeminiFastLive,
   LocalFileSystemLive,
   LocalShellLive,
 ).pipe(
