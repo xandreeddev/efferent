@@ -124,6 +124,10 @@ export const setupRawMode = (): (() => void) => {
     if (typeof stdin.setRawMode === "function") {
       stdin.setRawMode(wasRaw)
     }
+    // `resume()` above ref'd stdin into the event loop; without pausing,
+    // the process stays alive after the TUI exits (needing a second
+    // Ctrl-C). Pause to release the ref so the runtime can exit cleanly.
+    stdin.pause()
   }
   return restore
 }
