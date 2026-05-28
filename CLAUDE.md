@@ -6,20 +6,19 @@ Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent t
 
 ```
 packages/
-├── core/         pure domain: entities, ports, use cases, prompts — depends only on `effect`
-├── adapters/     Layer impls of ports — depends on @agent/core + external SDKs
-├── cli/          coding-agent driver: TUI + print + json + rpc modes
-└── web/          htmx + SSE driver (notes flow, not the coding agent)
+├── core/         pure domain: entities, ports, use cases, prompts — depends on `effect` + `@effect/ai`
+├── adapters/     Layer impls of ports — depends on @agent/core + external SDKs (@effect/ai-google, Postgres)
+└── cli/          coding-agent driver: TUI + print + json + rpc modes
 ```
 
-**Dependency direction is strictly inward.** `cli` / `web` → `adapters` → `core`. `core` imports nothing from siblings. `adapters` imports `@agent/core` + the external SDK it wraps. Drivers compose the layers at the very edge and hand off to `BunRuntime.runMain`.
+**Dependency direction is strictly inward.** `cli` → `adapters` → `core`. `core` imports nothing from siblings. `adapters` imports `@agent/core` + the external SDK it wraps. Drivers compose the layers at the very edge and hand off to `BunRuntime.runMain`.
 
 ## Conventions
 
 - **Ports** are `Context.Tag` services in `@agent/core/ports/`. Each ships its tagged errors next to it.
 - **Adapters** provide one `Layer.effect` per port. External promises go through `Effect.tryPromise`, mapped into the port's tagged error. Config via `Config.string` — never hardcode.
-- **Use cases** live in `@agent/core/usecases/` returning `Effect.Effect<A, E, Port1 | Port2>`. No IO, no SDK imports — only `@agent/core` and `effect`.
-- **Agent configs** (`@agent/core/usecases/{notesAgentConfig,coderAgentConfig}.ts`) bundle a system prompt + tool set into an `AgentConfig<R>`. `runAgent` is parameterized by config — the CLI picks `coderAgentConfig(cwd)`, the web picks `notesAgentConfig`.
+- **Use cases** live in `@agent/core/usecases/` returning `Effect.Effect<A, E, …>`. No IO; the only SDK allowed in `core` is `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`). Provider packages (`@effect/ai-google`) live in `adapters`.
+- **Agent configs** (`@agent/core/usecases/{agentConfig,coderAgentConfig}.ts`) bundle a system prompt + an `@effect/ai` `Toolkit` into an `AgentConfig<Tools>`. `runAgent` is parameterized by config; the CLI picks `coderAgentConfig(cwd)`. The toolkit's handler `Layer` (`codingToolkitLayer(cwd, skills, { allowBash })`) is provided at the driver's composition root — it carries the runtime deps (`cwd`, `FileSystem`, `Shell`).
 - **Schema** lives in `effect` itself: `import { Schema } from "effect"`.
 - Bun runs `.ts` directly. No build step, no emit. `tsc --noEmit` is purely a typecheck gate.
 - File naming: camelCase for files that export functions; PascalCase for files that export types / `Context.Tag` classes.
@@ -40,21 +39,18 @@ agent -p / --print                                   # explicit print mode (stdi
 agent --mode json "<prompt>"                         # stream events as JSONL on stdout
 agent --mode rpc                                     # bidirectional JSON-RPC on stdin/stdout
 agent --resume <conversationId>                      # resume an existing session
-agent --allow-bash                                   # skip bash confirms (non-interactive)
+agent --allow-bash                                   # allow bash in non-interactive modes
 agent --cwd <path>                                   # override workspace (defaults to process.cwd())
-
-bun --hot packages/web/src/main.ts                   # web UI on :3000 (notes flow)
 ```
 
 Required env (`.env`):
 - `GOOGLE_GENERATIVE_AI_API_KEY` — for any LLM call.
 - `AGENT_DB_URL` — Postgres URL for conversation history. Local default: `postgres://agent:agent@localhost:5434/agent`.
-- Optional `AGENT_MODEL` — smart tier (agent loop). Defaults to `gemini-3.5-flash`. Provider is `@ai-sdk/google@3.x` (round-trips Gemini `thought_signature`, so multi-step tool calls work on 3.x).
-- Optional `AGENT_FAST_MODEL` — fast tier for non-loop calls (web's `renderUi` second pass + capture extraction; eventually compaction / session titles). Defaults to `gemini-3.5-flash-lite`.
+- Optional `AGENT_MODEL` — the Gemini model for the agent loop. Defaults to `gemini-3.5-flash`. Provider is `@effect/ai-google`, which surfaces Gemini `thought_signature` on response/prompt part metadata so multi-step tool calls round-trip (see `promptMapping.ts`).
 
 ## Coding tools (CLI)
 
-Seven `AgentTool` records in `@agent/core/usecases/codingTools.ts`, backed by the `FileSystem` and `Shell` ports:
+An `@effect/ai` `Toolkit` in `@agent/core/usecases/codingToolkit.ts`, backed by the `FileSystem` and `Shell` ports. Each tool is a `Tool.make` def with an **object** `success` Struct + a shared `failure` Struct and `failureMode: "return"` (so a tool failure is returned to the model as data, not thrown). Handlers live in `codingToolkitLayer(cwd, skills, { allowBash })`, which resolves `FileSystem`/`Shell` from context at layer-build time. (Gemini rules learned the hard way: every tool needs ≥1 parameter, and `success` must be an object — see the spike notes in the plan.)
 
 | tool         | parameters                                       | implementation                              |
 |--------------|--------------------------------------------------|---------------------------------------------|
@@ -66,35 +62,36 @@ Seven `AgentTool` records in `@agent/core/usecases/codingTools.ts`, backed by th
 | `glob`       | `{ pattern; dir? }`                              | `FileSystem.glob` via `Bun.Glob`             |
 | `ls`         | `{ path?; recursive? }`                          | `FileSystem.list`                            |
 
-All paths resolved relative to the cwd baked into `buildCodingTools(cwd)`.
+All paths resolved relative to the `cwd` bound in `codingToolkitLayer(cwd)`.
 
 ## Agent loop
 
-One use case — **`runAgent(config, conversationId, prompt, hooks?)`** in `@agent/core/usecases/runAgent.ts` — drives the whole interaction. The mode-agnostic loop is in `@agent/core/usecases/agentLoop.ts`: an immutable `LoopState` threaded through composed `LoopState => Effect<LoopState>` step functions (transformContext → turnStart → takeTurn → assistantMessage → decideContinuation → consultShouldStop → advanceTurn), driven by `Effect.iterate` until `stopRequested` or `maxSteps`. Each `takeTurn` calls `Llm.runTurn` which wraps `generateText({ stopWhen: stepCountIs(1) })` — the SDK does one step, the loop owns the rest.
+One use case — **`runAgent(config, conversationId, prompt, hooks?)`** in `@agent/core/usecases/runAgent.ts` — drives the whole interaction. The loop lives in `@agent/core/usecases/agentLoop.ts`. **`@effect/ai` resolves a single model step's tool calls (its handlers are our Effects) but does NOT iterate across turns — so iteration is ours**: each turn maps the message buffer to a `Prompt`, calls `LanguageModel.generateText({ prompt, toolkit })`, appends the response parts as the new tail, and re-invokes until `finishReason !== "tool-calls"` or `maxSteps`.
 
 ```
 agent <prompt>
   ↓
 runAgent(coderAgentConfig(cwd), conversationId, prompt, hooks)
-  ├── ConversationStore.append(user)
-  ├── ConversationStore.list → message history
-  ├── runAgentLoop({ system, messages, tools, hooks, maxSteps: 5 })
-  │     ├── turn 0..N: applyTransformContext → emitTurnStart
-  │     │              → takeTurn (Llm.runTurn → generateText, stop=stepCountIs(1))
-  │     │                ├── per tool call: onBeforeToolCall (allow/block) → execute (graceful AgentToolError) → onAfterToolCall
-  │     │                └── append response.messages onto LoopState.messages
-  │     │              → emitAssistantMessage (carries TokenUsage) → decideContinuation → consultShouldStop → advanceTurn
-  │     └── Effect.iterate until stopRequested or turnIndex >= maxSteps
+  ├── ConversationStore.append(user) ; list → message history
+  ├── runAgentLoop({ system, messages, toolkit, hooks, maxSteps })
+  │     ├── turn 0..N: onTransformContext? → onTurnStart
+  │     │              → Prompt.make([system, ...toPromptMessages(messages)])
+  │     │              → LanguageModel.generateText({ prompt, toolkit })   (resolves this step's tools)
+  │     │              → responseToAgentMessages(res.content) onto buffer  (carries thought_signature in providerOptions)
+  │     │              → re-emit onBeforeToolCall / onAfterToolCall / onAssistantMessage(TokenUsage) from the response
+  │     │              → continue iff finishReason === "tool-calls" && toolCalls > 0 ; onShouldStopAfterTurn?
+  │     └── while turnIndex < maxSteps
   ├── ConversationStore.append(tail)
-  ├── Llm.snapshot → store per-(conversation, config) cache hint
   └── return AgentResult { finalText, messages }
 ```
 
-**Hooks** (`@agent/core/AgentHooks`): seven optional callbacks. The CLI installs hooks per mode via `makeEventHooks(queue, beforeToolHook)` in `packages/cli/src/events.ts`, plus safety hooks (`bashConfirmHook` for TUI, `denyBashHook` for non-interactive without `--allow-bash`) in `packages/cli/src/safetyHooks.ts`.
+**Prompt mapping** (`@agent/core/usecases/promptMapping.ts`): bridges our persisted `AgentMessage` (Vercel-shaped, unchanged) with `@effect/ai`'s `Prompt`/`Response`. The opaque provider blob is carried verbatim both ways (`providerOptions ↔ options`/`metadata`), which is how Gemini's `thought_signature` round-trips across our turns — `Prompt.fromResponseParts` drops it, so we map by hand.
 
-**Graceful tool errors**: the adapter (`vercelAi.ts`) catches `AgentToolError` inside the SDK's `execute` callback and returns a structured `{ ok: false, tool, error, message }` payload instead of throwing. One tool failure (e.g., `FileNotFound`) no longer aborts the whole turn — the model sees the failure as data and recovers.
+**Hooks** (`@agent/core/AgentHooks`): the loop re-emits the legacy event vocabulary (`onTurnStart` / tool events / `onAssistantMessage`) from each resolved response, so the CLI's `makeEventHooks(queue)` (`packages/cli/src/events.ts`) and the TUI execution tree keep working unchanged.
 
-**Bash safety**: TUI mode shows a centered y/n modal before each `bash` call. Print/JSON/RPC modes block `bash` unless `--allow-bash` was passed. The block surfaces as a tool-result, not an exception.
+**Graceful tool errors**: each tool's `failureMode: "return"` + `failure` Struct means a handler failure (e.g. `FileNotFound`, ambiguous edit) is returned to the model as a tool result instead of aborting the turn.
+
+**Bash safety**: gated in the `bash` handler via the `allowBash` flag on `codingToolkitLayer` (denied → returned as a tool failure). Non-interactive modes pass `--allow-bash`; the TUI currently allows bash (interactive per-command confirm is a deferred follow-up).
 
 ## CLI shape
 
@@ -109,11 +106,7 @@ Modes share one `AgentEvent` union (`packages/cli/src/events.ts`); the loop's ho
 
 ## Token & model display
 
-`Llm.metadata` exposes `{ modelId, contextWindow }`; the TUI status bar reads it at startup. After each turn, `onAssistantMessage` carries a `TokenUsage` (input / output / total / cacheRead) that the status bar uses to redraw the gauge. Cache-read tokens shown dim: `18k (12k cached) / 1M`.
-
-## Web flow (notes — unchanged)
-
-`packages/web/src/routes/chat.ts` passes `notesAgentConfig` to `runAgent`. Two LLM calls per turn: the agent step (notes-flavoured prompt + capture tools) and a second-pass `renderUi` that streams HTML matching the `recipe-card` / `capture-card` / `empty-state` class vocabulary. Cookie-bound `conversation_id`. Local-only — no script-sanitisation yet, do not expose publicly.
+`LlmInfo.metadata` (provided by `GoogleLive`) exposes `{ modelId, contextWindow }`; the TUI status bar reads it at startup. After each turn, `onAssistantMessage` carries a `TokenUsage` (input / output / total / cacheRead) for the gauge; `cacheReadTokens` comes from Gemini's `usageMetadata.cachedContentTokenCount`. Cache-read tokens shown dim: `18k (12k cached) / 1M`.
 
 ## Skills
 
@@ -134,18 +127,18 @@ Loader: `loadSkills(cwd, homeDir)` in `@agent/core/usecases/loadSkills.ts`. Fail
 
 ## Deferred (do not build until they hurt)
 
+Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
+- **Gemini context caching** — was the `LlmCache` port. Reimplement via `@effect/ai-google`'s `GoogleLanguageModel.Config` `cachedContent` field + the client's `CachedContent` create API. Cost optimisation, not correctness.
+- **Scoped sub-agent delegation** — was `scopedAgentTools`/`runScopedAgent` (depended on the old `Llm` port). Re-add as `@effect/ai` tools whose handlers run a nested loop.
+- **Interactive TUI bash confirm** — bash is now gated by the `allowBash` flag in the handler; the per-command y/n modal needs re-wiring through the handler (e.g. an approval service).
+- **Live token streaming** — the loop uses `generateText` per turn; switch to `streamText` and map stream parts to events for token-level TUI updates.
+
 - **Settings UI / config files / `/model` slash command** — knobs hardcoded in `main.ts` composition.
-- **Compaction** — Pi-style `transformContext` summarisation of old turns when context grows. The `onTransformContext` hook is already wired.
-- **Token-level assistant streaming** — v1 paints the assistant block once per turn after the model finishes.
+- **Compaction** — `onTransformContext` summarisation of old turns when context grows (hook is wired).
 - **Streaming tool output** — bash stdout chunks back to the model live.
-- **Branch / fork / session tree** (Pi's `--fork`, `/tree`).
-- **Extension system** (Pi's `extensions/`).
-- **Sub-agents** / parallel tool execution.
-- **Image attachments** in the CLI.
-- **Mouse support** in the TUI.
-- **Native (non-shell-out) grep**.
+- **Branch / fork / session tree**; **extension system**; **parallel tool execution**.
+- **Image attachments** in the CLI; **mouse support** in the TUI; **native (non-shell-out) grep**.
 - **Evals / Evalite**, telemetry, structured logging beyond what `Effect.log` already prints.
-- **Settled fate of the capture/notes domain** beyond removing it from the CLI; web still uses it.
 
 ## OPSEC reminder
 
