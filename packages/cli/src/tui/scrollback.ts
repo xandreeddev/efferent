@@ -96,7 +96,7 @@ export class Scrollback {
 
   updateTool(
     id: string,
-    patch: { state?: ToolPillState; detail?: string },
+    patch: { state?: ToolPillState; detail?: string; arg?: string },
   ): void {
     const idx = this.toolIndex.get(id)
     if (idx === undefined) return
@@ -106,6 +106,7 @@ export class Scrollback {
       ...cur,
       ...(patch.state !== undefined ? { state: patch.state } : {}),
       ...(patch.detail !== undefined ? { detail: patch.detail } : {}),
+      ...(patch.arg !== undefined ? { arg: patch.arg } : {}),
     }
   }
 

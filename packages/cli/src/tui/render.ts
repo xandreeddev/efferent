@@ -1,6 +1,8 @@
 import {
   ansi,
+  beginSync,
   clearScreen,
+  endSync,
   getTermSize,
   hideCursor,
   home,
@@ -28,6 +30,8 @@ export interface AppState {
   readonly palette: PaletteState
   readonly modal: ModalState
   readonly sidePane: SidePaneState
+  /** Spinner animation frame, for the side-pane tree's running nodes. */
+  readonly spinnerFrame: number
 }
 
 const PALETTE_MAX_ROWS = 6
@@ -64,10 +68,11 @@ export class FrameRenderer {
 
   draw(state: AppState): void {
     const { rows, cols } = getTermSize()
+    let sizeChangePrefix = ""
     if (rows !== this.prevSize.rows || cols !== this.prevSize.cols) {
       this.prev = []
       this.prevSize = { rows, cols }
-      write(clearScreen + home)
+      sizeChangePrefix = clearScreen + home
     }
 
     const inputResult = renderInput(state.input, cols)
@@ -89,7 +94,12 @@ export class FrameRenderer {
 
     // Middle: scrollback | side pane
     const scrollLines = state.scrollback.render(middleRows, leftWidth)
-    const sideLines = renderSidePane(state.sidePane, middleRows, sidePaneWidth)
+    const sideLines = renderSidePane(
+      state.sidePane,
+      middleRows,
+      sidePaneWidth,
+      state.spinnerFrame,
+    )
     const middleLines: string[] = []
     for (let i = 0; i < middleRows; i++) {
       const left = scrollLines[i] ?? padRight("", leftWidth)
@@ -122,7 +132,7 @@ export class FrameRenderer {
     frame.length = rows
 
     // Diff against previous frame
-    let out = hideCursor
+    let out = sizeChangePrefix + hideCursor
     for (let r = 0; r < rows; r++) {
       if (this.prev[r] !== frame[r]) {
         out += moveTo(r + 1, 1) + ansi.reset + (frame[r] ?? "")
@@ -153,7 +163,7 @@ export class FrameRenderer {
       out += hideCursor
     }
 
-    write(out)
+    write(beginSync + out + endSync)
   }
 
   reset(): void {

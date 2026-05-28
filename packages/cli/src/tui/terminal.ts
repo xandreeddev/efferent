@@ -45,6 +45,29 @@ export const home = `${CSI}H`
 export const hideCursor = `${CSI}?25l`
 export const showCursor = `${CSI}?25h`
 
+/**
+ * DEC private mode 2026 — synchronized output. Wrapping a full frame
+ * write between these tells supporting terminals to buffer the update
+ * and paint it atomically (no half-drawn frames / tearing). Terminals
+ * that don't support it ignore the unknown private mode — harmless.
+ */
+export const beginSync = `${CSI}?2026h`
+export const endSync = `${CSI}?2026l`
+
+/** Braille spinner frames, shared by the status bar and the agent tree. */
+export const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const
+
 export const moveTo = (row: number, col: number): string =>
   `${CSI}${row};${col}H`
 

@@ -370,12 +370,6 @@ export const renderInput = (
     cursorRow = cursorRow - start
   }
 
-  if (state.locked) {
-    lines = [`${ansi.dim}${ansi.fgGray}thinking…${ansi.reset}`]
-    cursorRow = 0
-    return { lines, cursorRow, cursorCol: 0 }
-  }
-
   return {
     lines,
     cursorRow,

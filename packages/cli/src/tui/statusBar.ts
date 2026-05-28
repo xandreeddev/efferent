@@ -9,7 +9,7 @@ export interface StatusState {
   readonly cacheReadTokens: number
   readonly cwd: string
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
-  readonly note?: string
+  readonly note?: string | undefined
   /** Editor mode label, shown leftmost when set. Hidden in plain insert mode. */
   readonly mode?: EditorModeLabel
 }

@@ -28,14 +28,11 @@ import {
   getTermSize,
   setupRawMode,
   showCursor,
+  SPINNER_FRAMES,
 } from "../tui/terminal.js"
 import { KeyParser, type Key } from "../tui/keys.js"
 import { emptyInput, inputText, type InputState, applyKey } from "../tui/input.js"
-import {
-  Scrollback,
-  type ScrollbackBlock,
-  type ToolPillState,
-} from "../tui/scrollback.js"
+import { Scrollback } from "../tui/scrollback.js"
 import type { StatusState } from "../tui/statusBar.js"
 import {
   computePalette,
@@ -45,10 +42,18 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
+import { type SidePaneState } from "../tui/sidePane.js"
 import {
-  type AgentStackFrame,
-  type SidePaneState,
-} from "../tui/sidePane.js"
+  emptyTree,
+  onAgentEnd as treeAgentEnd,
+  onSkillLoad as treeSkillLoad,
+  onSubAgentEnd as treeSubAgentEnd,
+  onSubAgentStart as treeSubAgentStart,
+  onToolEnd as treeToolEnd,
+  onToolStart as treeToolStart,
+  onTurnStart as treeTurnStart,
+} from "../tui/executionTree.js"
+import { describeToolCall, describeToolResult } from "../tui/toolDescribe.js"
 import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 import { applyViKey, initialVi, type ViState } from "../tui/viMode.js"
@@ -63,14 +68,40 @@ interface MutableAppState {
   conversationId: ConversationId
   sidePane: SidePaneState
   vi: ViState
+  /** A turn is in flight. Input stays live; submits queue. */
+  busy: boolean
+  /** The forked agent run, so Esc can interrupt it. */
+  runningFiber?: Fiber.RuntimeFiber<void, never> | undefined
+  /** FIFO of messages submitted while busy; drained on turn completion. */
+  queue: string[]
+  /** ms timestamp the current turn started, for the elapsed counter. */
+  turnStartedAt: number
+  /** Animation frame index for the busy spinner. */
+  spinnerFrame: number
+  /** 1-based index of the turn currently running (for the status note). */
+  currentTurn: number
+  /** ms timestamp of the last Ctrl-C, for 2×-to-quit. */
+  ctrlCArmedAt?: number
+}
+
+/** Build the status-bar note: spinner + elapsed + turn + queued, or none. */
+const computeNote = (s: MutableAppState): string | undefined => {
+  if (!s.busy) return undefined
+  const frame = SPINNER_FRAMES[s.spinnerFrame % SPINNER_FRAMES.length]
+  const elapsed = Math.max(0, Math.round((Date.now() - s.turnStartedAt) / 1000))
+  let note = `${frame} ${elapsed}s`
+  if (s.currentTurn > 0) note += ` · turn ${s.currentTurn}`
+  if (s.queue.length > 0) note += ` · queued:${s.queue.length}`
+  return note
 }
 
 const HELP_LINES = [
   "Keybindings:",
-  "  Enter         submit",
+  "  Enter         submit (queues if a turn is running)",
+  "  Esc           interrupt a running turn (or vi normal mode)",
   "  Ctrl-J        newline within input",
-  "  Ctrl-C        exit",
-  "  Ctrl-D        exit (when input is empty)",
+  "  Ctrl-C        quit (press twice)",
+  "  Ctrl-D        quit (when input is empty)",
   "  Ctrl-L        clear scrollback",
   "  PgUp / PgDn   scroll the conversation",
   "  ↑/↓           navigate input lines or palette",
@@ -85,12 +116,13 @@ const HELP_LINES = [
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
-  status: s.status,
+  status: { ...s.status, note: computeNote(s) },
   scrollback: s.scrollback,
   input: s.input,
   palette: s.palette,
   modal: s.modal,
   sidePane: s.sidePane,
+  spinnerFrame: s.spinnerFrame,
 })
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
@@ -106,43 +138,18 @@ export interface TuiModeInput {
   readonly resumeConversationId?: string
 }
 
-const renderArgsForPill = (args: unknown): string => {
-  if (typeof args !== "object" || args === null) return ""
-  const obj = args as Record<string, unknown>
-  if (typeof obj.path === "string") return obj.path
-  if (typeof obj.command === "string") return obj.command
-  if (typeof obj.pattern === "string") return obj.pattern
-  if (typeof obj.task === "string") return obj.task
-  try {
-    return JSON.stringify(obj).slice(0, 80)
-  } catch {
-    return ""
-  }
-}
-
 const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
 
 const seedSidePane = (
   instructions: ReadonlyArray<InstructionFile>,
 ): SidePaneState => ({
-  stack: [{ name: "coder", status: "idle" }],
+  tree: emptyTree,
   skillsLoaded: [],
   instructions: instructions.map((f) => ({
     path: f.path,
     scope: f.path,
   })),
 })
-
-const updateTopFrame = (
-  stack: ReadonlyArray<AgentStackFrame>,
-  patch: Partial<AgentStackFrame>,
-): ReadonlyArray<AgentStackFrame> => {
-  if (stack.length === 0) return stack
-  const next = stack.slice()
-  const top = next[next.length - 1]!
-  next[next.length - 1] = { ...top, ...patch }
-  return next
-}
 
 const runTuiModeCore = (
   input: TuiModeInput,
@@ -177,14 +184,71 @@ const runTuiModeCore = (
       conversationId: initialCid,
       sidePane: seedSidePane(input.instructionFiles),
       vi: initialVi,
+      busy: false,
+      queue: [],
+      turnStartedAt: 0,
+      spinnerFrame: 0,
+      currentTurn: 0,
     })
 
     const renderer = new FrameRenderer()
 
-    const requestRender = Effect.gen(function* () {
-      const s = yield* Ref.get(stateRef)
+    // Coalesced render scheduler: state mutations mark the frame dirty;
+    // an actual paint happens at most once per MIN_INTERVAL_MS (~60fps),
+    // so a burst of events collapses into a single frame. Idle = no
+    // timer = zero writes = no flashing. (Modeled after pi's scheduler.)
+    const MIN_INTERVAL_MS = 16
+    let dirty = false
+    let renderTimer: ReturnType<typeof setTimeout> | undefined
+    let lastRenderAt = 0
+    const doRender = (): void => {
+      const s = Effect.runSync(Ref.get(stateRef))
       renderer.draw(snapshot(s))
+    }
+    const scheduleRender = (): void => {
+      if (renderTimer !== undefined) return
+      const elapsed = performance.now() - lastRenderAt
+      const delay = Math.max(0, MIN_INTERVAL_MS - elapsed)
+      renderTimer = setTimeout(() => {
+        renderTimer = undefined
+        if (!dirty) return
+        dirty = false
+        lastRenderAt = performance.now()
+        doRender()
+      }, delay)
+    }
+    const requestRender = Effect.sync(() => {
+      dirty = true
+      scheduleRender()
     })
+
+    // Spinner animation — only runs while a turn is busy. Self-stops on
+    // the first tick after the turn ends, so idle = no timer = no paints.
+    let spinnerTimer: ReturnType<typeof setInterval> | undefined
+    const stopSpinner = (): void => {
+      if (spinnerTimer !== undefined) {
+        clearInterval(spinnerTimer)
+        spinnerTimer = undefined
+      }
+    }
+    const startSpinner = (): void => {
+      if (spinnerTimer !== undefined) return
+      spinnerTimer = setInterval(() => {
+        const s = Effect.runSync(Ref.get(stateRef))
+        if (!s.busy) {
+          stopSpinner()
+          return
+        }
+        Effect.runSync(
+          Ref.update(stateRef, (st) => {
+            st.spinnerFrame = st.spinnerFrame + 1
+            return st
+          }),
+        )
+        dirty = true
+        scheduleRender()
+      }, 80)
+    }
 
     yield* Ref.update(stateRef, (s) => {
       s.scrollback.push({
@@ -197,7 +261,7 @@ const runTuiModeCore = (
       })
       s.scrollback.push({
         kind: "info",
-        text: "type / for commands · Enter to submit · PgUp/PgDn to scroll · Ctrl-C to exit",
+        text: "type / for commands · Enter submits · Esc interrupts · PgUp/PgDn scroll · Ctrl-C ×2 quits",
       })
       return s
     })
@@ -221,138 +285,131 @@ const runTuiModeCore = (
 
     const onResize = (): void => {
       renderer.reset()
-      void Effect.runPromise(requestRender as Effect.Effect<void, never, never>)
+      dirty = true
+      scheduleRender()
     }
     process.stdout.on("resize", onResize)
 
-    const tickTimer = setInterval(() => {
-      void Effect.runPromise(
-        requestRender as Effect.Effect<void, never, never>,
-      ).catch(() => {})
-    }, 250)
-
     yield* requestRender
 
-    // ---- Event consumer: agent events → scrollback / side pane ----
+    // ---- Event consumer: agent events → scrollback (clean chat) + tree ----
     const eventQueue = yield* Queue.unbounded<AgentEvent>()
-    const currentToolByName = new Map<string, string>()
+    // Match tool_call_end → its tree node and (top-level only) scrollback pill.
+    const toolTreeId = new Map<string, number>()
+    const toolScrollId = new Map<string, string>()
+    let subAgentDepth = 0
     let toolSeq = 0
+    const isDelegate = (name: string): boolean => name.startsWith("delegate_to_")
     const consumer = yield* Effect.forkDaemon(
       Effect.gen(function* () {
         while (true) {
           const event = yield* Queue.take(eventQueue)
           yield* Ref.update(stateRef, (s) => {
+            const now = Date.now()
             switch (event.type) {
               case "turn_start": {
-                s.status = {
-                  ...s.status,
-                  note: `thinking (turn ${event.turnIndex + 1})`,
-                }
+                s.currentTurn = event.turnIndex + 1
                 s.sidePane = {
                   ...s.sidePane,
-                  stack: updateTopFrame(s.sidePane.stack, {
-                    status: "running",
-                  }),
+                  tree: treeTurnStart(s.sidePane.tree, event.turnIndex, now),
                 }
                 break
               }
               case "tool_call_start": {
-                const inSubAgent = s.sidePane.stack.length > 1
-                if (inSubAgent) {
-                  // Route to side pane only; no scrollback pill.
-                  s.sidePane = {
-                    ...s.sidePane,
-                    stack: updateTopFrame(s.sidePane.stack, {
-                      currentTool: event.toolName,
-                    }),
-                  }
-                } else {
+                // Delegations are represented by the sub-agent container,
+                // not a tool node — skip them here.
+                if (isDelegate(event.toolName)) break
+                const label = describeToolCall(event.toolName, event.args)
+                const { tree, id } = treeToolStart(s.sidePane.tree, label, now)
+                s.sidePane = { ...s.sidePane, tree }
+                toolTreeId.set(event.toolName, id)
+                // Top-level tools also get a compact chat line; sub-agent
+                // inner tools live only in the tree.
+                if (subAgentDepth === 0) {
                   toolSeq++
-                  const id = `t${toolSeq}`
-                  currentToolByName.set(event.toolName, id)
+                  const sid = `t${toolSeq}`
+                  toolScrollId.set(event.toolName, sid)
                   s.scrollback.push({
                     kind: "tool",
-                    id,
-                    toolName: event.toolName,
-                    arg: renderArgsForPill(event.args),
+                    id: sid,
+                    toolName: label,
+                    arg: "",
                     state: "running",
                   })
-                  s.sidePane = {
-                    ...s.sidePane,
-                    stack: updateTopFrame(s.sidePane.stack, {
-                      currentTool: event.toolName,
-                    }),
-                  }
-                  s.status = {
-                    ...s.status,
-                    note: `running ${event.toolName}`,
-                  }
                 }
                 break
               }
               case "tool_call_end": {
-                const inSubAgent = s.sidePane.stack.length > 1
-                if (!inSubAgent) {
-                  const id = currentToolByName.get(event.toolName)
-                  if (id !== undefined) {
-                    const nextState: ToolPillState = event.ok ? "ok" : "error"
-                    let detail: string | undefined
-                    if (!event.ok && typeof event.result === "object") {
-                      const r = event.result as Record<string, unknown>
-                      if (typeof r.message === "string") detail = r.message
-                      else if (typeof r.reason === "string") detail = r.reason
-                    }
-                    s.scrollback.updateTool(id, {
-                      state: nextState,
-                      ...(detail !== undefined ? { detail } : {}),
-                    })
-                    currentToolByName.delete(event.toolName)
+                if (isDelegate(event.toolName)) break
+                const detail = describeToolResult(
+                  event.toolName,
+                  event.ok,
+                  event.result,
+                )
+                const nodeId = toolTreeId.get(event.toolName)
+                if (nodeId !== undefined) {
+                  s.sidePane = {
+                    ...s.sidePane,
+                    tree: treeToolEnd(
+                      s.sidePane.tree,
+                      nodeId,
+                      event.ok,
+                      detail,
+                      now,
+                    ),
                   }
-                  s.status = { ...s.status, note: "thinking" }
+                  toolTreeId.delete(event.toolName)
                 }
-                s.sidePane = {
-                  ...s.sidePane,
-                  stack: updateTopFrame(s.sidePane.stack, {
-                    currentTool: undefined,
-                  }),
+                const sid = toolScrollId.get(event.toolName)
+                if (sid !== undefined) {
+                  s.scrollback.updateTool(sid, {
+                    state: event.ok ? "ok" : "error",
+                    ...(detail !== undefined ? { arg: detail } : {}),
+                  })
+                  toolScrollId.delete(event.toolName)
                 }
                 break
               }
               case "subagent_start": {
+                subAgentDepth++
                 s.sidePane = {
                   ...s.sidePane,
-                  stack: [
-                    ...s.sidePane.stack,
-                    { name: event.name, status: "running" },
-                  ],
-                }
-                s.status = {
-                  ...s.status,
-                  note: `delegating → ${event.name}`,
+                  tree: treeSubAgentStart(
+                    s.sidePane.tree,
+                    `delegate → ${event.name}`,
+                    now,
+                  ),
                 }
                 break
               }
               case "subagent_end": {
-                const stack = s.sidePane.stack.slice()
-                stack.pop()
-                s.sidePane = { ...s.sidePane, stack }
-                const tag = event.ok ? "⤴" : "✗"
-                const filesNote =
+                subAgentDepth = Math.max(0, subAgentDepth - 1)
+                const filesDetail =
                   event.filesChanged.length > 0
-                    ? ` (${event.filesChanged.length} file${
+                    ? `${event.filesChanged.length} file${
                         event.filesChanged.length === 1 ? "" : "s"
-                      } changed)`
-                    : ""
+                      }`
+                    : undefined
+                s.sidePane = {
+                  ...s.sidePane,
+                  tree: treeSubAgentEnd(
+                    s.sidePane.tree,
+                    event.ok,
+                    filesDetail,
+                    now,
+                  ),
+                }
+                const tag = event.ok ? "⤴" : "✗"
                 s.scrollback.push({
                   kind: "info",
-                  text: `${tag} ${event.name} finished${filesNote}`,
+                  text: `${tag} delegate → ${event.name}${
+                    filesDetail !== undefined ? ` (${filesDetail})` : ""
+                  }`,
                 })
-                s.status = { ...s.status, note: "thinking" }
                 break
               }
               case "skill_load": {
-                const exists = s.sidePane.skillsLoaded.includes(event.name)
-                if (!exists) {
+                if (!s.sidePane.skillsLoaded.includes(event.name)) {
                   s.sidePane = {
                     ...s.sidePane,
                     skillsLoaded: [...s.sidePane.skillsLoaded, event.name],
@@ -374,15 +431,9 @@ const runTuiModeCore = (
                 break
               }
               case "agent_end": {
-                const status = { ...s.status }
-                delete (status as { note?: string }).note
-                s.status = status
                 s.sidePane = {
                   ...s.sidePane,
-                  stack: updateTopFrame(s.sidePane.stack, {
-                    status: "idle",
-                    currentTool: undefined,
-                  }),
+                  tree: treeAgentEnd(s.sidePane.tree, now),
                 }
                 if (event.finalText.trim().length === 0) {
                   s.scrollback.push({
@@ -435,20 +486,61 @@ const runTuiModeCore = (
     const safetyHook = bashConfirmHook<R_Base>(promptForBash, input.cwd)
     const baseHooks = makeEventHooks<R_Base>(eventQueue, safetyHook)
 
-    const submit = (text: string) =>
+    const submit = (
+      text: string,
+    ): Effect.Effect<void, never, R_Base> =>
       Effect.gen(function* () {
         const cur = yield* Ref.get(stateRef)
+
+        // Busy → queue it for after the current turn.
+        if (cur.busy) {
+          yield* Ref.update(stateRef, (s) => {
+            s.queue = [...s.queue, text]
+            s.scrollback.push({ kind: "info", text: `queued: ${text}` })
+            return s
+          })
+          yield* requestRender
+          return
+        }
+
         cur.scrollback.push({ kind: "user", text })
         cur.scrollback.stickToBottom()
         yield* Ref.update(stateRef, (s) => {
-          s.input = { ...emptyInput, locked: true }
-          s.status = { ...s.status, note: "running" }
+          s.input = emptyInput
+          s.busy = true
+          s.turnStartedAt = Date.now()
+          s.spinnerFrame = 0
+          s.currentTurn = 0
           return s
         })
+        startSpinner()
         yield* requestRender
 
         const cid = cur.conversationId
-        yield* runAgent(
+
+        // Drain one queued message (if any) and reset busy state. Runs on
+        // success, failure, AND interruption (Esc) via `ensuring`, so the
+        // tree never gets stuck mid-run.
+        const finishTurn = Effect.gen(function* () {
+          subAgentDepth = 0
+          toolTreeId.clear()
+          toolScrollId.clear()
+          const next = yield* Ref.modify(stateRef, (s) => {
+            s.busy = false
+            s.runningFiber = undefined
+            s.sidePane = {
+              ...s.sidePane,
+              tree: treeAgentEnd(s.sidePane.tree, Date.now()),
+            }
+            const head = s.queue[0]
+            s.queue = s.queue.slice(1)
+            return [head, s] as const
+          })
+          yield* requestRender
+          if (next !== undefined) yield* submit(next)
+        })
+
+        const runEffect = runAgent(
           coderAgentConfig(
             input.cwd,
             input.skills,
@@ -468,16 +560,15 @@ const runTuiModeCore = (
                 : String(err)
             return Queue.offer(eventQueue, { type: "error", message: msg })
           }),
+          Effect.asVoid,
+          Effect.ensuring(finishTurn),
         )
-        yield* Effect.sleep("50 millis")
+
+        const fiber = yield* Effect.forkDaemon(runEffect)
         yield* Ref.update(stateRef, (s) => {
-          s.input = emptyInput
-          const status = { ...s.status }
-          delete (status as { note?: string }).note
-          s.status = status
+          s.runningFiber = fiber
           return s
         })
-        yield* requestRender
       })
 
     const handleSlash = (cmd: string) =>
@@ -491,6 +582,7 @@ const runTuiModeCore = (
           case "/clear":
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.clear()
+              s.sidePane = { ...s.sidePane, tree: emptyTree }
               return s
             })
             yield* requestRender
@@ -514,6 +606,7 @@ const runTuiModeCore = (
           case "/reset":
             yield* Ref.update(stateRef, (s) => {
               s.conversationId = newConversationId()
+              s.sidePane = { ...s.sidePane, tree: emptyTree }
               s.scrollback.push({
                 kind: "info",
                 text: `new conversation: ${s.conversationId.slice(0, 8)}`,
@@ -659,6 +752,36 @@ const runTuiModeCore = (
           return "stay" as const
         }
 
+        // Ctrl-C → quit, but require a confirming second press within 2s.
+        if (key.type === "ctrl" && key.char === "c") {
+          const now = Date.now()
+          if (s.ctrlCArmedAt !== undefined && now - s.ctrlCArmedAt < 2000) {
+            return "exit" as const
+          }
+          yield* Ref.update(stateRef, (st) => {
+            st.ctrlCArmedAt = now
+            st.scrollback.push({
+              kind: "info",
+              text: "press Ctrl-C again to quit",
+            })
+            return st
+          })
+          yield* requestRender
+          return "stay" as const
+        }
+
+        // Esc while a turn is running → interrupt it (takes priority over
+        // vi normal-mode entry, which only applies when idle).
+        if (key.type === "escape" && s.busy && s.runningFiber !== undefined) {
+          yield* Fiber.interruptFork(s.runningFiber)
+          yield* Ref.update(stateRef, (st) => {
+            st.scrollback.push({ kind: "info", text: "⨯ interrupted" })
+            return st
+          })
+          yield* requestRender
+          return "stay" as const
+        }
+
         // PageUp/PageDown: scroll the scrollback regardless of palette state.
         if (key.type === "pageUp") {
           yield* Ref.update(stateRef, (st) => {
@@ -796,8 +919,7 @@ const runTuiModeCore = (
 
     const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore>()
 
-    const onData = (chunk: Buffer): void => {
-      const keys = parser.feed(chunk)
+    const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
         Effect.runPromise(Effect.provide(handleKey(k), runtime))
           .then((outcome) => {
@@ -808,13 +930,35 @@ const runTuiModeCore = (
           .catch(() => {})
       }
     }
+
+    let escFlushTimer: ReturnType<typeof setTimeout> | undefined
+    const onData = (chunk: Buffer): void => {
+      // New bytes arrived — any held lone ESC is now part of a sequence
+      // (or precedes a real key), so cancel the pending flush and let
+      // `feed` resolve it.
+      if (escFlushTimer !== undefined) {
+        clearTimeout(escFlushTimer)
+        escFlushTimer = undefined
+      }
+      dispatchKeys(parser.feed(chunk))
+      // A lone ESC is held back by the parser; flush it as a real Escape
+      // after a short grace window if nothing follows.
+      if (parser.hasPendingEscape()) {
+        escFlushTimer = setTimeout(() => {
+          escFlushTimer = undefined
+          dispatchKeys(parser.flushEscape())
+        }, 30)
+      }
+    }
     process.stdin.on("data", onData)
 
     yield* Deferred.await(exitDeferred)
 
     process.stdin.off("data", onData)
     process.stdout.off("resize", onResize)
-    clearInterval(tickTimer)
+    if (renderTimer !== undefined) clearTimeout(renderTimer)
+    if (escFlushTimer !== undefined) clearTimeout(escFlushTimer)
+    stopSpinner()
     yield* Fiber.interrupt(consumer)
     cleanup()
   })
