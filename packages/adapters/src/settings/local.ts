@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref, Schema } from "effect"
+import { Config, Effect, Layer, Option, Ref, Schema } from "effect"
 import {
   DefaultSettings,
   FileSystem,
@@ -65,10 +65,19 @@ export const LocalSettingsStoreLive = Layer.effect(
           const homeConfig = yield* loadFromFile(configPath(homeDir))
           const localConfig = yield* loadFromFile(configPath(cwd))
 
+          // `AGENT_MODEL` env seeds the model when no config.json pins one;
+          // an explicit `/model` choice (persisted to config.json) wins.
+          const envModel = Option.getOrUndefined(
+            yield* Config.option(Config.string("AGENT_MODEL")).pipe(
+              Effect.orElseSucceed(() => Option.none<string>()),
+            ),
+          )
+
           const merged: Settings = {
             allowBash: localConfig?.allowBash ?? homeConfig?.allowBash ?? DefaultSettings.allowBash,
             maxSteps: localConfig?.maxSteps ?? homeConfig?.maxSteps ?? DefaultSettings.maxSteps,
             editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
+            model: localConfig?.model ?? homeConfig?.model ?? envModel ?? DefaultSettings.model,
           }
 
           yield* Ref.set(stateRef, merged)

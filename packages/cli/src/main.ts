@@ -11,10 +11,10 @@ import {
 } from "@agent/core"
 import {
   DatabaseLive,
-  GoogleLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
+  ModelLive,
   PostgresConversationStoreLive,
 } from "@agent/adapters"
 
@@ -29,7 +29,7 @@ import { runTuiMode } from "./modes/tui.js"
 
 const AppLive = Layer.mergeAll(
   PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
-  GoogleLive,
+  ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
 ).pipe(
