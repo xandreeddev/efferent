@@ -104,18 +104,19 @@ export const describeToolResult = (
     }
     case "read_file": {
       const total = num(r.totalLines)
-      return total !== undefined ? `${total} lines` : undefined
+      return total !== undefined ? `${total} lines` : "read"
     }
     case "write_file": {
+      const lines = num(r.lines)
+      if (lines !== undefined) return `wrote ${lines} line${lines === 1 ? "" : "s"}`
       const bytes = num(r.bytes)
-      return bytes !== undefined ? `${bytes}b` : undefined
+      return bytes !== undefined ? `wrote ${bytes} bytes` : "written"
     }
     case "bash": {
       const code = num(r.exitCode)
       const timedOut = r.timedOut === true
-      const codePart = code !== undefined ? `exit ${code}` : undefined
-      if (timedOut) return codePart ? `${codePart} · timed out` : "timed out"
-      return codePart
+      const codePart = code !== undefined ? `exit ${code}` : "done"
+      return timedOut ? `${codePart} · timed out` : codePart
     }
     case "grep": {
       const output = str(r.output) ?? ""
@@ -124,14 +125,25 @@ export const describeToolResult = (
     }
     case "glob": {
       const total = num(r.total)
-      return total !== undefined ? `${total} files` : undefined
+      return total !== undefined ? `${total} files` : "globbed"
     }
     case "ls": {
       const total = num(r.total)
-      return total !== undefined ? `${total} entries` : undefined
+      return total !== undefined ? `${total} entries` : "listed"
+    }
+    case "read_skill":
+      return "loaded"
+    case "web_fetch": {
+      const status = num(r.status)
+      const bytes = str(r.content)?.length
+      const parts = [
+        status !== undefined ? `${status}` : undefined,
+        bytes !== undefined ? `${bytes} chars` : undefined,
+      ].filter((p): p is string => p !== undefined)
+      return parts.length > 0 ? parts.join(" · ") : "fetched"
     }
     default:
-      return undefined
+      return "done"
   }
 }
 

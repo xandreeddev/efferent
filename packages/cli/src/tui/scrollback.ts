@@ -1,4 +1,4 @@
-import { ansi, padRight, truncate, visibleLength } from "./terminal.js"
+import { ansi, padLeft, padRight, truncate, wrapAnsi } from "./terminal.js"
 import { renderMarkdown } from "./markdown.js"
 
 export type ToolPillState = "running" | "ok" | "error"
@@ -9,9 +9,10 @@ export type ScrollbackBlock =
   | {
       readonly kind: "tool"
       readonly id: string
+      /** Semantic call label, e.g. `read foo.ts L1-40`. */
       readonly toolName: string
-      readonly arg: string
       readonly state: ToolPillState
+      /** One-line result summary, e.g. `50 lines`, `+12/-3`, `exit 0`. */
       readonly detail?: string
       /** Unified diff (edit_file/write_file) — rendered colorized below the pill. */
       readonly diff?: string
@@ -22,60 +23,80 @@ export type ScrollbackBlock =
   | { readonly kind: "error"; readonly text: string }
 
 const STATE_DOT: Record<ToolPillState, string> = {
-  running: `${ansi.fgYellow}●${ansi.reset}`,
-  ok: `${ansi.fgGreen}●${ansi.reset}`,
-  error: `${ansi.fgRed}●${ansi.reset}`,
+  running: `${ansi.fgYellow}⏺${ansi.reset}`,
+  ok: `${ansi.fgGreen}⏺${ansi.reset}`,
+  error: `${ansi.fgRed}⏺${ansi.reset}`,
 }
 
+type DiffRow =
+  | { readonly kind: "ctx" | "del" | "add"; readonly oldNo?: number; readonly newNo?: number; readonly text: string }
+  | { readonly kind: "sep" }
+
+const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
 /**
- * Colorize a unified diff's *content* lines (green add / red remove). The
- * `--- / +++ / @@` headers are dropped — they're noise in the chat view;
- * the pill already names the file.
+ * Render a unified diff into a line-number gutter view: old/new line columns
+ * (parsed from the `@@` headers), a coloured +/-/context marker, and a subtle
+ * full-width bg tint on changed lines. `--- / +++` headers are dropped; a `⋯`
+ * separates non-contiguous hunks. Each output line fits within `width`.
  */
-const colorizeDiff = (diff: string): string[] =>
-  diff
-    .split("\n")
-    .filter(
-      (line) =>
-        !line.startsWith("+++") &&
-        !line.startsWith("---") &&
-        !line.startsWith("@@"),
-    )
-    .map((line) => {
-      if (line.startsWith("+")) return `${ansi.fgGreen}${line}${ansi.reset}`
-      if (line.startsWith("-")) return `${ansi.fgRed}${line}${ansi.reset}`
-      return `${ansi.dim}${line}${ansi.reset}`
-    })
+const renderDiff = (diff: string, width: number): string[] => {
+  const rows: DiffRow[] = []
+  let oldLn = 0
+  let newLn = 0
+  let maxNo = 0
+  let seenHunk = false
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue
+    const hm = HUNK_RE.exec(line)
+    if (hm) {
+      if (seenHunk) rows.push({ kind: "sep" })
+      seenHunk = true
+      oldLn = Number(hm[1])
+      newLn = Number(hm[2])
+      continue
+    }
+    if (line.startsWith("-")) {
+      rows.push({ kind: "del", oldNo: oldLn, text: line.slice(1) })
+      maxNo = Math.max(maxNo, oldLn)
+      oldLn++
+    } else if (line.startsWith("+")) {
+      rows.push({ kind: "add", newNo: newLn, text: line.slice(1) })
+      maxNo = Math.max(maxNo, newLn)
+      newLn++
+    } else {
+      rows.push({ kind: "ctx", oldNo: oldLn, newNo: newLn, text: line.startsWith(" ") ? line.slice(1) : line })
+      maxNo = Math.max(maxNo, oldLn, newLn)
+      oldLn++
+      newLn++
+    }
+  }
+
+  const numW = Math.max(2, String(maxNo).length)
+  const gutterW = numW * 2 + 2 // oldCol + space + newCol + space
+  const bodyW = Math.max(4, width - gutterW)
+  const blank = " ".repeat(numW)
+
+  return rows.map((r) => {
+    if (r.kind === "sep") return `${ansi.dim}${" ".repeat(gutterW)}⋯${ansi.reset}`
+    const oldCol = r.oldNo !== undefined ? padLeft(String(r.oldNo), numW) : blank
+    const newCol = r.newNo !== undefined ? padLeft(String(r.newNo), numW) : blank
+    const gutter = `${ansi.dim}${oldCol} ${newCol} ${ansi.reset}`
+    const marker = r.kind === "del" ? "-" : r.kind === "add" ? "+" : " "
+    if (r.kind === "del") {
+      return `${gutter}${ansi.bgDiffDel}${ansi.fgRed}${padRight(truncate(marker + r.text, bodyW), bodyW)}${ansi.reset}`
+    }
+    if (r.kind === "add") {
+      return `${gutter}${ansi.bgDiffAdd}${ansi.fgGreen}${padRight(truncate(marker + r.text, bodyW), bodyW)}${ansi.reset}`
+    }
+    return `${gutter}${ansi.dim}${truncate(marker + r.text, bodyW)}${ansi.reset}`
+  })
+}
 
 // Collapsed line caps; expanded shows up to the larger cap.
 const DIFF_COLLAPSED = 8
 const DIFF_EXPANDED = 200
 const OUTPUT_EXPANDED = 120
-
-const wrapText = (text: string, width: number): string[] => {
-  const out: string[] = []
-  for (const para of text.split("\n")) {
-    if (para.length === 0) {
-      out.push("")
-      continue
-    }
-    let line = ""
-    for (const word of para.split(" ")) {
-      if (line.length === 0) {
-        line = word
-        continue
-      }
-      if (visibleLength(line) + 1 + visibleLength(word) > width) {
-        out.push(line)
-        line = word
-      } else {
-        line += " " + word
-      }
-    }
-    if (line.length > 0) out.push(line)
-  }
-  return out
-}
 
 const renderBlock = (
   block: ScrollbackBlock,
@@ -85,50 +106,57 @@ const renderBlock = (
   switch (block.kind) {
     case "user": {
       const prefix = `${ansi.fgBrightGreen}>${ansi.reset} `
-      const inner = wrapText(block.text, cols - 2)
+      const inner = wrapAnsi(block.text, cols - 2)
       return inner.map((l, i) => (i === 0 ? prefix + l : "  " + l))
     }
     case "assistant": {
-      return renderMarkdown(block.text)
+      // Prefix the first line with a marker so prose anchors to the
+      // conversation spine; continuation lines indent to stay aligned.
+      const body = renderMarkdown(block.text, cols - 2)
+      return body.map((l, i) =>
+        i === 0 ? `${ansi.fgBrightCyan}●${ansi.reset} ${l}` : `  ${l}`,
+      )
     }
     case "tool": {
-      const head = `${STATE_DOT[block.state]} ${ansi.bold}${block.toolName}${ansi.reset} ${ansi.fgGray}${truncate(block.arg, cols - 8)}${ansi.reset}`
-      const indent = (l: string): string => `   ${truncate(l, cols - 4)}`
+      // One compact pill line — the result count folds in dim onto the label,
+      // so navigational tools (ls/glob/read/grep) stay a single quiet line.
+      const summary =
+        block.detail !== undefined && block.detail.length > 0
+          ? block.detail.split("\n")[0]!
+          : undefined
+      const detailW = Math.max(4, cols - block.toolName.length - 5)
+      const head =
+        summary !== undefined
+          ? `${STATE_DOT[block.state]} ${block.toolName}  ${ansi.dim}${truncate(summary, detailW)}${ansi.reset}`
+          : `${STATE_DOT[block.state]} ${block.toolName}`
+      const out: string[] = [head]
 
-      // Diffs render colorized by default (collapsed); Ctrl-R reveals the rest.
+      // edit/write: gutter diff under the pill (collapsed cap; Ctrl-R reveals all).
       if (block.diff !== undefined && block.diff.length > 0) {
-        const all = colorizeDiff(block.diff)
+        const all = renderDiff(block.diff, cols - 5)
         const cap = expanded ? DIFF_EXPANDED : DIFF_COLLAPSED
-        const shown = all.slice(0, cap).map(indent)
+        out.push(...all.slice(0, cap).map((l) => `     ${l}`))
         if (all.length > cap) {
-          shown.push(
-            `   ${ansi.dim}… ${all.length - cap} more diff lines · Ctrl-R to expand${ansi.reset}`,
-          )
+          out.push(`     ${ansi.dim}… ${all.length - cap} more · Ctrl-R${ansi.reset}`)
         }
-        return [head, ...shown]
+        return out
       }
 
-      // Full output (bash/grep/read) only when expanded; summary otherwise.
+      // bash/grep/read full output is hidden by default — Ctrl-R reveals it.
       if (expanded && block.output !== undefined && block.output.length > 0) {
         const lines = block.output.split("\n")
-        const shown = lines
-          .slice(0, OUTPUT_EXPANDED)
-          .map((l) => `   ${ansi.dim}${truncate(l, cols - 4)}${ansi.reset}`)
+        out.push(
+          ...lines
+            .slice(0, OUTPUT_EXPANDED)
+            .map((l) => `     ${ansi.dim}${truncate(l, cols - 6)}${ansi.reset}`),
+        )
         if (lines.length > OUTPUT_EXPANDED) {
-          shown.push(
-            `   ${ansi.dim}… ${lines.length - OUTPUT_EXPANDED} more lines${ansi.reset}`,
+          out.push(
+            `     ${ansi.dim}… ${lines.length - OUTPUT_EXPANDED} more lines${ansi.reset}`,
           )
         }
-        return [head, ...shown]
       }
-
-      if (block.detail !== undefined && block.detail.length > 0) {
-        const detailLines = block.detail.split("\n").slice(0, 6).map(
-          (l) => `   ${ansi.dim}${truncate(l, cols - 4)}${ansi.reset}`,
-        )
-        return [head, ...detailLines]
-      }
-      return [head]
+      return out
     }
     case "info":
       return [`${ansi.dim}${block.text}${ansi.reset}`]
@@ -162,7 +190,6 @@ export class Scrollback {
     patch: {
       state?: ToolPillState
       detail?: string
-      arg?: string
       diff?: string
       output?: string
     },
@@ -175,7 +202,6 @@ export class Scrollback {
       ...cur,
       ...(patch.state !== undefined ? { state: patch.state } : {}),
       ...(patch.detail !== undefined ? { detail: patch.detail } : {}),
-      ...(patch.arg !== undefined ? { arg: patch.arg } : {}),
       ...(patch.diff !== undefined ? { diff: patch.diff } : {}),
       ...(patch.output !== undefined ? { output: patch.output } : {}),
     }
@@ -218,10 +244,13 @@ export class Scrollback {
     const allLines: string[] = []
     for (let i = 0; i < this.blocks.length; i++) {
       const block = this.blocks[i]!
+      // A run of consecutive tool calls stays tightly grouped (no blank
+      // gap between pills); blank lines separate everything else, so the
+      // reasoning text reads as the spine and tools sit quietly under it.
+      const prev = i > 0 ? this.blocks[i - 1] : undefined
+      const tightWithPrev = prev?.kind === "tool" && block.kind === "tool"
+      if (i > 0 && !tightWithPrev) allLines.push("")
       allLines.push(...renderBlock(block, cols, this.expanded))
-      if (i < this.blocks.length - 1) {
-        allLines.push("")
-      }
     }
     this.lastTotalVisualLines = allLines.length
 

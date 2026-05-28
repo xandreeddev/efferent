@@ -353,7 +353,6 @@ const runTuiModeCore = (
                     kind: "tool",
                     id: sid,
                     toolName: label,
-                    arg: "",
                     state: "running",
                   })
                 }
@@ -389,7 +388,7 @@ const runTuiModeCore = (
                   )
                   s.scrollback.updateTool(sid, {
                     state: event.ok ? "ok" : "error",
-                    ...(detail !== undefined ? { arg: detail } : {}),
+                    ...(detail !== undefined ? { detail } : {}),
                     ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
                     ...(artifacts.output !== undefined
                       ? { output: artifacts.output }

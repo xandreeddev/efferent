@@ -14,6 +14,7 @@ export const ansi = {
   italic: `${CSI}3m`,
   underline: `${CSI}4m`,
   inverse: `${CSI}7m`,
+  strikethrough: `${CSI}9m`,
 
   fgBlack: `${CSI}30m`,
   fgRed: `${CSI}31m`,
@@ -34,6 +35,10 @@ export const ansi = {
   bgBlue: `${CSI}44m`,
   bgGray: `${CSI}100m`,
   bgDarkGray: `${CSI}48;5;236m`,
+  // Subtle 256-color tints for code blocks and diff add/remove lines.
+  bgCode: `${CSI}48;5;235m`,
+  bgDiffAdd: `${CSI}48;5;22m`,
+  bgDiffDel: `${CSI}48;5;52m`,
 }
 
 export const enterAltBuffer = `${CSI}?1049h${CSI}?25l`
@@ -99,6 +104,58 @@ export const truncate = (s: string, width: number): string => {
   if (visibleLength(s) <= width) return s
   const stripped = stripAnsi(s).slice(0, width - 1)
   return `${stripped}…`
+}
+
+/** Hard-break a (visible, escape-free) string into `width`-column chunks. */
+const hardWrap = (visible: string, width: number): string[] => {
+  const out: string[] = []
+  for (let i = 0; i < visible.length; i += width) {
+    out.push(visible.slice(i, i + width))
+  }
+  return out.length > 0 ? out : [""]
+}
+
+/**
+ * Word-wrap a (possibly ANSI-styled) string to `width` visible columns,
+ * measuring with `visibleLength` so escapes don't count. Splits on spaces;
+ * a single token longer than `width` (e.g. a URL) is hard-broken — escapes
+ * are stripped from that token so the break never lands mid-sequence.
+ * Embedded `\n` start new paragraphs. No prefix is added — callers prepend
+ * their own marker/indent (see the user-block and list/quote renderers).
+ */
+export const wrapAnsi = (s: string, width: number): string[] => {
+  if (width <= 0) return s.split("\n")
+  const out: string[] = []
+  for (const para of s.split("\n")) {
+    if (para.length === 0) {
+      out.push("")
+      continue
+    }
+    let line = ""
+    for (const word of para.split(" ")) {
+      const wlen = visibleLength(word)
+      if (wlen > width) {
+        if (line.length > 0) {
+          out.push(line)
+          line = ""
+        }
+        const chunks = hardWrap(stripAnsi(word), width)
+        for (let k = 0; k < chunks.length - 1; k++) out.push(chunks[k]!)
+        line = chunks[chunks.length - 1] ?? ""
+        continue
+      }
+      if (line.length === 0) {
+        line = word
+      } else if (visibleLength(line) + 1 + wlen > width) {
+        out.push(line)
+        line = word
+      } else {
+        line += " " + word
+      }
+    }
+    if (line.length > 0) out.push(line)
+  }
+  return out
 }
 
 export interface TermSize {
