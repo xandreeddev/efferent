@@ -340,11 +340,13 @@ export const codingToolkit = Toolkit.make(
 export const codingToolkitLayer = (
   cwd: string,
   skills: ReadonlyArray<Skill> = [],
+  options: { readonly allowBash?: boolean } = {},
 ) =>
   codingToolkit.toLayer(
     Effect.gen(function* () {
       const fs = yield* FileSystem
       const shell = yield* Shell
+      const allowBash = options.allowBash ?? true
       const skillByName = new Map(skills.map((s) => [s.name, s] as const))
 
       return {
@@ -403,6 +405,13 @@ export const codingToolkitLayer = (
 
         bash: ({ command, timeout }) =>
           Effect.gen(function* () {
+            if (!allowBash) {
+              return yield* Effect.fail({
+                error: "BashNotAllowed",
+                message:
+                  "bash execution is disabled in this mode — re-run with --allow-bash to enable",
+              })
+            }
             const r = yield* shell.exec({
               command,
               cwd,

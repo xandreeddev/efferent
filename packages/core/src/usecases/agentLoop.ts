@@ -1,202 +1,121 @@
-import { Effect, pipe } from "effect"
+import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
+import { Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
-import type { AgentTool } from "../entities/AgentTool.js"
-import type {
-  AgentMessage,
-  AgentResult,
-  ToolCall,
-} from "../entities/Conversation.js"
-import { Llm, LlmError, type LlmCacheHint, type TokenUsage } from "../ports/Llm.js"
+import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
+import {
+  extractUsage,
+  responseToAgentMessages,
+  responseToolCalls,
+  responseToolResults,
+  toPromptMessages,
+} from "./promptMapping.js"
 
 /**
- * Provider-agnostic agent loop. Drives turns through `Llm.runTurn` via a
- * pipeline of `LoopState => Effect<LoopState>` step functions composed
- * with `Effect.flatMap`, iterated by `Effect.iterate`.
+ * Provider-agnostic agent loop on `@effect/ai`. `@effect/ai` resolves the
+ * tool calls within a single `generateText` (its handlers are our Effects),
+ * but it does NOT iterate across turns — so iteration is ours: we re-invoke
+ * with the growing message buffer until the model stops requesting tools or
+ * `maxSteps` is hit.
  *
- * The loop is pure state-shaping over `LoopState`. It never inspects
- * `AgentMessage` content parts — `assistantText` and `toolCalls` arrive
- * pre-extracted from the port (see `vercel-ai.ts`). Step functions live
- * at module level; per-run state (system, tools, hooks, cache) is bundled
- * into a `LoopCtx` and partially applied once when the pipeline is built.
+ * Each turn the response's content parts become the `AgentMessage` tail
+ * (carrying `thought_signature` through `providerOptions`); the prior hook
+ * vocabulary (`onTurnStart` / tool events / `onAssistantMessage`) is emitted
+ * from the resolved response so existing drivers render unchanged.
  */
 
-type LoopState = {
-  readonly messages: ReadonlyArray<AgentMessage>
-  readonly turnIndex: number
-  readonly lastFinishReason: string | undefined
-  /** Text the assistant emitted on the most recent turn (may be empty). */
-  readonly lastTurnAssistantText: string
-  /** Tool calls the assistant emitted on the most recent turn. */
-  readonly lastTurnToolCalls: ReadonlyArray<ToolCall>
-  /** Token accounting for the most recent turn. */
-  readonly lastTurnUsage: TokenUsage | undefined
-  /** Running last non-empty assistant text — the agent's final answer. */
-  readonly finalText: string
-  readonly stopRequested: boolean
-}
-
-type LoopCtx<R> = {
-  readonly system: string
-  readonly tools: ReadonlyArray<AgentTool<any, any, R>>
-  readonly maxSteps: number
-  readonly hooks?: AgentHooks<R>
-  readonly cacheHint?: LlmCacheHint
-}
-
-export interface RunAgentLoopInput<R> {
+export interface RunAgentLoopInput<
+  Tools extends Record<string, Tool.Any>,
+  R,
+> {
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
-  readonly tools: ReadonlyArray<AgentTool<any, any, R>>
+  readonly toolkit: Toolkit.Toolkit<Tools>
   readonly maxSteps?: number
   readonly hooks?: AgentHooks<R>
-  /** Opaque per-conversation cache hint from a prior `Llm.snapshot`,
-   * threaded into every `runTurn`. */
-  readonly cacheHint?: LlmCacheHint
 }
 
-// ---- Step functions (module-level, partially applied with ctx) ----
+export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
+  input: RunAgentLoopInput<Tools, R>,
+) =>
+  Effect.gen(function* () {
+    const hooks = input.hooks
+    const maxSteps = input.maxSteps ?? 20
+    let messages: ReadonlyArray<AgentMessage> = input.messages
+    let finalText = ""
+    let turnIndex = 0
 
-const applyTransformContext =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> => {
-    const hook = ctx.hooks?.onTransformContext
-    if (!hook) return Effect.succeed(s)
-    return hook(s.messages).pipe(
-      Effect.map((transformed) =>
-        transformed === s.messages ? s : { ...s, messages: transformed },
-      ),
-    )
-  }
-
-const emitTurnStart =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> => {
-    const hook = ctx.hooks?.onTurnStart
-    if (!hook) return Effect.succeed(s)
-    return hook({ turnIndex: s.turnIndex, messages: s.messages }).pipe(
-      Effect.as(s),
-    )
-  }
-
-const takeTurn =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, LlmError, R | Llm> =>
-    Effect.gen(function* () {
-      const llm = yield* Llm
-      const result = yield* llm.runTurn({
-        system: ctx.system,
-        messages: s.messages,
-        tools: ctx.tools,
-        turnIndex: s.turnIndex,
-        ...(ctx.hooks !== undefined ? { hooks: ctx.hooks } : {}),
-        ...(ctx.cacheHint !== undefined ? { cacheHint: ctx.cacheHint } : {}),
-      })
-      return {
-        ...s,
-        messages: [...s.messages, ...result.newMessages],
-        lastFinishReason: result.finishReason,
-        lastTurnAssistantText: result.assistantText,
-        lastTurnToolCalls: result.toolCalls,
-        lastTurnUsage: result.usage,
-        finalText:
-          result.assistantText.length > 0 ? result.assistantText : s.finalText,
+    while (turnIndex < maxSteps) {
+      if (hooks?.onTransformContext) {
+        messages = yield* hooks.onTransformContext(messages)
       }
-    })
+      if (hooks?.onTurnStart) {
+        yield* hooks.onTurnStart({ turnIndex, messages })
+      }
 
-const emitAssistantMessage =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> => {
-    const hook = ctx.hooks?.onAssistantMessage
-    if (!hook) return Effect.succeed(s)
-    return hook({
-      turnIndex: s.turnIndex,
-      text: s.lastTurnAssistantText,
-      toolCalls: s.lastTurnToolCalls,
-      ...(s.lastTurnUsage !== undefined ? { usage: s.lastTurnUsage } : {}),
-    }).pipe(Effect.as(s))
-  }
+      const prompt = Prompt.make([
+        { role: "system", content: input.system },
+        ...toPromptMessages(messages),
+      ] as never)
 
-const decideContinuation =
-  <R>(_ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> =>
-    Effect.succeed({
-      ...s,
-      // Continue iff the model both signalled more tool work AND actually
-      // emitted at least one tool call this turn.
-      stopRequested:
-        s.lastFinishReason !== "tool-calls" || s.lastTurnToolCalls.length === 0,
-    })
+      const res = yield* LanguageModel.generateText({
+        prompt,
+        toolkit: input.toolkit,
+      })
 
-const consultShouldStop =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> => {
-    if (s.stopRequested) return Effect.succeed(s)
-    const hook = ctx.hooks?.onShouldStopAfterTurn
-    if (!hook) return Effect.succeed(s)
-    return hook({
-      turnIndex: s.turnIndex,
-      finishReason: s.lastFinishReason ?? "",
-    }).pipe(Effect.map((stop) => (stop ? { ...s, stopRequested: true } : s)))
-  }
+      const content = res.content as ReadonlyArray<unknown>
+      messages = [...messages, ...responseToAgentMessages(content)]
 
-const advanceTurn =
-  <R>(_ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, never, R> =>
-    Effect.succeed({ ...s, turnIndex: s.turnIndex + 1 })
+      const text = res.text
+      if (text.length > 0) finalText = text
+      const toolCalls = responseToolCalls(content)
 
-const turnPipeline =
-  <R>(ctx: LoopCtx<R>) =>
-  (s: LoopState): Effect.Effect<LoopState, LlmError, R | Llm> =>
-    pipe(
-      Effect.succeed(s),
-      Effect.flatMap(applyTransformContext(ctx)),
-      Effect.flatMap(emitTurnStart(ctx)),
-      Effect.flatMap(takeTurn(ctx)),
-      Effect.flatMap(emitAssistantMessage(ctx)),
-      Effect.flatMap(decideContinuation(ctx)),
-      Effect.flatMap(consultShouldStop(ctx)),
-      Effect.flatMap(advanceTurn(ctx)),
-    )
-
-// ---- Entry point ----
-
-export const runAgentLoop = <R>(
-  input: RunAgentLoopInput<R>,
-): Effect.Effect<AgentResult, LlmError, R | Llm> => {
-  const ctx: LoopCtx<R> = {
-    system: input.system,
-    tools: input.tools,
-    maxSteps: input.maxSteps ?? 20,
-    ...(input.hooks !== undefined ? { hooks: input.hooks } : {}),
-    ...(input.cacheHint !== undefined ? { cacheHint: input.cacheHint } : {}),
-  }
-
-  const initialState: LoopState = {
-    messages: input.messages,
-    turnIndex: 0,
-    lastFinishReason: undefined,
-    lastTurnAssistantText: "",
-    lastTurnToolCalls: [],
-    lastTurnUsage: undefined,
-    finalText: "",
-    stopRequested: false,
-  }
-
-  return pipe(
-    Effect.iterate(initialState, {
-      while: (s: LoopState) => !s.stopRequested && s.turnIndex < ctx.maxSteps,
-      body: turnPipeline(ctx),
-    }),
-    Effect.tap((s) =>
-      ctx.hooks?.onAgentEnd
-        ? ctx.hooks.onAgentEnd({
-            messages: s.messages,
-            finalText: s.finalText,
+      // Re-emit the legacy hook vocabulary from the resolved response so
+      // the CLI's execution tree / token gauge keep working unchanged.
+      if (hooks?.onBeforeToolCall) {
+        for (const tc of toolCalls) {
+          yield* hooks.onBeforeToolCall({
+            turnIndex,
+            toolName: tc.toolName,
+            args: tc.args,
           })
-        : Effect.void,
-    ),
-    Effect.map(
-      (s): AgentResult => ({ finalText: s.finalText, messages: s.messages }),
-    ),
-  )
-}
+        }
+      }
+      if (hooks?.onAfterToolCall) {
+        for (const tr of responseToolResults(content)) {
+          yield* hooks.onAfterToolCall({
+            turnIndex,
+            toolName: tr.toolName,
+            args: {},
+            ok: tr.ok,
+            result: tr.result,
+          })
+        }
+      }
+      if (hooks?.onAssistantMessage) {
+        yield* hooks.onAssistantMessage({
+          turnIndex,
+          text,
+          toolCalls,
+          usage: extractUsage(res.usage, content),
+        })
+      }
+
+      turnIndex++
+
+      const wantsMore = res.finishReason === "tool-calls" && toolCalls.length > 0
+      if (!wantsMore) break
+      if (hooks?.onShouldStopAfterTurn) {
+        const stop = yield* hooks.onShouldStopAfterTurn({
+          turnIndex,
+          finishReason: res.finishReason,
+        })
+        if (stop) break
+      }
+    }
+
+    if (hooks?.onAgentEnd) {
+      yield* hooks.onAgentEnd({ messages, finalText })
+    }
+
+    return { finalText, messages } satisfies AgentResult as AgentResult
+  })

@@ -1,16 +1,16 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { LanguageModel } from "@effect/ai"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
 import {
   ConversationId,
   ConversationStore,
   FileSystem,
-  Llm,
-  LlmCache,
   LlmInfo,
   SettingsStore,
   Shell,
   coderAgentConfig,
+  codingToolkitLayer,
   runAgent,
   type InstructionFile,
   type ScopedAgentConfig,
@@ -19,7 +19,6 @@ import {
 
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
-import { bashConfirmHook } from "../safetyHooks.js"
 
 import {
   ansi,
@@ -156,7 +155,7 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
@@ -482,9 +481,8 @@ const runTuiModeCore = (
         return result
       })
 
-    type R_Base = FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore
-    const safetyHook = bashConfirmHook<R_Base>(promptForBash, input.cwd)
-    const baseHooks = makeEventHooks<R_Base>(eventQueue, safetyHook)
+    type R_Base = FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore
+    const baseHooks = makeEventHooks(eventQueue)
 
     const submit = (
       text: string,
@@ -546,13 +544,14 @@ const runTuiModeCore = (
             input.skills,
             input.scopedAgents,
             input.instructionFiles,
-            undefined,
-            baseHooks,
           ),
           cid,
           text,
           baseHooks,
         ).pipe(
+          Effect.provide(
+            codingToolkitLayer(input.cwd, input.skills, { allowBash: true }),
+          ),
           Effect.catchAll((err) => {
             const msg =
               typeof err === "object" && err !== null && "message" in err
@@ -726,7 +725,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -917,7 +916,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore>()
+    const runtime = yield* Effect.runtime<FileSystem | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore>()
 
     const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
@@ -968,7 +967,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | LlmInfo | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | LlmInfo | ConversationStore | SettingsStore
 > =>
   runTuiModeCore(input).pipe(
     Effect.provide(fileLoggerLayer(logFilePath())),

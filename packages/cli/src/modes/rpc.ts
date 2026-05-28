@@ -1,13 +1,13 @@
+import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
   ConversationId,
   ConversationStore,
   FileSystem,
-  Llm,
-  LlmCache,
   SettingsStore,
   Shell,
   coderAgentConfig,
+  codingToolkitLayer,
   runAgent,
   type InstructionFile,
   type ScopedAgentConfig,
@@ -15,7 +15,6 @@ import {
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
-import { denyBashHook } from "../safetyHooks.js"
 
 /**
  * Minimal JSON-RPC 2.0 server over stdin/stdout (one JSON object per
@@ -76,7 +75,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -127,12 +126,7 @@ const handleSend = (
       }),
     )
 
-    const hooks = makeEventHooks<
-      FileSystem | Shell | ConversationStore | Llm | LlmCache | SettingsStore
-    >(
-      queue,
-      denyBashHook(allowBash),
-    )
+    const hooks = makeEventHooks(queue)
 
     const ran = yield* runAgent(
       coderAgentConfig(
@@ -140,13 +134,16 @@ const handleSend = (
         defaults.skills,
         defaults.scopedAgents,
         defaults.instructionFiles,
-        undefined,
-        hooks,
       ),
       cid,
       prompt,
       hooks,
-    ).pipe(Effect.either)
+    ).pipe(
+      Effect.provide(
+        codingToolkitLayer(cwd, defaults.skills, { allowBash }),
+      ),
+      Effect.either,
+    )
 
     yield* Effect.sleep("50 millis")
     yield* Fiber.interrupt(consumer)
@@ -177,7 +174,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -207,7 +204,7 @@ export const runRpcMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
+  FileSystem | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore
 > =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes
