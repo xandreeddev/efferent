@@ -60,16 +60,127 @@ const applyEditsToContent = (
   return { result: current }
 }
 
+type DiffOp = { readonly tag: "eq" | "del" | "add"; readonly line: string }
+
 /**
- * Minimal unified diff: trim the common prefix + suffix, then report only
- * the changed span between them as removed/added lines. Far better than
- * dumping the whole file when one line changes (and keeps the model's view
- * tight too). Multi-region edits over-report the gap between the first and
- * last change — acceptable; a full LCS is a later refinement.
+ * Line-level LCS (longest common subsequence) via a flat DP table, then a
+ * backtrack into a list of equal/delete/add ops in file order. Pure; no IO.
  */
-export const unifiedDiff = (before: string, after: string, path: string): string => {
-  const a = before.split("\n")
-  const b = after.split("\n")
+const diffLines = (a: ReadonlyArray<string>, b: ReadonlyArray<string>): DiffOp[] => {
+  const n = a.length
+  const m = b.length
+  const w = m + 1
+  const dp = new Int32Array((n + 1) * (m + 1))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * w + j] =
+        a[i] === b[j]
+          ? dp[(i + 1) * w + (j + 1)]! + 1
+          : Math.max(dp[(i + 1) * w + j]!, dp[i * w + (j + 1)]!)
+    }
+  }
+  const ops: DiffOp[] = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ tag: "eq", line: a[i]! })
+      i++
+      j++
+    } else if (dp[(i + 1) * w + j]! >= dp[i * w + (j + 1)]!) {
+      ops.push({ tag: "del", line: a[i]! })
+      i++
+    } else {
+      ops.push({ tag: "add", line: b[j]! })
+      j++
+    }
+  }
+  while (i < n) ops.push({ tag: "del", line: a[i++]! })
+  while (j < m) ops.push({ tag: "add", line: b[j++]! })
+  return ops
+}
+
+interface Hunk {
+  readonly oldStart: number
+  readonly oldCount: number
+  readonly newStart: number
+  readonly newCount: number
+  readonly lines: string[]
+}
+
+/**
+ * Group an op list into unified-diff hunks, each padded with up to `context`
+ * unchanged lines; change regions separated by ≤ 2·context equal lines merge
+ * into one hunk. Emits in file order — fixes the old all-removes-then-adds,
+ * single-giant-hunk behaviour for multi-region edits.
+ */
+const groupHunks = (ops: ReadonlyArray<DiffOp>, context: number): Hunk[] => {
+  const changed = ops.map((o) => o.tag !== "eq")
+  // 1-based old/new line number at each op position.
+  const oldNo = new Array<number>(ops.length)
+  const newNo = new Array<number>(ops.length)
+  let o = 1
+  let nw = 1
+  for (let k = 0; k < ops.length; k++) {
+    oldNo[k] = o
+    newNo[k] = nw
+    if (ops[k]!.tag !== "add") o++
+    if (ops[k]!.tag !== "del") nw++
+  }
+
+  const hunks: Hunk[] = []
+  let k = 0
+  while (k < ops.length) {
+    if (!changed[k]) {
+      k++
+      continue
+    }
+    const start = k
+    let end = k
+    let j = k
+    while (j < ops.length) {
+      if (changed[j]) {
+        end = j
+        j++
+        continue
+      }
+      let e = j
+      while (e < ops.length && !changed[e]) e++
+      if (e < ops.length && e - j <= context * 2) {
+        j = e // small gap between changes — absorb it
+        continue
+      }
+      break
+    }
+    const ctxStart = Math.max(0, start - context)
+    const ctxEnd = Math.min(ops.length - 1, end + context)
+    const lines: string[] = []
+    let oldCount = 0
+    let newCount = 0
+    for (let p = ctxStart; p <= ctxEnd; p++) {
+      const op = ops[p]!
+      lines.push((op.tag === "eq" ? " " : op.tag === "del" ? "-" : "+") + op.line)
+      if (op.tag !== "add") oldCount++
+      if (op.tag !== "del") newCount++
+    }
+    hunks.push({
+      oldStart: oldNo[ctxStart]!,
+      oldCount,
+      newStart: newNo[ctxStart]!,
+      newCount,
+      lines,
+    })
+    k = ctxEnd + 1
+  }
+  return hunks
+}
+
+/**
+ * Common prefix/suffix trim — one hunk, no context. Kept as the fallback for
+ * inputs too large for the O(n·m) LCS table (over-reports the gap between
+ * distant edits, but bounded memory).
+ */
+const trimmedDiff = (a: ReadonlyArray<string>, b: ReadonlyArray<string>, path: string): string => {
   let start = 0
   const maxStart = Math.min(a.length, b.length)
   while (start < maxStart && a[start] === b[start]) start++
@@ -89,6 +200,29 @@ export const unifiedDiff = (before: string, after: string, path: string): string
   ]
   for (const l of removed) lines.push(`-${l}`)
   for (const l of added) lines.push(`+${l}`)
+  return lines.join("\n")
+}
+
+/**
+ * Unified diff over a real line-level LCS: multiple hunks in file order, each
+ * with up to 3 context lines and a correct `@@ -old,n +new,m @@` header. The
+ * renderer parses those headers for the line-number gutter, and the model
+ * sees canonical unified-diff text. Falls back to a bounded prefix/suffix
+ * trim for very large inputs.
+ */
+export const unifiedDiff = (before: string, after: string, path: string): string => {
+  if (before === after) return ""
+  const a = before.split("\n")
+  const b = after.split("\n")
+  // O(n·m) table guard — fall back to the bounded trim past ~2000² cells.
+  if (a.length * b.length > 4_000_000) return trimmedDiff(a, b, path)
+  const hunks = groupHunks(diffLines(a, b), 3)
+  if (hunks.length === 0) return ""
+  const lines: string[] = [`--- ${path}`, `+++ ${path}`]
+  for (const h of hunks) {
+    lines.push(`@@ -${h.oldStart},${h.oldCount} +${h.newStart},${h.newCount} @@`)
+    lines.push(...h.lines)
+  }
   return lines.join("\n")
 }
 
@@ -188,7 +322,7 @@ export const WriteFile = Tool.make("write_file", {
       description: "Full content to write. Overwrites any existing file.",
     }),
   },
-  success: Schema.Struct({ path: Schema.String, bytes: Schema.Number }),
+  success: Schema.Struct({ path: Schema.String, bytes: Schema.Number, lines: Schema.Number }),
   failure: Failure,
   failureMode: "return",
 })
@@ -428,6 +562,7 @@ export const codingToolkitLayer = (
             return {
               path: displayPath(cwd, abs),
               bytes: new TextEncoder().encode(content).byteLength,
+              lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length,
             }
           }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
