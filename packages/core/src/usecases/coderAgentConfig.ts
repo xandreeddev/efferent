@@ -7,7 +7,7 @@ import type { Shell } from "../ports/Shell.js"
 import { buildCodingTools } from "./codingTools.js"
 import { coderSystemPrompt } from "../prompts/coder.js"
 import type { InstructionFile } from "./discoverInstructionFiles.js"
-import type { AgentConfig } from "./notesAgentConfig.js"
+import type { AgentConfig } from "./agentConfig.js"
 import { buildScopedAgentDelegationTool } from "./scopedAgentTools.js"
 
 export const coderAgentConfig = <R = never>(
