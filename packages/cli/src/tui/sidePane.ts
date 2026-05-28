@@ -1,10 +1,5 @@
-import { ansi, padRight, truncate, visibleLength } from "./terminal.js"
-
-export interface AgentStackFrame {
-  readonly name: string
-  readonly currentTool?: string | undefined
-  readonly status: "running" | "idle"
-}
+import { ansi, padRight, truncate, SPINNER_FRAMES } from "./terminal.js"
+import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
 
 export interface SidePaneInstruction {
   readonly path: string
@@ -12,21 +7,16 @@ export interface SidePaneInstruction {
 }
 
 export interface SidePaneState {
-  readonly stack: ReadonlyArray<AgentStackFrame>
+  readonly tree: ExecutionTree
   readonly skillsLoaded: ReadonlyArray<string>
   readonly instructions: ReadonlyArray<SidePaneInstruction>
 }
 
 export const emptySidePane: SidePaneState = {
-  stack: [],
+  tree: emptyTree,
   skillsLoaded: [],
   instructions: [],
 }
-
-const STATUS_DOT = (status: AgentStackFrame["status"]): string =>
-  status === "running"
-    ? `${ansi.fgYellow}◉${ansi.reset}`
-    : `${ansi.fgGreen}◉${ansi.reset}`
 
 const homeDir = (() => {
   try {
@@ -39,88 +29,135 @@ const homeDir = (() => {
 const prettyPath = (p: string): string =>
   homeDir !== "" && p.startsWith(homeDir) ? `~${p.slice(homeDir.length)}` : p
 
-const sectionHeader = (label: string, count?: number): string => {
-  const c = count !== undefined ? ` ${ansi.dim}(${count})${ansi.reset}` : ""
-  return `${ansi.bold}${ansi.fgGray}${label}${ansi.reset}${c}`
+const fmtDur = (ms: number): string => {
+  if (ms < 1000) return `${ms}ms`
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const m = Math.floor(s / 60)
+  return `${m}m${Math.round(s - m * 60)}s`
 }
 
-const renderStack = (
-  stack: ReadonlyArray<AgentStackFrame>,
+const sectionHeader = (label: string, count?: number): string => {
+  const c = count !== undefined ? ` ${ansi.dim}(${count})${ansi.reset}` : ""
+  return `${ansi.bold}${ansi.fgGray}── ${label} ──${ansi.reset}${c}`
+}
+
+const statusGlyph = (node: TreeNode, spinnerFrame: number): string => {
+  if (node.status === "running") {
+    return `${ansi.fgYellow}${SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length]}${ansi.reset}`
+  }
+  if (node.status === "error") return `${ansi.fgRed}✗${ansi.reset}`
+  return `${ansi.fgGreen}✓${ansi.reset}`
+}
+
+const containerGlyph = (node: TreeNode): string => {
+  const color =
+    node.status === "running"
+      ? ansi.fgYellow
+      : node.status === "error"
+        ? ansi.fgRed
+        : ansi.fgGray
+  return `${color}▾${ansi.reset}`
+}
+
+const renderNode = (
+  node: TreeNode,
+  depth: number,
+  spinnerFrame: number,
+  now: number,
+  width: number,
+  out: string[],
+): void => {
+  const indent = "  ".repeat(depth)
+  const isContainer = node.kind === "turn" || node.kind === "subagent"
+  const glyph = isContainer ? containerGlyph(node) : statusGlyph(node, spinnerFrame)
+  const detail =
+    node.detail !== undefined ? ` ${ansi.dim}${node.detail}${ansi.reset}` : ""
+  let line = `${indent}${glyph} ${node.label}${detail}`
+
+  if (isContainer) {
+    const dur = fmtDur((node.endedAt ?? now) - node.startedAt)
+    line += ` ${ansi.dim}${dur}${ansi.reset}`
+  }
+  out.push(truncate(line, width))
+
+  for (const child of node.children) {
+    renderNode(child, depth + 1, spinnerFrame, now, width, out)
+  }
+}
+
+const renderTreeLines = (
+  tree: ExecutionTree,
+  spinnerFrame: number,
+  now: number,
   width: number,
 ): string[] => {
-  const out: string[] = []
-  if (stack.length === 0) {
-    out.push(`${ansi.dim}(idle)${ansi.reset}`)
-    return out
+  if (tree.roots.length === 0) {
+    return [`${ansi.dim}(idle)${ansi.reset}`]
   }
-  for (let i = 0; i < stack.length; i++) {
-    const frame = stack[i]!
-    const indent = "  ".repeat(i)
-    const branch = i === 0 ? "" : `${ansi.dim}└─${ansi.reset} `
-    const name = `${ansi.bold}${frame.name}${ansi.reset}`
-    out.push(
-      truncate(`${indent}${branch}${STATUS_DOT(frame.status)} ${name}`, width),
-    )
-    if (frame.currentTool !== undefined) {
-      const toolLine = `${indent}   ${ansi.fgGray}${frame.currentTool}${ansi.reset}`
-      out.push(truncate(toolLine, width))
+  const out: string[] = []
+  for (const root of tree.roots) {
+    renderNode(root, 0, spinnerFrame, now, width, out)
+  }
+  return out
+}
+
+const renderListSection = (
+  label: string,
+  items: ReadonlyArray<string>,
+  width: number,
+): string[] => {
+  const out = [sectionHeader(label, items.length)]
+  if (items.length === 0) {
+    out.push(`${ansi.dim}(none)${ansi.reset}`)
+  } else {
+    for (const item of items) {
+      out.push(truncate(`${ansi.fgGray}·${ansi.reset} ${item}`, width))
     }
   }
   return out
 }
 
-const renderList = (
-  items: ReadonlyArray<string>,
-  width: number,
-): string[] => {
-  if (items.length === 0) {
-    return [`${ansi.dim}(none)${ansi.reset}`]
-  }
-  return items.map((item) =>
-    truncate(`${ansi.fgGray}·${ansi.reset} ${item}`, width),
-  )
-}
-
 /**
- * Render the side pane: three sections (agent stack / skills / instructions)
- * separated by a blank line. Truncates per-row at `cols`; if the rendered
- * content exceeds `rows`, drops the tail and shows a "+N more" indicator.
+ * Render the side pane: the live execution tree on top (tail-windowed so
+ * the newest activity stays visible), with skills + instructions sections
+ * pinned below. Truncates per row at `cols`.
  */
 export const renderSidePane = (
   state: SidePaneState,
   rows: number,
   cols: number,
+  spinnerFrame = 0,
+  now: number = Date.now(),
 ): string[] => {
   if (rows <= 0 || cols <= 0) return []
-  const out: string[] = []
-  out.push(sectionHeader("agent"))
-  out.push(...renderStack(state.stack, cols))
-  out.push("")
-  out.push(sectionHeader("skills", state.skillsLoaded.length))
-  out.push(...renderList(state.skillsLoaded, cols))
-  out.push("")
-  out.push(sectionHeader("instructions", state.instructions.length))
-  out.push(
-    ...renderList(
+
+  const sections: string[] = ["", ...renderListSection("skills", state.skillsLoaded, cols)]
+  sections.push(
+    "",
+    ...renderListSection(
+      "instructions",
       state.instructions.map((i) => prettyPath(i.path)),
       cols,
     ),
   )
 
-  const visible: string[] = []
-  if (out.length <= rows) {
-    visible.push(...out)
-  } else {
-    const trimmed = out.slice(0, rows - 1)
-    const dropped = out.length - trimmed.length
-    visible.push(...trimmed)
-    visible.push(
-      truncate(`${ansi.dim}+${dropped} more${ansi.reset}`, cols),
-    )
-  }
-  while (visible.length < rows) visible.push("")
-  return visible.map((line) => padRight(line, cols))
-}
+  // Reserve up to half the pane for the bottom sections; the tree takes
+  // the rest and shows its tail (newest nodes) when it overflows.
+  const sectionsBudget = Math.min(sections.length, Math.floor(rows / 2))
+  const shownSections = sections.slice(0, sectionsBudget)
+  const treeRows = Math.max(0, rows - shownSections.length)
 
-// Re-export so consumers don't reach into terminal.ts directly.
-export { visibleLength }
+  const treeLines = renderTreeLines(state.tree, spinnerFrame, now, cols)
+  const treeWindow =
+    treeLines.length > treeRows
+      ? treeLines.slice(treeLines.length - treeRows)
+      : treeLines
+
+  const out: string[] = []
+  out.push(...treeWindow)
+  while (out.length < treeRows) out.push("")
+  out.push(...shownSections)
+  while (out.length < rows) out.push("")
+  return out.slice(0, rows).map((line) => padRight(line, cols))
+}

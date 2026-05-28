@@ -39,6 +39,23 @@ export class KeyParser {
   private pasting = false
   private pasteBuf = ""
 
+  /**
+   * True when the buffer holds exactly a lone ESC byte — i.e. a possible
+   * Escape keypress that `feed` is holding back in case it's the start of
+   * an escape sequence (arrows etc.). The driver arms a short timer and
+   * calls `flushEscape` if no more bytes arrive.
+   */
+  hasPendingEscape(): boolean {
+    return !this.pasting && this.buf === "\x1b"
+  }
+
+  /** Consume a held lone ESC as a standalone Escape key, if present. */
+  flushEscape(): Key[] {
+    if (!this.hasPendingEscape()) return []
+    this.buf = ""
+    return [{ type: "escape" }]
+  }
+
   feed(chunk: string | Buffer | Uint8Array): Key[] {
     const s =
       typeof chunk === "string"

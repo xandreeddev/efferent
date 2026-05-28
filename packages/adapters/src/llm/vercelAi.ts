@@ -326,13 +326,17 @@ export const buildLlm = (
             : (input.messages as ReadonlyArray<ModelMessage> as ModelMessage[])
 
         const step = yield* Effect.tryPromise({
-          try: () =>
+          // `signal` aborts when the fiber is interrupted (e.g. the TUI's
+          // Esc-to-stop), cancelling the in-flight HTTP request so the
+          // turn ends promptly instead of after the model finishes.
+          try: (signal) =>
             generateText({
               model,
               system: input.system,
               messages: requestMessages,
               tools: sdkTools,
               stopWhen: stepCountIs(1),
+              abortSignal: signal,
               ...(providerOptions !== undefined
                 ? { providerOptions: providerOptions as never }
                 : {}),
