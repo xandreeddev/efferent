@@ -1,13 +1,13 @@
+import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
   ConversationId,
   ConversationStore,
   FileSystem,
-  Llm,
-  LlmCache,
   SettingsStore,
   Shell,
   coderAgentConfig,
+  codingToolkitLayer,
   runAgent,
   type InstructionFile,
   type ScopedAgentConfig,
@@ -15,7 +15,6 @@ import {
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
-import { denyBashHook } from "../safetyHooks.js"
 
 const writeJson = (event: AgentEvent): Effect.Effect<void> =>
   Effect.sync(() => {
@@ -47,7 +46,11 @@ export const runJsonMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Shell | Llm | LlmCache | ConversationStore | SettingsStore
+  | FileSystem
+  | Shell
+  | LanguageModel.LanguageModel
+  | ConversationStore
+  | SettingsStore
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =
@@ -58,10 +61,7 @@ export const runJsonMode = (
     const queue = yield* Queue.unbounded<AgentEvent>()
     const consumer = yield* Effect.forkDaemon(consumeEvents(queue))
 
-    const hooks = makeEventHooks<FileSystem | Shell | ConversationStore | Llm>(
-      queue,
-      denyBashHook(input.allowBash),
-    )
+    const hooks = makeEventHooks(queue)
 
     yield* runAgent(
       coderAgentConfig(
@@ -69,13 +69,16 @@ export const runJsonMode = (
         input.skills,
         input.scopedAgents,
         input.instructionFiles,
-        undefined,
-        hooks,
       ),
       cid,
       input.prompt,
       hooks,
     ).pipe(
+      Effect.provide(
+        codingToolkitLayer(input.cwd, input.skills, {
+          allowBash: input.allowBash,
+        }),
+      ),
       Effect.catchAll((err) =>
         Effect.gen(function* () {
           const msg =
