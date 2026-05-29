@@ -101,11 +101,20 @@ runAgent(coderAgentConfig(cwd), conversationId, prompt, hooks)
 
 **Bash safety**: gated in the `bash` handler via the `allowBash` flag on `codingToolkitLayer` (denied → returned as a tool failure). Non-interactive modes pass `--allow-bash`; the TUI currently allows bash (interactive per-command confirm is a deferred follow-up).
 
+## Handoff & conversation context
+
+A **handoff** replaces the *loaded* history with a model-generated summary while keeping the originals. It's how a long session frees context without losing the record.
+
+- **Storage** (`checkpoints` table, migration `0005`): a checkpoint is `{ messagePosition, summary }` for a conversation. Original `messages` rows are never modified. `ConversationStore` exposes `checkpoint(id, summary)` (atomic — folds at `COALESCE(MAX(position), -1)` in one statement), `getLatestCheckpoint`, `listCheckpoints`, `list` (ALL messages, for browsing), and `listActive` (only real rows **after** the latest fold).
+- **Loading** (`runAgent`): loads `getLatestCheckpoint` + `listActive`, prepending the summary as a single synthetic `user` message via `handoffToMessage` (`promptMapping.ts`) — domain logic stays in core, not the adapter. So the model sees `[handoff summary] + [messages since the fold] + [new user msg]`; everything before the fold is preserved but never re-fed.
+- **Creating** (`createHandoff`, `@agent/core/usecases/handoff.ts`): summarizes the **currently loaded view** (prior summary + active window, never the raw `list`) with `HANDOFF_PROMPT` (`prompts/handoff.ts`, a Goal/State/Next-steps/Constraints brief) and writes a checkpoint. Summarizing the loaded view keeps handoffs **cumulative** — a second handoff folds the first summary back in. No-op when nothing new since the last fold.
+- **TUI**: `:handoff` runs it (pushes a checkpoint block); `:context` toggles the **context viewer** in the side pane (`tui/contextView.ts` — `buildContextView` partitions `list` + `listCheckpoints` into *archived* segments (folded, not loaded) and the *loaded* segment, rendered as a tree so the replacement is visible); `:browse` lists workspace conversations and `:resume <#|id>` switches to one (full replay for browsing, active-window for execution).
+
 ## CLI shape
 
 Composition root: `packages/cli/src/main.ts`. Four modes under `packages/cli/src/modes/`:
 
-- **`tui.ts`** — default in a TTY. Hand-rolled **modal, multi-pane** layout: a fixed top hint bar, the middle (scrollback ¦ optional side pane), and a multi-line input — plus a `:` command palette (`:exit`, `:clear`, `:help`, `:cwd`, `:reset`, `:settings`, `:set`, `:model`) and a `/` conversation search. Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l**; per-pane modes — **INSERT** only on the input, **NORMAL + VISUAL** on the read-only panes. NORMAL gives vim scroll motions (j/k, gg/G, {/}, Ctrl-D/U) and `/` search (n/N); VISUAL selects lines and `y` yanks to the clipboard (OSC 52). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
+- **`tui.ts`** — default in a TTY. Hand-rolled **modal, multi-pane** layout: a fixed top hint bar, the middle (scrollback ¦ optional side pane), and a multi-line input — plus a `:` command palette (`:exit`, `:clear`, `:help`, `:cwd`, `:reset`, `:handoff`, `:context`, `:browse`, `:resume`, `:settings`, `:set`, `:model`) and a `/` conversation search. Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l**; per-pane modes — **INSERT** only on the input, **NORMAL + VISUAL** on the read-only panes. NORMAL gives vim scroll motions (j/k, gg/G, {/}, Ctrl-D/U) and `/` search (n/N); VISUAL selects lines and `y` yanks to the clipboard (OSC 52). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
 - **`print.ts`** — one-shot. Prompt from argv or stdin (`-`). Final text on stdout, tool log on stderr. Exits when done.
 - **`json.ts`** — same control flow as print, but every `AgentEvent` is JSONL on stdout.
 - **`rpc.ts`** — bidirectional JSON-RPC on stdin/stdout. Method: `agent.send({ prompt, conversationId? })` → emits `agent.event` notifications, resolves with `{ conversationId, finalText }`.
@@ -157,7 +166,7 @@ Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
 - **Per-conversation OpenAI `prompt_cache_key`** — currently a stable static key; threading the conversation id would tighten cache routing.
 
 - **Settings UI / config files** — a few knobs still hardcoded in `main.ts` composition (`/model` + `/set` cover model + the core settings).
-- **Compaction** — `onTransformContext` summarisation of old turns when context grows (hook is wired).
+- **Auto-compaction** — manual `:handoff` ships (see Handoff & conversation context). Automatic, token-threshold folding via `onTransformContext` (the hook is wired but unused) is the remaining piece; needs the loop's tail-persistence to be robust to a shrinking buffer first.
 - **Streaming tool output** — bash stdout chunks back to the model live.
 - **Branch / fork / session tree**; **extension system**; **parallel tool execution**.
 - **Image attachments** in the CLI; **mouse support** in the TUI (intentionally none — the TUI stays out of mouse-reporting mode so terminal-native click-drag selection keeps working; navigation/selection is keyboard-modal: Ctrl-hjkl panes, j/k·gg/G·{/} scroll, `/` search, `v`+`y` yank); **native (non-shell-out) grep**.

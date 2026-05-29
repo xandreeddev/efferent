@@ -3,6 +3,15 @@ import { Schema } from "effect"
 export const ConversationId = Schema.UUID.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
 
+export const Checkpoint = Schema.Struct({
+  id: Schema.UUID,
+  conversationId: ConversationId,
+  messagePosition: Schema.Number,
+  summary: Schema.String,
+  createdAt: Schema.Number,
+})
+export type Checkpoint = typeof Checkpoint.Type
+
 /**
  * Content-part schemas, structurally mirroring Vercel AI SDK v6
  * `ModelMessage` parts so the adapter boundary is a near-identity cast.

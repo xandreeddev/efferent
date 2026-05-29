@@ -16,6 +16,9 @@ import {
   coderAgentConfig,
   parseModel,
   runAgent,
+  createHandoff,
+  type AgentMessage,
+  type Checkpoint,
   type InstructionFile,
   type ModelInfo,
   type Scope,
@@ -48,6 +51,7 @@ import {
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
 import { type SidePaneState } from "../tui/sidePane.js"
+import { buildContextView } from "../tui/contextView.js"
 import {
   emptyTree,
   onAgentEnd as treeAgentEnd,
@@ -157,6 +161,10 @@ const HELP_LINES = [
   "  :help            show this help",
   "  :cwd             print workspace path",
   "  :reset           start a new conversation",
+  "  :handoff         summarize & hand off — replace loaded history, keep originals",
+  "  :context         toggle the context viewer (message tree + handoff)",
+  "  :browse          list conversations in this workspace",
+  "  :resume <#|id>   resume a conversation (run :browse first)",
   "  :settings        show configuration settings",
   "  :set <k> <v>     update setting (e.g. :set maxSteps 15)",
   "  :model           list models; :model <#|id> switches provider/model",
@@ -226,6 +234,65 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
   Effect.runSync(decodeConversationId(crypto.randomUUID()).pipe(Effect.orDie))
 
+/**
+ * Replay a persisted conversation into the scrollback: each message → blocks,
+ * with a `checkpoint` block pushed at every handoff fold so the user sees
+ * "above = archived (not loaded), below = live." Used at startup (`--resume`)
+ * and by the in-session `:resume` command. Browsing shows the FULL record;
+ * execution still loads only the active window.
+ */
+const replayHistory = (
+  sb: Scrollback,
+  history: ReadonlyArray<AgentMessage>,
+  checkpoints: ReadonlyArray<Checkpoint>,
+): void => {
+  let msgIdx = 0
+  for (const msg of history) {
+    if (msg.role === "user") {
+      sb.push({ kind: "user", text: msg.content })
+    } else if (msg.role === "assistant") {
+      if (typeof msg.content === "string") {
+        sb.push({ kind: "assistant", text: msg.content })
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === "text") {
+            if (part.text.trim().length > 0) {
+              sb.push({ kind: "assistant", text: part.text })
+            }
+          } else if (part.type === "reasoning") {
+            if (part.text.trim().length > 0) {
+              sb.push({ kind: "reasoning", text: part.text })
+            }
+          } else if (part.type === "tool-call") {
+            sb.push({
+              kind: "tool",
+              id: part.toolCallId,
+              toolName: describeToolCall(part.toolName, part.input),
+              state: "ok",
+            })
+          }
+        }
+      }
+    } else if (msg.role === "tool") {
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          const detail = describeToolResult(part.toolName, !part.isError, part.output)
+          const artifacts = toolArtifacts(part.toolName, !part.isError, part.output)
+          sb.updateTool(part.toolCallId, {
+            state: part.isError ? "error" : "ok",
+            ...(detail !== undefined ? { detail } : {}),
+            ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
+            ...(artifacts.output !== undefined ? { output: artifacts.output } : {}),
+          })
+        }
+      }
+    }
+    const cp = checkpoints.find((c) => c.messagePosition === msgIdx)
+    if (cp !== undefined) sb.push({ kind: "checkpoint", text: cp.summary })
+    msgIdx++
+  }
+}
+
 export interface TuiModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
@@ -245,6 +312,7 @@ const seedSidePane = (
     path: f.path,
     scope: f.path,
   })),
+  view: "stack",
 })
 
 const runTuiModeCore = (
@@ -300,61 +368,17 @@ const runTuiModeCore = (
       const history = yield* store.list(initialCid).pipe(
         Effect.catchAll(() => Effect.succeed([])),
       )
+      const checkpoints = yield* store.listCheckpoints(initialCid).pipe(
+        Effect.catchAll(() => Effect.succeed([])),
+      )
       if (history.length > 0) {
         yield* Ref.update(stateRef, (s) => {
-          for (const msg of history) {
-            if (msg.role === "user") {
-              s.scrollback.push({ kind: "user", text: msg.content })
-            } else if (msg.role === "assistant") {
-              if (typeof msg.content === "string") {
-                s.scrollback.push({ kind: "assistant", text: msg.content })
-              } else if (Array.isArray(msg.content)) {
-                for (const part of msg.content) {
-                  if (part.type === "text") {
-                    if (part.text.trim().length > 0) {
-                      s.scrollback.push({ kind: "assistant", text: part.text })
-                    }
-                  } else if (part.type === "reasoning") {
-                    if (part.text.trim().length > 0) {
-                      s.scrollback.push({ kind: "reasoning", text: part.text })
-                    }
-                  } else if (part.type === "tool-call") {
-                    const label = describeToolCall(part.toolName, part.input)
-                    s.scrollback.push({
-                      kind: "tool",
-                      id: part.toolCallId,
-                      toolName: label,
-                      state: "ok",
-                    })
-                  }
-                }
-              }
-            } else if (msg.role === "tool") {
-              if (Array.isArray(msg.content)) {
-                for (const part of msg.content) {
-                  const detail = describeToolResult(
-                    part.toolName,
-                    !part.isError,
-                    part.output,
-                  )
-                  const artifacts = toolArtifacts(
-                    part.toolName,
-                    !part.isError,
-                    part.output,
-                  )
-                  s.scrollback.updateTool(part.toolCallId, {
-                    state: part.isError ? "error" : "ok",
-                    ...(detail !== undefined ? { detail } : {}),
-                    ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
-                    ...(artifacts.output !== undefined
-                      ? { output: artifacts.output }
-                      : {}),
-                  })
-                }
-              }
-            }
-          }
+          replayHistory(s.scrollback, history, checkpoints)
           s.conversationHasTurns = true
+          s.sidePane = {
+            ...s.sidePane,
+            context: buildContextView(history, checkpoints),
+          }
           return s
         })
       }
@@ -760,6 +784,32 @@ const runTuiModeCore = (
         })
       })
 
+    // Last `:browse` listing, so `:resume <#>` can resolve a numbered choice.
+    let browseList: ReadonlyArray<{
+      readonly id: string
+      readonly createdAt: number
+      readonly firstPrompt?: string
+    }> = []
+
+    // Rebuild the context-viewer model from the persisted record: full history
+    // (browsable) + checkpoints (the folds). Cheap; called on resume, after a
+    // handoff, and when `:context` opens.
+    const rebuildContext = (cid: ConversationId) =>
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const history = yield* store
+          .list(cid)
+          .pipe(Effect.catchAll(() => Effect.succeed([])))
+        const checkpoints = yield* store
+          .listCheckpoints(cid)
+          .pipe(Effect.catchAll(() => Effect.succeed([])))
+        const segments = buildContextView(history, checkpoints)
+        yield* Ref.update(stateRef, (s) => {
+          s.sidePane = { ...s.sidePane, context: segments }
+          return s
+        })
+      })
+
     const handleSlash = (cmd: string) =>
       Effect.gen(function* () {
         const parts = cmd.trim().split(/\s+/)
@@ -776,6 +826,185 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
+          case ":handoff": {
+            const cur0 = yield* Ref.get(stateRef)
+            if (cur0.busy) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "info",
+                  text: "can't hand off while a turn is running",
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const hcid = cur0.conversationId
+            yield* Effect.gen(function* () {
+              yield* Ref.update(stateRef, (s) => {
+                s.busy = true
+                s.scrollback.push({ kind: "info", text: "⟳ generating handoff…" })
+                return s
+              })
+              yield* requestRender
+
+              // createHandoff needs only ConversationStore + LanguageModel,
+              // both ambient — no toolkit handler layer required.
+              yield* createHandoff(hcid).pipe(
+                Effect.catchAll((err) => {
+                  const msg =
+                    typeof err === "object" && err !== null && "message" in err
+                      ? String((err as { message: unknown }).message)
+                      : String(err)
+                  return Queue.offer(eventQueue, {
+                    type: "error",
+                    message: `handoff failed: ${msg}`,
+                  })
+                }),
+              )
+
+              const store = yield* ConversationStore
+              const cp = yield* store
+                .getLatestCheckpoint(hcid)
+                .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+
+              yield* rebuildContext(hcid)
+              yield* Ref.update(stateRef, (s) => {
+                s.busy = false
+                if (cp !== undefined) {
+                  s.scrollback.push({ kind: "checkpoint", text: cp.summary })
+                } else {
+                  s.scrollback.push({
+                    kind: "info",
+                    text: "nothing new to hand off",
+                  })
+                }
+                return s
+              })
+              yield* requestRender
+            })
+            return "stay" as const
+          }
+          case ":context": {
+            const cur0 = yield* Ref.get(stateRef)
+            yield* rebuildContext(cur0.conversationId)
+            yield* Ref.update(stateRef, (s) => {
+              const next = s.sidePane.view === "context" ? "stack" : "context"
+              s.sidePane = { ...s.sidePane, view: next }
+              if (next === "context") s.focus = "side"
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          case ":browse": {
+            const store = yield* ConversationStore
+            const list = yield* store
+              .listByWorkspace(input.cwd)
+              .pipe(Effect.catchAll(() => Effect.succeed([])))
+            browseList = list
+            yield* Ref.update(stateRef, (s) => {
+              s.scrollback.push({
+                kind: "info",
+                text: `conversations in ${input.cwd}:`,
+              })
+              if (list.length === 0) {
+                s.scrollback.push({ kind: "info", text: "  (none)" })
+              } else {
+                list.forEach((c, i) => {
+                  const date = new Date(c.createdAt).toLocaleString()
+                  const preview =
+                    c.firstPrompt !== undefined &&
+                    c.firstPrompt.trim().length > 0
+                      ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 50)
+                      : "(empty)"
+                  const here = c.id === s.conversationId ? " ← current" : ""
+                  s.scrollback.push({
+                    kind: "info",
+                    text: `  [${i + 1}] ${date} · ${preview}${here}`,
+                  })
+                })
+                s.scrollback.push({
+                  kind: "info",
+                  text: "  :resume <#> to open one",
+                })
+              }
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          case ":resume": {
+            const cur0 = yield* Ref.get(stateRef)
+            if (cur0.busy) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "info",
+                  text: "can't resume while a turn is running",
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const arg = parts[1]
+            if (arg === undefined) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "info",
+                  text: "usage: :resume <#|id> (run :browse first)",
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const n = Number(arg)
+            const rawId =
+              Number.isInteger(n) && n >= 1 && n <= browseList.length
+                ? browseList[n - 1]!.id
+                : arg
+            const target = yield* decodeConversationId(rawId).pipe(
+              Effect.catchAll(() => Effect.succeed(undefined)),
+            )
+            if (target === undefined) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "info",
+                  text: `not a conversation: ${arg}`,
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const store = yield* ConversationStore
+            const history = yield* store
+              .list(target)
+              .pipe(Effect.catchAll(() => Effect.succeed([])))
+            const checkpoints = yield* store
+              .listCheckpoints(target)
+              .pipe(Effect.catchAll(() => Effect.succeed([])))
+            yield* Ref.update(stateRef, (s) => {
+              s.conversationId = target
+              s.scrollback.clear()
+              s.sidePane = {
+                ...s.sidePane,
+                tree: emptyTree,
+                context: buildContextView(history, checkpoints),
+              }
+              replayHistory(s.scrollback, history, checkpoints)
+              s.scrollback.cursorToBottom()
+              s.conversationHasTurns = history.length > 0
+              s.scrollback.push({
+                kind: "info",
+                text: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing`,
+              })
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
           case ":help":
             yield* Ref.update(stateRef, (s) => {
               for (const line of HELP_LINES) {

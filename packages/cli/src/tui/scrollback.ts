@@ -22,6 +22,7 @@ export type ScrollbackBlock =
     }
   | { readonly kind: "info"; readonly text: string }
   | { readonly kind: "error"; readonly text: string }
+  | { readonly kind: "checkpoint"; readonly text: string }
 
 const STATE_DOT: Record<ToolPillState, string> = {
   running: `${ansi.fgYellow}⏺${ansi.reset}`,
@@ -184,6 +185,19 @@ const renderBlock = (
       return [`${ansi.dim}${block.text}${ansi.reset}`]
     case "error":
       return [`${ansi.fgBrightRed}${block.text}${ansi.reset}`]
+    case "checkpoint": {
+      const bar = `${ansi.fgBrightMagenta}┃${ansi.reset} `
+      const header = `${ansi.fgBrightMagenta}─── Handoff Checkpoint ──────────────────────────────────────────${ansi.reset}`
+      const footer = `${ansi.fgBrightMagenta}─────────────────────────────────────────────────────────────────${ansi.reset}`
+      const lines = wrapAnsi(block.text, cols - 4)
+      return [
+        "",
+        header,
+        ...lines.map((l) => bar + l),
+        footer,
+        "",
+      ]
+    }
   }
 }
 

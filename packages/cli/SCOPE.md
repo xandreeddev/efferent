@@ -10,8 +10,13 @@ src/
 ├── events.ts          AgentEvent union + makeEventHooks(queue, beforeToolHook)
 ├── safetyHooks.ts     bashConfirmHook / denyBashHook
 ├── modes/{tui,print,json,rpc}.ts
-└── tui/{terminal,keys,render,header,uiMode,navKeys,statusBar,scrollback,input,slashPalette,modal,markdown,logger,sidePane,viMode}.ts
+└── tui/{terminal,keys,render,header,uiMode,navKeys,statusBar,scrollback,input,slashPalette,modal,markdown,logger,sidePane,contextView,viMode}.ts
 ```
+
+## Handoff & context viewer
+- **`:handoff`** runs `createHandoff` (core) — summarizes the loaded view, writes a checkpoint, pushes a `checkpoint` scrollback block. **`:context`** toggles the side pane between the live `stack` view and the `context` view; **`:browse`** lists workspace conversations, **`:resume <#|id>`** switches to one (full replay via the shared `replayHistory` helper; execution then loads only the active window).
+- `tui/contextView.ts` owns the viewer: `buildContextView(messages, checkpoints)` (pure, unit-tested) partitions into *archived* (folded, dim, not loaded) and *loaded* (bright, headed by the `✦` summary) segments; `renderContextView` draws the tree. The side pane (`sidePane.ts`) gained `view: "stack" | "context"` + a `context` segment array, tail-windowed like the stack tree (`z` zooms for the full read). The fold-point semantics live in `@agent/core` (handoff/checkpoints) — this is display only.
+- *Known follow-up:* the context view is currently non-interactive (no per-node expand / j-k scroll inside the side pane — the side pane has no cursor model yet); zoom for a fuller read. Same gap as the already-deferred "side-pane internal scroll".
 
 ## Hard rules
 - No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@agent/core`.
