@@ -148,12 +148,15 @@ export class FrameRenderer {
       state.zoomed &&
       (state.focus === "conversation" || state.focus === "side")
 
-    // Each middle pane reserves a 1-col focus gutter (constant width, so
-    // switching focus never reflows text): a bright bar on the focused pane.
-    const FOCUS_BAR = `${ansi.bold}${ansi.fgBrightCyan}▌${ansi.reset}`
-    // The persistent cursor caret: bright when the conversation is focused,
-    // dim otherwise (so a `/` search shows where Enter will land you).
-    const CARET = `${ansi.bold}${ansi.fgBrightCyan}▶${ansi.reset}`
+    // Each middle pane reserves a 1-col gutter (constant width, so switching
+    // focus never reflows text). Neither pane draws a focus bar — a bar flush
+    // against the content reads as overlapping it; focus is shown by the
+    // highlighted pane title + the bright divider + the badge (+ the cursor
+    // caret/tint on the conversation).
+    // The conversation cursor caret — bright yellow so it stands apart from the
+    // cyan ●/┃ content bullets; dim when unfocused (a `/` search shows where
+    // Enter will land you).
+    const CARET = `${ansi.bold}${ansi.fgBrightYellow}▶${ansi.reset}`
     const CARET_DIM = `${ansi.dim}▶${ansi.reset}`
 
     const paneTitle = (label: string, focused: boolean, width: number): string => {
@@ -172,23 +175,19 @@ export class FrameRenderer {
     // Window-relative cursor row — read *after* scrollback.render() below, so
     // it reflects the freshly-flattened viewport (not a stale snapshot).
     let cursorRowConv = -1
-    // Conversation gutter for content row i: a caret on the cursor line, else
-    // the focus bar (focused) / blank.
+    // Conversation gutter (2 cols): a caret + space on the cursor line, else two
+    // blanks. The trailing space keeps the caret from abutting the content (so
+    // a line like `29. …` reads `▶ 29. …`, not `▶29. …`) and gives every row a
+    // small left margin.
     const convGutterAt = (i: number): string =>
-      i === cursorRowConv
-        ? convFocused
-          ? CARET
-          : CARET_DIM
-        : convFocused
-          ? FOCUS_BAR
-          : " "
+      i === cursorRowConv ? (convFocused ? `${CARET} ` : `${CARET_DIM} `) : "  "
 
     const middleLines: string[] = []
 
     if (zoomed) {
-      // One pane fills the whole middle width (1-col gutter + the rest).
-      const contentW = Math.max(1, cols - 1)
+      // One pane fills the whole middle width.
       if (state.focus === "side") {
+        const contentW = Math.max(1, cols - 1) // 1-col gutter
         const sideLines = renderSidePane(
           state.sidePane,
           contentRows,
@@ -196,18 +195,17 @@ export class FrameRenderer {
           state.spinnerFrame,
         )
         if (hasTitle) {
-          middleLines.push(FOCUS_BAR + paneTitle(" context [zoom]", true, contentW))
+          middleLines.push(" " + paneTitle(" context [zoom]", true, contentW))
         }
         for (let i = 0; i < contentRows; i++) {
-          middleLines.push(FOCUS_BAR + (sideLines[i] ?? padRight("", contentW)))
+          middleLines.push(" " + (sideLines[i] ?? padRight("", contentW)))
         }
       } else {
+        const contentW = Math.max(1, cols - 2) // 2-col caret gutter
         const scrollLines = state.scrollback.render(contentRows, contentW, true)
         cursorRowConv = state.scrollback.cursorRow()
         if (hasTitle) {
-          middleLines.push(
-            FOCUS_BAR + paneTitle(" conversation [zoom]", true, contentW),
-          )
+          middleLines.push("  " + paneTitle(" conversation [zoom]", true, contentW))
         }
         for (let i = 0; i < contentRows; i++) {
           middleLines.push(convGutterAt(i) + (scrollLines[i] ?? padRight("", contentW)))
@@ -217,10 +215,13 @@ export class FrameRenderer {
       const sidePaneWidth = computeSidePaneWidth(cols)
       const dividerWidth = sidePaneWidth > 0 ? 1 : 0
       const leftWidth = Math.max(10, cols - sidePaneWidth - dividerWidth)
-      const scrollW = Math.max(1, leftWidth - 1)
+      const scrollW = Math.max(1, leftWidth - 2) // 2-col caret gutter
       const sideW = sidePaneWidth > 0 ? Math.max(1, sidePaneWidth - 1) : 0
-      const convTitleGutter = convFocused ? FOCUS_BAR : " "
-      const sideGutter = state.focus === "side" ? FOCUS_BAR : " "
+      // No focus bars: the conversation gutter is the 2-col caret gutter, the
+      // side gutter a single space. Focus shown by the highlighted title +
+      // divider + badge (+ caret/tint on the conversation).
+      const convTitleGutter = "  "
+      const sideGutter = " "
       const divider =
         state.focus === "side"
           ? `${ansi.bold}${ansi.fgBrightCyan}│${ansi.reset}`
@@ -327,8 +328,8 @@ export class FrameRenderer {
       const row = state.scrollback.cursorRow()
       if (row >= 0) {
         // Content rows start below the header + the pinned title row, after the
-        // 1-col focus gutter.
-        out += moveTo(HEADER_ROWS + 2 + row, 2) + showCursor
+        // 2-col conversation gutter (so the cursor sits on the content, col 3).
+        out += moveTo(HEADER_ROWS + 2 + row, 3) + showCursor
       } else {
         out += hideCursor
       }

@@ -155,6 +155,18 @@ export const responseText = (content: ReadonlyArray<unknown>): string =>
     .map((p) => p.text ?? "")
     .join("")
 
+/**
+ * Joined text of the assistant *reasoning* parts in one turn's response —
+ * the model's externalised thinking, when the provider surfaces it (OpenAI
+ * reasoning models; Gemini only when thoughts are included). Empty otherwise.
+ */
+export const responseReasoning = (content: ReadonlyArray<unknown>): string =>
+  (content as ReadonlyArray<AnyPart>)
+    .filter((p) => p.type === "reasoning")
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim()
+
 /** Tool-call summaries `{ toolName, args }` from one turn's response content. */
 export const responseToolCalls = (
   content: ReadonlyArray<unknown>,

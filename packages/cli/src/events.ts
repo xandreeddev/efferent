@@ -16,6 +16,7 @@ export type AgentEvent =
       readonly type: "assistant_message"
       readonly turnIndex: number
       readonly text: string
+      readonly reasoning?: string
       readonly usage?: TokenUsage
     }
   | {
@@ -70,6 +71,9 @@ export const makeEventHooks = <R = never>(
       type: "assistant_message",
       turnIndex: event.turnIndex,
       text: event.text,
+      ...(event.reasoning !== undefined && event.reasoning.length > 0
+        ? { reasoning: event.reasoning }
+        : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
     }).pipe(Effect.asVoid),
   onBeforeToolCall: extraBeforeTool

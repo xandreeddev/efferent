@@ -17,7 +17,7 @@ const SEP = `${ansi.dim} · ${ansi.reset}`
 const paneBadge = (focus: FocusPane): string => {
   const label =
     focus === "conversation" ? " CHAT " : focus === "side" ? " SIDE " : " INPUT "
-  return `${ansi.bold}${ansi.bgBlue}${ansi.fgWhite}${label}${ansi.reset}${ansi.bgDarkGray} `
+  return `${ansi.bold}${ansi.bgBrightCyan}${ansi.fgBlack}${label}${ansi.reset}${ansi.bgDarkGray} `
 }
 
 export const renderHeader = (

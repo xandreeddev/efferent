@@ -528,6 +528,12 @@ const runTuiModeCore = (
                 break
               }
               case "assistant_message": {
+                // Reasoning renders above the answer for this step (and, since
+                // the loop emits this before the step's tool events, above its
+                // tool pills too).
+                if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
+                  s.scrollback.push({ kind: "reasoning", text: event.reasoning })
+                }
                 if (event.text.trim().length > 0) {
                   s.scrollback.push({ kind: "assistant", text: event.text })
                 }
