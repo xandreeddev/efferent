@@ -4,34 +4,23 @@ import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
 
 /**
- * Discover skills from two kinds of source:
+ * Walk `cwd → parents → home` looking for `.agent/skills/*.md` files,
+ * parse their frontmatter, dedupe by `name` (first occurrence wins —
+ * closer-to-cwd shadows farther-from-cwd).
  *
- *  - **external** — `.agent/skills/*.md` walked `cwd → parents → home`
- *    (closer-to-cwd shadows farther). These are workspace/user skills.
- *  - **internal** — `*.md` in `internalDir`, the directory of base skills
- *    bundled with the agent. Searched *last*, so an external skill with the
- *    same name shadows a built-in one (a workspace can override a base skill).
- *
- * Each result is tagged `internal` accordingly. Dedupe is by `name`, first
- * occurrence wins. Failures (missing dirs, unreadable files, malformed
- * frontmatter) are silently skipped so a bad skill never breaks the agent.
+ * Failures (missing dirs, unreadable files, malformed frontmatter) are
+ * silently skipped so a bad skill never breaks the agent.
  */
 export const loadSkills = (
   cwd: string,
   homeDir: string,
-  internalDir?: string,
 ): Effect.Effect<ReadonlyArray<Skill>, never, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const seen = new Set<string>()
     const skills: Skill[] = []
 
-    const sources: ReadonlyArray<{ dir: string; internal: boolean }> = [
-      ...skillSearchPath(cwd, homeDir).map((dir) => ({ dir, internal: false })),
-      ...(internalDir !== undefined ? [{ dir: internalDir, internal: true }] : []),
-    ]
-
-    for (const { dir, internal } of sources) {
+    for (const dir of skillSearchPath(cwd, homeDir)) {
       const entries = yield* fs
         .list(dir, { recursive: false })
         .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<{
@@ -48,7 +37,7 @@ export const loadSkills = (
           .read(absPath)
           .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
         if (read === undefined) continue
-        const parsed = parseSkillFile(read.content, absPath, internal)
+        const parsed = parseSkillFile(read.content, absPath)
         if (parsed === undefined) continue
         if (seen.has(parsed.name)) continue
         seen.add(parsed.name)
@@ -99,7 +88,6 @@ const skillSearchPath = (cwd: string, homeDir: string): ReadonlyArray<string> =>
 const parseSkillFile = (
   content: string,
   sourcePath: string,
-  internal: boolean,
 ): Skill | undefined => {
   if (!content.startsWith("---")) return undefined
   const rest = content.slice(3)
@@ -122,5 +110,5 @@ const parseSkillFile = (
   const name = fields["name"]
   const description = fields["description"]
   if (name === undefined || description === undefined) return undefined
-  return { name, description, sourcePath, internal }
+  return { name, description, sourcePath }
 }

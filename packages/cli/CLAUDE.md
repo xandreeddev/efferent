@@ -14,7 +14,6 @@ packages/cli/src/
 │   ├── print.ts       one-shot, streams final text to stdout
 │   ├── json.ts        same loop as print but JSONL events on stdout
 │   └── rpc.ts         bidirectional JSON-RPC over stdio
-├── ../skills/         bundled (internal) base skills: web-search.md + web-search.js
 └── tui/
     ├── terminal.ts    raw mode, ANSI escapes, alt buffer, getTermSize
     ├── keys.ts        stdin byte → discriminated Key event parser

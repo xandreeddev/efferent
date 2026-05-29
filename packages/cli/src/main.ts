@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 import { homedir } from "node:os"
-import { dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
@@ -30,17 +28,6 @@ import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
 import { runTuiMode } from "./modes/tui.js"
-
-/**
- * Directory of skills bundled with the agent (base capabilities like
- * web search). Resolved off this module's own URL — `packages/cli/src/main.ts`
- * → `packages/cli/skills` — so it points at the shipped skills no matter what
- * cwd the agent is launched from. Bun runs from source, so the dir ships as-is.
- */
-const bundledSkillsDir = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../skills",
-)
 
 /* ------------------------------------------------------------------ */
 /* Composition root                                                    */
@@ -220,12 +207,10 @@ const root = Command.make(
         effectivePrompt !== undefined,
       )
 
-      // Discover skills once at startup. External skills are `.agent/skills/*.md`
-      // walked cwd → parents → ~/.agent/skills; internal (built-in) skills ship
-      // in this package's `skills/` dir (resolved off our own module URL so it
-      // works from any cwd). External shadows internal on a name clash.
+      // Discover skills once at startup. `.agent/skills/*.md` walked from
+      // cwd → parents → ~/.agent/skills. Closer-to-cwd shadows farther.
       // Failures fall back to an empty list — never breaks the agent.
-      const skills = yield* loadSkills(workspace, homedir(), bundledSkillsDir)
+      const skills = yield* loadSkills(workspace, homedir())
 
       // Load settings
       const settingsStore = yield* SettingsStore
