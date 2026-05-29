@@ -24,13 +24,14 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
   conversationId: ConversationId,
   userPrompt: string,
   extraHooks?: AgentHooks<R>,
+  workspaceDir?: string,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const settingsStore = yield* SettingsStore
     const settings = yield* settingsStore.get()
 
-    yield* store.ensure(conversationId)
+    yield* store.ensure(conversationId, workspaceDir)
     const stored = yield* store.list(conversationId)
 
     const userMsg: AgentMessage = { role: "user", content: userPrompt }

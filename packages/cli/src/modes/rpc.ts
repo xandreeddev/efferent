@@ -157,6 +157,7 @@ const handleSend = (
       cid,
       prompt,
       hooks,
+      cwd,
     ).pipe(Effect.provide(runtime.handlerLayer), Effect.either)
 
     yield* Effect.sleep("50 millis")
