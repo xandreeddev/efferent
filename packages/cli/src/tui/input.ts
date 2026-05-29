@@ -234,12 +234,12 @@ export const applyKey = (
       return { state: { ...state, lines, col: state.col - 1 } }
     }
     case "enter": {
-      const text = inputText(state)
-      if (text.trim().length === 0) return { state }
-      return {
-        state: emptyInput,
-        action: { type: "submit", text },
-      }
+      // In INSERT, Enter inserts a newline (never submits — you submit from
+      // NORMAL via Enter). Same split as Ctrl-J.
+      const lines = state.lines.slice()
+      const cur = lines[state.row] ?? ""
+      lines.splice(state.row, 1, cur.slice(0, state.col), cur.slice(state.col))
+      return { state: { ...state, lines, row: state.row + 1, col: 0 } }
     }
     case "ctrl": {
       switch (key.char) {
