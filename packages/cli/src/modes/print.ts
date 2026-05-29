@@ -7,6 +7,7 @@ import {
   Http,
   SettingsStore,
   Shell,
+  WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
   runAgent,
@@ -84,6 +85,7 @@ export const runPrintMode = (
   | LanguageModel.LanguageModel
   | ConversationStore
   | SettingsStore
+  | WebSearch
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =

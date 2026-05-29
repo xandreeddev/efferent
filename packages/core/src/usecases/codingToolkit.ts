@@ -5,6 +5,7 @@ import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { WebSearch as WebSearchPort } from "../ports/WebSearch.js"
 
 /**
  * The coding tools as an `@effect/ai` Toolkit. Each tool ships explicit
@@ -532,6 +533,25 @@ export const WebFetch = Tool.make("web_fetch", {
   failureMode: "return",
 })
 
+export const WebSearchTool = Tool.make("web_search", {
+  description:
+    "Search the web for current information and get a short synthesized answer with source URLs. Use it to find things you don't know or that may have changed — library versions, API docs, recent events — when you don't already have a URL. It returns a summary plus its sources; call web_fetch on a source url to read that page in full.",
+  parameters: {
+    query: Schema.String.annotations({
+      description:
+        "What to search for. Prefer specific keywords over a long question; add a year or 'latest' when currency matters.",
+    }),
+  },
+  success: Schema.Struct({
+    answer: Schema.String,
+    sources: Schema.Array(
+      Schema.Struct({ title: Schema.String, url: Schema.String }),
+    ),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const codingToolkit = Toolkit.make(
   ReadFile,
   WriteFile,
@@ -542,6 +562,7 @@ export const codingToolkit = Toolkit.make(
   Ls,
   ReadSkill,
   WebFetch,
+  WebSearchTool,
 )
 
 /**
@@ -578,6 +599,7 @@ export const makeCodingHandlers = (
     const fs = yield* FileSystem
     const shell = yield* Shell
     const http = yield* Http
+    const webSearch = yield* WebSearchPort
     const { rootDir, displayRoot, enforceWrite, allowBash } = binding
     const skillByName = new Map(skills.map((s) => [s.name, s] as const))
 
@@ -738,6 +760,12 @@ export const makeCodingHandlers = (
             content: truncateOutput(text, cap),
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      web_search: ({ query }) =>
+        webSearch.search(query).pipe(
+          Effect.map((r) => ({ answer: r.answer, sources: r.sources })),
+          Effect.catchAll((e) => Effect.fail(toFailure(e))),
+        ),
 
       read_skill: ({ name }) =>
         Effect.gen(function* () {

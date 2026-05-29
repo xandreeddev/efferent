@@ -11,6 +11,7 @@ import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { WebSearch } from "../ports/WebSearch.js"
 import { runAgentLoop } from "./agentLoop.js"
 import {
   codingToolkit,
@@ -34,7 +35,7 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    FileSystem | Shell | Http
+    FileSystem | Shell | Http | WebSearch
   >
 }
 

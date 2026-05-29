@@ -7,6 +7,7 @@ import {
   Http,
   SettingsStore,
   Shell,
+  WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
   runAgent,
@@ -51,6 +52,7 @@ export const runJsonMode = (
   | LanguageModel.LanguageModel
   | ConversationStore
   | SettingsStore
+  | WebSearch
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =

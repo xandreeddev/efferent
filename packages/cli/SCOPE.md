@@ -16,11 +16,11 @@ skills/                bundled (internal) base skills shipped with the agent —
 
 ## Bundled skills
 - `skills/` holds the **internal** base skills shipped with the binary (currently `web-search.md` + `web-search.js`). `main.ts` resolves this dir off `import.meta.url` (→ `packages/cli/skills`) and passes it to `loadSkills(cwd, home, internalDir)` as the lowest-priority source, so a workspace `.agent/skills/<name>.md` shadows a built-in of the same name. Skills carry `internal: boolean`; the prompt tags built-ins `(built-in)`.
-- A script-backed skill references its sidecar via the `{{SKILL_DIR}}` token (substituted by `read_skill` with the `.md`'s absolute dir), so `bash {{SKILL_DIR}}/web-search.js "<q>"` works from any cwd. `web-search` needs `BRAVE_API_KEY` + bash; it finds pages, `web_fetch` reads them. This is domain config, not logic — the loader/substitution live in `@agent/core`.
+- A script-backed skill references its sidecar via the `{{SKILL_DIR}}` token (substituted by `read_skill` with the `.md`'s absolute dir), so `bash {{SKILL_DIR}}/web-search.js "<q>"` works from any cwd. The `web-search` skill is the **optional Brave engine** (needs `BRAVE_API_KEY` + bash); the key-free default is the native `web_search` tool (provider-native grounding via `WebSearchLive`). This is domain config, not logic — the loader/substitution live in `@agent/core`.
 
 ## Hard rules
 - No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@agent/core`.
-- Each mode is a single `Effect.Effect<void, never, FileSystem | Http | Shell | LanguageModel | ConversationStore | SettingsStore>` (TUI adds `ModelRegistry` + `LlmInfo`) that subscribes to the agent's event queue and renders its way.
+- Each mode is a single `Effect.Effect<void, never, FileSystem | Http | Shell | LanguageModel | ConversationStore | SettingsStore | WebSearch>` (TUI adds `ModelRegistry` + `LlmInfo`) that subscribes to the agent's event queue and renders its way. (`WebSearch` is required because the coding toolkit's `web_search` handler resolves it.)
 - `main.ts` is the *only* place adapter selection happens. To swap providers, swap the Layer imported here.
 - Mode resolution defaults: argv prompt or piped stdin → print; TTY → tui; else print. `--mode <x>` overrides.
 - `--help` and `--version` are provided by `@effect/cli` — don't shadow them.

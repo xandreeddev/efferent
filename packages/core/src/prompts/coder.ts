@@ -103,6 +103,7 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - grep({ pattern, dir?, flags?, context? }) — search anywhere.
 - glob({ pattern, dir? }) — find files anywhere.
 - ls({ path?, recursive? }) — list anywhere.
+- web_search({ query }) — search the web; returns a synthesized answer plus source URLs.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.${args.children.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a sub-task to a nested scope (see Delegations)." : ""}
 ${renderDelegationsSection(args.children)}
 # Doing tasks
@@ -146,7 +147,8 @@ ${systemSection}
 - grep({ pattern, dir?, flags?, context? }) — regex search across files. Respects .gitignore.
 - glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
 - ls({ path?, recursive? }) — list a directory.
-- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or pages — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
+- web_search({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a web_search result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
 ${renderSkillsSection(skills)}${renderDelegationsSection(scopedAgents)}
 ${doingTasksSection}
 
