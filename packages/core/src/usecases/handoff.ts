@@ -6,34 +6,42 @@ import { HANDOFF_PROMPT } from "../prompts/handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 
 /**
- * Flatten the loaded view into terse role/content pairs for the summarizer.
- * Tool turns keep their tool names + ok/fail (not "[omitted]") so the handoff
- * can say what was actually done.
+ * Render the loaded view as a single, labelled transcript string. Tool turns
+ * keep their tool names + ok/fail (not "[omitted]") so the handoff can say what
+ * was actually done.
+ *
+ * We pass this as ONE user message (see `createHandoff`) rather than replaying
+ * the original user/assistant roles: feeding the transcript back as
+ * role-alternating messages structurally cues the model to *continue the
+ * conversation* (produce the next assistant turn) instead of summarizing it —
+ * which is exactly how a handoff once came back as "Let me know how you'd like
+ * to proceed!". A flat transcript inside a single user turn leaves the model
+ * only one reasonable move: reply with the summary.
  */
-const toSummaryInput = (
-  messages: ReadonlyArray<AgentMessage>,
-): ReadonlyArray<{ readonly role: "user" | "assistant"; readonly content: string }> =>
-  messages.map((m) => {
-    if (m.role === "user") {
-      return { role: "user" as const, content: m.content }
-    }
-    if (m.role === "assistant") {
-      const parts: string[] = []
-      for (const p of m.content) {
-        if (p.type === "text" || p.type === "reasoning") {
-          if (p.text.trim().length > 0) parts.push(p.text)
-        } else if (p.type === "tool-call") {
-          parts.push(`[called ${p.toolName}]`)
-        }
+const renderTranscript = (messages: ReadonlyArray<AgentMessage>): string =>
+  messages
+    .map((m) => {
+      if (m.role === "user") {
+        return `USER: ${m.content}`
       }
-      return { role: "assistant" as const, content: parts.join("\n") || "[tool calls]" }
-    }
-    // tool results — keep names + ok/fail
-    const results = m.content
-      .map((p) => `${p.toolName}: ${p.isError ? "error" : "ok"}`)
-      .join("; ")
-    return { role: "user" as const, content: `[tool results: ${results}]` }
-  })
+      if (m.role === "assistant") {
+        const parts: string[] = []
+        for (const p of m.content) {
+          if (p.type === "text" || p.type === "reasoning") {
+            if (p.text.trim().length > 0) parts.push(p.text)
+          } else if (p.type === "tool-call") {
+            parts.push(`[called ${p.toolName}]`)
+          }
+        }
+        return `ASSISTANT: ${parts.join("\n") || "[tool calls]"}`
+      }
+      // tool results — keep names + ok/fail
+      const results = m.content
+        .map((p) => `${p.toolName}: ${p.isError ? "error" : "ok"}`)
+        .join("; ")
+      return `TOOL RESULTS: ${results}`
+    })
+    .join("\n\n")
 
 /**
  * Create a handoff for `conversationId`: summarize the **currently loaded
@@ -61,7 +69,15 @@ export const createHandoff = (conversationId: ConversationId) =>
 
     const prompt = Prompt.make([
       { role: "system", content: HANDOFF_PROMPT },
-      ...toSummaryInput(view),
+      {
+        role: "user",
+        content:
+          "Summarize the following conversation transcript into a handoff, " +
+          "following your instructions exactly. Reply with ONLY the summary.\n\n" +
+          "<transcript>\n" +
+          renderTranscript(view) +
+          "\n</transcript>",
+      },
     ] as never)
 
     const res = yield* LanguageModel.generateText({ prompt })
