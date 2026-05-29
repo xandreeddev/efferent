@@ -1,20 +1,25 @@
 ---
 name: web-search
-description: Search the web via the Brave Search API. Use when you need to find documentation, current facts, library/API references, or any page whose URL you don't already have. Pairs with the web_fetch tool to read the results.
+description: Web search via the Brave Search API — an OPTIONAL alternative to the built-in web_search tool, for when you specifically want Brave (a key-controlled, ranked-result engine). Prefer the native web_search tool unless asked otherwise; this needs a BRAVE_API_KEY.
 ---
 
-# Web search
+# Web search (Brave) — optional engine
 
-A bundled script that queries the Brave Search API and prints ranked results.
-Run it through the `bash` tool, then use the built-in `web_fetch` tool to read
-whichever results look relevant.
+There is already a built-in **`web_search` tool** (provider-native, no extra
+key) — prefer it. This skill is the *alternative*: a bundled script that
+queries the **Brave Search API** and prints ranked results. Use it only when
+the user wants Brave specifically (e.g. a key-controlled engine, or to compare
+results). Run it through the `bash` tool, then read promising results with the
+built-in `web_fetch` tool.
 
 ## Requirements
 
-- `BRAVE_API_KEY` must be set in the environment (free tier:
-  https://brave.com/search/api/ — ~1 query/sec, 2k queries/month). If it's
-  missing the script exits with a clear message; tell the user to add the key
-  to their `.env` rather than retrying.
+- `BRAVE_API_KEY` must be set in the environment. Brave's API is usage-priced
+  (~$5 per 1,000 requests with ~$5 of free monthly credits) and **requires a
+  credit card** even for the free credits — see https://brave.com/search/api/.
+  If the key is missing the script exits with a clear message; tell the user to
+  add it to `.env` (or just use the native `web_search` tool) rather than
+  retrying.
 - `bash` must be permitted. In the TUI it is; in non-interactive modes the
   agent must be launched with `--allow-bash`.
 

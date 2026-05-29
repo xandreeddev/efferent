@@ -14,6 +14,7 @@ export * from "./ports/LlmInfo.js"
 export * from "./ports/ModelRegistry.js"
 export * from "./ports/Shell.js"
 export * from "./ports/SettingsStore.js"
+export * from "./ports/WebSearch.js"
 
 // Prompts
 export * from "./prompts/coder.js"

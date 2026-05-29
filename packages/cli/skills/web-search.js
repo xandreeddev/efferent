@@ -2,16 +2,17 @@
 // web-search — query the Brave Search API and print ranked results.
 //
 // The agent invokes this through its `bash` tool (see web-search.md). It is
-// deliberately a plain script, not a first-party `Tool.make`: web search lives
-// in userland as a skill, so the binary stays lean and the API key stays a
-// workspace concern. Pair it with the built-in `web_fetch` tool to read the
+// the OPTIONAL Brave engine — the built-in `web_search` tool (provider-native,
+// no key) is the default. This stays a plain script, not a first-party
+// `Tool.make`: the Brave path lives in userland so the binary stays lean and
+// the API key stays a workspace concern. Pair it with `web_fetch` to read the
 // pages it surfaces.
 //
 //   bun web-search.js "<query>"            # ranked list: title / url / snippet
 //   bun web-search.js "<query>" --count 5  # cap results (default 8, max 20)
 //   bun web-search.js "<query>" --json     # raw result objects, one per line
 //
-// Requires BRAVE_API_KEY (free tier: https://brave.com/search/api/).
+// Requires BRAVE_API_KEY (usage-priced, card required: https://brave.com/search/api/).
 
 const ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 const TIMEOUT_MS = 15_000
@@ -45,7 +46,7 @@ async function main() {
   }
   const key = process.env.BRAVE_API_KEY
   if (!key) {
-    fail("BRAVE_API_KEY is not set. Get a free key at https://brave.com/search/api/ and add it to .env", 3)
+    fail("BRAVE_API_KEY is not set. Add a key from https://brave.com/search/api/ to .env — or use the built-in web_search tool (no key needed).", 3)
   }
 
   const url = `${ENDPOINT}?q=${encodeURIComponent(query)}&count=${count}`
@@ -74,7 +75,7 @@ async function main() {
       res.status === 401 || res.status === 403
         ? " (check BRAVE_API_KEY)"
         : res.status === 429
-          ? " (rate limited — the free tier allows ~1 query/sec, 2k/month)"
+          ? " (rate limited — slow down; check your Brave plan's request budget)"
           : ""
     fail(`Brave API returned ${res.status} ${res.statusText}${hint}\n${detail.slice(0, 500)}`, 2)
   }

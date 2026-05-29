@@ -22,6 +22,8 @@ import {
   LocalShellLive,
   ModelLive,
   PostgresConversationStoreLive,
+  ProviderClientsLive,
+  WebSearchLive,
 } from "@agent/adapters"
 
 import { runPrintMode } from "./modes/print.js"
@@ -50,6 +52,10 @@ const AppLive = Layer.mergeAll(
   LocalFileSystemLive,
   LocalShellLive,
   HttpLive,
+  // Web search is its own grounding-only provider call (Gemini/OpenAI),
+  // configured independently of the chat model — so it carries its own
+  // provider clients rather than sharing ModelLive's (which are internal).
+  WebSearchLive.pipe(Layer.provide(ProviderClientsLive)),
 ).pipe(
   Layer.provideMerge(
     LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),

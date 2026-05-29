@@ -11,6 +11,7 @@ import {
   ModelRegistry,
   SettingsStore,
   Shell,
+  WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
   parseModel,
@@ -251,7 +252,7 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
@@ -664,7 +665,7 @@ const runTuiModeCore = (
         return result
       })
 
-    type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry
+    type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch
     const baseHooks = makeEventHooks(eventQueue)
     // Build the root scope runtime once: base coding tools + delegate_to_<child>
     // tools for the root's direct sub-scopes. The TUI allows bash (guarded by
@@ -1020,7 +1021,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -1408,7 +1409,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry>()
+    const runtime = yield* Effect.runtime<FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch>()
 
     const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
@@ -1459,7 +1460,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch
 > =>
   runTuiModeCore(input).pipe(
     Effect.provide(fileLoggerLayer(logFilePath())),
