@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import type { Skill } from "../entities/Skill.js"
@@ -779,17 +779,10 @@ export const makeCodingHandlers = (
             })
           }
           const read = yield* fs.read(skill.sourcePath)
-          // `{{SKILL_DIR}}` → the skill's own directory, so a script-backed
-          // skill (e.g. web-search) can reference its sidecar executable by
-          // absolute path no matter what cwd the agent runs bash from.
-          const body = stripFrontmatter(read.content).replaceAll(
-            "{{SKILL_DIR}}",
-            dirname(skill.sourcePath),
-          )
           return {
             name: skill.name,
             sourcePath: skill.sourcePath,
-            body,
+            body: stripFrontmatter(read.content),
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
     })

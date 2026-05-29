@@ -11,12 +11,7 @@ src/
 ├── safetyHooks.ts     bashConfirmHook / denyBashHook
 ├── modes/{tui,print,json,rpc}.ts
 └── tui/{terminal,keys,render,header,uiMode,navKeys,statusBar,scrollback,input,slashPalette,modal,markdown,logger,sidePane,viMode}.ts
-skills/                bundled (internal) base skills shipped with the agent — *.md + sidecar scripts
 ```
-
-## Bundled skills
-- `skills/` holds the **internal** base skills shipped with the binary (currently `web-search.md` + `web-search.js`). `main.ts` resolves this dir off `import.meta.url` (→ `packages/cli/skills`) and passes it to `loadSkills(cwd, home, internalDir)` as the lowest-priority source, so a workspace `.agent/skills/<name>.md` shadows a built-in of the same name. Skills carry `internal: boolean`; the prompt tags built-ins `(built-in)`.
-- A script-backed skill references its sidecar via the `{{SKILL_DIR}}` token (substituted by `read_skill` with the `.md`'s absolute dir), so `bash {{SKILL_DIR}}/web-search.js "<q>"` works from any cwd. The `web-search` skill is the **optional Brave engine** (needs `BRAVE_API_KEY` + bash); the key-free default is the native `web_search` tool (provider-native grounding via `WebSearchLive`). This is domain config, not logic — the loader/substitution live in `@agent/core`.
 
 ## Hard rules
 - No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@agent/core`.

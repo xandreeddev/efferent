@@ -37,9 +37,7 @@ Consider reversibility and blast radius before you act. Local, reversible operat
 
 const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   if (skills.length === 0) return ""
-  const lines = skills
-    .map((s) => `- ${s.name}${s.internal ? " (built-in)" : ""}: ${s.description}`)
-    .join("\n")
+  const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
   return `
 # Skills
 The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
