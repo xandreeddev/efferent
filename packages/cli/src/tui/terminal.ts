@@ -35,6 +35,9 @@ export const ansi = {
   bgBlue: `${CSI}44m`,
   bgGray: `${CSI}100m`,
   bgDarkGray: `${CSI}48;5;236m`,
+  // The persistent NORMAL/VISUAL cursor line in the conversation pane — a touch
+  // lighter than bgDarkGray so the current row reads as "you are here".
+  bgCursorLine: `${CSI}48;5;238m`,
   // Subtle 256-color tints for code blocks and diff add/remove lines.
   bgCode: `${CSI}48;5;235m`,
   bgDiffAdd: `${CSI}48;5;22m`,

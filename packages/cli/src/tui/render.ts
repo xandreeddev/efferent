@@ -10,14 +10,13 @@ import {
   padRight,
   showCursor,
   truncate,
-  visibleLength,
   write,
 } from "./terminal.js"
 import type { StatusState } from "./statusBar.js"
 import { renderStatusBar } from "./statusBar.js"
 import type { Scrollback } from "./scrollback.js"
 import type { InputState } from "./input.js"
-import { renderInput } from "./input.js"
+import { PROMPTS, renderInput } from "./input.js"
 import type { PaletteState } from "./slashPalette.js"
 import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
@@ -25,6 +24,7 @@ import { renderModal } from "./modal.js"
 import type { SidePaneState } from "./sidePane.js"
 import { renderSidePane } from "./sidePane.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
+import type { EntryMode } from "./navKeys.js"
 import { renderHeader } from "./header.js"
 
 export interface AppState {
@@ -40,21 +40,38 @@ export interface AppState {
   readonly focus: FocusPane
   /** Current modal mode (drives the hint bar + status). */
   readonly mode: UiMode
-  /** Active `/` search query — when set, a search bar replaces the palette. */
-  readonly search?: { readonly query: string } | undefined
+  /** Command-line mode of the input row: message / `:` command / `/` search. */
+  readonly entry: EntryMode
+  /** The focused read-only pane is maximized (fills the middle region). */
+  readonly zoomed: boolean
 }
 
-/** vim-style `/` search bar: `/query` on the left, `i/total` on the right. */
-const renderSearchBar = (
-  query: string,
+/**
+ * Overlay a right-aligned `i/total` search readout onto the input's first row,
+ * preserving the line's ANSI (the coloured `/` prompt) up to the cut column.
+ */
+const withMatchCount = (
+  line: string,
   info: { readonly index: number; readonly total: number },
   cols: number,
 ): string => {
-  const left = `${ansi.fgYellow}/${ansi.reset}${query}`
   const count = info.total > 0 ? `${info.index}/${info.total}` : "no matches"
-  const right = `${ansi.dim}${count}${ansi.reset}`
-  const gap = Math.max(1, cols - visibleLength(left) - count.length - 1)
-  return padRight(truncate(`${left}${" ".repeat(gap)}${right}`, cols), cols)
+  const tag = ` ${ansi.dim}${count}${ansi.reset}`
+  const cut = Math.max(0, cols - (count.length + 1))
+  let visible = 0
+  let out = ""
+  const re = /\x1b\[[0-9;?]*[A-Za-z]|[\s\S]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(line)) !== null) {
+    const tok = m[0]
+    if (tok.startsWith("\x1b")) out += tok
+    else if (visible < cut) {
+      out += tok
+      visible++
+    }
+  }
+  if (visible < cut) out += " ".repeat(cut - visible)
+  return out + ansi.reset + tag
 }
 
 const PALETTE_MAX_ROWS = 6
@@ -99,17 +116,21 @@ export class FrameRenderer {
       sizeChangePrefix = clearScreen + home
     }
 
-    const inputResult = renderInput(state.input, cols)
+    // The input prompt morphs with the entry mode: ❯ message · : command · / search.
+    const inputResult = renderInput(
+      state.input,
+      cols,
+      MAX_INPUT_ROWS,
+      PROMPTS[state.entry],
+    )
     const inputRows = Math.min(
       MAX_INPUT_ROWS,
       Math.max(1, inputResult.lines.length),
     )
-    // The overlay row group above the input is either the `/` search bar
-    // (1 row) or the `:` command palette — they never show together.
+    // Overlay above the input is the `:` command palette (when visible).
     const paletteRows = state.palette.visible
       ? Math.min(PALETTE_MAX_ROWS, state.palette.matches.length)
       : 0
-    const overlayRows = state.search !== undefined ? 1 : paletteRows
     const middleRows = Math.max(
       0,
       rows -
@@ -118,61 +139,143 @@ export class FrameRenderer {
         1 /* status sep */ -
         inputRows -
         1 /* input sep */ -
-        overlayRows,
+        paletteRows,
     )
 
-    const sidePaneWidth = computeSidePaneWidth(cols)
-    const dividerWidth = sidePaneWidth > 0 ? 1 : 0
-    const leftWidth = Math.max(10, cols - sidePaneWidth - dividerWidth)
+    // Zoom only ever applies to a read-only pane; if focus drifted to the
+    // input, treat it as un-zoomed (defensive — the driver clears it too).
+    const zoomed =
+      state.zoomed &&
+      (state.focus === "conversation" || state.focus === "side")
 
     // Each middle pane reserves a 1-col focus gutter (constant width, so
-    // switching focus never reflows text). The gutter is a bright bar on the
-    // focused pane, blank otherwise — the in-content "active pane" signal.
+    // switching focus never reflows text): a bright bar on the focused pane.
     const FOCUS_BAR = `${ansi.bold}${ansi.fgBrightCyan}▌${ansi.reset}`
-    const convGutter = state.focus === "conversation" ? FOCUS_BAR : " "
-    const sideGutter = state.focus === "side" ? FOCUS_BAR : " "
-    const scrollW = Math.max(1, leftWidth - 1)
-    const sideW = sidePaneWidth > 0 ? Math.max(1, sidePaneWidth - 1) : 0
+    // The persistent cursor caret: bright when the conversation is focused,
+    // dim otherwise (so a `/` search shows where Enter will land you).
+    const CARET = `${ansi.bold}${ansi.fgBrightCyan}▶${ansi.reset}`
+    const CARET_DIM = `${ansi.dim}▶${ansi.reset}`
 
-    const scrollLines = state.scrollback.render(middleRows, scrollW)
-    const sideLines = renderSidePane(
-      state.sidePane,
-      middleRows,
-      sideW,
-      state.spinnerFrame,
-    )
-    const divider =
-      state.focus === "side"
-        ? `${ansi.bold}${ansi.fgBrightCyan}│${ansi.reset}`
-        : DIVIDER
+    const paneTitle = (label: string, focused: boolean, width: number): string => {
+      const styled = focused
+        ? `${ansi.bold}${ansi.fgBrightCyan}${label}${ansi.reset}`
+        : `${ansi.dim}${label}${ansi.reset}`
+      return padRight(truncate(styled, width), width)
+    }
+
+    // A pinned title row identifies the panes (focused one highlighted); the
+    // scrollback/side get the remaining rows.
+    const hasTitle = middleRows > 0
+    const contentRows = Math.max(0, middleRows - (hasTitle ? 1 : 0))
+
+    const convFocused = state.focus === "conversation"
+    // Window-relative cursor row — read *after* scrollback.render() below, so
+    // it reflects the freshly-flattened viewport (not a stale snapshot).
+    let cursorRowConv = -1
+    // Conversation gutter for content row i: a caret on the cursor line, else
+    // the focus bar (focused) / blank.
+    const convGutterAt = (i: number): string =>
+      i === cursorRowConv
+        ? convFocused
+          ? CARET
+          : CARET_DIM
+        : convFocused
+          ? FOCUS_BAR
+          : " "
+
     const middleLines: string[] = []
-    for (let i = 0; i < middleRows; i++) {
-      const left = convGutter + (scrollLines[i] ?? padRight("", scrollW))
-      if (sidePaneWidth > 0) {
-        const right = sideGutter + (sideLines[i] ?? padRight("", sideW))
-        middleLines.push(left + divider + right)
+
+    if (zoomed) {
+      // One pane fills the whole middle width (1-col gutter + the rest).
+      const contentW = Math.max(1, cols - 1)
+      if (state.focus === "side") {
+        const sideLines = renderSidePane(
+          state.sidePane,
+          contentRows,
+          contentW,
+          state.spinnerFrame,
+        )
+        if (hasTitle) {
+          middleLines.push(FOCUS_BAR + paneTitle(" context [zoom]", true, contentW))
+        }
+        for (let i = 0; i < contentRows; i++) {
+          middleLines.push(FOCUS_BAR + (sideLines[i] ?? padRight("", contentW)))
+        }
       } else {
-        middleLines.push(left)
+        const scrollLines = state.scrollback.render(contentRows, contentW, true)
+        cursorRowConv = state.scrollback.cursorRow()
+        if (hasTitle) {
+          middleLines.push(
+            FOCUS_BAR + paneTitle(" conversation [zoom]", true, contentW),
+          )
+        }
+        for (let i = 0; i < contentRows; i++) {
+          middleLines.push(convGutterAt(i) + (scrollLines[i] ?? padRight("", contentW)))
+        }
+      }
+    } else {
+      const sidePaneWidth = computeSidePaneWidth(cols)
+      const dividerWidth = sidePaneWidth > 0 ? 1 : 0
+      const leftWidth = Math.max(10, cols - sidePaneWidth - dividerWidth)
+      const scrollW = Math.max(1, leftWidth - 1)
+      const sideW = sidePaneWidth > 0 ? Math.max(1, sidePaneWidth - 1) : 0
+      const convTitleGutter = convFocused ? FOCUS_BAR : " "
+      const sideGutter = state.focus === "side" ? FOCUS_BAR : " "
+      const divider =
+        state.focus === "side"
+          ? `${ansi.bold}${ansi.fgBrightCyan}│${ansi.reset}`
+          : DIVIDER
+
+      const scrollLines = state.scrollback.render(contentRows, scrollW, convFocused)
+      cursorRowConv = state.scrollback.cursorRow()
+      const sideLines = renderSidePane(
+        state.sidePane,
+        contentRows,
+        sideW,
+        state.spinnerFrame,
+      )
+
+      if (hasTitle) {
+        const leftTitle =
+          convTitleGutter + paneTitle(" conversation", convFocused, scrollW)
+        middleLines.push(
+          sidePaneWidth > 0
+            ? leftTitle +
+                divider +
+                sideGutter +
+                paneTitle(" context", state.focus === "side", sideW)
+            : leftTitle,
+        )
+      }
+      for (let i = 0; i < contentRows; i++) {
+        const left = convGutterAt(i) + (scrollLines[i] ?? padRight("", scrollW))
+        if (sidePaneWidth > 0) {
+          const right = sideGutter + (sideLines[i] ?? padRight("", sideW))
+          middleLines.push(left + divider + right)
+        } else {
+          middleLines.push(left)
+        }
       }
     }
 
-    // Input region: pad the visual rows to inputRows
+    // Input region: pad to inputRows; overlay the search count on the first row.
     const inputLinesPadded: string[] = inputResult.lines.slice(0, inputRows)
     while (inputLinesPadded.length < inputRows) {
       inputLinesPadded.push(padRight("", cols))
     }
+    if (state.entry === "search" && inputLinesPadded.length > 0) {
+      inputLinesPadded[0] = withMatchCount(
+        inputLinesPadded[0]!,
+        state.scrollback.matchInfo(),
+        cols,
+      )
+    }
 
-    // Overlay just above input: search bar (if active) else the palette.
-    const overlayLines =
-      state.search !== undefined
-        ? [renderSearchBar(state.search.query, state.scrollback.matchInfo(), cols)]
-        : renderPalette(state.palette, cols, PALETTE_MAX_ROWS)
+    const overlayLines = renderPalette(state.palette, cols, PALETTE_MAX_ROWS)
 
     // Compose
     const frame: string[] = []
-    frame.push(
-      renderHeader(state.mode, state.focus, state.search !== undefined, cols),
-    )
+    frame.push(renderHeader(state.mode, state.focus, state.entry, state.zoomed, cols))
     for (const l of middleLines) frame.push(l)
     frame.push(hRule(cols))
     for (const l of overlayLines) frame.push(l)
@@ -201,15 +304,12 @@ export class FrameRenderer {
     }
 
     // Cursor follows focus, so a pane swap is visible:
-    //  - searching → in the search bar;
-    //  - input focused → in the input region (bottom);
+    //  - input focused → in the input region (bottom) — covers the `:`/`/`
+    //    command line too, since those are typed in the input;
     //  - conversation + VISUAL → on the selected line in the middle region;
     //  - otherwise hidden (read-only panes have no insertion cursor — focus is
-    //    shown by the badge + gutter, and the input box no longer "holds" it).
-    if (state.search !== undefined && !state.modal.visible) {
-      const barRow = rows - inputRows - 1 - 1
-      out += moveTo(barRow, 2 + state.search.query.length) + showCursor
-    } else if (
+    //    shown by the badge + gutter + pane title).
+    if (
       !state.modal.visible &&
       state.focus === "input" &&
       !state.input.locked
@@ -224,11 +324,11 @@ export class FrameRenderer {
       state.focus === "conversation" &&
       state.mode === "visual"
     ) {
-      const row = state.scrollback.selectionCursorRow()
+      const row = state.scrollback.cursorRow()
       if (row >= 0) {
-        // Middle region starts just below the header; content starts after the
+        // Content rows start below the header + the pinned title row, after the
         // 1-col focus gutter.
-        out += moveTo(HEADER_ROWS + 1 + row, 2) + showCursor
+        out += moveTo(HEADER_ROWS + 2 + row, 2) + showCursor
       } else {
         out += hideCursor
       }
