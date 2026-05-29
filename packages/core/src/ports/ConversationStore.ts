@@ -22,10 +22,9 @@ export class ConversationStore extends Context.Tag(
 )<
   ConversationStore,
   {
-    readonly create: () => Effect.Effect<
-      ConversationId,
-      ConversationStoreError
-    >
+    readonly create: (
+      workspaceDir?: string,
+    ) => Effect.Effect<ConversationId, ConversationStoreError>
     /**
      * Idempotent: create the conversation if it doesn't exist. Used by
      * the web route to materialise the conversation referenced by the
@@ -33,6 +32,7 @@ export class ConversationStore extends Context.Tag(
      */
     readonly ensure: (
       id: ConversationId,
+      workspaceDir?: string,
     ) => Effect.Effect<void, ConversationStoreError>
     readonly append: (
       id: ConversationId,
@@ -42,6 +42,16 @@ export class ConversationStore extends Context.Tag(
       id: ConversationId,
     ) => Effect.Effect<
       ReadonlyArray<AgentMessage>,
+      ConversationStoreError
+    >
+    readonly listByWorkspace: (
+      workspaceDir: string,
+    ) => Effect.Effect<
+      ReadonlyArray<{
+        readonly id: ConversationId
+        readonly createdAt: number
+        readonly firstPrompt?: string
+      }>,
       ConversationStoreError
     >
   }

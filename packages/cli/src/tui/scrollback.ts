@@ -590,6 +590,9 @@ export class Scrollback {
       }
       lines.push(...this.blockLines(block, cols))
     }
+    if (lines.length > 0) {
+      lines.push("")
+    }
     return { lines, msgStarts }
   }
 

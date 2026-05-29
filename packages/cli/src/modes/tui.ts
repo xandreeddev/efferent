@@ -293,6 +293,71 @@ const runTuiModeCore = (
       conversationHasTurns: false,
     })
 
+    if (input.resumeConversationId !== undefined) {
+      const store = yield* ConversationStore
+      const history = yield* store.list(initialCid).pipe(
+        Effect.catchAll(() => Effect.succeed([])),
+      )
+      if (history.length > 0) {
+        yield* Ref.update(stateRef, (s) => {
+          for (const msg of history) {
+            if (msg.role === "user") {
+              s.scrollback.push({ kind: "user", text: msg.content })
+            } else if (msg.role === "assistant") {
+              if (typeof msg.content === "string") {
+                s.scrollback.push({ kind: "assistant", text: msg.content })
+              } else if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                  if (part.type === "text") {
+                    if (part.text.trim().length > 0) {
+                      s.scrollback.push({ kind: "assistant", text: part.text })
+                    }
+                  } else if (part.type === "reasoning") {
+                    if (part.text.trim().length > 0) {
+                      s.scrollback.push({ kind: "reasoning", text: part.text })
+                    }
+                  } else if (part.type === "tool-call") {
+                    const label = describeToolCall(part.toolName, part.input)
+                    s.scrollback.push({
+                      kind: "tool",
+                      id: part.toolCallId,
+                      toolName: label,
+                      state: "ok",
+                    })
+                  }
+                }
+              }
+            } else if (msg.role === "tool") {
+              if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                  const detail = describeToolResult(
+                    part.toolName,
+                    !part.isError,
+                    part.output,
+                  )
+                  const artifacts = toolArtifacts(
+                    part.toolName,
+                    !part.isError,
+                    part.output,
+                  )
+                  s.scrollback.updateTool(part.toolCallId, {
+                    state: part.isError ? "error" : "ok",
+                    ...(detail !== undefined ? { detail } : {}),
+                    ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
+                    ...(artifacts.output !== undefined
+                      ? { output: artifacts.output }
+                      : {}),
+                  })
+                }
+              }
+            }
+          }
+          s.conversationHasTurns = true
+          return s
+        })
+      }
+    }
+
     const renderer = new FrameRenderer()
 
     // Coalesced render scheduler: state mutations mark the frame dirty;
@@ -672,6 +737,7 @@ const runTuiModeCore = (
           cid,
           text,
           baseHooks,
+          input.cwd,
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.catchAll((err) => {

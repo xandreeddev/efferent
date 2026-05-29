@@ -53,12 +53,12 @@ export const PostgresConversationStoreLive = Layer.effect(
     const sql = yield* SqlClient.SqlClient
 
     return ConversationStore.of({
-      create: () =>
+      create: (workspaceDir) =>
         Effect.gen(function* () {
           const id = crypto.randomUUID()
           const createdAt = Date.now()
           yield* wrapSql(
-            sql`INSERT INTO conversations (id, created_at) VALUES (${id}::uuid, ${createdAt})`,
+            sql`INSERT INTO conversations (id, created_at, workspace_dir) VALUES (${id}::uuid, ${createdAt}, ${workspaceDir ?? null})`,
             "Failed to create conversation",
           )
           return yield* Schema.decodeUnknown(ConversationId)(id).pipe(
@@ -72,12 +72,12 @@ export const PostgresConversationStoreLive = Layer.effect(
           )
         }),
 
-      ensure: (id) =>
+      ensure: (id, workspaceDir) =>
         wrapSql(
           sql`
-            INSERT INTO conversations (id, created_at)
-            VALUES (${id}::uuid, ${Date.now()})
-            ON CONFLICT (id) DO NOTHING
+            INSERT INTO conversations (id, created_at, workspace_dir)
+            VALUES (${id}::uuid, ${Date.now()}, ${workspaceDir ?? null})
+            ON CONFLICT (id) DO UPDATE SET workspace_dir = COALESCE(conversations.workspace_dir, EXCLUDED.workspace_dir)
           `,
           "Failed to ensure conversation",
         ).pipe(Effect.asVoid),
@@ -129,6 +129,43 @@ export const PostgresConversationStoreLive = Layer.effect(
             "Failed to list messages",
           )
           return yield* Effect.forEach(rows, decodeMessage)
+        }),
+
+      listByWorkspace: (workspaceDir) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ readonly id: string; readonly created_at: string; readonly first_prompt: string | null }>`
+              SELECT 
+                c.id::text, 
+                c.created_at,
+                (SELECT content->>'content' 
+                 FROM messages 
+                 WHERE conversation_id = c.id AND role = 'user' 
+                 ORDER BY position ASC LIMIT 1) as first_prompt
+              FROM conversations c
+              WHERE c.workspace_dir = ${workspaceDir}
+              ORDER BY c.created_at DESC
+            `,
+            "Failed to list conversations by workspace",
+          )
+          const results: { id: ConversationId; createdAt: number; firstPrompt?: string }[] = []
+          for (const r of rows) {
+            const id = yield* Schema.decodeUnknown(ConversationId)(r.id).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ConversationStoreError({
+                    cause,
+                    message: "Failed to decode conversation UUID",
+                  }),
+              ),
+            )
+            results.push({
+              id,
+              createdAt: Number(r.created_at),
+              ...(r.first_prompt !== null ? { firstPrompt: r.first_prompt } : {}),
+            })
+          }
+          return results
         }),
     })
   }),

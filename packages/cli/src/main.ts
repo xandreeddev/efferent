@@ -5,6 +5,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import {
   coderSystemPrompt,
+  ConversationStore,
   discoverInstructionFiles,
   discoverScopeTree,
   loadSkills,
@@ -117,6 +118,48 @@ const readStdinIfPiped = (): Promise<string | undefined> =>
     })
     stdin.on("end", () => resolve(buf))
     stdin.on("error", () => resolve(undefined))
+  })
+
+const promptConversationSelection = (
+  list: ReadonlyArray<{
+    readonly id: string
+    readonly createdAt: number
+    readonly firstPrompt?: string
+  }>,
+): Effect.Effect<string | undefined, never, never> =>
+  Effect.gen(function* () {
+    console.log(`\nFound existing conversations in this workspace:`)
+    list.forEach((c, idx) => {
+      const dateStr = new Date(c.createdAt).toLocaleString()
+      const preview = c.firstPrompt
+        ? `"${c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 60)}..."`
+        : "<empty conversation>"
+      console.log(`  [${idx + 1}] ${dateStr} · ${preview}`)
+    })
+    console.log(`  [n] Start a new conversation\n`)
+
+    const readline = require("node:readline")
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    const answer = yield* Effect.promise(() =>
+      new Promise<string>((resolve) => {
+        rl.question(`Choose a conversation to resume (default: n): `, (ans: string) => {
+          rl.close()
+          resolve(ans.trim())
+        })
+      }),
+    )
+
+    const num = parseInt(answer, 10)
+    if (!isNaN(num) && num >= 1 && num <= list.length) {
+      const selected = list[num - 1]
+      return selected?.id
+    }
+
+    return undefined
   })
 
 const root = Command.make(
@@ -245,15 +288,26 @@ const root = Command.make(
             allowBash: effectiveAllowBash,
           })
           return
-        case "tui":
+        case "tui": {
+          let tuiResumeId: string | undefined = resumeId
+          if (tuiResumeId === undefined && process.stdin.isTTY) {
+            const store = yield* ConversationStore
+            const list = yield* store.listByWorkspace(workspace).pipe(
+              Effect.catchAll(() => Effect.succeed([])),
+            )
+            if (list.length > 0) {
+              tuiResumeId = yield* promptConversationSelection(list)
+            }
+          }
           yield* runTuiMode({
             cwd: workspace,
             skills,
             rootScope,
             instructionFiles,
-            ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
+            ...(tuiResumeId !== undefined ? { resumeConversationId: tuiResumeId } : {}),
           })
           return
+        }
       }
     }).pipe(Effect.provide(AppLive)),
 )

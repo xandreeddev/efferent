@@ -106,6 +106,7 @@ export const runPrintMode = (
       cid,
       input.prompt,
       hooks,
+      input.cwd,
     ).pipe(
       Effect.provide(runtime.handlerLayer),
       Effect.catchAll((err) =>
