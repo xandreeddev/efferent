@@ -19,47 +19,38 @@ const pgDn: Key = { type: "pageDown" }
 const ctx = (over: Partial<NavCtx>): NavCtx => ({
   focus: "input",
   mode: "insert",
-  searching: false,
+  entry: "message",
+  inputEmpty: true,
   searchActive: false,
   navPending: false,
   sideVisible: true,
+  zoomed: false,
   ...over,
 })
 
 const decide = (over: Partial<NavCtx>, key: Key): NavIntent =>
   decideKey(ctx(over), key)
 
-describe("input pane — INSERT", () => {
+describe("input pane — INSERT (message)", () => {
   const base = { focus: "input", mode: "insert" } as const
-  it("Ctrl-K focuses the conversation (and enters NORMAL there)", () => {
-    expect(decide(base, ctrl("k"))).toEqual({
-      kind: "focus",
-      to: "conversation",
-      mode: "normal",
-    })
+  it("`:` / `/` open command/search on an empty buffer", () => {
+    expect(decide(base, ch(":"))).toEqual({ kind: "openCommand" })
+    expect(decide(base, ch("/"))).toEqual({ kind: "openSearch" })
   })
-  it("Ctrl-L focuses the side pane when visible", () => {
-    expect(decide(base, ctrl("l"))).toEqual({
-      kind: "focus",
-      to: "side",
-      mode: "normal",
-    })
+  it("`:` / `/` are literal mid-message (non-empty buffer)", () => {
+    expect(decide({ ...base, inputEmpty: false }, ch(":"))).toEqual({ kind: "input" })
+    expect(decide({ ...base, inputEmpty: false }, ch("/"))).toEqual({ kind: "input" })
   })
-  it("Ctrl-L falls through to the editor when the side pane is hidden", () => {
-    expect(decide({ ...base, sideVisible: false }, ctrl("l"))).toEqual({
-      kind: "input",
-    })
-  })
-  it("Ctrl-J / Ctrl-H fall through to the editor (no pane down/left of input)", () => {
+  it("Ctrl-K → conversation, Ctrl-L → side, Ctrl-J/Ctrl-H → editor", () => {
+    expect(decide(base, ctrl("k"))).toEqual({ kind: "focus", to: "conversation", mode: "normal" })
+    expect(decide(base, ctrl("l"))).toEqual({ kind: "focus", to: "side", mode: "normal" })
+    expect(decide({ ...base, sideVisible: false }, ctrl("l"))).toEqual({ kind: "input" })
     expect(decide(base, ctrl("j"))).toEqual({ kind: "input" })
     expect(decide(base, ctrl("h"))).toEqual({ kind: "input" })
   })
-  it("ordinary chars, '/', and Enter go to the editor", () => {
+  it("ordinary chars / Enter go to the editor; PgUp pages the chat", () => {
     expect(decide(base, ch("a"))).toEqual({ kind: "input" })
-    expect(decide(base, ch("/"))).toEqual({ kind: "input" }) // literal in insert
     expect(decide(base, enter)).toEqual({ kind: "input" })
-  })
-  it("PgUp/PgDn page the conversation even from insert", () => {
     expect(decide(base, pgUp)).toEqual({ kind: "scroll", op: "pageUp" })
     expect(decide(base, pgDn)).toEqual({ kind: "scroll", op: "pageDown" })
   })
@@ -67,29 +58,36 @@ describe("input pane — INSERT", () => {
 
 describe("input pane — NORMAL", () => {
   const base = { focus: "input", mode: "normal" } as const
-  it("'/' opens search", () => {
+  it("`:` command, `/` search", () => {
+    expect(decide(base, ch(":"))).toEqual({ kind: "openCommand" })
     expect(decide(base, ch("/"))).toEqual({ kind: "openSearch" })
   })
   it("n/N cycle matches only when a search is active", () => {
-    expect(decide({ ...base, searchActive: true }, ch("n"))).toEqual({
-      kind: "match",
-      dir: "next",
-    })
-    expect(decide({ ...base, searchActive: true }, ch("N"))).toEqual({
-      kind: "match",
-      dir: "prev",
-    })
-    expect(decide(base, ch("n"))).toEqual({ kind: "input" }) // no search → editor
+    expect(decide({ ...base, searchActive: true }, ch("n"))).toEqual({ kind: "match", dir: "next" })
+    expect(decide({ ...base, searchActive: true }, ch("N"))).toEqual({ kind: "match", dir: "prev" })
+    expect(decide(base, ch("n"))).toEqual({ kind: "input" })
   })
   it("Esc clears a lingering highlight, else goes to the editor", () => {
-    expect(decide({ ...base, searchActive: true }, esc)).toEqual({
-      kind: "clearSearch",
-    })
+    expect(decide({ ...base, searchActive: true }, esc)).toEqual({ kind: "clearSearch" })
     expect(decide(base, esc)).toEqual({ kind: "input" })
   })
   it("vi motion chars still reach the editor", () => {
     expect(decide(base, ch("j"))).toEqual({ kind: "input" })
   })
+})
+
+describe("command-line entry (command / search)", () => {
+  for (const entry of ["command", "search"] as const) {
+    it(`${entry}: chars/backspace edit the body; Enter submits; Esc cancels`, () => {
+      const base = { focus: "input", entry } as const
+      expect(decide(base, ch("x"))).toEqual({ kind: "entryEdit" })
+      expect(decide(base, back)).toEqual({ kind: "entryEdit" })
+      expect(decide(base, enter)).toEqual({ kind: "entrySubmit" })
+      expect(decide(base, esc)).toEqual({ kind: "entryCancel" })
+      // Ctrl-K does not swap panes mid-entry; it edits the body.
+      expect(decide(base, ctrl("k"))).toEqual({ kind: "entryEdit" })
+    })
+  }
 })
 
 describe("conversation pane — NORMAL", () => {
@@ -104,46 +102,30 @@ describe("conversation pane — NORMAL", () => {
     expect(decide(base, ctrl("u"))).toEqual({ kind: "scroll", op: "halfUp" })
     expect(decide(base, arrow("down"))).toEqual({ kind: "scroll", op: "lineDown" })
   })
-  it("gg is a two-key motion", () => {
+  it("gg jumps to the top", () => {
     expect(decide(base, ch("g"))).toEqual({ kind: "gPending" })
-    expect(decide({ ...base, navPending: true }, ch("g"))).toEqual({
-      kind: "scroll",
-      op: "top",
-    })
-    // pending + a non-g key does not jump
+    expect(decide({ ...base, navPending: true }, ch("g"))).toEqual({ kind: "scroll", op: "top" })
     expect(decide({ ...base, navPending: true }, ch("x"))).toEqual({ kind: "none" })
   })
-  it("'/' search, v visual, i to-input", () => {
+  it("`/` search, `:` command, v visual, i to-input", () => {
     expect(decide(base, ch("/"))).toEqual({ kind: "openSearch" })
+    expect(decide(base, ch(":"))).toEqual({ kind: "openCommand" })
     expect(decide(base, ch("v"))).toEqual({ kind: "enterVisual" })
-    expect(decide(base, ch("i"))).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "insert",
-    })
+    expect(decide(base, ch("i"))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+  })
+  it("z toggles zoom", () => {
+    expect(decide(base, ch("z"))).toEqual({ kind: "toggleZoom" })
   })
   it("Ctrl-J → input(insert), Ctrl-L → side, Ctrl-K (no target) → none", () => {
-    expect(decide(base, ctrl("j"))).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "insert",
-    })
-    expect(decide(base, ctrl("l"))).toEqual({
-      kind: "focus",
-      to: "side",
-      mode: "normal",
-    })
+    expect(decide(base, ctrl("j"))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+    expect(decide(base, ctrl("l"))).toEqual({ kind: "focus", to: "side", mode: "normal" })
     expect(decide(base, ctrl("k"))).toEqual({ kind: "none" })
   })
-  it("Esc clears search if active, else drops to the input", () => {
-    expect(decide({ ...base, searchActive: true }, esc)).toEqual({
-      kind: "clearSearch",
-    })
-    expect(decide(base, esc)).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "normal",
-    })
+  it("Esc unwinds zoom first, then search, then drops to the input", () => {
+    expect(decide({ ...base, zoomed: true }, esc)).toEqual({ kind: "toggleZoom" })
+    expect(decide({ ...base, zoomed: true, searchActive: true }, esc)).toEqual({ kind: "toggleZoom" })
+    expect(decide({ ...base, searchActive: true }, esc)).toEqual({ kind: "clearSearch" })
+    expect(decide(base, esc)).toEqual({ kind: "focus", to: "input", mode: "normal" })
   })
 })
 
@@ -154,69 +136,32 @@ describe("conversation pane — VISUAL", () => {
     expect(decide(base, ch("v"))).toEqual({ kind: "exitVisual" })
     expect(decide(base, esc)).toEqual({ kind: "exitVisual" })
   })
-  it("motions move the selection cursor", () => {
-    expect(decide(base, ch("j"))).toEqual({ kind: "visualMove", op: "lineDown" })
-    expect(decide(base, ch("k"))).toEqual({ kind: "visualMove", op: "lineUp" })
-    expect(decide(base, ch("G"))).toEqual({ kind: "visualMove", op: "bottom" })
-    expect(decide({ ...base, navPending: true }, ch("g"))).toEqual({
-      kind: "visualMove",
-      op: "top",
-    })
-    expect(decide(base, arrow("down"))).toEqual({
-      kind: "visualMove",
-      op: "lineDown",
-    })
+  it("motions move the cursor (which extends the selection)", () => {
+    expect(decide(base, ch("j"))).toEqual({ kind: "scroll", op: "lineDown" })
+    expect(decide(base, ch("k"))).toEqual({ kind: "scroll", op: "lineUp" })
+    expect(decide(base, ch("G"))).toEqual({ kind: "scroll", op: "bottom" })
+    expect(decide({ ...base, navPending: true }, ch("g"))).toEqual({ kind: "scroll", op: "top" })
+    expect(decide(base, ctrl("d"))).toEqual({ kind: "scroll", op: "halfDown" })
+    expect(decide(base, arrow("down"))).toEqual({ kind: "scroll", op: "lineDown" })
   })
   it("Ctrl-J still swaps to the input even from visual", () => {
-    expect(decide(base, ctrl("j"))).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "insert",
-    })
-  })
-})
-
-describe("search entry", () => {
-  const base = { searching: true } as const
-  it("chars build the query; backspace deletes", () => {
-    expect(decide(base, ch("f"))).toEqual({ kind: "searchChar", char: "f" })
-    expect(decide(base, back)).toEqual({ kind: "searchBack" })
-  })
-  it("Enter jumps, Esc cancels", () => {
-    expect(decide(base, enter)).toEqual({ kind: "searchJump" })
-    expect(decide(base, esc)).toEqual({ kind: "searchCancel" })
-  })
-  it("everything else is swallowed (no pane swap mid-query)", () => {
-    expect(decide(base, ctrl("k"))).toEqual({ kind: "searchSwallow" })
-    expect(decide(base, pgUp)).toEqual({ kind: "searchSwallow" })
+    expect(decide(base, ctrl("j"))).toEqual({ kind: "focus", to: "input", mode: "insert" })
   })
 })
 
 describe("side pane", () => {
   const base = { focus: "side", mode: "normal" } as const
-  it("i → input(insert), Esc → input(normal), / → search", () => {
-    expect(decide(base, ch("i"))).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "insert",
-    })
-    expect(decide(base, esc)).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "normal",
-    })
+  it("i → input(insert), Esc → input(normal), `:`/`/` open command/search", () => {
+    expect(decide(base, ch("i"))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+    expect(decide(base, esc)).toEqual({ kind: "focus", to: "input", mode: "normal" })
+    expect(decide(base, ch(":"))).toEqual({ kind: "openCommand" })
     expect(decide(base, ch("/"))).toEqual({ kind: "openSearch" })
   })
   it("Ctrl-H → conversation, Ctrl-J → input", () => {
-    expect(decide(base, ctrl("h"))).toEqual({
-      kind: "focus",
-      to: "conversation",
-      mode: "normal",
-    })
-    expect(decide(base, ctrl("j"))).toEqual({
-      kind: "focus",
-      to: "input",
-      mode: "insert",
-    })
+    expect(decide(base, ctrl("h"))).toEqual({ kind: "focus", to: "conversation", mode: "normal" })
+    expect(decide(base, ctrl("j"))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+  })
+  it("z toggles zoom", () => {
+    expect(decide(base, ch("z"))).toEqual({ kind: "toggleZoom" })
   })
 })

@@ -1,5 +1,6 @@
 import { ansi, padRight, truncate } from "./terminal.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
+import type { EntryMode } from "./navKeys.js"
 
 /**
  * The fixed top hint bar. One row, pinned above the conversation (never
@@ -22,11 +23,14 @@ const paneBadge = (focus: FocusPane): string => {
 export const renderHeader = (
   mode: UiMode,
   focus: FocusPane,
-  searching: boolean,
+  entry: EntryMode,
+  zoomed: boolean,
   cols: number,
 ): string => {
   let parts: ReadonlyArray<string>
-  if (searching) {
+  if (entry === "command") {
+    parts = [hint("↵", "run"), hint("Tab", "complete"), hint("Esc", "cancel")]
+  } else if (entry === "search") {
     parts = [hint("↵", "jump"), hint("n/N", "next/prev"), hint("Esc", "cancel")]
   } else if (mode === "insert") {
     parts = [
@@ -39,22 +43,27 @@ export const renderHeader = (
     parts = [hint("j/k", "extend"), hint("y", "yank"), hint("Esc", "cancel")]
   } else if (focus === "conversation") {
     parts = [
-      hint("j/k", "scroll"),
+      hint("j/k", "move"),
       hint("gg/G", "ends"),
       hint("{/}", "msg"),
       hint("/", "search"),
       hint("v", "select"),
+      hint("z", "zoom"),
       hint("^h/j/k/l", "pane"),
-      hint(":", "cmd"),
     ]
   } else {
     // input or side, NORMAL
     parts = [
       hint("i", "insert"),
       hint("^h/j/k/l", "pane"),
+      hint("z", "zoom"),
       hint("/", "search"),
       hint(":", "cmd"),
     ]
+  }
+  // Zoom is the dominant state — lead with how to leave it.
+  if (zoomed && entry === "message" && mode !== "insert") {
+    parts = [hint("z/Esc", "unzoom"), ...parts]
   }
   const line = paneBadge(focus) + parts.join(SEP)
   return `${ansi.bgDarkGray}${padRight(truncate(line, cols), cols)}${ansi.reset}`

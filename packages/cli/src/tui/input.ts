@@ -37,6 +37,21 @@ const PROMPT = "❯ "
 const CONT = "  "
 const PREFIX_WIDTH = 2
 
+/**
+ * The input line is a vim-style command line: its prompt reflects what's being
+ * entered — a message (`❯`), a `:` command, or a `/` search. Every `plain`
+ * prompt is exactly PREFIX_WIDTH columns so the wrap/cursor math is identical.
+ */
+export interface PromptStyle {
+  readonly plain: string
+  readonly colored: string
+}
+export const PROMPTS = {
+  message: { plain: PROMPT, colored: `${ansi.fgBrightGreen}❯${ansi.reset} ` },
+  command: { plain: ": ", colored: `${ansi.fgBrightCyan}:${ansi.reset} ` },
+  search: { plain: "/ ", colored: `${ansi.fgBrightYellow}/${ansi.reset} ` },
+} as const satisfies Record<string, PromptStyle>
+
 /** Per-logical-line wrap: visible chars per visual row, sliced at spaces when possible. */
 const wrapLine = (text: string, contentWidth: number): string[] => {
   if (contentWidth <= 0) return [text]
@@ -70,7 +85,11 @@ interface InputLayout {
   readonly cursorVisualCol: number
 }
 
-export const layoutInput = (state: InputState, cols: number): InputLayout => {
+export const layoutInput = (
+  state: InputState,
+  cols: number,
+  prompt: PromptStyle = PROMPTS.message,
+): InputLayout => {
   const contentWidth = Math.max(1, cols - PREFIX_WIDTH)
   const visualLines: string[] = []
   const lineLayouts: LineLayout[] = []
@@ -89,7 +108,7 @@ export const layoutInput = (state: InputState, cols: number): InputLayout => {
     }
     const visualStartRow = visualLines.length
     for (let i = 0; i < chunks.length; i++) {
-      const prefix = row === 0 && i === 0 ? PROMPT : CONT
+      const prefix = row === 0 && i === 0 ? prompt.plain : CONT
       visualLines.push(prefix + chunks[i]!)
     }
     lineLayouts.push({
@@ -336,7 +355,6 @@ export const applyKey = (
   }
 }
 
-const PROMPT_COLORED = `${ansi.fgBrightGreen}❯${ansi.reset} `
 const PROMPT_VISIBLE_PREFIX_LEN = 2
 
 /**
@@ -350,15 +368,16 @@ export const renderInput = (
   state: InputState,
   cols: number,
   maxRows = 8,
+  prompt: PromptStyle = PROMPTS.message,
 ): {
   readonly lines: string[]
   readonly cursorRow: number
   readonly cursorCol: number
 } => {
-  const layout = layoutInput(state, cols)
+  const layout = layoutInput(state, cols, prompt)
   const styled = layout.visualLines.map((line, i) => {
-    if (i === 0 && line.startsWith(PROMPT)) {
-      return padRight(PROMPT_COLORED + line.slice(PROMPT.length), cols)
+    if (i === 0 && line.startsWith(prompt.plain)) {
+      return padRight(prompt.colored + line.slice(prompt.plain.length), cols)
     }
     return padRight(line, cols)
   })

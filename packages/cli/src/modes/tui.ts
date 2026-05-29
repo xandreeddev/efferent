@@ -71,7 +71,7 @@ import {
   type FocusPane,
   type UiMode,
 } from "../tui/uiMode.js"
-import { decideKey, type ScrollOp } from "../tui/navKeys.js"
+import { decideKey, type EntryMode, type ScrollOp } from "../tui/navKeys.js"
 
 interface MutableAppState {
   status: StatusState
@@ -89,8 +89,12 @@ interface MutableAppState {
   mode: UiMode
   /** Pending first key of a two-key normal-mode motion (e.g. `g` of `gg`). */
   navPending?: "g" | undefined
-  /** Active `/` search entry — present while typing a query. */
-  search?: { readonly query: string } | undefined
+  /** Command-line mode of the bottom input row: message / `:` command / `/` search. */
+  entry: EntryMode
+  /** The focused read-only pane is maximized (fills the middle region). */
+  zoomed: boolean
+  /** Pane that opened the current `/` search, restored on Esc-cancel. */
+  preSearchFocus?: FocusPane | undefined
   /** A turn is in flight. Input stays live; submits queue. */
   busy: boolean
   /** The forked agent run, so Esc can interrupt it. */
@@ -131,14 +135,15 @@ const HELP_LINES = [
   "  v                VISUAL select; y yanks to the clipboard",
   "Panes:",
   "  Ctrl-h/j/k/l     move focus: conversation · side · input",
-  "Scroll (NORMAL, conversation pane):",
-  "  j / k            line down / up",
+  "  z                maximize / restore the focused pane (Esc exits)",
+  "Cursor (NORMAL, conversation pane — the row caret is where you are):",
+  "  j / k            move cursor down / up",
   "  Ctrl-D / Ctrl-U  half page down / up",
   "  PgUp / PgDn      page (~75% of a screen)",
-  "  gg / G           jump to top / bottom",
+  "  gg / G           cursor to top / bottom (G re-follows new output)",
   "  { / }            previous / next message",
   "Search:",
-  "  /                search the conversation; n / N next / prev match",
+  "  /                search; Enter lands on the match, n / N next / prev",
   "Editing & turns:",
   "  Enter            submit (queues if a turn is running)",
   "  Ctrl-J           newline within input (INSERT)",
@@ -170,47 +175,16 @@ const snapshot = (s: MutableAppState): AppState => ({
   spinnerFrame: s.spinnerFrame,
   focus: s.focus,
   mode: s.mode,
-  search: s.search,
+  entry: s.entry,
+  zoomed: s.zoomed,
 })
 
-/** Apply a NORMAL-mode scroll op to the conversation viewport. */
+/**
+ * Apply a scroll op by moving the conversation cursor (the viewport follows).
+ * Used by both NORMAL nav and VISUAL extension — in VISUAL the same cursor
+ * move grows the selection, so there's no separate handler.
+ */
 const applyScroll = (sb: Scrollback, op: ScrollOp): void => {
-  switch (op) {
-    case "lineUp":
-      sb.lineUp()
-      return
-    case "lineDown":
-      sb.lineDown()
-      return
-    case "halfUp":
-      sb.halfUp()
-      return
-    case "halfDown":
-      sb.halfDown()
-      return
-    case "pageUp":
-      sb.pageUp()
-      return
-    case "pageDown":
-      sb.pageDown()
-      return
-    case "top":
-      sb.toTop()
-      return
-    case "bottom":
-      sb.toBottom()
-      return
-    case "msgUp":
-      sb.jumpMessage("up")
-      return
-    case "msgDown":
-      sb.jumpMessage("down")
-      return
-  }
-}
-
-/** Apply a VISUAL-mode motion (moves the selection cursor, extending it). */
-const applyVisualScroll = (sb: Scrollback, op: ScrollOp): void => {
   switch (op) {
     case "lineUp":
       sb.moveCursor(-1)
@@ -218,13 +192,29 @@ const applyVisualScroll = (sb: Scrollback, op: ScrollOp): void => {
     case "lineDown":
       sb.moveCursor(1)
       return
+    case "halfUp":
+      sb.cursorHalfUp()
+      return
+    case "halfDown":
+      sb.cursorHalfDown()
+      return
+    case "pageUp":
+      sb.cursorPageUp()
+      return
+    case "pageDown":
+      sb.cursorPageDown()
+      return
     case "top":
       sb.cursorToTop()
       return
     case "bottom":
       sb.cursorToBottom()
       return
-    default:
+    case "msgUp":
+      sb.cursorToMessage("up")
+      return
+    case "msgDown":
+      sb.cursorToMessage("down")
       return
   }
 }
@@ -292,6 +282,8 @@ const runTuiModeCore = (
       vi: initialVi,
       focus: "input",
       mode: "insert",
+      entry: "message",
+      zoomed: false,
       busy: false,
       queue: [],
       turnStartedAt: 0,
@@ -631,6 +623,7 @@ const runTuiModeCore = (
 
         cur.scrollback.push({ kind: "user", text })
         cur.scrollback.stickToBottom()
+        cur.scrollback.cursorToBottom()
         cur.scrollback.clearSearch()
         yield* Ref.update(stateRef, (s) => {
           s.input = emptyInput
@@ -1044,14 +1037,12 @@ const runTuiModeCore = (
           if (key.type === "tab") {
             const cmd = selectedCommand(s.palette)
             if (cmd !== undefined) {
+              // Complete into the command body without the `:` (the prompt
+              // shows it); stay in command entry so you can add args.
+              const body = cmd.name.slice(1)
               yield* Ref.update(stateRef, (st) => {
-                st.input = {
-                  lines: [cmd.name],
-                  row: 0,
-                  col: cmd.name.length,
-                  locked: false,
-                }
-                st.palette = hiddenPalette
+                st.input = { lines: [body], row: 0, col: body.length, locked: false }
+                st.palette = computePalette(cmd.name)
                 return st
               })
               yield* requestRender
@@ -1064,6 +1055,7 @@ const runTuiModeCore = (
               yield* Ref.update(stateRef, (st) => {
                 st.input = emptyInput
                 st.palette = hiddenPalette
+                st.entry = "message"
                 return st
               })
               const outcome = yield* handleSlash(cmd.name)
@@ -1078,10 +1070,12 @@ const runTuiModeCore = (
           {
             focus: s.focus,
             mode: s.mode,
-            searching: s.search !== undefined,
+            entry: s.entry,
+            inputEmpty: inputText(s.input).length === 0,
             searchActive: s.scrollback.searchActive(),
             navPending: s.navPending === "g",
             sideVisible: cols >= 60,
+            zoomed: s.zoomed,
           },
           key,
         )
@@ -1129,10 +1123,14 @@ const runTuiModeCore = (
 
           case "focus":
             yield* Ref.update(stateRef, (st) => {
+              // Swapping panes leaves zoom (you can't be zoomed on a hidden /
+              // input pane). Entering the conversation places its cursor.
+              st.zoomed = false
               st.focus = intent.to
               st.mode = intent.mode
               st.navPending = undefined
               st.palette = hiddenPalette
+              if (intent.to === "conversation") st.scrollback.initCursor()
               st.scrollback.endVisual()
               return st
             })
@@ -1158,6 +1156,7 @@ const runTuiModeCore = (
 
           case "enterVisual":
             yield* Ref.update(stateRef, (st) => {
+              st.scrollback.initCursor()
               st.scrollback.startVisual()
               st.mode = "visual"
               st.navPending = undefined
@@ -1166,9 +1165,13 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
 
-          case "visualMove":
+          // Maximize / restore the focused read-only pane.
+          case "toggleZoom":
             yield* Ref.update(stateRef, (st) => {
-              applyVisualScroll(st.scrollback, intent.op)
+              if (st.zoomed) st.zoomed = false
+              else if (st.focus === "conversation" || st.focus === "side") {
+                st.zoomed = true
+              }
               st.navPending = undefined
               return st
             })
@@ -1203,50 +1206,105 @@ const runTuiModeCore = (
             return "stay" as const
           }
 
-          case "openSearch":
+          // Open the `:` command line: focus the input, clear it, prime the
+          // command palette with the full list.
+          case "openCommand":
             yield* Ref.update(stateRef, (st) => {
-              st.search = { query: "" }
-              st.scrollback.search("")
+              st.entry = "command"
+              st.zoomed = false
+              st.focus = "input"
+              st.navPending = undefined
+              st.input = emptyInput
+              st.palette = computePalette(":")
+              st.scrollback.endVisual()
               return st
             })
             yield* requestRender
             return "stay" as const
 
-          case "searchChar": {
-            const ch = intent.char
+          // Open the `/` search line: focus the input, clear it, seed an empty
+          // query (live highlight begins as you type). Remember which pane
+          // opened it so Esc returns there; the conversation cursor stays put
+          // (render shows a dim caret marking where Enter will land you).
+          case "openSearch":
             yield* Ref.update(stateRef, (st) => {
-              const q = (st.search?.query ?? "") + ch
-              st.search = { query: q }
-              st.scrollback.search(q)
+              st.preSearchFocus = st.focus
+              st.entry = "search"
+              st.zoomed = false
+              st.focus = "input"
+              st.navPending = undefined
+              st.input = emptyInput
+              st.palette = hiddenPalette
+              st.scrollback.search("")
+              st.scrollback.endVisual()
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          // Edit the active command/search body via the input editor.
+          case "entryEdit": {
+            const r = applyKey(s.input, key, cols)
+            yield* Ref.update(stateRef, (st) => {
+              st.input = r.state
+              const body = inputText(r.state)
+              if (st.entry === "search") st.scrollback.search(body)
+              else st.palette = computePalette(":" + body)
               return st
             })
             yield* requestRender
             return "stay" as const
           }
 
-          case "searchBack":
+          // Enter: run the `:` command, or jump to the `/` match.
+          case "entrySubmit": {
+            const wasCommand = s.entry === "command"
+            const body = inputText(s.input).trim()
             yield* Ref.update(stateRef, (st) => {
-              const q = (st.search?.query ?? "").slice(0, -1)
-              st.search = { query: q }
-              st.scrollback.search(q)
+              st.entry = "message"
+              st.input = emptyInput
+              st.palette = hiddenPalette
+              if (wasCommand) {
+                // Back to the input, INSERT, ready for the next message.
+                st.focus = "input"
+                st.mode = "insert"
+              } else {
+                // Search: land *in the conversation* with the cursor on the
+                // match (not stranded in the input). n/N then walk matches.
+                st.scrollback.jumpToMatch()
+                st.scrollback.initCursor()
+                st.focus = "conversation"
+                st.mode = "normal"
+              }
               return st
             })
+            if (wasCommand && body.length > 0) {
+              const outcome = yield* handleSlash(":" + body)
+              if (outcome === "exit") return "exit" as const
+            }
             yield* requestRender
             return "stay" as const
+          }
 
-          case "searchJump":
+          // Esc: abandon the command/search line. A cancelled search clears its
+          // highlight and returns to whichever pane opened it.
+          case "entryCancel":
             yield* Ref.update(stateRef, (st) => {
-              st.scrollback.jumpToMatch()
-              st.search = undefined
-              return st
-            })
-            yield* requestRender
-            return "stay" as const
-
-          case "searchCancel":
-            yield* Ref.update(stateRef, (st) => {
-              st.scrollback.clearSearch()
-              st.search = undefined
+              const wasSearch = st.entry === "search"
+              st.entry = "message"
+              st.input = emptyInput
+              st.palette = hiddenPalette
+              if (wasSearch) {
+                st.scrollback.clearSearch()
+                const back = st.preSearchFocus ?? "input"
+                st.preSearchFocus = undefined
+                st.focus = back
+                st.mode = back === "input" ? "insert" : "normal"
+                if (back === "conversation") st.scrollback.initCursor()
+              } else {
+                st.focus = "input"
+                st.mode = "insert"
+              }
               return st
             })
             yield* requestRender
@@ -1268,7 +1326,6 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
 
-          case "searchSwallow":
           case "none":
             yield* requestRender
             return "stay" as const

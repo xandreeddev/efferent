@@ -93,6 +93,9 @@ const renderDiff = (diff: string, width: number): string[] => {
   })
 }
 
+/** Context rows kept above/below the cursor as the viewport follows it. */
+const SCROLLOFF = 3
+
 // Collapsed line caps; expanded shows up to the larger cap.
 const DIFF_COLLAPSED = 8
 const DIFF_EXPANDED = 200
@@ -195,11 +198,18 @@ export class Scrollback {
   private matchLines: number[] = []
   private matchIdx = 0
 
-  // VISUAL selection (line-wise): an anchor + a moving cursor, both absolute
-  // visual-line indices. `y` yanks the [min,max] range to the clipboard.
+  // The persistent cursor (absolute visual-line index). It is the single
+  // "where am I" anchor in BOTH NORMAL and VISUAL — every motion moves it and
+  // the viewport follows (see followCursor). `cursorActive` distinguishes a
+  // meaningfully-placed cursor from a fresh / just-cleared buffer (which
+  // follow-tails); the driver calls initCursor() on focus-in to place it.
+  private cursorLine = 0
+  private cursorActive = false
+
+  // VISUAL selection (line-wise): `anchorLine` is the fixed end, `cursorLine`
+  // the moving end; `y` yanks the [min,max] range to the clipboard.
   private selecting = false
   private anchorLine = 0
-  private cursorLine = 0
 
   private lineCache = new WeakMap<
     ScrollbackBlock,
@@ -251,6 +261,8 @@ export class Scrollback {
     this.flatLines = []
     this.msgStartLines = []
     this.selecting = false
+    this.cursorLine = 0
+    this.cursorActive = false
     this.clearSearch()
   }
 
@@ -286,42 +298,11 @@ export class Scrollback {
     return this.totalVisualLines
   }
 
-  /** gg / G — jump to the oldest / newest content. */
-  toTop(): void {
-    this.scrollOffset = this.maxOffset()
-  }
-  toBottom(): void {
-    this.scrollOffset = 0
-  }
-
-  /** j / k — one line toward newer / older content. */
-  lineDown(n = 1): void {
-    this.scrollBy(-n)
-  }
-  lineUp(n = 1): void {
-    this.scrollBy(n)
-  }
-
-  /** PgUp / PgDn — responsive step, ~75% of a screen (SCROLLING_REVIEW.md §B). */
   private pageStep(): number {
     return Math.max(5, Math.floor(this.viewportRows * 0.75))
   }
-  pageUp(): void {
-    this.scrollBy(this.pageStep())
-  }
-  pageDown(): void {
-    this.scrollBy(-this.pageStep())
-  }
-
-  /** Ctrl-U / Ctrl-D — half a screen. */
   private halfStep(): number {
     return Math.max(1, Math.floor(this.viewportRows / 2))
-  }
-  halfUp(): void {
-    this.scrollBy(this.halfStep())
-  }
-  halfDown(): void {
-    this.scrollBy(-this.halfStep())
   }
 
   /** First visible (top) absolute line index for the current offset. */
@@ -335,27 +316,121 @@ export class Scrollback {
     this.clampOffset()
   }
 
-  /** Scroll so absolute visual line `idx` sits centered in the viewport. */
-  private center(idx: number): void {
-    this.alignTop(idx - Math.floor(this.viewportRows / 2))
+  // --- cursor (NORMAL + VISUAL) -------------------------------------------
+
+  /** Largest valid cursor index (0 when empty). */
+  private maxCursor(): number {
+    return Math.max(0, this.totalVisualLines - 1)
   }
 
-  /** { / } — hop to the previous / next user|assistant message boundary. */
-  jumpMessage(dir: "up" | "down"): void {
+  private clampCursor(): void {
+    if (this.cursorLine < 0) this.cursorLine = 0
+    const max = this.maxCursor()
+    if (this.cursorLine > max) this.cursorLine = max
+  }
+
+  /**
+   * Adjust the viewport so the cursor stays visible with a scrolloff margin.
+   * The margin is *desired*, not forced: `alignTop`→`clampOffset` caps the
+   * offset, so the cursor only ever touches the true top/bottom edges.
+   */
+  private followCursor(): void {
+    this.clampCursor()
+    if (this.totalVisualLines <= this.viewportRows) {
+      this.scrollOffset = 0
+      return
+    }
+    const so = Math.min(SCROLLOFF, Math.floor((this.viewportRows - 1) / 2))
+    const top = this.topLine()
+    if (this.cursorLine < top + so) {
+      this.alignTop(this.cursorLine - so)
+    } else if (this.cursorLine > top + this.viewportRows - 1 - so) {
+      this.alignTop(this.cursorLine - this.viewportRows + 1 + so)
+    }
+  }
+
+  /**
+   * Idempotently place the cursor if it was never meaningfully positioned
+   * (fresh / just-cleared buffer): park it on the newest line so `k` walks
+   * back into history. A cursor already placed is left where it is — so it
+   * persists across focus changes.
+   */
+  initCursor(): void {
+    if (this.cursorActive) return
+    this.cursorActive = true
+    this.cursorLine = this.maxCursor()
+    this.followCursor()
+  }
+
+  /** Absolute cursor line — for the driver / tests. */
+  cursorIndex(): number {
+    return this.cursorLine
+  }
+
+  /** j / k — move the cursor one line (viewport follows). */
+  moveCursor(delta: number): void {
+    this.cursorActive = true
+    this.cursorLine += delta
+    this.followCursor()
+  }
+  /** gg — cursor to the oldest line. */
+  cursorToTop(): void {
+    this.cursorActive = true
+    this.cursorLine = 0
+    this.followCursor()
+  }
+  /** G — cursor to the newest line (re-engages follow-tail). */
+  cursorToBottom(): void {
+    this.cursorActive = true
+    this.cursorLine = this.maxCursor()
+    this.followCursor()
+  }
+  /** Ctrl-U / Ctrl-D — half a screen. */
+  cursorHalfUp(): void {
+    this.moveCursor(-this.halfStep())
+  }
+  cursorHalfDown(): void {
+    this.moveCursor(this.halfStep())
+  }
+  /** PgUp / PgDn — ~75% of a screen. */
+  cursorPageUp(): void {
+    this.moveCursor(-this.pageStep())
+  }
+  cursorPageDown(): void {
+    this.moveCursor(this.pageStep())
+  }
+
+  /** { / } — hop the cursor to the previous / next message boundary. */
+  cursorToMessage(dir: "up" | "down"): void {
     const starts = this.msgStartLines
     if (starts.length === 0) return
-    const top = this.topLine()
+    this.cursorActive = true
+    const cur = this.cursorLine
     if (dir === "up") {
+      // The last boundary strictly above the cursor (else the first one).
       let target = starts[0]!
       for (const s of starts) {
-        if (s < top) target = s
+        if (s < cur) target = s
         else break
       }
-      this.alignTop(target)
+      this.cursorLine = target
     } else {
-      const next = starts.find((s) => s > top)
-      this.alignTop(next ?? starts[starts.length - 1]!)
+      const next = starts.find((s) => s > cur)
+      this.cursorLine = next ?? starts[starts.length - 1]!
     }
+    this.followCursor()
+  }
+
+  /**
+   * Window-relative row (0-based, within the visible viewport) of the cursor
+   * line, or -1 when it's off-screen. Works in NORMAL and VISUAL — the driver
+   * maps it to a screen row (VISUAL hardware cursor) and render.ts uses it to
+   * place the gutter caret.
+   */
+  cursorRow(): number {
+    if (!this.cursorActive) return -1
+    const row = this.cursorLine - this.topLine()
+    return row >= 0 && row < this.viewportRows ? row : -1
   }
 
   // --- search (vim `/`) ---------------------------------------------------
@@ -392,13 +467,15 @@ export class Scrollback {
     this.matchIdx = 0
   }
 
-  /** Center the current match in the viewport (no-op if there are none). */
+  /** Move the cursor onto the current match (no-op if there are none). */
   jumpToMatch(): void {
     if (this.matchLines.length === 0) return
-    this.center(this.matchLines[this.matchIdx]!)
+    this.cursorActive = true
+    this.cursorLine = this.matchLines[this.matchIdx]!
+    this.followCursor()
   }
 
-  /** n / N — advance to the next / previous match and center it. */
+  /** n / N — advance to the next / previous match and put the cursor on it. */
   nextMatch(dir: "next" | "prev"): void {
     const n = this.matchLines.length
     if (n === 0) return
@@ -422,10 +499,15 @@ export class Scrollback {
 
   // --- VISUAL selection ---------------------------------------------------
 
-  /** Enter line-wise VISUAL mode, anchored at the current top visible line. */
+  /**
+   * Enter line-wise VISUAL mode, anchored at the *current cursor* (not the
+   * viewport top) — so selection extends from where you already are. The
+   * cursor motions (moveCursor / cursorTo* / cursorToMessage) double as the
+   * selection-extend verbs, since selRange() reads anchor + cursor.
+   */
   startVisual(): void {
+    this.cursorActive = true
     this.selecting = true
-    this.cursorLine = this.topLine()
     this.anchorLine = this.cursorLine
   }
   endVisual(): void {
@@ -433,31 +515,6 @@ export class Scrollback {
   }
   isSelecting(): boolean {
     return this.selecting
-  }
-
-  private ensureCursorVisible(): void {
-    const top = this.topLine()
-    if (this.cursorLine < top) this.alignTop(this.cursorLine)
-    else if (this.cursorLine >= top + this.viewportRows) {
-      this.alignTop(this.cursorLine - this.viewportRows + 1)
-    }
-  }
-
-  /** Move the selection cursor by `delta` lines (extends the selection). */
-  moveCursor(delta: number): void {
-    this.cursorLine = Math.max(
-      0,
-      Math.min(this.totalVisualLines - 1, this.cursorLine + delta),
-    )
-    this.ensureCursorVisible()
-  }
-  cursorToTop(): void {
-    this.cursorLine = 0
-    this.ensureCursorVisible()
-  }
-  cursorToBottom(): void {
-    this.cursorLine = Math.max(0, this.totalVisualLines - 1)
-    this.ensureCursorVisible()
   }
 
   private selRange(): readonly [number, number] {
@@ -476,17 +533,6 @@ export class Scrollback {
       .slice(a, b + 1)
       .map(stripAnsi)
       .join("\n")
-  }
-
-  /**
-   * Window-relative row (0-based, within the visible viewport) of the VISUAL
-   * cursor line, or -1 when not selecting / off-screen. The driver maps this
-   * to a screen row so the terminal cursor visibly sits in the pane.
-   */
-  selectionCursorRow(): number {
-    if (!this.selecting) return -1
-    const row = this.cursorLine - this.topLine()
-    return row >= 0 && row < this.viewportRows ? row : -1
   }
 
   // --- rendering ----------------------------------------------------------
@@ -552,8 +598,15 @@ export class Scrollback {
     return out
   }
 
-  render(rows: number, cols: number): string[] {
+  render(rows: number, cols: number, focused = false): string[] {
     this.viewportRows = rows
+
+    // Was the cursor riding the tail as of the *previous* frame? (Also true
+    // for a fresh / input-focused buffer that never placed a cursor.)
+    const wasAtTail =
+      !this.cursorActive || this.cursorLine >= this.totalVisualLines - 1
+    const prevTotal = this.totalVisualLines
+
     const { lines, msgStarts } = this.flatten(cols)
     this.flatLines = lines
     this.msgStartLines = msgStarts
@@ -563,14 +616,36 @@ export class Scrollback {
     // lines, tool updates) — preserves the n/N cursor.
     if (this.searchQuery.length > 0) this.recomputeMatches()
 
+    if (wasAtTail) {
+      // Ride the newest line so streaming content stays in view.
+      this.cursorLine = this.maxCursor()
+    } else if (this.totalVisualLines > prevTotal) {
+      // Content appended below a parked cursor: bump the bottom-relative offset
+      // by the growth so the absolute viewport (and the cursor's screen row)
+      // stays put instead of being yanked toward the new tail.
+      this.scrollOffset += this.totalVisualLines - prevTotal
+    }
+    this.followCursor()
+
+    const showCursor = focused && this.cursorActive
     const [selLo, selHi] = this.selecting ? this.selRange() : [-1, -1]
     const decorate = (l: string, absIdx: number): string => {
       let s = this.searchQuery.length > 0 ? this.highlight(l) : l
-      if (this.selecting && absIdx >= selLo && absIdx <= selHi) {
+      const inSel = this.selecting && absIdx >= selLo && absIdx <= selHi
+      if (inSel) {
         // Line-wise selection: invert the whole row (drops other styling).
         s = `${ansi.inverse}${stripAnsi(s)}${ansi.reset}`
       }
-      return padRight(truncate(s, cols), cols)
+      s = padRight(truncate(s, cols), cols)
+      if (showCursor && absIdx === this.cursorLine && !inSel) {
+        // Tint the whole row; re-inject the bg after every inner reset so the
+        // line's own colours survive under the cursor highlight.
+        s =
+          ansi.bgCursorLine +
+          s.split(ansi.reset).join(ansi.reset + ansi.bgCursorLine) +
+          ansi.reset
+      }
+      return s
     }
 
     if (lines.length <= rows) {
@@ -592,7 +667,7 @@ export class Scrollback {
     }
     if (this.scrollOffset > 0) {
       window[window.length - 1] =
-        `${ansi.dim}${ansi.fgYellow}↓ ${this.scrollOffset} more below · PgDn to follow${ansi.reset}`
+        `${ansi.dim}${ansi.fgYellow}↓ ${this.scrollOffset} more below · G to follow${ansi.reset}`
     }
 
     while (window.length < rows) window.push("")

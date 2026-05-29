@@ -6,18 +6,19 @@ import { moveFocus, type FocusPane, type UiMode } from "./uiMode.js"
  * current navigation context + a key and returns an *intent* describing what
  * should happen — no side effects, no Effects, no Scrollback mutation. The
  * driver (`tui.ts`) executes the intent. Keeping this pure makes the whole
- * bind surface unit-testable (see the probes), which is where the earlier
- * "panes never swap / search is broken" bugs lived.
+ * bind surface unit-testable (see `navKeys.test.ts`).
  *
- * Design decisions baked in here:
- *  - **Ctrl-h/j/k/l swaps focus in *any* mode** (including INSERT), but only
- *    when there's actually a pane that way — otherwise the key falls through
- *    to the editor (so Ctrl-J = newline / Ctrl-H = backspace still work in the
- *    input, which have no pane below/left).
- *  - **Entering the input pane → INSERT** (type immediately); entering a
- *    read-only pane → NORMAL. This is what makes Ctrl-K↔Ctrl-J feel right.
- *  - `/` opens search and `:`-commands stay in the palette; Esc in NORMAL
- *    clears a lingering search highlight before anything else.
+ * The bottom input row is a vim-style command line with an `entry` mode:
+ *  - `message` → normal text; prompt `❯`.
+ *  - `command` → a `:` command; prompt `:`.
+ *  - `search`  → a `/` query; prompt `/`.
+ * `:` / `/` open command/search from NORMAL, or from INSERT when the input is
+ * empty (so you can still type them literally mid-message). While an entry is
+ * active, keystrokes edit its body; Enter runs/jumps, Esc cancels.
+ *
+ * Focus: Ctrl-h/j/k/l swaps panes in any mode, but only when a pane exists that
+ * way — so Ctrl-J/Ctrl-H stay newline/backspace in the input. Entering the
+ * input pane → INSERT; entering a read-only pane → NORMAL.
  */
 
 export type ScrollOp =
@@ -32,37 +33,50 @@ export type ScrollOp =
   | "msgUp"
   | "msgDown"
 
+export type EntryMode = "message" | "command" | "search"
+
 export interface NavCtx {
   readonly focus: FocusPane
   readonly mode: UiMode
-  /** A `/` query is currently being typed. */
-  readonly searching: boolean
+  /** Command-line entry mode of the bottom input row. */
+  readonly entry: EntryMode
+  /** Whether the input buffer is currently empty (gates `:`/`/` in INSERT). */
+  readonly inputEmpty: boolean
   /** A query is set (highlights shown; n/N navigable). */
   readonly searchActive: boolean
   /** The first `g` of a `gg` motion has been seen. */
   readonly navPending: boolean
   /** Whether the side pane is on screen (wide enough). */
   readonly sideVisible: boolean
+  /** Whether the focused pane is maximized (zoom). Esc exits zoom first. */
+  readonly zoomed: boolean
 }
 
 export type NavIntent =
-  /** Hand the key to the input editor (typing / vi motions). */
+  /** Hand the key to the input editor (message typing / vi motions). */
   | { readonly kind: "input" }
   /** Swallow; just repaint. */
   | { readonly kind: "none" }
   | { readonly kind: "focus"; readonly to: FocusPane; readonly mode: UiMode }
+  /**
+   * Move the conversation cursor (viewport follows). In VISUAL the same op
+   * extends the selection — the scrollback's cursor *is* the selection cursor.
+   */
   | { readonly kind: "scroll"; readonly op: ScrollOp }
-  | { readonly kind: "visualMove"; readonly op: ScrollOp }
   | { readonly kind: "gPending" }
   | { readonly kind: "enterVisual" }
   | { readonly kind: "exitVisual" }
   | { readonly kind: "yank" }
+  /** Toggle maximize on the focused read-only pane. */
+  | { readonly kind: "toggleZoom" }
+  | { readonly kind: "openCommand" }
   | { readonly kind: "openSearch" }
-  | { readonly kind: "searchChar"; readonly char: string }
-  | { readonly kind: "searchBack" }
-  | { readonly kind: "searchJump" }
-  | { readonly kind: "searchCancel" }
-  | { readonly kind: "searchSwallow" }
+  /** Edit the active command/search body (driver runs the input editor). */
+  | { readonly kind: "entryEdit" }
+  /** Run the command / jump to the search match. */
+  | { readonly kind: "entrySubmit" }
+  /** Abandon the command/search line, back to a message. */
+  | { readonly kind: "entryCancel" }
   | { readonly kind: "match"; readonly dir: "next" | "prev" }
   | { readonly kind: "clearSearch" }
 
@@ -84,17 +98,15 @@ const ctrlDir = (
 }
 
 export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
-  // 1. Typing a `/` query captures everything until Enter/Esc.
-  if (ctx.searching) {
-    if (key.type === "escape") return { kind: "searchCancel" }
-    if (key.type === "enter") return { kind: "searchJump" }
-    if (key.type === "char") return { kind: "searchChar", char: key.char }
-    if (key.type === "backspace") return { kind: "searchBack" }
-    return { kind: "searchSwallow" }
+  // 1. A `:` command or `/` search is being typed — body editing captures keys.
+  if (ctx.entry !== "message") {
+    if (key.type === "escape") return { kind: "entryCancel" }
+    if (key.type === "enter") return { kind: "entrySubmit" }
+    return { kind: "entryEdit" }
   }
 
-  // 2. Ctrl-h/j/k/l: focus a neighbouring pane (any mode). Only when there's
-  //    a pane that way — else fall through so the editor keeps Ctrl-J/Ctrl-H.
+  // 2. Ctrl-h/j/k/l: focus a neighbouring pane (any mode). Only when there's a
+  //    pane that way — else fall through so the editor keeps Ctrl-J/Ctrl-H.
   if (key.type === "ctrl") {
     const dir = ctrlDir(key.char)
     if (dir !== undefined) {
@@ -112,6 +124,7 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
   // 4. Input pane.
   if (ctx.focus === "input") {
     if (ctx.mode === "normal") {
+      if (key.type === "char" && key.char === ":") return { kind: "openCommand" }
       if (key.type === "char" && key.char === "/") return { kind: "openSearch" }
       if (
         key.type === "char" &&
@@ -121,6 +134,15 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
         return { kind: "match", dir: key.char === "n" ? "next" : "prev" }
       }
       if (key.type === "escape" && ctx.searchActive) return { kind: "clearSearch" }
+      return { kind: "input" }
+    }
+    // INSERT: `:`/`/` open a command/search only on an empty buffer, so they
+    // stay literal mid-message.
+    if (ctx.inputEmpty && key.type === "char" && key.char === ":") {
+      return { kind: "openCommand" }
+    }
+    if (ctx.inputEmpty && key.type === "char" && key.char === "/") {
+      return { kind: "openSearch" }
     }
     return { kind: "input" }
   }
@@ -131,13 +153,16 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
     return decideConversationNormal(ctx, key)
   }
 
-  // 6. Side pane (minimal): drop back to the input, or open search.
+  // 6. Side pane (minimal): zoom, command/search, drop back to the input.
   if (ctx.focus === "side") {
     if (key.type === "char" && key.char === "i") {
       return { kind: "focus", to: "input", mode: "insert" }
     }
+    if (key.type === "char" && key.char === "z") return { kind: "toggleZoom" }
+    if (key.type === "char" && key.char === ":") return { kind: "openCommand" }
     if (key.type === "char" && key.char === "/") return { kind: "openSearch" }
     if (key.type === "escape") {
+      if (ctx.zoomed) return { kind: "toggleZoom" }
       return { kind: "focus", to: "input", mode: "normal" }
     }
   }
@@ -167,12 +192,16 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
         return { kind: "scroll", op: "msgDown" }
       case "/":
         return { kind: "openSearch" }
+      case ":":
+        return { kind: "openCommand" }
       case "n":
         return ctx.searchActive ? { kind: "match", dir: "next" } : { kind: "none" }
       case "N":
         return ctx.searchActive ? { kind: "match", dir: "prev" } : { kind: "none" }
       case "v":
         return { kind: "enterVisual" }
+      case "z":
+        return { kind: "toggleZoom" }
       case "i":
         return { kind: "focus", to: "input", mode: "insert" }
       default:
@@ -190,6 +219,8 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
     return { kind: "none" }
   }
   if (key.type === "escape") {
+    // Esc unwinds one layer at a time: zoom → search highlight → drop to input.
+    if (ctx.zoomed) return { kind: "toggleZoom" }
     return ctx.searchActive
       ? { kind: "clearSearch" }
       : { kind: "focus", to: "input", mode: "normal" }
@@ -198,8 +229,10 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
 }
 
 const decideVisual = (ctx: NavCtx, key: Key): NavIntent => {
+  // Selection extends via the same cursor motions as NORMAL (the scrollback's
+  // cursor is the selection cursor) — so VISUAL emits plain `scroll` ops.
   if (ctx.navPending && key.type === "char" && key.char === "g") {
-    return { kind: "visualMove", op: "top" }
+    return { kind: "scroll", op: "top" }
   }
   if (key.type === "char") {
     switch (key.char) {
@@ -208,21 +241,26 @@ const decideVisual = (ctx: NavCtx, key: Key): NavIntent => {
       case "v":
         return { kind: "exitVisual" }
       case "j":
-        return { kind: "visualMove", op: "lineDown" }
+        return { kind: "scroll", op: "lineDown" }
       case "k":
-        return { kind: "visualMove", op: "lineUp" }
+        return { kind: "scroll", op: "lineUp" }
       case "g":
         return { kind: "gPending" }
       case "G":
-        return { kind: "visualMove", op: "bottom" }
+        return { kind: "scroll", op: "bottom" }
       default:
         return { kind: "none" }
     }
   }
+  if (key.type === "ctrl") {
+    if (key.char === "d") return { kind: "scroll", op: "halfDown" }
+    if (key.char === "u") return { kind: "scroll", op: "halfUp" }
+    return { kind: "none" }
+  }
   if (key.type === "escape") return { kind: "exitVisual" }
   if (key.type === "arrow") {
-    if (key.dir === "down") return { kind: "visualMove", op: "lineDown" }
-    if (key.dir === "up") return { kind: "visualMove", op: "lineUp" }
+    if (key.dir === "down") return { kind: "scroll", op: "lineDown" }
+    if (key.dir === "up") return { kind: "scroll", op: "lineUp" }
   }
   return { kind: "none" }
 }
