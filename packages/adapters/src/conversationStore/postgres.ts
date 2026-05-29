@@ -7,6 +7,7 @@ import {
   ConversationNotFound,
   ConversationStore,
   ConversationStoreError,
+  Checkpoint,
 } from "@agent/core"
 
 const wrapSql = <A, R>(
@@ -52,7 +53,7 @@ export const PostgresConversationStoreLive = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
 
-    return ConversationStore.of({
+    const store = ConversationStore.of({
       create: (workspaceDir) =>
         Effect.gen(function* () {
           const id = crypto.randomUUID()
@@ -84,8 +85,6 @@ export const PostgresConversationStoreLive = Layer.effect(
 
       append: (conversationId, msg) =>
         Effect.gen(function* () {
-          // Verify the conversation exists so we return a typed NotFound
-          // rather than a foreign-key violation buried in the cause.
           const rows = yield* wrapSql(
             sql<{ readonly id: string }>`SELECT id::text FROM conversations WHERE id = ${conversationId}::uuid`,
             "Failed to look up conversation",
@@ -131,6 +130,89 @@ export const PostgresConversationStoreLive = Layer.effect(
           return yield* Effect.forEach(rows, decodeMessage)
         }),
 
+      checkpoint: (conversationId, summary) =>
+        wrapSql(
+          // Fold at the current head: COALESCE(MAX(position), -1) is computed
+          // and inserted in one statement, so the fold point is exactly
+          // "everything that exists right now" — no separate read/write race.
+          sql`
+            INSERT INTO checkpoints (id, conversation_id, message_position, summary, created_at)
+            SELECT ${crypto.randomUUID()}::uuid, ${conversationId}::uuid,
+                   COALESCE(MAX(position), -1), ${summary}, ${Date.now()}
+            FROM messages WHERE conversation_id = ${conversationId}::uuid
+          `,
+          "Failed to create checkpoint",
+        ).pipe(Effect.asVoid),
+
+      getLatestCheckpoint: (conversationId) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ id: string; conversation_id: string; message_position: number; summary: string; created_at: string }>`
+              SELECT id::text, conversation_id::text, message_position, summary, created_at
+              FROM checkpoints
+              WHERE conversation_id = ${conversationId}::uuid
+              ORDER BY created_at DESC
+              LIMIT 1
+            `,
+            "Failed to get latest checkpoint",
+          )
+          if (rows.length === 0) return undefined
+          const r = rows[0]!
+          return {
+            id: r.id,
+            conversationId: conversationId,
+            messagePosition: r.message_position,
+            summary: r.summary,
+            createdAt: Number(r.created_at),
+          } satisfies Checkpoint
+        }),
+
+      listCheckpoints: (conversationId) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ id: string; conversation_id: string; message_position: number; summary: string; created_at: string }>`
+              SELECT id::text, conversation_id::text, message_position, summary, created_at
+              FROM checkpoints
+              WHERE conversation_id = ${conversationId}::uuid
+              ORDER BY message_position ASC
+            `,
+            "Failed to list checkpoints",
+          )
+          const results = []
+          for (const r of rows) {
+            results.push({
+              id: r.id,
+              conversationId: conversationId,
+              messagePosition: r.message_position,
+              summary: r.summary,
+              createdAt: Number(r.created_at),
+            } satisfies Checkpoint)
+          }
+          return results
+        }),
+
+      // Real rows the agent loads: everything after the latest checkpoint's
+      // fold point (or all rows if none). The handoff summary itself is NOT
+      // prepended here — `runAgent` does that in core (no domain logic in the
+      // adapter). `list` remains the full, browsable record.
+      listActive: (conversationId) =>
+        Effect.gen(function* () {
+          const checkpoint = yield* store.getLatestCheckpoint(conversationId)
+          if (!checkpoint) {
+            return yield* store.list(conversationId)
+          }
+          const rows = yield* wrapSql(
+            sql<MessageRow>`
+              SELECT role, content
+              FROM messages
+              WHERE conversation_id = ${conversationId}::uuid AND position > ${checkpoint.messagePosition}
+              ORDER BY position ASC
+            `,
+            "Failed to list active messages",
+          )
+          return yield* Effect.forEach(rows, decodeMessage)
+        }),
+
       listByWorkspace: (workspaceDir) =>
         Effect.gen(function* () {
           const rows = yield* wrapSql(
@@ -168,5 +250,7 @@ export const PostgresConversationStoreLive = Layer.effect(
           return results
         }),
     })
+
+    return store
   }),
 )

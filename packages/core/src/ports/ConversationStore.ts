@@ -1,6 +1,7 @@
 import { Context, Data, type Effect } from "effect"
 import type {
   AgentMessage,
+  Checkpoint,
   ConversationId,
 } from "../entities/Conversation.js"
 
@@ -44,6 +45,32 @@ export class ConversationStore extends Context.Tag(
       ReadonlyArray<AgentMessage>,
       ConversationStoreError
     >
+    /**
+     * Fold the conversation at its current head: record a checkpoint whose
+     * `messagePosition` is the latest message position (computed atomically),
+     * with `summary` as the handoff that replaces everything up to and
+     * including that position for loading purposes. Original messages are
+     * never modified — `list` still returns them; only `listActive` narrows.
+     */
+    readonly checkpoint: (
+      id: ConversationId,
+      summary: string,
+    ) => Effect.Effect<void, ConversationStoreError>
+    readonly getLatestCheckpoint: (
+      id: ConversationId,
+    ) => Effect.Effect<Checkpoint | undefined, ConversationStoreError>
+    readonly listCheckpoints: (
+      id: ConversationId,
+    ) => Effect.Effect<ReadonlyArray<Checkpoint>, ConversationStoreError>
+    /**
+     * Messages the agent actually loads: only the **real** rows after the
+     * latest checkpoint's position (or all rows if no checkpoint). Does NOT
+     * include the handoff summary — `runAgent` prepends that (domain logic
+     * stays in core). For browsing the full record, use `list`.
+     */
+    readonly listActive: (
+      id: ConversationId,
+    ) => Effect.Effect<ReadonlyArray<AgentMessage>, ConversationStoreError>
     readonly listByWorkspace: (
       workspaceDir: string,
     ) => Effect.Effect<

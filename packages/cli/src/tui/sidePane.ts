@@ -1,5 +1,6 @@
 import { ansi, padRight, truncate, SPINNER_FRAMES } from "./terminal.js"
 import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
+import { type ContextSegment, renderContextView } from "./contextView.js"
 
 export interface SidePaneInstruction {
   readonly path: string
@@ -10,12 +11,17 @@ export interface SidePaneState {
   readonly tree: ExecutionTree
   readonly skillsLoaded: ReadonlyArray<string>
   readonly instructions: ReadonlyArray<SidePaneInstruction>
+  /** Which view the side pane shows: the live agent stack, or the context viewer. */
+  readonly view: "stack" | "context"
+  /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
+  readonly context?: ReadonlyArray<ContextSegment>
 }
 
 export const emptySidePane: SidePaneState = {
   tree: emptyTree,
   skillsLoaded: [],
   instructions: [],
+  view: "stack",
 }
 
 const homeDir = (() => {
@@ -131,6 +137,20 @@ export const renderSidePane = (
   now: number = Date.now(),
 ): string[] => {
   if (rows <= 0 || cols <= 0) return []
+
+  // Context view: the message tree + handoff replacement. Tail-windowed like
+  // the stack tree (newest/loaded stays visible); `z` zooms for the full read.
+  if (state.view === "context") {
+    const lines =
+      state.context !== undefined && state.context.length > 0
+        ? renderContextView(state.context, cols)
+        : [`${ansi.dim}(no conversation yet)${ansi.reset}`]
+    const window =
+      lines.length > rows ? lines.slice(lines.length - rows) : lines
+    const out = [...window]
+    while (out.length < rows) out.push("")
+    return out.slice(0, rows).map((line) => padRight(line, cols))
+  }
 
   const sections: string[] = ["", ...renderListSection("skills", state.skillsLoaded, cols)]
   sections.push(

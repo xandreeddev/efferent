@@ -10,6 +10,22 @@ import type { TokenUsage } from "../ports/LlmInfo.js"
  * never use that; we map by hand and keep the blob).
  */
 
+/**
+ * Wrap a handoff summary as the single `user` message that stands in for all
+ * the folded-away history. This is the domain representation of a checkpoint
+ * for the model (kept in `core`, not the store adapter): `runAgent` prepends
+ * it to the active window, and `createHandoff` prepends the prior summary when
+ * re-summarizing so handoffs stay cumulative.
+ */
+export const handoffToMessage = (summary: string): AgentMessage => ({
+  role: "user",
+  content:
+    "[System note: the earlier history of this conversation has been handed " +
+    "off into the summary below to free up context. Treat the summary as the " +
+    "source of truth for everything before this point.]\n\n" +
+    summary,
+})
+
 type AnyPart = {
   readonly type: string
   readonly text?: string
