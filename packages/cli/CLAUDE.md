@@ -14,13 +14,14 @@ packages/cli/src/
 │   ├── print.ts       one-shot, streams final text to stdout
 │   ├── json.ts        same loop as print but JSONL events on stdout
 │   └── rpc.ts         bidirectional JSON-RPC over stdio
+├── ../skills/         bundled (internal) base skills: web-search.md + web-search.js
 └── tui/
     ├── terminal.ts    raw mode, ANSI escapes, alt buffer, getTermSize
     ├── keys.ts        stdin byte → discriminated Key event parser
     ├── render.ts      diffing frame composer (status + scrollback + palette + input + modal)
     ├── statusBar.ts   model + token gauge + cwd
     ├── scrollback.ts  user / assistant / tool / info / error blocks
-    ├── input.ts       multi-line editor (Ctrl-J newline; Enter submits)
+    ├── input.ts       multi-line editor (Enter/Ctrl-J newline in INSERT; submit from NORMAL via Enter)
     ├── slashPalette.ts /<cmd> autocomplete overlay
     ├── modal.ts       generic centered y/n confirm
     └── markdown.ts    minimal markdown → ANSI converter

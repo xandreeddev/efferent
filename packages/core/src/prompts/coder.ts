@@ -37,7 +37,9 @@ Consider reversibility and blast radius before you act. Local, reversible operat
 
 const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   if (skills.length === 0) return ""
-  const lines = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
+  const lines = skills
+    .map((s) => `- ${s.name}${s.internal ? " (built-in)" : ""}: ${s.description}`)
+    .join("\n")
   return `
 # Skills
 The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
@@ -100,7 +102,8 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - bash({ command, timeout? }) — runs in your scope dir.
 - grep({ pattern, dir?, flags?, context? }) — search anywhere.
 - glob({ pattern, dir? }) — find files anywhere.
-- ls({ path?, recursive? }) — list anywhere.${args.children.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a sub-task to a nested scope (see Delegations)." : ""}
+- ls({ path?, recursive? }) — list anywhere.
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.${args.children.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a sub-task to a nested scope (see Delegations)." : ""}
 ${renderDelegationsSection(args.children)}
 # Doing tasks
 - Use tools to read; do not answer from memory.
@@ -142,7 +145,8 @@ ${systemSection}
 - bash({ command, timeout? }) — run a shell command in cwd. Confirmation may be required.
 - grep({ pattern, dir?, flags?, context? }) — regex search across files. Respects .gitignore.
 - glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
-- ls({ path?, recursive? }) — list a directory.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
+- ls({ path?, recursive? }) — list a directory.
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or pages — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
 ${renderSkillsSection(skills)}${renderDelegationsSection(scopedAgents)}
 ${doingTasksSection}
 

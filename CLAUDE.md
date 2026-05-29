@@ -124,7 +124,10 @@ The agent loop talks to one provider-agnostic `LanguageModel`; which provider/mo
 
 ## Skills
 
-`.agent/skills/*.md` files are auto-discovered at startup. The search path walks `cwd → parents → ~/.agent/skills/`; closer-to-cwd shadows farther on name collisions. Each skill file has YAML-ish frontmatter and a free-form markdown body:
+Skills are markdown files with YAML-ish frontmatter and a free-form body, loaded from two kinds of source:
+
+- **Internal (bundled)** — base capabilities shipped with the agent, in `packages/cli/skills/*.md`. `main.ts` resolves that dir off its own module URL and passes it to the loader, so it works from any cwd. First bundled skill: **`web-search`** (Brave Search API, see below).
+- **External (workspace/user)** — `.agent/skills/*.md` walked `cwd → parents → ~/.agent/skills/`.
 
 ```
 ---
@@ -135,9 +138,11 @@ description: <one-line summary for the prompt>
 (detailed procedure for the agent to follow)
 ```
 
-At startup, names + descriptions are injected into the coder system prompt under a `# Skills` section. The bodies are lazy-loaded by the model via `read_skill({ name })` only when relevant. Pi-pattern; lets you ship reusable procedures without changing the code.
+At startup, names + descriptions are injected into the coder system prompt under a `# Skills` section (internal ones tagged `(built-in)`). Bodies are lazy-loaded by the model via `read_skill({ name })` only when relevant. Pi-pattern; ship reusable procedures without changing code.
 
-Loader: `loadSkills(cwd, homeDir)` in `@agent/core/usecases/loadSkills.ts`. Failures (missing dirs, malformed frontmatter) are silently skipped — a broken skill never breaks the agent.
+Loader: `loadSkills(cwd, homeDir, internalDir?)` in `@agent/core/usecases/loadSkills.ts`. External sources are searched first, the internal dir last, deduped by `name` (first wins) — so a workspace skill **shadows** a built-in of the same name. Each `Skill` carries `internal: boolean`. Failures (missing dirs, malformed frontmatter) are silently skipped — a broken skill never breaks the agent.
+
+**Script-backed skills**: a skill body may reference its own directory via the `{{SKILL_DIR}}` token, substituted by `read_skill` with the absolute dir of the source `.md`. This lets a skill ship a sidecar executable next to it (e.g. `web-search.js`) and invoke it via `bash {{SKILL_DIR}}/script.js` regardless of cwd. `web-search` needs `BRAVE_API_KEY` (free tier) and `bash` permitted; it finds pages, the built-in `web_fetch` tool reads them.
 
 ## Deferred (do not build until they hurt)
 

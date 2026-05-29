@@ -33,10 +33,10 @@ export const renderHeader = (
   } else if (entry === "search") {
     parts = [hint("↵", "jump"), hint("n/N", "next/prev"), hint("Esc", "cancel")]
   } else if (mode === "insert") {
+    // Enter is a newline; you submit from NORMAL (Esc, then Enter).
     parts = [
-      hint("↵", "send"),
-      hint("^J", "newline"),
-      hint("Esc", "normal"),
+      hint("↵", "newline"),
+      hint("Esc", "normal · then ↵ sends"),
       hint("^h/j/k/l", "pane"),
     ]
   } else if (mode === "visual") {
@@ -51,8 +51,17 @@ export const renderHeader = (
       hint("z", "zoom"),
       hint("^h/j/k/l", "pane"),
     ]
+  } else if (focus === "input") {
+    // input, NORMAL — Enter sends the composed message.
+    parts = [
+      hint("↵", "send"),
+      hint("i", "insert"),
+      hint(":", "cmd"),
+      hint("/", "search"),
+      hint("^h/j/k/l", "pane"),
+    ]
   } else {
-    // input or side, NORMAL
+    // side, NORMAL
     parts = [
       hint("i", "insert"),
       hint("^h/j/k/l", "pane"),
