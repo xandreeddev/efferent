@@ -35,6 +35,11 @@ export const ansi = {
   bgBlue: `${CSI}44m`,
   bgGray: `${CSI}100m`,
   bgDarkGray: `${CSI}48;5;236m`,
+  // Bright backgrounds for badges — paired with black text for reliable
+  // contrast on any theme (replaces white-on-blue).
+  bgBrightGreen: `${CSI}102m`,
+  bgBrightYellow: `${CSI}103m`,
+  bgBrightCyan: `${CSI}106m`,
   // The persistent NORMAL/VISUAL cursor line in the conversation pane — a touch
   // lighter than bgDarkGray so the current row reads as "you are here".
   bgCursorLine: `${CSI}48;5;238m`,

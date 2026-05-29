@@ -6,6 +6,7 @@ export type ToolPillState = "running" | "ok" | "error"
 export type ScrollbackBlock =
   | { readonly kind: "user"; readonly text: string }
   | { readonly kind: "assistant"; readonly text: string }
+  | { readonly kind: "reasoning"; readonly text: string }
   | {
       readonly kind: "tool"
       readonly id: string
@@ -83,11 +84,12 @@ const renderDiff = (diff: string, width: number): string[] => {
     const newCol = r.newNo !== undefined ? padLeft(String(r.newNo), numW) : blank
     const gutter = `${ansi.dim}${oldCol} ${newCol} ${ansi.reset}`
     const marker = r.kind === "del" ? "-" : r.kind === "add" ? "+" : " "
+    // Subtle: coloured +/- text, no filled background.
     if (r.kind === "del") {
-      return `${gutter}${ansi.bgDiffDel}${ansi.fgRed}${padRight(truncate(marker + r.text, bodyW), bodyW)}${ansi.reset}`
+      return `${gutter}${ansi.fgRed}${truncate(marker + r.text, bodyW)}${ansi.reset}`
     }
     if (r.kind === "add") {
-      return `${gutter}${ansi.bgDiffAdd}${ansi.fgGreen}${padRight(truncate(marker + r.text, bodyW), bodyW)}${ansi.reset}`
+      return `${gutter}${ansi.fgGreen}${truncate(marker + r.text, bodyW)}${ansi.reset}`
     }
     return `${gutter}${ansi.dim}${truncate(marker + r.text, bodyW)}${ansi.reset}`
   })
@@ -108,9 +110,26 @@ const renderBlock = (
 ): string[] => {
   switch (block.kind) {
     case "user": {
-      const prefix = `${ansi.fgBrightGreen}>${ansi.reset} `
+      // A left accent bar down the whole block marks the user's turn.
+      const bar = `${ansi.fgBrightGreen}┃${ansi.reset} `
       const inner = wrapAnsi(block.text, cols - 2)
-      return inner.map((l, i) => (i === 0 ? prefix + l : "  " + l))
+      return inner.map((l) => bar + l)
+    }
+    case "reasoning": {
+      // The model's externalised thinking — quiet (dim italic), capped when
+      // collapsed; Ctrl-R reveals the rest.
+      const body = wrapAnsi(block.text, cols - 2)
+      const cap = expanded ? body.length : Math.min(body.length, 4)
+      const out = body
+        .slice(0, cap)
+        .map(
+          (l, i) =>
+            `${ansi.dim}${ansi.italic}${i === 0 ? "✻ " : "  "}${l}${ansi.reset}`,
+        )
+      if (body.length > cap) {
+        out.push(`${ansi.dim}  … ${body.length - cap} more · Ctrl-R${ansi.reset}`)
+      }
+      return out
     }
     case "assistant": {
       // Prefix the first line with a marker so prose anchors to the

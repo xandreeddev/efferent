@@ -4,6 +4,7 @@ import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import {
   extractUsage,
+  responseReasoning,
   responseToAgentMessages,
   responseToolCalls,
   responseToolResults,
@@ -67,10 +68,22 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
       const text = res.text
       if (text.length > 0) finalText = text
+      const reasoning = responseReasoning(content)
       const toolCalls = responseToolCalls(content)
 
       // Re-emit the legacy hook vocabulary from the resolved response so
       // the CLI's execution tree / token gauge keep working unchanged.
+      // The assistant message (reasoning + narration) fires *before* the
+      // tool events so per step it renders above that step's tool pills.
+      if (hooks?.onAssistantMessage) {
+        yield* hooks.onAssistantMessage({
+          turnIndex,
+          text,
+          reasoning,
+          toolCalls,
+          usage: extractUsage(res.usage, content),
+        })
+      }
       if (hooks?.onBeforeToolCall) {
         for (const tc of toolCalls) {
           yield* hooks.onBeforeToolCall({
@@ -90,14 +103,6 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
             result: tr.result,
           })
         }
-      }
-      if (hooks?.onAssistantMessage) {
-        yield* hooks.onAssistantMessage({
-          turnIndex,
-          text,
-          toolCalls,
-          usage: extractUsage(res.usage, content),
-        })
       }
 
       turnIndex++

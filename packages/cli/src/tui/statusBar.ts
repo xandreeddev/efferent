@@ -46,10 +46,10 @@ const renderMode = (
   if (mode === undefined) return ""
   const block =
     mode === "NOR"
-      ? `${ansi.bold}${ansi.bgBlue}${ansi.fgWhite} NORMAL ${ansi.reset}`
+      ? `${ansi.bold}${ansi.bgBrightCyan}${ansi.fgBlack} NORMAL ${ansi.reset}`
       : mode === "VIS"
-        ? `${ansi.bold}${ansi.bgGray}${ansi.fgWhite} VISUAL ${ansi.reset}`
-        : `${ansi.bold}${ansi.fgGray} INSERT ${ansi.reset}`
+        ? `${ansi.bold}${ansi.bgBrightYellow}${ansi.fgBlack} VISUAL ${ansi.reset}`
+        : `${ansi.bold}${ansi.bgBrightGreen}${ansi.fgBlack} INSERT ${ansi.reset}`
   const paneTag = pane !== undefined ? ` ${ansi.dim}${pane}${ansi.reset}` : ""
   return `${block}${paneTag}  `
 }

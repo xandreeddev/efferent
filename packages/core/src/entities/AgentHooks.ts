@@ -19,6 +19,8 @@ export interface AgentTurnStartEvent {
 export interface AgentAssistantMessageEvent {
   readonly turnIndex: number
   readonly text: string
+  /** The model's externalised reasoning for this step, when surfaced. */
+  readonly reasoning?: string
   readonly toolCalls: ReadonlyArray<ToolCall>
   readonly usage?: TokenUsage
 }
