@@ -36,13 +36,14 @@ packages/cli/src/
 
 ## TUI invariants
 
-- Three regions: status (1 row), scrollback (fills middle), input (≥1 row). Palette overlays just above input when `/` is typed.
+- **Modal + multi-pane** (vim-flavoured). Regions top→bottom: fixed hint bar, middle (scrollback ¦ side pane), separator, overlay (`:` palette OR `/` search), input, separator, status. Input is pinned at the bottom.
+- Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l**. INSERT only on the input; NORMAL + VISUAL on the read-only panes. NORMAL: j/k · Ctrl-D/U · PgUp/PgDn · gg/G · {/} scroll, `/` search (n/N), `:` commands. VISUAL: `v` select, `y` yanks to clipboard (OSC 52). No mouse tracking — native click-drag selection still works. See `SCOPE.md` for the full spec.
 - Renders are full-frame composed then line-diffed against the previous frame to avoid flicker.
-- Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-D, `/exit`, `/quit`, signal).
+- Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-C, `:exit`, signal).
 - Bash safety: `bashConfirmHook` opens the modal and blocks the model's call with `{ action: "block", reason }` on `n`/Esc. The hook is wired only in tui mode; non-interactive modes use `denyBashHook(--allow-bash)`.
 
 ## Hardcoded knobs (move to a settings layer later)
 
 - Bash timeout default (in `coderAgentConfig` tools): 60s.
-- TUI palette: 6 visible rows, slash commands hardcoded in `slashPalette.ts`.
+- TUI palette: 6 visible rows, `:` commands hardcoded in `slashPalette.ts`.
 - maxSteps for the agent loop: 5 (in `runAgentLoop`).

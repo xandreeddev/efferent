@@ -1,6 +1,6 @@
 import { ansi, padRight, truncate } from "./terminal.js"
 
-export type EditorModeLabel = "INS" | "NOR"
+export type EditorModeLabel = "INS" | "NOR" | "VIS"
 
 export interface StatusState {
   readonly modelId: string
@@ -10,8 +10,10 @@ export interface StatusState {
   readonly cwd: string
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
   readonly note?: string | undefined
-  /** Editor mode label, shown leftmost when set. Hidden in plain insert mode. */
+  /** Modal mode label (NORMAL/INSERT/VISUAL), shown leftmost. */
   readonly mode?: EditorModeLabel
+  /** Focused pane label (chat/side/input), shown next to the mode. */
+  readonly pane?: string
 }
 
 const formatTokens = (n: number): string => {
@@ -37,16 +39,23 @@ const homeDir = (() => {
 const prettyCwd = (cwd: string): string =>
   homeDir !== "" && cwd.startsWith(homeDir) ? `~${cwd.slice(homeDir.length)}` : cwd
 
-const renderMode = (mode: EditorModeLabel | undefined): string => {
+const renderMode = (
+  mode: EditorModeLabel | undefined,
+  pane: string | undefined,
+): string => {
   if (mode === undefined) return ""
-  if (mode === "NOR") {
-    return `${ansi.bold}${ansi.bgBlue}${ansi.fgWhite} NOR ${ansi.reset}  `
-  }
-  return `${ansi.bold}${ansi.fgGray} INS ${ansi.reset}  `
+  const block =
+    mode === "NOR"
+      ? `${ansi.bold}${ansi.bgBlue}${ansi.fgWhite} NORMAL ${ansi.reset}`
+      : mode === "VIS"
+        ? `${ansi.bold}${ansi.bgGray}${ansi.fgWhite} VISUAL ${ansi.reset}`
+        : `${ansi.bold}${ansi.fgGray} INSERT ${ansi.reset}`
+  const paneTag = pane !== undefined ? ` ${ansi.dim}${pane}${ansi.reset}` : ""
+  return `${block}${paneTag}  `
 }
 
 export const renderStatusBar = (state: StatusState, cols: number): string => {
-  const mode = renderMode(state.mode)
+  const mode = renderMode(state.mode, state.pane)
   const left = `${ansi.bold}${ansi.fgBrightCyan}${state.modelId}${ansi.reset}`
   const used = state.inputTokens
   const cached = state.cacheReadTokens

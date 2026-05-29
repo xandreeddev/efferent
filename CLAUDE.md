@@ -97,7 +97,7 @@ runAgent(coderAgentConfig(cwd), conversationId, prompt, hooks)
 
 Composition root: `packages/cli/src/main.ts`. Four modes under `packages/cli/src/modes/`:
 
-- **`tui.ts`** — default in a TTY. Hand-rolled three-region layout: status bar (model, live token gauge, cwd), scrollback (user / assistant / tool pills / info / error blocks), and a multi-line input editor with slash-command palette (`/exit`, `/clear`, `/help`, `/cwd`, `/reset`, `/settings`, `/set`, `/model`). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
+- **`tui.ts`** — default in a TTY. Hand-rolled **modal, multi-pane** layout: a fixed top hint bar, the middle (scrollback ¦ optional side pane), and a multi-line input — plus a `:` command palette (`:exit`, `:clear`, `:help`, `:cwd`, `:reset`, `:settings`, `:set`, `:model`) and a `/` conversation search. Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l**; per-pane modes — **INSERT** only on the input, **NORMAL + VISUAL** on the read-only panes. NORMAL gives vim scroll motions (j/k, gg/G, {/}, Ctrl-D/U) and `/` search (n/N); VISUAL selects lines and `y` yanks to the clipboard (OSC 52). No React, no Ink, no blessed — just `Bun + ANSI` in `packages/cli/src/tui/`.
 - **`print.ts`** — one-shot. Prompt from argv or stdin (`-`). Final text on stdout, tool log on stderr. Exits when done.
 - **`json.ts`** — same control flow as print, but every `AgentEvent` is JSONL on stdout.
 - **`rpc.ts`** — bidirectional JSON-RPC on stdin/stdout. Method: `agent.send({ prompt, conversationId? })` → emits `agent.event` notifications, resolves with `{ conversationId, finalText }`.
@@ -152,7 +152,8 @@ Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
 - **Compaction** — `onTransformContext` summarisation of old turns when context grows (hook is wired).
 - **Streaming tool output** — bash stdout chunks back to the model live.
 - **Branch / fork / session tree**; **extension system**; **parallel tool execution**.
-- **Image attachments** in the CLI; **mouse support** in the TUI; **native (non-shell-out) grep**.
+- **Image attachments** in the CLI; **mouse support** in the TUI (intentionally none — the TUI stays out of mouse-reporting mode so terminal-native click-drag selection keeps working; navigation/selection is keyboard-modal: Ctrl-hjkl panes, j/k·gg/G·{/} scroll, `/` search, `v`+`y` yank); **native (non-shell-out) grep**.
+- TUI follow-ups: **VISUAL select inside the input pane** (only the conversation pane selects today); **side-pane internal scroll** (j/k when the side pane is focused — its content is short, so deferred); **search-match centering refinements**.
 - **Evals / Evalite**, telemetry, structured logging beyond what `Effect.log` already prints.
 
 ## OPSEC reminder

@@ -7,11 +7,12 @@ import {
   Http,
   SettingsStore,
   Shell,
+  buildScopeRuntime,
   coderAgentConfig,
-  codingToolkitLayer,
+  coderSystemPrompt,
+  discoverScopeTree,
   runAgent,
-  type InstructionFile,
-  type ScopedAgentConfig,
+  type Scope,
   type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
@@ -57,8 +58,7 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 export interface RpcModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
-  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
-  readonly instructionFiles: ReadonlyArray<InstructionFile>
+  readonly rootScope: Scope
   readonly allowBash: boolean
 }
 
@@ -129,22 +129,35 @@ const handleSend = (
 
     const hooks = makeEventHooks(queue)
 
+    // Per-request cwd override re-discovers the scope tree for that
+    // workspace; otherwise reuse the startup root (already prompt-baked).
+    const rootScope =
+      cwd === defaults.cwd
+        ? defaults.rootScope
+        : yield* discoverScopeTree(cwd, (children, body) => {
+            const base = coderSystemPrompt(
+              cwd,
+              new Date(),
+              defaults.skills,
+              children,
+              [],
+            )
+            return body !== undefined && body.trim().length > 0
+              ? `${base}\n\n# Project scope\n\n${body}`
+              : base
+          })
+    const runtime = buildScopeRuntime(
+      rootScope,
+      { skills: defaults.skills, allowBash },
+      hooks,
+    )
+
     const ran = yield* runAgent(
-      coderAgentConfig(
-        cwd,
-        defaults.skills,
-        defaults.scopedAgents,
-        defaults.instructionFiles,
-      ),
+      coderAgentConfig(rootScope, runtime),
       cid,
       prompt,
       hooks,
-    ).pipe(
-      Effect.provide(
-        codingToolkitLayer(cwd, defaults.skills, { allowBash }),
-      ),
-      Effect.either,
-    )
+    ).pipe(Effect.provide(runtime.handlerLayer), Effect.either)
 
     yield* Effect.sleep("50 millis")
     yield* Fiber.interrupt(consumer)

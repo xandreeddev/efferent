@@ -4,10 +4,12 @@ import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import {
+  coderSystemPrompt,
   discoverInstructionFiles,
-  discoverScopedAgents,
+  discoverScopeTree,
   loadSkills,
   SettingsStore,
+  type Scope,
 } from "@agent/core"
 import {
   DatabaseLive,
@@ -166,17 +168,34 @@ const root = Command.make(
       const settings = yield* settingsStore.load(workspace, homedir())
       const effectiveAllowBash = allowBash || settings.allowBash
 
-      // Discover scoped sub-agents from SCOPE.md files anywhere in the
-      // workspace (gitignore-respecting glob). Returns [] when none —
-      // coder agent then runs without delegation tools.
-      const scopedAgents = yield* discoverScopedAgents(workspace)
-
       // Auto-inject AGENT.md / AGENT.local.md from the ancestor chain
       // (root → workspace → home). Per-file 4k char cap; total 12k char
       // cap; dedupe by normalized content. Returns [] when none.
       const instructionFiles = yield* discoverInstructionFiles(
         workspace,
         homedir(),
+      )
+
+      // Discover the scope tree from SCOPE.md files. The root is always
+      // present (its prompt = built-in coder prompt + any root SCOPE.md
+      // body, plus a delegation section for its direct children); each
+      // child SCOPE.md becomes a nested, write-confined sub-scope. With no
+      // SCOPE.md anywhere, the root has no children and behaves exactly
+      // like a plain workspace-wide agent.
+      const rootScope: Scope = yield* discoverScopeTree(
+        workspace,
+        (children, body) => {
+          const base = coderSystemPrompt(
+            workspace,
+            new Date(),
+            skills,
+            children,
+            instructionFiles,
+          )
+          return body !== undefined && body.trim().length > 0
+            ? `${base}\n\n# Project scope\n\n${body}`
+            : base
+        },
       )
 
       switch (chosen) {
@@ -194,8 +213,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
-            scopedAgents,
-            instructionFiles,
+            rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
@@ -214,8 +232,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
-            scopedAgents,
-            instructionFiles,
+            rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })
@@ -224,8 +241,7 @@ const root = Command.make(
           yield* runRpcMode({
             cwd: workspace,
             skills,
-            scopedAgents,
-            instructionFiles,
+            rootScope,
             allowBash: effectiveAllowBash,
           })
           return
@@ -233,7 +249,7 @@ const root = Command.make(
           yield* runTuiMode({
             cwd: workspace,
             skills,
-            scopedAgents,
+            rootScope,
             instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
           })

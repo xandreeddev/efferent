@@ -11,13 +11,13 @@ import {
   ModelRegistry,
   SettingsStore,
   Shell,
+  buildScopeRuntime,
   coderAgentConfig,
-  codingToolkitLayer,
   parseModel,
   runAgent,
   type InstructionFile,
   type ModelInfo,
-  type ScopedAgentConfig,
+  type Scope,
   type Skill,
 } from "@agent/core"
 
@@ -29,6 +29,7 @@ import {
   enterTui,
   exitTui,
   getTermSize,
+  osc52,
   setupRawMode,
   showCursor,
   SPINNER_FRAMES,
@@ -64,6 +65,13 @@ import {
 import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 import { applyViKey, initialVi, type ViState } from "../tui/viMode.js"
+import {
+  modeLabel,
+  paneLabel,
+  type FocusPane,
+  type UiMode,
+} from "../tui/uiMode.js"
+import { decideKey, type ScrollOp } from "../tui/navKeys.js"
 
 interface MutableAppState {
   status: StatusState
@@ -75,6 +83,14 @@ interface MutableAppState {
   conversationId: ConversationId
   sidePane: SidePaneState
   vi: ViState
+  /** Which pane has focus. Ctrl-h/j/k/l moves it. */
+  focus: FocusPane
+  /** Modal mode of the focused pane. INSERT only ever on the input pane. */
+  mode: UiMode
+  /** Pending first key of a two-key normal-mode motion (e.g. `g` of `gg`). */
+  navPending?: "g" | undefined
+  /** Active `/` search entry — present while typing a query. */
+  search?: { readonly query: string } | undefined
   /** A turn is in flight. Input stays live; submits queue. */
   busy: boolean
   /** The forked agent run, so Esc can interrupt it. */
@@ -109,37 +125,109 @@ const computeNote = (s: MutableAppState): string | undefined => {
 }
 
 const HELP_LINES = [
-  "Keybindings:",
-  "  Enter         submit (queues if a turn is running)",
-  "  Esc           interrupt a running turn (or vi normal mode)",
-  "  Ctrl-J        newline within input",
-  "  Ctrl-C        quit (press twice)",
-  "  Ctrl-D        quit (when input is empty)",
-  "  Ctrl-L        clear scrollback",
-  "  Ctrl-R        expand/collapse tool output & diffs",
-  "  PgUp / PgDn   scroll the conversation",
-  "  ↑/↓           navigate input lines or palette",
-  "Slash commands:",
-  "  /exit /quit   quit",
-  "  /clear        clear scrollback",
-  "  /help         show this help",
-  "  /cwd          print workspace path",
-  "  /reset        start a new conversation",
-  "  /settings     show configuration settings",
-  "  /set <k> <v>  update setting (e.g. /set maxSteps 15, /set editorMode vi)",
-  "  /model        list models; /model <#|id> switches provider/model",
-  "  /vi           toggle vi editing (Esc → normal mode, i/a → insert)",
+  "Modes (vim-style; INSERT only on the input pane):",
+  "  i / a            enter INSERT on the input pane",
+  "  Esc              INSERT → NORMAL (or interrupt a running turn)",
+  "  v                VISUAL select; y yanks to the clipboard",
+  "Panes:",
+  "  Ctrl-h/j/k/l     move focus: conversation · side · input",
+  "Scroll (NORMAL, conversation pane):",
+  "  j / k            line down / up",
+  "  Ctrl-D / Ctrl-U  half page down / up",
+  "  PgUp / PgDn      page (~75% of a screen)",
+  "  gg / G           jump to top / bottom",
+  "  { / }            previous / next message",
+  "Search:",
+  "  /                search the conversation; n / N next / prev match",
+  "Editing & turns:",
+  "  Enter            submit (queues if a turn is running)",
+  "  Ctrl-J           newline within input (INSERT)",
+  "  Ctrl-C           quit (press twice)",
+  "  Ctrl-R           expand/collapse tool output & diffs",
+  "Commands (type ':'):",
+  "  :exit :quit      quit",
+  "  :clear           clear scrollback",
+  "  :help            show this help",
+  "  :cwd             print workspace path",
+  "  :reset           start a new conversation",
+  "  :settings        show configuration settings",
+  "  :set <k> <v>     update setting (e.g. :set maxSteps 15)",
+  "  :model           list models; :model <#|id> switches provider/model",
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
-  status: { ...s.status, note: computeNote(s) },
+  status: {
+    ...s.status,
+    note: computeNote(s),
+    mode: modeLabel(s.mode),
+    pane: paneLabel(s.focus),
+  },
   scrollback: s.scrollback,
   input: s.input,
   palette: s.palette,
   modal: s.modal,
   sidePane: s.sidePane,
   spinnerFrame: s.spinnerFrame,
+  focus: s.focus,
+  mode: s.mode,
+  search: s.search,
 })
+
+/** Apply a NORMAL-mode scroll op to the conversation viewport. */
+const applyScroll = (sb: Scrollback, op: ScrollOp): void => {
+  switch (op) {
+    case "lineUp":
+      sb.lineUp()
+      return
+    case "lineDown":
+      sb.lineDown()
+      return
+    case "halfUp":
+      sb.halfUp()
+      return
+    case "halfDown":
+      sb.halfDown()
+      return
+    case "pageUp":
+      sb.pageUp()
+      return
+    case "pageDown":
+      sb.pageDown()
+      return
+    case "top":
+      sb.toTop()
+      return
+    case "bottom":
+      sb.toBottom()
+      return
+    case "msgUp":
+      sb.jumpMessage("up")
+      return
+    case "msgDown":
+      sb.jumpMessage("down")
+      return
+  }
+}
+
+/** Apply a VISUAL-mode motion (moves the selection cursor, extending it). */
+const applyVisualScroll = (sb: Scrollback, op: ScrollOp): void => {
+  switch (op) {
+    case "lineUp":
+      sb.moveCursor(-1)
+      return
+    case "lineDown":
+      sb.moveCursor(1)
+      return
+    case "top":
+      sb.cursorToTop()
+      return
+    case "bottom":
+      sb.cursorToBottom()
+      return
+    default:
+      return
+  }
+}
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
 
@@ -149,7 +237,7 @@ const newConversationId = (): ConversationId =>
 export interface TuiModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
-  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
+  readonly rootScope: Scope
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly resumeConversationId?: string
 }
@@ -202,6 +290,8 @@ const runTuiModeCore = (
       conversationId: initialCid,
       sidePane: seedSidePane(input.instructionFiles),
       vi: initialVi,
+      focus: "input",
+      mode: "insert",
       busy: false,
       queue: [],
       turnStartedAt: 0,
@@ -512,6 +602,15 @@ const runTuiModeCore = (
 
     type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry
     const baseHooks = makeEventHooks(eventQueue)
+    // Build the root scope runtime once: base coding tools + delegate_to_<child>
+    // tools for the root's direct sub-scopes. The TUI allows bash (guarded by
+    // the confirm modal hook, not the allowBash flag). `baseHooks` is captured
+    // so delegation emits subagent_start/end onto the event queue.
+    const scopeRuntime = buildScopeRuntime(
+      input.rootScope,
+      { skills: input.skills, allowBash: true },
+      baseHooks,
+    )
 
     const submit = (
       text: string,
@@ -532,6 +631,7 @@ const runTuiModeCore = (
 
         cur.scrollback.push({ kind: "user", text })
         cur.scrollback.stickToBottom()
+        cur.scrollback.clearSearch()
         yield* Ref.update(stateRef, (s) => {
           s.input = emptyInput
           s.busy = true
@@ -569,19 +669,12 @@ const runTuiModeCore = (
         })
 
         const runEffect = runAgent(
-          coderAgentConfig(
-            input.cwd,
-            input.skills,
-            input.scopedAgents,
-            input.instructionFiles,
-          ),
+          coderAgentConfig(input.rootScope, scopeRuntime),
           cid,
           text,
           baseHooks,
         ).pipe(
-          Effect.provide(
-            codingToolkitLayer(input.cwd, input.skills, { allowBash: true }),
-          ),
+          Effect.provide(scopeRuntime.handlerLayer),
           Effect.catchAll((err) => {
             const msg =
               typeof err === "object" && err !== null && "message" in err
@@ -605,10 +698,10 @@ const runTuiModeCore = (
         const parts = cmd.trim().split(/\s+/)
         const baseCmd = parts[0]
         switch (baseCmd) {
-          case "/exit":
-          case "/quit":
+          case ":exit":
+          case ":quit":
             return "exit" as const
-          case "/clear":
+          case ":clear":
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.clear()
               s.sidePane = { ...s.sidePane, tree: emptyTree }
@@ -616,7 +709,7 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
-          case "/help":
+          case ":help":
             yield* Ref.update(stateRef, (s) => {
               for (const line of HELP_LINES) {
                 s.scrollback.push({ kind: "info", text: line })
@@ -625,14 +718,14 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
-          case "/cwd":
+          case ":cwd":
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({ kind: "info", text: `cwd: ${input.cwd}` })
               return s
             })
             yield* requestRender
             return "stay" as const
-          case "/reset":
+          case ":reset":
             yield* Ref.update(stateRef, (s) => {
               s.conversationId = newConversationId()
               s.sidePane = { ...s.sidePane, tree: emptyTree }
@@ -645,28 +738,27 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
-          case "/settings": {
+          case ":settings": {
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
               s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
               s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
-              s.scrollback.push({ kind: "info", text: `editorMode: ${current.editorMode}` })
               s.scrollback.push({ kind: "info", text: `model: ${current.model}` })
               return s
             })
             yield* requestRender
             return "stay" as const
           }
-          case "/set": {
+          case ":set": {
             const k = parts[1]
             const v = parts.slice(2).join(" ")
             if (!k || !v) {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "error",
-                  text: "Usage: /set <key> <value> (e.g. /set maxSteps 15)",
+                  text: "Usage: :set <key> <value> (e.g. :set maxSteps 15)",
                 })
                 return s
               })
@@ -677,7 +769,7 @@ const runTuiModeCore = (
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
 
-            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps", "editorMode"]
+            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps"]
             if (!validKeys.includes(k as any)) {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({ kind: "error", text: `Unknown setting: ${k}. Valid settings: ${validKeys.join(", ")}` })
@@ -714,16 +806,6 @@ const runTuiModeCore = (
                 yield* requestRender
                 return "stay" as const
               }
-            } else if (key === "editorMode") {
-              if (v !== "insert" && v !== "vi") {
-                yield* Ref.update(stateRef, (s) => {
-                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be 'insert' or 'vi'` })
-                  return s
-                })
-                yield* requestRender
-                return "stay" as const
-              }
-              typedVal = v
             } else {
               typedVal = v as any
             }
@@ -735,52 +817,12 @@ const runTuiModeCore = (
 
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({ kind: "info", text: `Updated setting '${k}' to: ${typedVal}` })
-              // editorMode change takes effect immediately: reset the modal
-              // state + surface the mode indicator so it's visibly engaged.
-              if (key === "editorMode") {
-                s.vi = initialVi
-                if (typedVal === "vi") {
-                  s.status = { ...s.status, mode: "INS" }
-                  s.scrollback.push({
-                    kind: "info",
-                    text: "vi mode ON — starts in INSERT; Esc → normal, i/a → insert, hjkl move, x/dd/dw edit",
-                  })
-                } else {
-                  const ns = { ...s.status }
-                  delete (ns as { mode?: unknown }).mode
-                  s.status = ns
-                }
-              }
               return s
             })
             yield* requestRender
             return "stay" as const
           }
-          case "/vi": {
-            const settingsStore = yield* SettingsStore
-            const current = yield* settingsStore.get()
-            const next = current.editorMode === "vi" ? "insert" : "vi"
-            yield* settingsStore.update((c) => ({ ...c, editorMode: next }))
-            yield* Ref.update(stateRef, (s) => {
-              s.vi = initialVi
-              if (next === "vi") {
-                s.status = { ...s.status, mode: "INS" }
-                s.scrollback.push({
-                  kind: "info",
-                  text: "vi mode ON — starts in INSERT; Esc → normal, i/a → insert, hjkl move, x/dd/dw edit, Enter submits",
-                })
-              } else {
-                const ns = { ...s.status }
-                delete (ns as { mode?: unknown }).mode
-                s.status = ns
-                s.scrollback.push({ kind: "info", text: "vi mode OFF (default insert editing)" })
-              }
-              return s
-            })
-            yield* requestRender
-            return "stay" as const
-          }
-          case "/model": {
+          case ":model": {
             const registry = yield* ModelRegistry
             const arg = parts.slice(1).join(" ").trim()
 
@@ -813,7 +855,7 @@ const runTuiModeCore = (
                 } else {
                   s.scrollback.push({
                     kind: "info",
-                    text: "--- Models (/model <#> to switch) ---",
+                    text: "--- Models (:model <#> to switch) ---",
                   })
                   models.forEach((m, i) => {
                     const active =
@@ -853,7 +895,7 @@ const runTuiModeCore = (
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "error",
-                  text: `unknown model '${arg}'. Run /model to list, then /model <#>.`,
+                  text: `unknown model '${arg}'. Run :model to list, then :model <#>.`,
                 })
                 return s
               })
@@ -982,24 +1024,6 @@ const runTuiModeCore = (
           return "stay" as const
         }
 
-        // PageUp/PageDown: scroll the scrollback regardless of palette state.
-        if (key.type === "pageUp") {
-          yield* Ref.update(stateRef, (st) => {
-            st.scrollback.scrollBy(5)
-            return st
-          })
-          yield* requestRender
-          return "stay" as const
-        }
-        if (key.type === "pageDown") {
-          yield* Ref.update(stateRef, (st) => {
-            st.scrollback.scrollBy(-5)
-            return st
-          })
-          yield* requestRender
-          return "stay" as const
-        }
-
         if (s.palette.visible) {
           if (key.type === "arrow" && key.dir === "up") {
             yield* Ref.update(stateRef, (st) => {
@@ -1049,70 +1073,207 @@ const runTuiModeCore = (
           }
         }
 
-        const settingsStore = yield* SettingsStore
-        const settings = yield* settingsStore.get()
         const cols = getTermSize().cols
+        const intent = decideKey(
+          {
+            focus: s.focus,
+            mode: s.mode,
+            searching: s.search !== undefined,
+            searchActive: s.scrollback.searchActive(),
+            navPending: s.navPending === "g",
+            sideVisible: cols >= 60,
+          },
+          key,
+        )
 
-        let nextInput: InputState
-        let nextVi: ViState = s.vi
-        let action = undefined as
-          | undefined
-          | { readonly type: "submit"; readonly text: string }
-          | { readonly type: "exit" }
-          | { readonly type: "clearScrollback" }
-
-        if (settings.editorMode === "vi") {
-          const r = applyViKey(s.vi, s.input, key, cols)
-          nextInput = r.input
-          nextVi = r.vi
-          action = r.action
-        } else {
-          if (s.vi.mode !== "insert") nextVi = { mode: "insert" }
-          const r = applyKey(s.input, key, cols)
-          nextInput = r.state
-          action = r.action
-        }
-
-        const newPalette = computePalette(inputText(nextInput))
-        yield* Ref.update(stateRef, (st) => {
-          st.input = nextInput
-          st.palette = newPalette
-          st.vi = nextVi
-          if (settings.editorMode === "vi") {
-            st.status = {
-              ...st.status,
-              mode: nextVi.mode === "normal" ? "NOR" : "INS",
-            }
-          } else {
-            const ns = { ...st.status }
-            delete (ns as { mode?: unknown }).mode
-            st.status = ns
-          }
-          return st
-        })
-
-        if (action !== undefined) {
-          switch (action.type) {
-            case "exit":
-              return "exit" as const
-            case "clearScrollback":
-              yield* Ref.update(stateRef, (st) => {
-                st.scrollback.clear()
-                return st
-              })
-              yield* requestRender
-              return "stay" as const
-            case "submit": {
-              if (action.text.startsWith("/")) {
-                const outcome = yield* handleSlash(action.text.trim())
-                if (outcome === "exit") return "exit" as const
-                return "stay" as const
+        switch (intent.kind) {
+          // Hand the key to the input editor (typing / vi motions / submit).
+          case "input": {
+            const viMode = s.mode === "insert" ? "insert" : "normal"
+            const r = applyViKey({ ...s.vi, mode: viMode }, s.input, key, cols)
+            const nextMode: UiMode = r.vi.mode === "insert" ? "insert" : "normal"
+            const newPalette = computePalette(inputText(r.input))
+            yield* Ref.update(stateRef, (st) => {
+              st.input = r.input
+              st.vi = r.vi
+              st.mode = nextMode
+              st.palette = newPalette
+              st.navPending = undefined
+              return st
+            })
+            if (r.action !== undefined) {
+              switch (r.action.type) {
+                case "exit":
+                  return "exit" as const
+                case "clearScrollback":
+                  yield* Ref.update(stateRef, (st) => {
+                    st.scrollback.clear()
+                    return st
+                  })
+                  yield* requestRender
+                  return "stay" as const
+                case "submit": {
+                  if (r.action.text.startsWith(":")) {
+                    const outcome = yield* handleSlash(r.action.text.trim())
+                    if (outcome === "exit") return "exit" as const
+                    return "stay" as const
+                  }
+                  yield* submit(r.action.text)
+                  return "stay" as const
+                }
               }
-              yield* submit(action.text)
-              return "stay" as const
             }
+            yield* requestRender
+            return "stay" as const
           }
+
+          case "focus":
+            yield* Ref.update(stateRef, (st) => {
+              st.focus = intent.to
+              st.mode = intent.mode
+              st.navPending = undefined
+              st.palette = hiddenPalette
+              st.scrollback.endVisual()
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "scroll":
+            yield* Ref.update(stateRef, (st) => {
+              applyScroll(st.scrollback, intent.op)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "gPending":
+            yield* Ref.update(stateRef, (st) => {
+              st.navPending = "g"
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "enterVisual":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.startVisual()
+              st.mode = "visual"
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "visualMove":
+            yield* Ref.update(stateRef, (st) => {
+              applyVisualScroll(st.scrollback, intent.op)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "exitVisual":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.endVisual()
+              st.mode = "normal"
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "yank": {
+            const text = s.scrollback.selectionText()
+            const n = s.scrollback.selectionLineCount()
+            yield* Effect.sync(() => osc52(text))
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.endVisual()
+              st.mode = "normal"
+              st.navPending = undefined
+              st.scrollback.push({
+                kind: "info",
+                text: `yanked ${n} line${n === 1 ? "" : "s"} to clipboard`,
+              })
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+
+          case "openSearch":
+            yield* Ref.update(stateRef, (st) => {
+              st.search = { query: "" }
+              st.scrollback.search("")
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "searchChar": {
+            const ch = intent.char
+            yield* Ref.update(stateRef, (st) => {
+              const q = (st.search?.query ?? "") + ch
+              st.search = { query: q }
+              st.scrollback.search(q)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+
+          case "searchBack":
+            yield* Ref.update(stateRef, (st) => {
+              const q = (st.search?.query ?? "").slice(0, -1)
+              st.search = { query: q }
+              st.scrollback.search(q)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "searchJump":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.jumpToMatch()
+              st.search = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "searchCancel":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.clearSearch()
+              st.search = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "match":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.nextMatch(intent.dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "clearSearch":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.clearSearch()
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "searchSwallow":
+          case "none":
+            yield* requestRender
+            return "stay" as const
         }
+
         yield* requestRender
         return "stay" as const
       })

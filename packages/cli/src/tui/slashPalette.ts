@@ -5,17 +5,17 @@ export interface SlashCommand {
   readonly description: string
 }
 
+// Commands use a `:` prefix (vim ex-style); `/` is reserved for search.
 export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
-  { name: "/exit", description: "Quit the agent" },
-  { name: "/quit", description: "Quit the agent" },
-  { name: "/clear", description: "Clear the scrollback" },
-  { name: "/help", description: "Show keybindings and commands" },
-  { name: "/cwd", description: "Print the current workspace directory" },
-  { name: "/reset", description: "Start a new conversation (forgets history)" },
-  { name: "/settings", description: "Show current configuration settings" },
-  { name: "/set", description: "Update a config setting, e.g. /set maxSteps 30" },
-  { name: "/model", description: "List models, or /model <#|id> to switch" },
-  { name: "/vi", description: "Toggle vi editing mode (Esc → normal, i → insert)" },
+  { name: ":exit", description: "Quit the agent" },
+  { name: ":quit", description: "Quit the agent" },
+  { name: ":clear", description: "Clear the scrollback" },
+  { name: ":help", description: "Show keybindings and commands" },
+  { name: ":cwd", description: "Print the current workspace directory" },
+  { name: ":reset", description: "Start a new conversation (forgets history)" },
+  { name: ":settings", description: "Show current configuration settings" },
+  { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
+  { name: ":model", description: "List models, or :model <#|id> to switch" },
 ]
 
 export interface PaletteState {
@@ -32,7 +32,7 @@ export const hiddenPalette: PaletteState = {
 
 export const computePalette = (input: string): PaletteState => {
   const trimmed = input.trim()
-  if (trimmed.startsWith("/") && !trimmed.includes(" ") && !trimmed.includes("\n")) {
+  if (trimmed.startsWith(":") && !trimmed.includes(" ") && !trimmed.includes("\n")) {
     const q = trimmed.toLowerCase()
     const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(q))
     return {

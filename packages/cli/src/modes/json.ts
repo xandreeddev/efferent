@@ -7,11 +7,10 @@ import {
   Http,
   SettingsStore,
   Shell,
+  buildScopeRuntime,
   coderAgentConfig,
-  codingToolkitLayer,
   runAgent,
-  type InstructionFile,
-  type ScopedAgentConfig,
+  type Scope,
   type Skill,
 } from "@agent/core"
 import type { AgentEvent } from "../events.js"
@@ -36,8 +35,7 @@ export interface JsonModeInput {
   readonly prompt: string
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
-  readonly scopedAgents: ReadonlyArray<ScopedAgentConfig>
-  readonly instructionFiles: ReadonlyArray<InstructionFile>
+  readonly rootScope: Scope
   readonly allowBash: boolean
   readonly resumeConversationId?: string
 }
@@ -64,23 +62,19 @@ export const runJsonMode = (
     const consumer = yield* Effect.forkDaemon(consumeEvents(queue))
 
     const hooks = makeEventHooks(queue)
+    const runtime = buildScopeRuntime(
+      input.rootScope,
+      { skills: input.skills, allowBash: input.allowBash },
+      hooks,
+    )
 
     yield* runAgent(
-      coderAgentConfig(
-        input.cwd,
-        input.skills,
-        input.scopedAgents,
-        input.instructionFiles,
-      ),
+      coderAgentConfig(input.rootScope, runtime),
       cid,
       input.prompt,
       hooks,
     ).pipe(
-      Effect.provide(
-        codingToolkitLayer(input.cwd, input.skills, {
-          allowBash: input.allowBash,
-        }),
-      ),
+      Effect.provide(runtime.handlerLayer),
       Effect.catchAll((err) =>
         Effect.gen(function* () {
           const msg =

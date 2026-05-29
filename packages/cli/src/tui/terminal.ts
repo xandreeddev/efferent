@@ -76,6 +76,15 @@ export const SPINNER_FRAMES = [
 export const moveTo = (row: number, col: number): string =>
   `${CSI}${row};${col}H`
 
+/**
+ * Copy `text` to the system clipboard via OSC 52. Works over SSH and needs no
+ * native clipboard binding; terminals that don't support it ignore the escape.
+ */
+export const osc52 = (text: string): void => {
+  const b64 = Buffer.from(text, "utf8").toString("base64")
+  write(`${ESC}]52;c;${b64}\x07`)
+}
+
 export const clearLine = `${CSI}2K`
 export const clearToEol = `${CSI}0K`
 
