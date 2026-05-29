@@ -226,6 +226,10 @@ export const applyKey = (
       switch (key.char) {
         case "c":
           return { state, action: { type: "exit" } }
+        case "h":
+          // Ctrl-H (0x08) as an alternate Backspace, for terminals/keymaps
+          // that send 0x08 for the Backspace key while editing.
+          return applyKey(state, { type: "backspace" }, cols)
         case "d":
           if (isEmpty(state)) return { state, action: { type: "exit" } }
           return { state }

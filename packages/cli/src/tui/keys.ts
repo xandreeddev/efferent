@@ -127,8 +127,10 @@ export class KeyParser {
       return seq.length
     }
 
-    // Enter
-    if (c === 0x0d || c === 0x0a) {
+    // Enter (CR). LF (0x0a) is deliberately NOT folded in here so it can
+    // surface as Ctrl-J (used for pane focus / input newline) — raw-mode
+    // Enter is CR; bracketed paste carries its own newlines.
+    if (c === 0x0d) {
       out.push({ type: "enter" })
       this.buf = b.slice(1)
       return 1
@@ -141,14 +143,16 @@ export class KeyParser {
       return 1
     }
 
-    // Backspace (0x7F is what most terminals send; 0x08 is Ctrl-H)
-    if (c === 0x7f || c === 0x08) {
+    // Backspace: 0x7F only. 0x08 is left to the Ctrl-<letter> branch below so
+    // it surfaces as Ctrl-H (pane focus); insert-mode editing still treats
+    // Ctrl-H as backspace (see input.ts).
+    if (c === 0x7f) {
       out.push({ type: "backspace" })
       this.buf = b.slice(1)
       return 1
     }
 
-    // Ctrl-<letter>
+    // Ctrl-<letter> — includes 0x08 → Ctrl-H and 0x0a → Ctrl-J.
     if (c >= 0x01 && c <= 0x1a) {
       out.push({ type: "ctrl", char: String.fromCharCode(c + 0x60) })
       this.buf = b.slice(1)

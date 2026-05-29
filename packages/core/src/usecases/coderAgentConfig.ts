@@ -1,26 +1,21 @@
-import type { ScopedAgentConfig } from "../entities/ScopedAgent.js"
-import type { Skill } from "../entities/Skill.js"
-import { coderSystemPrompt } from "../prompts/coder.js"
-import type { InstructionFile } from "./discoverInstructionFiles.js"
-import { codingToolkit } from "./codingToolkit.js"
+import type { Tool } from "@effect/ai"
+import type { Scope } from "../entities/Scope.js"
+import type { AgentConfig } from "./agentConfig.js"
+import type { ScopeRuntime } from "./buildScopeRuntime.js"
 
 /**
- * Coder agent: the coding `Toolkit` + a system prompt built from the
- * discovered skills / instruction files. The toolkit's handler Layer is
- * provided by the driver via `codingToolkitLayer(cwd, skills, { allowBash })`.
- *
- * NOTE: scoped sub-agent delegation is temporarily dropped during the
- * @effect/ai migration (the old delegation tools depended on the removed
- * `Llm` port); `scopedAgents` is still threaded into the prompt context.
+ * Coder agent config for the **root scope**: the root's system prompt + the
+ * root scope's runtime toolkit (base coding tools + `delegate_to_<child>`
+ * tools for its direct children). The toolkit's handler Layer
+ * (`runtime.handlerLayer`) is provided by the driver at its composition
+ * root. Build `rootScope` with `discoverScopeTree` and `runtime` with
+ * `buildScopeRuntime(rootScope, …)`.
  */
 export const coderAgentConfig = (
-  cwd: string,
-  skills: ReadonlyArray<Skill> = [],
-  scopedAgents: ReadonlyArray<ScopedAgentConfig> = [],
-  instructionFiles: ReadonlyArray<InstructionFile> = [],
-  now: Date = new Date(),
-) => ({
-  key: `coder:${cwd}`,
-  systemPrompt: coderSystemPrompt(cwd, now, skills, scopedAgents, instructionFiles),
-  toolkit: codingToolkit,
+  rootScope: Scope,
+  runtime: ScopeRuntime,
+): AgentConfig<Record<string, Tool.Any>> => ({
+  key: `coder:${rootScope.rootDir}`,
+  systemPrompt: rootScope.systemPrompt,
+  toolkit: runtime.toolkit,
 })

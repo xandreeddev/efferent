@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import type { Skill } from "../entities/Skill.js"
@@ -12,7 +12,7 @@ import { Shell } from "../ports/Shell.js"
  * object) with `failureMode: "return"` so a tool failure is handed back
  * to the model as data instead of aborting the turn. Handlers resolve
  * `FileSystem`/`Shell` from context at layer-build time; the runtime
- * `cwd` is bound by `codingToolkitLayer(cwd)`.
+ * scope (`rootDir`/`displayRoot`) is bound by `makeCodingHandlers(binding)`.
  */
 
 const resolvePath = (cwd: string, path: string): string =>
@@ -21,6 +21,15 @@ const resolvePath = (cwd: string, path: string): string =>
 const displayPath = (cwd: string, path: string): string => {
   const rel = relative(cwd, path)
   return rel.startsWith("..") || rel.length === 0 ? path : rel
+}
+
+/**
+ * True when `path` lives inside `rootDir` (or *is* `rootDir`). Uses
+ * `path.sep` so `/foo/bar` isn't considered inside `/foo/bar-other`.
+ */
+const isWithinScope = (path: string, rootDir: string): boolean => {
+  const root = rootDir.endsWith(sep) ? rootDir : rootDir + sep
+  return path === rootDir || path.startsWith(root)
 }
 
 const stripFrontmatter = (content: string): string => {
@@ -263,13 +272,32 @@ const htmlToText = (html: string): string =>
 
 // ---- shared failure shape ----
 
-const Failure = Schema.Struct({
+export const Failure = Schema.Struct({
   error: Schema.String,
   message: Schema.optional(Schema.String),
 })
-type Failure = typeof Failure.Type
+export type Failure = typeof Failure.Type
 
-const toFailure = (e: unknown): Failure => {
+/**
+ * Normalise an arbitrary thrown/failed value into the shared `Failure`
+ * struct. An already-tagged failure (a `{ error: "<Tag>", message? }`
+ * object, e.g. `OutOfScope` / `EditFailed`) is preserved verbatim so the
+ * model sees the intended tag; everything else is wrapped (`_tag` → error,
+ * best-effort message).
+ */
+export const toFailure = (e: unknown): Failure => {
+  if (
+    typeof e === "object" &&
+    e !== null &&
+    "error" in e &&
+    typeof (e as { error: unknown }).error === "string"
+  ) {
+    const o = e as { error: string; message?: unknown }
+    return {
+      error: o.error,
+      ...(o.message !== undefined ? { message: String(o.message) } : {}),
+    }
+  }
   const tag =
     typeof e === "object" && e !== null && "_tag" in e
       ? String((e as { _tag: unknown })._tag)
@@ -517,9 +545,227 @@ export const codingToolkit = Toolkit.make(
 )
 
 /**
+ * Binds the coding handlers to a scope. For the **root** scope
+ * `rootDir === displayRoot ===` the workspace and `enforceWrite` is false,
+ * so behaviour is identical to a plain workspace-wide agent. For a **child**
+ * scope, `rootDir` is the scope dir (writes + bash confined there) while
+ * `displayRoot` stays the workspace root (reads/grep/glob/ls range over the
+ * whole tree and paths render workspace-relative).
+ */
+export interface ScopeBinding {
+  /** Absolute path; writes + bash are confined here when `enforceWrite`. */
+  readonly rootDir: string
+  /** Absolute anchor for path resolution + relative display (workspace root). */
+  readonly displayRoot: string
+  /** Reject `write_file`/`edit_file` outside `rootDir`. False for the root. */
+  readonly enforceWrite: boolean
+  /** Allow the `bash` tool. */
+  readonly allowBash: boolean
+}
+
+/**
+ * Build the coding-tool handler record for a scope, resolving
+ * `FileSystem`/`Shell`/`Http` from context once at build time. Shared by
+ * `codingToolkitLayer` (root, back-compat) and `buildScopeRuntime` (which
+ * merges in `delegate_to_<child>` handlers). Each returned handler is an
+ * `R = never` Effect (it closes over the resolved services).
+ */
+export const makeCodingHandlers = (
+  binding: ScopeBinding,
+  skills: ReadonlyArray<Skill> = [],
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem
+    const shell = yield* Shell
+    const http = yield* Http
+    const { rootDir, displayRoot, enforceWrite, allowBash } = binding
+    const skillByName = new Map(skills.map((s) => [s.name, s] as const))
+
+    const rejectIfOutOfScope = (abs: string) =>
+      enforceWrite && !isWithinScope(abs, rootDir)
+        ? Effect.fail({
+            error: "OutOfScope",
+            message: `${displayPath(displayRoot, abs)} is outside this scope (${displayPath(displayRoot, rootDir)}). Defer it to the parent in your summary.`,
+          })
+        : Effect.void
+
+    return codingToolkit.of({
+      read_file: ({ path, offset, limit }) =>
+        Effect.gen(function* () {
+          const abs = resolvePath(displayRoot, path)
+          const result = yield* fs.read(abs, {
+            ...(offset !== undefined ? { offset } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          })
+          return {
+            path: displayPath(displayRoot, abs),
+            content: formatReadOutput(
+              result.content,
+              offset ?? 1,
+              result.truncated,
+              result.totalLines,
+            ),
+            totalLines: result.totalLines,
+            truncated: result.truncated,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      write_file: ({ path, content }) =>
+        Effect.gen(function* () {
+          const abs = resolvePath(displayRoot, path)
+          yield* rejectIfOutOfScope(abs)
+          yield* fs.write(abs, content)
+          return {
+            path: displayPath(displayRoot, abs),
+            bytes: new TextEncoder().encode(content).byteLength,
+            lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      edit_file: ({ path, edits }) =>
+        Effect.gen(function* () {
+          const abs = resolvePath(displayRoot, path)
+          yield* rejectIfOutOfScope(abs)
+          const before = yield* fs.read(abs)
+          const applied = applyEditsToContent(before.content, edits)
+          if (applied.error !== undefined) {
+            return yield* Effect.fail({
+              error: "EditFailed",
+              message: applied.error,
+            })
+          }
+          yield* fs.write(abs, applied.result)
+          return {
+            path: displayPath(displayRoot, abs),
+            editsApplied: edits.length,
+            diff: unifiedDiff(
+              before.content,
+              applied.result,
+              displayPath(displayRoot, abs),
+            ),
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      bash: ({ command, timeout }) =>
+        Effect.gen(function* () {
+          if (!allowBash) {
+            return yield* Effect.fail({
+              error: "BashNotAllowed",
+              message:
+                "bash execution is disabled in this mode — re-run with --allow-bash to enable",
+            })
+          }
+          const r = yield* shell.exec({
+            command,
+            cwd: rootDir,
+            timeoutMs: timeout ?? 60_000,
+          })
+          return {
+            exitCode: r.exitCode ?? -1,
+            stdout: truncateOutput(r.stdout, 32_000),
+            stderr: truncateOutput(r.stderr, 8_000),
+            durationMs: r.durationMs,
+            timedOut: r.timedOut,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      grep: ({ pattern, dir, flags, context }) =>
+        Effect.gen(function* () {
+          const target = dir !== undefined ? resolvePath(displayRoot, dir) : displayRoot
+          const ctxFlag = context !== undefined ? ` -C ${context}` : ""
+          const extra = flags !== undefined ? ` ${flags}` : ""
+          const escaped = pattern.replace(/'/g, "'\\''")
+          const cmd = `grep -rnE${ctxFlag}${extra} --exclude-dir=.git --exclude-dir=node_modules '${escaped}' ${JSON.stringify(target)} || true`
+          const r = yield* shell.exec({ command: cmd, cwd: displayRoot, timeoutMs: 30_000 })
+          return {
+            dir: displayPath(displayRoot, target),
+            pattern,
+            output: truncateOutput(r.stdout, 32_000),
+            exitCode: r.exitCode ?? -1,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      glob: ({ pattern, dir }) =>
+        Effect.gen(function* () {
+          const target = dir !== undefined ? resolvePath(displayRoot, dir) : displayRoot
+          const matches = yield* fs.glob(pattern, {
+            cwd: target,
+            respectGitignore: true,
+          })
+          return {
+            dir: displayPath(displayRoot, target),
+            pattern,
+            matches: matches.slice(0, 200),
+            truncated: matches.length > 200,
+            total: matches.length,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      ls: ({ path, recursive }) =>
+        Effect.gen(function* () {
+          const target = path !== undefined ? resolvePath(displayRoot, path) : displayRoot
+          const entries = yield* fs.list(target, {
+            ...(recursive !== undefined ? { recursive } : {}),
+          })
+          return {
+            path: displayPath(displayRoot, target),
+            entries: entries.slice(0, 500).map((e) => ({
+              path: displayPath(displayRoot, e.path),
+              type: e.type,
+            })),
+            truncated: entries.length > 500,
+            total: entries.length,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      web_fetch: ({ url, maxBytes }) =>
+        Effect.gen(function* () {
+          if (!/^https?:\/\//i.test(url)) {
+            return yield* Effect.fail({
+              error: "InvalidUrl",
+              message: "url must be an absolute http:// or https:// URL",
+            })
+          }
+          const cap = maxBytes ?? 50_000
+          const res = yield* http.get(url, { maxBytes: cap })
+          const text = res.contentType.includes("html")
+            ? htmlToText(res.body)
+            : res.body
+          return {
+            url,
+            status: res.status,
+            contentType: res.contentType,
+            content: truncateOutput(text, cap),
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      read_skill: ({ name }) =>
+        Effect.gen(function* () {
+          const skill = skillByName.get(name)
+          if (skill === undefined) {
+            return yield* Effect.fail({
+              error: "UnknownSkill",
+              message: `No skill named '${name}'. Available: ${
+                [...skillByName.keys()].join(", ") || "(none)"
+              }`,
+            })
+          }
+          const read = yield* fs.read(skill.sourcePath)
+          return {
+            name: skill.name,
+            sourcePath: skill.sourcePath,
+            body: stripFrontmatter(read.content),
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+    })
+  })
+
+/**
  * Handler Layer for the coding toolkit, bound to a workspace `cwd` and the
- * discovered `skills`. Requires `FileSystem | Shell`, satisfied at the
- * driver's composition root.
+ * discovered `skills` — the root scope's flavour (writes unrestricted, paths
+ * anchored on `cwd`). Requires `FileSystem | Shell | Http`, satisfied at the
+ * driver's composition root. `buildScopeRuntime` builds richer per-scope
+ * layers on top of `makeCodingHandlers`.
  */
 export const codingToolkitLayer = (
   cwd: string,
@@ -527,179 +773,13 @@ export const codingToolkitLayer = (
   options: { readonly allowBash?: boolean } = {},
 ) =>
   codingToolkit.toLayer(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem
-      const shell = yield* Shell
-      const http = yield* Http
-      const allowBash = options.allowBash ?? true
-      const skillByName = new Map(skills.map((s) => [s.name, s] as const))
-
-      return {
-        read_file: ({ path, offset, limit }) =>
-          Effect.gen(function* () {
-            const abs = resolvePath(cwd, path)
-            const result = yield* fs.read(abs, {
-              ...(offset !== undefined ? { offset } : {}),
-              ...(limit !== undefined ? { limit } : {}),
-            })
-            return {
-              path: displayPath(cwd, abs),
-              content: formatReadOutput(
-                result.content,
-                offset ?? 1,
-                result.truncated,
-                result.totalLines,
-              ),
-              totalLines: result.totalLines,
-              truncated: result.truncated,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        write_file: ({ path, content }) =>
-          Effect.gen(function* () {
-            const abs = resolvePath(cwd, path)
-            yield* fs.write(abs, content)
-            return {
-              path: displayPath(cwd, abs),
-              bytes: new TextEncoder().encode(content).byteLength,
-              lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        edit_file: ({ path, edits }) =>
-          Effect.gen(function* () {
-            const abs = resolvePath(cwd, path)
-            const before = yield* fs.read(abs)
-            const applied = applyEditsToContent(before.content, edits)
-            if (applied.error !== undefined) {
-              return yield* Effect.fail({
-                error: "EditFailed",
-                message: applied.error,
-              })
-            }
-            yield* fs.write(abs, applied.result)
-            return {
-              path: displayPath(cwd, abs),
-              editsApplied: edits.length,
-              diff: unifiedDiff(
-                before.content,
-                applied.result,
-                displayPath(cwd, abs),
-              ),
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        bash: ({ command, timeout }) =>
-          Effect.gen(function* () {
-            if (!allowBash) {
-              return yield* Effect.fail({
-                error: "BashNotAllowed",
-                message:
-                  "bash execution is disabled in this mode — re-run with --allow-bash to enable",
-              })
-            }
-            const r = yield* shell.exec({
-              command,
-              cwd,
-              timeoutMs: timeout ?? 60_000,
-            })
-            return {
-              exitCode: r.exitCode ?? -1,
-              stdout: truncateOutput(r.stdout, 32_000),
-              stderr: truncateOutput(r.stderr, 8_000),
-              durationMs: r.durationMs,
-              timedOut: r.timedOut,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        grep: ({ pattern, dir, flags, context }) =>
-          Effect.gen(function* () {
-            const target = dir !== undefined ? resolvePath(cwd, dir) : cwd
-            const ctxFlag = context !== undefined ? ` -C ${context}` : ""
-            const extra = flags !== undefined ? ` ${flags}` : ""
-            const escaped = pattern.replace(/'/g, "'\\''")
-            const cmd = `grep -rnE${ctxFlag}${extra} --exclude-dir=.git --exclude-dir=node_modules '${escaped}' ${JSON.stringify(target)} || true`
-            const r = yield* shell.exec({ command: cmd, cwd, timeoutMs: 30_000 })
-            return {
-              dir: displayPath(cwd, target),
-              pattern,
-              output: truncateOutput(r.stdout, 32_000),
-              exitCode: r.exitCode ?? -1,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        glob: ({ pattern, dir }) =>
-          Effect.gen(function* () {
-            const target = dir !== undefined ? resolvePath(cwd, dir) : cwd
-            const matches = yield* fs.glob(pattern, {
-              cwd: target,
-              respectGitignore: true,
-            })
-            return {
-              dir: displayPath(cwd, target),
-              pattern,
-              matches: matches.slice(0, 200),
-              truncated: matches.length > 200,
-              total: matches.length,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        ls: ({ path, recursive }) =>
-          Effect.gen(function* () {
-            const target = path !== undefined ? resolvePath(cwd, path) : cwd
-            const entries = yield* fs.list(target, {
-              ...(recursive !== undefined ? { recursive } : {}),
-            })
-            return {
-              path: displayPath(cwd, target),
-              entries: entries.slice(0, 500).map((e) => ({
-                path: displayPath(cwd, e.path),
-                type: e.type,
-              })),
-              truncated: entries.length > 500,
-              total: entries.length,
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        web_fetch: ({ url, maxBytes }) =>
-          Effect.gen(function* () {
-            if (!/^https?:\/\//i.test(url)) {
-              return yield* Effect.fail({
-                error: "InvalidUrl",
-                message: "url must be an absolute http:// or https:// URL",
-              })
-            }
-            const cap = maxBytes ?? 50_000
-            const res = yield* http.get(url, { maxBytes: cap })
-            const text = res.contentType.includes("html")
-              ? htmlToText(res.body)
-              : res.body
-            return {
-              url,
-              status: res.status,
-              contentType: res.contentType,
-              content: truncateOutput(text, cap),
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-
-        read_skill: ({ name }) =>
-          Effect.gen(function* () {
-            const skill = skillByName.get(name)
-            if (skill === undefined) {
-              return yield* Effect.fail({
-                error: "UnknownSkill",
-                message: `No skill named '${name}'. Available: ${
-                  [...skillByName.keys()].join(", ") || "(none)"
-                }`,
-              })
-            }
-            const read = yield* fs.read(skill.sourcePath)
-            return {
-              name: skill.name,
-              sourcePath: skill.sourcePath,
-              body: stripFrontmatter(read.content),
-            }
-          }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
-      }
-    }),
+    makeCodingHandlers(
+      {
+        rootDir: cwd,
+        displayRoot: cwd,
+        enforceWrite: false,
+        allowBash: options.allowBash ?? true,
+      },
+      skills,
+    ),
   )
