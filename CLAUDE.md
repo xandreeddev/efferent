@@ -156,6 +156,15 @@ At startup, names + descriptions are injected into the coder system prompt under
 
 Loader: `loadSkills(cwd, homeDir)` in `@agent/core/usecases/loadSkills.ts`. Failures (missing dirs, malformed frontmatter) are silently skipped — a broken skill never breaks the agent.
 
+## Evals
+
+A fourth package, **`packages/evals`** — a minimal, Effect-native eval library (Evalite's `data → task → scorers` shape re-expressed as Effects, so a `task` can be the real agent loop and a `Scorer` can itself call an LLM). Built when Evalite hit three hard incompatibilities at once (native `better-sqlite3` on Node 26, Vercel-AI-SDK coupling, Node-vs-Bun adapter APIs) — the "Evalite until it actively hurts" clause firing. No sqlite, no UI, no persistence; runs under Bun directly.
+
+- **Framework** (`src/framework/`): `EvalSpec<I,O,T,R>` is pure data (`defineEval`); `runEval(spec)` returns `Effect<EvalReport, never, R>` — every per-case/per-scorer failure is captured via `Effect.exit` (so a provider 429 scores 0, never crashes the run) and `R` is left open for the caller to provide once. Scorers (`scorers.ts`): `predicate`, `includesAll` (substring-coverage ratio), `fromEffect`, and `llmJudge` (LLM-as-judge, parses `{"score","reason"}`). `report.ts` prints a coloured per-suite table.
+- **Env** (`src/env.ts`): `EvalEnvLive` mirrors `main.ts`'s composition but swaps Postgres for an in-memory `ConversationStore` (`support/inMemoryConversationStore.ts`, replicating the position/checkpoint fold semantics) so evals need no Docker. `support/workspace.ts` gives `withTempWorkspace` (acquire/release temp dirs); `support/coder.ts` (`runCoder`) stands up a real coder agent over a temp repo and reports the tools it called + final text + read-back files.
+- **Suites** (`src/suites/*.eval.ts`): `handoff` (seed a transcript → `createHandoff` → judge the summary), `tool-selection` (read-only intent, bounded to the first tool turn via an allow-list + `onShouldStopAfterTurn`, assert the first tool), `coder-edit` (full loop edits a temp file → read it back → assert + judge).
+- **Run**: `bun run eval [name …] [--json]` (`src/run.ts`). Gated on `hasKey(GOOGLE_API_KEY|OPENAI_API_KEY)` — no key → suites skip cleanly. Unit tests (`bun test`) cover the framework (incl. captured failures) and the in-memory store fold contract, with no LLM.
+
 ## Deferred (do not build until they hurt)
 
 Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
@@ -171,7 +180,7 @@ Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
 - **Branch / fork / session tree**; **extension system**; **parallel tool execution**.
 - **Image attachments** in the CLI; **mouse support** in the TUI (intentionally none — the TUI stays out of mouse-reporting mode so terminal-native click-drag selection keeps working; navigation/selection is keyboard-modal: Ctrl-hjkl panes, j/k·gg/G·{/} scroll, `/` search, `v`+`y` yank); **native (non-shell-out) grep**.
 - TUI follow-ups: **VISUAL select inside the input pane** (only the conversation pane selects today); **per-tool detail folding** (Ctrl-R is still a global toggle; turn + tool-group folding is per-section); **search-match centering refinements**. (The side pane now has a cursor, so "side-pane internal scroll" is done.)
-- **Evals / Evalite**, telemetry, structured logging beyond what `Effect.log` already prints.
+- **Evals**: the `packages/evals` harness ships (see Evals). Deferred *within* it: result persistence / trend tracking across runs, an `onAfterToolCall`-driven trajectory scorer, dataset files (cases are inline today), CI wiring. Telemetry + structured logging beyond what `Effect.log` already prints.
 
 ## OPSEC reminder
 

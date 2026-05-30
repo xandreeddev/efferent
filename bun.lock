@@ -47,6 +47,17 @@
         "effect": "^3.21.2",
       },
     },
+    "packages/evals": {
+      "name": "@agent/evals",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent/adapters": "workspace:*",
+        "@agent/core": "workspace:*",
+        "@effect/ai": "^0.35.0",
+        "@effect/platform-bun": "^0.89.0",
+        "effect": "^3.21.2",
+      },
+    },
   },
   "packages": {
     "@agent/adapters": ["@agent/adapters@workspace:packages/adapters"],
@@ -54,6 +65,8 @@
     "@agent/cli": ["@agent/cli@workspace:packages/cli"],
 
     "@agent/core": ["@agent/core@workspace:packages/core"],
+
+    "@agent/evals": ["@agent/evals@workspace:packages/evals"],
 
     "@effect/ai": ["@effect/ai@0.35.0", "", { "dependencies": { "find-my-way-ts": "^0.1.6" }, "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "@effect/rpc": "^0.75.0", "effect": "^3.21.0" } }, "sha512-VOYFBN/TpHC0sB5AhUGOEJzOTEnuo2bbDtQcDDsU7ffHaE8ZbqZj1CuSHgifbmqMaY9+xofsKMazQZ3jlZfPSw=="],
 
