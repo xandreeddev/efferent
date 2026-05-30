@@ -7,6 +7,7 @@ const ch = (char: string): Key => ({ type: "char", char })
 const ctrl = (char: string): Key => ({ type: "ctrl", char })
 const esc: Key = { type: "escape" }
 const enter: Key = { type: "enter" }
+const tab: Key = { type: "tab" }
 const back: Key = { type: "backspace" }
 const arrow = (dir: "up" | "down" | "left" | "right"): Key => ({
   type: "arrow",
@@ -25,6 +26,7 @@ const ctx = (over: Partial<NavCtx>): NavCtx => ({
   navPending: false,
   sideVisible: true,
   zoomed: false,
+  view: "stack",
   ...over,
 })
 
@@ -163,5 +165,46 @@ describe("side pane", () => {
   })
   it("z toggles zoom", () => {
     expect(decide(base, ch("z"))).toEqual({ kind: "toggleZoom" })
+  })
+})
+
+describe("conversation pane — block-cursor motions", () => {
+  const base = { focus: "conversation", mode: "normal" } as const
+  it("h/l → char left/right; arrows too", () => {
+    expect(decide(base, ch("h"))).toEqual({ kind: "cursorMove", op: "charLeft" })
+    expect(decide(base, ch("l"))).toEqual({ kind: "cursorMove", op: "charRight" })
+    expect(decide(base, arrow("left"))).toEqual({ kind: "cursorMove", op: "charLeft" })
+    expect(decide(base, arrow("right"))).toEqual({ kind: "cursorMove", op: "charRight" })
+  })
+  it("0/^/$ → line ends", () => {
+    expect(decide(base, ch("0"))).toEqual({ kind: "cursorMove", op: "lineStart" })
+    expect(decide(base, ch("^"))).toEqual({ kind: "cursorMove", op: "firstNonBlank" })
+    expect(decide(base, ch("$"))).toEqual({ kind: "cursorMove", op: "lineEnd" })
+  })
+  it("w/b/e and W/B/E → word motions", () => {
+    expect(decide(base, ch("w"))).toEqual({ kind: "cursorMove", op: "wordFwd" })
+    expect(decide(base, ch("b"))).toEqual({ kind: "cursorMove", op: "wordBack" })
+    expect(decide(base, ch("e"))).toEqual({ kind: "cursorMove", op: "wordEnd" })
+    expect(decide(base, ch("W"))).toEqual({ kind: "cursorMove", op: "wordFwdBig" })
+    expect(decide(base, ch("B"))).toEqual({ kind: "cursorMove", op: "wordBackBig" })
+    expect(decide(base, ch("E"))).toEqual({ kind: "cursorMove", op: "wordEndBig" })
+  })
+  it("v charwise / V linewise VISUAL; j/k still line scroll", () => {
+    expect(decide(base, ch("v"))).toEqual({ kind: "enterVisual" })
+    expect(decide(base, ch("V"))).toEqual({ kind: "enterVisualLine" })
+    expect(decide(base, ch("j"))).toEqual({ kind: "scroll", op: "lineDown" })
+    expect(decide(base, ch("k"))).toEqual({ kind: "scroll", op: "lineUp" })
+  })
+  it("Tab/Enter fold the section under the cursor; Z folds all", () => {
+    expect(decide(base, tab)).toEqual({ kind: "foldToggle" })
+    expect(decide(base, enter)).toEqual({ kind: "foldToggle" })
+    expect(decide(base, ch("Z"))).toEqual({ kind: "foldAll" })
+  })
+  it("VISUAL: motions extend the selection (h/l/w + j/k)", () => {
+    const v = { focus: "conversation", mode: "visual" } as const
+    expect(decide(v, ch("l"))).toEqual({ kind: "cursorMove", op: "charRight" })
+    expect(decide(v, ch("w"))).toEqual({ kind: "cursorMove", op: "wordFwd" })
+    expect(decide(v, ch("j"))).toEqual({ kind: "scroll", op: "lineDown" })
+    expect(decide(v, ch("y"))).toEqual({ kind: "yank" })
   })
 })

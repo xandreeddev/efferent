@@ -59,6 +59,15 @@ export const hideCursor = `${CSI}?25l`
 export const showCursor = `${CSI}?25h`
 
 /**
+ * DECSCUSR cursor shapes (`CSI Ps SP q`). We drive the cursor shape like nvim:
+ * a steady block in NORMAL/VISUAL on a read-only pane, a steady bar in INSERT.
+ * `cursorShapeReset` (`0 q`) restores the terminal's configured default on exit.
+ */
+export const cursorBlock = `${CSI}2 q`
+export const cursorBar = `${CSI}6 q`
+export const cursorShapeReset = `${CSI}0 q`
+
+/**
  * DEC private mode 2026 — synchronized output. Wrapping a full frame
  * write between these tells supporting terminals to buffer the update
  * and paint it atomically (no half-drawn frames / tearing). Terminals
@@ -219,5 +228,7 @@ export const enterTui = (): void => {
 }
 
 export const exitTui = (): void => {
-  write(disableBracketedPaste + exitAltBuffer + showCursor + ansi.reset)
+  write(
+    disableBracketedPaste + exitAltBuffer + cursorShapeReset + showCursor + ansi.reset,
+  )
 }

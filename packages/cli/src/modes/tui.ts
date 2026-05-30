@@ -50,7 +50,14 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
-import { type SidePaneState } from "../tui/sidePane.js"
+import {
+  sideCurrentRow,
+  sideCursorMove,
+  sideCursorToEnd,
+  sideCursorToTop,
+  sideToggleNode,
+  type SidePaneState,
+} from "../tui/sidePane.js"
 import { buildContextView } from "../tui/contextView.js"
 import {
   emptyTree,
@@ -76,7 +83,12 @@ import {
   type FocusPane,
   type UiMode,
 } from "../tui/uiMode.js"
-import { decideKey, type EntryMode, type ScrollOp } from "../tui/navKeys.js"
+import {
+  decideKey,
+  type CursorMoveOp,
+  type EntryMode,
+  type ScrollOp,
+} from "../tui/navKeys.js"
 
 interface MutableAppState {
   status: StatusState
@@ -134,27 +146,32 @@ const computeNote = (s: MutableAppState): string | undefined => {
 }
 
 const HELP_LINES = [
-  "Modes (vim-style; INSERT only on the input pane):",
-  "  i / a            enter INSERT on the input pane",
-  "  Esc              INSERT → NORMAL (or interrupt a running turn)",
-  "  v                VISUAL select; y yanks to the clipboard",
-  "Panes:",
+  "Panes (a real block cursor lives on the focused pane):",
   "  Ctrl-h/j/k/l     move focus: conversation · side · input",
+  "  i / a            enter INSERT on the input pane; Esc → NORMAL",
   "  z                maximize / restore the focused pane (Esc exits)",
-  "Cursor (NORMAL, conversation pane — the row caret is where you are):",
-  "  j / k            move cursor down / up",
-  "  Ctrl-D / Ctrl-U  half page down / up",
-  "  PgUp / PgDn      page (~75% of a screen)",
-  "  gg / G           cursor to top / bottom (G re-follows new output)",
-  "  { / }            previous / next message",
+  "Conversation (NORMAL — nvim motions move the block cursor):",
+  "  h/j/k/l          left / down / up / right",
+  "  w / b / e        next / prev / end of word (W/B/E = WORD)",
+  "  0 / ^ / $        line start / first non-blank / line end",
+  "  gg / G           top / bottom (G re-follows new output)",
+  "  Ctrl-D / Ctrl-U  half page;  PgUp / PgDn  page (~75%)",
+  "  { / }            previous / next turn",
+  "  v / V            charwise / linewise VISUAL; y yanks (clipboard)",
+  "Folding (Neogit-style — turns are foldable 'commits'):",
+  "  Tab / Enter      fold / unfold the turn or tool group under the cursor",
+  "  Z                fold / unfold all turns",
+  "  Ctrl-R           expand / collapse tool output & diffs",
+  "Context viewer (side pane, NORMAL — `:context` to open):",
+  "  j / k · gg / G   move the tree cursor",
+  "  Tab / h / l      fold / unfold a handoff segment",
+  "  Enter            jump to the message in the conversation",
   "Search:",
   "  /                search; Enter lands on the match, n / N next / prev",
-  "Editing & turns:",
+  "Turns:",
   "  Enter (INSERT)   newline (composing never submits)",
   "  Esc, then Enter  leave INSERT → NORMAL, then Enter sends the message",
-  "  Enter (NORMAL)   send the message (queues if a turn is running)",
   "  Ctrl-C           quit (press twice)",
-  "  Ctrl-R           expand/collapse tool output & diffs",
   "Commands (type ':'):",
   "  :exit :quit      quit",
   "  :clear           clear scrollback",
@@ -229,6 +246,45 @@ const applyScroll = (sb: Scrollback, op: ScrollOp): void => {
   }
 }
 
+/** Horizontal / word motions for the real block cursor (also extend VISUAL). */
+const applyCursorMove = (sb: Scrollback, op: CursorMoveOp): void => {
+  switch (op) {
+    case "charLeft":
+      sb.cursorCharLeft()
+      return
+    case "charRight":
+      sb.cursorCharRight()
+      return
+    case "lineStart":
+      sb.cursorLineStart()
+      return
+    case "lineEnd":
+      sb.cursorLineEnd()
+      return
+    case "firstNonBlank":
+      sb.cursorFirstNonBlank()
+      return
+    case "wordFwd":
+      sb.cursorWord("fwd", false)
+      return
+    case "wordBack":
+      sb.cursorWord("back", false)
+      return
+    case "wordEnd":
+      sb.cursorWord("end", false)
+      return
+    case "wordFwdBig":
+      sb.cursorWord("fwd", true)
+      return
+    case "wordBackBig":
+      sb.cursorWord("back", true)
+      return
+    case "wordEndBig":
+      sb.cursorWord("end", true)
+      return
+  }
+}
+
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
 
 const newConversationId = (): ConversationId =>
@@ -248,20 +304,22 @@ const replayHistory = (
 ): void => {
   let msgIdx = 0
   for (const msg of history) {
+    // Tag every block with the message's position so the context viewer can
+    // jump the conversation cursor to a chosen message (cursorToMessageIndex).
     if (msg.role === "user") {
-      sb.push({ kind: "user", text: msg.content })
+      sb.push({ kind: "user", text: msg.content, msgIndex: msgIdx })
     } else if (msg.role === "assistant") {
       if (typeof msg.content === "string") {
-        sb.push({ kind: "assistant", text: msg.content })
+        sb.push({ kind: "assistant", text: msg.content, msgIndex: msgIdx })
       } else if (Array.isArray(msg.content)) {
         for (const part of msg.content) {
           if (part.type === "text") {
             if (part.text.trim().length > 0) {
-              sb.push({ kind: "assistant", text: part.text })
+              sb.push({ kind: "assistant", text: part.text, msgIndex: msgIdx })
             }
           } else if (part.type === "reasoning") {
             if (part.text.trim().length > 0) {
-              sb.push({ kind: "reasoning", text: part.text })
+              sb.push({ kind: "reasoning", text: part.text, msgIndex: msgIdx })
             }
           } else if (part.type === "tool-call") {
             sb.push({
@@ -269,6 +327,7 @@ const replayHistory = (
               id: part.toolCallId,
               toolName: describeToolCall(part.toolName, part.input),
               state: "ok",
+              msgIndex: msgIdx,
             })
           }
         }
@@ -313,6 +372,8 @@ const seedSidePane = (
     scope: f.path,
   })),
   view: "stack",
+  contextCursor: 0,
+  contextCollapsed: new Set(),
 })
 
 const runTuiModeCore = (
@@ -890,8 +951,15 @@ const runTuiModeCore = (
             yield* rebuildContext(cur0.conversationId)
             yield* Ref.update(stateRef, (s) => {
               const next = s.sidePane.view === "context" ? "stack" : "context"
-              s.sidePane = { ...s.sidePane, view: next }
-              if (next === "context") s.focus = "side"
+              // Reset the tree cursor to the top each time the viewer opens.
+              s.sidePane = { ...s.sidePane, view: next, contextCursor: 0 }
+              if (next === "context") {
+                s.focus = "side"
+                s.mode = "normal" // enable the side block cursor + tree nav
+              } else if (s.focus === "side") {
+                s.focus = "input"
+                s.mode = "insert"
+              }
               return s
             })
             yield* requestRender
@@ -1379,6 +1447,7 @@ const runTuiModeCore = (
             navPending: s.navPending === "g",
             sideVisible: cols >= 60,
             zoomed: s.zoomed,
+            view: s.sidePane.view,
           },
           key,
         )
@@ -1449,6 +1518,15 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
 
+          case "cursorMove":
+            yield* Ref.update(stateRef, (st) => {
+              applyCursorMove(st.scrollback, intent.op)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
           case "gPending":
             yield* Ref.update(stateRef, (st) => {
               st.navPending = "g"
@@ -1457,10 +1535,95 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
 
+          case "foldToggle":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.foldToggleAtCursor()
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "foldAll":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.setAllFolded(!st.scrollback.anyFolded())
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "sideCursorMove":
+            yield* Ref.update(stateRef, (st) => {
+              const op = intent.op
+              st.sidePane =
+                op === "top"
+                  ? sideCursorToTop(st.sidePane)
+                  : op === "bottom"
+                    ? sideCursorToEnd(st.sidePane)
+                    : sideCursorMove(st.sidePane, op === "down" ? 1 : -1)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "sideToggleNode":
+            yield* Ref.update(stateRef, (st) => {
+              st.sidePane = sideToggleNode(st.sidePane)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "sideSelect": {
+            const row = sideCurrentRow(s.sidePane)
+            if (row !== undefined && row.collapsible) {
+              // Enter on a segment header folds/unfolds it.
+              yield* Ref.update(stateRef, (st) => {
+                st.sidePane = sideToggleNode(st.sidePane)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (row !== undefined && row.messageIndex !== undefined) {
+              const idx = row.messageIndex
+              yield* Ref.update(stateRef, (st) => {
+                const ok = st.scrollback.cursorToMessageIndex(idx)
+                if (ok) {
+                  st.focus = "conversation"
+                  st.mode = "normal"
+                } else {
+                  st.scrollback.push({
+                    kind: "info",
+                    text: "message not in the loaded view (:resume to load full history)",
+                  })
+                }
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            return "stay" as const
+          }
+
           case "enterVisual":
             yield* Ref.update(stateRef, (st) => {
               st.scrollback.initCursor()
-              st.scrollback.startVisual()
+              st.scrollback.startVisual("char")
+              st.mode = "visual"
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "enterVisualLine":
+            yield* Ref.update(stateRef, (st) => {
+              st.scrollback.initCursor()
+              st.scrollback.startVisual("line")
               st.mode = "visual"
               st.navPending = undefined
               return st

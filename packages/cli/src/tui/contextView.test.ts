@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@agent/core"
-import { buildContextView, type ContextSegment } from "./contextView.js"
+import { buildContextRows, buildContextView, type ContextSegment } from "./contextView.js"
 
 const user = (text: string): AgentMessage => ({ role: "user", content: text })
 const assistant = (text: string): AgentMessage => ({
@@ -72,5 +72,31 @@ describe("buildContextView", () => {
     const segs = buildContextView(msgs, [cp(3, "S2"), cp(1, "S1")])
     expect(loaded(segs).summary).toBe("S2")
     expect(archived(segs).map((s) => s.messages.length)).toEqual([2, 2])
+  })
+})
+
+describe("buildContextRows", () => {
+  const msgRows = (rows: ReadonlyArray<{ kind: string; messageIndex?: number }>) =>
+    rows.filter((r) => r.kind === "message")
+
+  test("no checkpoints → header + loaded segment + message rows with positions", () => {
+    const rows = buildContextRows(buildContextView([user("a"), assistant("b"), user("c")], []), new Set())
+    expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2])
+    expect(rows.some((r) => r.kind === "segment" && r.collapsible)).toBe(true)
+  })
+
+  test("a collapsed segment emits only its header (no message rows)", () => {
+    const rows = buildContextRows(
+      buildContextView([user("a"), assistant("b")], []),
+      new Set(["seg:loaded"]),
+    )
+    expect(msgRows(rows)).toHaveLength(0)
+    expect(rows.find((r) => r.kind === "segment")?.groupId).toBe("seg:loaded")
+  })
+
+  test("message indices stay continuous across archived + loaded segments", () => {
+    const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
+    const rows = buildContextRows(buildContextView(msgs, [cp(1, "S")]), new Set())
+    expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2, 3, 4])
   })
 })

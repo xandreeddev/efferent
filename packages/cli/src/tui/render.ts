@@ -2,6 +2,8 @@ import {
   ansi,
   beginSync,
   clearScreen,
+  cursorBar,
+  cursorBlock,
   endSync,
   getTermSize,
   hideCursor,
@@ -9,7 +11,7 @@ import {
   moveTo,
   padRight,
   showCursor,
-  truncate,
+  visibleLength,
   write,
 } from "./terminal.js"
 import type { StatusState } from "./statusBar.js"
@@ -22,10 +24,10 @@ import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
 import { renderModal } from "./modal.js"
 import type { SidePaneState } from "./sidePane.js"
-import { renderSidePane } from "./sidePane.js"
+import { renderSidePane, sideCursorRowAt } from "./sidePane.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
 import type { EntryMode } from "./navKeys.js"
-import { renderHeader } from "./header.js"
+import { LEGEND_ROWS, renderLegend } from "./legend.js"
 
 export interface AppState {
   readonly status: StatusState
@@ -77,18 +79,6 @@ const withMatchCount = (
 const PALETTE_MAX_ROWS = 6
 const MAX_INPUT_ROWS = 8
 const SIDE_PANE_MIN_COLS = 60
-const HEADER_ROWS = 1
-
-const DIVIDER = `${ansi.fgGray}│${ansi.reset}`
-
-/** Right-pane width: ~36% of the terminal, hidden under SIDE_PANE_MIN_COLS. */
-const computeSidePaneWidth = (cols: number): number => {
-  if (cols < SIDE_PANE_MIN_COLS) return 0
-  return Math.max(24, Math.floor(cols * 0.36))
-}
-
-const hRule = (cols: number): string =>
-  `${ansi.fgGray}${"─".repeat(cols)}${ansi.reset}`
 
 /**
  * Render the whole TUI as one frame. Diffs against the previous frame
@@ -131,132 +121,113 @@ export class FrameRenderer {
     const paletteRows = state.palette.visible
       ? Math.min(PALETTE_MAX_ROWS, state.palette.matches.length)
       : 0
-    const middleRows = Math.max(
-      0,
-      rows -
-        HEADER_ROWS /* top hint bar */ -
-        1 /* status */ -
-        1 /* status sep */ -
-        inputRows -
-        1 /* input sep */ -
-        paletteRows,
-    )
-
-    // Zoom only ever applies to a read-only pane; if focus drifted to the
-    // input, treat it as un-zoomed (defensive — the driver clears it too).
+    // Zoom applies only to a read-only pane; if focus drifted to the input,
+    // treat it as un-zoomed (defensive — the driver clears it too).
     const zoomed =
       state.zoomed &&
       (state.focus === "conversation" || state.focus === "side")
 
-    // Each middle pane reserves a 1-col gutter (constant width, so switching
-    // focus never reflows text). Neither pane draws a focus bar — a bar flush
-    // against the content reads as overlapping it; focus is shown by the
-    // highlighted pane title + the bright divider + the badge (+ the cursor
-    // caret/tint on the conversation).
-    // The conversation cursor caret — bright yellow so it stands apart from the
-    // cyan ●/┃ content bullets; dim when unfocused (a `/` search shows where
-    // Enter will land you).
-    const CARET = `${ansi.bold}${ansi.fgBrightYellow}▶${ansi.reset}`
-    const CARET_DIM = `${ansi.dim}▶${ansi.reset}`
+    const convFocused = state.focus === "conversation"
+    const sideFocused = state.focus === "side"
+    const showSide = !zoomed && cols >= SIDE_PANE_MIN_COLS
 
-    const paneTitle = (label: string, focused: boolean, width: number): string => {
-      const styled = focused
+    // Box content rows: total − top/bottom border − legend − palette − input − status.
+    const contentRows = Math.max(
+      0,
+      rows - 2 - LEGEND_ROWS - paletteRows - inputRows - 1,
+    )
+
+    // --- bordered-box helpers (the focused box's border brightens) ---------
+    const bcol = (focused: boolean): string =>
+      focused ? ansi.fgBrightCyan : `${ansi.dim}${ansi.fgGray}`
+    // A horizontal border with an embedded title, exactly `w` cells wide.
+    const hseg = (rawLabel: string, w: number, focused: boolean): string => {
+      const label = rawLabel.slice(0, Math.max(0, w - 3))
+      const rest = Math.max(1, w - 2 - visibleLength(label))
+      const c = bcol(focused)
+      const title = focused
         ? `${ansi.bold}${ansi.fgBrightCyan}${label}${ansi.reset}`
         : `${ansi.dim}${label}${ansi.reset}`
-      return padRight(truncate(styled, width), width)
+      return `${c}─ ${ansi.reset}${title}${c} ${"─".repeat(rest - 1)}${ansi.reset}`
     }
+    const vbar = (focused: boolean): string => `${bcol(focused)}│${ansi.reset}`
+    const dashes = (n: number, focused: boolean): string =>
+      `${bcol(focused)}${"─".repeat(Math.max(0, n))}${ansi.reset}`
+    const corner = (ch: string, focused: boolean): string =>
+      `${bcol(focused)}${ch}${ansi.reset}`
 
-    // A pinned title row identifies the panes (focused one highlighted); the
-    // scrollback/side get the remaining rows.
-    const hasTitle = middleRows > 0
-    const contentRows = Math.max(0, middleRows - (hasTitle ? 1 : 0))
-
-    const convFocused = state.focus === "conversation"
-    // Window-relative cursor row — read *after* scrollback.render() below, so
-    // it reflects the freshly-flattened viewport (not a stale snapshot).
-    let cursorRowConv = -1
-    // Conversation gutter (2 cols): a caret + space on the cursor line, else two
-    // blanks. The trailing space keeps the caret from abutting the content (so
-    // a line like `29. …` reads `▶ 29. …`, not `▶29. …`) and gives every row a
-    // small left margin.
-    const convGutterAt = (i: number): string =>
-      i === cursorRowConv ? (convFocused ? `${CARET} ` : `${CARET_DIM} `) : "  "
+    // Content geometry inside the box(es).
+    const convGutter = "  " // 2-col left margin; the block cursor sits on the cell
+    const sideGutter = " "
+    let leftInner: number
+    let rightInner = 0
+    let scrollW: number
+    let sideW: number
+    if (showSide) {
+      const inner = Math.max(2, cols - 3) // left + middle + right borders
+      rightInner = Math.min(Math.max(20, Math.floor(cols * 0.34)), inner - 12)
+      leftInner = inner - rightInner
+      scrollW = Math.max(1, leftInner - 2)
+      sideW = Math.max(1, rightInner - 1)
+    } else {
+      leftInner = Math.max(1, cols - 2)
+      scrollW = Math.max(1, leftInner - 2)
+      sideW = Math.max(1, leftInner - 1)
+    }
+    const convContentW = scrollW
+    const sideViewLabel = state.sidePane.view === "context" ? "context" : "side"
 
     const middleLines: string[] = []
 
-    if (zoomed) {
-      // One pane fills the whole middle width.
-      if (state.focus === "side") {
-        const contentW = Math.max(1, cols - 1) // 1-col gutter
-        const sideLines = renderSidePane(
-          state.sidePane,
-          contentRows,
-          contentW,
-          state.spinnerFrame,
-        )
-        if (hasTitle) {
-          middleLines.push(" " + paneTitle(" context [zoom]", true, contentW))
-        }
-        for (let i = 0; i < contentRows; i++) {
-          middleLines.push(" " + (sideLines[i] ?? padRight("", contentW)))
-        }
-      } else {
-        const contentW = Math.max(1, cols - 2) // 2-col caret gutter
-        const scrollLines = state.scrollback.render(contentRows, contentW, true)
-        cursorRowConv = state.scrollback.cursorRow()
-        if (hasTitle) {
-          middleLines.push("  " + paneTitle(" conversation [zoom]", true, contentW))
-        }
-        for (let i = 0; i < contentRows; i++) {
-          middleLines.push(convGutterAt(i) + (scrollLines[i] ?? padRight("", contentW)))
-        }
-      }
-    } else {
-      const sidePaneWidth = computeSidePaneWidth(cols)
-      const dividerWidth = sidePaneWidth > 0 ? 1 : 0
-      const leftWidth = Math.max(10, cols - sidePaneWidth - dividerWidth)
-      const scrollW = Math.max(1, leftWidth - 2) // 2-col caret gutter
-      const sideW = sidePaneWidth > 0 ? Math.max(1, sidePaneWidth - 1) : 0
-      // No focus bars: the conversation gutter is the 2-col caret gutter, the
-      // side gutter a single space. Focus shown by the highlighted title +
-      // divider + badge (+ caret/tint on the conversation).
-      const convTitleGutter = "  "
-      const sideGutter = " "
-      const divider =
-        state.focus === "side"
-          ? `${ansi.bold}${ansi.fgBrightCyan}│${ansi.reset}`
-          : DIVIDER
-
+    if (showSide) {
       const scrollLines = state.scrollback.render(contentRows, scrollW, convFocused)
-      cursorRowConv = state.scrollback.cursorRow()
       const sideLines = renderSidePane(
         state.sidePane,
         contentRows,
         sideW,
         state.spinnerFrame,
+        sideFocused,
       )
-
-      if (hasTitle) {
-        const leftTitle =
-          convTitleGutter + paneTitle(" conversation", convFocused, scrollW)
+      const midFocused = convFocused || sideFocused
+      middleLines.push(
+        corner("┌", convFocused) +
+          hseg("conversation", leftInner, convFocused) +
+          corner("┬", midFocused) +
+          hseg(sideViewLabel, rightInner, sideFocused) +
+          corner("┐", sideFocused),
+      )
+      for (let i = 0; i < contentRows; i++) {
+        const left = padRight(convGutter + (scrollLines[i] ?? ""), leftInner)
+        const right = padRight(sideGutter + (sideLines[i] ?? ""), rightInner)
         middleLines.push(
-          sidePaneWidth > 0
-            ? leftTitle +
-                divider +
-                sideGutter +
-                paneTitle(" context", state.focus === "side", sideW)
-            : leftTitle,
+          vbar(convFocused) + left + vbar(midFocused) + right + vbar(sideFocused),
         )
       }
+      middleLines.push(
+        corner("└", convFocused) +
+          dashes(leftInner, convFocused) +
+          corner("┴", midFocused) +
+          dashes(rightInner, sideFocused) +
+          corner("┘", sideFocused),
+      )
+    } else {
+      // A single box around the focused (or, when narrow, the only) pane.
+      const sideBox = zoomed && sideFocused
+      const f = zoomed ? true : convFocused
+      const title = sideBox
+        ? `${sideViewLabel} [zoom]`
+        : zoomed
+          ? "conversation [zoom]"
+          : "conversation"
+      const lines = sideBox
+        ? renderSidePane(state.sidePane, contentRows, sideW, state.spinnerFrame, true)
+        : state.scrollback.render(contentRows, scrollW, convFocused)
+      const gutter = sideBox ? sideGutter : convGutter
+      middleLines.push(corner("┌", f) + hseg(title, leftInner, f) + corner("┐", f))
       for (let i = 0; i < contentRows; i++) {
-        const left = convGutterAt(i) + (scrollLines[i] ?? padRight("", scrollW))
-        if (sidePaneWidth > 0) {
-          const right = sideGutter + (sideLines[i] ?? padRight("", sideW))
-          middleLines.push(left + divider + right)
-        } else {
-          middleLines.push(left)
-        }
+        middleLines.push(vbar(f) + padRight(gutter + (lines[i] ?? ""), leftInner) + vbar(f))
       }
+      middleLines.push(corner("└", f) + dashes(leftInner, f) + corner("┘", f))
     }
 
     // Input region: pad to inputRows; overlay the search count on the first row.
@@ -272,16 +243,21 @@ export class FrameRenderer {
       )
     }
 
+    const legendLines = renderLegend(
+      state.focus,
+      state.mode,
+      state.sidePane.view,
+      state.entry,
+      cols,
+    )
     const overlayLines = renderPalette(state.palette, cols, PALETTE_MAX_ROWS)
 
-    // Compose
+    // Compose: box · always-on legend · palette? · input · status
     const frame: string[] = []
-    frame.push(renderHeader(state.mode, state.focus, state.entry, state.zoomed, cols))
     for (const l of middleLines) frame.push(l)
-    frame.push(hRule(cols))
+    for (const l of legendLines) frame.push(l)
     for (const l of overlayLines) frame.push(l)
     for (const l of inputLinesPadded) frame.push(l)
-    frame.push(hRule(cols))
     frame.push(renderStatusBar(state.status, cols))
     while (frame.length < rows) frame.push(padRight("", cols))
     frame.length = rows
@@ -304,32 +280,54 @@ export class FrameRenderer {
       }
     }
 
-    // Cursor follows focus, so a pane swap is visible:
-    //  - input focused → in the input region (bottom) — covers the `:`/`/`
+    // The real cursor follows focus and mode:
+    //  - input focused → a BAR in the input region (bottom) — covers the `:`/`/`
     //    command line too, since those are typed in the input;
-    //  - conversation + VISUAL → on the selected line in the middle region;
-    //  - otherwise hidden (read-only panes have no insertion cursor — focus is
-    //    shown by the badge + gutter + pane title).
+    //  - conversation focused in NORMAL or VISUAL → a BLOCK on the cursor's
+    //    actual (row, col) cell in the middle region — the nvim cursor;
+    //  - otherwise hidden.
     if (
       !state.modal.visible &&
       state.focus === "input" &&
       !state.input.locked
     ) {
-      const inputStartRow = rows - inputRows - 1
+      // Input is the (inputRows)-tall region just above the status bar.
+      const inputFirstRow = rows - inputRows // 1-based row of the input's first line
       const cursorRow = Math.min(inputResult.cursorRow, inputRows - 1)
       out +=
-        moveTo(inputStartRow + cursorRow, inputResult.cursorCol + 1) +
+        moveTo(inputFirstRow + cursorRow, inputResult.cursorCol + 1) +
+        cursorBar +
         showCursor
     } else if (
       !state.modal.visible &&
       state.focus === "conversation" &&
-      state.mode === "visual"
+      (state.mode === "normal" || state.mode === "visual")
     ) {
       const row = state.scrollback.cursorRow()
       if (row >= 0) {
-        // Content rows start below the header + the pinned title row, after the
-        // 2-col conversation gutter (so the cursor sits on the content, col 3).
-        out += moveTo(HEADER_ROWS + 2 + row, 3) + showCursor
+        // Box top border is screen row 1; content starts at row 2. Content
+        // begins after the left border (col 1) + the 2-col gutter → screen col 4.
+        const col = Math.min(
+          state.scrollback.cursorVisibleCol(),
+          Math.max(0, convContentW - 1),
+        )
+        out += moveTo(2 + row, 4 + col) + cursorBlock + showCursor
+      } else {
+        out += hideCursor
+      }
+    } else if (
+      !state.modal.visible &&
+      state.focus === "side" &&
+      state.sidePane.view === "context" &&
+      state.mode === "normal"
+    ) {
+      // The side context-tree cursor: a block on the focused row's first cell.
+      const row = sideCursorRowAt(state.sidePane, contentRows)
+      if (row >= 0) {
+        // Side content starts after: left border + leftInner + mid border +
+        // 1-col gutter (two boxes), or left border + 1-col gutter (zoomed).
+        const startCol = showSide ? leftInner + 4 : 3
+        out += moveTo(2 + row, startCol) + cursorBlock + showCursor
       } else {
         out += hideCursor
       }
