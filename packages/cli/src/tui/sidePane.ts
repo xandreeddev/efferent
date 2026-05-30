@@ -1,6 +1,11 @@
 import { ansi, padRight, truncate, SPINNER_FRAMES } from "./terminal.js"
 import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
-import { type ContextSegment, renderContextView } from "./contextView.js"
+import {
+  buildContextRows,
+  type ContextRow,
+  type ContextSegment,
+  renderContextView,
+} from "./contextView.js"
 
 export interface SidePaneInstruction {
   readonly path: string
@@ -15,6 +20,10 @@ export interface SidePaneState {
   readonly view: "stack" | "context"
   /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
   readonly context?: ReadonlyArray<ContextSegment>
+  /** Context-tree cursor: index into the navigable rows. */
+  readonly contextCursor: number
+  /** Folded context-tree segment ids. */
+  readonly contextCollapsed: ReadonlySet<string>
 }
 
 export const emptySidePane: SidePaneState = {
@@ -22,7 +31,58 @@ export const emptySidePane: SidePaneState = {
   skillsLoaded: [],
   instructions: [],
   view: "stack",
+  contextCursor: 0,
+  contextCollapsed: new Set(),
 }
+
+// --- context-tree navigation (pure; the driver re-derives rows each call) ---
+
+const clamp = (n: number, lo: number, hi: number): number =>
+  Math.max(lo, Math.min(n, hi))
+
+export const contextRows = (state: SidePaneState): ReadonlyArray<ContextRow> =>
+  buildContextRows(state.context ?? [], state.contextCollapsed)
+
+/** Window start that keeps the cursor visible (centred-ish), like followCursor. */
+export const sideStart = (total: number, cursor: number, height: number): number =>
+  total <= height ? 0 : clamp(cursor - Math.floor(height / 2), 0, total - height)
+
+/** Window-relative row of the cursor for a pane `height`, or -1 if none. */
+export const sideCursorRowAt = (state: SidePaneState, height: number): number => {
+  const rows = contextRows(state)
+  if (rows.length === 0 || height <= 0) return -1
+  const cursor = clamp(state.contextCursor, 0, rows.length - 1)
+  const start = sideStart(rows.length, cursor, height)
+  const r = cursor - start
+  return r >= 0 && r < height ? r : -1
+}
+
+export const sideCursorMove = (state: SidePaneState, delta: number): SidePaneState => {
+  const n = contextRows(state).length
+  if (n === 0) return state
+  return { ...state, contextCursor: clamp(state.contextCursor + delta, 0, n - 1) }
+}
+export const sideCursorToTop = (state: SidePaneState): SidePaneState => ({
+  ...state,
+  contextCursor: 0,
+})
+export const sideCursorToEnd = (state: SidePaneState): SidePaneState => {
+  const n = contextRows(state).length
+  return { ...state, contextCursor: Math.max(0, n - 1) }
+}
+/** Fold/unfold the segment under the cursor (no-op on non-collapsible rows). */
+export const sideToggleNode = (state: SidePaneState): SidePaneState => {
+  const rows = contextRows(state)
+  const row = rows[clamp(state.contextCursor, 0, Math.max(0, rows.length - 1))]
+  if (row === undefined || !row.collapsible || row.groupId === undefined) return state
+  const next = new Set(state.contextCollapsed)
+  if (next.has(row.groupId)) next.delete(row.groupId)
+  else next.add(row.groupId)
+  return { ...state, contextCollapsed: next }
+}
+/** The row under the cursor (for the driver's Enter = jump-or-fold decision). */
+export const sideCurrentRow = (state: SidePaneState): ContextRow | undefined =>
+  contextRows(state)[clamp(state.contextCursor, 0, Math.max(0, contextRows(state).length - 1))]
 
 const homeDir = (() => {
   try {
@@ -134,20 +194,25 @@ export const renderSidePane = (
   rows: number,
   cols: number,
   spinnerFrame = 0,
+  focused = false,
   now: number = Date.now(),
 ): string[] => {
   if (rows <= 0 || cols <= 0) return []
 
-  // Context view: the message tree + handoff replacement. Tail-windowed like
-  // the stack tree (newest/loaded stays visible); `z` zooms for the full read.
+  // Context view: the navigable message tree. Windowed to follow the cursor;
+  // the focused row gets the cursor tint (the hardware block cursor sits there).
   if (state.view === "context") {
-    const lines =
-      state.context !== undefined && state.context.length > 0
-        ? renderContextView(state.context, cols)
-        : [`${ansi.dim}(no conversation yet)${ansi.reset}`]
-    const window =
-      lines.length > rows ? lines.slice(lines.length - rows) : lines
-    const out = [...window]
+    const rowsList = contextRows(state)
+    if (rowsList.length === 0) {
+      const out = [`${ansi.dim}(no conversation yet)${ansi.reset}`]
+      while (out.length < rows) out.push("")
+      return out.slice(0, rows).map((line) => padRight(line, cols))
+    }
+    const cursor = clamp(state.contextCursor, 0, rowsList.length - 1)
+    const start = sideStart(rowsList.length, cursor, rows)
+    const visible = rowsList.slice(start, start + rows)
+    const lines = renderContextView(visible, cols, focused ? cursor - start : -1, focused)
+    const out = [...lines]
     while (out.length < rows) out.push("")
     return out.slice(0, rows).map((line) => padRight(line, cols))
   }

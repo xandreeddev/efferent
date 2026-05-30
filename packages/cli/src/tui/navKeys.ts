@@ -35,6 +35,20 @@ export type ScrollOp =
 
 export type EntryMode = "message" | "command" | "search"
 
+/** Horizontal / word motions for the real 2D block cursor. */
+export type CursorMoveOp =
+  | "charLeft"
+  | "charRight"
+  | "lineStart"
+  | "lineEnd"
+  | "firstNonBlank"
+  | "wordFwd"
+  | "wordBack"
+  | "wordEnd"
+  | "wordFwdBig"
+  | "wordBackBig"
+  | "wordEndBig"
+
 export interface NavCtx {
   readonly focus: FocusPane
   readonly mode: UiMode
@@ -50,6 +64,8 @@ export interface NavCtx {
   readonly sideVisible: boolean
   /** Whether the focused pane is maximized (zoom). Esc exits zoom first. */
   readonly zoomed: boolean
+  /** Which view the side pane shows (gates the context-tree nav keys). */
+  readonly view: "stack" | "context"
 }
 
 export type NavIntent =
@@ -63,8 +79,17 @@ export type NavIntent =
    * extends the selection — the scrollback's cursor *is* the selection cursor.
    */
   | { readonly kind: "scroll"; readonly op: ScrollOp }
+  /** Move the real block cursor horizontally / by word (also extends VISUAL). */
+  | { readonly kind: "cursorMove"; readonly op: CursorMoveOp }
   | { readonly kind: "gPending" }
+  /** Tab/Enter: fold or unfold the section (Neogit turn / tool group) under the cursor. */
+  | { readonly kind: "foldToggle" }
+  /** Z: fold or unfold every section. */
+  | { readonly kind: "foldAll" }
+  /** Enter charwise VISUAL (`v`). */
   | { readonly kind: "enterVisual" }
+  /** Enter linewise VISUAL (`V`). */
+  | { readonly kind: "enterVisualLine" }
   | { readonly kind: "exitVisual" }
   | { readonly kind: "yank" }
   /** Toggle maximize on the focused read-only pane. */
@@ -79,6 +104,12 @@ export type NavIntent =
   | { readonly kind: "entryCancel" }
   | { readonly kind: "match"; readonly dir: "next" | "prev" }
   | { readonly kind: "clearSearch" }
+  /** Context-tree (side pane) cursor move. */
+  | { readonly kind: "sideCursorMove"; readonly op: "up" | "down" | "top" | "bottom" }
+  /** Context-tree: fold/unfold the segment under the side cursor. */
+  | { readonly kind: "sideToggleNode" }
+  /** Context-tree: Enter — jump to the message (or fold a segment header). */
+  | { readonly kind: "sideSelect" }
 
 const ctrlDir = (
   char: string,
@@ -153,8 +184,52 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
     return decideConversationNormal(ctx, key)
   }
 
-  // 6. Side pane (minimal): zoom, command/search, drop back to the input.
+  // 6. Side pane.
   if (ctx.focus === "side") {
+    // The context viewer is a navigable tree: cursor + fold + jump.
+    if (ctx.view === "context") {
+      if (ctx.navPending && key.type === "char" && key.char === "g") {
+        return { kind: "sideCursorMove", op: "top" }
+      }
+      if (key.type === "tab") return { kind: "sideToggleNode" }
+      if (key.type === "enter") return { kind: "sideSelect" }
+      if (key.type === "arrow") {
+        if (key.dir === "down") return { kind: "sideCursorMove", op: "down" }
+        if (key.dir === "up") return { kind: "sideCursorMove", op: "up" }
+        return { kind: "none" }
+      }
+      if (key.type === "char") {
+        switch (key.char) {
+          case "j":
+            return { kind: "sideCursorMove", op: "down" }
+          case "k":
+            return { kind: "sideCursorMove", op: "up" }
+          case "g":
+            return { kind: "gPending" }
+          case "G":
+            return { kind: "sideCursorMove", op: "bottom" }
+          case "h":
+          case "l":
+            return { kind: "sideToggleNode" }
+          case "i":
+            return { kind: "focus", to: "input", mode: "insert" }
+          case "z":
+            return { kind: "toggleZoom" }
+          case ":":
+            return { kind: "openCommand" }
+          case "/":
+            return { kind: "openSearch" }
+          default:
+            return { kind: "none" }
+        }
+      }
+      if (key.type === "escape") {
+        if (ctx.zoomed) return { kind: "toggleZoom" }
+        return { kind: "focus", to: "input", mode: "normal" }
+      }
+      return { kind: "none" }
+    }
+    // Stack view (minimal): zoom, command/search, drop back to the input.
     if (key.type === "char" && key.char === "i") {
       return { kind: "focus", to: "input", mode: "insert" }
     }
@@ -174,12 +249,36 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
   if (ctx.navPending && key.type === "char" && key.char === "g") {
     return { kind: "scroll", op: "top" }
   }
+  // Tab / Enter fold the section under the cursor (Neogit-style).
+  if (key.type === "tab" || key.type === "enter") return { kind: "foldToggle" }
   if (key.type === "char") {
     switch (key.char) {
       case "j":
         return { kind: "scroll", op: "lineDown" }
       case "k":
         return { kind: "scroll", op: "lineUp" }
+      case "h":
+        return { kind: "cursorMove", op: "charLeft" }
+      case "l":
+        return { kind: "cursorMove", op: "charRight" }
+      case "0":
+        return { kind: "cursorMove", op: "lineStart" }
+      case "$":
+        return { kind: "cursorMove", op: "lineEnd" }
+      case "^":
+        return { kind: "cursorMove", op: "firstNonBlank" }
+      case "w":
+        return { kind: "cursorMove", op: "wordFwd" }
+      case "b":
+        return { kind: "cursorMove", op: "wordBack" }
+      case "e":
+        return { kind: "cursorMove", op: "wordEnd" }
+      case "W":
+        return { kind: "cursorMove", op: "wordFwdBig" }
+      case "B":
+        return { kind: "cursorMove", op: "wordBackBig" }
+      case "E":
+        return { kind: "cursorMove", op: "wordEndBig" }
       case "g":
         return { kind: "gPending" }
       case "G":
@@ -200,6 +299,10 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
         return ctx.searchActive ? { kind: "match", dir: "prev" } : { kind: "none" }
       case "v":
         return { kind: "enterVisual" }
+      case "V":
+        return { kind: "enterVisualLine" }
+      case "Z":
+        return { kind: "foldAll" }
       case "z":
         return { kind: "toggleZoom" }
       case "i":
@@ -216,6 +319,8 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
   if (key.type === "arrow") {
     if (key.dir === "down") return { kind: "scroll", op: "lineDown" }
     if (key.dir === "up") return { kind: "scroll", op: "lineUp" }
+    if (key.dir === "left") return { kind: "cursorMove", op: "charLeft" }
+    if (key.dir === "right") return { kind: "cursorMove", op: "charRight" }
     return { kind: "none" }
   }
   if (key.type === "escape") {
@@ -244,6 +349,28 @@ const decideVisual = (ctx: NavCtx, key: Key): NavIntent => {
         return { kind: "scroll", op: "lineDown" }
       case "k":
         return { kind: "scroll", op: "lineUp" }
+      case "h":
+        return { kind: "cursorMove", op: "charLeft" }
+      case "l":
+        return { kind: "cursorMove", op: "charRight" }
+      case "0":
+        return { kind: "cursorMove", op: "lineStart" }
+      case "$":
+        return { kind: "cursorMove", op: "lineEnd" }
+      case "^":
+        return { kind: "cursorMove", op: "firstNonBlank" }
+      case "w":
+        return { kind: "cursorMove", op: "wordFwd" }
+      case "b":
+        return { kind: "cursorMove", op: "wordBack" }
+      case "e":
+        return { kind: "cursorMove", op: "wordEnd" }
+      case "W":
+        return { kind: "cursorMove", op: "wordFwdBig" }
+      case "B":
+        return { kind: "cursorMove", op: "wordBackBig" }
+      case "E":
+        return { kind: "cursorMove", op: "wordEndBig" }
       case "g":
         return { kind: "gPending" }
       case "G":
@@ -261,6 +388,8 @@ const decideVisual = (ctx: NavCtx, key: Key): NavIntent => {
   if (key.type === "arrow") {
     if (key.dir === "down") return { kind: "scroll", op: "lineDown" }
     if (key.dir === "up") return { kind: "scroll", op: "lineUp" }
+    if (key.dir === "left") return { kind: "cursorMove", op: "charLeft" }
+    if (key.dir === "right") return { kind: "cursorMove", op: "charRight" }
   }
   return { kind: "none" }
 }

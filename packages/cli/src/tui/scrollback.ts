@@ -1,12 +1,77 @@
-import { ansi, padLeft, padRight, stripAnsi, truncate, wrapAnsi } from "./terminal.js"
+import { ansi, padLeft, padRight, stripAnsi, truncate, visibleLength, wrapAnsi } from "./terminal.js"
 import { renderMarkdown } from "./markdown.js"
+
+// --- vim word motions (pure, over a single plain-text line) -----------------
+// class: 0 = whitespace, 1 = word char (alnum/_), 2 = punctuation. `big` (W/B/E)
+// collapses 1+2 → one class, so words are whitespace-delimited.
+type CharClass = 0 | 1 | 2
+const classOf = (ch: string, big: boolean): CharClass => {
+  if (ch === " " || ch === "\t") return 0
+  if (big) return 1
+  return /[A-Za-z0-9_]/.test(ch) ? 1 : 2
+}
+
+/** `w`/`W`: start of the next word after `col`, or -1 if none on this line. */
+export const nextWordStart = (text: string, col: number, big: boolean): number => {
+  const n = text.length
+  let i = col
+  if (i >= n) return -1
+  const c0 = classOf(text[i]!, big)
+  if (c0 !== 0) while (i < n && classOf(text[i]!, big) === c0) i++
+  while (i < n && classOf(text[i]!, big) === 0) i++
+  return i < n ? i : -1
+}
+
+/** `b`/`B`: start of the word at/before `col`, or -1 if none. */
+export const prevWordStart = (text: string, col: number, big: boolean): number => {
+  let i = col - 1
+  while (i >= 0 && classOf(text[i]!, big) === 0) i--
+  if (i < 0) return -1
+  const c = classOf(text[i]!, big)
+  while (i > 0 && classOf(text[i - 1]!, big) === c) i--
+  return i
+}
+
+/** `e`/`E`: end of the next word after `col`, or -1 if none. */
+export const wordEnd = (text: string, col: number, big: boolean): number => {
+  const n = text.length
+  let i = col + 1
+  while (i < n && classOf(text[i]!, big) === 0) i++
+  if (i >= n) return -1
+  const c = classOf(text[i]!, big)
+  while (i + 1 < n && classOf(text[i + 1]!, big) === c) i++
+  return i
+}
+
+/** `^`: first non-blank column (0 if the line is all blanks/empty). */
+export const firstNonBlank = (text: string): number => {
+  let i = 0
+  while (i < text.length && (text[i] === " " || text[i] === "\t")) i++
+  return i < text.length ? i : 0
+}
+
+/** Collapse whitespace to single spaces — for folded-section summary lines. */
+const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim()
+
+export type CursorOp =
+  | "charLeft"
+  | "charRight"
+  | "lineStart"
+  | "lineEnd"
+  | "firstNonBlank"
+  | "wordFwd"
+  | "wordBack"
+  | "wordEnd"
+  | "wordFwdBig"
+  | "wordBackBig"
+  | "wordEndBig"
 
 export type ToolPillState = "running" | "ok" | "error"
 
 export type ScrollbackBlock =
-  | { readonly kind: "user"; readonly text: string }
-  | { readonly kind: "assistant"; readonly text: string }
-  | { readonly kind: "reasoning"; readonly text: string }
+  | { readonly kind: "user"; readonly text: string; readonly msgIndex?: number }
+  | { readonly kind: "assistant"; readonly text: string; readonly msgIndex?: number }
+  | { readonly kind: "reasoning"; readonly text: string; readonly msgIndex?: number }
   | {
       readonly kind: "tool"
       readonly id: string
@@ -19,10 +84,21 @@ export type ScrollbackBlock =
       readonly diff?: string
       /** Full textual output (bash/grep/read) — shown when expanded. */
       readonly output?: string
+      readonly msgIndex?: number
     }
   | { readonly kind: "info"; readonly text: string }
   | { readonly kind: "error"; readonly text: string }
   | { readonly kind: "checkpoint"; readonly text: string }
+
+/**
+ * Maps a rendered visual line back to the foldable section it belongs to (a
+ * Neogit-style "commit" turn, or a tool-call group). `foldable` is false for
+ * lines that are not a fold handle (so Tab is a no-op there).
+ */
+interface FoldRef {
+  readonly id: string
+  readonly foldable: boolean
+}
 
 const STATE_DOT: Record<ToolPillState, string> = {
   running: `${ansi.fgYellow}⏺${ansi.reset}`,
@@ -219,6 +295,21 @@ export class Scrollback {
   private scrollOffset = 0
   private expanded = false
 
+  // --- Neogit-style folding ------------------------------------------------
+  // A monotonic sequence stamped on every block at push time gives each a
+  // STABLE id (surviving the object-replace in updateTool) so a section the
+  // user folded stays folded as streaming pills append into it.
+  private seq = 0
+  private blockSeq = new WeakMap<ScrollbackBlock, number>()
+  /** Folded section ids (turn ids + tool-group ids). */
+  private collapsed = new Set<string>()
+  /** Per visual line → the foldable section it belongs to (set by flatten). */
+  private itemAtLine: (FoldRef | undefined)[] = []
+  /** Message-index → first visual line, for the context-view cross-pane jump. */
+  private msgIndexToLine = new Map<number, number>()
+  /** Every foldable section id seen in the last flatten (for fold/unfold all). */
+  private foldableIds: string[] = []
+
   // Snapshot of the last render — drives nav/search without re-flattening.
   private viewportRows = 0
   private totalVisualLines = 0
@@ -237,12 +328,22 @@ export class Scrollback {
   // meaningfully-placed cursor from a fresh / just-cleared buffer (which
   // follow-tails); the driver calls initCursor() on focus-in to place it.
   private cursorLine = 0
+  // The cursor's column (visible cell index within its flat line) — this plus
+  // `cursorLine` is the real, nvim-style block-cursor position the driver
+  // renders with the hardware cursor. `desiredCol` is the remembered column so
+  // j/k keep the column over ragged lines (vim behaviour); `$` parks it at
+  // Infinity so vertical motion sticks to line ends.
+  private cursorCol = 0
+  private desiredCol = 0
   private cursorActive = false
 
-  // VISUAL selection (line-wise): `anchorLine` is the fixed end, `cursorLine`
-  // the moving end; `y` yanks the [min,max] range to the clipboard.
+  // VISUAL selection: `anchorLine`/`anchorCol` is the fixed end, the cursor the
+  // moving end. `visualKind` is charwise (`v`) or linewise (`V`); `y` yanks the
+  // ordered range to the clipboard.
   private selecting = false
+  private visualKind: "char" | "line" = "char"
   private anchorLine = 0
+  private anchorCol = 0
 
   private lineCache = new WeakMap<
     ScrollbackBlock,
@@ -253,6 +354,7 @@ export class Scrollback {
     if (block.kind === "tool") {
       this.toolIndex.set(block.id, this.blocks.length)
     }
+    this.blockSeq.set(block, this.seq++)
     this.blocks.push(block)
   }
 
@@ -271,13 +373,17 @@ export class Scrollback {
     if (cur === undefined || cur.kind !== "tool") return
     // A fresh object → the line cache misses for this block only (its old
     // key is gone), so the pill re-renders while every other block stays cached.
-    this.blocks[idx] = {
+    const next: ScrollbackBlock = {
       ...cur,
       ...(patch.state !== undefined ? { state: patch.state } : {}),
       ...(patch.detail !== undefined ? { detail: patch.detail } : {}),
       ...(patch.diff !== undefined ? { diff: patch.diff } : {}),
       ...(patch.output !== undefined ? { output: patch.output } : {}),
     }
+    // Carry the stable seq onto the replacement so its fold/group id is unchanged.
+    const oldSeq = this.blockSeq.get(cur)
+    if (oldSeq !== undefined) this.blockSeq.set(next, oldSeq)
+    this.blocks[idx] = next
   }
 
   /** Toggle full diff/output rendering for tool blocks (Ctrl-R). */
@@ -295,8 +401,64 @@ export class Scrollback {
     this.msgStartLines = []
     this.selecting = false
     this.cursorLine = 0
+    this.cursorCol = 0
+    this.desiredCol = 0
     this.cursorActive = false
+    this.seq = 0
+    this.collapsed.clear()
+    this.itemAtLine = []
+    this.msgIndexToLine.clear()
+    this.foldableIds = []
     this.clearSearch()
+  }
+
+  // --- folding API (driven by Tab / zR / zM) ------------------------------
+
+  /** Stable id for a block (tool keeps its own id; others use the seq). */
+  private idOf(block: ScrollbackBlock): string {
+    if (block.kind === "tool") return `t:${block.id}`
+    return `b:${this.blockSeq.get(block) ?? -1}`
+  }
+
+  /** Tab/Enter: fold or unfold the section under the cursor (no-op elsewhere). */
+  foldToggleAtCursor(): void {
+    const ref = this.itemAtLine[this.cursorLine]
+    if (ref === undefined || !ref.foldable) return
+    // Land the cursor on the section's first (header) line, which folding never
+    // moves — so the cursor stays put as the body collapses below it.
+    let first = this.cursorLine
+    while (first > 0 && this.itemAtLine[first - 1]?.id === ref.id) first--
+    this.cursorLine = first
+    this.cursorCol = 0
+    this.desiredCol = 0
+    if (this.collapsed.has(ref.id)) this.collapsed.delete(ref.id)
+    else this.collapsed.add(ref.id)
+  }
+
+  /** Z: unfold or fold every section. */
+  setAllFolded(folded: boolean): void {
+    if (folded) for (const id of this.foldableIds) this.collapsed.add(id)
+    else this.collapsed.clear()
+  }
+
+  /** Whether any section is currently folded (drives the Z toggle). */
+  anyFolded(): boolean {
+    return this.collapsed.size > 0
+  }
+
+  /**
+   * Move the cursor to the first visual line of message `i` (a context-view
+   * jump target). Returns false if that message isn't in the current buffer.
+   */
+  cursorToMessageIndex(i: number): boolean {
+    const line = this.msgIndexToLine.get(i)
+    if (line === undefined) return false
+    this.cursorActive = true
+    this.cursorLine = line
+    this.cursorCol = 0
+    this.desiredCol = 0
+    this.followCursor()
+    return true
   }
 
   // --- viewport scrolling -------------------------------------------------
@@ -362,6 +524,27 @@ export class Scrollback {
     if (this.cursorLine > max) this.cursorLine = max
   }
 
+  /** Visible length of a flat line (0 if out of range). */
+  private lineLen(idx: number): number {
+    const l = this.flatLines[idx]
+    return l === undefined ? 0 : visibleLength(l)
+  }
+  /** Largest valid column on a line (0 on an empty line). */
+  private lastCol(idx: number): number {
+    return Math.max(0, this.lineLen(idx) - 1)
+  }
+  private clampCol(): void {
+    const max = this.lastCol(this.cursorLine)
+    if (this.cursorCol > max) this.cursorCol = max
+    if (this.cursorCol < 0) this.cursorCol = 0
+  }
+  /** Reconcile the column from the remembered desired column (vim j/k). */
+  private applyDesiredCol(): void {
+    const max = this.lastCol(this.cursorLine)
+    this.cursorCol = Math.min(this.desiredCol, max)
+    if (this.cursorCol < 0) this.cursorCol = 0
+  }
+
   /**
    * Adjust the viewport so the cursor stays visible with a scrolloff margin.
    * The margin is *desired*, not forced: `alignTop`→`clampOffset` caps the
@@ -369,6 +552,7 @@ export class Scrollback {
    */
   private followCursor(): void {
     this.clampCursor()
+    this.clampCol()
     if (this.totalVisualLines <= this.viewportRows) {
       this.scrollOffset = 0
       return
@@ -400,22 +584,98 @@ export class Scrollback {
     return this.cursorLine
   }
 
-  /** j / k — move the cursor one line (viewport follows). */
+  /** j / k — move the cursor one line, keeping the desired column (viewport follows). */
   moveCursor(delta: number): void {
     this.cursorActive = true
     this.cursorLine += delta
+    this.clampCursor()
+    this.applyDesiredCol()
     this.followCursor()
   }
   /** gg — cursor to the oldest line. */
   cursorToTop(): void {
     this.cursorActive = true
     this.cursorLine = 0
+    this.applyDesiredCol()
     this.followCursor()
   }
   /** G — cursor to the newest line (re-engages follow-tail). */
   cursorToBottom(): void {
     this.cursorActive = true
     this.cursorLine = this.maxCursor()
+    this.applyDesiredCol()
+    this.followCursor()
+  }
+
+  // --- horizontal + word motions (the nvim block cursor) ------------------
+
+  /** h / l — one cell left/right, remembering the new desired column. */
+  cursorCharLeft(): void {
+    this.cursorActive = true
+    this.cursorCol = Math.max(0, this.cursorCol - 1)
+    this.desiredCol = this.cursorCol
+  }
+  cursorCharRight(): void {
+    this.cursorActive = true
+    this.cursorCol = Math.min(this.lastCol(this.cursorLine), this.cursorCol + 1)
+    this.desiredCol = this.cursorCol
+  }
+  /** 0 — first column. */
+  cursorLineStart(): void {
+    this.cursorActive = true
+    this.cursorCol = 0
+    this.desiredCol = 0
+  }
+  /** $ — last column; parks desiredCol at the end so j/k stick to line ends. */
+  cursorLineEnd(): void {
+    this.cursorActive = true
+    this.cursorCol = this.lastCol(this.cursorLine)
+    this.desiredCol = Number.MAX_SAFE_INTEGER
+  }
+  /** ^ — first non-blank column. */
+  cursorFirstNonBlank(): void {
+    this.cursorActive = true
+    const col = firstNonBlank(stripAnsi(this.flatLines[this.cursorLine] ?? ""))
+    this.cursorCol = col
+    this.desiredCol = col
+  }
+  /**
+   * w/W/b/B/e/E — word motions on the current line; when there's no target on
+   * the line they spill to the adjacent line (vim-ish) so the cursor never gets
+   * stuck at a line boundary.
+   */
+  cursorWord(kind: "fwd" | "back" | "end", big: boolean): void {
+    this.cursorActive = true
+    const text = stripAnsi(this.flatLines[this.cursorLine] ?? "")
+    if (kind === "fwd") {
+      const i = nextWordStart(text, this.cursorCol, big)
+      if (i >= 0) this.cursorCol = i
+      else if (this.cursorLine < this.maxCursor()) {
+        this.cursorLine++
+        const t = stripAnsi(this.flatLines[this.cursorLine] ?? "")
+        this.cursorCol = firstNonBlank(t)
+      } else this.cursorCol = this.lastCol(this.cursorLine)
+    } else if (kind === "back") {
+      const i = prevWordStart(text, this.cursorCol, big)
+      if (i >= 0) this.cursorCol = i
+      else if (this.cursorLine > 0) {
+        this.cursorLine--
+        const t = stripAnsi(this.flatLines[this.cursorLine] ?? "")
+        const j = prevWordStart(t, t.length, big)
+        this.cursorCol = j >= 0 ? j : 0
+      } else this.cursorCol = 0
+    } else {
+      const i = wordEnd(text, this.cursorCol, big)
+      if (i >= 0) this.cursorCol = i
+      else if (this.cursorLine < this.maxCursor()) {
+        this.cursorLine++
+        const t = stripAnsi(this.flatLines[this.cursorLine] ?? "")
+        const j = wordEnd(t, -1, big)
+        this.cursorCol = j >= 0 ? j : 0
+      } else this.cursorCol = this.lastCol(this.cursorLine)
+    }
+    this.clampCol()
+    this.desiredCol = this.cursorCol
     this.followCursor()
   }
   /** Ctrl-U / Ctrl-D — half a screen. */
@@ -451,6 +711,7 @@ export class Scrollback {
       const next = starts.find((s) => s > cur)
       this.cursorLine = next ?? starts[starts.length - 1]!
     }
+    this.applyDesiredCol()
     this.followCursor()
   }
 
@@ -464,6 +725,11 @@ export class Scrollback {
     if (!this.cursorActive) return -1
     const row = this.cursorLine - this.topLine()
     return row >= 0 && row < this.viewportRows ? row : -1
+  }
+
+  /** The cursor's visible column within its line — for the hardware block cursor. */
+  cursorVisibleCol(): number {
+    return this.cursorCol
   }
 
   // --- search (vim `/`) ---------------------------------------------------
@@ -505,6 +771,12 @@ export class Scrollback {
     if (this.matchLines.length === 0) return
     this.cursorActive = true
     this.cursorLine = this.matchLines[this.matchIdx]!
+    // Land on the match column (vim-like), not just the line.
+    const col = stripAnsi(this.flatLines[this.cursorLine] ?? "")
+      .toLowerCase()
+      .indexOf(this.searchQuery.toLowerCase())
+    this.cursorCol = col >= 0 ? col : 0
+    this.desiredCol = this.cursorCol
     this.followCursor()
   }
 
@@ -538,10 +810,12 @@ export class Scrollback {
    * cursor motions (moveCursor / cursorTo* / cursorToMessage) double as the
    * selection-extend verbs, since selRange() reads anchor + cursor.
    */
-  startVisual(): void {
+  startVisual(kind: "char" | "line" = "char"): void {
     this.cursorActive = true
     this.selecting = true
+    this.visualKind = kind
     this.anchorLine = this.cursorLine
+    this.anchorCol = this.cursorCol
   }
   endVisual(): void {
     this.selecting = false
@@ -549,23 +823,52 @@ export class Scrollback {
   isSelecting(): boolean {
     return this.selecting
   }
+  visualMode(): "char" | "line" {
+    return this.visualKind
+  }
 
+  /** Ordered line-wise bounds (for linewise selection + the line count). */
   private selRange(): readonly [number, number] {
     return this.anchorLine <= this.cursorLine
       ? [this.anchorLine, this.cursorLine]
       : [this.cursorLine, this.anchorLine]
   }
+  /** Ordered (line,col) endpoints for charwise selection. */
+  private selOrdered(): {
+    readonly loL: number
+    readonly loC: number
+    readonly hiL: number
+    readonly hiC: number
+  } {
+    const a = { l: this.anchorLine, c: this.anchorCol }
+    const b = { l: this.cursorLine, c: this.cursorCol }
+    const aFirst = a.l < b.l || (a.l === b.l && a.c <= b.c)
+    const lo = aFirst ? a : b
+    const hi = aFirst ? b : a
+    return { loL: lo.l, loC: lo.c, hiL: hi.l, hiC: hi.c }
+  }
   selectionLineCount(): number {
     const [a, b] = this.selRange()
     return b - a + 1
   }
-  /** The selected lines as plain text (ANSI stripped), for yanking. */
+  /** The selection as plain text (ANSI stripped), for yanking. */
   selectionText(): string {
-    const [a, b] = this.selRange()
-    return this.flatLines
-      .slice(a, b + 1)
-      .map(stripAnsi)
-      .join("\n")
+    if (this.visualKind === "line") {
+      const [a, b] = this.selRange()
+      return this.flatLines.slice(a, b + 1).map(stripAnsi).join("\n")
+    }
+    const { loL, loC, hiL, hiC } = this.selOrdered()
+    if (loL === hiL) {
+      return stripAnsi(this.flatLines[loL] ?? "").slice(loC, hiC + 1)
+    }
+    const out: string[] = []
+    for (let i = loL; i <= hiL; i++) {
+      const t = stripAnsi(this.flatLines[i] ?? "")
+      if (i === loL) out.push(t.slice(loC))
+      else if (i === hiL) out.push(t.slice(0, hiC + 1))
+      else out.push(t)
+    }
+    return out.join("\n")
   }
 
   // --- rendering ----------------------------------------------------------
@@ -584,29 +887,154 @@ export class Scrollback {
     return lines
   }
 
-  /** Flatten blocks into visual lines (memoized per block) + message starts. */
-  private flatten(cols: number): {
-    lines: string[]
-    msgStarts: number[]
-  } {
+  /** A Neogit-style turn ("commit") header: foldable, the user prompt as subject. */
+  private turnHeader(
+    text: string,
+    cols: number,
+    folded: boolean,
+    childCount: number,
+  ): string[] {
+    const green = ansi.fgBrightGreen
+    if (folded) {
+      const count =
+        childCount > 0
+          ? `${ansi.dim} · ${childCount} block${childCount === 1 ? "" : "s"}${ansi.reset}`
+          : ""
+      return [
+        truncate(`${ansi.fgGray}▸${ansi.reset} ${green}┃${ansi.reset} ${oneLine(text)}${count}`, cols),
+      ]
+    }
+    const wrapped = wrapAnsi(text, Math.max(1, cols - 4))
+    return wrapped.map((l, k) =>
+      k === 0
+        ? `${ansi.fgGray}▾${ansi.reset} ${green}┃${ansi.reset} ${l}`
+        : `  ${green}┃${ansi.reset} ${l}`,
+    )
+  }
+
+  /**
+   * Flatten blocks into visual lines (memoized per block) as a Neogit-style
+   * section tree: each user-led TURN is a foldable "commit"; runs of ≥2 tool
+   * calls inside it fold into one group line. Also records, at post-fold
+   * positions: `msgStarts` (turn/assistant starts, for `{`/`}`), `itemAtLine`
+   * (line → foldable section, for Tab), `msgIndexToLine` (jump targets) and
+   * `foldableIds` (for fold/unfold-all).
+   */
+  private flatten(cols: number): { lines: string[]; msgStarts: number[] } {
     const lines: string[] = []
     const msgStarts: number[] = []
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]!
-      // A run of consecutive tool calls stays tightly grouped (no blank gap
-      // between pills); blank lines separate everything else, so the reasoning
-      // text reads as the spine and tools sit quietly under it.
-      const prev = i > 0 ? this.blocks[i - 1] : undefined
-      const tightWithPrev = prev?.kind === "tool" && block.kind === "tool"
-      if (i > 0 && !tightWithPrev) lines.push("")
-      if (block.kind === "user" || block.kind === "assistant") {
-        msgStarts.push(lines.length)
+    const itemAtLine: (FoldRef | undefined)[] = []
+    const msgIndexToLine = new Map<number, number>()
+    const foldableIds: string[] = []
+
+    const push = (line: string, ref?: FoldRef): void => {
+      lines.push(line)
+      itemAtLine.push(ref)
+    }
+    const gap = (): void => {
+      if (lines.length > 0 && lines[lines.length - 1] !== "") push("")
+    }
+    const recordMsg = (block: ScrollbackBlock): void => {
+      if (block.kind === "info" || block.kind === "error" || block.kind === "checkpoint") {
+        return
       }
-      lines.push(...this.blockLines(block, cols))
+      if (block.msgIndex !== undefined && !msgIndexToLine.has(block.msgIndex)) {
+        msgIndexToLine.set(block.msgIndex, lines.length)
+      }
     }
-    if (lines.length > 0) {
-      lines.push("")
+
+    // Emit a turn body (or loose run): tool runs of ≥2 fold into a group; other
+    // blocks render plain, each separated by a blank line.
+    const emitBody = (body: ScrollbackBlock[]): void => {
+      let k = 0
+      while (k < body.length) {
+        const b = body[k]!
+        if (b.kind === "tool") {
+          let m = k + 1
+          while (m < body.length && body[m]!.kind === "tool") m++
+          const run = body.slice(k, m)
+          if (run.length >= 2) {
+            const gid = `grp:${this.idOf(run[0]!)}`
+            foldableIds.push(gid)
+            const ref: FoldRef = { id: gid, foldable: true }
+            gap()
+            if (this.collapsed.has(gid)) {
+              push(`${ansi.fgGray}▸${ansi.reset} ${ansi.dim}⊞ ${run.length} tool calls${ansi.reset}`, ref)
+            } else {
+              push(`${ansi.fgGray}▾${ansi.reset} ${ansi.dim}${run.length} tool calls${ansi.reset}`, ref)
+              for (const t of run) {
+                recordMsg(t)
+                const tref: FoldRef = { id: this.idOf(t), foldable: false }
+                for (const l of this.blockLines(t, cols)) push(l, tref)
+              }
+            }
+            k = m
+            continue
+          }
+          gap()
+          recordMsg(b)
+          const tref: FoldRef = { id: this.idOf(b), foldable: false }
+          for (const l of this.blockLines(b, cols)) push(l, tref)
+          k++
+          continue
+        }
+        gap()
+        if (b.kind === "assistant") msgStarts.push(lines.length)
+        recordMsg(b)
+        const ref: FoldRef = { id: this.idOf(b), foldable: false }
+        for (const l of this.blockLines(b, cols)) push(l, ref)
+        k++
+      }
     }
+
+    let i = 0
+    while (i < this.blocks.length) {
+      const block = this.blocks[i]!
+      if (block.kind === "user") {
+        let j = i + 1
+        while (
+          j < this.blocks.length &&
+          this.blocks[j]!.kind !== "user" &&
+          this.blocks[j]!.kind !== "checkpoint"
+        ) {
+          j++
+        }
+        const body = this.blocks.slice(i + 1, j)
+        const tid = `turn:${this.blockSeq.get(block) ?? i}`
+        foldableIds.push(tid)
+        const folded = this.collapsed.has(tid)
+        const ref: FoldRef = { id: tid, foldable: true }
+        gap()
+        msgStarts.push(lines.length)
+        recordMsg(block)
+        for (const l of this.turnHeader(block.text, cols, folded, body.length)) {
+          push(l, ref)
+        }
+        if (!folded) emitBody(body)
+        i = j
+      } else if (block.kind === "checkpoint") {
+        const ref: FoldRef = { id: this.idOf(block), foldable: false }
+        for (const l of this.blockLines(block, cols)) push(l, ref)
+        i++
+      } else {
+        // Loose run outside any turn (leading content, or right after a fold).
+        let j = i
+        while (
+          j < this.blocks.length &&
+          this.blocks[j]!.kind !== "user" &&
+          this.blocks[j]!.kind !== "checkpoint"
+        ) {
+          j++
+        }
+        emitBody(this.blocks.slice(i, j))
+        i = j
+      }
+    }
+    if (lines.length > 0) push("")
+
+    this.itemAtLine = itemAtLine
+    this.msgIndexToLine = msgIndexToLine
+    this.foldableIds = foldableIds
     return { lines, msgStarts }
   }
 
@@ -664,13 +1092,40 @@ export class Scrollback {
     this.followCursor()
 
     const showCursor = focused && this.cursorActive
-    const [selLo, selHi] = this.selecting ? this.selRange() : [-1, -1]
+    const lineSel = this.selecting && this.visualKind === "line"
+    const [selLo, selHi] = lineSel ? this.selRange() : [-1, -1]
+    const ord =
+      this.selecting && this.visualKind === "char" ? this.selOrdered() : undefined
     const decorate = (l: string, absIdx: number): string => {
       let s = this.searchQuery.length > 0 ? this.highlight(l) : l
-      const inSel = this.selecting && absIdx >= selLo && absIdx <= selHi
-      if (inSel) {
+      let inSel = false
+      if (lineSel && absIdx >= selLo && absIdx <= selHi) {
         // Line-wise selection: invert the whole row (drops other styling).
         s = `${ansi.inverse}${stripAnsi(s)}${ansi.reset}`
+        inSel = true
+      } else if (ord !== undefined && absIdx >= ord.loL && absIdx <= ord.hiL) {
+        // Char-wise selection: invert only the spanned cells on this row.
+        const plain = stripAnsi(l)
+        const last = Math.max(0, plain.length - 1)
+        let c0 = 0
+        let c1 = last
+        if (ord.loL === ord.hiL) {
+          c0 = ord.loC
+          c1 = ord.hiC
+        } else if (absIdx === ord.loL) {
+          c0 = ord.loC
+        } else if (absIdx === ord.hiL) {
+          c1 = ord.hiC
+        }
+        c0 = Math.max(0, Math.min(c0, plain.length))
+        c1 = Math.max(c0 - 1, Math.min(c1, last))
+        s =
+          plain.slice(0, c0) +
+          ansi.inverse +
+          plain.slice(c0, c1 + 1) +
+          ansi.reset +
+          plain.slice(c1 + 1)
+        inSel = true
       }
       s = padRight(truncate(s, cols), cols)
       if (showCursor && absIdx === this.cursorLine && !inSel) {
