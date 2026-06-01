@@ -17,7 +17,8 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
   { name: ":model", description: "List models, or :model <#|id> to switch" },
   { name: ":handoff", description: "Summarize & hand off — replace loaded history, keep originals" },
-  { name: ":context", description: "Toggle the context viewer (message tree + handoff)" },
+  { name: ":context", description: "Toggle the context viewer (turn tree — Space select, b build)" },
+  { name: ":build", description: "Build a new session from the turns selected in :context" },
   { name: ":browse", description: "List conversations in this workspace" },
   { name: ":resume", description: "Resume a conversation, e.g. :resume 2" },
 ]

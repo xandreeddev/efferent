@@ -1,26 +1,20 @@
-import { ansi, padRight, truncate, visibleLength } from "./terminal.js"
+import { ansi, visibleLength } from "./terminal.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
 import type { EntryMode } from "./navKeys.js"
 
 /**
- * The always-on, per-pane keybind legend that sits fixed above the input — the
- * "fixed instructions". Row 1 is the mode badge + focused pane; rows 2–3 are
- * the keys that pane actually accepts, so it doubles as live help.
+ * The always-on, per-pane keybinds. Rendered as a bordered box (by render.ts)
+ * whose border + title take the focused pane's accent colour; the title carries
+ * the focused pane + mode (e.g. `conversation · NORMAL`), and the body rows are
+ * the keys that pane actually accepts — so it doubles as live help.
  */
-export const LEGEND_ROWS = 3
+/** Key content rows inside the keybind box. */
+export const KEYBIND_KEY_ROWS = 2
+/** Total keybind box height: top border + key rows + bottom border. */
+export const KEYBIND_BOX_ROWS = KEYBIND_KEY_ROWS + 2
 
 const modeLabel = (mode: UiMode): string =>
   mode === "insert" ? "INSERT" : mode === "visual" ? "VISUAL" : "NORMAL"
-
-const modeBadge = (mode: UiMode): string => {
-  const bg =
-    mode === "insert"
-      ? ansi.bgBrightGreen
-      : mode === "visual"
-        ? ansi.bgBrightYellow
-        : ansi.bgBrightCyan
-  return `${ansi.bold}${bg}${ansi.fgBlack} ${modeLabel(mode)} ${ansi.reset}`
-}
 
 /** The keys to advertise for the current pane/mode/entry, in priority order. */
 const keysFor = (
@@ -54,8 +48,8 @@ const keysFor = (
   }
   // side pane
   return view === "context"
-    ? ["j/k move", "⇥/h/l fold", "↵ jump to message", "z zoom", "^h/j/k/l panes", "i insert"]
-    : ["j/k scroll", "z zoom", ": command", "^h/j/k/l panes", "i insert"]
+    ? ["j/k move", "Space select", "b build session", "⇥/h/l fold", "↵ jump", "z zoom", "^h/j/k/l panes", "i insert"]
+    : ["z zoom", ": command", "^h/j/k/l panes", "i insert"]
 }
 
 /** Greedy-pack labels into at most `rows` lines, each ≤ `width`, joined by ` · `. */
@@ -93,13 +87,19 @@ const styleKeyLine = (line: string): string => {
     .join(`${ansi.dim} · ${ansi.reset}`)
 }
 
-export const renderLegend = (
+/**
+ * The keybind box's content: a `title` (focused pane · MODE, e.g.
+ * `conversation · NORMAL`) for the box border, plus `rows` of styled key hints
+ * packed to `innerWidth`. render.ts frames these in a box coloured by the
+ * focused pane's accent.
+ */
+export const legendContent = (
   focus: FocusPane,
   mode: UiMode,
   view: "stack" | "context",
   entry: EntryMode,
-  cols: number,
-): string[] => {
+  innerWidth: number,
+): { title: string; rows: string[] } => {
   const paneName =
     focus === "conversation"
       ? "conversation"
@@ -108,12 +108,9 @@ export const renderLegend = (
           ? "context"
           : "side"
         : "input"
-  const row1 = `${modeBadge(mode)} ${ansi.dim}·${ansi.reset} ${ansi.bold}${ansi.fgBrightCyan}${paneName}${ansi.reset}`
-
-  const keyRows = packRows(keysFor(focus, mode, view, entry), cols - 2, LEGEND_ROWS - 1)
-  const styled = keyRows.map((l) => " " + styleKeyLine(l))
-
-  const out = [" " + row1, ...styled]
-  while (out.length < LEGEND_ROWS) out.push("")
-  return out.slice(0, LEGEND_ROWS).map((l) => padRight(truncate(l, cols), cols))
+  const title = `${paneName} · ${modeLabel(mode)}`
+  const keyRows = packRows(keysFor(focus, mode, view, entry), innerWidth, KEYBIND_KEY_ROWS)
+  const rows = keyRows.map((l) => styleKeyLine(l))
+  while (rows.length < KEYBIND_KEY_ROWS) rows.push("")
+  return { title, rows: rows.slice(0, KEYBIND_KEY_ROWS) }
 }

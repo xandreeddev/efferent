@@ -110,6 +110,10 @@ export type NavIntent =
   | { readonly kind: "sideToggleNode" }
   /** Context-tree: Enter — jump to the message (or fold a segment header). */
   | { readonly kind: "sideSelect" }
+  /** Context-tree: Space — toggle selection of the turn under the cursor. */
+  | { readonly kind: "sideToggleSelect" }
+  /** Context-tree: b — build a new session from the selected turns. */
+  | { readonly kind: "buildSession" }
 
 const ctrlDir = (
   char: string,
@@ -211,6 +215,10 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
           case "h":
           case "l":
             return { kind: "sideToggleNode" }
+          case " ":
+            return { kind: "sideToggleSelect" }
+          case "b":
+            return { kind: "buildSession" }
           case "i":
             return { kind: "focus", to: "input", mode: "insert" }
           case "z":

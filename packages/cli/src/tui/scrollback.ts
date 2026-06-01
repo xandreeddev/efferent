@@ -100,10 +100,11 @@ interface FoldRef {
   readonly foldable: boolean
 }
 
-const STATE_DOT: Record<ToolPillState, string> = {
-  running: `${ansi.fgYellow}⏺${ansi.reset}`,
-  ok: `${ansi.fgGreen}⏺${ansi.reset}`,
-  error: `${ansi.fgRed}⏺${ansi.reset}`,
+// No leading bullet — the tool *name* takes this colour to carry run state.
+const STATE_COLOR: Record<ToolPillState, string> = {
+  running: ansi.fgYellow,
+  ok: ansi.fgGreen,
+  error: ansi.fgRed,
 }
 
 type DiffRow =
@@ -187,10 +188,10 @@ const renderBlock = (
 ): string[] => {
   switch (block.kind) {
     case "user": {
-      // A left accent bar down the whole block marks the user's turn.
-      const bar = `${ansi.fgBrightGreen}┃${ansi.reset} `
+      // Dead in the stack view — flatten() routes user blocks through
+      // turnHeader (the full-width bg bar). Kept consistent: no ┃ bar.
       const inner = wrapAnsi(block.text, cols - 2)
-      return inner.map((l) => bar + l)
+      return inner.map((l) => `  ${ansi.fgBrightGreen}${l}${ansi.reset}`)
     }
     case "reasoning": {
       // The model's externalised thinking — quiet (dim italic), capped when
@@ -209,25 +210,23 @@ const renderBlock = (
       return out
     }
     case "assistant": {
-      // Prefix the first line with a marker so prose anchors to the
-      // conversation spine; continuation lines indent to stay aligned.
+      // No bullet — prose sits under the user's turn bar at a 2-space indent.
       const body = renderMarkdown(block.text, cols - 2)
-      return body.map((l, i) =>
-        i === 0 ? `${ansi.fgBrightCyan}●${ansi.reset} ${l}` : `  ${l}`,
-      )
+      return body.map((l) => `  ${l}`)
     }
     case "tool": {
-      // One compact pill line — the result count folds in dim onto the label,
-      // so navigational tools (ls/glob/read/grep) stay a single quiet line.
+      // One compact pill line, indented 2 under its turn — no leading dot; the
+      // tool *name*'s colour carries run/ok/error. The result count folds in dim.
       const summary =
         block.detail !== undefined && block.detail.length > 0
           ? block.detail.split("\n")[0]!
           : undefined
-      const detailW = Math.max(4, cols - block.toolName.length - 5)
+      const detailW = Math.max(4, cols - block.toolName.length - 6)
+      const name = `${STATE_COLOR[block.state]}${block.toolName}${ansi.reset}`
       const head =
         summary !== undefined
-          ? `${STATE_DOT[block.state]} ${block.toolName}  ${ansi.dim}${truncate(summary, detailW)}${ansi.reset}`
-          : `${STATE_DOT[block.state]} ${block.toolName}`
+          ? `  ${name}  ${ansi.dim}${truncate(summary, detailW)}${ansi.reset}`
+          : `  ${name}`
       const out: string[] = [head]
 
       // edit/write: gutter diff under the pill (collapsed cap; Ctrl-R reveals all).
@@ -887,29 +886,40 @@ export class Scrollback {
     return lines
   }
 
-  /** A Neogit-style turn ("commit") header: foldable, the user prompt as subject. */
+  /**
+   * Tint a built line with the user-turn background across the FULL width: pad
+   * to `cols`, then re-inject the bg after every inner `ansi.reset` so the
+   * line's own colours survive under the tint (same trick as the cursor line).
+   */
+  private tintUserLine(content: string, cols: number): string {
+    const bg = ansi.bgUserTurn
+    const padded = padRight(truncate(content, cols), cols)
+    return bg + padded.split(ansi.reset).join(ansi.reset + bg) + ansi.reset
+  }
+
+  /**
+   * A Neogit-style turn ("commit") header — the user prompt rendered as a
+   * full-width background bar with NO leading glyph. Foldable via its `ref` in
+   * flatten(); a folded bar shows a trailing `· N blocks` instead of a chevron.
+   */
   private turnHeader(
     text: string,
     cols: number,
     folded: boolean,
     childCount: number,
   ): string[] {
-    const green = ansi.fgBrightGreen
+    const style = `${ansi.fgBrightGreen}${ansi.bold}`
     if (folded) {
-      const count =
+      const countPlain =
         childCount > 0
-          ? `${ansi.dim} · ${childCount} block${childCount === 1 ? "" : "s"}${ansi.reset}`
+          ? ` · ${childCount} block${childCount === 1 ? "" : "s"}`
           : ""
-      return [
-        truncate(`${ansi.fgGray}▸${ansi.reset} ${green}┃${ansi.reset} ${oneLine(text)}${count}`, cols),
-      ]
+      const subj = truncate(oneLine(text), Math.max(1, cols - visibleLength(countPlain)))
+      const content = `${style}${subj}${ansi.reset}${ansi.dim}${countPlain}${ansi.reset}`
+      return [this.tintUserLine(content, cols)]
     }
-    const wrapped = wrapAnsi(text, Math.max(1, cols - 4))
-    return wrapped.map((l, k) =>
-      k === 0
-        ? `${ansi.fgGray}▾${ansi.reset} ${green}┃${ansi.reset} ${l}`
-        : `  ${green}┃${ansi.reset} ${l}`,
-    )
+    const wrapped = wrapAnsi(text, cols)
+    return wrapped.map((l) => this.tintUserLine(`${style}${l}${ansi.reset}`, cols))
   }
 
   /**
@@ -959,7 +969,7 @@ export class Scrollback {
             const ref: FoldRef = { id: gid, foldable: true }
             gap()
             if (this.collapsed.has(gid)) {
-              push(`${ansi.fgGray}▸${ansi.reset} ${ansi.dim}⊞ ${run.length} tool calls${ansi.reset}`, ref)
+              push(`${ansi.fgGray}▸${ansi.reset} ${ansi.dim}${run.length} tool calls${ansi.reset}`, ref)
             } else {
               push(`${ansi.fgGray}▾${ansi.reset} ${ansi.dim}${run.length} tool calls${ansi.reset}`, ref)
               for (const t of run) {

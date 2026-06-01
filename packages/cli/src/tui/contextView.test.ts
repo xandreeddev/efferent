@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@agent/core"
-import { buildContextRows, buildContextView, type ContextSegment } from "./contextView.js"
+import {
+  buildContextRows,
+  buildContextView,
+  messagesForSelectedTurns,
+  turnIdsOf,
+  type ContextSegment,
+} from "./contextView.js"
 
 const user = (text: string): AgentMessage => ({ role: "user", content: text })
 const assistant = (text: string): AgentMessage => ({
@@ -98,5 +104,83 @@ describe("buildContextRows", () => {
     const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
     const rows = buildContextRows(buildContextView(msgs, [cp(1, "S")]), new Set())
     expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2, 3, 4])
+  })
+})
+
+const toolCall = (id: string, name: string): AgentMessage => ({
+  role: "assistant",
+  content: [{ type: "tool-call", toolCallId: id, toolName: name, input: {} }],
+})
+const toolResult = (id: string, name: string): AgentMessage => ({
+  role: "tool",
+  content: [{ type: "tool-result", toolCallId: id, toolName: name, output: {}, isError: false }],
+})
+
+describe("turn grouping", () => {
+  test("each user message starts a turn; turnIdsOf counts them across segments", () => {
+    // 2 turns: [u,a] and [u,a]
+    const msgs = [user("hi"), assistant("yo"), user("again"), assistant("sure")]
+    expect(turnIdsOf(buildContextView(msgs, []))).toEqual(["turn:0", "turn:1"])
+  })
+
+  test("buildContextRows emits one turn row per turn with a running turnIndex", () => {
+    const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
+    const rows = buildContextRows(buildContextView(msgs, []), new Set())
+    const turns = rows.filter((r) => r.kind === "turn")
+    expect(turns.map((t) => t.turnIndex)).toEqual([0, 1])
+    // turn rows carry the first message index of the turn (jump target)
+    expect(turns.map((t) => t.messageIndex)).toEqual([0, 2])
+    expect(turns.every((t) => t.collapsible)).toBe(true)
+  })
+
+  test("a folded turn hides its child message rows; the turn row stays", () => {
+    const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
+    const rows = buildContextRows(buildContextView(msgs, []), new Set(["turn:0"]))
+    expect(rows.filter((r) => r.kind === "turn")).toHaveLength(2)
+    // turn:0 folded → its messages absent; turn:1 expanded → its messages present
+    const msgIdxs = rows.filter((r) => r.kind === "message").map((r) => r.messageIndex)
+    expect(msgIdxs).toEqual([2, 3])
+  })
+
+  test("selected turns render the ◉ marker and the header shows a count", () => {
+    const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
+    const rows = buildContextRows(buildContextView(msgs, []), new Set(), new Set([1]))
+    const turns = rows.filter((r) => r.kind === "turn")
+    expect(turns[0]!.label).toContain("○")
+    expect(turns[1]!.label).toContain("◉")
+    expect(rows[0]!.label).toContain("1 selected")
+  })
+})
+
+describe("messagesForSelectedTurns", () => {
+  test("collects the selected turns' messages in order", () => {
+    const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
+    const segs = buildContextView(msgs, [])
+    const picked = messagesForSelectedTurns(segs, new Set([1]))
+    expect(picked).toHaveLength(2)
+    expect(picked[0]).toEqual(user("b"))
+  })
+
+  test("keeps a tool-call and its tool-result together (turn integrity)", () => {
+    // one turn: user → assistant(tool-call) → tool(result)
+    const msgs = [user("read it"), toolCall("t1", "read_file"), toolResult("t1", "read_file")]
+    const segs = buildContextView(msgs, [])
+    const picked = messagesForSelectedTurns(segs, new Set([0]))
+    expect(picked.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
+  })
+
+  test("nothing selected → empty", () => {
+    const msgs = [user("a"), assistant("A")]
+    expect(messagesForSelectedTurns(buildContextView(msgs, []), new Set())).toEqual([])
+  })
+
+  test("turn indices line up with buildContextRows across archived + loaded", () => {
+    // 0..4 ; cp folds 0..1 (archived turn 0), loaded has turns 1 ([c,d]) and 2 ([e])
+    const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
+    const segs = buildContextView(msgs, [cp(1, "S")])
+    const rows = buildContextRows(segs, new Set())
+    expect(rows.filter((r) => r.kind === "turn").map((t) => t.turnIndex)).toEqual([0, 1, 2])
+    // selecting turn 2 yields just [e]
+    expect(messagesForSelectedTurns(segs, new Set([2]))).toEqual([user("e")])
   })
 })

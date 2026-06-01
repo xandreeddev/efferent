@@ -22,8 +22,10 @@ export interface SidePaneState {
   readonly context?: ReadonlyArray<ContextSegment>
   /** Context-tree cursor: index into the navigable rows. */
   readonly contextCursor: number
-  /** Folded context-tree segment ids. */
+  /** Folded context-tree segment/turn ids. */
   readonly contextCollapsed: ReadonlySet<string>
+  /** Selected turn indices — the units picked to build a new session. */
+  readonly contextSelected: ReadonlySet<number>
 }
 
 export const emptySidePane: SidePaneState = {
@@ -33,6 +35,7 @@ export const emptySidePane: SidePaneState = {
   view: "stack",
   contextCursor: 0,
   contextCollapsed: new Set(),
+  contextSelected: new Set(),
 }
 
 // --- context-tree navigation (pure; the driver re-derives rows each call) ---
@@ -41,7 +44,7 @@ const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(n, hi))
 
 export const contextRows = (state: SidePaneState): ReadonlyArray<ContextRow> =>
-  buildContextRows(state.context ?? [], state.contextCollapsed)
+  buildContextRows(state.context ?? [], state.contextCollapsed, state.contextSelected)
 
 /** Window start that keeps the cursor visible (centred-ish), like followCursor. */
 export const sideStart = (total: number, cursor: number, height: number): number =>
@@ -83,6 +86,16 @@ export const sideToggleNode = (state: SidePaneState): SidePaneState => {
 /** The row under the cursor (for the driver's Enter = jump-or-fold decision). */
 export const sideCurrentRow = (state: SidePaneState): ContextRow | undefined =>
   contextRows(state)[clamp(state.contextCursor, 0, Math.max(0, contextRows(state).length - 1))]
+
+/** Toggle selection of the turn under the cursor (no-op on non-turn rows). */
+export const sideToggleSelect = (state: SidePaneState): SidePaneState => {
+  const row = sideCurrentRow(state)
+  if (row === undefined || row.kind !== "turn" || row.turnIndex === undefined) return state
+  const next = new Set(state.contextSelected)
+  if (next.has(row.turnIndex)) next.delete(row.turnIndex)
+  else next.add(row.turnIndex)
+  return { ...state, contextSelected: next }
+}
 
 const homeDir = (() => {
   try {
