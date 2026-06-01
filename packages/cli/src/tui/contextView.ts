@@ -1,4 +1,4 @@
-import type { AgentMessage, Checkpoint } from "@agent/core"
+import { type AgentMessage, type Checkpoint, handoffToMessage } from "@agent/core"
 import { ansi, padRight, truncate } from "./terminal.js"
 
 /**
@@ -16,6 +16,8 @@ export type ContextSegment =
       readonly kind: "archived"
       /** 1-based index of the handoff that folded this segment. */
       readonly handoffIndex: number
+      /** This handoff's summary — what selecting the handoff loads in place of its messages. */
+      readonly summary: string
       readonly messages: ReadonlyArray<AgentMessage>
     }
   | {
@@ -41,6 +43,8 @@ export interface ContextRow {
   readonly messageIndex?: number
   /** For `turn` rows: the global turn index — the unit of select-and-build. */
   readonly turnIndex?: number
+  /** For archived `segment` rows: the handoff index — a select-and-build unit (its summary). */
+  readonly handoffIndex?: number
 }
 
 /**
@@ -61,7 +65,12 @@ export const buildContextView = (
   sorted.forEach((cp, i) => {
     // messages with index in (prev, cp.messagePosition] — index === position
     const slice = messages.slice(prev + 1, cp.messagePosition + 1)
-    segments.push({ kind: "archived", handoffIndex: i + 1, messages: slice })
+    segments.push({
+      kind: "archived",
+      handoffIndex: i + 1,
+      summary: cp.summary,
+      messages: slice,
+    })
     prev = cp.messagePosition
   })
   const latest = sorted.length > 0 ? sorted[sorted.length - 1] : undefined
@@ -156,17 +165,55 @@ export const turnIdsOf = (segments: ReadonlyArray<ContextSegment>): ReadonlyArra
 }
 
 /**
- * Collect the messages of the selected turns, in conversation order — the seed
- * for "build a new session". Walks segments/turns the same way `buildContextRows`
- * assigns `turnIndex`, so the set of indices lines up exactly.
+ * The contiguous `turnIndex` range each archived handoff owns — assigned the
+ * same way `buildContextRows` walks segments/turns. Used to keep a handoff and
+ * its own inner turns mutually exclusive when selecting (select the handoff →
+ * its turns drop; select an inner turn → the handoff drops).
+ */
+export const archivedTurnRanges = (
+  segments: ReadonlyArray<ContextSegment>,
+): ReadonlyMap<number, { start: number; count: number }> => {
+  const ranges = new Map<number, { start: number; count: number }>()
+  let turnIdx = 0
+  for (const seg of segments) {
+    const count = groupTurns(seg.messages).length
+    if (seg.kind === "archived") ranges.set(seg.handoffIndex, { start: turnIdx, count })
+    turnIdx += count
+  }
+  return ranges
+}
+
+/** The archived handoff index owning `turnIndex`, or undefined (loaded turns own none). */
+export const handoffOwningTurn = (
+  segments: ReadonlyArray<ContextSegment>,
+  turnIndex: number,
+): number | undefined => {
+  for (const [handoffIndex, { start, count }] of archivedTurnRanges(segments)) {
+    if (turnIndex >= start && turnIndex < start + count) return handoffIndex
+  }
+  return undefined
+}
+
+/**
+ * Collect the messages for the build seed, in conversation order — the picked
+ * turns plus, for each selected handoff, a single `handoffToMessage(summary)`
+ * standing in for that whole archived segment. Walks segments/turns the same way
+ * `buildContextRows` assigns `turnIndex`, so the indices line up exactly; the
+ * summary message lands as the prefix of its segment (matching `runAgent`'s
+ * `[handoff prefix, …messages]` shape). A handoff and its own turns are kept
+ * mutually exclusive at selection time, so they never both contribute.
  */
 export const messagesForSelectedTurns = (
   segments: ReadonlyArray<ContextSegment>,
   selected: ReadonlySet<number>,
+  selectedHandoffs: ReadonlySet<number> = new Set(),
 ): ReadonlyArray<AgentMessage> => {
   const out: AgentMessage[] = []
   let turnIdx = 0
   for (const seg of segments) {
+    if (seg.kind === "archived" && selectedHandoffs.has(seg.handoffIndex)) {
+      out.push(handoffToMessage(seg.summary))
+    }
     for (const turn of groupTurns(seg.messages)) {
       if (selected.has(turnIdx)) out.push(...turn)
       turnIdx++
@@ -185,6 +232,7 @@ export const buildContextRows = (
   segments: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
   selected: ReadonlySet<number> = new Set(),
+  selectedHandoffs: ReadonlySet<number> = new Set(),
 ): ReadonlyArray<ContextRow> => {
   const rows: ContextRow[] = []
   const loaded = loadedMsgCount(segments)
@@ -192,6 +240,8 @@ export const buildContextRows = (
   const hasFold = archived > 0
   const hasSummary = segments.some((s) => s.kind === "loaded" && s.summary)
   const fold = (f: boolean): string => `${ansi.fgGray}${f ? "▸" : "▾"}${ansi.reset}`
+  const selectMark = (on: boolean): string =>
+    on ? `${ansi.fgBrightGreen}◉${ansi.reset}` : `${ansi.dim}○${ansi.reset}`
 
   rows.push({
     kind: "header",
@@ -202,8 +252,8 @@ export const buildContextRows = (
       (hasFold
         ? `${ansi.dim}loaded ${ansi.reset}${ansi.fgGreen}${loaded}${ansi.reset}${ansi.dim}${hasSummary ? " + ✦" : ""} · archived ${archived}${ansi.reset}`
         : `${ansi.fgGreen}${loaded} msg${loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`) +
-      (selected.size > 0
-        ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${selected.size} selected${ansi.reset}`
+      (selected.size + selectedHandoffs.size > 0
+        ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${selected.size + selectedHandoffs.size} selected${ansi.reset}`
         : ""),
   })
 
@@ -220,8 +270,11 @@ export const buildContextRows = (
       depth: 0,
       collapsible: true,
       groupId: gid,
+      // Archived handoffs are a select-and-build unit: selecting one seeds the
+      // build with its summary alone (the inner turns drop, mutually exclusive).
+      ...(isArchived ? { handoffIndex: seg.handoffIndex } : {}),
       label: isArchived
-        ? `${fold(segFolded)} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${seg.handoffIndex} · ${seg.messages.length} msg${seg.messages.length === 1 ? "" : "s"} folded${ansi.reset}`
+        ? `${fold(segFolded)} ${selectMark(selectedHandoffs.has(seg.handoffIndex))} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${seg.handoffIndex} · summary + ${seg.messages.length} msg${seg.messages.length === 1 ? "" : "s"} folded${ansi.reset}`
         : `${fold(segFolded)} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`,
     })
 
@@ -231,7 +284,9 @@ export const buildContextRows = (
       continue
     }
 
-    if (!isArchived && seg.summary !== undefined) {
+    // The handoff summary — shown under both an archived segment (what selecting
+    // the handoff grabs) and the loaded segment (the live cumulative summary).
+    if (seg.summary) {
       rows.push({
         kind: "summary",
         depth: 1,
@@ -243,9 +298,7 @@ export const buildContextRows = (
     for (const turn of turns) {
       const tgid = `turn:${turnIdx}`
       const tFolded = collapsed.has(tgid)
-      const marker = selected.has(turnIdx)
-        ? `${ansi.fgBrightGreen}◉${ansi.reset}`
-        : `${ansi.dim}○${ansi.reset}`
+      const marker = selectMark(selected.has(turnIdx))
       const subjStyle = isArchived ? ansi.dim : ""
       rows.push({
         kind: "turn",

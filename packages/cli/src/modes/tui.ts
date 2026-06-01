@@ -381,6 +381,7 @@ const seedSidePane = (
   contextCursor: 0,
   contextCollapsed: new Set(),
   contextSelected: new Set(),
+  contextHandoffSelected: new Set(),
 })
 
 const runTuiModeCore = (
@@ -871,6 +872,7 @@ const runTuiModeCore = (
             // subjects; cursor at the top; nothing selected yet.
             contextCollapsed: new Set(turnIdsOf(segments)),
             contextSelected: new Set(),
+            contextHandoffSelected: new Set(),
             contextCursor: 0,
           }
           return s
@@ -891,13 +893,18 @@ const runTuiModeCore = (
         return
       }
       const segs = cur.sidePane.context ?? []
-      const picked = messagesForSelectedTurns(segs, cur.sidePane.contextSelected)
+      const picked = messagesForSelectedTurns(
+        segs,
+        cur.sidePane.contextSelected,
+        cur.sidePane.contextHandoffSelected,
+      )
       const turnCount = cur.sidePane.contextSelected.size
+      const handoffCount = cur.sidePane.contextHandoffSelected.size
       if (picked.length === 0) {
         yield* Ref.update(stateRef, (s) => {
           s.scrollback.push({
             kind: "info",
-            text: "no turns selected — in :context, Space to select turns, then b to build",
+            text: "nothing selected — in :context, Space to pick turns or a handoff, then b to build",
           })
           return s
         })
@@ -928,6 +935,7 @@ const runTuiModeCore = (
           context: buildContextView(picked, []),
           contextCollapsed: new Set(),
           contextSelected: new Set(),
+          contextHandoffSelected: new Set(),
           contextCursor: 0,
         }
         replayHistory(s.scrollback, picked, [])
@@ -935,9 +943,15 @@ const runTuiModeCore = (
         s.conversationHasTurns = picked.length > 0
         s.focus = "input"
         s.mode = "insert"
+        const units = [
+          turnCount > 0 ? `${turnCount} turn${turnCount === 1 ? "" : "s"}` : "",
+          handoffCount > 0 ? `${handoffCount} handoff${handoffCount === 1 ? "" : "s"}` : "",
+        ]
+          .filter((x) => x !== "")
+          .join(" + ")
         s.scrollback.push({
           kind: "info",
-          text: `built new session ${newId.slice(0, 8)} · ${turnCount} turn${turnCount === 1 ? "" : "s"} · ${picked.length} msgs`,
+          text: `built new session ${newId.slice(0, 8)} · ${units} · ${picked.length} msgs`,
         })
         return s
       })
@@ -1140,6 +1154,7 @@ const runTuiModeCore = (
                 context: resumedSegments,
                 contextCollapsed: new Set(turnIdsOf(resumedSegments)),
                 contextSelected: new Set(),
+                contextHandoffSelected: new Set(),
                 contextCursor: 0,
               }
               replayHistory(s.scrollback, history, checkpoints)

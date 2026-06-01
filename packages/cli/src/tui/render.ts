@@ -339,9 +339,11 @@ export class FrameRenderer {
       }
     }
 
-    // The real cursor follows focus and mode:
-    //  - input focused → a BAR in the input region (bottom) — covers the `:`/`/`
-    //    command line too, since those are typed in the input;
+    // The real cursor follows focus and mode, nvim-style: a BAR in INSERT, a
+    // BLOCK in NORMAL/VISUAL — on every pane.
+    //  - input focused → in the input region (bottom); covers the `:`/`/`
+    //    command line too, since those are typed in the input. INSERT → bar,
+    //    NORMAL → block (the input has no VISUAL yet);
     //  - conversation focused in NORMAL or VISUAL → a BLOCK on the cursor's
     //    actual (row, col) cell in the middle region — the nvim cursor;
     //  - otherwise hidden.
@@ -357,7 +359,7 @@ export class FrameRenderer {
       const cursorRow = Math.min(inputResult.cursorRow, inputRows - 1)
       out +=
         moveTo(inputFirstRow + cursorRow, inputResult.cursorCol + 3) +
-        cursorBar +
+        (state.mode === "insert" ? cursorBar : cursorBlock) +
         showCursor
     } else if (
       !state.modal.visible &&

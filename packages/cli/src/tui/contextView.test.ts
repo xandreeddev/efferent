@@ -45,10 +45,17 @@ describe("buildContextView", () => {
     const arch = archived(segs)
     expect(arch).toHaveLength(1)
     expect(arch[0]!.handoffIndex).toBe(1)
+    expect(arch[0]!.summary).toBe("SUMMARY") // archived segment carries its checkpoint summary
     expect(arch[0]!.messages.map((m) => m.role)).toEqual(["user", "assistant"])
     const ld = loaded(segs)
     expect(ld.summary).toBe("SUMMARY")
     expect(ld.messages).toHaveLength(2) // c, d
+  })
+
+  test("each archived segment carries its own checkpoint summary", () => {
+    const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
+    const segs = buildContextView(msgs, [cp(1, "S1"), cp(3, "S2")])
+    expect(archived(segs).map((s) => s.summary)).toEqual(["S1", "S2"])
   })
 
   test("folding everything → loaded is summary-only", () => {
@@ -104,6 +111,24 @@ describe("buildContextRows", () => {
     const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
     const rows = buildContextRows(buildContextView(msgs, [cp(1, "S")]), new Set())
     expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2, 3, 4])
+  })
+
+  test("an archived segment row carries its handoffIndex and shows a ✦ summary preview", () => {
+    const msgs = [user("a"), assistant("b"), user("c")]
+    const rows = buildContextRows(buildContextView(msgs, [cp(1, "THE SUMMARY")]), new Set())
+    const seg = rows.find((r) => r.kind === "segment" && r.handoffIndex === 1)
+    expect(seg).toBeDefined()
+    // the summary text appears as a preview row under the (expanded) archived segment
+    expect(rows.some((r) => r.kind === "summary" && r.label.includes("THE SUMMARY"))).toBe(true)
+  })
+
+  test("a selected handoff renders ◉ on its segment row and counts in the header", () => {
+    const msgs = [user("a"), assistant("b"), user("c")]
+    const segs = buildContextView(msgs, [cp(1, "S")])
+    const rows = buildContextRows(segs, new Set(), new Set(), new Set([1]))
+    const seg = rows.find((r) => r.kind === "segment" && r.handoffIndex === 1)
+    expect(seg!.label).toContain("◉")
+    expect(rows[0]!.label).toContain("1 selected")
   })
 })
 
@@ -172,6 +197,29 @@ describe("messagesForSelectedTurns", () => {
   test("nothing selected → empty", () => {
     const msgs = [user("a"), assistant("A")]
     expect(messagesForSelectedTurns(buildContextView(msgs, []), new Set())).toEqual([])
+  })
+
+  test("a selected handoff yields a single summary message before any selected turns", () => {
+    // cp folds [a,b] (handoff #1); loaded has turns 1 ([c,d]) and 2 ([e])
+    const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
+    const segs = buildContextView(msgs, [cp(1, "S1")])
+    // select handoff #1 + loaded turn 2 ([e])
+    const picked = messagesForSelectedTurns(segs, new Set([2]), new Set([1]))
+    expect(picked).toHaveLength(2)
+    expect(picked[0]!.role).toBe("user") // synthetic handoff summary message
+    expect(typeof picked[0]!.content === "string" && picked[0]!.content.includes("S1")).toBe(true)
+    expect(picked[1]).toEqual(user("e"))
+  })
+
+  test("selecting only a handoff yields just its summary (not the folded messages)", () => {
+    const msgs = [user("a"), assistant("b"), user("c")]
+    const segs = buildContextView(msgs, [cp(1, "ONLY SUMMARY")])
+    const picked = messagesForSelectedTurns(segs, new Set(), new Set([1]))
+    expect(picked).toHaveLength(1)
+    expect(picked[0]!.role).toBe("user")
+    expect(typeof picked[0]!.content === "string" && picked[0]!.content.includes("ONLY SUMMARY")).toBe(
+      true,
+    )
   })
 
   test("turn indices line up with buildContextRows across archived + loaded", () => {
