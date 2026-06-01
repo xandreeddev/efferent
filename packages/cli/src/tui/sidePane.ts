@@ -1,9 +1,11 @@
 import { ansi, padRight, truncate, SPINNER_FRAMES } from "./terminal.js"
 import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
 import {
+  archivedTurnRanges,
   buildContextRows,
   type ContextRow,
   type ContextSegment,
+  handoffOwningTurn,
   renderContextView,
 } from "./contextView.js"
 
@@ -26,6 +28,8 @@ export interface SidePaneState {
   readonly contextCollapsed: ReadonlySet<string>
   /** Selected turn indices — the units picked to build a new session. */
   readonly contextSelected: ReadonlySet<number>
+  /** Selected handoff indices — each seeds the build with its summary alone. */
+  readonly contextHandoffSelected: ReadonlySet<number>
 }
 
 export const emptySidePane: SidePaneState = {
@@ -36,6 +40,7 @@ export const emptySidePane: SidePaneState = {
   contextCursor: 0,
   contextCollapsed: new Set(),
   contextSelected: new Set(),
+  contextHandoffSelected: new Set(),
 }
 
 // --- context-tree navigation (pure; the driver re-derives rows each call) ---
@@ -44,7 +49,12 @@ const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(n, hi))
 
 export const contextRows = (state: SidePaneState): ReadonlyArray<ContextRow> =>
-  buildContextRows(state.context ?? [], state.contextCollapsed, state.contextSelected)
+  buildContextRows(
+    state.context ?? [],
+    state.contextCollapsed,
+    state.contextSelected,
+    state.contextHandoffSelected,
+  )
 
 /** Window start that keeps the cursor visible (centred-ish), like followCursor. */
 export const sideStart = (total: number, cursor: number, height: number): number =>
@@ -87,14 +97,47 @@ export const sideToggleNode = (state: SidePaneState): SidePaneState => {
 export const sideCurrentRow = (state: SidePaneState): ContextRow | undefined =>
   contextRows(state)[clamp(state.contextCursor, 0, Math.max(0, contextRows(state).length - 1))]
 
-/** Toggle selection of the turn under the cursor (no-op on non-turn rows). */
+/**
+ * Toggle selection of the unit under the cursor: a `turn` row (its messages) or
+ * an archived `handoff` segment row (its summary). A handoff and its own inner
+ * turns are mutually exclusive — selecting one clears the other for that handoff
+ * (summary OR raw messages, never both). No-op on other rows.
+ */
 export const sideToggleSelect = (state: SidePaneState): SidePaneState => {
   const row = sideCurrentRow(state)
-  if (row === undefined || row.kind !== "turn" || row.turnIndex === undefined) return state
-  const next = new Set(state.contextSelected)
-  if (next.has(row.turnIndex)) next.delete(row.turnIndex)
-  else next.add(row.turnIndex)
-  return { ...state, contextSelected: next }
+  const segments = state.context ?? []
+
+  // Archived handoff: select its summary; drop its inner turns.
+  if (row?.kind === "segment" && row.handoffIndex !== undefined) {
+    const handoffs = new Set(state.contextHandoffSelected)
+    const turns = new Set(state.contextSelected)
+    if (handoffs.has(row.handoffIndex)) {
+      handoffs.delete(row.handoffIndex)
+    } else {
+      handoffs.add(row.handoffIndex)
+      const range = archivedTurnRanges(segments).get(row.handoffIndex)
+      if (range !== undefined) {
+        for (let i = range.start; i < range.start + range.count; i++) turns.delete(i)
+      }
+    }
+    return { ...state, contextHandoffSelected: handoffs, contextSelected: turns }
+  }
+
+  // Turn: select its messages; if it belongs to a selected handoff, drop that handoff.
+  if (row?.kind === "turn" && row.turnIndex !== undefined) {
+    const turns = new Set(state.contextSelected)
+    const handoffs = new Set(state.contextHandoffSelected)
+    if (turns.has(row.turnIndex)) {
+      turns.delete(row.turnIndex)
+    } else {
+      turns.add(row.turnIndex)
+      const owner = handoffOwningTurn(segments, row.turnIndex)
+      if (owner !== undefined) handoffs.delete(owner)
+    }
+    return { ...state, contextSelected: turns, contextHandoffSelected: handoffs }
+  }
+
+  return state
 }
 
 const homeDir = (() => {
