@@ -35,6 +35,9 @@ export const ansi = {
   bgBlue: `${CSI}44m`,
   bgGray: `${CSI}100m`,
   bgDarkGray: `${CSI}48;5;236m`,
+  // Full-width tint behind a user message ("you said this") — a subtle dark
+  // gray, darker than bgCursorLine so the cursor highlight still reads on top.
+  bgUserTurn: `${CSI}48;5;236m`,
   // Bright backgrounds for badges — paired with black text for reliable
   // contrast on any theme (replaces white-on-blue).
   bgBrightGreen: `${CSI}102m`,

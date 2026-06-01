@@ -1,7 +1,5 @@
 import { ansi, padRight, truncate } from "./terminal.js"
 
-export type EditorModeLabel = "INS" | "NOR" | "VIS"
-
 export interface StatusState {
   readonly modelId: string
   readonly contextWindow: number
@@ -10,10 +8,6 @@ export interface StatusState {
   readonly cwd: string
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
   readonly note?: string | undefined
-  /** Modal mode label (NORMAL/INSERT/VISUAL), shown leftmost. */
-  readonly mode?: EditorModeLabel
-  /** Focused pane label (chat/side/input), shown next to the mode. */
-  readonly pane?: string
 }
 
 const formatTokens = (n: number): string => {
@@ -39,23 +33,8 @@ const homeDir = (() => {
 const prettyCwd = (cwd: string): string =>
   homeDir !== "" && cwd.startsWith(homeDir) ? `~${cwd.slice(homeDir.length)}` : cwd
 
-const renderMode = (
-  mode: EditorModeLabel | undefined,
-  pane: string | undefined,
-): string => {
-  if (mode === undefined) return ""
-  const block =
-    mode === "NOR"
-      ? `${ansi.bold}${ansi.bgBrightCyan}${ansi.fgBlack} NORMAL ${ansi.reset}`
-      : mode === "VIS"
-        ? `${ansi.bold}${ansi.bgBrightYellow}${ansi.fgBlack} VISUAL ${ansi.reset}`
-        : `${ansi.bold}${ansi.bgBrightGreen}${ansi.fgBlack} INSERT ${ansi.reset}`
-  const paneTag = pane !== undefined ? ` ${ansi.dim}${pane}${ansi.reset}` : ""
-  return `${block}${paneTag}  `
-}
-
 export const renderStatusBar = (state: StatusState, cols: number): string => {
-  const mode = renderMode(state.mode, state.pane)
+  // Mode + focused pane live in the bordered keybind box now (no duplication here).
   const left = `${ansi.bold}${ansi.fgBrightCyan}${state.modelId}${ansi.reset}`
   const used = state.inputTokens
   const cached = state.cacheReadTokens
@@ -72,7 +51,7 @@ export const renderStatusBar = (state: StatusState, cols: number): string => {
       ? `  ${ansi.fgYellow}· ${state.note}${ansi.reset}`
       : ""
 
-  const composed = `${mode}${left}  ${middle}${note}  ${right}`
+  const composed = `${left}  ${middle}${note}  ${right}`
   const truncated = truncate(composed, cols)
   return `${ansi.bgDarkGray}${padRight(truncated, cols)}${ansi.reset}`
 }

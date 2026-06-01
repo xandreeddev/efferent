@@ -11,6 +11,7 @@ import {
   moveTo,
   padRight,
   showCursor,
+  truncate,
   visibleLength,
   write,
 } from "./terminal.js"
@@ -27,7 +28,7 @@ import type { SidePaneState } from "./sidePane.js"
 import { renderSidePane, sideCursorRowAt } from "./sidePane.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
 import type { EntryMode } from "./navKeys.js"
-import { LEGEND_ROWS, renderLegend } from "./legend.js"
+import { KEYBIND_BOX_ROWS, legendContent } from "./legend.js"
 
 export interface AppState {
   readonly status: StatusState
@@ -46,6 +47,8 @@ export interface AppState {
   readonly entry: EntryMode
   /** The focused read-only pane is maximized (fills the middle region). */
   readonly zoomed: boolean
+  /** Fixed dim footer below the status bar (logs path + key hints). Empty = no row. */
+  readonly footer: string
 }
 
 /**
@@ -80,18 +83,24 @@ const PALETTE_MAX_ROWS = 6
 const MAX_INPUT_ROWS = 8
 const SIDE_PANE_MIN_COLS = 60
 
+/** Per-pane border/title accent when focused (the keybind box matches the focused pane). */
+const PANE_ACCENT = {
+  conversation: ansi.fgBrightCyan,
+  side: ansi.fgBrightMagenta,
+  input: ansi.fgBrightGreen,
+} as const
+
 /**
  * Render the whole TUI as one frame. Diffs against the previous frame
  * line-by-line and writes only the changes — minimises flicker without
  * needing libuv tricks.
  *
  * Layout (top → bottom):
- *   middle = scrollback | side pane
- *   ── separator ──
+ *   ┌ conversation ┐ ┌ context ┐  two boxes + 1 gap col (per-pane accents)
+ *   ┌ keybinds ┐ box (KEYBIND_BOX_ROWS; border + title = focused pane's accent)
  *   palette? (overlay row group)
- *   input (1–MAX_INPUT_ROWS rows, wrapped visually)
- *   ── separator ──
- *   status bar (1 row)
+ *   ┌ input ┐ box (1–MAX_INPUT_ROWS content rows, wrapped visually)
+ *   status bar (1 row) · dim footer (1 row, optional)
  */
 export class FrameRenderer {
   private prev: string[] = []
@@ -107,9 +116,12 @@ export class FrameRenderer {
     }
 
     // The input prompt morphs with the entry mode: ❯ message · : command · / search.
+    // It renders inside a bordered box (like the panes), so the content width is
+    // the terminal width minus the two borders and a 1-col left gutter.
+    const inputInner = Math.max(1, cols - 3)
     const inputResult = renderInput(
       state.input,
-      cols,
+      inputInner,
       MAX_INPUT_ROWS,
       PROMPTS[state.entry],
     )
@@ -131,48 +143,53 @@ export class FrameRenderer {
     const sideFocused = state.focus === "side"
     const showSide = !zoomed && cols >= SIDE_PANE_MIN_COLS
 
-    // Box content rows: total − top/bottom border − legend − palette − input − status.
+    // Box content rows: total − pane box borders (2) − keybind box − palette
+    // − input content − input box borders (2) − status − footer.
+    const footerRows = state.footer.length > 0 ? 1 : 0
     const contentRows = Math.max(
       0,
-      rows - 2 - LEGEND_ROWS - paletteRows - inputRows - 1,
+      rows - 2 - KEYBIND_BOX_ROWS - paletteRows - inputRows - 2 - 1 - footerRows,
     )
 
-    // --- bordered-box helpers (the focused box's border brightens) ---------
-    const bcol = (focused: boolean): string =>
-      focused ? ansi.fgBrightCyan : `${ansi.dim}${ansi.fgGray}`
+    // --- bordered-box helpers (a focused box's border brightens to its accent) ---
+    // Each pane carries a distinct accent so the focused pane reads at a glance.
+    const bcol = (focused: boolean, accent: string): string =>
+      focused ? accent : `${ansi.dim}${ansi.fgGray}`
     // A horizontal border with an embedded title, exactly `w` cells wide.
-    const hseg = (rawLabel: string, w: number, focused: boolean): string => {
+    const hseg = (rawLabel: string, w: number, focused: boolean, accent: string): string => {
       const label = rawLabel.slice(0, Math.max(0, w - 3))
       const rest = Math.max(1, w - 2 - visibleLength(label))
-      const c = bcol(focused)
+      const c = bcol(focused, accent)
       const title = focused
-        ? `${ansi.bold}${ansi.fgBrightCyan}${label}${ansi.reset}`
+        ? `${ansi.bold}${accent}${label}${ansi.reset}`
         : `${ansi.dim}${label}${ansi.reset}`
       return `${c}─ ${ansi.reset}${title}${c} ${"─".repeat(rest - 1)}${ansi.reset}`
     }
-    const vbar = (focused: boolean): string => `${bcol(focused)}│${ansi.reset}`
-    const dashes = (n: number, focused: boolean): string =>
-      `${bcol(focused)}${"─".repeat(Math.max(0, n))}${ansi.reset}`
-    const corner = (ch: string, focused: boolean): string =>
-      `${bcol(focused)}${ch}${ansi.reset}`
+    const vbar = (focused: boolean, accent: string): string =>
+      `${bcol(focused, accent)}│${ansi.reset}`
+    const dashes = (n: number, focused: boolean, accent: string): string =>
+      `${bcol(focused, accent)}${"─".repeat(Math.max(0, n))}${ansi.reset}`
+    const corner = (ch: string, focused: boolean, accent: string): string =>
+      `${bcol(focused, accent)}${ch}${ansi.reset}`
 
     // Content geometry inside the box(es).
     const convGutter = "  " // 2-col left margin; the block cursor sits on the cell
-    const sideGutter = " "
+    const sideGutter = "  " // 2-col left margin, matching the conversation pane
     let leftInner: number
     let rightInner = 0
     let scrollW: number
     let sideW: number
     if (showSide) {
-      const inner = Math.max(2, cols - 3) // left + middle + right borders
+      // Two separate boxes with a 1-col gap: 4 borders + gap = 5 chrome cols.
+      const inner = Math.max(2, cols - 5)
       rightInner = Math.min(Math.max(20, Math.floor(cols * 0.34)), inner - 12)
       leftInner = inner - rightInner
       scrollW = Math.max(1, leftInner - 2)
-      sideW = Math.max(1, rightInner - 1)
+      sideW = Math.max(1, rightInner - 2) // rightInner − sideGutter(2)
     } else {
       leftInner = Math.max(1, cols - 2)
       scrollW = Math.max(1, leftInner - 2)
-      sideW = Math.max(1, leftInner - 1)
+      sideW = Math.max(1, leftInner - 2) // leftInner − sideGutter(2)
     }
     const convContentW = scrollW
     const sideViewLabel = state.sidePane.view === "context" ? "context" : "side"
@@ -180,6 +197,9 @@ export class FrameRenderer {
     const middleLines: string[] = []
 
     if (showSide) {
+      // Two separate bordered boxes, each its own accent, with a gap column.
+      const convA = PANE_ACCENT.conversation
+      const sideA = PANE_ACCENT.side
       const scrollLines = state.scrollback.render(contentRows, scrollW, convFocused)
       const sideLines = renderSidePane(
         state.sidePane,
@@ -188,32 +208,38 @@ export class FrameRenderer {
         state.spinnerFrame,
         sideFocused,
       )
-      const midFocused = convFocused || sideFocused
       middleLines.push(
-        corner("┌", convFocused) +
-          hseg("conversation", leftInner, convFocused) +
-          corner("┬", midFocused) +
-          hseg(sideViewLabel, rightInner, sideFocused) +
-          corner("┐", sideFocused),
+        corner("┌", convFocused, convA) +
+          hseg("conversation", leftInner, convFocused, convA) +
+          corner("┐", convFocused, convA) +
+          " " +
+          corner("┌", sideFocused, sideA) +
+          hseg(sideViewLabel, rightInner, sideFocused, sideA) +
+          corner("┐", sideFocused, sideA),
       )
       for (let i = 0; i < contentRows; i++) {
         const left = padRight(convGutter + (scrollLines[i] ?? ""), leftInner)
         const right = padRight(sideGutter + (sideLines[i] ?? ""), rightInner)
         middleLines.push(
-          vbar(convFocused) + left + vbar(midFocused) + right + vbar(sideFocused),
+          vbar(convFocused, convA) + left + vbar(convFocused, convA) +
+            " " +
+            vbar(sideFocused, sideA) + right + vbar(sideFocused, sideA),
         )
       }
       middleLines.push(
-        corner("└", convFocused) +
-          dashes(leftInner, convFocused) +
-          corner("┴", midFocused) +
-          dashes(rightInner, sideFocused) +
-          corner("┘", sideFocused),
+        corner("└", convFocused, convA) +
+          dashes(leftInner, convFocused, convA) +
+          corner("┘", convFocused, convA) +
+          " " +
+          corner("└", sideFocused, sideA) +
+          dashes(rightInner, sideFocused, sideA) +
+          corner("┘", sideFocused, sideA),
       )
     } else {
       // A single box around the focused (or, when narrow, the only) pane.
       const sideBox = zoomed && sideFocused
       const f = zoomed ? true : convFocused
+      const accent = sideBox ? PANE_ACCENT.side : PANE_ACCENT.conversation
       const title = sideBox
         ? `${sideViewLabel} [zoom]`
         : zoomed
@@ -223,42 +249,75 @@ export class FrameRenderer {
         ? renderSidePane(state.sidePane, contentRows, sideW, state.spinnerFrame, true)
         : state.scrollback.render(contentRows, scrollW, convFocused)
       const gutter = sideBox ? sideGutter : convGutter
-      middleLines.push(corner("┌", f) + hseg(title, leftInner, f) + corner("┐", f))
+      middleLines.push(corner("┌", f, accent) + hseg(title, leftInner, f, accent) + corner("┐", f, accent))
       for (let i = 0; i < contentRows; i++) {
-        middleLines.push(vbar(f) + padRight(gutter + (lines[i] ?? ""), leftInner) + vbar(f))
+        middleLines.push(vbar(f, accent) + padRight(gutter + (lines[i] ?? ""), leftInner) + vbar(f, accent))
       }
-      middleLines.push(corner("└", f) + dashes(leftInner, f) + corner("┘", f))
+      middleLines.push(corner("└", f, accent) + dashes(leftInner, f, accent) + corner("┘", f, accent))
     }
 
-    // Input region: pad to inputRows; overlay the search count on the first row.
+    // Input region (inner width): pad to inputRows; overlay the search count.
     const inputLinesPadded: string[] = inputResult.lines.slice(0, inputRows)
     while (inputLinesPadded.length < inputRows) {
-      inputLinesPadded.push(padRight("", cols))
+      inputLinesPadded.push(padRight("", inputInner))
     }
     if (state.entry === "search" && inputLinesPadded.length > 0) {
       inputLinesPadded[0] = withMatchCount(
         inputLinesPadded[0]!,
         state.scrollback.matchInfo(),
-        cols,
+        inputInner,
       )
     }
 
-    const legendLines = renderLegend(
+    // The keybinds are their own bordered box; its border + title take the
+    // FOCUSED pane's accent, so it visually links to the active pane, and the
+    // title carries the focused pane + mode (the mode lives only here now).
+    const focusAccent = PANE_ACCENT[state.focus]
+    const kb = legendContent(
       state.focus,
       state.mode,
       state.sidePane.view,
       state.entry,
-      cols,
+      cols - 3,
     )
+    const keybindBox: string[] = [
+      corner("┌", true, focusAccent) + hseg(kb.title, cols - 2, true, focusAccent) + corner("┐", true, focusAccent),
+    ]
+    for (const row of kb.rows) {
+      keybindBox.push(
+        vbar(true, focusAccent) + " " + padRight(truncate(row, cols - 3), cols - 3) + vbar(true, focusAccent),
+      )
+    }
+    keybindBox.push(corner("└", true, focusAccent) + dashes(cols - 2, true, focusAccent) + corner("┘", true, focusAccent))
+
     const overlayLines = renderPalette(state.palette, cols, PALETTE_MAX_ROWS)
 
-    // Compose: box · always-on legend · palette? · input · status
+    // The input is its own bordered box — the third focusable pane, framed to
+    // match the conversation/context boxes; its border brightens when focused
+    // and the title tracks the entry mode.
+    const inputFocused = state.focus === "input"
+    const inputA = PANE_ACCENT.input
+    const inputTitle =
+      state.entry === "command" ? "command" : state.entry === "search" ? "search" : "input"
+    const inputBox: string[] = [
+      corner("┌", inputFocused, inputA) + hseg(inputTitle, cols - 2, inputFocused, inputA) + corner("┐", inputFocused, inputA),
+    ]
+    for (const l of inputLinesPadded) {
+      inputBox.push(vbar(inputFocused, inputA) + " " + l + vbar(inputFocused, inputA))
+    }
+    inputBox.push(corner("└", inputFocused, inputA) + dashes(cols - 2, inputFocused, inputA) + corner("┘", inputFocused, inputA))
+
+    // Compose: pane box(es) · keybind box · palette? · input box · status · footer
     const frame: string[] = []
     for (const l of middleLines) frame.push(l)
-    for (const l of legendLines) frame.push(l)
+    for (const l of keybindBox) frame.push(l)
     for (const l of overlayLines) frame.push(l)
-    for (const l of inputLinesPadded) frame.push(l)
+    for (const l of inputBox) frame.push(l)
     frame.push(renderStatusBar(state.status, cols))
+    if (footerRows > 0) {
+      const f = truncate(state.footer, cols)
+      frame.push(padRight(`${ansi.dim}${f}${ansi.reset}`, cols))
+    }
     while (frame.length < rows) frame.push(padRight("", cols))
     frame.length = rows
 
@@ -291,11 +350,13 @@ export class FrameRenderer {
       state.focus === "input" &&
       !state.input.locked
     ) {
-      // Input is the (inputRows)-tall region just above the status bar.
-      const inputFirstRow = rows - inputRows // 1-based row of the input's first line
+      // The input box sits above the status bar (and the optional footer below
+      // it), so its content's first row is `rows - inputRows - 1 - footerRows`.
+      // Content begins after the left border (col 1) + 1-col gutter → col 3.
+      const inputFirstRow = rows - inputRows - 1 - footerRows
       const cursorRow = Math.min(inputResult.cursorRow, inputRows - 1)
       out +=
-        moveTo(inputFirstRow + cursorRow, inputResult.cursorCol + 1) +
+        moveTo(inputFirstRow + cursorRow, inputResult.cursorCol + 3) +
         cursorBar +
         showCursor
     } else if (
@@ -324,9 +385,9 @@ export class FrameRenderer {
       // The side context-tree cursor: a block on the focused row's first cell.
       const row = sideCursorRowAt(state.sidePane, contentRows)
       if (row >= 0) {
-        // Side content starts after: left border + leftInner + mid border +
-        // 1-col gutter (two boxes), or left border + 1-col gutter (zoomed).
-        const startCol = showSide ? leftInner + 4 : 3
+        // Two boxes + gap: convL(1)+leftInner+convR(1)+gap(1)+sideL(1)+gutter(2)
+        // → first side text cell = leftInner + 7. Zoomed single box: border + gutter → col 4.
+        const startCol = showSide ? leftInner + 7 : 4
         out += moveTo(2 + row, startCol) + cursorBlock + showCursor
       } else {
         out += hideCursor

@@ -31,7 +31,7 @@ export type ContextSegment =
  * carry the conversation `messageIndex` so Enter can jump the conversation
  * cursor to that message. `label` is pre-styled (icon + one-line text).
  */
-export type ContextRowKind = "header" | "segment" | "summary" | "message"
+export type ContextRowKind = "header" | "segment" | "summary" | "turn" | "message"
 export interface ContextRow {
   readonly kind: ContextRowKind
   readonly depth: number
@@ -39,6 +39,8 @@ export interface ContextRow {
   readonly collapsible: boolean
   readonly groupId?: string
   readonly messageIndex?: number
+  /** For `turn` rows: the global turn index — the unit of select-and-build. */
+  readonly turnIndex?: number
 }
 
 /**
@@ -108,6 +110,72 @@ const oneLine = (s: string): string =>
   s.replace(/\s+/g, " ").trim()
 
 /**
+ * Split a message list into **turns**: each `user` message starts a new turn,
+ * carrying the assistant/tool replies that follow until the next `user`. A
+ * leading non-user run (rare) forms the first turn. A turn is a complete
+ * user→assistant→tool unit, so selecting whole turns keeps tool-call/result
+ * pairs valid by construction.
+ */
+const groupTurns = (
+  messages: ReadonlyArray<AgentMessage>,
+): ReadonlyArray<ReadonlyArray<AgentMessage>> => {
+  const turns: AgentMessage[][] = []
+  let current: AgentMessage[] = []
+  for (const msg of messages) {
+    if (msg.role === "user" && current.length > 0) {
+      turns.push(current)
+      current = []
+    }
+    current.push(msg)
+  }
+  if (current.length > 0) turns.push(current)
+  return turns
+}
+
+/** One-line commit-style subject for a turn (its user prompt, else its first line). */
+const turnSubject = (turn: ReadonlyArray<AgentMessage>): string => {
+  const user = turn.find((m) => m.role === "user")
+  if (user !== undefined && user.role === "user") return oneLine(user.content)
+  const first = turn[0]
+  const lines = first !== undefined ? messageLines(first) : []
+  return lines[0]?.text ?? "(turn)"
+}
+
+/**
+ * The `turn:<i>` group ids for every turn across all segments, in order — used
+ * to seed the context viewer with all turns folded (a clean, selectable list).
+ */
+export const turnIdsOf = (segments: ReadonlyArray<ContextSegment>): ReadonlyArray<string> => {
+  const ids: string[] = []
+  let turnIdx = 0
+  for (const seg of segments) {
+    const n = groupTurns(seg.messages).length
+    for (let i = 0; i < n; i++) ids.push(`turn:${turnIdx++}`)
+  }
+  return ids
+}
+
+/**
+ * Collect the messages of the selected turns, in conversation order — the seed
+ * for "build a new session". Walks segments/turns the same way `buildContextRows`
+ * assigns `turnIndex`, so the set of indices lines up exactly.
+ */
+export const messagesForSelectedTurns = (
+  segments: ReadonlyArray<ContextSegment>,
+  selected: ReadonlySet<number>,
+): ReadonlyArray<AgentMessage> => {
+  const out: AgentMessage[] = []
+  let turnIdx = 0
+  for (const seg of segments) {
+    for (const turn of groupTurns(seg.messages)) {
+      if (selected.has(turnIdx)) out.push(...turn)
+      turnIdx++
+    }
+  }
+  return out
+}
+
+/**
  * Flatten the context segments into navigable rows, honouring `collapsed`
  * (folded segment ids). Pure: the running message index === conversation
  * position (a multi-preview assistant message shares one index), so a
@@ -116,12 +184,14 @@ const oneLine = (s: string): string =>
 export const buildContextRows = (
   segments: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
+  selected: ReadonlySet<number> = new Set(),
 ): ReadonlyArray<ContextRow> => {
   const rows: ContextRow[] = []
   const loaded = loadedMsgCount(segments)
   const archived = archivedMsgCount(segments)
   const hasFold = archived > 0
   const hasSummary = segments.some((s) => s.kind === "loaded" && s.summary)
+  const fold = (f: boolean): string => `${ansi.fgGray}${f ? "▸" : "▾"}${ansi.reset}`
 
   rows.push({
     kind: "header",
@@ -131,72 +201,79 @@ export const buildContextRows = (
       `${ansi.bold}${ansi.fgGray}── context ──${ansi.reset} ` +
       (hasFold
         ? `${ansi.dim}loaded ${ansi.reset}${ansi.fgGreen}${loaded}${ansi.reset}${ansi.dim}${hasSummary ? " + ✦" : ""} · archived ${archived}${ansi.reset}`
-        : `${ansi.fgGreen}${loaded} msg${loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`),
+        : `${ansi.fgGreen}${loaded} msg${loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`) +
+      (selected.size > 0
+        ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${selected.size} selected${ansi.reset}`
+        : ""),
   })
 
   let msgIdx = 0
+  let turnIdx = 0
   for (const seg of segments) {
-    if (seg.kind === "archived") {
-      const gid = `seg:archived:${seg.handoffIndex}`
-      const folded = collapsed.has(gid)
-      const n = seg.messages.length
+    const isArchived = seg.kind === "archived"
+    const gid = isArchived ? `seg:archived:${seg.handoffIndex}` : "seg:loaded"
+    const segFolded = collapsed.has(gid)
+    const turns = groupTurns(seg.messages)
+
+    rows.push({
+      kind: "segment",
+      depth: 0,
+      collapsible: true,
+      groupId: gid,
+      label: isArchived
+        ? `${fold(segFolded)} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${seg.handoffIndex} · ${seg.messages.length} msg${seg.messages.length === 1 ? "" : "s"} folded${ansi.reset}`
+        : `${fold(segFolded)} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`,
+    })
+
+    if (segFolded) {
+      msgIdx += seg.messages.length
+      turnIdx += turns.length
+      continue
+    }
+
+    if (!isArchived && seg.summary !== undefined) {
       rows.push({
-        kind: "segment",
-        depth: 0,
-        collapsible: true,
-        groupId: gid,
-        label: `${ansi.fgGray}${folded ? "▸" : "▾"}${ansi.reset} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${seg.handoffIndex} · ${n} msg${n === 1 ? "" : "s"} folded${ansi.reset}`,
+        kind: "summary",
+        depth: 1,
+        collapsible: false,
+        label: `   ${ansi.fgBrightMagenta}✦${ansi.reset} ${ansi.dim}${oneLine(seg.summary)}${ansi.reset}`,
       })
-      if (folded) {
-        msgIdx += n
+    }
+
+    for (const turn of turns) {
+      const tgid = `turn:${turnIdx}`
+      const tFolded = collapsed.has(tgid)
+      const marker = selected.has(turnIdx)
+        ? `${ansi.fgBrightGreen}◉${ansi.reset}`
+        : `${ansi.dim}○${ansi.reset}`
+      const subjStyle = isArchived ? ansi.dim : ""
+      rows.push({
+        kind: "turn",
+        depth: 1,
+        collapsible: true,
+        groupId: tgid,
+        turnIndex: turnIdx,
+        messageIndex: msgIdx,
+        label: `  ${fold(tFolded)} ${marker} ${subjStyle}${truncate(turnSubject(turn), 200)}${ansi.reset} ${ansi.dim}·${turn.length}${ansi.reset}`,
+      })
+
+      if (tFolded) {
+        msgIdx += turn.length
       } else {
-        for (const msg of seg.messages) {
+        for (const msg of turn) {
           for (const ln of messageLines(msg)) {
             rows.push({
               kind: "message",
-              depth: 1,
+              depth: 2,
               collapsible: false,
               messageIndex: msgIdx,
-              label: `${ansi.dim}   ${ln.icon} ${ln.text}${ansi.reset}`,
+              label: `     ${ansi.dim}${ln.icon} ${ln.text}${ansi.reset}`,
             })
           }
           msgIdx++
         }
       }
-    } else {
-      const gid = "seg:loaded"
-      const folded = collapsed.has(gid)
-      rows.push({
-        kind: "segment",
-        depth: 0,
-        collapsible: true,
-        groupId: gid,
-        label: `${ansi.fgGray}${folded ? "▸" : "▾"}${ansi.reset} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`,
-      })
-      if (folded) {
-        msgIdx += seg.messages.length
-      } else {
-        if (seg.summary !== undefined) {
-          rows.push({
-            kind: "summary",
-            depth: 1,
-            collapsible: false,
-            label: `   ${ansi.fgBrightMagenta}✦${ansi.reset} ${ansi.dim}${oneLine(seg.summary)}${ansi.reset}`,
-          })
-        }
-        for (const msg of seg.messages) {
-          for (const ln of messageLines(msg)) {
-            rows.push({
-              kind: "message",
-              depth: 1,
-              collapsible: false,
-              messageIndex: msgIdx,
-              label: `   ${ln.icon} ${ln.text}`,
-            })
-          }
-          msgIdx++
-        }
-      }
+      turnIdx++
     }
   }
   return rows

@@ -38,7 +38,8 @@ describe("Neogit folding", () => {
     sb.render(40, 70) // populate foldableIds
     sb.setAllFolded(true)
     const out = sb.render(40, 70)
-    expect(has(out, "▸")).toBe(true)
+    // A folded turn bar carries no chevron — the trailing block count is the cue.
+    expect(has(out, "4 blocks")).toBe(true)
     expect(has(out, "do the thing")).toBe(true)
     expect(has(out, "read a")).toBe(false) // body hidden
     expect(has(out, "on it")).toBe(false)
@@ -54,7 +55,8 @@ describe("Neogit folding", () => {
     sb.moveCursor(gi)
     sb.foldToggleAtCursor()
     out = plain(sb.render(40, 70))
-    expect(out.some((l) => l.includes("3 tool calls") && l.includes("⊞"))).toBe(true)
+    // Folded tool group keeps the ▸ chevron (the lone surviving marker), no ⊞.
+    expect(out.some((l) => l.includes("3 tool calls") && l.includes("▸"))).toBe(true)
     expect(out.some((l) => l.includes("read a"))).toBe(false) // folded
     // A 4th tool streams into the same turn — the group id is keyed on the
     // first member, so it must STAY folded and just bump the count.

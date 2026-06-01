@@ -13,9 +13,6 @@ export type ModeLabel = "INS" | "NOR" | "VIS"
 export const modeLabel = (mode: UiMode): ModeLabel =>
   mode === "insert" ? "INS" : mode === "visual" ? "VIS" : "NOR"
 
-export const paneLabel = (focus: FocusPane): string =>
-  focus === "conversation" ? "chat" : focus === "side" ? "side" : "input"
-
 /**
  * Directional focus movement (Ctrl-h/j/k/l). Layout:
  *

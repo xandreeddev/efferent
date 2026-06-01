@@ -208,3 +208,28 @@ describe("conversation pane — block-cursor motions", () => {
     expect(decide(v, ch("y"))).toEqual({ kind: "yank" })
   })
 })
+
+describe("side pane — context view: select + build", () => {
+  const sideCtx = { focus: "side", mode: "normal", view: "context" } as const
+  it("Space toggles selection of the turn under the cursor", () => {
+    expect(decide(sideCtx, ch(" "))).toEqual({ kind: "sideToggleSelect" })
+  })
+  it("b builds a new session from the selection", () => {
+    expect(decide(sideCtx, ch("b"))).toEqual({ kind: "buildSession" })
+  })
+  it("still routes the core tree nav", () => {
+    expect(decide(sideCtx, ch("j"))).toEqual({ kind: "sideCursorMove", op: "down" })
+    expect(decide(sideCtx, tab)).toEqual({ kind: "sideToggleNode" })
+    expect(decide(sideCtx, enter)).toEqual({ kind: "sideSelect" })
+  })
+  it("Space / b do nothing in the side stack view", () => {
+    expect(decide({ focus: "side", mode: "normal", view: "stack" }, ch(" "))).toEqual({ kind: "none" })
+    expect(decide({ focus: "side", mode: "normal", view: "stack" }, ch("b"))).toEqual({ kind: "none" })
+  })
+  it("b keeps its conversation meaning (word-back), not build", () => {
+    expect(decide({ focus: "conversation", mode: "normal" }, ch("b"))).toEqual({
+      kind: "cursorMove",
+      op: "wordBack",
+    })
+  })
+})

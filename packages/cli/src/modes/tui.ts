@@ -56,9 +56,14 @@ import {
   sideCursorToEnd,
   sideCursorToTop,
   sideToggleNode,
+  sideToggleSelect,
   type SidePaneState,
 } from "../tui/sidePane.js"
-import { buildContextView } from "../tui/contextView.js"
+import {
+  buildContextView,
+  messagesForSelectedTurns,
+  turnIdsOf,
+} from "../tui/contextView.js"
 import {
   emptyTree,
   onAgentEnd as treeAgentEnd,
@@ -78,8 +83,6 @@ import { fileLoggerLayer } from "../tui/logger.js"
 import { FrameRenderer, type AppState } from "../tui/render.js"
 import { applyViKey, initialVi, type ViState } from "../tui/viMode.js"
 import {
-  modeLabel,
-  paneLabel,
   type FocusPane,
   type UiMode,
 } from "../tui/uiMode.js"
@@ -132,6 +135,8 @@ interface MutableAppState {
   activeProvider: "google" | "openai"
   /** Whether the current conversation already has at least one turn. */
   conversationHasTurns: boolean
+  /** Fixed dim footer below the status bar (logs path + key hints). */
+  footer: string
 }
 
 /** Build the status-bar note: spinner + elapsed + turn + queued, or none. */
@@ -163,9 +168,11 @@ const HELP_LINES = [
   "  Z                fold / unfold all turns",
   "  Ctrl-R           expand / collapse tool output & diffs",
   "Context viewer (side pane, NORMAL — `:context` to open):",
-  "  j / k · gg / G   move the tree cursor",
-  "  Tab / h / l      fold / unfold a handoff segment",
-  "  Enter            jump to the message in the conversation",
+  "  j / k · gg / G   move the tree cursor (turns shown as foldable rows)",
+  "  Space            select / deselect the turn under the cursor",
+  "  b                build a NEW session from the selected turns + switch to it",
+  "  Tab / h / l      fold / unfold a turn or handoff segment",
+  "  Enter            jump to the turn / message in the conversation",
   "Search:",
   "  /                search; Enter lands on the match, n / N next / prev",
   "Turns:",
@@ -191,8 +198,6 @@ const snapshot = (s: MutableAppState): AppState => ({
   status: {
     ...s.status,
     note: computeNote(s),
-    mode: modeLabel(s.mode),
-    pane: paneLabel(s.focus),
   },
   scrollback: s.scrollback,
   input: s.input,
@@ -204,6 +209,7 @@ const snapshot = (s: MutableAppState): AppState => ({
   mode: s.mode,
   entry: s.entry,
   zoomed: s.zoomed,
+  footer: s.footer,
 })
 
 /**
@@ -374,6 +380,7 @@ const seedSidePane = (
   view: "stack",
   contextCursor: 0,
   contextCollapsed: new Set(),
+  contextSelected: new Set(),
 })
 
 const runTuiModeCore = (
@@ -422,6 +429,7 @@ const runTuiModeCore = (
       currentTurn: 0,
       activeProvider: initialSel.provider,
       conversationHasTurns: false,
+      footer: `logs: tail -f ${logFilePath()}  ·  : commands · ↵ send · esc interrupt · ^C×2 quit`,
     })
 
     if (input.resumeConversationId !== undefined) {
@@ -433,12 +441,14 @@ const runTuiModeCore = (
         Effect.catchAll(() => Effect.succeed([])),
       )
       if (history.length > 0) {
+        const startupSegments = buildContextView(history, checkpoints)
         yield* Ref.update(stateRef, (s) => {
           replayHistory(s.scrollback, history, checkpoints)
           s.conversationHasTurns = true
           s.sidePane = {
             ...s.sidePane,
-            context: buildContextView(history, checkpoints),
+            context: startupSegments,
+            contextCollapsed: new Set(turnIdsOf(startupSegments)),
           }
           return s
         })
@@ -504,21 +514,9 @@ const runTuiModeCore = (
       }, 80)
     }
 
-    yield* Ref.update(stateRef, (s) => {
-      s.scrollback.push({
-        kind: "info",
-        text: `agent · ${meta.modelId} · cwd: ${input.cwd}`,
-      })
-      s.scrollback.push({
-        kind: "info",
-        text: `logs: tail -f ${logFilePath()}`,
-      })
-      s.scrollback.push({
-        kind: "info",
-        text: "type / for commands · Enter submits · Esc interrupts · PgUp/PgDn scroll · Ctrl-C ×2 quits",
-      })
-      return s
-    })
+    // Startup meta (model · cwd · logs · key hints) no longer clutters the
+    // scrollback — model/cwd/tokens live in the status bar, and the logs path
+    // plus key hints render as a fixed dim footer below it (see `footer`).
 
     enterTui()
     const restoreRaw = setupRawMode()
@@ -866,10 +864,85 @@ const runTuiModeCore = (
           .pipe(Effect.catchAll(() => Effect.succeed([])))
         const segments = buildContextView(history, checkpoints)
         yield* Ref.update(stateRef, (s) => {
-          s.sidePane = { ...s.sidePane, context: segments }
+          s.sidePane = {
+            ...s.sidePane,
+            context: segments,
+            // Start with turns folded → a clean, selectable list of turn
+            // subjects; cursor at the top; nothing selected yet.
+            contextCollapsed: new Set(turnIdsOf(segments)),
+            contextSelected: new Set(),
+            contextCursor: 0,
+          }
           return s
         })
       })
+
+    // Build a brand-new conversation seeded with the turns the user picked in
+    // the context viewer, then switch the TUI to it (the old one is untouched).
+    // Mirrors the `:resume` switch — create + append + replay + focus the input.
+    const doBuildSession = Effect.gen(function* () {
+      const cur = yield* Ref.get(stateRef)
+      if (cur.busy) {
+        yield* Ref.update(stateRef, (s) => {
+          s.scrollback.push({ kind: "info", text: "can't build a session while a turn is running" })
+          return s
+        })
+        yield* requestRender
+        return
+      }
+      const segs = cur.sidePane.context ?? []
+      const picked = messagesForSelectedTurns(segs, cur.sidePane.contextSelected)
+      const turnCount = cur.sidePane.contextSelected.size
+      if (picked.length === 0) {
+        yield* Ref.update(stateRef, (s) => {
+          s.scrollback.push({
+            kind: "info",
+            text: "no turns selected — in :context, Space to select turns, then b to build",
+          })
+          return s
+        })
+        yield* requestRender
+        return
+      }
+      const store = yield* ConversationStore
+      const created = yield* store.create(input.cwd).pipe(Effect.either)
+      if (created._tag === "Left") {
+        yield* Ref.update(stateRef, (s) => {
+          s.scrollback.push({ kind: "info", text: "failed to create the new session" })
+          return s
+        })
+        yield* requestRender
+        return
+      }
+      const newId = created.right
+      yield* Effect.forEach(picked, (m) =>
+        store.append(newId, m).pipe(Effect.catchAll(() => Effect.void)),
+      )
+      yield* Ref.update(stateRef, (s) => {
+        s.conversationId = newId
+        s.scrollback.clear()
+        s.sidePane = {
+          ...s.sidePane,
+          tree: emptyTree,
+          view: "stack",
+          context: buildContextView(picked, []),
+          contextCollapsed: new Set(),
+          contextSelected: new Set(),
+          contextCursor: 0,
+        }
+        replayHistory(s.scrollback, picked, [])
+        s.scrollback.cursorToBottom()
+        s.conversationHasTurns = picked.length > 0
+        s.focus = "input"
+        s.mode = "insert"
+        s.scrollback.push({
+          kind: "info",
+          text: `built new session ${newId.slice(0, 8)} · ${turnCount} turn${turnCount === 1 ? "" : "s"} · ${picked.length} msgs`,
+        })
+        return s
+      })
+      yield* requestRender
+    })
 
     const handleSlash = (cmd: string) =>
       Effect.gen(function* () {
@@ -965,6 +1038,10 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
           }
+          case ":build": {
+            yield* doBuildSession
+            return "stay" as const
+          }
           case ":browse": {
             const store = yield* ConversationStore
             const list = yield* store
@@ -1053,13 +1130,17 @@ const runTuiModeCore = (
             const checkpoints = yield* store
               .listCheckpoints(target)
               .pipe(Effect.catchAll(() => Effect.succeed([])))
+            const resumedSegments = buildContextView(history, checkpoints)
             yield* Ref.update(stateRef, (s) => {
               s.conversationId = target
               s.scrollback.clear()
               s.sidePane = {
                 ...s.sidePane,
                 tree: emptyTree,
-                context: buildContextView(history, checkpoints),
+                context: resumedSegments,
+                contextCollapsed: new Set(turnIdsOf(resumedSegments)),
+                contextSelected: new Set(),
+                contextCursor: 0,
               }
               replayHistory(s.scrollback, history, checkpoints)
               s.scrollback.cursorToBottom()
@@ -1575,6 +1656,19 @@ const runTuiModeCore = (
               return st
             })
             yield* requestRender
+            return "stay" as const
+
+          case "sideToggleSelect":
+            yield* Ref.update(stateRef, (st) => {
+              st.sidePane = sideToggleSelect(st.sidePane)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "buildSession":
+            yield* doBuildSession
             return "stay" as const
 
           case "sideSelect": {
