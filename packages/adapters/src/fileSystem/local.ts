@@ -9,7 +9,7 @@ import {
   FileSystemError,
   NotADirectory,
   PermissionDenied,
-} from "@agent/core"
+} from "@efferent/core"
 
 const errCode = (cause: unknown): string =>
   typeof cause === "object" && cause !== null && "code" in cause

@@ -1,14 +1,30 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
+import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { type AgentMessage, ConversationStore } from "@efferent/core"
-import { InMemoryConversationStoreLive } from "./inMemoryConversationStore.js"
+import { SqliteConversationStoreLive } from "./sqlite.js"
+import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
+
+// Exercises the real SQLite store + the position/checkpoint fold contract on a
+// fresh in-memory db (no Postgres, no Docker). `provideMerge` exposes the
+// SqlClient alongside the store so we can run the schema migration directly —
+// avoiding the migrator's platform FileSystem requirement (the app provides
+// BunContext for that at its composition root).
+const Live = SqliteConversationStoreLive.pipe(
+  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+)
 
 const user = (content: string): AgentMessage => ({ role: "user", content })
 
 const run = <A>(eff: Effect.Effect<A, unknown, ConversationStore>): Promise<A> =>
-  Effect.runPromise(eff.pipe(Effect.provide(InMemoryConversationStoreLive)) as Effect.Effect<A>)
+  Effect.runPromise(
+    Effect.gen(function* () {
+      yield* sqlite0001 // create the schema on this connection
+      return yield* eff
+    }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
+  )
 
-describe("InMemoryConversationStore", () => {
+describe("SqliteConversationStore", () => {
   test("create + append + list preserves order; listActive == list with no checkpoint", async () => {
     const result = await run(
       Effect.gen(function* () {
@@ -17,16 +33,14 @@ describe("InMemoryConversationStore", () => {
         yield* store.append(id, user("a"))
         yield* store.append(id, user("b"))
         yield* store.append(id, user("c"))
-        const all = yield* store.list(id)
-        const active = yield* store.listActive(id)
-        return { all, active }
+        return { all: yield* store.list(id), active: yield* store.listActive(id) }
       }),
     )
     expect(result.all.map((m) => (m.role === "user" ? m.content : ""))).toEqual(["a", "b", "c"])
     expect(result.active).toHaveLength(3)
   })
 
-  test("checkpoint folds everything up to head; listActive returns only later rows", async () => {
+  test("checkpoint folds up to head; listActive returns only later rows; originals untouched", async () => {
     const result = await run(
       Effect.gen(function* () {
         const store = yield* ConversationStore
@@ -35,19 +49,20 @@ describe("InMemoryConversationStore", () => {
         yield* store.append(id, user("b")) // position 1
         yield* store.checkpoint(id, "SUMMARY") // folds at position 1
         yield* store.append(id, user("c")) // position 2
-        const cp = yield* store.getLatestCheckpoint(id)
-        const active = yield* store.listActive(id)
-        const all = yield* store.list(id)
-        return { cp, active, all }
+        return {
+          cp: yield* store.getLatestCheckpoint(id),
+          active: yield* store.listActive(id),
+          all: yield* store.list(id),
+        }
       }),
     )
     expect(result.cp?.summary).toBe("SUMMARY")
     expect(result.cp?.messagePosition).toBe(1)
-    expect(result.all).toHaveLength(3) // originals untouched
+    expect(result.all).toHaveLength(3)
     expect(result.active.map((m) => (m.role === "user" ? m.content : ""))).toEqual(["c"])
   })
 
-  test("getLatestCheckpoint returns the most recent; listCheckpoints is position-sorted", async () => {
+  test("getLatestCheckpoint returns most recent; listCheckpoints is position-sorted", async () => {
     const result = await run(
       Effect.gen(function* () {
         const store = yield* ConversationStore
@@ -56,25 +71,33 @@ describe("InMemoryConversationStore", () => {
         yield* store.checkpoint(id, "S1") // position 0
         yield* store.append(id, user("b"))
         yield* store.checkpoint(id, "S2") // position 1
-        const latest = yield* store.getLatestCheckpoint(id)
-        const list = yield* store.listCheckpoints(id)
-        return { latest, list }
+        return { latest: yield* store.getLatestCheckpoint(id), list: yield* store.listCheckpoints(id) }
       }),
     )
     expect(result.latest?.summary).toBe("S2")
     expect(result.list.map((c) => c.summary)).toEqual(["S1", "S2"])
   })
 
+  test("listByWorkspace returns conversations newest-first with the first user prompt", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const id = yield* store.create("/tmp/ws-a")
+        yield* store.append(id, user("hello world"))
+        return yield* store.listByWorkspace("/tmp/ws-a")
+      }),
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0]!.firstPrompt).toBe("hello world")
+  })
+
   test("append to a missing conversation fails with ConversationNotFound", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
+        yield* sqlite0001
         const store = yield* ConversationStore
-        // a syntactically valid but unknown UUID
-        yield* store.append(
-          "00000000-0000-0000-0000-000000000000" as never,
-          user("x"),
-        )
-      }).pipe(Effect.provide(InMemoryConversationStoreLive)),
+        yield* store.append("00000000-0000-0000-0000-000000000000" as never, user("x"))
+      }).pipe(Effect.provide(Live)),
     )
     expect(exit._tag).toBe("Failure")
   })

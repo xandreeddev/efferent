@@ -3,16 +3,18 @@
   "workspaces": {
     "": {
       "name": "agent",
+      "dependencies": {
+        "effect": "^3.21.2",
+      },
       "devDependencies": {
         "@types/bun": "^1.3.14",
         "typescript": "^5.9.3",
       },
     },
     "packages/adapters": {
-      "name": "@agent/adapters",
+      "name": "@efferent/adapters",
       "version": "0.0.0",
       "dependencies": {
-        "@agent/core": "workspace:*",
         "@effect/ai": "^0.35.0",
         "@effect/ai-google": "^0.14.0",
         "@effect/ai-openai": "^0.39.2",
@@ -20,27 +22,30 @@
         "@effect/platform": "^0.96.1",
         "@effect/sql": "^0.51.1",
         "@effect/sql-pg": "^0.52.1",
+        "@effect/sql-sqlite-bun": "^0.52.0",
+        "@efferent/core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
     "packages/cli": {
-      "name": "@agent/cli",
+      "name": "efferent",
       "version": "0.0.0",
       "bin": {
-        "agent": "./src/main.ts",
+        "efferent": "dist/efferent.js",
+        "eff": "dist/efferent.js",
       },
-      "dependencies": {
-        "@agent/adapters": "workspace:*",
-        "@agent/core": "workspace:*",
+      "devDependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/cli": "^0.75.1",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
+        "@efferent/adapters": "workspace:*",
+        "@efferent/core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
     "packages/core": {
-      "name": "@agent/core",
+      "name": "@efferent/core",
       "version": "0.0.0",
       "dependencies": {
         "@effect/ai": "^0.35.0",
@@ -48,26 +53,18 @@
       },
     },
     "packages/evals": {
-      "name": "@agent/evals",
+      "name": "@efferent/evals",
       "version": "0.0.0",
       "dependencies": {
-        "@agent/adapters": "workspace:*",
-        "@agent/core": "workspace:*",
         "@effect/ai": "^0.35.0",
         "@effect/platform-bun": "^0.89.0",
+        "@efferent/adapters": "workspace:*",
+        "@efferent/core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
   },
   "packages": {
-    "@agent/adapters": ["@agent/adapters@workspace:packages/adapters"],
-
-    "@agent/cli": ["@agent/cli@workspace:packages/cli"],
-
-    "@agent/core": ["@agent/core@workspace:packages/core"],
-
-    "@agent/evals": ["@agent/evals@workspace:packages/evals"],
-
     "@effect/ai": ["@effect/ai@0.35.0", "", { "dependencies": { "find-my-way-ts": "^0.1.6" }, "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "@effect/rpc": "^0.75.0", "effect": "^3.21.0" } }, "sha512-VOYFBN/TpHC0sB5AhUGOEJzOTEnuo2bbDtQcDDsU7ffHaE8ZbqZj1CuSHgifbmqMaY9+xofsKMazQZ3jlZfPSw=="],
 
     "@effect/ai-google": ["@effect/ai-google@0.14.0", "", { "peerDependencies": { "@effect/ai": "^0.35.0", "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "effect": "^3.21.0" } }, "sha512-lQG3T5wT31L9a1FuIr7IhYbC6dq0ClqXs3CqJKSiF0IMVpxC/2ZPREbhd5O4dKrT+6JyWmxP54Uv04DTt/0cJQ=="],
@@ -96,9 +93,17 @@
 
     "@effect/sql-pg": ["@effect/sql-pg@0.52.1", "", { "dependencies": { "pg": "^8.16.3", "pg-connection-string": "2.9.1", "pg-cursor": "^2.15.3", "pg-pool": "^3.10.1", "pg-types": "^4.1.0" }, "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "@effect/sql": "^0.51.0", "effect": "^3.21.0" } }, "sha512-Lp0Zjas77WQ/AfWZ/FzzCOkyGCpx+wB2FXNHStzM4GrHEvwUYQoYQxMxdz5r7K+EUiZOPlxy/SBLVVReVIovjw=="],
 
+    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@0.52.0", "", { "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.0", "@effect/sql": "^0.51.0", "effect": "^3.21.0" } }, "sha512-iqQ7SvSNxq0HLjKW5IQ29FsCTzOD1CuX1wuBEuPLLgPCvuEykEHLn4zDrs2qJ+O3CBEUm4kiCy29tmfHE7uAdw=="],
+
     "@effect/typeclass": ["@effect/typeclass@0.29.19", "", { "peerDependencies": { "effect": "^3.10.19" } }, "sha512-nVbPVbad5YralGdKUZun9ySDmyWx4f0v/MxSaET7ZU3+g9N0e3D3LcGgRo0SuZtVREgsH+5EhZpdgaGiShwtHg=="],
 
     "@effect/workflow": ["@effect/workflow@0.18.1", "", { "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.1", "@effect/rpc": "^0.75.1", "effect": "^3.21.2" } }, "sha512-FxsUxkyvd7CyN7tw4bQgmAJv8tf8hUwy72bwGYzKGpeuiEObiUKgO1pg8xM49gB6EtwOdVRJhytwcFc8eM/6ow=="],
+
+    "@efferent/adapters": ["@efferent/adapters@workspace:packages/adapters"],
+
+    "@efferent/core": ["@efferent/core@workspace:packages/core"],
+
+    "@efferent/evals": ["@efferent/evals@workspace:packages/evals"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3", "", { "os": "darwin", "cpu": "arm64" }, "sha512-QZHtlVgbAdy2zAqNA9Gu1UpIuI8Xvsd1v8ic6B2pZmeFnFcMWiPLfWXh7TVw4eGEZ/C9TH281KwhVoeQUKbyjw=="],
 
@@ -151,6 +156,8 @@
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
     "effect": ["effect@3.21.2", "", { "dependencies": { "@standard-schema/spec": "^1.0.0", "fast-check": "^3.23.1" } }, "sha512-rXd2FGDM8KdjSIrc+mqEELo7ScW7xTVxEf1iInmPSpIde9/nyGuFM710cjTo7/EreGXiUX2MOonPpprbz2XHCg=="],
+
+    "efferent": ["efferent@workspace:packages/cli"],
 
     "fast-check": ["fast-check@3.23.2", "", { "dependencies": { "pure-rand": "^6.1.0" } }, "sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A=="],
 

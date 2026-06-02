@@ -1,4 +1,4 @@
-# @agent/cli
+# @efferent/cli
 
 Coding-agent driver — composition root for four modes, plus a hand-rolled TUI.
 
@@ -30,7 +30,7 @@ packages/cli/src/
 
 ## Rules
 
-- No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@agent/core`.
+- No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@efferent/core`.
 - Each mode is a single `Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore>` that subscribes to the agent's event queue and renders its way.
 - `main.ts` is the *only* place adapter selection happens. To swap the LLM provider, swap the Layer imported here.
 - Mode resolution defaults: argv prompt or piped stdin → print; TTY → tui; else print. `--mode <x>` overrides.
@@ -50,4 +50,5 @@ packages/cli/src/
 
 - Bash timeout default (in `coderAgentConfig` tools): 60s.
 - TUI palette: 6 visible rows, `:` commands hardcoded in `slashPalette.ts`.
-- maxSteps for the agent loop: 5 (in `runAgentLoop`).
+- maxSteps for the agent loop: default 20 (`Settings.maxSteps`; `runAgentLoop` falls back to 20).
+- Conversation store: SQLite at `~/.efferent/efferent.db` by default; Postgres when `EFFERENT_DB_URL` is set (`ConversationStoreLive` in `adapters/src/database/migrator.ts`).

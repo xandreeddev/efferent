@@ -1,7 +1,7 @@
 import { Context, type Effect } from "effect"
 import type { Settings } from "../entities/Settings.js"
 
-export class SettingsStore extends Context.Tag("@agent/core/SettingsStore")<
+export class SettingsStore extends Context.Tag("@efferent/core/SettingsStore")<
   SettingsStore,
   {
     readonly get: () => Effect.Effect<Settings, never>

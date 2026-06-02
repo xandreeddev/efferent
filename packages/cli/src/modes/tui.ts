@@ -23,7 +23,7 @@ import {
   type ModelInfo,
   type Scope,
   type Skill,
-} from "@agent/core"
+} from "@efferent/core"
 
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -374,7 +374,7 @@ export interface TuiModeInput {
   readonly resumeConversationId?: string
 }
 
-const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
+const logFilePath = (): string => join(homedir(), ".efferent", "efferent.log")
 
 const seedSidePane = (
   instructions: ReadonlyArray<InstructionFile>,
@@ -790,7 +790,7 @@ const runTuiModeCore = (
                 if (event.finalText.trim().length === 0) {
                   s.scrollback.push({
                     kind: "info",
-                    text: `(agent stopped without a final answer — see ~/.agent/agent.log)`,
+                    text: `(agent stopped without a final answer — see ~/.efferent/efferent.log)`,
                   })
                 }
                 break

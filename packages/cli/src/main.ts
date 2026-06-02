@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
+import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
@@ -11,18 +13,17 @@ import {
   loadSkills,
   SettingsStore,
   type Scope,
-} from "@agent/core"
+} from "@efferent/core"
 import {
-  DatabaseLive,
+  ConversationStoreLive,
   HttpLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
   ModelLive,
-  PostgresConversationStoreLive,
   ProviderClientsLive,
   WebSearchLive,
-} from "@agent/adapters"
+} from "@efferent/adapters"
 
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
@@ -34,7 +35,7 @@ import { runTuiMode } from "./modes/tui.js"
 /* ------------------------------------------------------------------ */
 
 const AppLive = Layer.mergeAll(
-  PostgresConversationStoreLive.pipe(Layer.provide(DatabaseLive)),
+  ConversationStoreLive,
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
@@ -169,7 +170,7 @@ const promptConversationSelection = (
   })
 
 const root = Command.make(
-  "agent",
+  "efferent",
   {
     prompt: promptArg,
     mode: modeOption,
@@ -207,8 +208,8 @@ const root = Command.make(
         effectivePrompt !== undefined,
       )
 
-      // Discover skills once at startup. `.agent/skills/*.md` walked from
-      // cwd → parents → ~/.agent/skills. Closer-to-cwd shadows farther.
+      // Discover skills once at startup. `.efferent/skills/*.md` walked from
+      // cwd → parents → ~/.efferent/skills. Closer-to-cwd shadows farther.
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
@@ -318,8 +319,112 @@ const root = Command.make(
     }).pipe(Effect.provide(AppLive)),
 )
 
-const cli = Command.run(root, {
-  name: "agent",
+/* ------------------------------------------------------------------ */
+/* `efferent init` — set up the global ~/.efferent config              */
+/* ------------------------------------------------------------------ */
+
+const initProvider = Options.choice("provider", ["google", "openai"]).pipe(
+  Options.withDefault("google" as const),
+  Options.withDescription("Which provider the --key belongs to."),
+)
+const initKey = Options.text("key").pipe(
+  Options.optional,
+  Options.withDescription("API key to store in ~/.efferent/auth.json."),
+)
+const initModel = Options.text("model").pipe(
+  Options.optional,
+  Options.withDescription(
+    "Default model to pin in ~/.efferent/config.json (e.g. google:gemini-3.5-flash).",
+  ),
+)
+
+const initCommand = Command.make(
+  "init",
+  { provider: initProvider, key: initKey, model: initModel },
+  ({ provider, key, model }) =>
+    Effect.sync(() => {
+      const dir = join(homedir(), ".efferent")
+      mkdirSync(dir, { recursive: true })
+
+      // API keys live in auth.json (separate from config.json so a `/model`
+      // switch, which rewrites config.json, never clobbers them).
+      if (key._tag === "Some") {
+        const authPath = join(dir, "auth.json")
+        let auth: Record<string, string> = {}
+        if (existsSync(authPath)) {
+          try {
+            auth = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, string>
+          } catch {
+            /* overwrite malformed auth */
+          }
+        }
+        auth[provider] = key.value
+        writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`)
+      }
+
+      if (model._tag === "Some") {
+        const cfgPath = join(dir, "config.json")
+        let cfg: Record<string, unknown> = {}
+        if (existsSync(cfgPath)) {
+          try {
+            cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>
+          } catch {
+            /* overwrite malformed config */
+          }
+        }
+        cfg.model = model.value
+        writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`)
+      }
+
+      const envName =
+        provider === "google" ? "GOOGLE_GENERATIVE_AI_API_KEY" : "OPENAI_API_KEY"
+      console.log(`efferent: global config at ${dir}`)
+      console.log(
+        `  history → ${join(dir, "efferent.db")} (SQLite; set EFFERENT_DB_URL for Postgres)`,
+      )
+      console.log(
+        key._tag === "Some"
+          ? `  ${provider} key stored in auth.json`
+          : `  no key stored — re-run with --key, or set ${envName} in your env`,
+      )
+      if (model._tag === "Some") console.log(`  default model → ${model.value}`)
+      console.log(`\nRun \`efferent\` in any project to start.`)
+    }),
+).pipe(Command.withDescription("Set up the global ~/.efferent config (API key, default model)."))
+
+/* ------------------------------------------------------------------ */
+/* Run                                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Seed provider keys from the global `~/.efferent/auth.json` into the env
+ * *before* the layers build, so a global install works without exported env
+ * vars. Real env vars (incl. a project `.env`) always win — this only fills
+ * gaps.
+ */
+const seedKeysFromGlobalAuth = (): void => {
+  try {
+    const p = join(homedir(), ".efferent", "auth.json")
+    if (!existsSync(p)) return
+    const auth = JSON.parse(readFileSync(p, "utf8")) as {
+      google?: string
+      openai?: string
+    }
+    if (auth.google && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY = auth.google
+    }
+    if (auth.openai && !process.env.OPENAI_API_KEY) {
+      process.env.OPENAI_API_KEY = auth.openai
+    }
+  } catch {
+    /* ignore malformed auth — env / explicit config still apply */
+  }
+}
+
+seedKeysFromGlobalAuth()
+
+const cli = Command.run(root.pipe(Command.withSubcommands([initCommand])), {
+  name: "efferent",
   version: "0.0.0",
 })
 

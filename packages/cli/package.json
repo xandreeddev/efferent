@@ -1,14 +1,31 @@
 {
-  "name": "@agent/cli",
+  "name": "efferent",
   "version": "0.0.0",
-  "private": true,
+  "description": "A coding agent CLI on Effect.ts + Bun — modal TUI, zero-config SQLite history, multi-provider (Gemini/OpenAI). No React.",
+  "license": "MIT",
   "type": "module",
   "bin": {
-    "agent": "./src/main.ts"
+    "efferent": "dist/efferent.js",
+    "eff": "dist/efferent.js"
   },
-  "dependencies": {
-    "@agent/adapters": "workspace:*",
-    "@agent/core": "workspace:*",
+  "files": ["dist"],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xandreeddev/efferent.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun build src/main.ts --target=bun --outfile dist/efferent.js",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "@efferent/adapters": "workspace:*",
+    "@efferent/core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/cli": "^0.75.1",
     "@effect/platform": "^0.96.1",

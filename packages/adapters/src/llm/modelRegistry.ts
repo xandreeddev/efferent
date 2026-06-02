@@ -5,7 +5,7 @@ import {
   parseModel,
   SettingsStore,
   type ModelInfo,
-} from "@agent/core"
+} from "@efferent/core"
 import { HttpClient, HttpClientRequest } from "@effect/platform"
 import { Config, Effect, Layer, Option, Redacted } from "effect"
 import { GOOGLE_API_KEY, OPENAI_API_KEY } from "./clients.js"

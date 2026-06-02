@@ -1,4 +1,4 @@
-# @agent/core
+# @efferent/core
 
 Pure domain. Only runtime dependency: `effect`.
 
@@ -12,11 +12,11 @@ Pure domain. Only runtime dependency: `effect`.
 
 ## Rules
 
-- Never import from `@agent/adapters`, `@agent/cli`, or `@agent/web`.
+- Never import from `@efferent/adapters`, `@efferent/cli`, or `@efferent/web`.
 - No SDK / IO libraries — no `ai`, no `@ai-sdk/*`, no `fs`, no Bun-only globals. If a use case needs a capability, declare a port; do not reach for an SDK directly.
 - Pure standard-lib helpers from `node:path` are allowed (string-only — no filesystem access). Anything that performs IO must go through a port.
 - Schema imports use `import { Schema } from "effect"`.
-- Tags carry a fully-qualified string ID so Effect's diagnostics stay useful: `Context.Tag("@agent/core/Llm")`.
+- Tags carry a fully-qualified string ID so Effect's diagnostics stay useful: `Context.Tag("@efferent/core/Llm")`.
 
 ## Conventions
 

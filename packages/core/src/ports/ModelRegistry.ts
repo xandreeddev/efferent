@@ -14,11 +14,11 @@ export class ModelListError extends Data.TaggedError("ModelListError")<{
  * to offer choices and `select` to switch + persist.
  *
  * The selection is the single source of truth in `SettingsStore` (persisted
- * to `.agent/config.json` as `"<provider>:<modelId>"`), so `current` always
+ * to `.efferent/config.json` as `"<provider>:<modelId>"`), so `current` always
  * reflects the latest `/model` switch without a separate cache to keep in
  * sync.
  */
-export class ModelRegistry extends Context.Tag("@agent/core/ModelRegistry")<
+export class ModelRegistry extends Context.Tag("@efferent/core/ModelRegistry")<
   ModelRegistry,
   {
     /** The model the loop should use right now. */

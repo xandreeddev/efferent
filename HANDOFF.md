@@ -4,7 +4,7 @@ _Last updated: 2026-05-28._
 
 ## TL;DR
 
-The agent was migrated off the **Vercel AI SDK** onto **`@effect/ai`** with a **multi-provider router** over `@effect/ai-google` (Gemini) + `@effect/ai-openai` (OpenAI). It works end-to-end (verified in `print` mode with real multi-step Gemini tool calls; live model catalogue fetch verified). A runtime **`/model` switch** picks provider + model from a live catalogue; selection persists to `.agent/config.json`; caching is provider-native + aggressive.
+The agent was migrated off the **Vercel AI SDK** onto **`@effect/ai`** with a **multi-provider router** over `@effect/ai-google` (Gemini) + `@effect/ai-openai` (OpenAI). It works end-to-end (verified in `print` mode with real multi-step Gemini tool calls; live model catalogue fetch verified). A runtime **`/model` switch** picks provider + model from a live catalogue; selection persists to `.efferent/config.json`; caching is provider-native + aggressive.
 
 ---
 
@@ -53,7 +53,7 @@ The agent was migrated off the **Vercel AI SDK** onto **`@effect/ai`** with a **
 - **Router** (`adapters/src/llm/router.ts`, `RouterLanguageModelLive`) — a `LanguageModel` whose methods read `ModelRegistry.current` per call and delegate to `GoogleLanguageModel.make` / `OpenAiLanguageModel.make` (built on the fly from the captured client, `Effect.provideService`d in). `ModelLive` bundles router + registry + dynamic `LlmInfo`; requires only `SettingsStore`. Replaces `GoogleLive`.
 - **Clients** (`adapters/src/llm/clients.ts`) — both clients with **key-optional** config (missing key never fails layer build; 401s only on use). `hasKey` gates listing.
 - **Registry** (`adapters/src/llm/modelRegistry.ts`) — selection from `SettingsStore` (the source of truth); catalogue fetched over **raw HTTP** + parsed defensively (the SDK list schemas mis-decode the live APIs — Google omits `baseModelId`). Filters drop embeddings/image/tts/audio; only key-set providers are queried.
-- **CLI** — `main.ts` swaps `GoogleLive` → `ModelLive`; TUI `/model` lists (numbered, cached) + `/model <#|id>` selects, updates the status bar, and warns on a mid-conversation provider switch. `AGENT_MODEL` seeds the default (parsed as `provider:modelId` or bare id), an explicit `/model` choice in `.agent/config.json` wins.
+- **CLI** — `main.ts` swaps `GoogleLive` → `ModelLive`; TUI `/model` lists (numbered, cached) + `/model <#|id>` selects, updates the status bar, and warns on a mid-conversation provider switch. `EFFERENT_MODEL` seeds the default (parsed as `provider:modelId` or bare id), an explicit `/model` choice in `.efferent/config.json` wins.
 
 **Caching:** OpenAI — automatic prompt-prefix caching + a stable `prompt_cache_key` (set via `OpenAiLanguageModel.make({ config })`). Gemini — implicit context caching (stable prefix → `cachedContentTokenCount`, surfaced in the gauge). Explicit Gemini `cachedContent` is **not expressible** through `@effect/ai-google@0.14` (it always sends full `contents`, and `Config` omits `contents`/`tools`/`systemInstruction`), so we rely on implicit — this resolves the old "Gemini duplicate-content" open risk (it can't be done cleanly, so we don't).
 
@@ -82,7 +82,7 @@ bun packages/cli/src/main.ts --mode print --allow-bash "<prompt>"   # one-shot
 bun packages/cli/src/main.ts --mode json "<prompt>"                 # JSONL events
 ```
 
-Env (`.env`, gitignored): `GOOGLE_GENERATIVE_AI_API_KEY` (Gemini) and/or `OPENAI_API_KEY` (OpenAI) — at least one; each optional at startup, only fails if you select that provider. `AGENT_DB_URL` (default `postgres://agent:agent@localhost:5434/agent`), optional `AGENT_MODEL` (`"<provider>:<modelId>"` or bare id).
+Env (`.env`, gitignored): `GOOGLE_GENERATIVE_AI_API_KEY` (Gemini) and/or `OPENAI_API_KEY` (OpenAI) — at least one; each optional at startup, only fails if you select that provider. `EFFERENT_DB_URL` (default `postgres://agent:agent@localhost:5434/agent`), optional `EFFERENT_MODEL` (`"<provider>:<modelId>"` or bare id).
 
 Smoke test that proves the round-trip: a two-step dependent tool call, e.g. _"read packages/core/package.json, then read packages/core/src/index.ts, and tell me the package name and how many export lines index.ts has."_
 

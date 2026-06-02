@@ -6,7 +6,7 @@ Today `agent` is a personal-notes CLI: `capture / ls / show / rm`. The agent loo
 
 We're repurposing the CLI to be a **coding agent** in the Pi mould (`~/Workspace/xandreed/pi`, read-only research material): run `agent` in any directory, it inherits cwd as its workspace, reads / writes / edits files, greps, runs shell. **No compromise on UX**: the default `agent` invocation drops into a proper full-screen TUI (Pi/Codex/Claude-Code shape) with a persistent status bar (model name, live context-token gauge, cwd), a scrollback area with inline tool-call pills and streaming markdown, and a multi-line input editor with slash-command palette. Three further modes (`--print`, `--mode json`, `--mode rpc`) cover headless / scripting / IDE-integration use cases.
 
-Bash calls hit a y/n confirm modal in the TUI and require explicit `--allow-bash` in non-interactive modes; reads / writes / edits run freely (file changes are diff-printable and git-undoable). The capture/notes domain **stays in `@agent/core` and is still wired into the web driver** — only the CLI loses its capture verbs.
+Bash calls hit a y/n confirm modal in the TUI and require explicit `--allow-bash` in non-interactive modes; reads / writes / edits run freely (file changes are diff-printable and git-undoable). The capture/notes domain **stays in `@efferent/core` and is still wired into the web driver** — only the CLI loses its capture verbs.
 
 No React (it's a wedge — Pi-style: hand-rolled TUI on Bun). Model + tools + system prompt + safety policy are configured **in code** (composition root in `packages/cli/src/main.ts`); a settings layer is a future slice. The TUI surfaces what's hardcoded (model name, token usage) so users see it, even though they can't change it from the CLI yet.
 

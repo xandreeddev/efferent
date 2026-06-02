@@ -15,7 +15,7 @@ import {
   runAgent,
   type Scope,
   type Skill,
-} from "@agent/core"
+} from "@efferent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 

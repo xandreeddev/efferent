@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { Shell, ShellAborted, ShellError, ShellTimeout } from "@agent/core"
+import { Shell, ShellAborted, ShellError, ShellTimeout } from "@efferent/core"
 
 interface SpawnLike {
   spawn: (cmd: string[], opts: {

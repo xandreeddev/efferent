@@ -1,6 +1,6 @@
 import type { EvalReport } from "./Eval.js"
 
-/* Inline ANSI — evals must not depend on @agent/cli. */
+/* Inline ANSI — evals must not depend on @efferent/cli. */
 const ESC = "\x1b["
 const wrap = (code: number) => (s: string): string => `${ESC}${code}m${s}${ESC}0m`
 const dim = wrap(2)

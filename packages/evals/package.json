@@ -1,5 +1,5 @@
 {
-  "name": "@agent/evals",
+  "name": "@efferent/evals",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@agent/adapters": "workspace:*",
-    "@agent/core": "workspace:*",
+    "@efferent/adapters": "workspace:*",
+    "@efferent/core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/platform-bun": "^0.89.0",
     "effect": "^3.21.2"

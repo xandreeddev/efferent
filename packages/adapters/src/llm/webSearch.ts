@@ -8,7 +8,7 @@ import {
   WebSearchError,
   type WebSearchResult,
   type WebSearchSource,
-} from "@agent/core"
+} from "@efferent/core"
 import { Config, Effect, Layer, Option } from "effect"
 import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "./clients.js"
 
@@ -22,7 +22,7 @@ import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "./clients.js"
  * `source` parts are the citations.
  *
  * The search engine is configured independently of the chat `/model`:
- *  - `AGENT_SEARCH_MODEL` ("<provider>:<modelId>", e.g. `google:gemini-3.5-flash`
+ *  - `EFFERENT_SEARCH_MODEL` ("<provider>:<modelId>", e.g. `google:gemini-3.5-flash`
  *    or `openai:gpt-4o`) pins it explicitly; otherwise
  *  - it defaults to whichever provider key is present (Google preferred).
  * With no provider key set, `search` fails with a clear, returned tool error.
@@ -38,7 +38,7 @@ interface SearchModel {
 
 const resolveSearchModel: Effect.Effect<SearchModel | undefined> = Effect.gen(
   function* () {
-    const explicit = yield* Config.string("AGENT_SEARCH_MODEL").pipe(
+    const explicit = yield* Config.string("EFFERENT_SEARCH_MODEL").pipe(
       Config.option,
       Effect.orElseSucceed(() => Option.none<string>()),
     )
@@ -101,7 +101,7 @@ export const WebSearchLive = Layer.effect(
         return Effect.fail(
           new WebSearchError({
             message:
-              "Web search is not configured — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY (or AGENT_SEARCH_MODEL).",
+              "Web search is not configured — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY (or EFFERENT_SEARCH_MODEL).",
           }),
         )
       }
