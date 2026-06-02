@@ -5,51 +5,100 @@ import type { EntryMode } from "./navKeys.js"
 /**
  * The always-on, per-pane keybinds. Rendered as a bordered box (by render.ts)
  * whose border + title take the focused pane's accent colour; the title carries
- * the focused pane + mode (e.g. `conversation · NORMAL`), and the body rows are
- * the keys that pane actually accepts — so it doubles as live help.
+ * the focused pane + mode (e.g. `conversation · NORMAL`).
+ *
+ * The body is **two labelled rows**: a fixed `nav` row (the global movement set
+ * — pane switching / `:` / `/` / zoom, identical in every pane) over a dynamic
+ * row of the focused pane's own keys. A `:`/`/` entry is a focused prompt, so it
+ * takes the top row (labelled `cmd`/`find`) and blanks the bottom one.
  */
 /** Key content rows inside the keybind box. */
 export const KEYBIND_KEY_ROWS = 2
 /** Total keybind box height: top border + key rows + bottom border. */
 export const KEYBIND_BOX_ROWS = KEYBIND_KEY_ROWS + 2
 
+/** Width of the dim row label (`nav`/`pane`/…); a trailing space follows it. */
+const LABEL_W = 4
+
 const modeLabel = (mode: UiMode): string =>
   mode === "insert" ? "INSERT" : mode === "visual" ? "VISUAL" : "NORMAL"
 
-/** The keys to advertise for the current pane/mode/entry, in priority order. */
-const keysFor = (
+/** One legend row: a short dim label + the keys it advertises. */
+interface LegendRow {
+  readonly label: string
+  readonly keys: readonly string[]
+}
+
+/** Pane switching — Ctrl + hjkl or Ctrl + arrows (peers). */
+const PANE_KEY = "^hjkl/↑↓←→ panes"
+
+/** Global navigation keys — identical across the read-only panes. */
+const NAV_KEYS = [PANE_KEY, ": cmd", "/ search", "z zoom"]
+
+/**
+ * The two rows for the current pane/mode/entry: a fixed `nav` row over a dynamic
+ * row of the focused pane's keys. `↵`/`⇥`/arrow glyphs read the same as the keys
+ * `decideKey` actually accepts (arrows are peers of hjkl).
+ */
+const legendRows = (
   focus: FocusPane,
   mode: UiMode,
   view: "stack" | "context",
   entry: EntryMode,
-): string[] => {
-  if (entry === "command") return ["↵ run", "Tab complete", "Esc cancel"]
-  if (entry === "search") return ["↵ jump", "n/N next·prev", "Esc cancel"]
+): readonly [LegendRow, LegendRow] => {
+  if (entry === "command") {
+    return [
+      { label: "cmd", keys: ["↵ run", "Tab complete", "Esc cancel"] },
+      { label: "", keys: [] },
+    ]
+  }
+  if (entry === "search") {
+    return [
+      { label: "find", keys: ["↵ jump", "n/N next·prev", "Esc cancel"] },
+      { label: "", keys: [] },
+    ]
+  }
   if (focus === "input") {
+    const nav: LegendRow = { label: "nav", keys: [PANE_KEY, ": cmd", "/ search"] }
     return mode === "insert"
-      ? ["type to compose", "Esc → NORMAL", "^h/j/k/l panes"]
-      : ["↵ send", "i insert", ": command", "/ search", "^h/j/k/l panes"]
+      ? [nav, { label: "input", keys: ["type to compose", "Esc → NORMAL"] }]
+      : [nav, { label: "input", keys: ["↵ send", "i insert"] }]
   }
   if (focus === "conversation") {
     return mode === "visual"
-      ? ["h/j/k/l extend", "y yank", "v/V switch", "Esc cancel"]
+      ? [
+          { label: "nav", keys: [PANE_KEY] },
+          { label: "vis", keys: ["hjkl/↑↓←→ extend", "y yank", "v/V switch", "Esc cancel"] },
+        ]
       : [
-          "h/j/k/l move",
-          "w/b/e word",
-          "⇥ fold",
-          "Z fold all",
-          "{ } turn",
-          "/ search",
-          "v/V select",
-          "z zoom",
-          "^h/j/k/l panes",
-          "i insert",
+          { label: "nav", keys: NAV_KEYS },
+          {
+            label: "pane",
+            keys: [
+              "hjkl/↑↓←→ move",
+              "w/b/e word",
+              "⇥ fold",
+              "Z fold all",
+              "{ } turn",
+              "v/V select",
+              "i insert",
+            ],
+          },
         ]
   }
-  // side pane
+  // Side pane: context viewer vs activity (stack) view.
   return view === "context"
-    ? ["j/k move", "Space select", "b build session", "⇥/h/l fold", "↵ jump", "z zoom", "^h/j/k/l panes", "i insert"]
-    : ["j/k move", "⇥/h/l fold", "z zoom", ": command", "^h/j/k/l panes", "i insert"]
+    ? [
+        { label: "nav", keys: NAV_KEYS },
+        {
+          label: "ctx",
+          keys: ["j/k/↑↓ move", "h/l/←→ fold", "↵ jump", "Space select", "b build", "i insert"],
+        },
+      ]
+    : [
+        { label: "nav", keys: NAV_KEYS },
+        { label: "act", keys: ["j/k/↑↓ move", "⇥/↵/←→ fold", "i insert"] },
+      ]
 }
 
 /** Greedy-pack labels into at most `rows` lines, each ≤ `width`, joined by ` · `. */
@@ -73,8 +122,12 @@ const packRows = (labels: string[], width: number, rows: number): string[] => {
   return out.slice(0, rows)
 }
 
+/** Visible gray vertical bar between commands (the dim `·` read as invisible). */
+const SEP = `${ansi.fgGray} │ ${ansi.reset}`
+
 const styleKeyLine = (line: string): string => {
-  // Dim the descriptive words; leave the key tokens (first word of each item) plain.
+  // Bold key tokens (first word of each item), dim the descriptive words, with a
+  // clearly-visible bar between commands.
   return line
     .split(" · ")
     .map((item) => {
@@ -84,14 +137,18 @@ const styleKeyLine = (line: string): string => {
       const desc = item.slice(sp + 1)
       return `${ansi.bold}${key}${ansi.reset} ${ansi.dim}${desc}${ansi.reset}`
     })
-    .join(`${ansi.dim} · ${ansi.reset}`)
+    .join(SEP)
 }
+
+/** A dim, fixed-width row label (`nav`/`pane`/…) with a trailing gutter space. */
+const styleLabel = (label: string): string =>
+  `${ansi.dim}${label.padEnd(LABEL_W)}${ansi.reset} `
 
 /**
  * The keybind box's content: a `title` (focused pane · MODE, e.g.
- * `conversation · NORMAL`) for the box border, plus `rows` of styled key hints
- * packed to `innerWidth`. render.ts frames these in a box coloured by the
- * focused pane's accent.
+ * `conversation · NORMAL`) for the box border, plus two labelled rows — a fixed
+ * `nav` line over the focused pane's own keys — packed to `innerWidth`. render.ts
+ * frames these in a box coloured by the focused pane's accent.
  */
 export const legendContent = (
   focus: FocusPane,
@@ -109,8 +166,12 @@ export const legendContent = (
           : "side"
         : "input"
   const title = `${paneName} · ${modeLabel(mode)}`
-  const keyRows = packRows(keysFor(focus, mode, view, entry), innerWidth, KEYBIND_KEY_ROWS)
-  const rows = keyRows.map((l) => styleKeyLine(l))
-  while (rows.length < KEYBIND_KEY_ROWS) rows.push("")
-  return { title, rows: rows.slice(0, KEYBIND_KEY_ROWS) }
+  const keysWidth = Math.max(1, innerWidth - LABEL_W - 1)
+  const renderRow = (row: LegendRow): string => {
+    const packed = packRows([...row.keys], keysWidth, 1)[0] ?? ""
+    const keys = packed.length > 0 ? styleKeyLine(packed) : ""
+    return `${styleLabel(row.label)}${keys}`
+  }
+  const [r1, r2] = legendRows(focus, mode, view, entry)
+  return { title, rows: [renderRow(r1), renderRow(r2)] }
 }

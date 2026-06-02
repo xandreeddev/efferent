@@ -60,7 +60,7 @@ import {
   stackCursorMove,
   stackCursorToEnd,
   stackCursorToTop,
-  stackToggleSection,
+  stackToggle,
   emptyStats,
   type FileChange,
   type SidePaneState,
@@ -80,6 +80,7 @@ import {
   onToolStart as treeToolStart,
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
+  openTurnId,
 } from "../tui/executionTree.js"
 import {
   describeToolCall,
@@ -394,7 +395,7 @@ const seedSidePane = (
   contextHandoffSelected: new Set(),
   stats: emptyStats,
   filesChanged: [],
-  sectionsCollapsed: new Set(["files", "skills", "instructions"]),
+  stackCollapsed: new Set(["files", "skills", "instructions"]),
   stackCursor: 0,
 })
 
@@ -581,9 +582,15 @@ const runTuiModeCore = (
             switch (event.type) {
               case "turn_start": {
                 s.currentTurn = event.turnIndex + 1
+                // Auto-collapse the just-finished step so only the running one
+                // stays expanded (a build-log feel); manual re-expands persist.
+                const prevTurn = openTurnId(s.sidePane.tree)
+                const collapsed = new Set(s.sidePane.stackCollapsed)
+                if (prevTurn !== undefined) collapsed.add(`node:${prevTurn}`)
                 s.sidePane = {
                   ...s.sidePane,
                   tree: treeTurnStart(s.sidePane.tree, event.turnIndex, now),
+                  stackCollapsed: collapsed,
                 }
                 break
               }
@@ -1021,6 +1028,8 @@ const runTuiModeCore = (
             contextWindow: s.sidePane.stats.contextWindow,
           },
           filesChanged: [],
+          stackCollapsed: new Set(["files", "skills", "instructions"]),
+          stackCursor: 0,
         }
         replayHistory(s.scrollback, picked, [])
         s.scrollback.cursorToBottom()
@@ -1246,6 +1255,8 @@ const runTuiModeCore = (
                   contextWindow: s.sidePane.stats.contextWindow,
                 },
                 filesChanged: [],
+                stackCollapsed: new Set(["files", "skills", "instructions"]),
+                stackCursor: 0,
               }
               replayHistory(s.scrollback, history, checkpoints)
               s.scrollback.cursorToBottom()
@@ -1782,9 +1793,9 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
 
-          case "stackToggleSection":
+          case "stackToggle":
             yield* Ref.update(stateRef, (st) => {
-              st.sidePane = stackToggleSection(st.sidePane)
+              st.sidePane = stackToggle(st.sidePane)
               st.navPending = undefined
               return st
             })

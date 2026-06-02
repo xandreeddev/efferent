@@ -8,9 +8,10 @@ import {
   stackCursorMove,
   stackCursorToTop,
   stackRows,
-  stackToggleSection,
+  stackToggle,
   type SidePaneState,
 } from "./sidePane.js"
+import { emptyTree, onToolEnd, onToolStart, onTurnStart } from "./executionTree.js"
 
 const user = (text: string): AgentMessage => ({ role: "user", content: text })
 const assistant = (text: string): AgentMessage => ({
@@ -98,17 +99,31 @@ describe("Activity (stack) view navigation", () => {
     const rows = stackRows(emptySidePane)
     const i = rows.findIndex((r) => r.foldId === "skills")
     expect(i).toBeGreaterThanOrEqual(0)
-    expect(emptySidePane.sectionsCollapsed.has("skills")).toBe(true)
-    const opened = stackToggleSection({ ...emptySidePane, stackCursor: i })
-    expect(opened.sectionsCollapsed.has("skills")).toBe(false)
-    const closed = stackToggleSection({ ...opened, stackCursor: i })
-    expect(closed.sectionsCollapsed.has("skills")).toBe(true)
+    expect(emptySidePane.stackCollapsed.has("skills")).toBe(true)
+    const opened = stackToggle({ ...emptySidePane, stackCursor: i })
+    expect(opened.stackCollapsed.has("skills")).toBe(false)
+    const closed = stackToggle({ ...opened, stackCursor: i })
+    expect(closed.stackCollapsed.has("skills")).toBe(true)
   })
 
-  test("toggling off a section header that isn't a fold row is a no-op", () => {
+  test("toggling off a row that isn't a fold row is a no-op", () => {
     // stats header (row 0) has no foldId
-    const same = stackToggleSection({ ...emptySidePane, stackCursor: 0 })
-    expect([...same.sectionsCollapsed].sort()).toEqual(["files", "instructions", "skills"])
+    const same = stackToggle({ ...emptySidePane, stackCursor: 0 })
+    expect([...same.stackCollapsed].sort()).toEqual(["files", "instructions", "skills"])
+  })
+
+  test("a turn node is foldable; collapsing it hides its tool children", () => {
+    let tree = onTurnStart(emptyTree, 0, 0) // turn id 1
+    const started = onToolStart(tree, "Read(x.ts)", 0) // tool id 2
+    tree = onToolEnd(started.tree, started.id, true, "1 line", 0)
+    const base: SidePaneState = { ...emptySidePane, tree }
+    const rows = stackRows(base)
+    const turnRow = rows.findIndex((r) => r.foldId === "node:1")
+    expect(turnRow).toBeGreaterThanOrEqual(0)
+    expect(rows.some((r) => r.line.includes("Read(x.ts)"))).toBe(true) // tool visible
+    const folded = stackToggle({ ...base, stackCursor: turnRow })
+    expect(folded.stackCollapsed.has("node:1")).toBe(true)
+    expect(stackRows(folded).some((r) => r.line.includes("Read(x.ts)"))).toBe(false) // hidden
   })
 
   test("cursor moves clamp to the row range", () => {

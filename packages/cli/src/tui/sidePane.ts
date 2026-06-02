@@ -66,8 +66,8 @@ export interface SidePaneState {
   readonly stats: SessionStats
   /** Files touched this session, with running diffstat (Activity "files" section). */
   readonly filesChanged: ReadonlyArray<FileChange>
-  /** Folded Activity section ids ("files" / "skills" / "instructions"). */
-  readonly sectionsCollapsed: ReadonlySet<string>
+  /** Folded Activity fold ids: section names + tree containers ("node:<id>"). */
+  readonly stackCollapsed: ReadonlySet<string>
   /** Activity (stack) view cursor: index into its navigable rows. */
   readonly stackCursor: number
 }
@@ -83,7 +83,7 @@ export const emptySidePane: SidePaneState = {
   contextHandoffSelected: new Set(),
   stats: emptyStats,
   filesChanged: [],
-  sectionsCollapsed: new Set(["files", "skills", "instructions"]),
+  stackCollapsed: new Set(["files", "skills", "instructions"]),
   stackCursor: 0,
 }
 
@@ -276,65 +276,61 @@ const statusGlyph = (node: TreeNode, spinnerFrame: number): string => {
   return `${ansi.fgGreen}✓${ansi.reset}`
 }
 
-const containerGlyph = (node: TreeNode): string => {
+const containerGlyph = (node: TreeNode, collapsed: boolean): string => {
   const color =
     node.status === "running"
       ? ansi.fgYellow
       : node.status === "error"
         ? ansi.fgRed
         : ansi.fgGray
-  return `${color}▾${ansi.reset}`
+  return `${color}${collapsed ? "▸" : "▾"}${ansi.reset}`
 }
 
-const renderNode = (
-  node: TreeNode,
-  depth: number,
-  spinnerFrame: number,
-  now: number,
-  width: number,
-  out: string[],
-): void => {
-  const indent = "  ".repeat(depth)
-  const isContainer = node.kind === "turn" || node.kind === "subagent"
-  const glyph = isContainer ? containerGlyph(node) : statusGlyph(node, spinnerFrame)
-  const detail =
-    node.detail !== undefined ? ` ${ansi.dim}${node.detail}${ansi.reset}` : ""
-  let line = `${indent}${glyph} ${node.label}${detail}`
-
-  if (isContainer) {
-    const dur = fmtDur((node.endedAt ?? now) - node.startedAt)
-    line += ` ${ansi.dim}${dur}${ansi.reset}`
-  }
-  out.push(truncate(line, width))
-
-  for (const child of node.children) {
-    renderNode(child, depth + 1, spinnerFrame, now, width, out)
-  }
-}
-
-const renderTreeLines = (
-  tree: ExecutionTree,
-  spinnerFrame: number,
-  now: number,
-  width: number,
-): string[] => {
-  if (tree.roots.length === 0) {
-    return [`${ansi.dim}(idle)${ansi.reset}`]
-  }
-  const out: string[] = []
-  for (const root of tree.roots) {
-    renderNode(root, 0, spinnerFrame, now, width, out)
-  }
-  return out
-}
-
-// --- Activity (stack) view: a navigable rows model ---
-
-/** One rendered Activity row; `foldId` marks a foldable section header. */
+/** One rendered Activity row; `foldId` marks a foldable row (section or tree node). */
 interface StackRow {
   readonly line: string
   readonly foldId?: string
 }
+
+/**
+ * Walk the execution tree into `StackRow`s. Container nodes (turn/subagent) are
+ * foldable (`foldId = "node:<id>"`): a collapsed one shows `▸`, a trailing
+ * `· N tools`, and hides its children. Leaf tool rows carry no `foldId`.
+ */
+const treeRows = (
+  node: TreeNode,
+  depth: number,
+  collapsed: ReadonlySet<string>,
+  spinnerFrame: number,
+  now: number,
+  width: number,
+  out: StackRow[],
+): void => {
+  const indent = "  ".repeat(depth)
+  const isContainer = node.kind === "turn" || node.kind === "subagent"
+  const foldId = isContainer ? `node:${node.id}` : undefined
+  const folded = foldId !== undefined && collapsed.has(foldId)
+  const glyph = isContainer ? containerGlyph(node, folded) : statusGlyph(node, spinnerFrame)
+  const count =
+    folded && node.children.length > 0
+      ? `${ansi.dim} · ${node.children.length} tool${node.children.length === 1 ? "" : "s"}${ansi.reset}`
+      : ""
+  const detail =
+    node.detail !== undefined ? ` ${ansi.dim}${node.detail}${ansi.reset}` : ""
+  let line = `${indent}${glyph} ${node.label}${count}${detail}`
+  if (isContainer) {
+    line += ` ${ansi.dim}${fmtDur((node.endedAt ?? now) - node.startedAt)}${ansi.reset}`
+  }
+  out.push({ line: truncate(line, width), ...(foldId !== undefined ? { foldId } : {}) })
+
+  if (!folded) {
+    for (const child of node.children) {
+      treeRows(child, depth + 1, collapsed, spinnerFrame, now, width, out)
+    }
+  }
+}
+
+// --- Activity (stack) view: a navigable rows model ---
 
 /**
  * The Activity view as a flat list of rows: a stats header, the live tree, then
@@ -350,20 +346,26 @@ const stackModel = (
   const rows: StackRow[] = []
   for (const line of renderStats(state.stats, width, now)) rows.push({ line })
   rows.push({ line: "" })
-  for (const line of renderTreeLines(state.tree, spinnerFrame, now, width)) rows.push({ line })
+  if (state.tree.roots.length === 0) {
+    rows.push({ line: `${ansi.dim}(idle)${ansi.reset}` })
+  } else {
+    for (const root of state.tree.roots) {
+      treeRows(root, 0, state.stackCollapsed, spinnerFrame, now, width, rows)
+    }
+  }
   rows.push({ line: "" })
   const section = (id: string, lines: ReadonlyArray<string>): void => {
     lines.forEach((line, i) => rows.push(i === 0 ? { line, foldId: id } : { line }))
   }
-  section("files", renderFilesSection(state.filesChanged, width, state.sectionsCollapsed.has("files")))
-  section("skills", renderListSection("skills", state.skillsLoaded, width, state.sectionsCollapsed.has("skills")))
+  section("files", renderFilesSection(state.filesChanged, width, state.stackCollapsed.has("files")))
+  section("skills", renderListSection("skills", state.skillsLoaded, width, state.stackCollapsed.has("skills")))
   section(
     "instructions",
     renderListSection(
       "instructions",
       state.instructions.map((i) => prettyPath(i.path)),
       width,
-      state.sectionsCollapsed.has("instructions"),
+      state.stackCollapsed.has("instructions"),
     ),
   )
   return rows
@@ -387,15 +389,19 @@ export const stackCursorToEnd = (state: SidePaneState): SidePaneState => ({
   stackCursor: Math.max(0, stackRows(state).length - 1),
 })
 
-/** Fold/unfold the section under the Activity cursor (no-op off a section header). */
-export const stackToggleSection = (state: SidePaneState): SidePaneState => {
+/**
+ * Fold/unfold the row under the Activity cursor — a section header
+ * (files/skills/instructions) or a tree container (turn/subagent). No-op off a
+ * foldable row.
+ */
+export const stackToggle = (state: SidePaneState): SidePaneState => {
   const rows = stackRows(state)
   const row = rows[clamp(state.stackCursor, 0, Math.max(0, rows.length - 1))]
   if (row?.foldId === undefined) return state
-  const next = new Set(state.sectionsCollapsed)
+  const next = new Set(state.stackCollapsed)
   if (next.has(row.foldId)) next.delete(row.foldId)
   else next.add(row.foldId)
-  return { ...state, sectionsCollapsed: next }
+  return { ...state, stackCollapsed: next }
 }
 
 /** Window-relative row of the Activity cursor for a pane `height`, or -1. */
