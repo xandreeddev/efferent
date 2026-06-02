@@ -25,7 +25,7 @@ import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
 import { renderModal } from "./modal.js"
 import type { SidePaneState } from "./sidePane.js"
-import { renderSidePane, sideCursorRowAt } from "./sidePane.js"
+import { renderSidePane, sideCursorRowAt, stackCursorRowAt } from "./sidePane.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
 import type { EntryMode } from "./navKeys.js"
 import { KEYBIND_BOX_ROWS, legendContent } from "./legend.js"
@@ -381,11 +381,14 @@ export class FrameRenderer {
     } else if (
       !state.modal.visible &&
       state.focus === "side" &&
-      state.sidePane.view === "context" &&
       state.mode === "normal"
     ) {
-      // The side context-tree cursor: a block on the focused row's first cell.
-      const row = sideCursorRowAt(state.sidePane, contentRows)
+      // The side cursor: a block on the focused row's first cell. The context
+      // and Activity views each have their own row model + cursor.
+      const row =
+        state.sidePane.view === "context"
+          ? sideCursorRowAt(state.sidePane, contentRows)
+          : stackCursorRowAt(state.sidePane, contentRows)
       if (row >= 0) {
         // Two boxes + gap: convL(1)+leftInner+convR(1)+gap(1)+sideL(1)+gutter(2)
         // → first side text cell = leftInner + 7. Zoomed single box: border + gutter → col 4.

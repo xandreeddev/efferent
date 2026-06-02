@@ -68,6 +68,8 @@ export interface SidePaneState {
   readonly filesChanged: ReadonlyArray<FileChange>
   /** Folded Activity section ids ("files" / "skills" / "instructions"). */
   readonly sectionsCollapsed: ReadonlySet<string>
+  /** Activity (stack) view cursor: index into its navigable rows. */
+  readonly stackCursor: number
 }
 
 export const emptySidePane: SidePaneState = {
@@ -82,6 +84,7 @@ export const emptySidePane: SidePaneState = {
   stats: emptyStats,
   filesChanged: [],
   sectionsCollapsed: new Set(["files", "skills", "instructions"]),
+  stackCursor: 0,
 }
 
 // --- context-tree navigation (pure; the driver re-derives rows each call) ---
@@ -219,9 +222,9 @@ const renderStats = (s: SessionStats, width: number, now: number): string[] => {
       ? `${ansi.dim} (${formatTokens(s.cacheReadTokens)} cached)${ansi.reset}`
       : ""
   const win = s.contextWindow > 0 ? formatTokens(s.contextWindow) : "?"
-  const gaugeLine = `${gauge(s.inputTokens, s.contextWindow, 10)} ${ansi.fgGray}${formatTokens(s.inputTokens)}/${win}${ansi.reset}${cached}`
+  const gaugeLine = `${ansi.dim}ctx${ansi.reset} ${gauge(s.inputTokens, s.contextWindow, 8)} ${ansi.fgGray}${formatTokens(s.inputTokens)}/${win}${ansi.reset}${cached}`
   const elapsed = s.startedAt > 0 ? fmtDur(now - s.startedAt) : "0s"
-  const meta = `${ansi.dim}↓${formatTokens(s.outputTokens)} out · ${s.turns} turn${s.turns === 1 ? "" : "s"} · ${elapsed}${ansi.reset}`
+  const meta = `${ansi.dim}${formatTokens(s.outputTokens)} tok out · ${s.turns} turn${s.turns === 1 ? "" : "s"} · ${elapsed}${ansi.reset}`
   return [truncate(gaugeLine, width), truncate(meta, width)]
 }
 
@@ -325,10 +328,91 @@ const renderTreeLines = (
   return out
 }
 
+// --- Activity (stack) view: a navigable rows model ---
+
+/** One rendered Activity row; `foldId` marks a foldable section header. */
+interface StackRow {
+  readonly line: string
+  readonly foldId?: string
+}
+
 /**
- * Render the side pane: the live execution tree on top (tail-windowed so
- * the newest activity stays visible), with skills + instructions sections
- * pinned below. Truncates per row at `cols`.
+ * The Activity view as a flat list of rows: a stats header, the live tree, then
+ * the foldable files/skills/instructions sections. Single source of truth for
+ * both rendering and navigation (row count + `foldId`s are width-independent).
+ */
+const stackModel = (
+  state: SidePaneState,
+  spinnerFrame: number,
+  now: number,
+  width: number,
+): ReadonlyArray<StackRow> => {
+  const rows: StackRow[] = []
+  for (const line of renderStats(state.stats, width, now)) rows.push({ line })
+  rows.push({ line: "" })
+  for (const line of renderTreeLines(state.tree, spinnerFrame, now, width)) rows.push({ line })
+  rows.push({ line: "" })
+  const section = (id: string, lines: ReadonlyArray<string>): void => {
+    lines.forEach((line, i) => rows.push(i === 0 ? { line, foldId: id } : { line }))
+  }
+  section("files", renderFilesSection(state.filesChanged, width, state.sectionsCollapsed.has("files")))
+  section("skills", renderListSection("skills", state.skillsLoaded, width, state.sectionsCollapsed.has("skills")))
+  section(
+    "instructions",
+    renderListSection(
+      "instructions",
+      state.instructions.map((i) => prettyPath(i.path)),
+      width,
+      state.sectionsCollapsed.has("instructions"),
+    ),
+  )
+  return rows
+}
+
+/** Navigable rows (metadata stable regardless of width/now). */
+export const stackRows = (state: SidePaneState): ReadonlyArray<StackRow> =>
+  stackModel(state, 0, 0, 120)
+
+export const stackCursorMove = (state: SidePaneState, delta: number): SidePaneState => {
+  const n = stackRows(state).length
+  if (n === 0) return state
+  return { ...state, stackCursor: clamp(state.stackCursor + delta, 0, n - 1) }
+}
+export const stackCursorToTop = (state: SidePaneState): SidePaneState => ({
+  ...state,
+  stackCursor: 0,
+})
+export const stackCursorToEnd = (state: SidePaneState): SidePaneState => ({
+  ...state,
+  stackCursor: Math.max(0, stackRows(state).length - 1),
+})
+
+/** Fold/unfold the section under the Activity cursor (no-op off a section header). */
+export const stackToggleSection = (state: SidePaneState): SidePaneState => {
+  const rows = stackRows(state)
+  const row = rows[clamp(state.stackCursor, 0, Math.max(0, rows.length - 1))]
+  if (row?.foldId === undefined) return state
+  const next = new Set(state.sectionsCollapsed)
+  if (next.has(row.foldId)) next.delete(row.foldId)
+  else next.add(row.foldId)
+  return { ...state, sectionsCollapsed: next }
+}
+
+/** Window-relative row of the Activity cursor for a pane `height`, or -1. */
+export const stackCursorRowAt = (state: SidePaneState, height: number): number => {
+  const n = stackRows(state).length
+  if (n === 0 || height <= 0) return -1
+  const cursor = clamp(state.stackCursor, 0, n - 1)
+  const start = sideStart(n, cursor, height)
+  const r = cursor - start
+  return r >= 0 && r < height ? r : -1
+}
+
+/**
+ * Render the side pane. Context view: the navigable message tree. Activity
+ * view: a stats header, the live execution tree (tail-windowed), and the
+ * foldable files/skills/instructions sections — navigable with its own cursor
+ * when focused. Truncates per row at `cols`.
  */
 export const renderSidePane = (
   state: SidePaneState,
@@ -358,30 +442,26 @@ export const renderSidePane = (
     return out.slice(0, rows).map((line) => padRight(line, cols))
   }
 
-  // Activity view: a stats header on top, the live tree filling the middle
-  // (tail-windowed), and the foldable files/skills/instructions sections pinned
-  // to the floor (collapsed by default — each still shows its key-info summary).
-  const header = [...renderStats(state.stats, cols, now), ""]
-  const bottom = [
-    ...renderFilesSection(state.filesChanged, cols, state.sectionsCollapsed.has("files")),
-    ...renderListSection("skills", state.skillsLoaded, cols, state.sectionsCollapsed.has("skills")),
-    ...renderListSection(
-      "instructions",
-      state.instructions.map((i) => prettyPath(i.path)),
-      cols,
-      state.sectionsCollapsed.has("instructions"),
-    ),
-  ]
-
-  const treeRows = Math.max(0, rows - header.length - bottom.length - 1)
-  const treeLines = renderTreeLines(state.tree, spinnerFrame, now, cols)
-  const treeWindow =
-    treeLines.length > treeRows
-      ? treeLines.slice(treeLines.length - treeRows)
-      : treeLines
-
-  const out: string[] = [...header, ...treeWindow]
-  while (out.length < rows - bottom.length) out.push("")
-  out.push(...bottom)
+  // Activity view: a stats header, the live tree, and the foldable
+  // files/skills/instructions sections — one navigable list. Windowed to follow
+  // the cursor when focused, else bottom-anchored so the newest activity and the
+  // section summaries stay visible. The focused row gets the cursor tint.
+  const model = stackModel(state, spinnerFrame, now, cols)
+  const total = model.length
+  const cursor = clamp(state.stackCursor, 0, Math.max(0, total - 1))
+  const start = focused ? sideStart(total, cursor, rows) : Math.max(0, total - rows)
+  const visible = model.slice(start, start + rows)
+  const out = visible.map((r, i) => {
+    const line = padRight(truncate(r.line, cols), cols)
+    if (focused && start + i === cursor) {
+      return (
+        ansi.bgCursorLine +
+        line.split(ansi.reset).join(ansi.reset + ansi.bgCursorLine) +
+        ansi.reset
+      )
+    }
+    return line
+  })
+  while (out.length < rows) out.push("")
   return out.slice(0, rows).map((line) => padRight(line, cols))
 }

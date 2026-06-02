@@ -49,7 +49,7 @@ const keysFor = (
   // side pane
   return view === "context"
     ? ["j/k move", "Space select", "b build session", "⇥/h/l fold", "↵ jump", "z zoom", "^h/j/k/l panes", "i insert"]
-    : ["z zoom", ": command", "^h/j/k/l panes", "i insert"]
+    : ["j/k move", "⇥/h/l fold", "z zoom", ": command", "^h/j/k/l panes", "i insert"]
 }
 
 /** Greedy-pack labels into at most `rows` lines, each ≤ `width`, joined by ` · `. */

@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@agent/core"
 import { buildContextView, type ContextRow } from "./contextView.js"
-import { contextRows, emptySidePane, sideToggleSelect, type SidePaneState } from "./sidePane.js"
+import {
+  contextRows,
+  emptySidePane,
+  sideToggleSelect,
+  stackCursorMove,
+  stackCursorToTop,
+  stackRows,
+  stackToggleSection,
+  type SidePaneState,
+} from "./sidePane.js"
 
 const user = (text: string): AgentMessage => ({ role: "user", content: text })
 const assistant = (text: string): AgentMessage => ({
@@ -74,5 +83,38 @@ describe("sideToggleSelect — handoffs and turns are mutually exclusive", () =>
     const on = sideToggleSelect(onHandoff(baseState(), 1))
     const off = sideToggleSelect(onHandoff(on, 1))
     expect([...off.contextHandoffSelected]).toEqual([])
+  })
+})
+
+describe("Activity (stack) view navigation", () => {
+  test("stackRows exposes the foldable section headers", () => {
+    const ids = stackRows(emptySidePane)
+      .map((r) => r.foldId)
+      .filter((x): x is string => x !== undefined)
+    expect(ids).toEqual(["files", "skills", "instructions"])
+  })
+
+  test("Tab on a section header toggles its collapsed state", () => {
+    const rows = stackRows(emptySidePane)
+    const i = rows.findIndex((r) => r.foldId === "skills")
+    expect(i).toBeGreaterThanOrEqual(0)
+    expect(emptySidePane.sectionsCollapsed.has("skills")).toBe(true)
+    const opened = stackToggleSection({ ...emptySidePane, stackCursor: i })
+    expect(opened.sectionsCollapsed.has("skills")).toBe(false)
+    const closed = stackToggleSection({ ...opened, stackCursor: i })
+    expect(closed.sectionsCollapsed.has("skills")).toBe(true)
+  })
+
+  test("toggling off a section header that isn't a fold row is a no-op", () => {
+    // stats header (row 0) has no foldId
+    const same = stackToggleSection({ ...emptySidePane, stackCursor: 0 })
+    expect([...same.sectionsCollapsed].sort()).toEqual(["files", "instructions", "skills"])
+  })
+
+  test("cursor moves clamp to the row range", () => {
+    const n = stackRows(emptySidePane).length
+    const bottom = stackCursorMove(emptySidePane, 1000)
+    expect(bottom.stackCursor).toBe(n - 1)
+    expect(stackCursorToTop(bottom).stackCursor).toBe(0)
   })
 })

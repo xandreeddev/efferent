@@ -57,6 +57,10 @@ import {
   sideCursorToTop,
   sideToggleNode,
   sideToggleSelect,
+  stackCursorMove,
+  stackCursorToEnd,
+  stackCursorToTop,
+  stackToggleSection,
   emptyStats,
   type FileChange,
   type SidePaneState,
@@ -373,9 +377,12 @@ const logFilePath = (): string => join(homedir(), ".agent", "agent.log")
 
 const seedSidePane = (
   instructions: ReadonlyArray<InstructionFile>,
+  skills: ReadonlyArray<Skill>,
 ): SidePaneState => ({
   tree: emptyTree,
-  skillsLoaded: [],
+  // Seed with the skills discovered at startup (the `skill_load` event then
+  // dedup-appends any read at runtime) so the section shows what's available.
+  skillsLoaded: skills.map((s) => s.name),
   instructions: instructions.map((f) => ({
     path: f.path,
     scope: f.path,
@@ -388,6 +395,7 @@ const seedSidePane = (
   stats: emptyStats,
   filesChanged: [],
   sectionsCollapsed: new Set(["files", "skills", "instructions"]),
+  stackCursor: 0,
 })
 
 const runTuiModeCore = (
@@ -424,7 +432,7 @@ const runTuiModeCore = (
       modal: hiddenModal,
       conversationId: initialCid,
       sidePane: {
-        ...seedSidePane(input.instructionFiles),
+        ...seedSidePane(input.instructionFiles, input.skills),
         stats: { ...emptyStats, startedAt: Date.now(), contextWindow: meta.contextWindow },
       },
       vi: initialVi,
@@ -757,10 +765,11 @@ const runTuiModeCore = (
                       totalTokens: prev.totalTokens + u.totalTokens,
                       turns: prev.turns + 1,
                     },
-                    // Per-LLM-call usage on the open turn node: `↑12k ↓340`.
+                    // Per-LLM-call output on the open turn node, e.g. `340 tok`
+                    // (what the model generated this turn; context is the header gauge).
                     tree: treeTurnDetail(
                       s.sidePane.tree,
-                      `↑${formatTokens(u.inputTokens)} ↓${formatTokens(u.outputTokens)}`,
+                      `${formatTokens(u.outputTokens)} tok`,
                     ),
                   }
                 }
@@ -1752,6 +1761,30 @@ const runTuiModeCore = (
           case "sideToggleNode":
             yield* Ref.update(stateRef, (st) => {
               st.sidePane = sideToggleNode(st.sidePane)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "stackCursorMove":
+            yield* Ref.update(stateRef, (st) => {
+              const op = intent.op
+              st.sidePane =
+                op === "top"
+                  ? stackCursorToTop(st.sidePane)
+                  : op === "bottom"
+                    ? stackCursorToEnd(st.sidePane)
+                    : stackCursorMove(st.sidePane, op === "down" ? 1 : -1)
+              st.navPending = undefined
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+
+          case "stackToggleSection":
+            yield* Ref.update(stateRef, (st) => {
+              st.sidePane = stackToggleSection(st.sidePane)
               st.navPending = undefined
               return st
             })
