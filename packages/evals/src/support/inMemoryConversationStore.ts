@@ -6,7 +6,7 @@ import {
   ConversationNotFound,
   ConversationStore,
   ConversationStoreError,
-} from "@agent/core"
+} from "@efferent/core"
 
 /**
  * An in-memory `ConversationStore` for evals — no Postgres, no Docker. It

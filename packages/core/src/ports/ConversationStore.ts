@@ -19,7 +19,7 @@ export class ConversationNotFound extends Data.TaggedError(
 }> {}
 
 export class ConversationStore extends Context.Tag(
-  "@agent/core/ConversationStore",
+  "@efferent/core/ConversationStore",
 )<
   ConversationStore,
   {

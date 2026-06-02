@@ -31,7 +31,7 @@ export interface WebSearchResult {
  * The model uses this via the `web_search` tool to *find* things; `web_fetch`
  * then *reads* a chosen source URL in full.
  */
-export class WebSearch extends Context.Tag("@agent/core/WebSearch")<
+export class WebSearch extends Context.Tag("@efferent/core/WebSearch")<
   WebSearch,
   {
     readonly search: (

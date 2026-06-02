@@ -18,7 +18,7 @@ const collectAnnotations = (
 /**
  * A Logger that appends one JSON object per log entry to `path`
  * (newline-delimited, `jq`-friendly). Tail with
- * `tail -f ~/.agent/agent.log | jq` from another terminal.
+ * `tail -f ~/.efferent/efferent.log | jq` from another terminal.
  */
 export const createFileLogger = (path: string) => {
   try {

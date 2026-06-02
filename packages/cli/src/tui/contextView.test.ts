@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentMessage, Checkpoint, ConversationId } from "@agent/core"
+import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/core"
 import {
   buildContextRows,
   buildContextView,

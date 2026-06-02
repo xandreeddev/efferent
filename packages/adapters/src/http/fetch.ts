@@ -1,4 +1,4 @@
-import { Http, HttpError } from "@agent/core"
+import { Http, HttpError } from "@efferent/core"
 import { Effect, Layer } from "effect"
 
 /**

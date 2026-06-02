@@ -50,7 +50,7 @@ export const DefaultSettings: Settings = {
 
 ### 1.2 Extend the ModelRegistry Port (`packages/core/src/ports/ModelRegistry.ts`)
 ```typescript
-export class ModelRegistry extends Context.Tag("@agent/core/ModelRegistry")<
+export class ModelRegistry extends Context.Tag("@efferent/core/ModelRegistry")<
   ModelRegistry,
   {
     /** The models assigned to each tier */
@@ -154,7 +154,7 @@ In our multi-provider router, before delegating the `generateText`/`streamText` 
 ## 4. Verification & Testing
 
 1. **Verify Config Storage:** 
-   Check `.agent/config.json` after running `/model fast google:gemini-1.5-flash` to ensure separate serialization of `model`, `fastModel`, and `cheapModel`.
+   Check `.efferent/config.json` after running `/model fast google:gemini-1.5-flash` to ensure separate serialization of `model`, `fastModel`, and `cheapModel`.
 2. **Verify Compaction Model:**
    Trigger background summarization and verify that the request utilizes the cheap model's context window.
 3. **Verify Grounding:**

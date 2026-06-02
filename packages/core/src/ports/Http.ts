@@ -16,7 +16,7 @@ export interface HttpGetResult {
  * Minimal outbound HTTP capability for tools (e.g. `web_fetch`). Kept as a
  * port so `core` stays IO-free; the adapter wraps `fetch`/`HttpClient`.
  */
-export class Http extends Context.Tag("@agent/core/Http")<
+export class Http extends Context.Tag("@efferent/core/Http")<
   Http,
   {
     readonly get: (

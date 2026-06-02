@@ -22,7 +22,7 @@ export interface LlmMetadata {
  * startup by drivers that surface it — e.g. the TUI status bar prints
  * `<modelId>  [gauge] <tokens>/<contextWindow>  <cwd>`.
  */
-export class LlmInfo extends Context.Tag("@agent/core/LlmInfo")<
+export class LlmInfo extends Context.Tag("@efferent/core/LlmInfo")<
   LlmInfo,
   {
     readonly metadata: Effect.Effect<LlmMetadata, never>

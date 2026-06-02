@@ -29,7 +29,7 @@ export interface ShellExecResult {
   readonly timedOut: boolean
 }
 
-export class Shell extends Context.Tag("@agent/core/Shell")<
+export class Shell extends Context.Tag("@efferent/core/Shell")<
   Shell,
   {
     readonly exec: (

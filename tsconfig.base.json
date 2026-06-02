@@ -19,12 +19,12 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@agent/core": ["packages/core/src/index.ts"],
-      "@agent/core/*": ["packages/core/src/*"],
-      "@agent/application": ["packages/application/src/index.ts"],
-      "@agent/application/*": ["packages/application/src/*"],
-      "@agent/adapters": ["packages/adapters/src/index.ts"],
-      "@agent/adapters/*": ["packages/adapters/src/*"]
+      "@efferent/core": ["packages/core/src/index.ts"],
+      "@efferent/core/*": ["packages/core/src/*"],
+      "@efferent/application": ["packages/application/src/index.ts"],
+      "@efferent/application/*": ["packages/application/src/*"],
+      "@efferent/adapters": ["packages/adapters/src/index.ts"],
+      "@efferent/adapters/*": ["packages/adapters/src/*"]
     }
   }
 }

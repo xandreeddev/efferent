@@ -10,7 +10,7 @@ import {
   discoverScopeTree,
   loadSkills,
   runAgent,
-} from "@agent/core"
+} from "@efferent/core"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

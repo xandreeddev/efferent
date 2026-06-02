@@ -5,7 +5,7 @@
  * exists; the body is lazy-loaded via the `read_skill` tool only when
  * the model decides it needs the details. Pi pattern.
  *
- * Discovery walks `.agent/skills/*.md` from cwd up to home; closer-to-cwd
+ * Discovery walks `.efferent/skills/*.md` from cwd up to home; closer-to-cwd
  * wins on name collisions.
  */
 export interface Skill {

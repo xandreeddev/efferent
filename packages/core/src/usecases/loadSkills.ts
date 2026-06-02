@@ -4,7 +4,7 @@ import type { Skill } from "../entities/Skill.js"
 import { FileSystem } from "../ports/FileSystem.js"
 
 /**
- * Walk `cwd → parents → home` looking for `.agent/skills/*.md` files,
+ * Walk `cwd → parents → home` looking for `.efferent/skills/*.md` files,
  * parse their frontmatter, dedupe by `name` (first occurrence wins —
  * closer-to-cwd shadows farther-from-cwd).
  *
@@ -50,15 +50,15 @@ export const loadSkills = (
   })
 
 /**
- * Search path: cwd/.agent/skills, then each ancestor up to root, then
- * homeDir/.agent/skills (deduped). Order matters — earlier entries win.
+ * Search path: cwd/.efferent/skills, then each ancestor up to root, then
+ * homeDir/.efferent/skills (deduped). Order matters — earlier entries win.
  */
 const skillSearchPath = (cwd: string, homeDir: string): ReadonlyArray<string> => {
   const out: string[] = []
   const seen = new Set<string>()
   let dir = cwd
   while (true) {
-    const candidate = resolve(dir, ".agent/skills")
+    const candidate = resolve(dir, ".efferent/skills")
     if (!seen.has(candidate)) {
       out.push(candidate)
       seen.add(candidate)
@@ -67,7 +67,7 @@ const skillSearchPath = (cwd: string, homeDir: string): ReadonlyArray<string> =>
     if (parent === dir) break
     dir = parent
   }
-  const homeCandidate = resolve(homeDir, ".agent/skills")
+  const homeCandidate = resolve(homeDir, ".efferent/skills")
   if (!seen.has(homeCandidate)) out.push(homeCandidate)
   return out
 }

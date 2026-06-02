@@ -7,7 +7,7 @@ import type {
   SettingsStore,
   Shell,
   WebSearch,
-} from "@agent/core"
+} from "@efferent/core"
 import {
   HttpLive,
   LocalFileSystemLive,
@@ -16,7 +16,7 @@ import {
   ModelLive,
   ProviderClientsLive,
   WebSearchLive,
-} from "@agent/adapters"
+} from "@efferent/adapters"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"
 
 /**

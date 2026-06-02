@@ -2,7 +2,7 @@ import { Schema } from "effect"
 
 /**
  * Which LLM vendor backs a selection. Each maps to one `@effect/ai`
- * provider package in `@agent/adapters` (`@effect/ai-google` /
+ * provider package in `@efferent/adapters` (`@effect/ai-google` /
  * `@effect/ai-openai`); the router picks the implementation at call time.
  */
 export const Provider = Schema.Literal("google", "openai")

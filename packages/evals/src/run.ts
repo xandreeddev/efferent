@@ -1,8 +1,8 @@
 import { homedir } from "node:os"
 import { BunRuntime } from "@effect/platform-bun"
 import { Effect } from "effect"
-import { SettingsStore } from "@agent/core"
-import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "@agent/adapters"
+import { SettingsStore } from "@efferent/core"
+import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "@efferent/adapters"
 import { EvalEnvLive, type EvalEnv } from "./env.js"
 import type { EvalReport, EvalSpec } from "./framework/Eval.js"
 import { formatReport } from "./framework/report.js"
@@ -53,7 +53,7 @@ const program = Effect.gen(function* () {
       )
     }
   } else {
-    // One load for the whole run — honors AGENT_MODEL / .agent/config.json.
+    // One load for the whole run — honors EFFERENT_MODEL / .efferent/config.json.
     const settings = yield* SettingsStore
     yield* settings.load(process.cwd(), homedir())
     for (const s of selected) {

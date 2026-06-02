@@ -1,8 +1,8 @@
-# @agent/evals
+# @efferent/evals
 
 A minimal, Effect-native eval library + the agent's eval suites. Driver-level:
-depends on `@agent/core` + `@agent/adapters` (composes them at the edge, like
-`cli`) and never on `@agent/cli`.
+depends on `@efferent/core` + `@efferent/adapters` (composes them at the edge, like
+`cli`) and never on `@efferent/cli`.
 
 ## Layout
 
@@ -30,7 +30,7 @@ src/
   Pin suite specs to `R = EvalEnv` so a subset-requiring task/scorer assigns by contravariance.
 - **`runEval` leaves `R` open** and never errors — `run.ts` provides `EvalEnvLive` *once* around all
   suites so they share one set of provider clients + one `SettingsStore` (loaded once, honoring
-  `AGENT_MODEL`). Every task/scorer goes through `Effect.exit`: a 429 (typed or defect) becomes a
+  `EFFERENT_MODEL`). Every task/scorer goes through `Effect.exit`: a 429 (typed or defect) becomes a
   0-scored case, not a crash.
 - **No Postgres, no Docker, no LLM in unit tests.** `EvalEnvLive` uses the in-memory store; the
   framework + store have `bun test` coverage that needs no key. Live suites are gated on

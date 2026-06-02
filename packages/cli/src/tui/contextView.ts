@@ -1,4 +1,4 @@
-import { type AgentMessage, type Checkpoint, handoffToMessage } from "@agent/core"
+import { type AgentMessage, type Checkpoint, handoffToMessage } from "@efferent/core"
 import { ansi, padRight, truncate } from "./terminal.js"
 
 /**

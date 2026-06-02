@@ -4,7 +4,7 @@ import {
   FileSystem,
   Settings,
   SettingsStore,
-} from "@agent/core"
+} from "@efferent/core"
 import { join } from "node:path"
 
 export const LocalSettingsStoreLive = Layer.effect(
@@ -14,7 +14,7 @@ export const LocalSettingsStoreLive = Layer.effect(
     const stateRef = yield* Ref.make<Settings>(DefaultSettings)
     const activeCwdRef = yield* Ref.make("")
 
-    const configPath = (dir: string) => join(dir, ".agent", "config.json")
+    const configPath = (dir: string) => join(dir, ".efferent", "config.json")
 
     const loadFromFile = (path: string) =>
       Effect.gen(function* () {
@@ -65,10 +65,10 @@ export const LocalSettingsStoreLive = Layer.effect(
           const homeConfig = yield* loadFromFile(configPath(homeDir))
           const localConfig = yield* loadFromFile(configPath(cwd))
 
-          // `AGENT_MODEL` env seeds the model when no config.json pins one;
+          // `EFFERENT_MODEL` env seeds the model when no config.json pins one;
           // an explicit `/model` choice (persisted to config.json) wins.
           const envModel = Option.getOrUndefined(
-            yield* Config.option(Config.string("AGENT_MODEL")).pipe(
+            yield* Config.option(Config.string("EFFERENT_MODEL")).pipe(
               Effect.orElseSucceed(() => Option.none<string>()),
             ),
           )

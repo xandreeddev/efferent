@@ -28,4 +28,4 @@ pg-data/
 *.png
 
 # Skills are local to each workspace; agents read them, repos don't carry them.
-.agent/
+.efferent/
