@@ -80,8 +80,33 @@ export const describeToolResult = (
   >
 
   if (!ok) {
-    const msg = str(r.message) ?? str(r.reason) ?? str(r.error)
-    return msg !== undefined ? truncate(msg, 60) : "failed"
+    // 1. flat string fields
+    const flat = str(r.message) ?? str(r.reason) ?? str(r.error)
+    if (flat !== undefined) return truncate(flat, 60)
+    // 2. Effect tagged errors: _tag (+ optional message)
+    const tag = str(r._tag)
+    if (tag !== undefined) {
+      const tagMsg = str(r.message)
+      return truncate(tagMsg !== undefined ? `${tag}: ${tagMsg}` : tag, 60)
+    }
+    // 3. cause chain — peek one level
+    const cause =
+      typeof r.cause === "object" && r.cause !== null
+        ? (r.cause as Record<string, unknown>)
+        : undefined
+    if (cause !== undefined) {
+      const causeMsg = str(cause.message) ?? str(cause.reason) ?? str(cause.error)
+      if (causeMsg !== undefined) return truncate(causeMsg, 60)
+      const causeTag = str(cause._tag)
+      if (causeTag !== undefined) {
+        const causeTagMsg = str(cause.message)
+        return truncate(
+          causeTagMsg !== undefined ? `${causeTag}: ${causeTagMsg}` : causeTag,
+          60,
+        )
+      }
+    }
+    return "failed"
   }
 
   if (toolName.startsWith("delegate_to_")) {
@@ -152,7 +177,18 @@ export const toolArtifacts = (
   ok: boolean,
   result: unknown,
 ): { diff?: string; output?: string } => {
-  if (!ok) return {}
+  if (!ok) {
+    if (typeof result === "string") return { output: result }
+    if (typeof result === "object" && result !== null) {
+      try {
+        return { output: JSON.stringify(result, null, 2) }
+      } catch {
+        // circular / non-serializable payload — fall back to a coarse string.
+        return { output: String(result) }
+      }
+    }
+    return {}
+  }
   const r = (typeof result === "object" && result !== null ? result : {}) as Record<
     string,
     unknown

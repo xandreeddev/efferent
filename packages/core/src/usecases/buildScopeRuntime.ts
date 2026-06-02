@@ -86,6 +86,7 @@ const makeDelegateTool = (displayRoot: string, child: Scope) =>
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
+  usageRef: Ref.Ref<{ inputTokens: number; outputTokens: number; cacheReadTokens: number }>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -113,6 +114,16 @@ const makeInnerHooks = <R>(
               yield* trackFiles(e)
             })
         : trackFiles,
+    onAssistantMessage: (event) => {
+      const u = event.usage
+      return u !== undefined
+        ? Ref.update(usageRef, (acc) => ({
+            inputTokens: u.inputTokens,
+            outputTokens: acc.outputTokens + u.outputTokens,
+            cacheReadTokens: u.cacheReadTokens,
+          }))
+        : Effect.void
+    },
     ...(parent?.onSubAgentStart !== undefined
       ? { onSubAgentStart: parent.onSubAgentStart }
       : {}),
@@ -171,21 +182,24 @@ export const buildScopeRuntime = <R = never>(
     ({ task }: { readonly task: string }) =>
       Effect.gen(function* () {
         const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
+        const usageRef = yield* Ref.make({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 })
         if (hooks?.onSubAgentStart) {
           yield* hooks.onSubAgentStart({ name: child.name, task })
         }
-        const innerHooks = makeInnerHooks(hooks, filesRef)
+        const innerHooks = makeInnerHooks(hooks, filesRef, usageRef)
         const childRuntime = buildScopeRuntime(child, opts, innerHooks, depth + 1)
 
         const emitEnd = (ok: boolean, summary: string) =>
           Effect.gen(function* () {
             if (!hooks?.onSubAgentEnd) return
             const files = yield* Ref.get(filesRef)
+            const usage = yield* Ref.get(usageRef)
             yield* hooks.onSubAgentEnd({
               name: child.name,
               ok,
               summary,
               filesChanged: files,
+              ...(usage.outputTokens > 0 || usage.inputTokens > 0 ? { usage } : {}),
             })
           })
 
