@@ -139,6 +139,15 @@ export const onTurnStart = (
   return { ...t, openPath: [...base.openPath, id] }
 }
 
+/** The deepest currently-open `turn` node's id (the running step), or undefined. */
+export const openTurnId = (tree: ExecutionTree): number | undefined => {
+  for (let i = tree.openPath.length - 1; i >= 0; i--) {
+    const id = tree.openPath[i]!
+    if (findNode(tree.roots, id)?.kind === "turn") return id
+  }
+  return undefined
+}
+
 export const onToolStart = (
   tree: ExecutionTree,
   label: string,

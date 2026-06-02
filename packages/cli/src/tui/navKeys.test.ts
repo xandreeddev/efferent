@@ -9,13 +9,14 @@ const esc: Key = { type: "escape" }
 const enter: Key = { type: "enter" }
 const tab: Key = { type: "tab" }
 const back: Key = { type: "backspace" }
-const arrow = (dir: "up" | "down" | "left" | "right"): Key => ({
-  type: "arrow",
-  dir,
-  shift: false,
-})
+const arrow = (
+  dir: "up" | "down" | "left" | "right",
+  ctrl = false,
+): Key => ({ type: "arrow", dir, shift: false, ctrl })
 const pgUp: Key = { type: "pageUp" }
 const pgDn: Key = { type: "pageDown" }
+const home: Key = { type: "home" }
+const end: Key = { type: "end" }
 
 const ctx = (over: Partial<NavCtx>): NavCtx => ({
   focus: "input",
@@ -206,6 +207,63 @@ describe("conversation pane — block-cursor motions", () => {
     expect(decide(v, ch("w"))).toEqual({ kind: "cursorMove", op: "wordFwd" })
     expect(decide(v, ch("j"))).toEqual({ kind: "scroll", op: "lineDown" })
     expect(decide(v, ch("y"))).toEqual({ kind: "yank" })
+  })
+})
+
+describe("Ctrl-arrows mirror Ctrl-hjkl for pane focus", () => {
+  it("from the input: Ctrl-↑ → conversation, Ctrl-→ → side", () => {
+    const base = { focus: "input", mode: "insert" } as const
+    expect(decide(base, arrow("up", true))).toEqual({ kind: "focus", to: "conversation", mode: "normal" })
+    expect(decide(base, arrow("right", true))).toEqual({ kind: "focus", to: "side", mode: "normal" })
+    // no pane below/left of the input → Ctrl-arrow falls back to the editor.
+    expect(decide(base, arrow("down", true))).toEqual({ kind: "input" })
+    expect(decide(base, arrow("left", true))).toEqual({ kind: "input" })
+    // no side pane → Ctrl-→ also falls back.
+    expect(decide({ ...base, sideVisible: false }, arrow("right", true))).toEqual({ kind: "input" })
+  })
+  it("from the conversation: Ctrl-↓ → input, Ctrl-→ → side, Ctrl-↑ falls back to scroll", () => {
+    const base = { focus: "conversation", mode: "normal" } as const
+    expect(decide(base, arrow("down", true))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+    expect(decide(base, arrow("right", true))).toEqual({ kind: "focus", to: "side", mode: "normal" })
+    expect(decide(base, arrow("up", true))).toEqual({ kind: "scroll", op: "lineUp" })
+  })
+  it("works from VISUAL too (Ctrl-↓ → input)", () => {
+    expect(decide({ focus: "conversation", mode: "visual" }, arrow("down", true))).toEqual({
+      kind: "focus",
+      to: "input",
+      mode: "insert",
+    })
+  })
+  it("from the side pane: Ctrl-← → conversation, Ctrl-↓ → input", () => {
+    const base = { focus: "side", mode: "normal", view: "stack" } as const
+    expect(decide(base, arrow("left", true))).toEqual({ kind: "focus", to: "conversation", mode: "normal" })
+    expect(decide(base, arrow("down", true))).toEqual({ kind: "focus", to: "input", mode: "insert" })
+  })
+})
+
+describe("side pane — bare arrows are peers of hjkl", () => {
+  it("context view: ↑/↓ move the cursor, ←/→ fold (like h/l)", () => {
+    const base = { focus: "side", mode: "normal", view: "context" } as const
+    expect(decide(base, arrow("down"))).toEqual({ kind: "sideCursorMove", op: "down" })
+    expect(decide(base, arrow("up"))).toEqual({ kind: "sideCursorMove", op: "up" })
+    expect(decide(base, arrow("left"))).toEqual({ kind: "sideToggleNode" })
+    expect(decide(base, arrow("right"))).toEqual({ kind: "sideToggleNode" })
+  })
+  it("stack view: ↑/↓ move the cursor, ←/→ fold (like h/l)", () => {
+    const base = { focus: "side", mode: "normal", view: "stack" } as const
+    expect(decide(base, arrow("down"))).toEqual({ kind: "stackCursorMove", op: "down" })
+    expect(decide(base, arrow("up"))).toEqual({ kind: "stackCursorMove", op: "up" })
+    expect(decide(base, arrow("left"))).toEqual({ kind: "stackToggle" })
+    expect(decide(base, arrow("right"))).toEqual({ kind: "stackToggle" })
+  })
+})
+
+describe("conversation — Home/End move to line start/end", () => {
+  it("NORMAL and VISUAL", () => {
+    expect(decide({ focus: "conversation", mode: "normal" }, home)).toEqual({ kind: "cursorMove", op: "lineStart" })
+    expect(decide({ focus: "conversation", mode: "normal" }, end)).toEqual({ kind: "cursorMove", op: "lineEnd" })
+    expect(decide({ focus: "conversation", mode: "visual" }, home)).toEqual({ kind: "cursorMove", op: "lineStart" })
+    expect(decide({ focus: "conversation", mode: "visual" }, end)).toEqual({ kind: "cursorMove", op: "lineEnd" })
   })
 })
 

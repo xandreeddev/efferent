@@ -16,9 +16,10 @@ import { moveFocus, type FocusPane, type UiMode } from "./uiMode.js"
  * empty (so you can still type them literally mid-message). While an entry is
  * active, keystrokes edit its body; Enter runs/jumps, Esc cancels.
  *
- * Focus: Ctrl-h/j/k/l swaps panes in any mode, but only when a pane exists that
- * way — so Ctrl-J/Ctrl-H stay newline/backspace in the input. Entering the
- * input pane → INSERT; entering a read-only pane → NORMAL.
+ * Focus: Ctrl-h/j/k/l (and Ctrl-arrows) swap panes in any mode, but only when a
+ * pane exists that way — so Ctrl-J/Ctrl-H stay newline/backspace in the input,
+ * and a non-moving Ctrl-arrow falls back to that pane's in-pane motion.
+ * Entering the input pane → INSERT; entering a read-only pane → NORMAL.
  */
 
 export type ScrollOp =
@@ -116,8 +117,8 @@ export type NavIntent =
   | { readonly kind: "buildSession" }
   /** Activity (stack) view cursor move. */
   | { readonly kind: "stackCursorMove"; readonly op: "up" | "down" | "top" | "bottom" }
-  /** Activity view: fold/unfold the section (files/skills/instructions) under the cursor. */
-  | { readonly kind: "stackToggleSection" }
+  /** Activity view: fold/unfold the row (section or tree turn/subagent) under the cursor. */
+  | { readonly kind: "stackToggle" }
 
 const ctrlDir = (
   char: string,
@@ -144,8 +145,9 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
     return { kind: "entryEdit" }
   }
 
-  // 2. Ctrl-h/j/k/l: focus a neighbouring pane (any mode). Only when there's a
-  //    pane that way — else fall through so the editor keeps Ctrl-J/Ctrl-H.
+  // 2. Ctrl-h/j/k/l (and Ctrl-arrows): focus a neighbouring pane (any mode).
+  //    Only when there's a pane that way — else fall through so the editor keeps
+  //    Ctrl-J/Ctrl-H and the bare-arrow handlers keep their in-pane meaning.
   if (key.type === "ctrl") {
     const dir = ctrlDir(key.char)
     if (dir !== undefined) {
@@ -153,6 +155,12 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
       if (to !== ctx.focus) {
         return { kind: "focus", to, mode: to === "input" ? "insert" : "normal" }
       }
+    }
+  }
+  if (key.type === "arrow" && key.ctrl === true) {
+    const to = moveFocus(ctx.focus, key.dir, ctx.sideVisible)
+    if (to !== ctx.focus) {
+      return { kind: "focus", to, mode: to === "input" ? "insert" : "normal" }
     }
   }
 
@@ -204,7 +212,8 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
       if (key.type === "arrow") {
         if (key.dir === "down") return { kind: "sideCursorMove", op: "down" }
         if (key.dir === "up") return { kind: "sideCursorMove", op: "up" }
-        return { kind: "none" }
+        // left/right fold the node, mirroring h/l.
+        return { kind: "sideToggleNode" }
       }
       if (key.type === "char") {
         switch (key.char) {
@@ -245,11 +254,13 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
     if (ctx.navPending && key.type === "char" && key.char === "g") {
       return { kind: "stackCursorMove", op: "top" }
     }
-    if (key.type === "tab") return { kind: "stackToggleSection" }
+    if (key.type === "tab") return { kind: "stackToggle" }
+    if (key.type === "enter") return { kind: "stackToggle" }
     if (key.type === "arrow") {
       if (key.dir === "down") return { kind: "stackCursorMove", op: "down" }
       if (key.dir === "up") return { kind: "stackCursorMove", op: "up" }
-      return { kind: "none" }
+      // left/right fold the row, mirroring h/l.
+      return { kind: "stackToggle" }
     }
     if (key.type === "char") {
       switch (key.char) {
@@ -263,7 +274,7 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
           return { kind: "stackCursorMove", op: "bottom" }
         case "h":
         case "l":
-          return { kind: "stackToggleSection" }
+          return { kind: "stackToggle" }
         case "i":
           return { kind: "focus", to: "input", mode: "insert" }
         case "z":
@@ -363,6 +374,8 @@ const decideConversationNormal = (ctx: NavCtx, key: Key): NavIntent => {
     if (key.dir === "right") return { kind: "cursorMove", op: "charRight" }
     return { kind: "none" }
   }
+  if (key.type === "home") return { kind: "cursorMove", op: "lineStart" }
+  if (key.type === "end") return { kind: "cursorMove", op: "lineEnd" }
   if (key.type === "escape") {
     // Esc unwinds one layer at a time: zoom → search highlight → drop to input.
     if (ctx.zoomed) return { kind: "toggleZoom" }
@@ -431,5 +444,7 @@ const decideVisual = (ctx: NavCtx, key: Key): NavIntent => {
     if (key.dir === "left") return { kind: "cursorMove", op: "charLeft" }
     if (key.dir === "right") return { kind: "cursorMove", op: "charRight" }
   }
+  if (key.type === "home") return { kind: "cursorMove", op: "lineStart" }
+  if (key.type === "end") return { kind: "cursorMove", op: "lineEnd" }
   return { kind: "none" }
 }

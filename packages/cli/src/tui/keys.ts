@@ -18,7 +18,13 @@ export type ArrowDir = "up" | "down" | "left" | "right"
 export type Key =
   | { readonly type: "char"; readonly char: string }
   | { readonly type: "ctrl"; readonly char: string }
-  | { readonly type: "arrow"; readonly dir: ArrowDir; readonly shift: boolean }
+  | {
+      readonly type: "arrow"
+      readonly dir: ArrowDir
+      readonly shift: boolean
+      /** Ctrl held (xterm modifier ≥5). Optional so plain-arrow literals stay valid. */
+      readonly ctrl?: boolean
+    }
   | { readonly type: "enter" }
   | { readonly type: "tab" }
   | { readonly type: "shiftTab" }
@@ -172,13 +178,13 @@ const parseCsi = (seq: string): Key | undefined => {
     const last = seq[seq.length - 1]
     switch (last) {
       case "A":
-        return { type: "arrow", dir: "up", shift: false }
+        return { type: "arrow", dir: "up", shift: false, ctrl: false }
       case "B":
-        return { type: "arrow", dir: "down", shift: false }
+        return { type: "arrow", dir: "down", shift: false, ctrl: false }
       case "C":
-        return { type: "arrow", dir: "right", shift: false }
+        return { type: "arrow", dir: "right", shift: false, ctrl: false }
       case "D":
-        return { type: "arrow", dir: "left", shift: false }
+        return { type: "arrow", dir: "left", shift: false, ctrl: false }
     }
     return undefined
   }
@@ -186,16 +192,19 @@ const parseCsi = (seq: string): Key | undefined => {
   const inner = seq.slice(2, -1) // strip ESC[ ... terminator
   const final = seq[seq.length - 1]
   const params = inner.split(";")
-  const shift = params.length > 1 && params[1] === "2"
+  // xterm modifier: `CSI 1;<m> <letter>`, m = 1 + bit(shift=1, alt=2, ctrl=4).
+  const m = (parseInt(params[1] ?? "1", 10) || 1) - 1
+  const shift = (m & 1) !== 0
+  const ctrl = (m & 4) !== 0
   switch (final) {
     case "A":
-      return { type: "arrow", dir: "up", shift }
+      return { type: "arrow", dir: "up", shift, ctrl }
     case "B":
-      return { type: "arrow", dir: "down", shift }
+      return { type: "arrow", dir: "down", shift, ctrl }
     case "C":
-      return { type: "arrow", dir: "right", shift }
+      return { type: "arrow", dir: "right", shift, ctrl }
     case "D":
-      return { type: "arrow", dir: "left", shift }
+      return { type: "arrow", dir: "left", shift, ctrl }
     case "Z":
       return { type: "shiftTab" }
     case "H":
