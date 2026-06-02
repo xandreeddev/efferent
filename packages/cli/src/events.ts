@@ -43,6 +43,7 @@ export type AgentEvent =
       readonly ok: boolean
       readonly summary: string
       readonly filesChanged: ReadonlyArray<string>
+      readonly usage?: { readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number }
     }
   | { readonly type: "skill_load"; readonly name: string }
   | {
@@ -115,6 +116,7 @@ export const makeEventHooks = <R = never>(
       ok: event.ok,
       summary: event.summary,
       filesChanged: event.filesChanged,
+      ...(event.usage !== undefined ? { usage: event.usage } : {}),
     }).pipe(Effect.asVoid),
   onSkillLoad: (event) =>
     Queue.offer(queue, {

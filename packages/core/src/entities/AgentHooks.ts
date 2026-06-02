@@ -59,6 +59,12 @@ export interface AgentSubAgentEndEvent {
   readonly ok: boolean
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
+  /** Cumulative token usage across all turns of this sub-agent's run. Optional — only present when the sub-agent had at least one LLM turn. */
+  readonly usage?: {
+    readonly inputTokens: number
+    readonly outputTokens: number
+    readonly cacheReadTokens: number
+  }
 }
 
 export interface AgentSkillLoadEvent {

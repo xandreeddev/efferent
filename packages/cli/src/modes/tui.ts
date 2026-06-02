@@ -114,7 +114,7 @@ import {
   onToolStart as treeToolStart,
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
-  openTurnId,
+  type TreeNode,
 } from "../tui/executionTree.js"
 import {
   describeToolCall,
@@ -851,9 +851,16 @@ const runTuiModeCore = (
     const toolScrollId = new Map<string, string>()
     // edit/write paths captured at call-start, for the files-changed diffstat.
     const toolPath = new Map<string, string>()
+    // sub-agent name → scrollback pill id, so subagent_end can update it.
+    const subAgentScrollId = new Map<string, string>()
     let subAgentDepth = 0
     let toolSeq = 0
     const isDelegate = (name: string): boolean => name.startsWith("delegate_to_")
+    // Join the present detail parts with ` · `, or undefined when none apply.
+    const joinDetail = (
+      ...parts: ReadonlyArray<string | undefined>
+    ): string | undefined =>
+      parts.filter((p): p is string => p !== undefined).join(" · ") || undefined
     const consumer = yield* Effect.forkDaemon(
       Effect.gen(function* () {
         while (true) {
@@ -863,15 +870,9 @@ const runTuiModeCore = (
             switch (event.type) {
               case "turn_start": {
                 s.currentTurn = event.turnIndex + 1
-                // Auto-collapse the just-finished step so only the running one
-                // stays expanded (a build-log feel); manual re-expands persist.
-                const prevTurn = openTurnId(s.sidePane.tree)
-                const collapsed = new Set(s.sidePane.stackCollapsed)
-                if (prevTurn !== undefined) collapsed.add(`node:${prevTurn}`)
                 s.sidePane = {
                   ...s.sidePane,
                   tree: treeTurnStart(s.sidePane.tree, event.turnIndex, now),
-                  stackCollapsed: collapsed,
                 }
                 break
               }
@@ -979,6 +980,17 @@ const runTuiModeCore = (
               }
               case "subagent_start": {
                 subAgentDepth++
+                const label = `Task(${event.name})`
+                toolSeq++
+                const sid = `sa${toolSeq}`
+                subAgentScrollId.set(event.name, sid)
+                s.scrollback.push({
+                  kind: "tool",
+                  id: sid,
+                  toolName: label,
+                  state: "running",
+                  output: event.task,
+                })
                 s.sidePane = {
                   ...s.sidePane,
                   tree: treeSubAgentStart(
@@ -997,22 +1009,40 @@ const runTuiModeCore = (
                         event.filesChanged.length === 1 ? "" : "s"
                       }`
                     : undefined
+                // Update the running pill to ok/error with a short detail.
+                const endSid = subAgentScrollId.get(event.name)
+                if (endSid !== undefined) {
+                  const pillDetail = joinDetail(
+                    filesDetail,
+                    event.usage !== undefined
+                      ? `${formatTokens(event.usage.inputTokens)} ctx · ${formatTokens(event.usage.outputTokens)} out`
+                      : undefined,
+                  )
+                  s.scrollback.updateTool(endSid, {
+                    state: event.ok ? "ok" : "error",
+                    ...(pillDetail !== undefined ? { detail: pillDetail } : {}),
+                  })
+                  subAgentScrollId.delete(event.name)
+                }
+                // Push the summary as an assistant block so it's visible as a reply.
+                if (event.ok && event.summary.trim().length > 0) {
+                  s.scrollback.push({ kind: "assistant", text: event.summary })
+                }
+                const nodeDetail = joinDetail(
+                  filesDetail,
+                  event.usage !== undefined
+                    ? `${formatTokens(event.usage.inputTokens)} ctx`
+                    : undefined,
+                )
                 s.sidePane = {
                   ...s.sidePane,
                   tree: treeSubAgentEnd(
                     s.sidePane.tree,
                     event.ok,
-                    filesDetail,
+                    nodeDetail,
                     now,
                   ),
                 }
-                const tag = event.ok ? "⤴" : "✗"
-                s.scrollback.push({
-                  kind: "info",
-                  text: `${tag} delegate → ${event.name}${
-                    filesDetail !== undefined ? ` (${filesDetail})` : ""
-                  }`,
-                })
                 break
               }
               case "skill_load": {
@@ -1172,6 +1202,20 @@ const runTuiModeCore = (
           s.spinnerFrame = 0
           s.currentTurn = 0
           s.conversationHasTurns = true
+          // Collapse all activity-pane tree nodes from the previous run when a
+          // new user message comes in, so the next run starts with a clean
+          // expanded view.
+          const collapsed = new Set(s.sidePane.stackCollapsed)
+          const collectContainerIds = (nodes: ReadonlyArray<TreeNode>): void => {
+            for (const n of nodes) {
+              if (n.kind === "turn" || n.kind === "subagent") {
+                collapsed.add(`node:${n.id}`)
+              }
+              collectContainerIds(n.children)
+            }
+          }
+          collectContainerIds(s.sidePane.tree.roots)
+          s.sidePane = { ...s.sidePane, stackCollapsed: collapsed }
           return s
         })
         startSpinner()
@@ -1186,6 +1230,7 @@ const runTuiModeCore = (
           subAgentDepth = 0
           toolTreeId.clear()
           toolScrollId.clear()
+          subAgentScrollId.clear()
           const next = yield* Ref.modify(stateRef, (s) => {
             s.busy = false
             s.runningFiber = undefined
