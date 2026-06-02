@@ -5,7 +5,7 @@ Pure domain. Only runtime dependency: `effect`.
 ## Contents
 
 - `entities/` — Schema-backed types and the building blocks the loop manipulates: `Conversation`, `Capture`, `AgentTool`, `AgentHooks`. Pure values; no IO.
-- `ports/` — `Context.Tag` services describing capabilities the application needs from the outside world: `Llm`, `CaptureStore`, `ConversationStore`, `FileSystem`, `Shell`. Each port file pairs its tagged errors with the Tag declaration.
+- `ports/` — `Context.Tag` services describing capabilities the application needs from the outside world: `AuthStore` (provider credentials, `~/.efferent/auth.json`), `ConversationStore`, `FileSystem`, `Http`, `LlmInfo`, `ModelRegistry`, `SettingsStore`, `Shell`, `WebSearch`. Each port file pairs its tagged errors with the Tag declaration.
 - `usecases/` — Functions returning `Effect.Effect<A, E, Port1 | Port2>`. The agent loop (`agentLoop.ts`, `runAgent.ts`), tool definitions (`captureTools.ts`, `codingTools.ts`), agent configs (`notesAgentConfig.ts`, `coderAgentConfig.ts`), and the notes-domain workflows (`capture`, `saveCapture`, `getCapture`, `listCaptures`, `deleteCapture`, `renderUi`).
 - `prompts/` — System-prompt strings/functions: `notes.ts` (notes assistant), `coder.ts` (coding assistant), `capture.ts` (notes extraction), `renderUi.ts` (HTML rendering).
 - `src/index.ts` — Public surface; everything other packages import comes through here.

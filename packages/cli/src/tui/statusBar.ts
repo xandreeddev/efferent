@@ -6,6 +6,8 @@ export interface StatusState {
   readonly inputTokens: number
   readonly cacheReadTokens: number
   readonly cwd: string
+  /** Active conversation store, e.g. "sqlite" or "pg". Shown between tokens and cwd. */
+  readonly storage: string
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
   readonly note?: string | undefined
 }
@@ -45,13 +47,14 @@ export const renderStatusBar = (state: StatusState, cols: number): string => {
         )}`
       : `${formatTokens(used)} / ${formatTokens(state.contextWindow)}`
   const middle = `${gauge(used, state.contextWindow, 8)} ${ansi.fgGray}${tokensText}${ansi.reset}`
+  const storage = `${ansi.fgGray}${state.storage}${ansi.reset}`
   const right = `${ansi.fgGray}${prettyCwd(state.cwd)}${ansi.reset}`
   const note =
     state.note !== undefined
       ? `  ${ansi.fgYellow}· ${state.note}${ansi.reset}`
       : ""
 
-  const composed = `${left}  ${middle}${note}  ${right}`
+  const composed = `${left}  ${middle}${note}  ${storage}  ${right}`
   const truncated = truncate(composed, cols)
   return `${ansi.bgDarkGray}${padRight(truncated, cols)}${ansi.reset}`
 }

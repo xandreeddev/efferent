@@ -17,6 +17,12 @@ export const Settings = Schema.Struct({
   model: Schema.String.annotations({
     description: "Active model as '<provider>:<modelId>' (e.g. 'google:gemini-3.5-flash', 'openai:gpt-4o'). Switch at runtime with /model.",
   }),
+  dbUrl: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Conversation store location. A 'postgres://…' connection string selects Postgres; anything else (a filesystem path, optionally 'sqlite:'-prefixed) selects SQLite at that path. Unset → SQLite at ~/.efferent/efferent.db. The EFFERENT_DB_URL env var overrides this.",
+    }),
+  ),
 })
 
 export type Settings = typeof Settings.Type
@@ -26,4 +32,14 @@ export const DefaultSettings: Settings = {
   maxSteps: 20,
   editorMode: "insert",
   model: DefaultModel,
+}
+
+/**
+ * Mask the password in a `postgres://user:pass@host/db` URL for display/logs.
+ * Non-Postgres values (SQLite paths) are passed through unchanged. Pure
+ * string helper — safe to use anywhere a `dbUrl` is shown to a human.
+ */
+export const maskDbUrl = (url: string): string => {
+  if (!/^postgres(ql)?:\/\//i.test(url)) return url
+  return url.replace(/^(postgres(?:ql)?:\/\/[^:/@]+:)[^@]*(@)/i, "$1***$2")
 }

@@ -383,7 +383,15 @@ export const EditFile = Tool.make("edit_file", {
   failureMode: "return",
 })
 
-export const Bash = Tool.make("bash", {
+// NB: named "Bash" — the capital B is LOAD-BEARING, don't lowercase it.
+// Anthropic reserves the lowercase names "bash"/"web_search"/"computer"/
+// "code_execution"/"str_replace_*" for its built-in provider tools, and
+// `@effect/ai-anthropic` rewrites those exact response tool names to its
+// provider-defined tools (`AnthropicBash`, …) — which aren't in our toolkit,
+// so the turn fails. The lookup is a case-sensitive `Map.get`, so "Bash" (the
+// name Claude Code itself uses) sidesteps it while staying the well-trained
+// name the model expects.
+export const Bash = Tool.make("Bash", {
   description:
     "Execute a shell command in the workspace. Use for git, build, test, install, and other operations not covered by the other tools.",
   parameters: {
@@ -533,7 +541,9 @@ export const WebFetch = Tool.make("web_fetch", {
   failureMode: "return",
 })
 
-export const WebSearchTool = Tool.make("web_search", {
+// Named "search_web", not "web_search" — see the note on `Bash` above
+// (Anthropic reserves "web_search" for its built-in provider tool).
+export const WebSearchTool = Tool.make("search_web", {
   description:
     "Search the web for current information and get a short synthesized answer with source URLs. Use it to find things you don't know or that may have changed — library versions, API docs, recent events — when you don't already have a URL. It returns a summary plus its sources; call web_fetch on a source url to read that page in full.",
   parameters: {
@@ -668,7 +678,7 @@ export const makeCodingHandlers = (
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
-      bash: ({ command, timeout }) =>
+      Bash: ({ command, timeout }) =>
         Effect.gen(function* () {
           if (!allowBash) {
             return yield* Effect.fail({
@@ -761,7 +771,7 @@ export const makeCodingHandlers = (
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
-      web_search: ({ query }) =>
+      search_web: ({ query }) =>
         webSearch.search(query).pipe(
           Effect.map((r) => ({ answer: r.answer, sources: r.sources })),
           Effect.catchAll((e) => Effect.fail(toFailure(e))),

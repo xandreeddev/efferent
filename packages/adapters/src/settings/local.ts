@@ -66,18 +66,28 @@ export const LocalSettingsStoreLive = Layer.effect(
           const localConfig = yield* loadFromFile(configPath(cwd))
 
           // `EFFERENT_MODEL` env seeds the model when no config.json pins one;
-          // an explicit `/model` choice (persisted to config.json) wins.
+          // an explicit `/model` choice (persisted to config.json) wins. The
+          // provider-aware default for a freshly logged-in provider is applied
+          // by the driver (it knows which providers have a credential), so the
+          // fallback here is just the static default.
           const envModel = Option.getOrUndefined(
             yield* Config.option(Config.string("EFFERENT_MODEL")).pipe(
               Effect.orElseSucceed(() => Option.none<string>()),
             ),
           )
 
+          // `dbUrl` is workspace > home; no env seeding here — the
+          // EFFERENT_DB_URL env precedence is handled at the store selector
+          // (see adapters/src/database/migrator.ts). This field is surfaced
+          // for display (`:settings`) and validated by `Schema.partial`.
+          const dbUrl = localConfig?.dbUrl ?? homeConfig?.dbUrl
+
           const merged: Settings = {
             allowBash: localConfig?.allowBash ?? homeConfig?.allowBash ?? DefaultSettings.allowBash,
             maxSteps: localConfig?.maxSteps ?? homeConfig?.maxSteps ?? DefaultSettings.maxSteps,
             editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
             model: localConfig?.model ?? homeConfig?.model ?? envModel ?? DefaultSettings.model,
+            ...(dbUrl !== undefined ? { dbUrl } : {}),
           }
 
           yield* Ref.set(stateRef, merged)

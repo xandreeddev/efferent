@@ -1,16 +1,15 @@
 # efferent
 
-A coding agent CLI on **Effect.ts + Bun** — modal TUI, zero-config SQLite history, multi-provider (Gemini/OpenAI), colocated evals. No React. Built in public.
+A coding agent CLI on **Effect.ts + Bun** — modal TUI, zero-config SQLite history, multi-provider (Gemini/OpenAI/Claude), colocated evals. No React. Built in public.
 
 ```bash
 # requires Bun (https://bun.sh)
 npm i -g efferent          # or: bun add -g efferent
-efferent init              # set up ~/.efferent (API key, default model)
-efferent                   # full TUI in the current project
-efferent "fix the failing test in src/foo.ts"   # one-shot print mode
+efferent                   # full TUI in the current project — then :login
+efferent "fix the failing test in src/foo.ts"   # one-shot print mode (needs a prior :login)
 ```
 
-History persists to `~/.efferent/efferent.db` (SQLite) with no setup; set `EFFERENT_DB_URL` to use Postgres instead.
+`efferent` boots straight into the TUI. Add a provider in-session with **`:login`** — pick a **subscription** (OAuth: Claude Pro/Max) or an **API key**, choose the provider, and it works that turn with no restart. Switch models anytime with `:model`; `:logout <provider>` removes a credential. Credentials live only in `~/.efferent/auth.json` (no env vars, no `init`). History persists to `~/.efferent/efferent.db` (SQLite) with no setup; the status bar shows the active store. Switch to Postgres (or another SQLite path) with `:db pg <url>` (add `global` to apply everywhere) or the `EFFERENT_DB_URL` env var (env wins) — config is layered, so a folder can override the global.
 
 ## Develop
 
