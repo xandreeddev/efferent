@@ -114,6 +114,10 @@ export type NavIntent =
   | { readonly kind: "sideToggleSelect" }
   /** Context-tree: b — build a new session from the selected turns. */
   | { readonly kind: "buildSession" }
+  /** Activity (stack) view cursor move. */
+  | { readonly kind: "stackCursorMove"; readonly op: "up" | "down" | "top" | "bottom" }
+  /** Activity view: fold/unfold the section (files/skills/instructions) under the cursor. */
+  | { readonly kind: "stackToggleSection" }
 
 const ctrlDir = (
   char: string,
@@ -237,13 +241,41 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
       }
       return { kind: "none" }
     }
-    // Stack view (minimal): zoom, command/search, drop back to the input.
-    if (key.type === "char" && key.char === "i") {
-      return { kind: "focus", to: "input", mode: "insert" }
+    // Activity (stack) view: navigable cursor + fold the sections.
+    if (ctx.navPending && key.type === "char" && key.char === "g") {
+      return { kind: "stackCursorMove", op: "top" }
     }
-    if (key.type === "char" && key.char === "z") return { kind: "toggleZoom" }
-    if (key.type === "char" && key.char === ":") return { kind: "openCommand" }
-    if (key.type === "char" && key.char === "/") return { kind: "openSearch" }
+    if (key.type === "tab") return { kind: "stackToggleSection" }
+    if (key.type === "arrow") {
+      if (key.dir === "down") return { kind: "stackCursorMove", op: "down" }
+      if (key.dir === "up") return { kind: "stackCursorMove", op: "up" }
+      return { kind: "none" }
+    }
+    if (key.type === "char") {
+      switch (key.char) {
+        case "j":
+          return { kind: "stackCursorMove", op: "down" }
+        case "k":
+          return { kind: "stackCursorMove", op: "up" }
+        case "g":
+          return { kind: "gPending" }
+        case "G":
+          return { kind: "stackCursorMove", op: "bottom" }
+        case "h":
+        case "l":
+          return { kind: "stackToggleSection" }
+        case "i":
+          return { kind: "focus", to: "input", mode: "insert" }
+        case "z":
+          return { kind: "toggleZoom" }
+        case ":":
+          return { kind: "openCommand" }
+        case "/":
+          return { kind: "openSearch" }
+        default:
+          return { kind: "none" }
+      }
+    }
     if (key.type === "escape") {
       if (ctx.zoomed) return { kind: "toggleZoom" }
       return { kind: "focus", to: "input", mode: "normal" }

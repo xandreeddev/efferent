@@ -18,8 +18,10 @@ packages/cli/src/
     ├── terminal.ts    raw mode, ANSI escapes, alt buffer, getTermSize
     ├── keys.ts        stdin byte → discriminated Key event parser
     ├── render.ts      diffing frame composer (status + scrollback + palette + input + modal)
-    ├── statusBar.ts   model + token gauge + cwd
-    ├── scrollback.ts  user / assistant / tool / info / error blocks
+    ├── statusBar.ts   model + token gauge + cwd (exports formatTokens/gauge)
+    ├── scrollback.ts  ●/⎿ event rail: user turn / assistant / tool / diff / info / error blocks
+    ├── sidePane.ts    "activity" dashboard (stats + tree + files/skills/instructions) + context viewer
+    ├── toolDescribe.ts pure ToolName(arg) labels + result summaries + artifacts
     ├── input.ts       multi-line editor (Enter/Ctrl-J newline in INSERT; submit from NORMAL via Enter)
     ├── slashPalette.ts /<cmd> autocomplete overlay
     ├── modal.ts       generic centered y/n confirm
