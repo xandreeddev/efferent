@@ -1,5 +1,6 @@
 import { ansi, padRight, truncate, SPINNER_FRAMES } from "./terminal.js"
 import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
+import { formatTokens, gauge } from "./statusBar.js"
 import {
   archivedTurnRanges,
   buildContextRows,
@@ -12,6 +13,37 @@ import {
 export interface SidePaneInstruction {
   readonly path: string
   readonly scope: string
+}
+
+/** One file touched this session, with its running diffstat. */
+export interface FileChange {
+  readonly path: string
+  readonly added: number
+  readonly removed: number
+}
+
+/** At-a-glance session counters surfaced in the Activity header. */
+export interface SessionStats {
+  /** Current context size (last turn's input tokens). */
+  readonly inputTokens: number
+  /** Cumulative output tokens generated this session. */
+  readonly outputTokens: number
+  readonly totalTokens: number
+  readonly cacheReadTokens: number
+  readonly contextWindow: number
+  readonly turns: number
+  /** Session start (ms) for the elapsed readout; 0 = not started. */
+  readonly startedAt: number
+}
+
+export const emptyStats: SessionStats = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cacheReadTokens: 0,
+  contextWindow: 0,
+  turns: 0,
+  startedAt: 0,
 }
 
 export interface SidePaneState {
@@ -30,6 +62,12 @@ export interface SidePaneState {
   readonly contextSelected: ReadonlySet<number>
   /** Selected handoff indices — each seeds the build with its summary alone. */
   readonly contextHandoffSelected: ReadonlySet<number>
+  /** At-a-glance session counters (Activity header). */
+  readonly stats: SessionStats
+  /** Files touched this session, with running diffstat (Activity "files" section). */
+  readonly filesChanged: ReadonlyArray<FileChange>
+  /** Folded Activity section ids ("files" / "skills" / "instructions"). */
+  readonly sectionsCollapsed: ReadonlySet<string>
 }
 
 export const emptySidePane: SidePaneState = {
@@ -41,6 +79,9 @@ export const emptySidePane: SidePaneState = {
   contextCollapsed: new Set(),
   contextSelected: new Set(),
   contextHandoffSelected: new Set(),
+  stats: emptyStats,
+  filesChanged: [],
+  sectionsCollapsed: new Set(["files", "skills", "instructions"]),
 }
 
 // --- context-tree navigation (pure; the driver re-derives rows each call) ---
@@ -159,9 +200,69 @@ const fmtDur = (ms: number): string => {
   return `${m}m${Math.round(s - m * 60)}s`
 }
 
-const sectionHeader = (label: string, count?: number): string => {
-  const c = count !== undefined ? ` ${ansi.dim}(${count})${ansi.reset}` : ""
-  return `${ansi.bold}${ansi.fgGray}── ${label} ──${ansi.reset}${c}`
+const foldGlyph = (collapsed: boolean): string =>
+  `${ansi.fgGray}${collapsed ? "▸" : "▾"}${ansi.reset}`
+
+/** A foldable Activity section header: `▸ label (N)` + an optional summary. */
+const sectionHead = (
+  label: string,
+  count: number,
+  collapsed: boolean,
+  summary = "",
+): string =>
+  `${foldGlyph(collapsed)} ${ansi.bold}${ansi.fgGray}${label}${ansi.reset} ${ansi.dim}(${count})${ansi.reset}${summary}`
+
+/** The Activity stats header: a context gauge + a cumulative one-liner. */
+const renderStats = (s: SessionStats, width: number, now: number): string[] => {
+  const cached =
+    s.cacheReadTokens > 0
+      ? `${ansi.dim} (${formatTokens(s.cacheReadTokens)} cached)${ansi.reset}`
+      : ""
+  const win = s.contextWindow > 0 ? formatTokens(s.contextWindow) : "?"
+  const gaugeLine = `${gauge(s.inputTokens, s.contextWindow, 10)} ${ansi.fgGray}${formatTokens(s.inputTokens)}/${win}${ansi.reset}${cached}`
+  const elapsed = s.startedAt > 0 ? fmtDur(now - s.startedAt) : "0s"
+  const meta = `${ansi.dim}↓${formatTokens(s.outputTokens)} out · ${s.turns} turn${s.turns === 1 ? "" : "s"} · ${elapsed}${ansi.reset}`
+  return [truncate(gaugeLine, width), truncate(meta, width)]
+}
+
+/** The foldable `files` section: header carries a `+A/-D` diffstat summary. */
+const renderFilesSection = (
+  files: ReadonlyArray<FileChange>,
+  width: number,
+  collapsed: boolean,
+): string[] => {
+  const tot = files.reduce(
+    (a, f) => ({ added: a.added + f.added, removed: a.removed + f.removed }),
+    { added: 0, removed: 0 },
+  )
+  const summary =
+    files.length > 0
+      ? ` ${ansi.fgGreen}+${tot.added}${ansi.reset}${ansi.dim}/${ansi.reset}${ansi.fgRed}-${tot.removed}${ansi.reset}`
+      : ""
+  const head = sectionHead("files", files.length, collapsed, summary)
+  if (collapsed || files.length === 0) return [head]
+  const rows = files.map((f) =>
+    truncate(
+      `   ${ansi.fgGray}${f.path}${ansi.reset} ${ansi.fgGreen}+${f.added}${ansi.reset}${ansi.dim}/${ansi.reset}${ansi.fgRed}-${f.removed}${ansi.reset}`,
+      width,
+    ),
+  )
+  return [head, ...rows]
+}
+
+/** A foldable list section (skills / instructions): one line when collapsed. */
+const renderListSection = (
+  label: string,
+  items: ReadonlyArray<string>,
+  width: number,
+  collapsed: boolean,
+): string[] => {
+  const head = sectionHead(label, items.length, collapsed)
+  if (collapsed || items.length === 0) return [head]
+  return [
+    head,
+    ...items.map((i) => truncate(`   ${ansi.fgGray}·${ansi.reset} ${i}`, width)),
+  ]
 }
 
 const statusGlyph = (node: TreeNode, spinnerFrame: number): string => {
@@ -224,22 +325,6 @@ const renderTreeLines = (
   return out
 }
 
-const renderListSection = (
-  label: string,
-  items: ReadonlyArray<string>,
-  width: number,
-): string[] => {
-  const out = [sectionHeader(label, items.length)]
-  if (items.length === 0) {
-    out.push(`${ansi.dim}(none)${ansi.reset}`)
-  } else {
-    for (const item of items) {
-      out.push(truncate(`${ansi.fgGray}·${ansi.reset} ${item}`, width))
-    }
-  }
-  return out
-}
-
 /**
  * Render the side pane: the live execution tree on top (tail-windowed so
  * the newest activity stays visible), with skills + instructions sections
@@ -273,32 +358,30 @@ export const renderSidePane = (
     return out.slice(0, rows).map((line) => padRight(line, cols))
   }
 
-  const sections: string[] = ["", ...renderListSection("skills", state.skillsLoaded, cols)]
-  sections.push(
-    "",
+  // Activity view: a stats header on top, the live tree filling the middle
+  // (tail-windowed), and the foldable files/skills/instructions sections pinned
+  // to the floor (collapsed by default — each still shows its key-info summary).
+  const header = [...renderStats(state.stats, cols, now), ""]
+  const bottom = [
+    ...renderFilesSection(state.filesChanged, cols, state.sectionsCollapsed.has("files")),
+    ...renderListSection("skills", state.skillsLoaded, cols, state.sectionsCollapsed.has("skills")),
     ...renderListSection(
       "instructions",
       state.instructions.map((i) => prettyPath(i.path)),
       cols,
+      state.sectionsCollapsed.has("instructions"),
     ),
-  )
+  ]
 
-  // Reserve up to half the pane for the bottom sections; the tree takes
-  // the rest and shows its tail (newest nodes) when it overflows.
-  const sectionsBudget = Math.min(sections.length, Math.floor(rows / 2))
-  const shownSections = sections.slice(0, sectionsBudget)
-  const treeRows = Math.max(0, rows - shownSections.length)
-
+  const treeRows = Math.max(0, rows - header.length - bottom.length - 1)
   const treeLines = renderTreeLines(state.tree, spinnerFrame, now, cols)
   const treeWindow =
     treeLines.length > treeRows
       ? treeLines.slice(treeLines.length - treeRows)
       : treeLines
 
-  const out: string[] = []
-  out.push(...treeWindow)
-  while (out.length < treeRows) out.push("")
-  out.push(...shownSections)
-  while (out.length < rows) out.push("")
+  const out: string[] = [...header, ...treeWindow]
+  while (out.length < rows - bottom.length) out.push("")
+  out.push(...bottom)
   return out.slice(0, rows).map((line) => padRight(line, cols))
 }

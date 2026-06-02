@@ -154,6 +154,23 @@ export const onToolEnd = (
   now: number,
 ): ExecutionTree => closeNode(tree, id, ok ? "ok" : "error", detail, now)
 
+/**
+ * Attach a detail (e.g. per-LLM-call token usage `↑12k ↓340`) to the deepest
+ * open turn node — set when the turn's `assistant_message` (with usage) lands.
+ */
+export const onTurnDetail = (
+  tree: ExecutionTree,
+  detail: string,
+): ExecutionTree => {
+  for (let i = tree.openPath.length - 1; i >= 0; i--) {
+    const id = tree.openPath[i]!
+    if (findNode(tree.roots, id)?.kind === "turn") {
+      return { ...tree, roots: mapRoots(tree.roots, id, (n) => ({ ...n, detail })) }
+    }
+  }
+  return tree
+}
+
 export const onSubAgentStart = (
   tree: ExecutionTree,
   label: string,
