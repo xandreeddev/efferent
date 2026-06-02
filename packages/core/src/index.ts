@@ -7,6 +7,7 @@ export * from "./entities/Skill.js"
 export * from "./entities/Settings.js"
 
 // Ports
+export * from "./ports/AuthStore.js"
 export * from "./ports/ConversationStore.js"
 export * from "./ports/FileSystem.js"
 export * from "./ports/Http.js"

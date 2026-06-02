@@ -18,15 +18,36 @@ import pg0005 from "./migrations/0005_checkpoints.js"
 import sqlite0001 from "./migrations-sqlite/0001_init.js"
 
 /**
- * Database layer + ConversationStore, selected at runtime:
- *   - `EFFERENT_DB_URL` set → Postgres (the opt-in, heavier-duty backend);
- *   - else → SQLite at `~/.efferent/efferent.db` (the zero-config default,
+ * Database layer + ConversationStore, selected at runtime from a single
+ * `EFFERENT_DB_URL` value (env, or seeded from config.json's `dbUrl` at boot —
+ * see packages/cli/src/main.ts `seedDbUrlFromConfig`; env always wins):
+ *   - `postgres://…` / `postgresql://…` → Postgres (the opt-in backend);
+ *   - any other non-empty value (a path, optionally `sqlite:`-prefixed) →
+ *     SQLite at that path;
+ *   - unset → SQLite at `~/.efferent/efferent.db` (the zero-config default,
  *     so `npm i -g efferent` works with no Docker).
  *
  * Migrations are loaded via `Migrator.fromRecord` (a static map) rather than
  * `fromFileSystem`, so the published single-file bundle carries them inline —
  * no `.ts` files read off disk at runtime.
  */
+
+const defaultSqlitePath = () => join(homedir(), ".efferent", "efferent.db")
+
+type DbTarget =
+  | { readonly kind: "postgres" }
+  | { readonly kind: "sqlite"; readonly filename: string }
+
+/** Interpret the EFFERENT_DB_URL value into a concrete backend target. */
+export const parseDbTarget = (raw: string | undefined): DbTarget => {
+  const v = raw?.trim()
+  if (v === undefined || v.length === 0) {
+    return { kind: "sqlite", filename: defaultSqlitePath() }
+  }
+  if (/^postgres(ql)?:\/\//i.test(v)) return { kind: "postgres" }
+  const path = v.replace(/^sqlite:(\/\/)?/i, "")
+  return { kind: "sqlite", filename: path.length > 0 ? path : defaultSqlitePath() }
+}
 
 const pgLoader = Migrator.fromRecord({
   "0001_init": pg0001,
@@ -47,29 +68,36 @@ const PgDatabaseLive = PgMigrator.layer({ loader: pgLoader }).pipe(
   ),
 )
 
-/** SQLite client + migrator at ~/.efferent/efferent.db (creating the dir). */
-const SqliteDatabaseLive = Layer.unwrapEffect(
-  Effect.sync(() => {
-    const filename = join(homedir(), ".efferent", "efferent.db")
-    mkdirSync(dirname(filename), { recursive: true })
-    return SqliteMigrator.layer({ loader: sqliteLoader }).pipe(
-      Layer.provideMerge(SqliteClient.layer({ filename })),
-    )
-  }),
-)
+/** SQLite client + migrator at `filename` (creating its parent dir). */
+const sqliteDatabaseLive = (filename: string) =>
+  Layer.unwrapEffect(
+    Effect.sync(() => {
+      mkdirSync(dirname(filename), { recursive: true })
+      return SqliteMigrator.layer({ loader: sqliteLoader }).pipe(
+        Layer.provideMerge(SqliteClient.layer({ filename })),
+      )
+    }),
+  )
 
 /** Back-compat alias: the Postgres database layer. */
 export const DatabaseLive = PgDatabaseLive
 
 /**
  * The composed ConversationStore for the active backend. The driver provides
- * this once; all four modes consume `ConversationStore` unchanged.
+ * this once; all four modes consume `ConversationStore` unchanged. The plain
+ * (non-redacted) value is read only to branch + extract a SQLite path; the
+ * Postgres branch re-reads it as a redacted secret in `PgDatabaseLive`.
  */
 export const ConversationStoreLive = Layer.unwrapEffect(
   Effect.gen(function* () {
-    const dbUrl = yield* Config.option(Config.redacted("EFFERENT_DB_URL"))
-    return Option.isSome(dbUrl)
+    const raw = Option.getOrUndefined(
+      yield* Config.option(Config.string("EFFERENT_DB_URL")),
+    )
+    const target = parseDbTarget(raw)
+    return target.kind === "postgres"
       ? PostgresConversationStoreLive.pipe(Layer.provide(PgDatabaseLive))
-      : SqliteConversationStoreLive.pipe(Layer.provide(SqliteDatabaseLive))
+      : SqliteConversationStoreLive.pipe(
+          Layer.provide(sqliteDatabaseLive(target.filename)),
+        )
   }),
 )

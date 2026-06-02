@@ -1,8 +1,7 @@
 import { homedir } from "node:os"
 import { BunRuntime } from "@effect/platform-bun"
 import { Effect } from "effect"
-import { SettingsStore } from "@efferent/core"
-import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "@efferent/adapters"
+import { AuthStore, SettingsStore } from "@efferent/core"
 import { EvalEnvLive, type EvalEnv } from "./env.js"
 import type { EvalReport, EvalSpec } from "./framework/Eval.js"
 import { formatReport } from "./framework/report.js"
@@ -43,13 +42,18 @@ const program = Effect.gen(function* () {
 
   // Live suites need a provider; without one, skip cleanly so the harness is
   // still demonstrably wired (no hard failure when credits aren't loaded yet).
-  const haveKey = (yield* hasKey(GOOGLE_API_KEY)) || (yield* hasKey(OPENAI_API_KEY))
+  // The eval env reads keys from the env (EnvAuthStoreLive), not auth.json.
+  const creds = yield* (yield* AuthStore).all
+  const haveKey = Object.keys(creds).length > 0
 
   const reports: Array<EvalReport> = []
   if (!haveKey) {
     for (const s of selected) {
       reports.push(
-        skippedReport(s, "no provider key (set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY)"),
+        skippedReport(
+          s,
+          "no provider key (set GOOGLE_GENERATIVE_AI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY)",
+        ),
       )
     }
   } else {

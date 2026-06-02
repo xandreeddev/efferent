@@ -23,7 +23,7 @@ const systemSection = `# System
 const doingTasksSection = `# Doing tasks
 - Use tools to read the workspace. NEVER answer questions about files, directories, or commands from memory — the filesystem is the source of truth, and your conversation history goes stale fast.
 - When the user names a specific file, or you already know its path, read it directly with 'read_file' — don't grep/glob/ls to "locate" or scan it first. The search tools are for when the path is genuinely unknown.
-- Prefer 'grep' for searching content and 'glob' for finding files by name. Reach for 'bash' only when the other tools can't do the job.
+- Prefer 'grep' for searching content and 'glob' for finding files by name. Reach for 'Bash' only when the other tools can't do the job.
 - Show paths exactly as they are (relative to cwd unless absolute). Never invent paths; if you don't know where a file lives, grep or glob for it first.
 - When editing, read the file first, then make minimal targeted edits via 'edit_file'. Don't rewrite a whole file with 'write_file' if a small edit would do.
 - Keep changes tightly scoped to the request. Don't add speculative abstractions, backwards-compatibility shims, or unrelated cleanup. Don't create files (especially docs / READMEs) unless required to complete the task or the user explicitly asked.
@@ -99,11 +99,11 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - read_file({ path, offset?, limit? }) — read anywhere.
 - write_file({ path, content }) — write only within your scope.
 - edit_file({ path, edits: [{ oldText, newText }] }) — edit only within your scope.
-- bash({ command, timeout? }) — runs in your scope dir.
+- Bash({ command, timeout? }) — runs in your scope dir.
 - grep({ pattern, dir?, flags?, context? }) — search anywhere.
 - glob({ pattern, dir? }) — find files anywhere.
 - ls({ path?, recursive? }) — list anywhere.
-- web_search({ query }) — search the web; returns a synthesized answer plus source URLs.
+- search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.${args.children.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a sub-task to a nested scope (see Delegations)." : ""}
 ${renderDelegationsSection(args.children)}
 # Doing tasks
@@ -144,12 +144,12 @@ ${systemSection}
 - read_file({ path, offset?, limit? }) — read a file's contents (line-numbered). Use offset/limit on big files.
 - write_file({ path, content }) — create or fully replace a file. Prefer 'edit_file' for changes to existing files.
 - edit_file({ path, edits: [{ oldText, newText }] }) — apply targeted in-place edits. 'oldText' must match exactly (whitespace included).
-- bash({ command, timeout? }) — run a shell command in cwd. Confirmation may be required.
+- Bash({ command, timeout? }) — run a shell command in cwd. Confirmation may be required.
 - grep({ pattern, dir?, flags?, context? }) — regex search across files. Respects .gitignore.
 - glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
 - ls({ path?, recursive? }) — list a directory.
-- web_search({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
-- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a web_search result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
+- search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
 ${renderSkillsSection(skills)}${renderDelegationsSection(scopedAgents)}
 ${doingTasksSection}
 

@@ -1,6 +1,7 @@
 import type { LanguageModel } from "@effect/ai"
 import { Layer } from "effect"
 import type {
+  AuthStore,
   ConversationStore,
   FileSystem,
   Http,
@@ -9,12 +10,13 @@ import type {
   WebSearch,
 } from "@efferent/core"
 import {
+  EnvAuthStoreLive,
+  FetchHttpClientLive,
   HttpLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
   ModelLive,
-  ProviderClientsLive,
   WebSearchLive,
 } from "@efferent/adapters"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"
@@ -27,6 +29,7 @@ import { InMemoryConversationStoreLive } from "./support/inMemoryConversationSto
  */
 export type EvalEnv =
   | LanguageModel.LanguageModel
+  | AuthStore
   | ConversationStore
   | SettingsStore
   | FileSystem
@@ -38,19 +41,21 @@ export type EvalEnv =
 // value, so Effect memoises it to a single FileSystem instance.
 const FsLive = LocalFileSystemLive
 const SettingsLive = LocalSettingsStoreLive.pipe(Layer.provide(FsLive))
+// Headless credentials: read the provider keys from the env (the product CLI
+// uses auth.json via :login; evals/CI can't run the interactive flow).
+const CredentialsLive = Layer.mergeAll(EnvAuthStoreLive, SettingsLive)
 
 export const EvalEnvLive: Layer.Layer<EvalEnv> = Layer.mergeAll(
-  ModelLive, // requires SettingsStore
+  ModelLive, // requires AuthStore + SettingsStore
   InMemoryConversationStoreLive,
   FsLive,
   LocalShellLive,
   HttpLive,
-  WebSearchLive.pipe(Layer.provide(ProviderClientsLive)),
+  WebSearchLive.pipe(Layer.provide(FetchHttpClientLive)), // requires AuthStore (below)
 ).pipe(
-  // provideMerge (not merge): feeds SettingsStore *into* ModelLive AND keeps
-  // it in the output (runAgent reads it for maxSteps). Mirrors main.ts.
-  Layer.provideMerge(SettingsLive),
-  // The provider clients read keys via Config (optional); a genuinely broken
-  // config is unrecoverable for an eval run, so surface it as a defect.
+  // provideMerge (not merge): feeds AuthStore + SettingsStore *into* ModelLive
+  // / WebSearchLive AND keeps SettingsStore in the output (runAgent reads it
+  // for maxSteps). Mirrors main.ts.
+  Layer.provideMerge(CredentialsLive),
   Layer.orDie,
 )

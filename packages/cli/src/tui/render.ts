@@ -24,6 +24,8 @@ import type { PaletteState } from "./slashPalette.js"
 import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
 import { renderModal } from "./modal.js"
+import { renderSelectBox, type SelectState } from "./selectBox.js"
+import { type LoginFlow, renderLoginFlow } from "./loginFlow.js"
 import type { SidePaneState } from "./sidePane.js"
 import { renderSidePane, sideCursorRowAt, stackCursorRowAt } from "./sidePane.js"
 import type { FocusPane, UiMode } from "./uiMode.js"
@@ -36,6 +38,10 @@ export interface AppState {
   readonly input: InputState
   readonly palette: PaletteState
   readonly modal: ModalState
+  /** Open `:model` select box, composited as a centered overlay. */
+  readonly modelPicker?: SelectState<unknown> | undefined
+  /** Open `:login` flow (auth-method / provider / key / oauth), centered overlay. */
+  readonly loginFlow?: LoginFlow | undefined
   readonly sidePane: SidePaneState
   /** Spinner animation frame, for the side-pane tree's running nodes. */
   readonly spinnerFrame: number
@@ -339,6 +345,27 @@ export class FrameRenderer {
       }
     }
 
+    // Model select-box overlay (draws its own filter cursor; suppresses the
+    // hardware cursor below).
+    if (state.modelPicker !== undefined) {
+      for (const ov of renderSelectBox(state.modelPicker, rows, cols)) {
+        out += moveTo(ov.row, ov.col) + ov.content
+        if (ov.row - 1 >= 0 && ov.row - 1 < this.prev.length) {
+          this.prev[ov.row - 1] = ""
+        }
+      }
+    }
+
+    // `:login` flow overlay (its own filter/input cursor; suppresses hardware).
+    if (state.loginFlow !== undefined) {
+      for (const ov of renderLoginFlow(state.loginFlow, rows, cols)) {
+        out += moveTo(ov.row, ov.col) + ov.content
+        if (ov.row - 1 >= 0 && ov.row - 1 < this.prev.length) {
+          this.prev[ov.row - 1] = ""
+        }
+      }
+    }
+
     // The real cursor follows focus and mode, nvim-style: a BAR in INSERT, a
     // BLOCK in NORMAL/VISUAL — on every pane.
     //  - input focused → in the input region (bottom); covers the `:`/`/`
@@ -347,7 +374,10 @@ export class FrameRenderer {
     //  - conversation focused in NORMAL or VISUAL → a BLOCK on the cursor's
     //    actual (row, col) cell in the middle region — the nvim cursor;
     //  - otherwise hidden.
-    if (
+    if (state.modelPicker !== undefined || state.loginFlow !== undefined) {
+      // The select/prompt box draws its own cursor; hide the hardware one.
+      out += hideCursor
+    } else if (
       !state.modal.visible &&
       state.focus === "input" &&
       !state.input.locked

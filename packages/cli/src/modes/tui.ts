@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { LanguageModel } from "@effect/ai"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
 import {
+  AuthStore,
   ConversationId,
   ConversationStore,
   FileSystem,
@@ -14,19 +15,32 @@ import {
   WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
+  defaultModelForProvider,
+  maskDbUrl,
   parseModel,
   runAgent,
   createHandoff,
   type AgentMessage,
+  type AuthData,
   type Checkpoint,
   type InstructionFile,
   type ModelInfo,
+  type Provider,
   type Scope,
   type Skill,
 } from "@efferent/core"
 
+import {
+  ANTHROPIC_CALLBACK_PORT,
+  anthropicAuthorizeUrl,
+  exchangeAnthropicCode,
+  generatePkce,
+  parseAuthorizationInput,
+} from "@efferent/adapters"
+
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
+import { browserCommand, startCallbackServer } from "../login/oauthServer.js"
 
 import {
   ansi,
@@ -50,6 +64,26 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
+import { describeActiveDatabase, storageLabel } from "../tui/dbStatus.js"
+import {
+  openSelect,
+  moveSelect,
+  filterAppend,
+  filterBackspace,
+  selectedValue,
+  type SelectState,
+} from "../tui/selectBox.js"
+import {
+  loginAdvance,
+  loginAppend,
+  loginBack,
+  loginBackspace,
+  loginMove,
+  loginSetOAuthStatus,
+  openLogin,
+  type LoginFlow,
+  type ProviderStatus,
+} from "../tui/loginFlow.js"
 import {
   sideCurrentRow,
   sideCursorMove,
@@ -139,8 +173,18 @@ interface MutableAppState {
   ctrlCArmedAt?: number
   /** Last `/model` listing, so `/model <#>` can resolve a numbered choice. */
   modelList?: ReadonlyArray<ModelInfo>
+  /** Open `:model` select box (overlay); owns input while visible. */
+  modelPicker?: SelectState<ModelInfo>
+  /** Open `:login` flow (overlay); owns input while visible. */
+  loginFlow?: LoginFlow
+  /** In-flight OAuth login: PKCE verifier + callback-server stop + waiter fiber. */
+  oauthSession?: {
+    verifier: string
+    stop: () => void
+    fiber: Fiber.RuntimeFiber<void, never>
+  }
   /** The active model's provider, to warn on a mid-conversation switch. */
-  activeProvider: "google" | "openai"
+  activeProvider: Provider
   /** Whether the current conversation already has at least one turn. */
   conversationHasTurns: boolean
   /** Fixed dim footer below the status bar (logs path + key hints). */
@@ -211,6 +255,8 @@ const snapshot = (s: MutableAppState): AppState => ({
   input: s.input,
   palette: s.palette,
   modal: s.modal,
+  modelPicker: s.modelPicker,
+  loginFlow: s.loginFlow,
   sidePane: s.sidePane,
   spinnerFrame: s.spinnerFrame,
   focus: s.focus,
@@ -404,7 +450,7 @@ const runTuiModeCore = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch | AuthStore
 > =>
   Effect.gen(function* () {
     const info = yield* LlmInfo
@@ -426,6 +472,7 @@ const runTuiModeCore = (
         inputTokens: 0,
         cacheReadTokens: 0,
         cwd: input.cwd,
+        storage: storageLabel(process.env.EFFERENT_DB_URL),
       },
       scrollback: new Scrollback(),
       input: emptyInput,
@@ -474,6 +521,21 @@ const runTuiModeCore = (
       }
     }
 
+    // First-run guidance (pi-style): with no credential, the agent can't run —
+    // point at :login instead of letting the first message 401.
+    {
+      const bootCreds = yield* (yield* AuthStore).all
+      if (Object.keys(bootCreds).length === 0) {
+        yield* Ref.update(stateRef, (s) => {
+          s.scrollback.push({
+            kind: "info",
+            text: "No models available. Run :login to add a provider — a subscription (OAuth) or an API key.",
+          })
+          return s
+        })
+      }
+    }
+
     const renderer = new FrameRenderer()
 
     // Coalesced render scheduler: state mutations mark the frame dirty;
@@ -504,6 +566,225 @@ const runTuiModeCore = (
       dirty = true
       scheduleRender()
     })
+
+    /**
+     * Switch to a model and reflect it in the status bar / side pane. Shared by
+     * the `:model <#|id>` path and the `:model` select box's Enter.
+     */
+    const applyModelSelection = (chosen: ModelInfo) =>
+      Effect.gen(function* () {
+        const registry = yield* ModelRegistry
+        const prev = yield* registry.current
+        const sel = yield* registry.select({
+          provider: chosen.provider,
+          modelId: chosen.modelId,
+          ...(chosen.contextWindow > 0 ? { contextWindow: chosen.contextWindow } : {}),
+        })
+        const st0 = yield* Ref.get(stateRef)
+        const crossProvider = prev.provider !== sel.provider && st0.conversationHasTurns
+        yield* Ref.update(stateRef, (s) => {
+          s.status = { ...s.status, modelId: sel.modelId, contextWindow: sel.contextWindow }
+          s.sidePane = {
+            ...s.sidePane,
+            stats: { ...s.sidePane.stats, contextWindow: sel.contextWindow },
+          }
+          s.activeProvider = sel.provider
+          s.scrollback.push({
+            kind: "info",
+            text: `switched to ${sel.provider}:${sel.modelId}`,
+          })
+          if (crossProvider) {
+            s.scrollback.push({
+              kind: "info",
+              text: "note: switched provider mid-conversation; if the next turn errors, /reset (Gemini needs its own tool-call history).",
+            })
+          }
+          return s
+        })
+      })
+
+    /* ----- in-app `:login` flow ---------------------------------------- */
+
+    // Per-provider status tags for the provider selector.
+    const loginStatuses = (auth: AuthData): ReadonlyArray<ProviderStatus> =>
+      (["anthropic", "google", "openai"] as const).map((p) => ({
+        provider: p,
+        configured: auth[p]?.type,
+      }))
+
+    // Open the `:login` flow, tagging which providers are already configured.
+    const openLoginFlow = Effect.gen(function* () {
+      const all = yield* (yield* AuthStore).all
+      yield* Ref.update(stateRef, (s) => {
+        s.loginFlow = openLogin(loginStatuses(all))
+        return s
+      })
+      yield* requestRender
+    })
+
+    // Shared post-login: if the currently-selected model's provider has no
+    // credential, switch to the just-configured provider's default model;
+    // refresh the status bar and confirm in the rail; close the flow.
+    const afterLogin = (provider: Provider, how: string) =>
+      Effect.gen(function* () {
+        const registry = yield* ModelRegistry
+        const auth = yield* AuthStore
+        const cur = yield* registry.current
+        const curHasCred = (yield* auth.get(cur.provider)) !== undefined
+        yield* Ref.update(stateRef, (s) => {
+          delete s.loginFlow
+          s.scrollback.push({ kind: "info", text: `✓ logged in to ${provider} (${how})` })
+          return s
+        })
+        if (!curHasCred) {
+          const { provider: p, modelId } = parseModel(defaultModelForProvider(provider))
+          yield* applyModelSelection({
+            provider: p,
+            modelId,
+            displayName: modelId,
+            contextWindow: 0,
+          })
+        }
+        yield* requestRender
+      })
+
+    // Persist an API key for a provider, then run the post-login steps.
+    const commitApiKey = (provider: Provider, key: string) =>
+      Effect.gen(function* () {
+        const auth = yield* AuthStore
+        const ok = yield* auth.setApiKey(provider, key).pipe(
+          Effect.as(true),
+          Effect.catchAll((e) =>
+            Ref.update(stateRef, (s) => {
+              delete s.loginFlow
+              s.scrollback.push({ kind: "error", text: `login failed: ${e.message}` })
+              return s
+            }).pipe(Effect.as(false)),
+          ),
+        )
+        if (ok) yield* afterLogin(provider, "api key")
+        else yield* requestRender
+      })
+
+    // Finish an OAuth login: exchange the code for tokens, persist, run the
+    // post-login steps. Stops the callback server either way.
+    const finishOAuth = (
+      provider: Provider,
+      code: string,
+      verifier: string,
+      stop: () => void,
+    ) =>
+      Effect.gen(function* () {
+        const auth = yield* AuthStore
+        const tokens = yield* exchangeAnthropicCode(code, verifier)
+        yield* auth.setOAuth(provider, tokens)
+        stop()
+        yield* Ref.update(stateRef, (s) => {
+          delete s.oauthSession
+          return s
+        })
+        yield* afterLogin(provider, "subscription")
+      }).pipe(
+        Effect.catchAll((e) =>
+          Effect.sync(stop).pipe(
+            Effect.zipRight(
+              Ref.update(stateRef, (s) => {
+                delete s.oauthSession
+                delete s.loginFlow
+                s.scrollback.push({
+                  kind: "error",
+                  text: `login failed: ${"message" in e ? e.message : String(e)}`,
+                })
+                return s
+              }),
+            ),
+            Effect.zipRight(requestRender),
+          ),
+        ),
+      )
+
+    // OAuth subscription login: PKCE → open browser + loopback callback server,
+    // and race that against a manually-pasted redirect URL.
+    const startOAuthLogin = (provider: Provider) =>
+      Effect.gen(function* () {
+        if (provider !== "anthropic") {
+          yield* Ref.update(stateRef, (s) => {
+            delete s.loginFlow
+            s.scrollback.push({
+              kind: "info",
+              text: `OAuth subscription login isn't available for ${provider} — use an API key.`,
+            })
+            return s
+          })
+          yield* requestRender
+          return
+        }
+        const pkce = yield* generatePkce()
+        const url = anthropicAuthorizeUrl(pkce)
+        const server = startCallbackServer(ANTHROPIC_CALLBACK_PORT)
+        const shell = yield* Shell
+        yield* shell
+          .exec({ command: browserCommand(url), cwd: input.cwd, timeoutMs: 5_000 })
+          .pipe(Effect.catchAll(() => Effect.void))
+        yield* Ref.update(stateRef, (s) => {
+          if (s.loginFlow) {
+            s.loginFlow = loginSetOAuthStatus(s.loginFlow, "waiting for browser login")
+          }
+          s.scrollback.push({
+            kind: "info",
+            text: `Opening your browser to log in. If it didn't open, visit:\n${url}`,
+          })
+          return s
+        })
+        yield* requestRender
+        const waiter = Effect.gen(function* () {
+          const { code } = yield* Effect.promise(() => server.waitForCode)
+          yield* finishOAuth(provider, code, pkce.verifier, server.stop)
+        })
+        const fiber = yield* Effect.forkDaemon(waiter)
+        yield* Ref.update(stateRef, (s) => {
+          s.oauthSession = { verifier: pkce.verifier, stop: server.stop, fiber }
+          return s
+        })
+      })
+
+    // Manual paste of the redirect URL (browser on another machine / no auto-open).
+    const completeOAuthManual = (provider: Provider, redirect: string) =>
+      Effect.gen(function* () {
+        const session = (yield* Ref.get(stateRef)).oauthSession
+        const parsed = parseAuthorizationInput(redirect)
+        if (parsed.code === undefined) {
+          yield* Ref.update(stateRef, (s) => {
+            s.scrollback.push({
+              kind: "error",
+              text: "couldn't find an authorization code in that input",
+            })
+            return s
+          })
+          yield* requestRender
+          return
+        }
+        if (session !== undefined) yield* Fiber.interrupt(session.fiber)
+        const verifier = session?.verifier ?? parsed.state ?? ""
+        yield* finishOAuth(provider, parsed.code, verifier, session?.stop ?? (() => {}))
+      })
+
+    // Tear down an in-flight OAuth login (callback server + waiter) on cancel.
+    const stopOAuthSession = Ref.get(stateRef).pipe(
+      Effect.flatMap((s) => {
+        const sess = s.oauthSession
+        if (sess === undefined) return Effect.void
+        sess.stop()
+        return Fiber.interrupt(sess.fiber).pipe(
+          Effect.zipRight(
+            Ref.update(stateRef, (st) => {
+              delete st.oauthSession
+              return st
+            }),
+          ),
+        )
+      }),
+    )
 
     // Spinner animation — only runs while a turn is busy. Self-stops on
     // the first tick after the turn ends, so idle = no timer = no paints.
@@ -834,7 +1115,7 @@ const runTuiModeCore = (
         return result
       })
 
-    type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch
+    type R_Base = FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch | AuthStore
     const baseHooks = makeEventHooks(eventQueue)
     // Build the root scope runtime once: base coding tools + delegate_to_<child>
     // tools for the root's direct sub-scopes. The TUI allows bash (guarded by
@@ -851,6 +1132,23 @@ const runTuiModeCore = (
     ): Effect.Effect<void, never, R_Base> =>
       Effect.gen(function* () {
         const cur = yield* Ref.get(stateRef)
+
+        // No provider configured → guide to :login instead of a deep 401.
+        const authAll = yield* (yield* AuthStore).all
+        if (Object.keys(authAll).length === 0) {
+          cur.scrollback.push({ kind: "user", text })
+          cur.scrollback.push({
+            kind: "info",
+            text: "no provider configured — run :login to add one (subscription or API key)",
+          })
+          cur.scrollback.stickToBottom()
+          yield* Ref.update(stateRef, (s) => {
+            s.input = emptyInput
+            return s
+          })
+          yield* requestRender
+          return
+        }
 
         // Busy → queue it for after the current turn.
         if (cur.busy) {
@@ -1302,11 +1600,23 @@ const runTuiModeCore = (
           case ":settings": {
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
+            // Report the *active* store (what's actually connected), derived
+            // from the live EFFERENT_DB_URL the selector used — env, or seeded
+            // from config.json. The config value alone is misleading (an env
+            // var overrides it).
+            const db = describeActiveDatabase(
+              process.env.EFFERENT_DB_URL,
+              current.dbUrl,
+            )
             yield* Ref.update(stateRef, (s) => {
               s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
               s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
               s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
               s.scrollback.push({ kind: "info", text: `model: ${current.model}` })
+              s.scrollback.push({ kind: "info", text: db.line })
+              if (db.overrideNote !== undefined) {
+                s.scrollback.push({ kind: "info", text: db.overrideNote })
+              }
               return s
             })
             yield* requestRender
@@ -1383,11 +1693,108 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
           }
+          case ":db": {
+            // Show or change the conversation store. The active store is bound
+            // at boot, so a change is persisted (project or global config) and
+            // takes effect on the next launch.
+            const tokens = parts.slice(1).filter((t) => t.length > 0)
+            const wantGlobal = tokens.some((t) => t.toLowerCase() === "global")
+            const args = tokens.filter((t) => t.toLowerCase() !== "global")
+
+            if (args.length === 0) {
+              const settingsStore = yield* SettingsStore
+              const current = yield* settingsStore.get()
+              const db = describeActiveDatabase(
+                process.env.EFFERENT_DB_URL,
+                current.dbUrl,
+              )
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({ kind: "info", text: db.line })
+                if (db.overrideNote !== undefined) {
+                  s.scrollback.push({ kind: "info", text: db.overrideNote })
+                }
+                s.scrollback.push({
+                  kind: "info",
+                  text: "set: :db pg <url> [global] · :db sqlite [path] [global] (applies next launch)",
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            const head = args[0]!.toLowerCase()
+            let dbUrl: string // "" → reset to default SQLite
+            if (head === "sqlite") {
+              dbUrl = args[1] ?? ""
+            } else if (head === "pg" || head === "postgres" || head === "postgresql") {
+              dbUrl = args.slice(1).join(" ").trim()
+              if (dbUrl.length === 0) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({
+                    kind: "error",
+                    text: "Usage: :db pg <postgres://… connection string> [global]",
+                  })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+            } else {
+              dbUrl = args.join(" ").trim() // raw value (a postgres:// URL or a path)
+            }
+
+            const fs = yield* FileSystem
+            const cfgPath = wantGlobal
+              ? join(homedir(), ".efferent", "config.json")
+              : join(input.cwd, ".efferent", "config.json")
+            const exists = yield* fs
+              .exists(cfgPath)
+              .pipe(Effect.orElseSucceed(() => false))
+            let cfg: Record<string, unknown> = {}
+            if (exists) {
+              const read = yield* fs.read(cfgPath).pipe(Effect.either)
+              if (read._tag === "Right") {
+                try {
+                  cfg = JSON.parse(read.right.content) as Record<string, unknown>
+                } catch {
+                  /* overwrite malformed config */
+                }
+              }
+            }
+            if (dbUrl.length > 0) cfg.dbUrl = dbUrl
+            else delete cfg.dbUrl
+            const writeResult = yield* fs
+              .write(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`)
+              .pipe(Effect.either)
+
+            yield* Ref.update(stateRef, (s) => {
+              if (writeResult._tag === "Left") {
+                s.scrollback.push({
+                  kind: "error",
+                  text: `Failed to write ${cfgPath}: ${String(writeResult.left)}`,
+                })
+                return s
+              }
+              const scope = wantGlobal ? "global (~/.efferent)" : "project (.efferent)"
+              const target =
+                dbUrl.length > 0
+                  ? maskDbUrl(dbUrl)
+                  : "SQLite default (~/.efferent/efferent.db)"
+              s.scrollback.push({
+                kind: "info",
+                text: `database → ${target} · saved to ${scope} config · relaunch efferent to connect`,
+              })
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
           case ":model": {
             const registry = yield* ModelRegistry
             const arg = parts.slice(1).join(" ").trim()
 
-            // No arg → fetch the live list and cache it for numbered picks.
+            // No arg → fetch the live catalogue and open the select box.
             if (arg.length === 0) {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({ kind: "info", text: "fetching models…" })
@@ -1406,37 +1813,33 @@ const runTuiModeCore = (
                 ),
               )
               const cur = yield* registry.current
+              if (models.length === 0) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({
+                    kind: "info",
+                    text: "no models available — run :login to add a provider (subscription or API key)",
+                  })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              const options = models.map((m) => ({
+                value: m,
+                label: `${m.provider}:${m.modelId}`,
+                active: m.provider === cur.provider && m.modelId === cur.modelId,
+              }))
               yield* Ref.update(stateRef, (s) => {
                 s.modelList = models
-                if (models.length === 0) {
-                  s.scrollback.push({
-                    kind: "info",
-                    text: "no models available — set GOOGLE_GENERATIVE_AI_API_KEY and/or OPENAI_API_KEY",
-                  })
-                } else {
-                  s.scrollback.push({
-                    kind: "info",
-                    text: "--- Models (:model <#> to switch) ---",
-                  })
-                  models.forEach((m, i) => {
-                    const active =
-                      m.provider === cur.provider && m.modelId === cur.modelId
-                        ? " ◀ active"
-                        : ""
-                    s.scrollback.push({
-                      kind: "info",
-                      text: `${String(i + 1).padStart(2)}. ${m.provider}:${m.modelId}${active}`,
-                    })
-                  })
-                }
+                s.modelPicker = openSelect("Select a model", options)
                 return s
               })
               yield* requestRender
               return "stay" as const
             }
 
-            // Resolve a choice: a number indexes the last listing; otherwise
-            // treat it as a (possibly provider-prefixed) id.
+            // `<#|id>` → resolve directly (no box) and switch. A number indexes
+            // the last listing; otherwise treat it as a (provider-prefixed) id.
             const list = (yield* Ref.get(stateRef)).modelList ?? []
             let chosen: ModelInfo | undefined
             const asNum = Number(arg)
@@ -1456,7 +1859,7 @@ const runTuiModeCore = (
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "error",
-                  text: `unknown model '${arg}'. Run :model to list, then :model <#>.`,
+                  text: `unknown model '${arg}'. Run :model to pick from the list.`,
                 })
                 return s
               })
@@ -1464,40 +1867,61 @@ const runTuiModeCore = (
               return "stay" as const
             }
 
-            const prev = yield* registry.current
-            const sel = yield* registry.select({
-              provider: chosen.provider,
-              modelId: chosen.modelId,
-              ...(chosen.contextWindow > 0
-                ? { contextWindow: chosen.contextWindow }
-                : {}),
-            })
-            const st = yield* Ref.get(stateRef)
-            const crossProvider =
-              prev.provider !== sel.provider && st.conversationHasTurns
-            yield* Ref.update(stateRef, (s) => {
-              s.status = {
-                ...s.status,
-                modelId: sel.modelId,
-                contextWindow: sel.contextWindow,
-              }
-              s.sidePane = {
-                ...s.sidePane,
-                stats: { ...s.sidePane.stats, contextWindow: sel.contextWindow },
-              }
-              s.activeProvider = sel.provider
-              s.scrollback.push({
-                kind: "info",
-                text: `switched to ${sel.provider}:${sel.modelId}`,
-              })
-              if (crossProvider) {
+            yield* applyModelSelection(chosen)
+            yield* requestRender
+            return "stay" as const
+          }
+          case ":login": {
+            yield* openLoginFlow
+            return "stay" as const
+          }
+          case ":logout": {
+            const auth = yield* AuthStore
+            const all = yield* auth.all
+            const arg = parts.slice(1).join(" ").trim().toLowerCase()
+            const configured = (["anthropic", "google", "openai"] as const).filter(
+              (p) => all[p] !== undefined,
+            )
+            if (arg.length === 0) {
+              yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "info",
-                  text: "note: switched provider mid-conversation; if the next turn errors, /reset (Gemini needs its own tool-call history).",
+                  text:
+                    configured.length === 0
+                      ? "no providers configured — :login to add one"
+                      : `configured: ${configured.join(", ")} · :logout <provider> to remove one`,
                 })
-              }
-              return s
-            })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (arg !== "anthropic" && arg !== "google" && arg !== "openai") {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "error",
+                  text: `unknown provider '${arg}' (anthropic | google | openai)`,
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const provider: Provider = arg
+            yield* auth.remove(provider).pipe(
+              Effect.flatMap(() =>
+                Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "info", text: `logged out of ${provider}` })
+                  return s
+                }),
+              ),
+              Effect.catchAll((e) =>
+                Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `logout failed: ${e.message}` })
+                  return s
+                }),
+              ),
+            )
             yield* requestRender
             return "stay" as const
           }
@@ -1519,7 +1943,7 @@ const runTuiModeCore = (
     const exitDeferred = yield* Deferred.make<void, never>()
     const parser = new KeyParser()
 
-    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch> =>
+    const handleKey = (key: Key): Effect.Effect<"stay" | "exit", never, FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch | AuthStore> =>
       Effect.gen(function* () {
         const s = yield* Ref.get(stateRef)
 
@@ -1540,6 +1964,137 @@ const runTuiModeCore = (
           }
           if (key.type === "ctrl" && key.char === "c") {
             yield* Deferred.succeed(s.modalAnswer, false)
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
+        // The `:model` select box owns all input while open.
+        if (s.modelPicker !== undefined) {
+          if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
+            yield* Ref.update(stateRef, (st) => {
+              delete st.modelPicker
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.modelPicker) st.modelPicker = moveSelect(st.modelPicker, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "backspace") {
+            yield* Ref.update(stateRef, (st) => {
+              if (st.modelPicker) st.modelPicker = filterBackspace(st.modelPicker)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "char") {
+            const ch = key.char
+            yield* Ref.update(stateRef, (st) => {
+              if (st.modelPicker) st.modelPicker = filterAppend(st.modelPicker, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const chosen = selectedValue(s.modelPicker)
+            yield* Ref.update(stateRef, (st) => {
+              delete st.modelPicker
+              return st
+            })
+            if (chosen !== undefined) yield* applyModelSelection(chosen)
+            yield* requestRender
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
+        // The `:login` flow owns all input while open (Esc steps back / closes).
+        if (s.loginFlow !== undefined) {
+          const flow = s.loginFlow
+          if (key.type === "escape") {
+            // Leaving the OAuth step cancels any in-flight callback server.
+            if (flow.step === "oauth") yield* stopOAuthSession
+            const back = loginBack(flow)
+            yield* Ref.update(stateRef, (st) => {
+              if (back === undefined) delete st.loginFlow
+              else st.loginFlow = back
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "ctrl" && key.char === "c") {
+            yield* stopOAuthSession
+            yield* Ref.update(stateRef, (st) => {
+              delete st.loginFlow
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.loginFlow) st.loginFlow = loginMove(st.loginFlow, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "backspace") {
+            yield* Ref.update(stateRef, (st) => {
+              if (st.loginFlow) st.loginFlow = loginBackspace(st.loginFlow)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "char") {
+            const ch = key.char
+            yield* Ref.update(stateRef, (st) => {
+              if (st.loginFlow) st.loginFlow = loginAppend(st.loginFlow, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const outcome = loginAdvance(flow)
+            switch (outcome.kind) {
+              case "flow":
+                yield* Ref.update(stateRef, (st) => {
+                  st.loginFlow = outcome.flow
+                  return st
+                })
+                yield* requestRender
+                break
+              case "apiKey":
+                yield* commitApiKey(outcome.provider, outcome.key)
+                break
+              case "startOAuth":
+                yield* Ref.update(stateRef, (st) => {
+                  st.loginFlow = outcome.flow
+                  return st
+                })
+                yield* requestRender
+                yield* startOAuthLogin(outcome.provider)
+                break
+              case "oauthManual":
+                yield* completeOAuthManual(outcome.provider, outcome.redirect)
+                break
+              case "none":
+                break
+            }
             return "stay" as const
           }
           return "stay" as const
@@ -2039,7 +2594,7 @@ const runTuiModeCore = (
         return "stay" as const
       })
 
-    const runtime = yield* Effect.runtime<FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch>()
+    const runtime = yield* Effect.runtime<FileSystem | Http | Shell | ConversationStore | LanguageModel.LanguageModel | SettingsStore | ModelRegistry | WebSearch | AuthStore>()
 
     const dispatchKeys = (keys: ReadonlyArray<Key>): void => {
       for (const k of keys) {
@@ -2090,7 +2645,7 @@ export const runTuiMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | LlmInfo | ModelRegistry | ConversationStore | SettingsStore | WebSearch | AuthStore
 > =>
   runTuiModeCore(input).pipe(
     Effect.provide(fileLoggerLayer(logFilePath())),

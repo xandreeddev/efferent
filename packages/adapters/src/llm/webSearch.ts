@@ -1,7 +1,9 @@
-import { Prompt, Response, type Tool, Toolkit } from "@effect/ai"
+import { Prompt, type Response, type Tool, Toolkit } from "@effect/ai"
 import { GoogleClient, GoogleLanguageModel, GoogleTool } from "@effect/ai-google"
 import { OpenAiClient, OpenAiLanguageModel, OpenAiTool } from "@effect/ai-openai"
+import { HttpClient } from "@effect/platform"
 import {
+  AuthStore,
   parseModel,
   type Provider,
   WebSearch,
@@ -10,22 +12,22 @@ import {
   type WebSearchSource,
 } from "@efferent/core"
 import { Config, Effect, Layer, Option } from "effect"
-import { GOOGLE_API_KEY, hasKey, OPENAI_API_KEY } from "./clients.js"
 
 /**
  * `WebSearch` backed by a provider's **server-side** search tool — Gemini
  * `GoogleSearch` grounding or OpenAI `WebSearch`. Each `search` is a dedicated,
  * grounding-only `generateText` call: the request carries *only* the search
- * tool (no function tools), so it works with no extra key beyond the LLM
- * provider key and never trips providers that won't mix grounding with
- * function calling. The result's synthesized text is the answer; the response's
- * `source` parts are the citations.
+ * tool (no function tools), so it never trips providers that won't mix
+ * grounding with function calling. The result's synthesized text is the
+ * answer; the response's `source` parts are the citations.
  *
  * The search engine is configured independently of the chat `/model`:
- *  - `EFFERENT_SEARCH_MODEL` ("<provider>:<modelId>", e.g. `google:gemini-3.5-flash`
- *    or `openai:gpt-4o`) pins it explicitly; otherwise
- *  - it defaults to whichever provider key is present (Google preferred).
- * With no provider key set, `search` fails with a clear, returned tool error.
+ *  - `EFFERENT_SEARCH_MODEL` ("<provider>:<modelId>", google/openai only) pins
+ *    it explicitly; otherwise
+ *  - it defaults to whichever provider is logged in via `:login` (Google
+ *    preferred). The key is resolved per search from the `AuthStore`.
+ * With neither Google nor OpenAI configured, `search` fails with a clear,
+ * returned tool error.
  */
 
 const DEFAULT_GOOGLE_SEARCH_MODEL = "gemini-3.5-flash"
@@ -36,24 +38,27 @@ interface SearchModel {
   readonly modelId: string
 }
 
-const resolveSearchModel: Effect.Effect<SearchModel | undefined> = Effect.gen(
-  function* () {
+const resolveSearchModel = (
+  auth: AuthStore["Type"],
+): Effect.Effect<SearchModel | undefined> =>
+  Effect.gen(function* () {
     const explicit = yield* Config.string("EFFERENT_SEARCH_MODEL").pipe(
       Config.option,
       Effect.orElseSucceed(() => Option.none<string>()),
     )
     if (Option.isSome(explicit) && explicit.value.trim().length > 0) {
-      return parseModel(explicit.value.trim())
+      const m = parseModel(explicit.value.trim())
+      // Only Google/OpenAI expose a server-side search tool here.
+      if (m.provider === "google" || m.provider === "openai") return m
     }
-    if (yield* hasKey(GOOGLE_API_KEY)) {
+    if ((yield* auth.get("google")) !== undefined) {
       return { provider: "google", modelId: DEFAULT_GOOGLE_SEARCH_MODEL }
     }
-    if (yield* hasKey(OPENAI_API_KEY)) {
+    if ((yield* auth.get("openai")) !== undefined) {
       return { provider: "openai", modelId: DEFAULT_OPENAI_SEARCH_MODEL }
     }
     return undefined
-  },
-)
+  })
 
 const searchPrompt = (query: string): string =>
   `Search the web and answer with up-to-date, factual information. Be concise — a short paragraph or a few bullets. Rely on the search results; if they conflict, say so briefly.\n\nQuery: ${query}`
@@ -90,61 +95,74 @@ const errorMessage = (e: unknown): string => {
 export const WebSearchLive = Layer.effect(
   WebSearch,
   Effect.gen(function* () {
-    const google = yield* GoogleClient.GoogleClient
-    const openai = yield* OpenAiClient.OpenAiClient
-    const sel = yield* resolveSearchModel
+    const auth = yield* AuthStore
+    const http = yield* HttpClient.HttpClient
 
     const search = (
       query: string,
-    ): Effect.Effect<WebSearchResult, WebSearchError> => {
-      if (sel === undefined) {
-        return Effect.fail(
-          new WebSearchError({
-            message:
-              "Web search is not configured — set GOOGLE_GENERATIVE_AI_API_KEY or OPENAI_API_KEY (or EFFERENT_SEARCH_MODEL).",
-          }),
-        )
-      }
+    ): Effect.Effect<WebSearchResult, WebSearchError> =>
+      resolveSearchModel(auth).pipe(
+        Effect.flatMap((sel) => {
+          if (sel === undefined) {
+            return Effect.fail(
+              new WebSearchError({
+                message:
+                  "Web search is not configured — log in to Google or OpenAI with :login (or set EFFERENT_SEARCH_MODEL).",
+              }),
+            )
+          }
 
-      const prompt = Prompt.make([
-        { role: "user", content: searchPrompt(query) },
-      ] as never)
+          const prompt = Prompt.make([
+            { role: "user", content: searchPrompt(query) },
+          ] as never)
 
-      // Each provider branch keeps its own concretely-typed, handler-free
-      // search toolkit — no union, no cast. Both yield a WebSearchResult.
-      const run =
-        sel.provider === "google"
-          ? Effect.gen(function* () {
-              const svc = yield* GoogleLanguageModel.make({
-                model: sel.modelId,
-              }).pipe(Effect.provideService(GoogleClient.GoogleClient, google))
-              const res = yield* svc.generateText({
-                prompt,
-                toolkit: Toolkit.make(GoogleTool.GoogleSearch({})),
-              })
-              return {
-                answer: res.text,
-                sources: extractSources(res.content),
-              } satisfies WebSearchResult
-            })
-          : Effect.gen(function* () {
-              const svc = yield* OpenAiLanguageModel.make({
-                model: sel.modelId,
-              }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, openai))
-              const res = yield* svc.generateText({
-                prompt,
-                toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
-              })
-              return {
-                answer: res.text,
-                sources: extractSources(res.content),
-              } satisfies WebSearchResult
-            })
+          // Each provider branch keeps its own concretely-typed, handler-free
+          // search toolkit — no union, no cast. The client is built per call
+          // from the resolved key (scoped to the call).
+          const run =
+            sel.provider === "google"
+              ? Effect.gen(function* () {
+                  const key = yield* auth
+                    .resolveKey("google")
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                  const client = yield* GoogleClient.make({ apiKey: key })
+                  const svc = yield* GoogleLanguageModel.make({
+                    model: sel.modelId,
+                  }).pipe(Effect.provideService(GoogleClient.GoogleClient, client))
+                  const res = yield* svc.generateText({
+                    prompt,
+                    toolkit: Toolkit.make(GoogleTool.GoogleSearch({})),
+                  })
+                  return {
+                    answer: res.text,
+                    sources: extractSources(res.content),
+                  } satisfies WebSearchResult
+                })
+              : Effect.gen(function* () {
+                  const key = yield* auth
+                    .resolveKey("openai")
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                  const client = yield* OpenAiClient.make({ apiKey: key })
+                  const svc = yield* OpenAiLanguageModel.make({
+                    model: sel.modelId,
+                  }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client))
+                  const res = yield* svc.generateText({
+                    prompt,
+                    toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
+                  })
+                  return {
+                    answer: res.text,
+                    sources: extractSources(res.content),
+                  } satisfies WebSearchResult
+                })
 
-      return run.pipe(
-        Effect.mapError((e) => new WebSearchError({ message: errorMessage(e) })),
+          return run.pipe(
+            Effect.scoped,
+            Effect.provideService(HttpClient.HttpClient, http),
+            Effect.mapError((e) => new WebSearchError({ message: errorMessage(e) })),
+          )
+        }),
       )
-    }
 
     return { search }
   }),

@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
+import { FetchHttpClient } from "@effect/platform"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import {
+  AuthStore,
   coderSystemPrompt,
   ConversationStore,
   discoverInstructionFiles,
@@ -17,11 +19,11 @@ import {
 import {
   ConversationStoreLive,
   HttpLive,
+  LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
   ModelLive,
-  ProviderClientsLive,
   WebSearchLive,
 } from "@efferent/adapters"
 
@@ -34,6 +36,14 @@ import { runTuiMode } from "./modes/tui.js"
 /* Composition root                                                    */
 /* ------------------------------------------------------------------ */
 
+// Credentials + settings feed the model/search tiers. Both are provided at the
+// bottom so `ModelLive` (AuthStore + SettingsStore) and `WebSearchLive`
+// (AuthStore) resolve against them, and both stay exposed for `main` to read.
+const CredentialsLive = Layer.mergeAll(
+  LocalAuthStoreLive,
+  LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
+)
+
 const AppLive = Layer.mergeAll(
   ConversationStoreLive,
   ModelLive,
@@ -41,14 +51,10 @@ const AppLive = Layer.mergeAll(
   LocalShellLive,
   HttpLive,
   // Web search is its own grounding-only provider call (Gemini/OpenAI),
-  // configured independently of the chat model — so it carries its own
-  // provider clients rather than sharing ModelLive's (which are internal).
-  WebSearchLive.pipe(Layer.provide(ProviderClientsLive)),
-).pipe(
-  Layer.provideMerge(
-    LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
-  ),
-)
+  // configured independently of the chat model — it resolves its key from the
+  // AuthStore (below) and carries its own HTTP client.
+  WebSearchLive.pipe(Layer.provide(FetchHttpClient.layer)),
+).pipe(Layer.provideMerge(CredentialsLive))
 
 /* ------------------------------------------------------------------ */
 /* CLI                                                                  */
@@ -248,17 +254,32 @@ const root = Command.make(
         },
       )
 
+      // Non-interactive modes can't run the in-app `:login` flow, so they need
+      // a credential already in ~/.efferent/auth.json (written by a prior TUI
+      // `:login`). The TUI itself boots regardless and guides the user there.
+      const ensureBatchCredential = Effect.gen(function* () {
+        const all = yield* (yield* AuthStore).all
+        if (Object.keys(all).length === 0) {
+          process.stderr.write(
+            "efferent: no provider configured. Run `efferent` (TUI) and `:login` to add one,\n" +
+              "then re-run — it reads ~/.efferent/auth.json.\n",
+          )
+          process.exit(1)
+        }
+      })
+
       switch (chosen) {
         case "print":
           if (effectivePrompt === undefined) {
             yield* Effect.sync(() => {
               process.stderr.write(
-                "agent: print mode needs a prompt (argv or stdin)\n",
+                "efferent: print mode needs a prompt (argv or stdin)\n",
               )
               process.exit(1)
             })
             return
           }
+          yield* ensureBatchCredential
           yield* runPrintMode({
             prompt: effectivePrompt,
             cwd: workspace,
@@ -272,12 +293,13 @@ const root = Command.make(
           if (effectivePrompt === undefined) {
             yield* Effect.sync(() => {
               process.stderr.write(
-                "agent: json mode needs a prompt (argv or stdin)\n",
+                "efferent: json mode needs a prompt (argv or stdin)\n",
               )
               process.exit(1)
             })
             return
           }
+          yield* ensureBatchCredential
           yield* runJsonMode({
             prompt: effectivePrompt,
             cwd: workspace,
@@ -288,6 +310,7 @@ const root = Command.make(
           })
           return
         case "rpc":
+          yield* ensureBatchCredential
           yield* runRpcMode({
             cwd: workspace,
             skills,
@@ -320,110 +343,44 @@ const root = Command.make(
 )
 
 /* ------------------------------------------------------------------ */
-/* `efferent init` — set up the global ~/.efferent config              */
-/* ------------------------------------------------------------------ */
-
-const initProvider = Options.choice("provider", ["google", "openai"]).pipe(
-  Options.withDefault("google" as const),
-  Options.withDescription("Which provider the --key belongs to."),
-)
-const initKey = Options.text("key").pipe(
-  Options.optional,
-  Options.withDescription("API key to store in ~/.efferent/auth.json."),
-)
-const initModel = Options.text("model").pipe(
-  Options.optional,
-  Options.withDescription(
-    "Default model to pin in ~/.efferent/config.json (e.g. google:gemini-3.5-flash).",
-  ),
-)
-
-const initCommand = Command.make(
-  "init",
-  { provider: initProvider, key: initKey, model: initModel },
-  ({ provider, key, model }) =>
-    Effect.sync(() => {
-      const dir = join(homedir(), ".efferent")
-      mkdirSync(dir, { recursive: true })
-
-      // API keys live in auth.json (separate from config.json so a `/model`
-      // switch, which rewrites config.json, never clobbers them).
-      if (key._tag === "Some") {
-        const authPath = join(dir, "auth.json")
-        let auth: Record<string, string> = {}
-        if (existsSync(authPath)) {
-          try {
-            auth = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, string>
-          } catch {
-            /* overwrite malformed auth */
-          }
-        }
-        auth[provider] = key.value
-        writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`)
-      }
-
-      if (model._tag === "Some") {
-        const cfgPath = join(dir, "config.json")
-        let cfg: Record<string, unknown> = {}
-        if (existsSync(cfgPath)) {
-          try {
-            cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>
-          } catch {
-            /* overwrite malformed config */
-          }
-        }
-        cfg.model = model.value
-        writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`)
-      }
-
-      const envName =
-        provider === "google" ? "GOOGLE_GENERATIVE_AI_API_KEY" : "OPENAI_API_KEY"
-      console.log(`efferent: global config at ${dir}`)
-      console.log(
-        `  history → ${join(dir, "efferent.db")} (SQLite; set EFFERENT_DB_URL for Postgres)`,
-      )
-      console.log(
-        key._tag === "Some"
-          ? `  ${provider} key stored in auth.json`
-          : `  no key stored — re-run with --key, or set ${envName} in your env`,
-      )
-      if (model._tag === "Some") console.log(`  default model → ${model.value}`)
-      console.log(`\nRun \`efferent\` in any project to start.`)
-    }),
-).pipe(Command.withDescription("Set up the global ~/.efferent config (API key, default model)."))
-
-/* ------------------------------------------------------------------ */
 /* Run                                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * Seed provider keys from the global `~/.efferent/auth.json` into the env
- * *before* the layers build, so a global install works without exported env
- * vars. Real env vars (incl. a project `.env`) always win — this only fills
- * gaps.
+ * Seed `EFFERENT_DB_URL` from config.json (`dbUrl`) when it's not already set
+ * in the env, so a config-file DB selection feeds the boot-time store selector
+ * (which reads the env var, at layer-build, before settings are loaded).
+ * Workspace `<cwd>/.efferent/config.json` overrides the global
+ * `~/.efferent/config.json`, matching SettingsStore layering. A real env var
+ * always wins — this only fills the gap.
  */
-const seedKeysFromGlobalAuth = (): void => {
-  try {
-    const p = join(homedir(), ".efferent", "auth.json")
-    if (!existsSync(p)) return
-    const auth = JSON.parse(readFileSync(p, "utf8")) as {
-      google?: string
-      openai?: string
+const seedDbUrlFromConfig = (): void => {
+  if (process.env.EFFERENT_DB_URL) return
+  const readDbUrl = (p: string): string | undefined => {
+    try {
+      if (!existsSync(p)) return undefined
+      const cfg = JSON.parse(readFileSync(p, "utf8")) as { dbUrl?: unknown }
+      return typeof cfg.dbUrl === "string" && cfg.dbUrl.length > 0
+        ? cfg.dbUrl
+        : undefined
+    } catch {
+      return undefined
     }
-    if (auth.google && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY = auth.google
-    }
-    if (auth.openai && !process.env.OPENAI_API_KEY) {
-      process.env.OPENAI_API_KEY = auth.openai
-    }
-  } catch {
-    /* ignore malformed auth — env / explicit config still apply */
   }
+  const dbUrl =
+    readDbUrl(join(process.cwd(), ".efferent", "config.json")) ??
+    readDbUrl(join(homedir(), ".efferent", "config.json"))
+  if (dbUrl !== undefined) process.env.EFFERENT_DB_URL = dbUrl
 }
 
-seedKeysFromGlobalAuth()
+seedDbUrlFromConfig()
 
-const cli = Command.run(root.pipe(Command.withSubcommands([initCommand])), {
+// No boot gate: efferent always launches into the TUI. With no credential it
+// shows a "run :login" warning (see runTuiMode) and configures providers in
+// session via the in-app `:login` flow — credentials live only in
+// ~/.efferent/auth.json, never the env. Non-interactive modes (print/json/rpc)
+// gate on that file via `ensureBatchCredential` instead.
+const cli = Command.run(root, {
   name: "efferent",
   version: "0.0.0",
 })

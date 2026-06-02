@@ -38,7 +38,7 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       return `Write(${path("?")})`
     case "edit_file":
       return `Edit(${path("?")})`
-    case "bash":
+    case "Bash":
       return `Bash(${truncate(str(a.command) ?? "", 50)})`
     case "grep":
       return `Grep(${truncate(str(a.pattern) ?? "", 40)})`
@@ -108,7 +108,7 @@ export const describeToolResult = (
       const bytes = num(r.bytes)
       return bytes !== undefined ? `wrote ${bytes} bytes` : "written"
     }
-    case "bash": {
+    case "Bash": {
       const code = num(r.exitCode)
       const timedOut = r.timedOut === true
       const codePart = code !== undefined ? `exit ${code}` : "done"
@@ -162,7 +162,7 @@ export const toolArtifacts = (
       const diff = str(r.diff)
       return diff !== undefined && diff.length > 0 ? { diff } : {}
     }
-    case "bash": {
+    case "Bash": {
       const stdout = str(r.stdout) ?? ""
       const stderr = str(r.stderr) ?? ""
       const out =

@@ -1,14 +1,16 @@
 import {
+  AuthStore,
   contextWindowFor,
   formatModel,
   ModelRegistry,
   parseModel,
   SettingsStore,
+  type Credential,
   type ModelInfo,
+  type Provider,
 } from "@efferent/core"
 import { HttpClient, HttpClientRequest } from "@effect/platform"
-import { Config, Effect, Layer, Option, Redacted } from "effect"
-import { GOOGLE_API_KEY, OPENAI_API_KEY } from "./clients.js"
+import { Effect, Layer, Redacted } from "effect"
 
 /**
  * Runtime model selection + live catalogue. The selection lives in
@@ -18,6 +20,9 @@ import { GOOGLE_API_KEY, OPENAI_API_KEY } from "./clients.js"
  * schemas are stricter than the real APIs (e.g. Google's `ListModels` omits
  * `baseModelId`), so decoding through the SDK clients fails; reading the
  * handful of fields we need by hand keeps the list live and drift-proof.
+ *
+ * Keys come from the `AuthStore` (`~/.efferent/auth.json`), resolved per call
+ * — a provider with no credential simply contributes nothing to the list.
  */
 
 // Google: keep chat/tool-capable models; drop embeddings / image / tts / aqa.
@@ -34,18 +39,13 @@ type GoogleModel = {
   readonly inputTokenLimit?: number
 }
 type OpenAiModel = { readonly id?: string }
-
-const readKey = (name: string): Effect.Effect<string | undefined> =>
-  Config.option(Config.redacted(name)).pipe(
-    Effect.map(Option.map(Redacted.value)),
-    Effect.map(Option.getOrUndefined),
-    Effect.orElseSucceed(() => undefined),
-  )
+type AnthropicModel = { readonly id?: string; readonly display_name?: string }
 
 export const ModelRegistryLive = Layer.effect(
   ModelRegistry,
   Effect.gen(function* () {
     const settings = yield* SettingsStore
+    const auth = yield* AuthStore
     const http = yield* HttpClient.HttpClient
 
     const getJson = (req: HttpClientRequest.HttpClientRequest) =>
@@ -54,13 +54,25 @@ export const ModelRegistryLive = Layer.effect(
         Effect.scoped,
       )
 
+    // The credential + a usable secret string for a provider's list call.
+    const creds = (
+      p: Provider,
+    ): Effect.Effect<{ cred: Credential; key: string } | undefined> =>
+      Effect.all([auth.get(p), auth.resolveKey(p).pipe(Effect.orElseSucceed(() => undefined))]).pipe(
+        Effect.map(([cred, key]) =>
+          cred !== undefined && key !== undefined
+            ? { cred, key: Redacted.value(key) }
+            : undefined,
+        ),
+      )
+
     const listGoogle = Effect.gen(function* () {
-      const key = yield* readKey(GOOGLE_API_KEY)
-      if (key === undefined) return [] as ModelInfo[]
+      const c = yield* creds("google")
+      if (c === undefined) return [] as ModelInfo[]
       const json = yield* getJson(
         HttpClientRequest.get(
           "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-        ).pipe(HttpClientRequest.setHeader("x-goog-api-key", key)),
+        ).pipe(HttpClientRequest.setHeader("x-goog-api-key", c.key)),
       ).pipe(
         Effect.catchAll((e) =>
           Effect.as(
@@ -88,11 +100,11 @@ export const ModelRegistryLive = Layer.effect(
     })
 
     const listOpenAi = Effect.gen(function* () {
-      const key = yield* readKey(OPENAI_API_KEY)
-      if (key === undefined) return [] as ModelInfo[]
+      const c = yield* creds("openai")
+      if (c === undefined) return [] as ModelInfo[]
       const json = yield* getJson(
         HttpClientRequest.get("https://api.openai.com/v1/models").pipe(
-          HttpClientRequest.setHeader("Authorization", `Bearer ${key}`),
+          HttpClientRequest.setHeader("Authorization", `Bearer ${c.key}`),
         ),
       ).pipe(
         Effect.catchAll((e) =>
@@ -118,6 +130,45 @@ export const ModelRegistryLive = Layer.effect(
       return out
     })
 
+    const listAnthropic = Effect.gen(function* () {
+      const c = yield* creds("anthropic")
+      if (c === undefined) return [] as ModelInfo[]
+      // OAuth subscriptions authenticate with a Bearer token + the oauth beta
+      // flag; API keys use `x-api-key`. Either way `anthropic-version` is set.
+      const authed =
+        c.cred.type === "oauth"
+          ? HttpClientRequest.setHeaders({
+              Authorization: `Bearer ${c.key}`,
+              "anthropic-beta": "oauth-2025-04-20",
+            })
+          : HttpClientRequest.setHeader("x-api-key", c.key)
+      const json = yield* getJson(
+        HttpClientRequest.get("https://api.anthropic.com/v1/models?limit=1000").pipe(
+          authed,
+          HttpClientRequest.setHeader("anthropic-version", "2023-06-01"),
+        ),
+      ).pipe(
+        Effect.catchAll((e) =>
+          Effect.as(
+            Effect.logWarning(`anthropic model list failed: ${String(e)}`),
+            { data: [] as ReadonlyArray<AnthropicModel> },
+          ),
+        ),
+      )
+      const data = (json as { data?: ReadonlyArray<AnthropicModel> }).data ?? []
+      const out: ModelInfo[] = []
+      for (const m of data) {
+        if (m.id === undefined) continue
+        out.push({
+          provider: "anthropic",
+          modelId: m.id,
+          displayName: m.display_name ?? m.id,
+          contextWindow: contextWindowFor("anthropic", m.id),
+        })
+      }
+      return out
+    })
+
     return ModelRegistry.of({
       current: settings.get().pipe(
         Effect.map((s) => {
@@ -138,11 +189,13 @@ export const ModelRegistryLive = Layer.effect(
             }),
           ),
 
-      list: Effect.zipWith(listGoogle, listOpenAi, (g, o) =>
-        [...g, ...o].sort((a, b) =>
-          a.provider === b.provider
-            ? a.modelId.localeCompare(b.modelId)
-            : a.provider.localeCompare(b.provider),
+      list: Effect.all([listGoogle, listOpenAi, listAnthropic]).pipe(
+        Effect.map((lists) =>
+          lists.flat().sort((a, b) =>
+            a.provider === b.provider
+              ? a.modelId.localeCompare(b.modelId)
+              : a.provider.localeCompare(b.provider),
+          ),
         ),
       ),
     })
