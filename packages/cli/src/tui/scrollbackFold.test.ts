@@ -38,8 +38,8 @@ describe("Neogit folding", () => {
     sb.render(40, 70) // populate foldableIds
     sb.setAllFolded(true)
     const out = sb.render(40, 70)
-    // A folded turn bar carries no chevron — the trailing block count is the cue.
-    expect(has(out, "4 blocks")).toBe(true)
+    // A folded turn shows a ▸ chevron + subject + a trailing step count.
+    expect(has(out, "4 steps")).toBe(true)
     expect(has(out, "do the thing")).toBe(true)
     expect(has(out, "read a")).toBe(false) // body hidden
     expect(has(out, "on it")).toBe(false)
@@ -65,5 +65,20 @@ describe("Neogit folding", () => {
     expect(out.some((l) => l.includes("4 tool calls"))).toBe(true)
     expect(out.some((l) => l.includes("read a"))).toBe(false)
     expect(out.some((l) => l.includes("on it"))).toBe(true) // turn still expanded
+  })
+})
+
+describe("event rail (●/⎿)", () => {
+  test("assistant prose leads with ●; a tool shows ● head + ⎿ summary", () => {
+    const sb = new Scrollback()
+    sb.push({ kind: "user", text: "do it" })
+    sb.push({ kind: "assistant", text: "working on it" })
+    sb.push({ kind: "tool", id: "1", toolName: "Read(pkg.json)", state: "ok", detail: "7 lines" })
+    const out = plain(sb.render(40, 70))
+    // assistant prose carries a leading bullet
+    expect(out.some((l) => l.startsWith("● ") && l.includes("working on it"))).toBe(true)
+    // tool head is `● Name(arg)`, result hangs under a ⎿ connector
+    expect(out.some((l) => l.includes("● Read(pkg.json)"))).toBe(true)
+    expect(out.some((l) => l.includes("⎿") && l.includes("7 lines"))).toBe(true)
   })
 })

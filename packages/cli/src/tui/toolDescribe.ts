@@ -3,12 +3,6 @@
  * labels for the execution tree and the chat scrollback. No IO.
  */
 
-const base = (p: string): string => {
-  const cleaned = p.endsWith("/") ? p.slice(0, -1) : p
-  const idx = cleaned.lastIndexOf("/")
-  return idx === -1 ? cleaned : cleaned.slice(idx + 1)
-}
-
 const str = (v: unknown): string | undefined =>
   typeof v === "string" ? v : undefined
 
@@ -18,42 +12,44 @@ const num = (v: unknown): number | undefined =>
 const truncate = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n - 1)}…`
 
-/** A semantic one-line label for a tool *call*, e.g. `read keys.ts L1-40`. */
+/** Truncate a path keeping its tail (the filename stays visible): `…/math.ts`. */
+const truncPath = (p: string, n = 42): string =>
+  p.length <= n ? p : `…${p.slice(p.length - (n - 1))}`
+
+/**
+ * A Claude-style `ToolName(arg)` label for a tool *call*, e.g. `Read(keys.ts)`,
+ * `Edit(src/math.ts)`, `Bash(npm run build)`. Used by both the conversation rail
+ * and the Activity tree; line ranges / counts live in the result summary, not here.
+ */
 export const describeToolCall = (toolName: string, args: unknown): string => {
   const a = (typeof args === "object" && args !== null ? args : {}) as Record<
     string,
     unknown
   >
   if (toolName.startsWith("delegate_to_")) {
-    return `delegate → ${toolName.slice("delegate_to_".length)}`
+    return `Task(${toolName.slice("delegate_to_".length)})`
   }
+  const path = (fallback: string): string =>
+    str(a.path) ? truncPath(str(a.path)!) : fallback
   switch (toolName) {
-    case "read_file": {
-      const path = str(a.path)
-      const offset = num(a.offset)
-      const limit = num(a.limit)
-      const span =
-        offset !== undefined
-          ? ` L${offset}-${offset + (limit ?? 0)}`
-          : ""
-      return `read ${path ? base(path) : "?"}${span}`
-    }
+    case "read_file":
+      return `Read(${path("?")})`
     case "write_file":
-      return `write ${str(a.path) ? base(str(a.path)!) : "?"}`
+      return `Write(${path("?")})`
     case "edit_file":
-      return `edit ${str(a.path) ? base(str(a.path)!) : "?"}`
+      return `Edit(${path("?")})`
     case "bash":
-      return `$ ${truncate(str(a.command) ?? "", 60)}`
+      return `Bash(${truncate(str(a.command) ?? "", 50)})`
     case "grep":
-      return `grep '${truncate(str(a.pattern) ?? "", 40)}'`
+      return `Grep(${truncate(str(a.pattern) ?? "", 40)})`
     case "glob":
-      return `glob ${truncate(str(a.pattern) ?? "", 40)}`
+      return `Glob(${truncate(str(a.pattern) ?? "", 40)})`
     case "ls":
-      return `ls ${str(a.path) ? base(str(a.path)!) : "."}`
+      return `Ls(${path(".")})`
     case "read_skill":
-      return `skill ${str(a.name) ?? "?"}`
+      return `Skill(${str(a.name) ?? "?"})`
     case "web_fetch":
-      return `fetch ${truncate(str(a.url) ?? "", 60)}`
+      return `Fetch(${truncate(str(a.url) ?? "", 50)})`
     default:
       return toolName
   }

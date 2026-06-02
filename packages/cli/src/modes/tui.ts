@@ -41,7 +41,7 @@ import {
 import { KeyParser, type Key } from "../tui/keys.js"
 import { emptyInput, inputText, type InputState, applyKey } from "../tui/input.js"
 import { Scrollback } from "../tui/scrollback.js"
-import type { StatusState } from "../tui/statusBar.js"
+import { formatTokens, type StatusState } from "../tui/statusBar.js"
 import {
   computePalette,
   hiddenPalette,
@@ -57,6 +57,8 @@ import {
   sideCursorToTop,
   sideToggleNode,
   sideToggleSelect,
+  emptyStats,
+  type FileChange,
   type SidePaneState,
 } from "../tui/sidePane.js"
 import {
@@ -72,6 +74,7 @@ import {
   onSubAgentStart as treeSubAgentStart,
   onToolEnd as treeToolEnd,
   onToolStart as treeToolStart,
+  onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../tui/executionTree.js"
 import {
@@ -382,6 +385,9 @@ const seedSidePane = (
   contextCollapsed: new Set(),
   contextSelected: new Set(),
   contextHandoffSelected: new Set(),
+  stats: emptyStats,
+  filesChanged: [],
+  sectionsCollapsed: new Set(["files", "skills", "instructions"]),
 })
 
 const runTuiModeCore = (
@@ -417,7 +423,10 @@ const runTuiModeCore = (
       palette: hiddenPalette,
       modal: hiddenModal,
       conversationId: initialCid,
-      sidePane: seedSidePane(input.instructionFiles),
+      sidePane: {
+        ...seedSidePane(input.instructionFiles),
+        stats: { ...emptyStats, startedAt: Date.now(), contextWindow: meta.contextWindow },
+      },
       vi: initialVi,
       focus: "input",
       mode: "insert",
@@ -550,6 +559,8 @@ const runTuiModeCore = (
     // Match tool_call_end → its tree node and (top-level only) scrollback pill.
     const toolTreeId = new Map<string, number>()
     const toolScrollId = new Map<string, string>()
+    // edit/write paths captured at call-start, for the files-changed diffstat.
+    const toolPath = new Map<string, string>()
     let subAgentDepth = 0
     let toolSeq = 0
     const isDelegate = (name: string): boolean => name.startsWith("delegate_to_")
@@ -572,6 +583,10 @@ const runTuiModeCore = (
                 // Delegations are represented by the sub-agent container,
                 // not a tool node — skip them here.
                 if (isDelegate(event.toolName)) break
+                if (event.toolName === "edit_file" || event.toolName === "write_file") {
+                  const p = (event.args as { path?: unknown }).path
+                  if (typeof p === "string") toolPath.set(event.toolName, p)
+                }
                 const label = describeToolCall(event.toolName, event.args)
                 const { tree, id } = treeToolStart(s.sidePane.tree, label, now)
                 s.sidePane = { ...s.sidePane, tree }
@@ -628,6 +643,41 @@ const runTuiModeCore = (
                       : {}),
                   })
                   toolScrollId.delete(event.toolName)
+                }
+                // Files-changed diffstat (edit/write only, on success).
+                if (
+                  event.ok &&
+                  (event.toolName === "edit_file" || event.toolName === "write_file")
+                ) {
+                  const path = toolPath.get(event.toolName)
+                  toolPath.delete(event.toolName)
+                  if (path !== undefined) {
+                    let added = 0
+                    let removed = 0
+                    if (detail !== undefined) {
+                      const m = /\+(\d+)\/-(\d+)/.exec(detail)
+                      if (m !== null) {
+                        added = Number(m[1])
+                        removed = Number(m[2])
+                      } else {
+                        const w = /(\d+)/.exec(detail) // write_file: "wrote N lines"
+                        if (w !== null) added = Number(w[1])
+                      }
+                    }
+                    const prevFiles = s.sidePane.filesChanged
+                    const existing = prevFiles.find((f) => f.path === path)
+                    const next: FileChange =
+                      existing !== undefined
+                        ? { path, added: existing.added + added, removed: existing.removed + removed }
+                        : { path, added, removed }
+                    s.sidePane = {
+                      ...s.sidePane,
+                      filesChanged:
+                        existing !== undefined
+                          ? prevFiles.map((f) => (f.path === path ? next : f))
+                          : [...prevFiles, next],
+                    }
+                  }
                 }
                 break
               }
@@ -689,10 +739,29 @@ const runTuiModeCore = (
                   s.scrollback.push({ kind: "assistant", text: event.text })
                 }
                 if (event.usage !== undefined) {
+                  const u = event.usage
                   s.status = {
                     ...s.status,
-                    inputTokens: event.usage.inputTokens,
-                    cacheReadTokens: event.usage.cacheReadTokens,
+                    inputTokens: u.inputTokens,
+                    cacheReadTokens: u.cacheReadTokens,
+                  }
+                  const prev = s.sidePane.stats
+                  s.sidePane = {
+                    ...s.sidePane,
+                    // Cumulative output/total; input/cache reflect the latest call.
+                    stats: {
+                      ...prev,
+                      inputTokens: u.inputTokens,
+                      cacheReadTokens: u.cacheReadTokens,
+                      outputTokens: prev.outputTokens + u.outputTokens,
+                      totalTokens: prev.totalTokens + u.totalTokens,
+                      turns: prev.turns + 1,
+                    },
+                    // Per-LLM-call usage on the open turn node: `↑12k ↓340`.
+                    tree: treeTurnDetail(
+                      s.sidePane.tree,
+                      `↑${formatTokens(u.inputTokens)} ↓${formatTokens(u.outputTokens)}`,
+                    ),
                   }
                 }
                 break
@@ -937,6 +1006,12 @@ const runTuiModeCore = (
           contextSelected: new Set(),
           contextHandoffSelected: new Set(),
           contextCursor: 0,
+          stats: {
+            ...emptyStats,
+            startedAt: Date.now(),
+            contextWindow: s.sidePane.stats.contextWindow,
+          },
+          filesChanged: [],
         }
         replayHistory(s.scrollback, picked, [])
         s.scrollback.cursorToBottom()
@@ -1156,6 +1231,12 @@ const runTuiModeCore = (
                 contextSelected: new Set(),
                 contextHandoffSelected: new Set(),
                 contextCursor: 0,
+                stats: {
+                  ...emptyStats,
+                  startedAt: Date.now(),
+                  contextWindow: s.sidePane.stats.contextWindow,
+                },
+                filesChanged: [],
               }
               replayHistory(s.scrollback, history, checkpoints)
               s.scrollback.cursorToBottom()
@@ -1379,6 +1460,10 @@ const runTuiModeCore = (
                 ...s.status,
                 modelId: sel.modelId,
                 contextWindow: sel.contextWindow,
+              }
+              s.sidePane = {
+                ...s.sidePane,
+                stats: { ...s.sidePane.stats, contextWindow: sel.contextWindow },
               }
               s.activeProvider = sel.provider
               s.scrollback.push({

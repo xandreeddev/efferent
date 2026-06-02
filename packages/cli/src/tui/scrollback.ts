@@ -100,12 +100,17 @@ interface FoldRef {
   readonly foldable: boolean
 }
 
-// No leading bullet — the tool *name* takes this colour to carry run state.
+// Claude-style event rail: a leading `●` whose COLOUR carries the signal.
+// Tool bullets carry run/ok/error; assistant prose gets a calm pane-accent dot.
 const STATE_COLOR: Record<ToolPillState, string> = {
   running: ansi.fgYellow,
   ok: ansi.fgGreen,
   error: ansi.fgRed,
 }
+const DOT = "●"
+const ASSISTANT_DOT = `${ansi.fgBrightCyan}${DOT}${ansi.reset}`
+// Result connector hanging under a tool's `●` (Claude's `⎿`).
+const CONNECTOR = "⎿"
 
 type DiffRow =
   | { readonly kind: "ctx" | "del" | "add"; readonly oldNo?: number; readonly newNo?: number; readonly text: string }
@@ -210,32 +215,34 @@ const renderBlock = (
       return out
     }
     case "assistant": {
-      // No bullet — prose sits under the user's turn bar at a 2-space indent.
+      // A pane-accent `●` leads the first line; continuations align under the
+      // text at a 2-space hang (the bullet + space is the same 2-col gutter).
       const body = renderMarkdown(block.text, cols - 2)
-      return body.map((l) => `  ${l}`)
+      return body.map((l, i) => (i === 0 ? `${ASSISTANT_DOT} ${l}` : `  ${l}`))
     }
     case "tool": {
-      // One compact pill line, indented 2 under its turn — no leading dot; the
-      // tool *name*'s colour carries run/ok/error. The result count folds in dim.
+      // `● Name(arg)` — the `●` colour carries run/ok/error; the result summary
+      // hangs under it on a `⎿` connector line. Diff/output indent under the ⎿.
+      const head = `${STATE_COLOR[block.state]}${DOT}${ansi.reset} ${block.toolName}`
+      const out: string[] = [head]
+
       const summary =
         block.detail !== undefined && block.detail.length > 0
           ? block.detail.split("\n")[0]!
           : undefined
-      const detailW = Math.max(4, cols - block.toolName.length - 6)
-      const name = `${STATE_COLOR[block.state]}${block.toolName}${ansi.reset}`
-      const head =
-        summary !== undefined
-          ? `  ${name}  ${ansi.dim}${truncate(summary, detailW)}${ansi.reset}`
-          : `  ${name}`
-      const out: string[] = [head]
+      if (summary !== undefined) {
+        out.push(
+          `  ${ansi.dim}${CONNECTOR} ${truncate(summary, Math.max(4, cols - 6))}${ansi.reset}`,
+        )
+      }
 
-      // edit/write: gutter diff under the pill (collapsed cap; Ctrl-R reveals all).
+      // edit/write: gutter diff under the ⎿ (collapsed cap; Ctrl-R reveals all).
       if (block.diff !== undefined && block.diff.length > 0) {
-        const all = renderDiff(block.diff, cols - 5)
+        const all = renderDiff(block.diff, cols - 4)
         const cap = expanded ? DIFF_EXPANDED : DIFF_COLLAPSED
-        out.push(...all.slice(0, cap).map((l) => `     ${l}`))
+        out.push(...all.slice(0, cap).map((l) => `    ${l}`))
         if (all.length > cap) {
-          out.push(`     ${ansi.dim}… ${all.length - cap} more · Ctrl-R${ansi.reset}`)
+          out.push(`    ${ansi.dim}… ${all.length - cap} more · Ctrl-R${ansi.reset}`)
         }
         return out
       }
@@ -246,11 +253,11 @@ const renderBlock = (
         out.push(
           ...lines
             .slice(0, OUTPUT_EXPANDED)
-            .map((l) => `     ${ansi.dim}${truncate(l, cols - 6)}${ansi.reset}`),
+            .map((l) => `    ${ansi.dim}${truncate(l, cols - 5)}${ansi.reset}`),
         )
         if (lines.length > OUTPUT_EXPANDED) {
           out.push(
-            `     ${ansi.dim}… ${lines.length - OUTPUT_EXPANDED} more lines${ansi.reset}`,
+            `    ${ansi.dim}… ${lines.length - OUTPUT_EXPANDED} more lines${ansi.reset}`,
           )
         }
       }
@@ -259,7 +266,7 @@ const renderBlock = (
     case "info":
       return [`${ansi.dim}${block.text}${ansi.reset}`]
     case "error":
-      return [`${ansi.fgBrightRed}${block.text}${ansi.reset}`]
+      return [`${ansi.fgBrightRed}${DOT} ${block.text}${ansi.reset}`]
     case "checkpoint": {
       const bar = `${ansi.fgBrightMagenta}┃${ansi.reset} `
       const header = `${ansi.fgBrightMagenta}─── Handoff Checkpoint ──────────────────────────────────────────${ansi.reset}`
@@ -887,20 +894,10 @@ export class Scrollback {
   }
 
   /**
-   * Tint a built line with the user-turn background across the FULL width: pad
-   * to `cols`, then re-inject the bg after every inner `ansi.reset` so the
-   * line's own colours survive under the tint (same trick as the cursor line).
-   */
-  private tintUserLine(content: string, cols: number): string {
-    const bg = ansi.bgUserTurn
-    const padded = padRight(truncate(content, cols), cols)
-    return bg + padded.split(ansi.reset).join(ansi.reset + bg) + ansi.reset
-  }
-
-  /**
-   * A Neogit-style turn ("commit") header — the user prompt rendered as a
-   * full-width background bar with NO leading glyph. Foldable via its `ref` in
-   * flatten(); a folded bar shows a trailing `· N blocks` instead of a chevron.
+   * A Neogit-style turn ("commit") header — the user prompt led by a gray fold
+   * chevron (`▾` open / `▸` folded) in bright-green bold (the user/input accent).
+   * Foldable via its `ref` in flatten(); folded shows a trailing `· N steps`.
+   * The `chevron + space` prefix is the same 2-col gutter as the event rail.
    */
   private turnHeader(
     text: string,
@@ -908,18 +905,25 @@ export class Scrollback {
     folded: boolean,
     childCount: number,
   ): string[] {
+    const chevron = `${ansi.fgGray}${folded ? "▸" : "▾"}${ansi.reset}`
     const style = `${ansi.fgBrightGreen}${ansi.bold}`
     if (folded) {
       const countPlain =
         childCount > 0
-          ? ` · ${childCount} block${childCount === 1 ? "" : "s"}`
+          ? ` · ${childCount} step${childCount === 1 ? "" : "s"}`
           : ""
-      const subj = truncate(oneLine(text), Math.max(1, cols - visibleLength(countPlain)))
-      const content = `${style}${subj}${ansi.reset}${ansi.dim}${countPlain}${ansi.reset}`
-      return [this.tintUserLine(content, cols)]
+      const subj = truncate(
+        oneLine(text),
+        Math.max(1, cols - 2 - visibleLength(countPlain)),
+      )
+      return [`${chevron} ${style}${subj}${ansi.reset}${ansi.dim}${countPlain}${ansi.reset}`]
     }
-    const wrapped = wrapAnsi(text, cols)
-    return wrapped.map((l) => this.tintUserLine(`${style}${l}${ansi.reset}`, cols))
+    const wrapped = wrapAnsi(text, cols - 2)
+    return wrapped.map((l, i) =>
+      i === 0
+        ? `${chevron} ${style}${l}${ansi.reset}`
+        : `  ${style}${l}${ansi.reset}`,
+    )
   }
 
   /**

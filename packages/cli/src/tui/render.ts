@@ -192,7 +192,7 @@ export class FrameRenderer {
       sideW = Math.max(1, leftInner - 2) // leftInner − sideGutter(2)
     }
     const convContentW = scrollW
-    const sideViewLabel = state.sidePane.view === "context" ? "context" : "side"
+    const sideViewLabel = state.sidePane.view === "context" ? "context" : "activity"
 
     const middleLines: string[] = []
 
