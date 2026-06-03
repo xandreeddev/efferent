@@ -16,6 +16,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
   { name: ":model", description: "Open the model picker (↑↓/filter/↵), or :model <id> to switch" },
+  { name: ":search", description: "Open the web search model picker, or :search openai:gpt-4o / default" },
   { name: ":effort", description: "Open the thinking/reasoning effort picker, or :effort <level>" },
   { name: ":login", description: "Add a provider — subscription (OAuth) or API key" },
   { name: ":logout", description: "Remove a provider's credential: :logout <provider>" },

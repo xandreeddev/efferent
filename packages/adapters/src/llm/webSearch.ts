@@ -6,6 +6,7 @@ import {
   AuthStore,
   parseModel,
   type Provider,
+  SettingsStore,
   WebSearch,
   WebSearchError,
   type WebSearchResult,
@@ -22,8 +23,8 @@ import { Config, Effect, Layer, Option } from "effect"
  * answer; the response's `source` parts are the citations.
  *
  * The search engine is configured independently of the chat `/model`:
- *  - `EFFERENT_SEARCH_MODEL` ("<provider>:<modelId>", google/openai only) pins
- *    it explicitly; otherwise
+ *  - `:set searchModel <provider>:<modelId>` (google/openai only) pins it;
+ *  - `EFFERENT_SEARCH_MODEL` is still honored as a fallback; otherwise
  *  - it defaults to whichever provider is logged in via `:login` (Google
  *    preferred). The key is resolved per search from the `AuthStore`.
  * With neither Google nor OpenAI configured, `search` fails with a clear,
@@ -38,19 +39,39 @@ interface SearchModel {
   readonly modelId: string
 }
 
+const parseSearchModel = (raw: string): SearchModel | undefined => {
+  const value = raw.trim()
+  if (value.length === 0) return undefined
+  const idx = value.indexOf(":")
+  if (idx > 0) {
+    const provider = value.slice(0, idx)
+    if (provider !== "google" && provider !== "openai") return undefined
+  }
+  const m = parseModel(value)
+  // Only Google/OpenAI expose a server-side search tool here.
+  return m.provider === "google" || m.provider === "openai" ? m : undefined
+}
+
 const resolveSearchModel = (
   auth: AuthStore["Type"],
+  settingsStore: SettingsStore["Type"],
 ): Effect.Effect<SearchModel | undefined> =>
   Effect.gen(function* () {
+    const settings = yield* settingsStore.get()
+    const fromSettings = settings.searchModel !== undefined
+      ? parseSearchModel(settings.searchModel)
+      : undefined
+    if (fromSettings !== undefined) return fromSettings
+
     const explicit = yield* Config.string("EFFERENT_SEARCH_MODEL").pipe(
       Config.option,
       Effect.orElseSucceed(() => Option.none<string>()),
     )
-    if (Option.isSome(explicit) && explicit.value.trim().length > 0) {
-      const m = parseModel(explicit.value.trim())
-      // Only Google/OpenAI expose a server-side search tool here.
-      if (m.provider === "google" || m.provider === "openai") return m
+    if (Option.isSome(explicit)) {
+      const fromEnv = parseSearchModel(explicit.value)
+      if (fromEnv !== undefined) return fromEnv
     }
+
     if ((yield* auth.get("google")) !== undefined) {
       return { provider: "google", modelId: DEFAULT_GOOGLE_SEARCH_MODEL }
     }
@@ -97,18 +118,19 @@ export const WebSearchLive = Layer.effect(
   WebSearch,
   Effect.gen(function* () {
     const auth = yield* AuthStore
+    const settingsStore = yield* SettingsStore
     const http = yield* HttpClient.HttpClient
 
     const search = (
       query: string,
     ): Effect.Effect<WebSearchResult, WebSearchError> =>
-      resolveSearchModel(auth).pipe(
+      resolveSearchModel(auth, settingsStore).pipe(
         Effect.flatMap((sel) => {
           if (sel === undefined) {
             return Effect.fail(
               new WebSearchError({
                 message:
-                  "Web search is not configured — log in to Google or OpenAI with :login (or set EFFERENT_SEARCH_MODEL).",
+                  "Web search is not configured — log in to Google or OpenAI with :login (or set :set searchModel ... / EFFERENT_SEARCH_MODEL).",
               }),
             )
           }

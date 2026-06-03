@@ -82,6 +82,7 @@ export const LocalSettingsStoreLive = Layer.effect(
           // for display (`:settings`) and validated by `Schema.partial`.
           const dbUrl = localConfig?.dbUrl ?? homeConfig?.dbUrl
 
+          const searchModel = localConfig?.searchModel ?? homeConfig?.searchModel
           const anthropicThinkingEffort =
             localConfig?.anthropicThinkingEffort ?? homeConfig?.anthropicThinkingEffort
           const openAiReasoningEffort =
@@ -95,6 +96,7 @@ export const LocalSettingsStoreLive = Layer.effect(
             editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
             model: localConfig?.model ?? homeConfig?.model ?? envModel ?? DefaultSettings.model,
             ...(dbUrl !== undefined ? { dbUrl } : {}),
+            ...(searchModel !== undefined ? { searchModel } : {}),
             ...(anthropicThinkingEffort !== undefined ? { anthropicThinkingEffort } : {}),
             ...(openAiReasoningEffort !== undefined ? { openAiReasoningEffort } : {}),
             ...(geminiThinkingLevel !== undefined ? { geminiThinkingLevel } : {}),

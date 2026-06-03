@@ -203,6 +203,8 @@ interface MutableAppState {
   modelList?: ReadonlyArray<ModelInfo>
   /** Open `:model` select box (overlay); owns input while visible. */
   modelPicker?: SelectState<ModelInfo>
+  /** Open `:search` model picker (overlay); owns input while visible. */
+  searchPicker?: SelectState<string | undefined>
   /** Open effort picker (overlay, Shift-Tab); owns input while visible. */
   effortPicker?: SelectState<string>
   /**
@@ -287,6 +289,7 @@ const HELP_LINES = [
   "  :settings        open the settings modal (arrow + ↵ to edit)",
   "  :set <k> <v>     update setting directly (e.g. :set maxSteps 15)",
   "  :model           list models; :model <#|id> switches provider/model",
+  "  :search          open web search model picker; :search openai:gpt-4o / default",
   "  :effort          open effort picker; :effort <level> sets directly",
 ]
 
@@ -300,6 +303,7 @@ const snapshot = (s: MutableAppState): AppState => ({
   palette: s.palette,
   modal: s.modal,
   modelPicker: s.modelPicker,
+  searchPicker: s.searchPicker,
   effortPicker: s.effortPicker,
   convPicker: s.convPicker,
   settingsView: s.settingsView,
@@ -699,6 +703,38 @@ const runTuiModeCore = (
       dirty = true
       scheduleRender()
     })
+
+    const parseSearchModelArg = (raw: string): string | undefined => {
+      const value = raw.trim()
+      if (value.length === 0 || value === "default") return undefined
+      const idx = value.indexOf(":")
+      if (idx > 0) {
+        const provider = value.slice(0, idx)
+        if (provider !== "google" && provider !== "openai") return undefined
+      }
+      const { provider, modelId } = parseModel(value)
+      if (provider !== "google" && provider !== "openai") return undefined
+      return `${provider}:${modelId}`
+    }
+
+    const DEFAULT_GOOGLE_SEARCH_MODEL = "google:gemini-3.5-flash"
+    const DEFAULT_OPENAI_SEARCH_MODEL = "openai:gpt-4o"
+
+    const applySearchModelSelection = (chosen: string | undefined) =>
+      Effect.gen(function* () {
+        const settingsStore = yield* SettingsStore
+        yield* settingsStore.update((curr) => {
+          if (chosen === undefined) {
+            const { searchModel: _drop, ...rest } = curr
+            return rest
+          }
+          return { ...curr, searchModel: chosen }
+        })
+        yield* Ref.update(stateRef, (s) => {
+          s.scrollback.push({ kind: "info", text: `searchModel → ${chosen ?? "default"}` })
+          return s
+        })
+      })
 
     /**
      * Switch to a model and reflect it in the status bar / side pane. Shared by
@@ -1194,9 +1230,15 @@ const runTuiModeCore = (
                   })
                   subAgentScrollId.delete(event.name)
                 }
-                // Push the summary as an assistant block so it's visible as a reply.
-                if (event.ok && event.summary.trim().length > 0) {
-                  s.scrollback.push({ kind: "assistant", text: event.summary })
+                // Surface the sub-agent's result: its summary as a reply, or —
+                // on failure — its error, so a delegated agent's failure isn't
+                // silently swallowed.
+                if (event.summary.trim().length > 0) {
+                  s.scrollback.push(
+                    event.ok
+                      ? { kind: "assistant", text: event.summary }
+                      : { kind: "error", text: `${event.name}: ${event.summary}` },
+                  )
                 }
                 const nodeDetail = joinDetail(
                   filesDetail,
@@ -1921,6 +1963,13 @@ const runTuiModeCore = (
                 hint: "use :model",
               },
               {
+                key: "searchModel",
+                label: "searchModel",
+                value: current.searchModel ?? "default",
+                kind: "readonly",
+                hint: "use :search",
+              },
+              {
                 key: "database",
                 label: "database",
                 value: db.value,
@@ -1959,6 +2008,7 @@ const runTuiModeCore = (
               "anthropicThinkingEffort",
               "openAiReasoningEffort",
               "geminiThinkingLevel",
+              "searchModel",
             ]
             if (!validKeys.includes(k as any)) {
               yield* Ref.update(stateRef, (s) => {
@@ -2029,19 +2079,83 @@ const runTuiModeCore = (
                 return "stay" as const
               }
               typedVal = (v === "default" ? undefined : v) as any
+            } else if (key === "searchModel") {
+              const parsed = parseSearchModelArg(v)
+              if (v !== "default" && parsed === undefined) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: "Setting 'searchModel' must be 'default' or google/openai:<modelId>" })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = parsed as any
             } else {
               typedVal = v as any
             }
 
-            yield* settingsStore.update((curr) => ({
-              ...curr,
-              [key]: typedVal,
-            }))
+            yield* settingsStore.update((curr) => {
+              if (key === "searchModel" && typedVal === undefined) {
+                const { searchModel: _drop, ...rest } = curr
+                return rest
+              }
+              return { ...curr, [key]: typedVal }
+            })
 
             yield* Ref.update(stateRef, (s) => {
-              s.scrollback.push({ kind: "info", text: `Updated setting '${k}' to: ${typedVal}` })
+              s.scrollback.push({ kind: "info", text: `Updated setting '${k}' to: ${typedVal ?? "default"}` })
               return s
             })
+            yield* requestRender
+            return "stay" as const
+          }
+          case ":search": {
+            const settingsStore = yield* SettingsStore
+            const arg = parts.slice(1).join(" ").trim()
+            if (arg.length === 0) {
+              const current = yield* settingsStore.get()
+              const auth = yield* (yield* AuthStore).all
+              const configured = current.searchModel
+              const options = [
+                {
+                  value: undefined,
+                  label: "default (auto: env → Google Search → OpenAI Web Search)",
+                  active: configured === undefined,
+                },
+                ...(auth.google !== undefined
+                  ? [{
+                      value: DEFAULT_GOOGLE_SEARCH_MODEL,
+                      label: "Google Search grounding (Gemini)",
+                      active: configured === DEFAULT_GOOGLE_SEARCH_MODEL,
+                    }]
+                  : []),
+                ...(auth.openai?.type === "api_key"
+                  ? [{
+                      value: DEFAULT_OPENAI_SEARCH_MODEL,
+                      label: "OpenAI Web Search",
+                      active: configured === DEFAULT_OPENAI_SEARCH_MODEL,
+                    }]
+                  : []),
+              ]
+              yield* Ref.update(stateRef, (s) => {
+                s.searchPicker = openSelect("Select web search config", options)
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            const parsed = parseSearchModelArg(arg)
+            if (arg !== "default" && parsed === undefined) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({ kind: "error", text: "Usage: :search google:<modelId> | openai:<modelId> | default" })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+
+            yield* applySearchModelSelection(parsed)
             yield* requestRender
             return "stay" as const
           }
@@ -2443,6 +2557,68 @@ const runTuiModeCore = (
           return "stay" as const
         }
 
+        // The `:search` model picker owns all input while open.
+        if (s.searchPicker !== undefined) {
+          if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
+            yield* Ref.update(stateRef, (st) => {
+              delete st.searchPicker
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.searchPicker) st.searchPicker = moveSelect(st.searchPicker, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "backspace") {
+            yield* Ref.update(stateRef, (st) => {
+              if (st.searchPicker) st.searchPicker = filterBackspace(st.searchPicker)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "char") {
+            const ch = key.char
+            yield* Ref.update(stateRef, (st) => {
+              if (st.searchPicker) st.searchPicker = filterAppend(st.searchPicker, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "paste") {
+            const text = key.text.replace(/\r|\n/g, "")
+            yield* Ref.update(stateRef, (st) => {
+              if (st.searchPicker) {
+                for (const ch of text) {
+                  st.searchPicker = filterAppend(st.searchPicker, ch)
+                }
+              }
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const chosen = selectedValue(s.searchPicker)
+            yield* Ref.update(stateRef, (st) => {
+              delete st.searchPicker
+              return st
+            })
+            yield* applySearchModelSelection(chosen)
+            yield* requestRender
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
         // The effort picker owns all input while open.
         if (s.effortPicker !== undefined) {
           if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
@@ -2700,7 +2876,7 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             }
-            // readonly rows: no-op (a hint already points at :model / :db).
+            // readonly rows: no-op (a hint already points at :model / :search / :db).
             return "stay" as const
           }
           return "stay" as const

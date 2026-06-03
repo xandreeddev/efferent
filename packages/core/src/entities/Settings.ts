@@ -29,6 +29,12 @@ export const Settings = Schema.Struct({
   model: Schema.String.annotations({
     description: "Active model as '<provider>:<modelId>' (e.g. 'google:gemini-3.5-flash', 'openai:gpt-4o'). Switch at runtime with /model.",
   }),
+  searchModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Dedicated web search model as '<provider>:<modelId>' (google/openai only); used by search_web independently of the chat model.",
+    }),
+  ),
   dbUrl: Schema.optional(
     Schema.String.annotations({
       description:
