@@ -35,6 +35,47 @@ export interface RunAgentLoopInput<
   readonly hooks?: AgentHooks<R>
 }
 
+const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
+
+/**
+ * `@effect/ai` decodes a tool call's parameters *inside* `Toolkit.handle`,
+ * before our handler runs — so a wrong-shaped call (or a hallucinated tool
+ * name) fails with `AiError.MalformedOutput`, which `failureMode: "return"`
+ * never sees (it only catches *handler* failures), aborting the whole turn.
+ *
+ * Wrapping the resolved handler turns those **model-caused** failures into an
+ * ordinary tool *result* (`isFailure: true`): the assistant tool-call ↔
+ * tool-result pairing stays valid, the loop keeps iterating, and the model
+ * gets the decode error back as feedback and retries — the same recovery path
+ * as any returned tool failure. `MalformedInput` is let through on purpose:
+ * that's a result encode/validate failure (our bug, not the model's) and
+ * should surface rather than be silently masked.
+ */
+export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>>(
+  base: Toolkit.WithHandler<Tools>,
+): Toolkit.WithHandler<Tools> => {
+  const rawHandle = base.handle as (
+    name: unknown,
+    params: unknown,
+  ) => Effect.Effect<unknown, unknown, unknown>
+  const handle = (name: unknown, params: unknown) =>
+    rawHandle(name, params).pipe(
+      Effect.catchAll((err) => {
+        const e = err as { readonly _tag?: string; readonly description?: string } | null
+        if (e?._tag !== "MalformedOutput") return Effect.fail(err)
+        const failure = {
+          error: "InvalidToolCall",
+          message: `${clip(
+            e.description ?? "the tool call could not be processed",
+            800,
+          )} — the arguments did not match the tool's schema; re-call the tool with parameters that match its documented shape.`,
+        }
+        return Effect.succeed({ isFailure: true, result: failure, encodedResult: failure })
+      }),
+    )
+  return { tools: base.tools, handle } as unknown as Toolkit.WithHandler<Tools>
+}
+
 export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
   input: RunAgentLoopInput<Tools, R>,
 ) =>
@@ -44,6 +85,13 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     let messages: ReadonlyArray<AgentMessage> = input.messages
     let finalText = ""
     let turnIndex = 0
+
+    // Resolve the toolkit's handler once (it reads the handler Layer from
+    // context), then wrap it so a malformed tool call is fed back as a tool
+    // *result* the model can correct on the next turn — instead of a decode
+    // failure aborting the turn. Handlers are stable across turns, so this is
+    // resolved a single time, not per request.
+    const toolkit = recoverMalformedToolCalls(yield* input.toolkit)
 
     while (turnIndex < maxSteps) {
       if (hooks?.onTransformContext) {
@@ -60,7 +108,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
       const res = yield* LanguageModel.generateText({
         prompt,
-        toolkit: input.toolkit,
+        toolkit,
       })
 
       const content = res.content as ReadonlyArray<unknown>

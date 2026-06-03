@@ -1,5 +1,6 @@
 import {
   AuthStore,
+  catalogModelIdsForProvider,
   contextWindowFor,
   formatModel,
   ModelRegistry,
@@ -40,6 +41,15 @@ type GoogleModel = {
 }
 type OpenAiModel = { readonly id?: string }
 type AnthropicModel = { readonly id?: string; readonly display_name?: string }
+
+// OpenAI ChatGPT/Codex subscription tokens don't work with `/v1/models`.
+// Use the generated models.dev snapshot instead of a stale hand-written list.
+const OPENAI_SUBSCRIPTION_INCLUDE = /^gpt-5/i
+const OPENAI_SUBSCRIPTION_EXCLUDE = /chat-latest/i
+const openAiSubscriptionModels = (): ReadonlyArray<string> =>
+  catalogModelIdsForProvider("openai").filter(
+    (id) => OPENAI_SUBSCRIPTION_INCLUDE.test(id) && !OPENAI_SUBSCRIPTION_EXCLUDE.test(id),
+  )
 
 export const ModelRegistryLive = Layer.effect(
   ModelRegistry,
@@ -102,6 +112,14 @@ export const ModelRegistryLive = Layer.effect(
     const listOpenAi = Effect.gen(function* () {
       const c = yield* creds("openai")
       if (c === undefined) return [] as ModelInfo[]
+      if (c.cred.type === "oauth") {
+        return openAiSubscriptionModels().map((modelId) => ({
+          provider: "openai" as const,
+          modelId,
+          displayName: modelId,
+          contextWindow: contextWindowFor("openai", modelId),
+        }))
+      }
       const json = yield* getJson(
         HttpClientRequest.get("https://api.openai.com/v1/models").pipe(
           HttpClientRequest.setHeader("Authorization", `Bearer ${c.key}`),

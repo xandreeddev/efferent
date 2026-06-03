@@ -196,7 +196,7 @@ const renderBlock = (
       // Dead in the stack view — flatten() routes user blocks through
       // turnHeader (the full-width bg bar). Kept consistent: no ┃ bar.
       const inner = wrapAnsi(block.text, cols - 2)
-      return inner.map((l) => `  ${ansi.fgBrightGreen}${l}${ansi.reset}`)
+      return inner.map((l) => `  ${ansi.fgBrightBlue}${l}${ansi.reset}`)
     }
     case "reasoning": {
       // The model's externalised thinking — quiet (dim italic), capped when
@@ -265,8 +265,16 @@ const renderBlock = (
     }
     case "info":
       return [`${ansi.dim}${block.text}${ansi.reset}`]
-    case "error":
-      return [`${ansi.fgBrightRed}${DOT} ${block.text}${ansi.reset}`]
+    case "error": {
+      const lines = wrapAnsi(block.text, Math.max(20, cols - 4))
+      return lines.length === 0
+        ? [`${ansi.fgBrightRed}${DOT}${ansi.reset}`]
+        : lines.map((l, i) =>
+            i === 0
+              ? `${ansi.fgBrightRed}${DOT} ${l}${ansi.reset}`
+              : `${ansi.fgBrightRed}  ${l}${ansi.reset}`,
+          )
+    }
     case "checkpoint": {
       const bar = `${ansi.fgBrightMagenta}┃${ansi.reset} `
       const header = `${ansi.fgBrightMagenta}─── Handoff Checkpoint ──────────────────────────────────────────${ansi.reset}`
@@ -895,7 +903,8 @@ export class Scrollback {
 
   /**
    * A Neogit-style turn ("commit") header — the user prompt led by a gray fold
-   * chevron (`▾` open / `▸` folded) in bright-green bold (the user/input accent).
+   * chevron (`▾` open / `▸` folded) in bright-blue bold (distinct from the
+   * cyan/magenta/green pane accents).
    * Foldable via its `ref` in flatten(); folded shows a trailing `· N steps`.
    * The `chevron + space` prefix is the same 2-col gutter as the event rail.
    */
@@ -906,7 +915,7 @@ export class Scrollback {
     childCount: number,
   ): string[] {
     const chevron = `${ansi.fgGray}${folded ? "▸" : "▾"}${ansi.reset}`
-    const style = `${ansi.fgBrightGreen}${ansi.bold}`
+    const style = `${ansi.fgBrightBlue}${ansi.bold}`
     if (folded) {
       const countPlain =
         childCount > 0

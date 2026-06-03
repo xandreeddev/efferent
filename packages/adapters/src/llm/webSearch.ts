@@ -54,7 +54,8 @@ const resolveSearchModel = (
     if ((yield* auth.get("google")) !== undefined) {
       return { provider: "google", modelId: DEFAULT_GOOGLE_SEARCH_MODEL }
     }
-    if ((yield* auth.get("openai")) !== undefined) {
+    const openai = yield* auth.get("openai")
+    if (openai?.type === "api_key") {
       return { provider: "openai", modelId: DEFAULT_OPENAI_SEARCH_MODEL }
     }
     return undefined

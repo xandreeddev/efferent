@@ -93,6 +93,14 @@ const catalogLookup = (provider: Provider, modelId: string) => {
   return undated !== modelId ? MODEL_CATALOG[`${provider}:${undated}`] : undefined
 }
 
+/** Model ids from the generated models.dev snapshot for a provider. */
+export const catalogModelIdsForProvider = (provider: Provider): ReadonlyArray<string> => {
+  const prefix = `${provider}:`
+  return Object.keys(MODEL_CATALOG)
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+}
+
 /**
  * Context-window size for the status-bar gauge. Prefers the generated
  * catalogue (the real per-model limit from models.dev — neither Anthropic's nor

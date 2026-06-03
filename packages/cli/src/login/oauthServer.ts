@@ -20,7 +20,7 @@ export interface CallbackServer {
 }
 
 /** Start the loopback callback server on `port`. Bun-native `Bun.serve`. */
-export const startCallbackServer = (port: number): CallbackServer => {
+export const startCallbackServer = (port: number, callbackPath = "/callback"): CallbackServer => {
   let resolveCode!: (v: { code: string; state: string }) => void
   const waitForCode = new Promise<{ code: string; state: string }>((resolve) => {
     resolveCode = resolve
@@ -30,7 +30,7 @@ export const startCallbackServer = (port: number): CallbackServer => {
     hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url)
-      if (url.pathname !== "/callback") {
+      if (url.pathname !== callbackPath) {
         return new Response("Not found", { status: 404 })
       }
       const code = url.searchParams.get("code")

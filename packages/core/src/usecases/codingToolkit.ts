@@ -44,6 +44,29 @@ const stripFrontmatter = (content: string): string => {
   return afterFirstFence.slice(closeIndex + 4).replace(/^\n+/, "")
 }
 
+/**
+ * Accept either the canonical `edits: [{ oldText, newText }]` array or the
+ * flat single-edit convenience form (top-level `oldText`/`newText`). Models
+ * trained on Claude Code's `Edit` tool routinely drop the array wrapper for a
+ * single edit and emit the flat shape — which used to fail *parameter decode*
+ * (before our handler runs, so `failureMode: "return"` couldn't catch it) and
+ * abort the whole turn. Normalising both shapes here lets the decode succeed;
+ * an empty result is returned by the handler as a graceful tool failure.
+ */
+export const normalizeEdits = (args: {
+  readonly edits?: ReadonlyArray<{ readonly oldText: string; readonly newText: string }> | undefined
+  readonly oldText?: string | undefined
+  readonly newText?: string | undefined
+}): ReadonlyArray<{ oldText: string; newText: string }> => {
+  if (args.edits !== undefined && args.edits.length > 0) {
+    return args.edits.map((e) => ({ oldText: e.oldText, newText: e.newText }))
+  }
+  if (args.oldText !== undefined) {
+    return [{ oldText: args.oldText, newText: args.newText ?? "" }]
+  }
+  return []
+}
+
 const applyEditsToContent = (
   content: string,
   edits: ReadonlyArray<{ oldText: string; newText: string }>,
@@ -358,21 +381,34 @@ export const WriteFile = Tool.make("write_file", {
 
 export const EditFile = Tool.make("edit_file", {
   description:
-    "Apply targeted substring edits to a file. Each edit's oldText must match exactly once in the current file content.",
+    "Apply targeted substring edits to a file. Each edit's oldText must match exactly once in the current file content. For multiple edits pass the `edits` array; for a single edit you may instead pass top-level `oldText`/`newText`.",
   parameters: {
     path: Schema.String.annotations({ description: "Path to the file to edit." }),
-    edits: Schema.Array(
-      Schema.Struct({
-        oldText: Schema.String.annotations({
-          description:
-            "Exact substring to find (whitespace and indentation included). Must be unique in the file.",
+    edits: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          oldText: Schema.String.annotations({
+            description:
+              "Exact substring to find (whitespace and indentation included). Must be unique in the file.",
+          }),
+          newText: Schema.String.annotations({ description: "Replacement text." }),
         }),
-        newText: Schema.String.annotations({ description: "Replacement text." }),
+      ).annotations({
+        description:
+          "One or more substring edits, applied in order. Each oldText must match exactly once. Omit if using the top-level oldText/newText single-edit form.",
       }),
-    ).annotations({
-      description:
-        "One or more substring edits, applied in order. Each oldText must match exactly once.",
-    }),
+    ),
+    oldText: Schema.optional(
+      Schema.String.annotations({
+        description:
+          "Single-edit form: exact substring to find (must match exactly once). Pair with newText; ignored when `edits` is provided.",
+      }),
+    ),
+    newText: Schema.optional(
+      Schema.String.annotations({
+        description: "Single-edit form: replacement text for the top-level oldText.",
+      }),
+    ),
   },
   success: Schema.Struct({
     path: Schema.String,
@@ -654,12 +690,20 @@ export const makeCodingHandlers = (
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
-      edit_file: ({ path, edits }) =>
+      edit_file: ({ path, edits, oldText, newText }) =>
         Effect.gen(function* () {
+          const normalized = normalizeEdits({ edits, oldText, newText })
+          if (normalized.length === 0) {
+            return yield* Effect.fail({
+              error: "EditFailed",
+              message:
+                "no edits provided — pass edits: [{ oldText, newText }] (or the single-edit oldText/newText fields)",
+            })
+          }
           const abs = resolvePath(displayRoot, path)
           yield* rejectIfOutOfScope(abs)
           const before = yield* fs.read(abs)
-          const applied = applyEditsToContent(before.content, edits)
+          const applied = applyEditsToContent(before.content, normalized)
           if (applied.error !== undefined) {
             return yield* Effect.fail({
               error: "EditFailed",
@@ -669,7 +713,7 @@ export const makeCodingHandlers = (
           yield* fs.write(abs, applied.result)
           return {
             path: displayPath(displayRoot, abs),
-            editsApplied: edits.length,
+            editsApplied: normalized.length,
             diff: unifiedDiff(
               before.content,
               applied.result,

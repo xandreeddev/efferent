@@ -3,8 +3,8 @@ import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { GoogleClient, GoogleLanguageModel } from "@effect/ai-google"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
-import { AuthStore, LlmInfo, ModelRegistry, type ModelSelection } from "@efferent/core"
-import { Effect, Layer, Redacted, type Scope, Stream } from "effect"
+import { AuthStore, LlmInfo, ModelRegistry, type Credential, type ModelSelection } from "@efferent/core"
+import { Chunk, Effect, Layer, Redacted, type Scope, Stream } from "effect"
 import {
   ANTHROPIC_OAUTH_BETA,
   CLAUDE_CODE_SYSTEM,
@@ -27,6 +27,27 @@ const oauthTransform =
       ),
     )
 
+const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
+const OPENAI_CODEX_INSTRUCTIONS =
+  "You are Efferent, an interactive coding agent running inside a terminal. Follow the developer/system instructions in the conversation, use tools when needed, and keep responses concise."
+
+const openAiOAuthTransform =
+  (access: Redacted.Redacted, accountId: string | undefined) =>
+  (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+    client.pipe(
+      HttpClient.mapRequest((req) =>
+        req.pipe(
+          HttpClientRequest.setHeaders({
+            Authorization: `Bearer ${Redacted.value(access)}`,
+            ...(accountId !== undefined ? { "chatgpt-account-id": accountId } : {}),
+            originator: "efferent",
+            "User-Agent": "efferent",
+            "OpenAI-Beta": "responses=experimental",
+          }),
+        ),
+      ),
+    )
+
 // The required first system block for OAuth tokens (prepended for that path).
 const claudeCodePrompt = Prompt.make([
   { role: "system", content: CLAUDE_CODE_SYSTEM },
@@ -38,6 +59,74 @@ const prependClaudeCode = (options: unknown): unknown => ({
     Prompt.make((options as { prompt: Prompt.RawInput }).prompt),
   ),
 })
+
+const stripSystemPrompt = <A extends { readonly prompt: Prompt.RawInput }>(options: A): A => {
+  const prompt = Prompt.make(options.prompt)
+  return {
+    ...options,
+    prompt: Prompt.make(prompt.content.filter((m) => m.role !== "system") as never),
+  }
+}
+
+const collectStreamingResponse = (
+  stream: Stream.Stream<unknown, unknown, unknown>,
+): Effect.Effect<any, any, any> =>
+  stream.pipe(
+    Stream.runCollect,
+    Effect.map((chunk) => {
+      const parts: Array<Record<string, unknown>> = []
+      const text = new Map<string, string>()
+      const reasoning = new Map<string, string>()
+
+      const flushText = (id: string) => {
+        const value = text.get(id)
+        if (value !== undefined && value.length > 0) parts.push({ type: "text", text: value })
+        text.delete(id)
+      }
+      const flushReasoning = (id: string) => {
+        const value = reasoning.get(id)
+        if (value !== undefined && value.length > 0) parts.push({ type: "reasoning", text: value })
+        reasoning.delete(id)
+      }
+
+      for (const part of Chunk.toArray(chunk) as Array<Record<string, unknown>>) {
+        switch (part.type) {
+          case "text-start":
+            if (typeof part.id === "string") text.set(part.id, "")
+            break
+          case "text-delta":
+            if (typeof part.id === "string" && typeof part.delta === "string") {
+              text.set(part.id, `${text.get(part.id) ?? ""}${part.delta}`)
+            }
+            break
+          case "text-end":
+            if (typeof part.id === "string") flushText(part.id)
+            break
+          case "reasoning-start":
+            if (typeof part.id === "string") reasoning.set(part.id, "")
+            break
+          case "reasoning-delta":
+            if (typeof part.id === "string" && typeof part.delta === "string") {
+              reasoning.set(part.id, `${reasoning.get(part.id) ?? ""}${part.delta}`)
+            }
+            break
+          case "reasoning-end":
+            if (typeof part.id === "string") flushReasoning(part.id)
+            break
+          case "tool-params-start":
+          case "tool-params-delta":
+          case "tool-params-end":
+          case "error":
+            break
+          default:
+            parts.push(part)
+        }
+      }
+      for (const id of text.keys()) flushText(id)
+      for (const id of reasoning.keys()) flushReasoning(id)
+      return new LanguageModel.GenerateTextResponse(parts as never)
+    }),
+  )
 
 /**
  * The single `LanguageModel` the agent loop talks to. It is provider-
@@ -73,12 +162,13 @@ export const RouterLanguageModelLive = Layer.effect(
     const buildSvc = (
       sel: ModelSelection,
       key: Redacted.Redacted | undefined,
-      oauth: boolean,
+      cred: Credential | undefined,
     ): Effect.Effect<
       LanguageModel.Service,
       never,
       HttpClient.HttpClient | Scope.Scope
     > => {
+      const oauth = cred?.type === "oauth"
       switch (sel.provider) {
         case "google":
           return GoogleClient.make({ apiKey: key }).pipe(
@@ -104,11 +194,30 @@ export const RouterLanguageModelLive = Layer.effect(
             ),
           )
         default:
-          return OpenAiClient.make({ apiKey: key }).pipe(
+          return (
+            oauth && key !== undefined
+              ? OpenAiClient.make({
+                  apiKey: undefined,
+                  apiUrl: OPENAI_CODEX_API_URL,
+                  transformClient: openAiOAuthTransform(key, cred?.accountId),
+                })
+              : OpenAiClient.make({ apiKey: key })
+          ).pipe(
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
                 model: sel.modelId,
-                config: { prompt_cache_key: "efferent" },
+                config: {
+                  prompt_cache_key: "efferent",
+                  ...(oauth
+                    ? {
+                        instructions: OPENAI_CODEX_INSTRUCTIONS,
+                        store: false,
+                        include: ["reasoning.encrypted_content"],
+                        parallel_tool_calls: true,
+                        strict: false,
+                      }
+                    : {}),
+                },
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
           )
@@ -126,8 +235,12 @@ export const RouterLanguageModelLive = Layer.effect(
           .resolveKey(sel.provider)
           .pipe(Effect.orElseSucceed(() => undefined))
         const oauth = cred?.type === "oauth"
-        const svc = yield* buildSvc(sel, key, oauth)
-        return { svc, oauth }
+        const svc = yield* buildSvc(sel, key, cred)
+        return {
+          svc,
+          prependClaudeCode: oauth && sel.provider === "anthropic",
+          openAiSubscription: oauth && sel.provider === "openai",
+        }
       })
 
     const service: LanguageModel.Service = {
@@ -135,11 +248,16 @@ export const RouterLanguageModelLive = Layer.effect(
         registry.current.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
-              Effect.flatMap(({ svc, oauth }) =>
-                svc.generateText(
-                  oauth ? (prependClaudeCode(options) as typeof options) : options,
-                ),
-              ),
+              Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend, openAiSubscription }) => {
+                const nextOptions = shouldPrepend
+                  ? (prependClaudeCode(options) as typeof options)
+                  : openAiSubscription
+                    ? stripSystemPrompt(options)
+                    : options
+                return openAiSubscription
+                  ? collectStreamingResponse(svc.streamText(nextOptions))
+                  : svc.generateText(nextOptions)
+              }),
             ),
           ),
           Effect.scoped,
@@ -149,9 +267,9 @@ export const RouterLanguageModelLive = Layer.effect(
         registry.current.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
-              Effect.flatMap(({ svc, oauth }) =>
+              Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
                 svc.generateObject(
-                  oauth ? (prependClaudeCode(options) as typeof options) : options,
+                  shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
                 ),
               ),
             ),
@@ -164,9 +282,9 @@ export const RouterLanguageModelLive = Layer.effect(
           registry.current.pipe(
             Effect.flatMap((sel) =>
               resolveAndBuild(sel).pipe(
-                Effect.map(({ svc, oauth }) =>
+                Effect.map(({ svc, prependClaudeCode: shouldPrepend }) =>
                   svc.streamText(
-                    oauth ? (prependClaudeCode(options) as typeof options) : options,
+                    shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
                   ),
                 ),
               ),

@@ -1,5 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { inspect } from "node:util"
 import { LanguageModel } from "@effect/ai"
 import { Deferred, Effect, Fiber, Queue, Ref, Schema } from "effect"
 import {
@@ -32,9 +33,12 @@ import {
 
 import {
   ANTHROPIC_CALLBACK_PORT,
+  OPENAI_CALLBACK_PORT,
   anthropicAuthorizeUrl,
   exchangeAnthropicCode,
+  exchangeOpenAiCode,
   generatePkce,
+  openaiAuthorizeUrl,
   parseAuthorizationInput,
 } from "@efferent/adapters"
 
@@ -53,7 +57,15 @@ import {
   SPINNER_FRAMES,
 } from "../tui/terminal.js"
 import { KeyParser, type Key } from "../tui/keys.js"
-import { emptyInput, inputText, type InputState, applyKey } from "../tui/input.js"
+import {
+  emptyInput,
+  inputText,
+  type InputState,
+  applyKey,
+  cursorAtTopVisualRow,
+  cursorAtBottomVisualRow,
+  inputFromText,
+} from "../tui/input.js"
 import { Scrollback } from "../tui/scrollback.js"
 import { formatTokens, type StatusState } from "../tui/statusBar.js"
 import {
@@ -64,6 +76,19 @@ import {
   type PaletteState,
 } from "../tui/slashPalette.js"
 import { hiddenModal, type ModalState } from "../tui/modal.js"
+import {
+  openSettings,
+  moveSettings,
+  currentRow,
+  beginEdit,
+  editAppend,
+  editBackspace,
+  cancelEdit,
+  setRowValue,
+  isEditing,
+  type SettingsRow,
+  type SettingsState,
+} from "../tui/settingsView.js"
 import { describeActiveDatabase, storageLabel } from "../tui/dbStatus.js"
 import {
   openSelect,
@@ -175,6 +200,13 @@ interface MutableAppState {
   modelList?: ReadonlyArray<ModelInfo>
   /** Open `:model` select box (overlay); owns input while visible. */
   modelPicker?: SelectState<ModelInfo>
+  /**
+   * Open conversation picker (overlay), shown at startup when the workspace
+   * has prior conversations. `null` value = "start a new conversation".
+   */
+  convPicker?: SelectState<string | null>
+  /** Open `:settings` modal (overlay); owns input while visible. */
+  settingsView?: SettingsState
   /** Open `:login` flow (overlay); owns input while visible. */
   loginFlow?: LoginFlow
   /** In-flight OAuth login: PKCE verifier + callback-server stop + waiter fiber. */
@@ -189,6 +221,12 @@ interface MutableAppState {
   conversationHasTurns: boolean
   /** Fixed dim footer below the status bar (logs path + key hints). */
   footer: string
+  /** Session ring of submitted user messages, oldest → newest. */
+  inputHistory: string[]
+  /** Browsing position: -1 = not browsing; else index into `inputHistory`. */
+  historyIndex: number
+  /** Draft stashed when history browsing begins, so Down can restore it. */
+  historyDraft?: string
 }
 
 /** Build the status-bar note: spinner + elapsed + turn + queued, or none. */
@@ -241,8 +279,8 @@ const HELP_LINES = [
   "  :context         toggle the context viewer (message tree + handoff)",
   "  :browse          list conversations in this workspace",
   "  :resume <#|id>   resume a conversation (run :browse first)",
-  "  :settings        show configuration settings",
-  "  :set <k> <v>     update setting (e.g. :set maxSteps 15)",
+  "  :settings        open the settings modal (arrow + ↵ to edit)",
+  "  :set <k> <v>     update setting directly (e.g. :set maxSteps 15)",
   "  :model           list models; :model <#|id> switches provider/model",
 ]
 
@@ -256,6 +294,8 @@ const snapshot = (s: MutableAppState): AppState => ({
   palette: s.palette,
   modal: s.modal,
   modelPicker: s.modelPicker,
+  convPicker: s.convPicker,
+  settingsView: s.settingsView,
   loginFlow: s.loginFlow,
   sidePane: s.sidePane,
   spinnerFrame: s.spinnerFrame,
@@ -422,6 +462,46 @@ export interface TuiModeInput {
 
 const logFilePath = (): string => join(homedir(), ".efferent", "efferent.log")
 
+const formatFullError = (err: unknown): string => {
+  const message =
+    typeof err === "object" && err !== null && "message" in err
+      ? String((err as { message: unknown }).message)
+      : String(err)
+  const details = inspect(err, {
+    depth: 10,
+    maxArrayLength: 200,
+    maxStringLength: 100_000,
+    breakLength: 120,
+  })
+  return details === message ? message : `${message}\n\n${details}`
+}
+
+/** A conversation summary as returned by `ConversationStore.listByWorkspace`. */
+interface ConversationSummary {
+  readonly id: string
+  readonly createdAt: number
+  readonly firstPrompt?: string
+}
+
+/**
+ * Build the options for the startup conversation picker: one row per prior
+ * conversation (date + prompt preview) plus a leading "start new" row whose
+ * value is `null`.
+ */
+const conversationPickerOptions = (
+  list: ReadonlyArray<ConversationSummary>,
+): ReadonlyArray<{ value: string | null; label: string }> => [
+  { value: null, label: "＋  Start a new conversation" },
+  ...list.map((c) => {
+    const date = new Date(c.createdAt).toLocaleString()
+    const preview =
+      c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+        ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 60)
+        : "(empty)"
+    return { value: c.id, label: `${date} · ${preview}` }
+  }),
+]
+
 const seedSidePane = (
   instructions: ReadonlyArray<InstructionFile>,
   skills: ReadonlyArray<Skill>,
@@ -496,6 +576,8 @@ const runTuiModeCore = (
       activeProvider: initialSel.provider,
       conversationHasTurns: false,
       footer: `logs: tail -f ${logFilePath()}  ·  : commands · ↵ send · esc interrupt · ^C×2 quit`,
+      inputHistory: [],
+      historyIndex: -1,
     })
 
     if (input.resumeConversationId !== undefined) {
@@ -516,6 +598,23 @@ const runTuiModeCore = (
             context: startupSegments,
             contextCollapsed: new Set(turnIdsOf(startupSegments)),
           }
+          return s
+        })
+      }
+    } else if (process.stdin.isTTY) {
+      // No explicit --resume: if the workspace has prior conversations, offer a
+      // picker over the live TUI (Esc / "start new" dismisses it). The agent is
+      // already interactive behind the overlay.
+      const store = yield* ConversationStore
+      const list = yield* store
+        .listByWorkspace(input.cwd)
+        .pipe(Effect.catchAll(() => Effect.succeed([])))
+      if (list.length > 0) {
+        yield* Ref.update(stateRef, (s) => {
+          s.convPicker = openSelect(
+            "Resume a conversation",
+            conversationPickerOptions(list),
+          )
           return s
         })
       }
@@ -637,7 +736,11 @@ const runTuiModeCore = (
           return s
         })
         if (!curHasCred) {
-          const { provider: p, modelId } = parseModel(defaultModelForProvider(provider))
+          const defaultModel =
+            provider === "openai" && how === "subscription"
+              ? "openai:gpt-5.5"
+              : defaultModelForProvider(provider)
+          const { provider: p, modelId } = parseModel(defaultModel)
           yield* applyModelSelection({
             provider: p,
             modelId,
@@ -676,7 +779,9 @@ const runTuiModeCore = (
     ) =>
       Effect.gen(function* () {
         const auth = yield* AuthStore
-        const tokens = yield* exchangeAnthropicCode(code, verifier)
+        const tokens = yield* (provider === "openai"
+          ? exchangeOpenAiCode(code, verifier)
+          : exchangeAnthropicCode(code, verifier))
         yield* auth.setOAuth(provider, tokens)
         stop()
         yield* Ref.update(stateRef, (s) => {
@@ -707,7 +812,7 @@ const runTuiModeCore = (
     // and race that against a manually-pasted redirect URL.
     const startOAuthLogin = (provider: Provider) =>
       Effect.gen(function* () {
-        if (provider !== "anthropic") {
+        if (provider !== "anthropic" && provider !== "openai") {
           yield* Ref.update(stateRef, (s) => {
             delete s.loginFlow
             s.scrollback.push({
@@ -720,8 +825,11 @@ const runTuiModeCore = (
           return
         }
         const pkce = yield* generatePkce()
-        const url = anthropicAuthorizeUrl(pkce)
-        const server = startCallbackServer(ANTHROPIC_CALLBACK_PORT)
+        const url = provider === "openai" ? openaiAuthorizeUrl(pkce) : anthropicAuthorizeUrl(pkce)
+        const server =
+          provider === "openai"
+            ? startCallbackServer(OPENAI_CALLBACK_PORT, "/auth/callback")
+            : startCallbackServer(ANTHROPIC_CALLBACK_PORT)
         const shell = yield* Shell
         yield* shell
           .exec({ command: browserCommand(url), cwd: input.cwd, timeoutMs: 5_000 })
@@ -1157,6 +1265,64 @@ const runTuiModeCore = (
       baseHooks,
     )
 
+    // Record a submitted message into the session history ring (skip empty and
+    // consecutive duplicates) and reset any in-progress history browse.
+    const recordHistory = (s: MutableAppState, text: string): void => {
+      s.historyIndex = -1
+      delete s.historyDraft
+      const trimmed = text.trim()
+      if (trimmed.length === 0) return
+      if (s.inputHistory[s.inputHistory.length - 1] === text) return
+      s.inputHistory.push(text)
+    }
+
+    // Load a conversation's history + checkpoints, swap it into view (clearing
+    // scrollback + the side pane), and replay it for browsing. Shared by the
+    // `:resume` command and the startup conversation picker.
+    const resumeConversation = (
+      target: ConversationId,
+    ): Effect.Effect<void, never, R_Base> =>
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const history = yield* store
+          .list(target)
+          .pipe(Effect.catchAll(() => Effect.succeed([])))
+        const checkpoints = yield* store
+          .listCheckpoints(target)
+          .pipe(Effect.catchAll(() => Effect.succeed([])))
+        const resumedSegments = buildContextView(history, checkpoints)
+        yield* Ref.update(stateRef, (s) => {
+          s.conversationId = target
+          s.scrollback.clear()
+          s.sidePane = {
+            ...s.sidePane,
+            tree: emptyTree,
+            context: resumedSegments,
+            contextCollapsed: new Set(turnIdsOf(resumedSegments)),
+            contextSelected: new Set(),
+            contextHandoffSelected: new Set(),
+            contextCursor: 0,
+            stats: {
+              ...emptyStats,
+              startedAt: Date.now(),
+              contextWindow: s.sidePane.stats.contextWindow,
+            },
+            filesChanged: [],
+            stackCollapsed: new Set(["files", "skills", "instructions"]),
+            stackCursor: 0,
+          }
+          replayHistory(s.scrollback, history, checkpoints)
+          s.scrollback.cursorToBottom()
+          s.conversationHasTurns = history.length > 0
+          s.scrollback.push({
+            kind: "info",
+            text: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing`,
+          })
+          return s
+        })
+        yield* requestRender
+      })
+
     const submit = (
       text: string,
     ): Effect.Effect<void, never, R_Base> =>
@@ -1185,6 +1351,7 @@ const runTuiModeCore = (
           yield* Ref.update(stateRef, (s) => {
             s.queue = [...s.queue, text]
             s.scrollback.push({ kind: "info", text: `queued: ${text}` })
+            recordHistory(s, text)
             return s
           })
           yield* requestRender
@@ -1197,6 +1364,7 @@ const runTuiModeCore = (
         cur.scrollback.clearSearch()
         yield* Ref.update(stateRef, (s) => {
           s.input = emptyInput
+          recordHistory(s, text)
           s.busy = true
           s.turnStartedAt = Date.now()
           s.spinnerFrame = 0
@@ -1255,11 +1423,10 @@ const runTuiModeCore = (
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.catchAll((err) => {
-            const msg =
-              typeof err === "object" && err !== null && "message" in err
-                ? String((err as { message: unknown }).message)
-                : String(err)
-            return Queue.offer(eventQueue, { type: "error", message: msg })
+            const msg = formatFullError(err)
+            return Effect.logError(msg).pipe(
+              Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+            )
           }),
           Effect.asVoid,
           Effect.ensuring(finishTurn),
@@ -1573,44 +1740,7 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             }
-            const store = yield* ConversationStore
-            const history = yield* store
-              .list(target)
-              .pipe(Effect.catchAll(() => Effect.succeed([])))
-            const checkpoints = yield* store
-              .listCheckpoints(target)
-              .pipe(Effect.catchAll(() => Effect.succeed([])))
-            const resumedSegments = buildContextView(history, checkpoints)
-            yield* Ref.update(stateRef, (s) => {
-              s.conversationId = target
-              s.scrollback.clear()
-              s.sidePane = {
-                ...s.sidePane,
-                tree: emptyTree,
-                context: resumedSegments,
-                contextCollapsed: new Set(turnIdsOf(resumedSegments)),
-                contextSelected: new Set(),
-                contextHandoffSelected: new Set(),
-                contextCursor: 0,
-                stats: {
-                  ...emptyStats,
-                  startedAt: Date.now(),
-                  contextWindow: s.sidePane.stats.contextWindow,
-                },
-                filesChanged: [],
-                stackCollapsed: new Set(["files", "skills", "instructions"]),
-                stackCursor: 0,
-              }
-              replayHistory(s.scrollback, history, checkpoints)
-              s.scrollback.cursorToBottom()
-              s.conversationHasTurns = history.length > 0
-              s.scrollback.push({
-                kind: "info",
-                text: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing`,
-              })
-              return s
-            })
-            yield* requestRender
+            yield* resumeConversation(target)
             return "stay" as const
           }
           case ":help":
@@ -1645,23 +1775,44 @@ const runTuiModeCore = (
           case ":settings": {
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
-            // Report the *active* store (what's actually connected), derived
-            // from the live EFFERENT_DB_URL the selector used — env, or seeded
-            // from config.json. The config value alone is misleading (an env
+            // The *active* store (what's actually connected), derived from the
+            // live EFFERENT_DB_URL the selector used — env, or seeded from
+            // config.json (the config value alone is misleading since an env
             // var overrides it).
             const db = describeActiveDatabase(
               process.env.EFFERENT_DB_URL,
               current.dbUrl,
             )
+            const rows: ReadonlyArray<SettingsRow> = [
+              {
+                key: "allowBash",
+                label: "allowBash",
+                value: String(current.allowBash),
+                kind: "boolean",
+              },
+              {
+                key: "maxSteps",
+                label: "maxSteps",
+                value: String(current.maxSteps),
+                kind: "number",
+              },
+              {
+                key: "model",
+                label: "model",
+                value: current.model,
+                kind: "readonly",
+                hint: "use :model",
+              },
+              {
+                key: "database",
+                label: "database",
+                value: db.value,
+                kind: "readonly",
+                hint: "use :db",
+              },
+            ]
             yield* Ref.update(stateRef, (s) => {
-              s.scrollback.push({ kind: "info", text: "--- Configuration Settings ---" })
-              s.scrollback.push({ kind: "info", text: `allowBash: ${current.allowBash}` })
-              s.scrollback.push({ kind: "info", text: `maxSteps: ${current.maxSteps}` })
-              s.scrollback.push({ kind: "info", text: `model: ${current.model}` })
-              s.scrollback.push({ kind: "info", text: db.line })
-              if (db.overrideNote !== undefined) {
-                s.scrollback.push({ kind: "info", text: db.overrideNote })
-              }
+              s.settingsView = openSettings(rows)
               return s
             })
             yield* requestRender
@@ -2063,6 +2214,183 @@ const runTuiModeCore = (
           return "stay" as const
         }
 
+        // The startup conversation picker owns all input while open.
+        if (s.convPicker !== undefined) {
+          if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
+            yield* Ref.update(stateRef, (st) => {
+              delete st.convPicker
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.convPicker) st.convPicker = moveSelect(st.convPicker, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "backspace") {
+            yield* Ref.update(stateRef, (st) => {
+              if (st.convPicker) st.convPicker = filterBackspace(st.convPicker)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "char") {
+            const ch = key.char
+            yield* Ref.update(stateRef, (st) => {
+              if (st.convPicker) st.convPicker = filterAppend(st.convPicker, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const chosen = selectedValue(s.convPicker)
+            yield* Ref.update(stateRef, (st) => {
+              delete st.convPicker
+              return st
+            })
+            // A string value is a conversation id to resume; `null` (or no
+            // selection) just dismisses and starts fresh.
+            if (typeof chosen === "string") {
+              const target = yield* decodeConversationId(chosen).pipe(
+                Effect.catchAll(() => Effect.succeed(undefined)),
+              )
+              if (target !== undefined) yield* resumeConversation(target)
+            }
+            yield* requestRender
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
+        // The `:settings` modal owns all input while open. Arrow to move, Enter
+        // toggles a boolean / opens an inline editor for a number; an open edit
+        // takes typing, Enter commits + persists, Esc cancels (or closes).
+        if (s.settingsView !== undefined) {
+          const view = s.settingsView
+          const editing = isEditing(view)
+
+          if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
+            yield* Ref.update(stateRef, (st) => {
+              if (st.settingsView !== undefined && isEditing(st.settingsView)) {
+                // Esc cancels the inline edit but keeps the modal open.
+                st.settingsView = cancelEdit(st.settingsView)
+              } else {
+                delete st.settingsView
+              }
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+
+          // ---- Inline number edit ----
+          if (editing) {
+            if (key.type === "char") {
+              const ch = key.char
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView) st.settingsView = editAppend(st.settingsView, ch)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (key.type === "backspace") {
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView) st.settingsView = editBackspace(st.settingsView)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (key.type === "enter") {
+              const rowNow = currentRow(view)
+              const raw = view.editBuffer ?? ""
+              const num = Number(raw)
+              if (
+                rowNow === undefined ||
+                rowNow.key !== "maxSteps" ||
+                !Number.isFinite(num) ||
+                num < 1
+              ) {
+                // Invalid — drop the edit, keep the modal open.
+                yield* Ref.update(stateRef, (st) => {
+                  if (st.settingsView) st.settingsView = cancelEdit(st.settingsView)
+                  return st
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              const settingsStore = yield* SettingsStore
+              yield* settingsStore.update((curr) => ({
+                ...curr,
+                maxSteps: Math.floor(num),
+              }))
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView)
+                  st.settingsView = setRowValue(
+                    st.settingsView,
+                    "maxSteps",
+                    String(Math.floor(num)),
+                  )
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            return "stay" as const
+          }
+
+          // ---- Navigation / activation ----
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.settingsView) st.settingsView = moveSettings(st.settingsView, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const rowNow = currentRow(view)
+            if (rowNow === undefined) return "stay" as const
+            if (rowNow.kind === "boolean" && rowNow.key === "allowBash") {
+              const next = rowNow.value !== "true"
+              const settingsStore = yield* SettingsStore
+              yield* settingsStore.update((curr) => ({ ...curr, allowBash: next }))
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView)
+                  st.settingsView = setRowValue(
+                    st.settingsView,
+                    "allowBash",
+                    String(next),
+                  )
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (rowNow.kind === "number") {
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView) st.settingsView = beginEdit(st.settingsView)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            // readonly rows: no-op (a hint already points at :model / :db).
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
         // The `:login` flow owns all input while open (Esc steps back / closes).
         if (s.loginFlow !== undefined) {
           const flow = s.loginFlow
@@ -2256,16 +2584,72 @@ const runTuiModeCore = (
         switch (intent.kind) {
           // Hand the key to the input editor (typing / vi motions / submit).
           case "input": {
+            // Shell-style history recall: Up at the top visual row (or on empty
+            // input) walks back through previously submitted messages; Down
+            // walks forward toward the draft. Only at the edges, so multi-line
+            // cursor navigation still works mid-draft. Active in INSERT + NORMAL.
+            if (
+              key.type === "arrow" &&
+              (key.dir === "up" || key.dir === "down") &&
+              s.inputHistory.length > 0
+            ) {
+              const atTop = cursorAtTopVisualRow(s.input, cols)
+              const atBottom = cursorAtBottomVisualRow(s.input, cols)
+              const browsing = s.historyIndex !== -1
+              if (key.dir === "up" && atTop) {
+                yield* Ref.update(stateRef, (st) => {
+                  // Entering history: stash the live draft so Down can restore it.
+                  if (st.historyIndex === -1) st.historyDraft = inputText(st.input)
+                  const next =
+                    st.historyIndex === -1
+                      ? st.inputHistory.length - 1
+                      : Math.max(0, st.historyIndex - 1)
+                  st.historyIndex = next
+                  st.input = inputFromText(st.inputHistory[next] ?? "")
+                  st.palette = computePalette(inputText(st.input))
+                  st.navPending = undefined
+                  return st
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              if (key.dir === "down" && browsing && atBottom) {
+                yield* Ref.update(stateRef, (st) => {
+                  const next = st.historyIndex + 1
+                  if (next >= st.inputHistory.length) {
+                    // Past the newest entry → restore the stashed draft.
+                    st.input = inputFromText(st.historyDraft ?? "")
+                    st.historyIndex = -1
+                    delete st.historyDraft
+                  } else {
+                    st.historyIndex = next
+                    st.input = inputFromText(st.inputHistory[next] ?? "")
+                  }
+                  st.palette = computePalette(inputText(st.input))
+                  st.navPending = undefined
+                  return st
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+            }
+
             const viMode = s.mode === "insert" ? "insert" : "normal"
             const r = applyViKey({ ...s.vi, mode: viMode }, s.input, key, cols)
             const nextMode: UiMode = r.vi.mode === "insert" ? "insert" : "normal"
             const newPalette = computePalette(inputText(r.input))
+            // Editing a recalled entry detaches from history browsing.
+            const editedText = inputText(r.input) !== inputText(s.input)
             yield* Ref.update(stateRef, (st) => {
               st.input = r.input
               st.vi = r.vi
               st.mode = nextMode
               st.palette = newPalette
               st.navPending = undefined
+              if (editedText && st.historyIndex !== -1) {
+                st.historyIndex = -1
+                delete st.historyDraft
+              }
               return st
             })
             if (r.action !== undefined) {
