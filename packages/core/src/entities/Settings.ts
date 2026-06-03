@@ -4,6 +4,18 @@ import { DefaultModel } from "./Model.js"
 export const EditorMode = Schema.Literal("insert", "vi")
 export type EditorMode = typeof EditorMode.Type
 
+export const AnthropicThinkingEffort = Schema.Literal("off", "low", "medium", "high")
+export type AnthropicThinkingEffort = typeof AnthropicThinkingEffort.Type
+
+export const OpenAiReasoningEffort = Schema.Literal("none", "minimal", "low", "medium", "high")
+export type OpenAiReasoningEffort = typeof OpenAiReasoningEffort.Type
+
+export const GeminiThinkingLevel = Schema.Literal("off", "minimal", "low", "medium", "high")
+export type GeminiThinkingLevel = typeof GeminiThinkingLevel.Type
+
+export const OpenCodeThinkingMode = Schema.Literal("off", "high")
+export type OpenCodeThinkingMode = typeof OpenCodeThinkingMode.Type
+
 export const Settings = Schema.Struct({
   allowBash: Schema.Boolean.annotations({
     description: "Whether the agent can execute bash commands without prompting in non-interactive modes.",
@@ -21,6 +33,30 @@ export const Settings = Schema.Struct({
     Schema.String.annotations({
       description:
         "Conversation store location. A 'postgres://…' connection string selects Postgres; anything else (a filesystem path, optionally 'sqlite:'-prefixed) selects SQLite at that path. Unset → SQLite at ~/.efferent/efferent.db. The EFFERENT_DB_URL env var overrides this.",
+    }),
+  ),
+  anthropicThinkingEffort: Schema.optional(
+    AnthropicThinkingEffort.annotations({
+      description:
+        "Claude extended-thinking effort. Omit to use provider defaults; 'off' sends thinking disabled; low/medium/high map to token budgets.",
+    }),
+  ),
+  openAiReasoningEffort: Schema.optional(
+    OpenAiReasoningEffort.annotations({
+      description:
+        "OpenAI reasoning effort for reasoning models. Omit to use provider defaults.",
+    }),
+  ),
+  geminiThinkingLevel: Schema.optional(
+    GeminiThinkingLevel.annotations({
+      description:
+        "Gemini thinking level. Omit to use provider defaults; 'off' disables thought budget when supported.",
+    }),
+  ),
+  openCodeThinkingMode: Schema.optional(
+    OpenCodeThinkingMode.annotations({
+      description:
+        "OpenCode (Kimi) thinking mode. 'off' disables extended thinking; 'high' enables it.",
     }),
   ),
 })

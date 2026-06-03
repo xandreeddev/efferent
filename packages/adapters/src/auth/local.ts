@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
@@ -33,7 +34,7 @@ const REFRESH_SKEW_MS = 60_000
  * so a credential added mid-session works on the next turn with no restart.
  */
 
-const PROVIDERS = ["google", "openai", "anthropic"] as const
+const PROVIDERS = ["google", "openai", "anthropic", "opencode"] as const
 
 // `~/.efferent`, or `<EFFERENT_HOME>/.efferent` when that env var points
 // elsewhere (relocate config / test isolation). This is a directory knob, not
@@ -53,14 +54,15 @@ const isProvider = (s: string): s is Provider =>
  * `efferent init`) which is read as an api_key. Anything malformed is dropped
  * so a broken file never blocks login.
  */
-const parseAuth = (raw: string): AuthData => {
+const parseAuth = (raw: string): { data: AuthData; changed: boolean } => {
+  let changed = false
   let json: unknown
   try {
     json = JSON.parse(raw)
   } catch {
-    return {}
+    return { data: {}, changed }
   }
-  if (typeof json !== "object" || json === null) return {}
+  if (typeof json !== "object" || json === null) return { data: {}, changed }
   const out: Record<string, Credential> = {}
   for (const [k, v] of Object.entries(json as Record<string, unknown>)) {
     if (!isProvider(k)) continue
@@ -78,6 +80,15 @@ const parseAuth = (raw: string): AuthData => {
       typeof o.refresh === "string" &&
       typeof o.expires === "number"
     ) {
+      const installationId =
+        k === "openai"
+          ? typeof o.installationId === "string" && o.installationId.length > 0
+            ? o.installationId
+            : randomUUID()
+          : typeof o.installationId === "string" && o.installationId.length > 0
+            ? o.installationId
+            : undefined
+      if (k === "openai" && typeof o.installationId !== "string") changed = true
       out[k] = {
         type: "oauth",
         access: o.access,
@@ -86,17 +97,26 @@ const parseAuth = (raw: string): AuthData => {
         ...(typeof o.accountId === "string" && o.accountId.length > 0
           ? { accountId: o.accountId }
           : {}),
+        ...(installationId !== undefined ? { installationId } : {}),
       }
     }
   }
-  return out
+  return { data: out, changed }
 }
 
 const readAuthFile = (): AuthData => {
   try {
     const p = authFilePath()
     if (!existsSync(p)) return {}
-    return parseAuth(readFileSync(p, "utf8"))
+    const parsed = parseAuth(readFileSync(p, "utf8"))
+    if (parsed.changed) {
+      try {
+        writeAuthFile(parsed.data)
+      } catch {
+        // Best-effort migration only; keep the in-memory credential usable.
+      }
+    }
+    return parsed.data
   } catch {
     return {}
   }
@@ -110,12 +130,19 @@ const writeAuthFile = (data: AuthData): void => {
   renameSync(tmp, p)
 }
 
-const oauthCredential = (tokens: OAuthTokens): Credential => ({
+const oauthCredential = (provider: Provider, tokens: OAuthTokens): Credential => ({
   type: "oauth",
   access: tokens.access,
   refresh: tokens.refresh,
   expires: tokens.expires,
   ...(tokens.accountId !== undefined ? { accountId: tokens.accountId } : {}),
+  ...(provider === "openai"
+    ? {
+        installationId: tokens.installationId ?? randomUUID(),
+      }
+    : tokens.installationId !== undefined
+      ? { installationId: tokens.installationId }
+      : {}),
 })
 
 export const LocalAuthStoreLive = Layer.effect(
@@ -164,10 +191,19 @@ export const LocalAuthStoreLive = Layer.effect(
                       refresh: cred.refresh,
                       expires: cred.expires,
                       ...(cred.accountId !== undefined ? { accountId: cred.accountId } : {}),
+                      ...(cred.installationId !== undefined
+                        ? { installationId: cred.installationId }
+                        : {}),
                     } satisfies OAuthTokens)
             return refresh.pipe(
+              Effect.map((tokens) => ({
+                ...tokens,
+                ...(tokens.installationId !== undefined || cred.installationId === undefined
+                  ? {}
+                  : { installationId: cred.installationId }),
+              })),
               Effect.flatMap((tokens) =>
-                set(p, oauthCredential(tokens)).pipe(
+                set(p, oauthCredential(p, tokens)).pipe(
                   Effect.as(Redacted.make(tokens.access)),
                 ),
               ),
@@ -177,7 +213,7 @@ export const LocalAuthStoreLive = Layer.effect(
 
       setApiKey: (p, key) => set(p, { type: "api_key", key }),
 
-      setOAuth: (p, tokens: OAuthTokens) => set(p, oauthCredential(tokens)),
+      setOAuth: (p, tokens: OAuthTokens) => set(p, oauthCredential(p, tokens)),
 
       remove: (p) =>
         Ref.get(ref).pipe(

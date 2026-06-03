@@ -14,6 +14,7 @@ const STATUSES: ReadonlyArray<ProviderStatus> = [
   { provider: "anthropic", configured: "api_key" },
   { provider: "google", configured: undefined },
   { provider: "openai", configured: undefined },
+  { provider: "opencode", configured: undefined },
 ]
 
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")

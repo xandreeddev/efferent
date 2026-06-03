@@ -226,6 +226,12 @@ const parseCsi = (seq: string): Key | undefined => {
           return { type: "pageUp" }
         case 6:
           return { type: "pageDown" }
+        case 27: {
+          // modifyOtherKeys: CSI 27;<mod>;<code>~  (code 9 = Tab)
+          const code = parseInt(params[2] ?? "", 10)
+          if (code === 9) return { type: "shiftTab" }
+          return undefined
+        }
       }
       return undefined
     }

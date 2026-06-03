@@ -73,12 +73,13 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   google: "Google",
   openai: "OpenAI",
   anthropic: "Anthropic",
+  opencode: "OpenCode",
 }
 
 // Anthropic and OpenAI expose subscription/OAuth flows; every provider accepts
 // an API key.
 const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "openai"]
-const API_KEY_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "google", "openai"]
+const API_KEY_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "google", "openai", "opencode"]
 
 const statusTag = (s: ProviderStatus["configured"]): string =>
   s === "api_key" ? "✓ api key" : s === "oauth" ? "✓ subscription" : "• unconfigured"

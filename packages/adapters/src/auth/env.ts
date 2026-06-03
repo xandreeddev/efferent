@@ -19,6 +19,7 @@ const ENV_VAR: Record<Provider, string> = {
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  opencode: "OPENCODE_API_KEY",
 }
 
 const readEnvKey = (name: string): Effect.Effect<string | undefined> =>
@@ -32,7 +33,7 @@ export const EnvAuthStoreLive = Layer.effect(
   AuthStore,
   Effect.gen(function* () {
     const data: Record<string, Credential> = {}
-    for (const p of ["google", "openai", "anthropic"] as const) {
+    for (const p of ["google", "openai", "anthropic", "opencode"] as const) {
       const k = yield* readEnvKey(ENV_VAR[p])
       if (k !== undefined) data[p] = { type: "api_key", key: k }
     }

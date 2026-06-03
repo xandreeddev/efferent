@@ -78,6 +78,7 @@ const legendRows = (
               "hjkl/↑↓←→ move",
               "w/b/e word",
               "⇥ fold",
+              "⇧T effort",
               "Z fold all",
               "{ } turn",
               "v/V select",

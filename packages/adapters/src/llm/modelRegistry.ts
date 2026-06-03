@@ -41,6 +41,7 @@ type GoogleModel = {
 }
 type OpenAiModel = { readonly id?: string }
 type AnthropicModel = { readonly id?: string; readonly display_name?: string }
+type OpenCodeModel = { readonly id?: string }
 
 // OpenAI ChatGPT/Codex subscription tokens don't work with `/v1/models`.
 // Use the generated models.dev snapshot instead of a stale hand-written list.
@@ -187,6 +188,35 @@ export const ModelRegistryLive = Layer.effect(
       return out
     })
 
+    const listOpenCode = Effect.gen(function* () {
+      const c = yield* creds("opencode")
+      if (c === undefined) return [] as ModelInfo[]
+      const json = yield* getJson(
+        HttpClientRequest.get("https://opencode.ai/zen/go/v1/models").pipe(
+          HttpClientRequest.setHeader("Authorization", `Bearer ${c.key}`),
+        ),
+      ).pipe(
+        Effect.catchAll((e) =>
+          Effect.as(
+            Effect.logWarning(`opencode model list failed: ${String(e)}`),
+            { data: [] as ReadonlyArray<OpenCodeModel> },
+          ),
+        ),
+      )
+      const data = (json as { data?: ReadonlyArray<OpenCodeModel> }).data ?? []
+      const out: ModelInfo[] = []
+      for (const m of data) {
+        if (m.id === undefined) continue
+        out.push({
+          provider: "opencode",
+          modelId: m.id,
+          displayName: m.id,
+          contextWindow: contextWindowFor("opencode", m.id),
+        })
+      }
+      return out
+    })
+
     return ModelRegistry.of({
       current: settings.get().pipe(
         Effect.map((s) => {
@@ -207,7 +237,7 @@ export const ModelRegistryLive = Layer.effect(
             }),
           ),
 
-      list: Effect.all([listGoogle, listOpenAi, listAnthropic]).pipe(
+      list: Effect.all([listGoogle, listOpenAi, listAnthropic, listOpenCode]).pipe(
         Effect.map((lists) =>
           lists.flat().sort((a, b) =>
             a.provider === b.provider

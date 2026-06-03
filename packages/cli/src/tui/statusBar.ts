@@ -8,6 +8,8 @@ export interface StatusState {
   readonly cwd: string
   /** Active conversation store, e.g. "sqlite" or "pg". Shown between tokens and cwd. */
   readonly storage: string
+  /** Optional thinking/reasoning effort level shown next to the model. */
+  readonly effort?: string | undefined
   /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
   readonly note?: string | undefined
 }
@@ -37,15 +39,17 @@ const prettyCwd = (cwd: string): string =>
 
 export const renderStatusBar = (state: StatusState, cols: number): string => {
   // Mode + focused pane live in the bordered keybind box now (no duplication here).
-  const left = `${ansi.bold}${ansi.fgBrightCyan}${state.modelId}${ansi.reset}`
+  const effort =
+    state.effort !== undefined && state.effort.length > 0
+      ? `${ansi.fgGray} · ${ansi.fgBrightMagenta}${state.effort}${ansi.reset}`
+      : ""
+  const left = `${ansi.bold}${ansi.fgBrightCyan}${state.modelId}${ansi.reset}${effort}`
   const used = state.inputTokens
   const cached = state.cacheReadTokens
   const tokensText =
-    cached > 0
-      ? `${formatTokens(used)} (${formatTokens(cached)} cached) / ${formatTokens(
-          state.contextWindow,
-        )}`
-      : `${formatTokens(used)} / ${formatTokens(state.contextWindow)}`
+    `${formatTokens(used)} (${formatTokens(cached)} cached) / ${formatTokens(
+      state.contextWindow,
+    )}`
   const middle = `${gauge(used, state.contextWindow, 8)} ${ansi.fgGray}${tokensText}${ansi.reset}`
   const storage = `${ansi.fgGray}${state.storage}${ansi.reset}`
   const right = `${ansi.fgGray}${prettyCwd(state.cwd)}${ansi.reset}`

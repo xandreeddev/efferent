@@ -212,16 +212,92 @@ export const extractUsage = (
     inputTokens?: number
     outputTokens?: number
     totalTokens?: number
+    cachedInputTokens?: number
   }
-  const finish = (content as ReadonlyArray<AnyPart>).find(
+  // Some streaming adapters (e.g. OpenCode) emit a finish part from the
+  // choice with finish_reason *and* a later usage-only finish part.
+  // Scan all finish parts and pick the one that carries usage data.
+  const finishes = (content as ReadonlyArray<AnyPart>).filter(
     (p) => p.type === "finish",
   )
+  const finish =
+    finishes.find((p) => {
+      const fu = (p as AnyPart).usage as {
+        inputTokens?: number
+        outputTokens?: number
+      } | undefined
+      return fu?.inputTokens !== undefined || fu?.outputTokens !== undefined
+    }) ?? finishes[0]
   const um = (finish?.metadata as { google?: { usageMetadata?: Record<string, number> } })
     ?.google?.usageMetadata
+  const fu = finish?.usage as {
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+    cachedInputTokens?: number
+  } | undefined
   return {
-    inputTokens: u.inputTokens ?? um?.promptTokenCount ?? 0,
-    outputTokens: u.outputTokens ?? um?.candidatesTokenCount ?? 0,
-    totalTokens: u.totalTokens ?? um?.totalTokenCount ?? 0,
-    cacheReadTokens: um?.cachedContentTokenCount ?? 0,
+    inputTokens: u.inputTokens ?? fu?.inputTokens ?? um?.promptTokenCount ?? 0,
+    outputTokens: u.outputTokens ?? fu?.outputTokens ?? um?.candidatesTokenCount ?? 0,
+    totalTokens: u.totalTokens ?? fu?.totalTokens ?? um?.totalTokenCount ?? 0,
+    cacheReadTokens: u.cachedInputTokens ?? fu?.cachedInputTokens ?? um?.cachedContentTokenCount ?? 0,
   }
+}
+
+const EFFERENT_USAGE_KEY = "efferent"
+
+/**
+ * Embed the API-reported turn usage into the first assistant message's
+ * `providerOptions` so it persists with the conversation and can be
+ * recovered on resume / build.
+ */
+export const attachUsageToAssistant = (
+  messages: Array<AgentMessage>,
+  usage: TokenUsage,
+): void => {
+  const first = messages[0]
+  if (first !== undefined && first.role === "assistant") {
+    const prev =
+      typeof first.providerOptions === "object" && first.providerOptions !== null
+        ? (first.providerOptions as Record<string, unknown>)
+        : {}
+    ;(first as Record<string, unknown>).providerOptions = {
+      ...prev,
+      [EFFERENT_USAGE_KEY]: usage,
+    }
+  }
+}
+
+/**
+ * Scan a persisted conversation for embedded turn usage and return:
+ * - `lastUsage`: the most recent turn's input/cache (for the status bar)
+ * - cumulative output/total/turns (for the side-pane activity view)
+ */
+export const recoverConversationStats = (
+  messages: ReadonlyArray<AgentMessage>,
+): {
+  readonly lastUsage: TokenUsage | undefined
+  readonly cumulativeOutput: number
+  readonly cumulativeTotal: number
+  readonly turns: number
+} => {
+  let cumulativeOutput = 0
+  let cumulativeTotal = 0
+  let turns = 0
+  let lastUsage: TokenUsage | undefined
+
+  for (const msg of messages) {
+    if (msg.role === "assistant") {
+      const opts = msg.providerOptions as Record<string, unknown> | undefined
+      const usage = opts?.[EFFERENT_USAGE_KEY] as TokenUsage | undefined
+      if (usage !== undefined) {
+        cumulativeOutput += usage.outputTokens
+        cumulativeTotal += usage.totalTokens
+        turns++
+        lastUsage = usage
+      }
+    }
+  }
+
+  return { lastUsage, cumulativeOutput, cumulativeTotal, turns }
 }
