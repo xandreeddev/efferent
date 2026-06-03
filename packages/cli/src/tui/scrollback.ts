@@ -291,7 +291,7 @@ const renderBlock = (
  *
  * Per-block wrapped lines are memoized (keyed by block identity + cols +
  * expanded), so a keystroke / spinner tick re-flattens by concatenating
- * cached arrays instead of re-wrapping every block (SCROLLING_REVIEW.md §C).
+ * cached arrays instead of re-wrapping every block.
  * Navigation, search and the viewport math read fields derived from the
  * most recent render(), so callers never re-flatten or thread the size in.
  */
@@ -1165,8 +1165,8 @@ export class Scrollback {
     const start = Math.max(0, end - rows)
     const window = lines.slice(start, end)
 
-    // Independent above/below indicators (SCROLLING_REVIEW.md §A): hidden
-    // content above shows at the top, hidden content below at the bottom.
+    // Independent above/below indicators: hidden content above shows at the
+    // top, hidden content below at the bottom.
     if (start > 0) {
       window[0] = `${ansi.dim}↑ ${start} more above${ansi.reset}`
     }

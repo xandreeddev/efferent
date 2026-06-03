@@ -7,8 +7,7 @@ description: Owns packages/cli/. Coding-agent driver — composition root + four
 ```
 src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
-├── events.ts          AgentEvent union + makeEventHooks(queue, beforeToolHook)
-├── safetyHooks.ts     bashConfirmHook / denyBashHook
+├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
 ├── modes/{tui,print,json,rpc}.ts
 ├── login/oauthServer.ts   loopback OAuth callback server (:53692) + open-browser
 └── tui/{terminal,keys,render,legend,uiMode,navKeys,statusBar,scrollback,input,slashPalette,modal,selectBox,promptBox,loginFlow,markdown,logger,sidePane,contextView,viMode}.ts
@@ -58,7 +57,7 @@ src/
 - Sub-agent inner tool calls do NOT push pills to scrollback — they update the side pane's top frame's `currentTool`. The parent's `delegate_to_<name>` pill stays in the scrollback.
 - Renders are full-frame composed then line-diffed against the previous frame to avoid flicker.
 - Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-C, `:exit`, signal).
-- Bash safety: `bashConfirmHook` opens the modal and blocks the model's call with `{ action: "block", reason }` on `n`/Esc. The hook is wired only in tui mode; non-interactive modes use `denyBashHook(--allow-bash)`.
+- Bash safety: non-interactive modes gate on `--allow-bash` via the `allowBash` flag passed to `codingToolkitLayer`; a denied call is returned to the model as a tool failure. The TUI currently allows bash unconditionally — a `promptForBash` modal is defined in `tui.ts` but **not yet wired** into `onBeforeToolCall` (see `docs/roadmap.md`).
 
 ## Hardcoded knobs (move to a settings layer later)
 - Bash timeout default: 60s.

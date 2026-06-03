@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { MODEL_CATALOG } from "./modelCatalog.generated.js"
 
 /**
  * Which LLM vendor backs a selection. Each maps to one `@effect/ai`
@@ -80,11 +81,28 @@ export const defaultModelForProviders = (
 }
 
 /**
- * Best-effort context-window size for the status-bar gauge when the live
- * model list (which carries the real limit) hasn't been fetched. Matches
- * on substrings of the id; falls back to a per-provider default.
+ * Look the model up in the generated catalogue (`modelCatalog.generated.ts`,
+ * snapshotted from models.dev). Tries the exact `"<provider>:<modelId>"` key,
+ * then retries with a trailing date stamp (`-YYYYMMDD`) stripped, since pinned
+ * ids like `claude-opus-4-8-20260101` share a window with their base id.
+ */
+const catalogLookup = (provider: Provider, modelId: string) => {
+  const exact = MODEL_CATALOG[`${provider}:${modelId}`]
+  if (exact !== undefined) return exact
+  const undated = modelId.replace(/-\d{6,}$/, "")
+  return undated !== modelId ? MODEL_CATALOG[`${provider}:${undated}`] : undefined
+}
+
+/**
+ * Context-window size for the status-bar gauge. Prefers the generated
+ * catalogue (the real per-model limit from models.dev — neither Anthropic's nor
+ * OpenAI's `/models` API reports it); falls back to a per-provider substring
+ * heuristic for ids not yet in the catalogue (e.g. a model released since the
+ * last `bun run generate-models`).
  */
 export const contextWindowFor = (provider: Provider, modelId: string): number => {
+  const cataloged = catalogLookup(provider, modelId)
+  if (cataloged !== undefined) return cataloged.contextWindow
   const id = modelId.toLowerCase()
   if (provider === "google") {
     if (id.includes("1.5-pro")) return 2_000_000

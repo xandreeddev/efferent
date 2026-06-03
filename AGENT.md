@@ -1,6 +1,6 @@
 # efferent — coding agent on Effect.ts + Bun
 
-Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent tree) for the broader project rules — alias identity, OPSEC, weekly cadence, locked stack. See `PLAN.md` for the active design / pivot record.
+Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent tree) for the broader project rules — alias identity, OPSEC, weekly cadence, locked stack. See `docs/roadmap.md` for what's deferred and `docs/comparison.md` for how we stack up against Claude Code + pi.
 
 ## Architecture (ports & adapters)
 
@@ -30,6 +30,7 @@ bun install                                          # from agent/ root only
 bun run typecheck                                    # cross-package via path mappings
 bun run build                                        # bundle the CLI → packages/cli/dist/efferent.js
 bun run eval [name …]                                # run eval suites (key-gated)
+bun run generate-models                              # refresh the model catalogue from models.dev
 
 # Postgres is OPTIONAL (only when EFFERENT_DB_URL is set); the default store is SQLite.
 docker compose up -d                                 # start local Postgres (host port 5434)
@@ -64,14 +65,14 @@ An `@effect/ai` `Toolkit` in `@efferent/core/usecases/codingToolkit.ts`, backed 
 | `read_file`  | `{ path; offset?; limit? }`                      | `FileSystem.read`                            |
 | `write_file` | `{ path; content }`                              | `FileSystem.write`                           |
 | `edit_file`  | `{ path; edits: [{ oldText; newText }] }`        | read → string replace → write, returns diff |
-| `bash`       | `{ command; timeout? }`                          | `Shell.exec`, cwd bound at tool-build time  |
+| `Bash`       | `{ command; timeout? }`                          | `Shell.exec`, cwd bound at tool-build time  |
 | `grep`       | `{ pattern; dir?; flags?; context? }`            | shells out to `grep -rnE` for now            |
 | `glob`       | `{ pattern; dir? }`                              | `FileSystem.glob` via `Bun.Glob`             |
 | `ls`         | `{ path?; recursive? }`                          | `FileSystem.list`                            |
 | `web_fetch`  | `{ url; maxBytes? }`                             | `Http.get`; HTML reduced to text             |
-| `web_search` | `{ query }`                                      | `WebSearch.search` → `{ answer; sources }`   |
+| `search_web` | `{ query }`                                      | `WebSearch.search` → `{ answer; sources }`   |
 
-All paths resolved relative to the `cwd` bound in `codingToolkitLayer(cwd)`. `web_search` is provider-native (see below) — it has no parameter-less constraint issue because `{ query }` satisfies the ≥1-parameter rule.
+All paths resolved relative to the `cwd` bound in `codingToolkitLayer(cwd)`. **Names matter:** Anthropic reserves the lowercase tool names `bash` / `web_search` / `computer` for its provider-defined tools (case-sensitive lookup); when we register a handler-backed tool by one of those names, the Anthropic SDK reroutes it to the built-in provider tool — which isn't in our toolkit, so the turn fails. So our shell is **`Bash`** (capital B) and our search is **`search_web`** (reversed). `search_web` is provider-native (see below) — it has no parameter-less constraint issue because `{ query }` satisfies the ≥1-parameter rule.
 
 ## Web search
 
@@ -147,6 +148,8 @@ The agent loop talks to one provider-agnostic `LanguageModel`; which provider/mo
 
 `LlmInfo.metadata` (provided by `ModelLive`, following the live `ModelRegistry.current`) exposes `{ modelId, contextWindow }`; the TUI status bar reads it at startup and `/model` updates it on switch. After each turn, `onAssistantMessage` carries a `TokenUsage` (input / output / total / cacheRead) for the gauge; `cacheReadTokens` comes from Gemini's `usageMetadata.cachedContentTokenCount`. Cache-read tokens shown dim: `18k (12k cached) / 1M`.
 
+**Context window** comes from `contextWindowFor(provider, modelId)` (`entities/Model.ts`), which reads a **generated catalogue** (`entities/modelCatalog.generated.ts`, snapshotted from [models.dev](https://models.dev) by `bun run generate-models` → `scripts/generateModelCatalog.ts`) — neither Anthropic's nor OpenAI's `/models` API reports a context length, so the catalogue is the source of truth (e.g. Sonnet 4.6 / Opus 4.6+ = 1M). A bare per-provider substring heuristic remains as the fallback for ids newer than the last snapshot; dated ids (`…-20260101`) fall back to their base id. Google's live `inputTokenLimit` still wins when present.
+
 ## Skills
 
 `.efferent/skills/*.md` files are auto-discovered at startup. The search path walks `cwd → parents → ~/.efferent/skills/`; closer-to-cwd shadows farther on name collisions. Each skill file has YAML-ish frontmatter and a free-form markdown body:
@@ -175,10 +178,10 @@ A fourth package, **`packages/evals`** — a minimal, Effect-native eval library
 
 ## Deferred (do not build until they hurt)
 
-Migration follow-ups (dropped when the loop moved onto `@effect/ai`):
+See `docs/roadmap.md` for the full backlog. Highlights of what's NOT yet built:
+
 - **Explicit Gemini context caching** — implicit caching is live (see Models & providers). Explicit `cachedContent` resources would need `@effect/ai-google` to let us send a trimmed `contents` + suppress system/tools; it can't today, so deferred. Cost optimisation, not correctness.
-- **Scoped sub-agent delegation** — was `scopedAgentTools`/`runScopedAgent` (depended on the old `Llm` port). Re-add as `@effect/ai` tools whose handlers run a nested loop.
-- **Interactive TUI bash confirm** — bash is now gated by the `allowBash` flag in the handler; the per-command y/n modal needs re-wiring through the handler (e.g. an approval service).
+- **Interactive TUI bash confirm** — bash is now gated by the `allowBash` flag in the handler; a `promptForBash` modal is defined in `tui.ts` but not yet wired into `onBeforeToolCall` (it needs the handler to consult an approval service before exec).
 - **Live token streaming** — the loop uses `generateText` per turn; switch to `streamText` and map stream parts to events for token-level TUI updates.
 - **Per-conversation OpenAI `prompt_cache_key`** — currently a stable static key; threading the conversation id would tighten cache routing.
 

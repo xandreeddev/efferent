@@ -1,0 +1,100 @@
+# Roadmap
+
+Living backlog of what's **not yet built** in efferent — what's coming next, what's optional, and what we're consciously skipping. Up to date with `main` as of the last edit to this file.
+
+For *what's shipped*, see `AGENT.md` (architecture) and `README.md` (feature tour).
+
+---
+
+## Tier 1 — next up (visible polish + capability)
+
+These are low-to-medium effort on the current Effect stack and unlock the biggest UX wins.
+
+### Token-level streaming
+The loop uses `LanguageModel.generateText` per turn (one round-trip → one append). Switch to `LanguageModel.streamText` and map `Response.StreamPart`s (`TextStart/Delta/End`, `ReasoningStart/Delta/End`, `ToolParamsStart/Delta/End`, `ToolCallPart`, `ToolResultPart`, `FinishPart`) onto new `AgentEvent` variants. The router already implements `streamText`; the pieces to touch are `core/usecases/agentLoop.ts`, `core/usecases/promptMapping.ts`, `cli/src/events.ts`, and the scrollback's assistant-block renderer (it needs to accept partial text and live-update). Tool-arg deltas can drive a "tool call forming" pill state.
+
+### Wire the bash-confirm modal
+`promptForBash` is defined in `packages/cli/src/modes/tui.ts` but never attached. Plan: build a small `Approval` service in `@efferent/core` (a port with `requestApproval({ tool, summary, cwd })`), call it from the `Bash` handler when an `approvalRequired` flag is set on `codingToolkitLayer`, and provide a TUI-mode implementation that opens the existing modal. Non-interactive modes keep the `allowBash` gate. Pairs well with a `permissions` config block on `Settings` (allow / deny / prompt lists).
+
+### Compaction
+`onTransformContext` is wired (`agentLoop.ts:48`) but no mode provides an implementation. Implement `core/usecases/compaction.ts`: when input tokens exceed a budget fraction of `LlmInfo.contextWindow`, summarise the older window via a cheap model call and replace those turns with a single synthetic message — the same shape `handoffToMessage` already produces for `:handoff`. `@effect/ai`'s `Tokenizer` gives us counts. Trigger off the status-bar gauge that's already shown. Requires the three-tier model selection below (or a fixed cheap model).
+
+### Three-tier model selection (`main` / `fast` / `cheap`)
+Today `Settings.model` is a single `"<provider>:<modelId>"`. Two more tiers would let:
+- **fast** — sub-agent loops, single-file edits, syntax checkups (e.g. `gemini-2.5-flash`, `claude-haiku`)
+- **cheap** — background compaction, turn-summarisation, token math (e.g. `gemini-2.5-flash-lite`, `gpt-4o-mini`)
+
+Touch points: extend `Settings` schema with `fastModel?` / `cheapModel?`; teach `ModelRegistry` to expose `current(tier)`; have `runAgent` accept a tier hint (sub-agents default to `fast`); compaction always uses `cheap`. `:model` keeps switching `main`; add `:set fastModel <…>` / `:set cheapModel <…>`.
+
+---
+
+## Tier 2 — capability depth
+
+### Per-conversation OpenAI `prompt_cache_key`
+Today the router sets a stable static `prompt_cache_key`. Threading the conversation id would tighten cache routing across resumed sessions. Single-file change in `adapters/src/llm/router.ts`.
+
+### Explicit Gemini context caching
+Implicit context caching is live (stable prefix → `cachedContentTokenCount` surfaces in the gauge). Explicit `cachedContent` resources would let us cache + reuse a known instruction/skill prefix across conversations — but `@effect/ai-google@0.14` always sends full `contents` and `Config` omits `contents`/`tools`/`systemInstruction`, so it isn't expressible without forking the adapter. Watch upstream; reconsider when a `Config.cachedContent` lands. Cost optimisation, not correctness.
+
+### TodoWrite tool + planning panel
+A `todo_write` tool in `codingToolkit.ts` + a foldable section in the activity pane (`sidePane.ts`) showing the live todo list. Cheap to ship, helps long multi-step turns stay coherent.
+
+### MCP — expose
+`@effect/ai`'s `McpServer.toolkit()` is a direct bridge from our existing toolkit to an MCP server. Means other agents can call into efferent — both as a CLI integration test surface and as a way to make our tools usable from Claude Desktop / Cursor / Cline. Low-med effort.
+
+### `@`-file references in input
+Parse `@path/to/file` in user input → expand to a `read_file` block prepended to the message (or to a fenced code block inline). Common UX in mature agents. Trivial parse; the question is what to do with binary paths and globs.
+
+### Cost tracking
+We already track `inputTokens` / `outputTokens` / `cacheReadTokens` per turn (status bar gauge). Multiply by per-model pricing for a session $ readout (and a per-turn one when expanded). Add a `pricing.json` (or a `Pricing` port that fetches it). Informational; no budgeting yet.
+
+---
+
+## Tier 3 — extensions + later
+
+### MCP — consume
+External MCP servers exposed as tools inside our loop. `@effect/ai` only hosts MCP servers today; consuming them needs a custom client. Material work. Wait until at least one MCP-only tool we want appears.
+
+### Extensions-as-Layers
+The on-thesis answer to pi's runtime extension system: an extension is a default-exported `Layer` that merges a `Toolkit` (and optionally hooks, slash commands, side-pane widgets) into the agent at composition. Typed end-to-end, no `jiti`/runtime-eval, validated for tool-name collisions. Discovery from `.efferent/extensions/` + `~/.efferent/extensions/`. This is the headline differentiator vs pi when we ship it.
+
+### Shell hooks (Pre/PostToolUse)
+A small event bus around tool calls — user-provided shell commands triggered on `pre-tool-use` / `post-tool-use` / `turn-end` for things like running a formatter after every `edit_file`. Pairs with the extension system. Claude Code has these.
+
+### Memory directory
+A `~/.efferent/memory/` (or per-project `.efferent/memory/`) with file-per-fact persistent notes the agent can `read`/`write`/`search`. New `Memory` port + a small retrieval policy (recency + keyword for v1; embeddings later). Pairs with the @-file references above.
+
+### Session branching
+Today history is flat — `:resume <id>` continues a conversation. Branching would let `:branch` create a fork from any point in the conversation viewer (turn-granular, like `:build` already supports) and switch between them. The `checkpoints` table model already supports the data shape; the UI is the work.
+
+### Image attachments
+`@effect/ai` `Prompt` has `FilePart`s; the CLI just needs an input syntax (`:attach <path>`) and to encode the bytes. Useful for screenshots-of-errors flows.
+
+### Live bash output streaming
+Today bash returns stdout/stderr as a blob when done; streaming chunks back to the model in real time would let it react to long-running builds. Touches `Shell` port (currently `exec` → result) — need a `spawn` variant returning a stream.
+
+### Native (non-shell-out) grep
+`grep` shells out to system `grep -rnE`. A pure-TS implementation over `Bun.Glob` + `Bun.file` would remove the dependency and unlock structured matches (with context lines in the result struct, not just printed). Quality-of-life; not blocking anything.
+
+### LSP tool
+A real win for language-aware navigation (find-references, go-to-definition). Big integration — needs LSP client + a server-launcher per language. Park until the extension system lands; LSP is naturally an extension.
+
+---
+
+## Consciously skipped
+
+These are *not* on the roadmap. Revisit only if a concrete need surfaces.
+
+- **Plugins marketplace** — extensions-as-Layers is the on-thesis answer; a marketplace is off-thesis for a lean Effect CLI.
+- **Team / coordinator multi-agent mode** — Claude Code's `coordinatorMode` orchestrates teams of agents. Heavy; sub-agent delegation already handles the cases we actually need.
+- **Cron / remote-trigger / scheduling** — agents that fire on a schedule or react to webhooks. Outside the CLI's wedge.
+- **ToolSearch** — only useful at large tool counts (Claude Code carries a vast tool surface). With our handful, it's pointless.
+- **Output styles** — purely cosmetic theming. We have the per-pane accent system; that's enough.
+- **Full keybindings editor** — vi/insert + Ctrl-hjkl pane switching is the model; per-key remapping would only complicate it.
+- **`tool.respond` safety prompts over RPC** — the RPC mode is a programmatic surface; if a host wants to prompt a human, it does so before sending the next message.
+
+---
+
+## Mouse support — intentionally absent
+
+Not deferred — **deliberately excluded**. The TUI never enters mouse-reporting mode, which keeps your terminal's native click-drag selection working. Navigation + selection are fully keyboard-modal: `Ctrl-hjkl` panes, `j/k` / arrows / `gg/G` / `{/}` scroll, `/` search, `v`+`y` yank to OSC 52 clipboard. If the user community ever wants mouse-mode, it's an opt-in flag — not a default.
