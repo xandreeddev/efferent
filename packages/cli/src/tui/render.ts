@@ -25,6 +25,7 @@ import { renderPalette } from "./slashPalette.js"
 import type { ModalState } from "./modal.js"
 import { renderModal } from "./modal.js"
 import { renderSelectBox, type SelectState } from "./selectBox.js"
+import { renderSettingsView, type SettingsState } from "./settingsView.js"
 import { type LoginFlow, renderLoginFlow } from "./loginFlow.js"
 import type { SidePaneState } from "./sidePane.js"
 import { renderSidePane, sideCursorRowAt, stackCursorRowAt } from "./sidePane.js"
@@ -40,6 +41,10 @@ export interface AppState {
   readonly modal: ModalState
   /** Open `:model` select box, composited as a centered overlay. */
   readonly modelPicker?: SelectState<unknown> | undefined
+  /** Open startup conversation picker, composited as a centered overlay. */
+  readonly convPicker?: SelectState<unknown> | undefined
+  /** Open `:settings` modal, composited as a centered overlay. */
+  readonly settingsView?: SettingsState | undefined
   /** Open `:login` flow (auth-method / provider / key / oauth), centered overlay. */
   readonly loginFlow?: LoginFlow | undefined
   readonly sidePane: SidePaneState
@@ -356,6 +361,26 @@ export class FrameRenderer {
       }
     }
 
+    // Startup conversation picker overlay (same shape as the model box).
+    if (state.convPicker !== undefined) {
+      for (const ov of renderSelectBox(state.convPicker, rows, cols)) {
+        out += moveTo(ov.row, ov.col) + ov.content
+        if (ov.row - 1 >= 0 && ov.row - 1 < this.prev.length) {
+          this.prev[ov.row - 1] = ""
+        }
+      }
+    }
+
+    // Settings modal overlay (draws its own inline-edit cursor).
+    if (state.settingsView !== undefined) {
+      for (const ov of renderSettingsView(state.settingsView, rows, cols)) {
+        out += moveTo(ov.row, ov.col) + ov.content
+        if (ov.row - 1 >= 0 && ov.row - 1 < this.prev.length) {
+          this.prev[ov.row - 1] = ""
+        }
+      }
+    }
+
     // `:login` flow overlay (its own filter/input cursor; suppresses hardware).
     if (state.loginFlow !== undefined) {
       for (const ov of renderLoginFlow(state.loginFlow, rows, cols)) {
@@ -374,7 +399,12 @@ export class FrameRenderer {
     //  - conversation focused in NORMAL or VISUAL → a BLOCK on the cursor's
     //    actual (row, col) cell in the middle region — the nvim cursor;
     //  - otherwise hidden.
-    if (state.modelPicker !== undefined || state.loginFlow !== undefined) {
+    if (
+      state.modelPicker !== undefined ||
+      state.convPicker !== undefined ||
+      state.settingsView !== undefined ||
+      state.loginFlow !== undefined
+    ) {
       // The select/prompt box draws its own cursor; hide the hardware one.
       out += hideCursor
     } else if (

@@ -142,6 +142,26 @@ export const layoutInput = (
   }
 }
 
+/**
+ * Whether the cursor sits on the first / last *visual* row of the input. Used
+ * by the driver to decide when an Up/Down arrow recalls input history (at the
+ * edges) vs. moves the cursor within a multi-line draft.
+ */
+export const cursorAtTopVisualRow = (state: InputState, cols: number): boolean =>
+  layoutInput(state, cols).cursorVisualRow === 0
+
+export const cursorAtBottomVisualRow = (state: InputState, cols: number): boolean => {
+  const layout = layoutInput(state, cols)
+  return layout.cursorVisualRow === layout.visualLines.length - 1
+}
+
+/** Build an input state holding `text`, cursor parked at the very end. */
+export const inputFromText = (text: string): InputState => {
+  const lines = text.split("\n")
+  const row = lines.length - 1
+  return { lines, row, col: (lines[row] ?? "").length, locked: false }
+}
+
 const positionAtVisualRow = (
   state: InputState,
   cols: number,

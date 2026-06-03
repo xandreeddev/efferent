@@ -15,6 +15,8 @@ export type Credential =
       readonly access: string
       readonly refresh: string
       readonly expires: number
+      /** Provider-specific OAuth metadata. OpenAI ChatGPT tokens carry this. */
+      readonly accountId?: string
     }
 
 /** The whole credential map — one entry per configured provider. */
@@ -26,6 +28,8 @@ export interface OAuthTokens {
   readonly refresh: string
   /** Absolute expiry, epoch ms. */
   readonly expires: number
+  /** Provider-specific OAuth metadata. OpenAI ChatGPT tokens carry this. */
+  readonly accountId?: string
 }
 
 /** Persisting a credential, or refreshing an expired OAuth token, failed. */

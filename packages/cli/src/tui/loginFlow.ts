@@ -75,9 +75,9 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   anthropic: "Anthropic",
 }
 
-// Only Anthropic (Claude Pro/Max) has an OAuth subscription flow today; every
-// provider accepts an API key.
-const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic"]
+// Anthropic and OpenAI expose subscription/OAuth flows; every provider accepts
+// an API key.
+const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "openai"]
 const API_KEY_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "google", "openai"]
 
 const statusTag = (s: ProviderStatus["configured"]): string =>
@@ -140,7 +140,7 @@ export const openLogin = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow =>
   step: "authMethod",
   statuses,
   sel: openSelect("How do you want to log in?", [
-    { value: "subscription", label: "Use a subscription (OAuth — Claude Pro/Max)" },
+    { value: "subscription", label: "Use a subscription (OAuth — Claude Pro/Max or ChatGPT)" },
     { value: "api_key", label: "Use an API key" },
   ]),
 })

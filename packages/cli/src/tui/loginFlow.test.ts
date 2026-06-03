@@ -64,7 +64,7 @@ describe("loginFlow", () => {
     expect(flow.step).toBe("provider")
     if (flow.step === "provider") {
       expect(flow.method).toBe("subscription")
-      expect(flow.sel.all.map((o) => o.value)).toEqual(["anthropic"])
+      expect(flow.sel.all.map((o) => o.value)).toEqual(["anthropic", "openai"])
     }
     adv = loginAdvance(flow)
     expect(adv.kind).toBe("startOAuth")

@@ -1,6 +1,7 @@
 export * from "./auth/env.js"
 export * from "./auth/local.js"
 export * from "./auth/oauth/anthropic.js"
+export * from "./auth/oauth/openai.js"
 export * from "./database/migrator.js"
 export * from "./conversationStore/postgres.js"
 export * from "./conversationStore/sqlite.js"

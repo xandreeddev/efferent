@@ -11,6 +11,7 @@ import {
 } from "@efferent/core"
 import { Effect, Layer, Redacted, Ref } from "effect"
 import { refreshAnthropicToken } from "./oauth/anthropic.js"
+import { refreshOpenAiToken } from "./oauth/openai.js"
 
 /** Refresh an OAuth token when it's within this window of expiry. */
 const REFRESH_SKEW_MS = 60_000
@@ -82,6 +83,9 @@ const parseAuth = (raw: string): AuthData => {
         access: o.access,
         refresh: o.refresh,
         expires: o.expires,
+        ...(typeof o.accountId === "string" && o.accountId.length > 0
+          ? { accountId: o.accountId }
+          : {}),
       }
     }
   }
@@ -105,6 +109,14 @@ const writeAuthFile = (data: AuthData): void => {
   writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 })
   renameSync(tmp, p)
 }
+
+const oauthCredential = (tokens: OAuthTokens): Credential => ({
+  type: "oauth",
+  access: tokens.access,
+  refresh: tokens.refresh,
+  expires: tokens.expires,
+  ...(tokens.accountId !== undefined ? { accountId: tokens.accountId } : {}),
+})
 
 export const LocalAuthStoreLive = Layer.effect(
   AuthStore,
@@ -138,13 +150,24 @@ export const LocalAuthStoreLive = Layer.effect(
             if (cred === undefined) return Effect.succeed(undefined)
             if (cred.type === "api_key") return Effect.succeed(Redacted.make(cred.key))
             // OAuth: hand back the access token, refreshing + persisting first
-            // when it's near expiry. Only Anthropic has a refresh flow today.
-            if (cred.expires - Date.now() > REFRESH_SKEW_MS || p !== "anthropic") {
+            // when it's near expiry.
+            if (cred.expires - Date.now() > REFRESH_SKEW_MS) {
               return Effect.succeed(Redacted.make(cred.access))
             }
-            return refreshAnthropicToken(cred.refresh).pipe(
+            const refresh =
+              p === "anthropic"
+                ? refreshAnthropicToken(cred.refresh)
+                : p === "openai"
+                  ? refreshOpenAiToken(cred.refresh)
+                  : Effect.succeed({
+                      access: cred.access,
+                      refresh: cred.refresh,
+                      expires: cred.expires,
+                      ...(cred.accountId !== undefined ? { accountId: cred.accountId } : {}),
+                    } satisfies OAuthTokens)
+            return refresh.pipe(
               Effect.flatMap((tokens) =>
-                set(p, { type: "oauth", ...tokens }).pipe(
+                set(p, oauthCredential(tokens)).pipe(
                   Effect.as(Redacted.make(tokens.access)),
                 ),
               ),
@@ -154,13 +177,7 @@ export const LocalAuthStoreLive = Layer.effect(
 
       setApiKey: (p, key) => set(p, { type: "api_key", key }),
 
-      setOAuth: (p, tokens: OAuthTokens) =>
-        set(p, {
-          type: "oauth",
-          access: tokens.access,
-          refresh: tokens.refresh,
-          expires: tokens.expires,
-        }),
+      setOAuth: (p, tokens: OAuthTokens) => set(p, oauthCredential(tokens)),
 
       remove: (p) =>
         Ref.get(ref).pipe(

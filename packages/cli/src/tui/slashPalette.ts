@@ -13,7 +13,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":help", description: "Show keybindings and commands" },
   { name: ":cwd", description: "Print the current workspace directory" },
   { name: ":reset", description: "Start a new conversation (forgets history)" },
-  { name: ":settings", description: "Show current configuration settings" },
+  { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
   { name: ":model", description: "Open the model picker (↑↓/filter/↵), or :model <id> to switch" },
   { name: ":login", description: "Add a provider — subscription (OAuth) or API key" },
