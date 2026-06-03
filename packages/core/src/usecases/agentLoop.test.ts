@@ -1,7 +1,50 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Exit } from "effect"
-import type { Toolkit } from "@effect/ai"
-import { recoverMalformedToolCalls } from "./agentLoop.js"
+import { LanguageModel, type Toolkit } from "@effect/ai"
+import { recoverMalformedToolCalls, runAgentLoop } from "./agentLoop.js"
+import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
+
+/**
+ * A stub `LanguageModel` service whose `generateText` returns scripted
+ * outcomes turn-by-turn. A `"malformed"` entry fails with a response-decode
+ * `MalformedOutput` (an unknown tool name fails *here*, inside generateText,
+ * before any handler runs); a `"done"` entry is a plain text response that
+ * ends the loop.
+ */
+const scriptedModel = (script: ReadonlyArray<"malformed" | "done">) => {
+  let calls = 0
+  const service = {
+    generateText: () => {
+      const step = script[Math.min(calls, script.length - 1)]
+      calls++
+      if (step === "malformed") {
+        return Effect.fail({
+          _tag: "MalformedOutput",
+          description: 'is missing ... actual "google:search"',
+        })
+      }
+      return Effect.succeed({
+        content: [],
+        text: "done",
+        finishReason: "stop",
+        usage: undefined,
+      })
+    },
+    generateObject: () => Effect.die("unused"),
+    streamText: () => {
+      throw new Error("unused")
+    },
+  }
+  return { layer: LanguageModel.LanguageModel.of(service as never), calls: () => calls }
+}
+
+// A pre-resolved toolkit (one tool) the loop can `yield*` without a handler layer.
+const oneToolToolkit = Effect.succeed({
+  tools: { read_file: {} },
+  handle: () => Effect.succeed({ isFailure: false, result: {}, encodedResult: {} }),
+}) as unknown as Toolkit.Toolkit<Record<string, never>>
+
+const seed: ReadonlyArray<AgentMessage> = [{ role: "user", content: "hi" }]
 
 /**
  * Build a fake resolved toolkit whose `handle` yields whatever Effect we pass.
@@ -51,5 +94,45 @@ describe("recoverMalformedToolCalls", () => {
     const base = fakeToolkit(() => Effect.succeed(ok))
     const out = Effect.runSync(callHandle(recoverMalformedToolCalls(base)))
     expect(out).toBe(ok)
+  })
+})
+
+describe("runAgentLoop malformed-response recovery", () => {
+  it("feeds a response-decode MalformedOutput back and keeps looping", async () => {
+    const model = scriptedModel(["malformed", "done"])
+    const program = runAgentLoop({
+      system: "s",
+      messages: seed,
+      toolkit: oneToolToolkit,
+      maxSteps: 5,
+    }).pipe(
+      Effect.provideService(LanguageModel.LanguageModel, model.layer),
+    ) as Effect.Effect<AgentResult, unknown, never>
+    const res = await Effect.runPromise(program)
+
+    // Failed once, retried, succeeded — the turn was NOT aborted.
+    expect(model.calls()).toBe(2)
+    expect(res.finalText).toBe("done")
+    // A corrective message naming the real toolkit was injected before retry.
+    const lastUser = res.messages.filter((m) => m.role === "user").at(-1)
+    expect(String(lastUser?.content)).toContain("read_file")
+    expect(String(lastUser?.content)).toContain("could not be parsed")
+  })
+
+  it("gives up after MAX_MALFORMED consecutive failures (surfaces the error)", async () => {
+    const model = scriptedModel(["malformed"]) // always malformed
+    const program = runAgentLoop({
+      system: "s",
+      messages: seed,
+      toolkit: oneToolToolkit,
+      maxSteps: 20,
+    }).pipe(
+      Effect.provideService(LanguageModel.LanguageModel, model.layer),
+    ) as Effect.Effect<AgentResult, unknown, never>
+    const exit = await Effect.runPromiseExit(program)
+
+    // 3 retries are tolerated; the 4th consecutive failure surfaces, not hangs.
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(model.calls()).toBe(4)
   })
 })
