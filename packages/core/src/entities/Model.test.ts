@@ -26,11 +26,21 @@ describe("parseModel — anthropic", () => {
 })
 
 describe("contextWindowFor — anthropic", () => {
-  it("defaults to 200k", () => {
+  it("reads the real 1M window from the catalogue (not the 200k heuristic)", () => {
+    expect(contextWindowFor("anthropic", "claude-opus-4-8")).toBe(1_000_000)
+    expect(contextWindowFor("anthropic", "claude-sonnet-4-6")).toBe(1_000_000)
+  })
+  it("reads a 200k window from the catalogue", () => {
     expect(contextWindowFor("anthropic", "claude-sonnet-4-5")).toBe(200_000)
   })
-  it("recognises a 1M beta window", () => {
-    expect(contextWindowFor("anthropic", "claude-sonnet-4-5-1m")).toBe(1_000_000)
+  it("strips a trailing date stamp to hit the base id", () => {
+    expect(contextWindowFor("anthropic", "claude-opus-4-8-20260101")).toBe(1_000_000)
+  })
+  it("falls back to the heuristic for an id not in the catalogue", () => {
+    // unknown future id → 200k anthropic default
+    expect(contextWindowFor("anthropic", "claude-zephyr-9")).toBe(200_000)
+    // the legacy 1M-beta substring still works via the heuristic fallback
+    expect(contextWindowFor("anthropic", "claude-zephyr-9-1m")).toBe(1_000_000)
   })
 })
 

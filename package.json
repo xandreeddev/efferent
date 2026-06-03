@@ -9,6 +9,7 @@
     "start": "bun packages/cli/src/main.ts",
     "build": "bun build packages/cli/src/main.ts --target=bun --outfile packages/cli/dist/efferent.js",
     "eval": "bun packages/evals/src/run.ts",
+    "generate-models": "bun packages/core/scripts/generateModelCatalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

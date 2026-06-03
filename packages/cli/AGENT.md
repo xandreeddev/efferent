@@ -7,8 +7,7 @@ Coding-agent driver — composition root for four modes, plus a hand-rolled TUI.
 ```
 packages/cli/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
-├── events.ts          AgentEvent union + makeEventHooks(queue, beforeToolHook)
-├── safetyHooks.ts     bashConfirmHook / denyBashHook
+├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
 ├── modes/
 │   ├── tui.ts         full-screen TUI driver (TTY default)
 │   ├── print.ts       one-shot, streams final text to stdout
@@ -48,7 +47,7 @@ packages/cli/src/
 - The **keybind box** is **two labelled rows** (`legend.ts`): a dim **`nav`** row (the global movement set — pane switching / `:` / `/` / zoom, identical in every pane) over a dynamic row of the focused pane's own keys. A `:`/`/` entry takes the top row (`cmd`/`find`) and blanks the bottom one.
 - Renders are full-frame composed then line-diffed against the previous frame to avoid flicker.
 - Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-C, `:exit`, signal).
-- Bash safety: `bashConfirmHook` opens the modal and blocks the model's call with `{ action: "block", reason }` on `n`/Esc. The hook is wired only in tui mode; non-interactive modes use `denyBashHook(--allow-bash)`.
+- Bash safety: non-interactive modes gate on `--allow-bash` (the `allowBash` flag flows into `codingToolkitLayer`; a denied call returns to the model as a tool failure). The TUI currently allows bash unconditionally — a `promptForBash` modal is defined in `tui.ts` but **not yet wired** into `onBeforeToolCall` (see `docs/roadmap.md`).
 
 ## Hardcoded knobs (move to a settings layer later)
 
