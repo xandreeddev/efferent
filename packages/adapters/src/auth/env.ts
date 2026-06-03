@@ -15,7 +15,8 @@ import { Config, Effect, Layer, Option, Redacted } from "effect"
  * file to persist to.
  */
 
-const ENV_VAR: Record<Provider, string> = {
+// Ollama is local-only and has no env-var key; it's omitted from this map.
+const ENV_VAR: Partial<Record<Provider, string>> = {
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
@@ -33,8 +34,8 @@ export const EnvAuthStoreLive = Layer.effect(
   AuthStore,
   Effect.gen(function* () {
     const data: Record<string, Credential> = {}
-    for (const p of ["google", "openai", "anthropic", "opencode"] as const) {
-      const k = yield* readEnvKey(ENV_VAR[p])
+    for (const [p, envVar] of Object.entries(ENV_VAR) as [Provider, string][]) {
+      const k = yield* readEnvKey(envVar)
       if (k !== undefined) data[p] = { type: "api_key", key: k }
     }
     const snapshot = data as AuthData
@@ -58,6 +59,7 @@ export const EnvAuthStoreLive = Layer.effect(
         ),
       setApiKey: (p) => readOnly(p),
       setOAuth: (p) => readOnly(p),
+      setLocal: (p) => readOnly(p),
       remove: (p) => readOnly(p),
     })
   }),

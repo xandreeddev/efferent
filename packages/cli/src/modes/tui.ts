@@ -750,7 +750,7 @@ const runTuiModeCore = (
 
     // Per-provider status tags for the provider selector.
     const loginStatuses = (auth: AuthData): ReadonlyArray<ProviderStatus> =>
-      (["anthropic", "google", "openai", "opencode"] as const).map((p) => ({
+      (["anthropic", "google", "openai", "opencode", "ollama"] as const).map((p) => ({
         provider: p,
         configured: auth[p]?.type,
       }))
@@ -810,6 +810,24 @@ const runTuiModeCore = (
           ),
         )
         if (ok) yield* afterLogin(provider, "api key")
+        else yield* requestRender
+      })
+
+    // Persist a local (no-auth) credential for a provider (e.g. Ollama).
+    const commitLocalUrl = (provider: Provider, baseUrl: string) =>
+      Effect.gen(function* () {
+        const auth = yield* AuthStore
+        const ok = yield* auth.setLocal(provider, baseUrl).pipe(
+          Effect.as(true),
+          Effect.catchAll((e) =>
+            Ref.update(stateRef, (s) => {
+              delete s.loginFlow
+              s.scrollback.push({ kind: "error", text: `login failed: ${e.message}` })
+              return s
+            }).pipe(Effect.as(false)),
+          ),
+        )
+        if (ok) yield* afterLogin(provider, "local")
         else yield* requestRender
       })
 
@@ -2273,7 +2291,7 @@ const runTuiModeCore = (
             const auth = yield* AuthStore
             const all = yield* auth.all
             const arg = parts.slice(1).join(" ").trim().toLowerCase()
-            const configured = (["anthropic", "google", "openai", "opencode"] as const).filter(
+            const configured = (["anthropic", "google", "openai", "opencode", "ollama"] as const).filter(
               (p) => all[p] !== undefined,
             )
             if (arg.length === 0) {
@@ -2290,11 +2308,11 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             }
-            if (arg !== "anthropic" && arg !== "google" && arg !== "openai" && arg !== "opencode") {
+            if (arg !== "anthropic" && arg !== "google" && arg !== "openai" && arg !== "opencode" && arg !== "ollama") {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "error",
-                  text: `unknown provider '${arg}' (anthropic | google | openai | opencode)`,
+                  text: `unknown provider '${arg}' (anthropic | google | openai | opencode | ollama)`,
                 })
                 return s
               })
@@ -2774,6 +2792,9 @@ const runTuiModeCore = (
                 break
               case "oauthManual":
                 yield* completeOAuthManual(outcome.provider, outcome.redirect)
+                break
+              case "localUrl":
+                yield* commitLocalUrl(outcome.provider, outcome.baseUrl)
                 break
               case "none":
                 break

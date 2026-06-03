@@ -19,6 +19,7 @@ import {
 } from "../auth/oauth/anthropic.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
 import { makeOpenCodeLanguageModel } from "./openCode.js"
+import { makeOllamaLanguageModel, OLLAMA_DEFAULT_BASE_URL } from "./ollama.js"
 
 // Anthropic OAuth authenticates as a subscription: Bearer + Claude Code beta
 // flags, never `x-api-key`.
@@ -201,5 +202,12 @@ export const makeProviderLanguageModel = (
         ),
         Effect.map((svc) => ({ svc, prependClaudeCode: false })),
       )
+    case "ollama": {
+      const baseUrl =
+        cred?.type === "local" ? (cred.baseUrl ?? OLLAMA_DEFAULT_BASE_URL) : OLLAMA_DEFAULT_BASE_URL
+      return makeOllamaLanguageModel(baseUrl, sel.modelId).pipe(
+        Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+      )
+    }
   }
 }

@@ -32,7 +32,7 @@ export type AuthMethod = "subscription" | "api_key"
 /** What's already configured for a provider (drives the status tag). */
 export interface ProviderStatus {
   readonly provider: Provider
-  readonly configured: "api_key" | "oauth" | undefined
+  readonly configured: "api_key" | "oauth" | "local" | undefined
 }
 
 export type LoginFlow =
@@ -60,6 +60,12 @@ export type LoginFlow =
       readonly status: string
       readonly manual: PromptState
     }
+  | {
+      readonly step: "localUrl"
+      readonly statuses: ReadonlyArray<ProviderStatus>
+      readonly provider: Provider
+      readonly prompt: PromptState
+    }
 
 /** What the driver must do after an Enter (the pure machine can't run effects). */
 export type LoginAdvance =
@@ -67,6 +73,7 @@ export type LoginAdvance =
   | { readonly kind: "apiKey"; readonly provider: Provider; readonly key: string }
   | { readonly kind: "startOAuth"; readonly provider: Provider; readonly flow: LoginFlow }
   | { readonly kind: "oauthManual"; readonly provider: Provider; readonly redirect: string }
+  | { readonly kind: "localUrl"; readonly provider: Provider; readonly baseUrl: string }
   | { readonly kind: "none" }
 
 const PROVIDER_LABEL: Record<Provider, string> = {
@@ -74,15 +81,29 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   opencode: "OpenCode",
+  ollama: "Ollama (local)",
 }
 
 // Anthropic and OpenAI expose subscription/OAuth flows; every provider accepts
-// an API key.
+// an API key. Ollama is local-only and uses a URL prompt instead of a key.
 const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "openai"]
-const API_KEY_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "google", "openai", "opencode"]
+const API_KEY_PROVIDERS: ReadonlyArray<Provider> = [
+  "anthropic",
+  "google",
+  "openai",
+  "opencode",
+  "ollama",
+]
+const LOCAL_PROVIDERS: ReadonlyArray<Provider> = ["ollama"]
 
 const statusTag = (s: ProviderStatus["configured"]): string =>
-  s === "api_key" ? "✓ api key" : s === "oauth" ? "✓ subscription" : "• unconfigured"
+  s === "api_key"
+    ? "✓ api key"
+    : s === "oauth"
+      ? "✓ subscription"
+      : s === "local"
+        ? "✓ local"
+        : "• unconfigured"
 
 const pad = (s: string, n: number): string =>
   s.length >= n ? s : s + " ".repeat(n - s.length)
@@ -119,6 +140,21 @@ const apiKeyStep = (
   statuses,
   provider,
   prompt: openPrompt(`Log in to ${PROVIDER_LABEL[provider]}`, "Paste your API key", true),
+})
+
+const localUrlStep = (
+  statuses: ReadonlyArray<ProviderStatus>,
+  provider: Provider,
+): LoginFlow => ({
+  step: "localUrl",
+  statuses,
+  provider,
+  prompt: openPrompt(
+    `Connect to ${PROVIDER_LABEL[provider]}`,
+    "Base URL",
+    false,
+    "http://localhost:11434",
+  ),
 })
 
 export const oauthStep = (
@@ -169,6 +205,8 @@ export const loginAppend = (flow: LoginFlow, ch: string): LoginFlow => {
       return { ...flow, prompt: promptAppend(flow.prompt, ch) }
     case "oauth":
       return { ...flow, manual: promptAppend(flow.manual, ch) }
+    case "localUrl":
+      return { ...flow, prompt: promptAppend(flow.prompt, ch) }
   }
 }
 
@@ -182,6 +220,8 @@ export const loginBackspace = (flow: LoginFlow): LoginFlow => {
       return { ...flow, prompt: promptBackspace(flow.prompt) }
     case "oauth":
       return { ...flow, manual: promptBackspace(flow.manual) }
+    case "localUrl":
+      return { ...flow, prompt: promptBackspace(flow.prompt) }
   }
 }
 
@@ -196,6 +236,8 @@ export const loginBack = (flow: LoginFlow): LoginFlow | undefined => {
       return providerStep("api_key", flow.statuses)
     case "oauth":
       return providerStep("subscription", flow.statuses)
+    case "localUrl":
+      return providerStep("api_key", flow.statuses)
   }
 }
 
@@ -214,6 +256,9 @@ export const loginAdvance = (flow: LoginFlow): LoginAdvance => {
     case "provider": {
       const provider = selectedValue(flow.sel)
       if (provider === undefined) return { kind: "none" }
+      if (flow.method === "api_key" && LOCAL_PROVIDERS.includes(provider)) {
+        return { kind: "flow", flow: localUrlStep(flow.statuses, provider) }
+      }
       return flow.method === "api_key"
         ? { kind: "flow", flow: apiKeyStep(flow.statuses, provider) }
         : { kind: "startOAuth", provider, flow: oauthStep(flow.statuses, provider) }
@@ -229,6 +274,12 @@ export const loginAdvance = (flow: LoginFlow): LoginAdvance => {
       return redirect.length === 0
         ? { kind: "none" }
         : { kind: "oauthManual", provider: flow.provider, redirect }
+    }
+    case "localUrl": {
+      const baseUrl = flow.prompt.value.trim()
+      return baseUrl.length === 0
+        ? { kind: "none" }
+        : { kind: "localUrl", provider: flow.provider, baseUrl }
     }
   }
 }
@@ -251,5 +302,7 @@ export const renderLoginFlow = (
         termRows,
         termCols,
       )
+    case "localUrl":
+      return renderPromptBox(flow.prompt, termRows, termCols)
   }
 }

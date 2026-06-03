@@ -6,7 +6,7 @@ import { MODEL_CATALOG } from "./modelCatalog.generated.js"
  * provider package in `@efferent/adapters` (`@effect/ai-google` /
  * `@effect/ai-openai`); the router picks the implementation at call time.
  */
-export const Provider = Schema.Literal("google", "openai", "anthropic", "opencode")
+export const Provider = Schema.Literal("google", "openai", "anthropic", "opencode", "ollama")
 export type Provider = typeof Provider.Type
 
 /**
@@ -41,7 +41,7 @@ export const parseModel = (raw: string): { provider: Provider; modelId: string }
   if (idx > 0) {
     const head = raw.slice(0, idx)
     const tail = raw.slice(idx + 1)
-    if (head === "google" || head === "openai" || head === "anthropic" || head === "opencode") {
+    if (head === "google" || head === "openai" || head === "anthropic" || head === "opencode" || head === "ollama") {
       return { provider: head, modelId: tail }
     }
   }
@@ -70,7 +70,9 @@ export const defaultModelForProvider = (p: Provider): string =>
       ? "anthropic:claude-sonnet-4-5"
       : p === "opencode"
         ? "opencode:deepseek-v4-pro"
-        : DefaultModel
+        : p === "ollama"
+          ? "ollama:llama3.2"
+          : DefaultModel
 
 /**
  * Pick the default model from the providers that currently have a key.
@@ -81,7 +83,7 @@ export const defaultModelForProvider = (p: Provider): string =>
 export const defaultModelForProviders = (
   available: ReadonlyArray<Provider>,
 ): string => {
-  for (const p of ["anthropic", "google", "openai", "opencode"] as const) {
+  for (const p of ["anthropic", "google", "openai", "opencode", "ollama"] as const) {
     if (available.includes(p)) return defaultModelForProvider(p)
   }
   return DefaultModel
@@ -133,6 +135,8 @@ export const effortLevelsFor = (
       return ["", "off", "minimal", "low", "medium", "high"]
     case "opencode":
       return ["", "off", "high"]
+    case "ollama":
+      return undefined
   }
 }
 
@@ -153,6 +157,8 @@ export const effortSettingKeyFor = (
       return "geminiThinkingLevel"
     case "opencode":
       return "openCodeThinkingMode"
+    case "ollama":
+      return undefined
   }
 }
 
@@ -175,6 +181,7 @@ export const contextWindowFor = (provider: Provider, modelId: string): number =>
     if (id.includes("minimax")) return 200_000
     return 128_000
   }
+  if (provider === "ollama") return 128_000
   // openai
   if (id.includes("gpt-4.1")) return 1_047_576
   if (id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4")) {
