@@ -33,6 +33,8 @@ const OPENAI_INCLUDE = /^(gpt-|o1|o3|o4|chatgpt)/i
 const OPENAI_EXCLUDE =
   /embedding|whisper|tts|audio|realtime|image|dall-e|moderation|transcribe|search|babbage|davinci|instruct|codex/i
 
+import { OLLAMA_DEFAULT_BASE_URL } from "./ollama.js"
+
 type GoogleModel = {
   readonly name?: string
   readonly displayName?: string
@@ -217,6 +219,32 @@ export const ModelRegistryLive = Layer.effect(
       return out
     })
 
+    type OllamaTagModel = { readonly name?: string }
+
+    const listOllama = Effect.gen(function* () {
+      const c = yield* creds("ollama")
+      if (c === undefined) return [] as ModelInfo[]
+      const baseUrl =
+        c.cred.type === "local" ? (c.cred.baseUrl ?? OLLAMA_DEFAULT_BASE_URL) : OLLAMA_DEFAULT_BASE_URL
+      const json = yield* getJson(
+        HttpClientRequest.get(`${baseUrl.replace(/\/$/, "")}/api/tags`),
+      ).pipe(
+        Effect.catchAll((e) =>
+          Effect.as(
+            Effect.logWarning(`ollama model list failed: ${String(e)}`),
+            { models: [] as ReadonlyArray<OllamaTagModel> },
+          ),
+        ),
+      )
+      const models = (json as { models?: ReadonlyArray<OllamaTagModel> }).models ?? []
+      return models.map((m) => ({
+        provider: "ollama" as const,
+        modelId: m.name ?? "",
+        displayName: m.name ?? "",
+        contextWindow: contextWindowFor("ollama", m.name ?? ""),
+      })).filter((m) => m.modelId.length > 0)
+    })
+
     return ModelRegistry.of({
       current: settings.get().pipe(
         Effect.map((s) => {
@@ -237,7 +265,7 @@ export const ModelRegistryLive = Layer.effect(
             }),
           ),
 
-      list: Effect.all([listGoogle, listOpenAi, listAnthropic, listOpenCode]).pipe(
+      list: Effect.all([listGoogle, listOpenAi, listAnthropic, listOpenCode, listOllama]).pipe(
         Effect.map((lists) =>
           lists.flat().sort((a, b) =>
             a.provider === b.provider

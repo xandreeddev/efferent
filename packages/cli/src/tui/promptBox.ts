@@ -22,7 +22,8 @@ export const openPrompt = (
   title: string,
   prompt: string,
   mask = true,
-): PromptState => ({ title, prompt, value: "", mask })
+  defaultValue = "",
+): PromptState => ({ title, prompt, value: defaultValue, mask })
 
 export const promptAppend = (state: PromptState, ch: string): PromptState => ({
   ...state,

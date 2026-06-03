@@ -34,7 +34,7 @@ const REFRESH_SKEW_MS = 60_000
  * so a credential added mid-session works on the next turn with no restart.
  */
 
-const PROVIDERS = ["google", "openai", "anthropic", "opencode"] as const
+const PROVIDERS = ["google", "openai", "anthropic", "opencode", "ollama"] as const
 
 // `~/.efferent`, or `<EFFERENT_HOME>/.efferent` when that env var points
 // elsewhere (relocate config / test isolation). This is a directory knob, not
@@ -72,7 +72,12 @@ const parseAuth = (raw: string): { data: AuthData; changed: boolean } => {
     }
     if (typeof v !== "object" || v === null) continue
     const o = v as Record<string, unknown>
-    if (o.type === "api_key" && typeof o.key === "string" && o.key.length > 0) {
+    if (o.type === "local") {
+      out[k] = {
+        type: "local",
+        ...(typeof o.baseUrl === "string" && o.baseUrl.length > 0 ? { baseUrl: o.baseUrl } : {}),
+      }
+    } else if (o.type === "api_key" && typeof o.key === "string" && o.key.length > 0) {
       out[k] = { type: "api_key", key: o.key }
     } else if (
       o.type === "oauth" &&
@@ -176,6 +181,9 @@ export const LocalAuthStoreLive = Layer.effect(
             const cred = d[p]
             if (cred === undefined) return Effect.succeed(undefined)
             if (cred.type === "api_key") return Effect.succeed(Redacted.make(cred.key))
+            // Local providers (Ollama) need no real key; return a dummy so the
+            // router's key-plumbing stays uniform.
+            if (cred.type === "local") return Effect.succeed(Redacted.make("ollama"))
             // OAuth: hand back the access token, refreshing + persisting first
             // when it's near expiry.
             if (cred.expires - Date.now() > REFRESH_SKEW_MS) {
@@ -214,6 +222,9 @@ export const LocalAuthStoreLive = Layer.effect(
       setApiKey: (p, key) => set(p, { type: "api_key", key }),
 
       setOAuth: (p, tokens: OAuthTokens) => set(p, oauthCredential(p, tokens)),
+
+      setLocal: (p, baseUrl) =>
+        set(p, { type: "local", ...(baseUrl !== undefined && baseUrl.length > 0 ? { baseUrl } : {}) }),
 
       remove: (p) =>
         Ref.get(ref).pipe(

@@ -20,6 +20,8 @@ export type Credential =
       /** Stable local installation id for provider transports that require one. */
       readonly installationId?: string
     }
+  /** Local provider (e.g. Ollama) — no key needed; optional custom base URL. */
+  | { readonly type: "local"; readonly baseUrl?: string }
 
 /** The whole credential map — one entry per configured provider. */
 export type AuthData = Partial<Record<Provider, Credential>>
@@ -71,6 +73,8 @@ export class AuthStore extends Context.Tag("@efferent/core/AuthStore")<
       p: Provider,
       tokens: OAuthTokens,
     ) => Effect.Effect<void, AuthError>
+    /** Store (and persist) a local (no-auth) credential, optionally with a custom base URL. */
+    readonly setLocal: (p: Provider, baseUrl?: string) => Effect.Effect<void, AuthError>
     /** Forget a provider's credential (`:logout`). */
     readonly remove: (p: Provider) => Effect.Effect<void, AuthError>
   }
