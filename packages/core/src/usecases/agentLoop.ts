@@ -39,10 +39,10 @@ export interface RunAgentLoopInput<
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
 
 /**
- * `@effect/ai` decodes a tool call's parameters *inside* `Toolkit.handle`,
- * before our handler runs — so a wrong-shaped call (or a hallucinated tool
- * name) fails with `AiError.MalformedOutput`, which `failureMode: "return"`
- * never sees (it only catches *handler* failures), aborting the whole turn.
+ * `@effect/ai` decodes a *known* tool call's parameters inside `Toolkit.handle`,
+ * before our handler runs — so a wrong-shaped call (right name, bad args) fails
+ * with `AiError.MalformedOutput`, which `failureMode: "return"` never sees (it
+ * only catches *handler* failures), aborting the whole turn.
  *
  * Wrapping the resolved handler turns those **model-caused** failures into an
  * ordinary tool *result* (`isFailure: true`): the assistant tool-call ↔
@@ -51,6 +51,12 @@ const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.sli
  * as any returned tool failure. `MalformedInput` is let through on purpose:
  * that's a result encode/validate failure (our bug, not the model's) and
  * should surface rather than be silently masked.
+ *
+ * NOTE: a *hallucinated tool name* (one not in the toolkit) fails one layer
+ * earlier — when `generateText` decodes the response, the `ToolCallPart.name`
+ * literal union rejects it — so it never reaches `handle` and this wrapper
+ * can't catch it. That case is recovered in `runAgentLoop` itself (the
+ * `MalformedOutput` catch around `generateText`).
  */
 export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>>(
   base: Toolkit.WithHandler<Tools>,
@@ -93,6 +99,16 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // failure aborting the turn. Handlers are stable across turns, so this is
     // resolved a single time, not per request.
     const toolkit = recoverMalformedToolCalls(yield* input.toolkit)
+    const toolNames = Object.keys(toolkit.tools)
+
+    // A response whose parts don't decode — most often a hallucinated tool
+    // *name* (not in the toolkit's name union), which fails INSIDE
+    // `generateText` before any handler runs, so `recoverMalformedToolCalls`
+    // never sees it — would otherwise abort the whole turn. Instead we feed the
+    // decode error back as a corrective message and let the model retry,
+    // bounded so a persistently-broken model can't spin forever.
+    let consecutiveMalformed = 0
+    const MAX_MALFORMED = 3
 
     while (turnIndex < maxSteps) {
       if (hooks?.onTransformContext) {
@@ -107,10 +123,47 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         ...toPromptMessages(messages),
       ] as never)
 
-      const res = yield* LanguageModel.generateText({
+      const outcome = yield* LanguageModel.generateText({
         prompt,
         toolkit,
-      })
+      }).pipe(
+        Effect.map((res) => ({ _tag: "ok" as const, res })),
+        Effect.catchAll((err) =>
+          (err as { readonly _tag?: string } | null)?._tag === "MalformedOutput"
+            ? Effect.succeed({ _tag: "malformed" as const, err })
+            : Effect.fail(err),
+        ),
+      )
+
+      // Response didn't decode (e.g. an unknown tool name): feed the decode
+      // error back as a corrective turn and retry, instead of aborting.
+      if (outcome._tag === "malformed") {
+        consecutiveMalformed++
+        if (consecutiveMalformed > MAX_MALFORMED) return yield* Effect.fail(outcome.err)
+        const desc = clip(
+          String(
+            (outcome.err as { readonly description?: unknown }).description ??
+              "the response could not be parsed",
+          ),
+          600,
+        )
+        yield* Effect.logWarning(`recovering from malformed response: ${desc}`)
+        messages = [
+          ...messages,
+          {
+            role: "user",
+            content:
+              `Your previous reply could not be parsed: ${desc}\n\n` +
+              `This usually means you called a tool that doesn't exist or used the wrong ` +
+              `argument shape. The only tools available are: ${toolNames.join(", ")}. ` +
+              `Reply again using one of those tools, or plain text if you're done.`,
+          },
+        ]
+        turnIndex++
+        continue
+      }
+      consecutiveMalformed = 0
+      const res = outcome.res
 
       const content = res.content as ReadonlyArray<unknown>
       const tail = responseToAgentMessages(content)

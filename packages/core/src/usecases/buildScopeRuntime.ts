@@ -215,7 +215,10 @@ export const buildScopeRuntime = <R = never>(
         }).pipe(
           Effect.provide(childRuntime.handlerLayer),
           Effect.tap((r) => emitEnd(true, r.finalText)),
-          Effect.tapError(() => emitEnd(false, "")),
+          Effect.tapError((e) => {
+            const f = toFailure(e)
+            return emitEnd(false, f.message ? `${f.error}: ${f.message}` : f.error)
+          }),
         )
 
         const filesChanged = yield* Ref.get(filesRef)
