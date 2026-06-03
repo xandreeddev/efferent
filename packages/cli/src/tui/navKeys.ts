@@ -115,6 +115,8 @@ export type NavIntent =
   | { readonly kind: "sideToggleSelect" }
   /** Context-tree: b — build a new session from the selected turns. */
   | { readonly kind: "buildSession" }
+  /** Shift-Tab: cycle the active provider's thinking/reasoning effort level. */
+  | { readonly kind: "cycleEffort" }
   /** Activity (stack) view cursor move. */
   | { readonly kind: "stackCursorMove"; readonly op: "up" | "down" | "top" | "bottom" }
   /** Activity view: fold/unfold the row (section or tree turn/subagent) under the cursor. */
@@ -164,7 +166,10 @@ export const decideKey = (ctx: NavCtx, key: Key): NavIntent => {
     }
   }
 
-  // 3. PgUp/PgDn always page the conversation, whatever has focus.
+  // 3. Shift-Tab opens the effort picker globally (any pane, any mode).
+  if (key.type === "shiftTab") return { kind: "cycleEffort" }
+
+  // 4. PgUp/PgDn always page the conversation, whatever has focus.
   if (key.type === "pageUp") return { kind: "scroll", op: "pageUp" }
   if (key.type === "pageDown") return { kind: "scroll", op: "pageDown" }
 

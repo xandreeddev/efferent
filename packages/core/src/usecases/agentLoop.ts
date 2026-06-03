@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import {
+  attachUsageToAssistant,
   extractUsage,
   responseReasoning,
   responseToAgentMessages,
@@ -112,7 +113,10 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       })
 
       const content = res.content as ReadonlyArray<unknown>
-      messages = [...messages, ...responseToAgentMessages(content)]
+      const tail = responseToAgentMessages(content)
+      const usage = extractUsage(res.usage, content)
+      attachUsageToAssistant(tail, usage)
+      messages = [...messages, ...tail]
 
       const text = res.text
       if (text.length > 0) finalText = text

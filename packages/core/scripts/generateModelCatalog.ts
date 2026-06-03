@@ -18,6 +18,23 @@
 
 const PROVIDERS = ["anthropic", "google", "openai"] as const
 
+// OpenCode Go models are not on models.dev; merge them manually.
+const OPENCODE_CATALOG: Record<string, { contextWindow: number; output: number }> = {
+  "opencode:deepseek-v4-pro": { contextWindow: 128000, output: 8192 },
+  "opencode:deepseek-v4-flash": { contextWindow: 128000, output: 8192 },
+  "opencode:glm-5": { contextWindow: 128000, output: 8192 },
+  "opencode:glm-5.1": { contextWindow: 128000, output: 8192 },
+  "opencode:kimi-k2.5": { contextWindow: 256000, output: 8192 },
+  "opencode:kimi-k2.6": { contextWindow: 256000, output: 8192 },
+  "opencode:mimo-v2.5": { contextWindow: 128000, output: 8192 },
+  "opencode:mimo-v2.5-pro": { contextWindow: 128000, output: 8192 },
+  "opencode:minimax-m2.5": { contextWindow: 200000, output: 8192 },
+  "opencode:minimax-m2.7": { contextWindow: 200000, output: 8192 },
+  "opencode:minimax-m3": { contextWindow: 200000, output: 8192 },
+  "opencode:qwen3.6-plus": { contextWindow: 128000, output: 8192 },
+  "opencode:qwen3.7-max": { contextWindow: 128000, output: 8192 },
+}
+
 interface ModelsDevModel {
   readonly name?: string
   readonly tool_call?: boolean
@@ -51,6 +68,10 @@ const main = async (): Promise<void> => {
         maxTokens: m.limit?.output ?? 0,
       }
     }
+  }
+
+  for (const [k, v] of Object.entries(OPENCODE_CATALOG)) {
+    catalog[k] = { contextWindow: v.contextWindow, maxTokens: v.output }
   }
 
   const keys = Object.keys(catalog).sort()

@@ -21,7 +21,9 @@ export interface SettingsRow {
   /** Current value, formatted for display. */
   readonly value: string
   /** How Enter behaves on this row. */
-  readonly kind: "boolean" | "number" | "readonly"
+  readonly kind: "boolean" | "number" | "enum" | "readonly"
+  /** Allowed values for enum rows; an empty display value means provider default. */
+  readonly options?: ReadonlyArray<string>
   /** A dim trailing hint (e.g. "use :model"). */
   readonly hint?: string
 }
@@ -143,7 +145,7 @@ export const renderSettingsView = (
       ? `${state.editBuffer}${span(ansi.fgBrightGreen, "█")}`
       : rw.kind === "readonly"
         ? span(ansi.fgGray, rw.value)
-        : span(focused ? ansi.bold : "", rw.value)
+        : span(focused ? ansi.bold : "", rw.value.length > 0 ? rw.value : "default")
     const hint =
       rw.hint !== undefined && !editing ? span(ansi.fgGray, `  ${rw.hint}`) : ""
     emit(row(`${marker} ${span(ansi.fgGray, label)} ${valueText}${hint}`))
@@ -153,7 +155,7 @@ export const renderSettingsView = (
   const hints =
     state.editBuffer !== undefined
       ? "type a value · ↵ save · esc cancel"
-      : "↑↓ move · ↵ toggle / edit · esc close"
+      : "↑↓ move · ↵ toggle / cycle / edit · esc close"
   const counter = `${state.cursor + 1}/${state.rows.length}`
   emit(
     row(

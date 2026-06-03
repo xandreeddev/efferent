@@ -17,6 +17,7 @@ const pgUp: Key = { type: "pageUp" }
 const pgDn: Key = { type: "pageDown" }
 const home: Key = { type: "home" }
 const end: Key = { type: "end" }
+const shiftTab: Key = { type: "shiftTab" }
 
 const ctx = (over: Partial<NavCtx>): NavCtx => ({
   focus: "input",
@@ -289,5 +290,21 @@ describe("side pane — context view: select + build", () => {
       kind: "cursorMove",
       op: "wordBack",
     })
+  })
+})
+
+describe("Shift-Tab cycles effort level", () => {
+  it("conversation NORMAL: shiftTab → cycleEffort", () => {
+    expect(decide({ focus: "conversation", mode: "normal" }, shiftTab)).toEqual({
+      kind: "cycleEffort",
+    })
+  })
+  it("conversation VISUAL: shiftTab → cycleEffort", () => {
+    expect(decide({ focus: "conversation", mode: "visual" }, shiftTab)).toEqual({
+      kind: "cycleEffort",
+    })
+  })
+  it("input pane: shiftTab → input (editor handles it)", () => {
+    expect(decide({ focus: "input", mode: "insert" }, shiftTab)).toEqual({ kind: "input" })
   })
 })

@@ -6,7 +6,7 @@ import { MODEL_CATALOG } from "./modelCatalog.generated.js"
  * provider package in `@efferent/adapters` (`@effect/ai-google` /
  * `@effect/ai-openai`); the router picks the implementation at call time.
  */
-export const Provider = Schema.Literal("google", "openai", "anthropic")
+export const Provider = Schema.Literal("google", "openai", "anthropic", "opencode")
 export type Provider = typeof Provider.Type
 
 /**
@@ -41,16 +41,21 @@ export const parseModel = (raw: string): { provider: Provider; modelId: string }
   if (idx > 0) {
     const head = raw.slice(0, idx)
     const tail = raw.slice(idx + 1)
-    if (head === "google" || head === "openai" || head === "anthropic") {
+    if (head === "google" || head === "openai" || head === "anthropic" || head === "opencode") {
       return { provider: head, modelId: tail }
     }
   }
   // No provider prefix → infer from the id shape; default to Google.
+  const lower = raw.toLowerCase()
   const provider: Provider = /^claude/i.test(raw)
     ? "anthropic"
     : /^(gpt|o\d|chatgpt|text-|davinci)/i.test(raw)
       ? "openai"
-      : "google"
+      : /^gemini/i.test(raw)
+        ? "google"
+        : /^(glm|kimi|deepseek|mimo|minimax|qwen)/i.test(raw)
+          ? "opencode"
+          : "google"
   return { provider, modelId: raw }
 }
 
@@ -63,7 +68,9 @@ export const defaultModelForProvider = (p: Provider): string =>
     ? "openai:gpt-4o"
     : p === "anthropic"
       ? "anthropic:claude-sonnet-4-5"
-      : DefaultModel
+      : p === "opencode"
+        ? "opencode:deepseek-v4-pro"
+        : DefaultModel
 
 /**
  * Pick the default model from the providers that currently have a key.
@@ -74,7 +81,7 @@ export const defaultModelForProvider = (p: Provider): string =>
 export const defaultModelForProviders = (
   available: ReadonlyArray<Provider>,
 ): string => {
-  for (const p of ["anthropic", "google", "openai"] as const) {
+  for (const p of ["anthropic", "google", "openai", "opencode"] as const) {
     if (available.includes(p)) return defaultModelForProvider(p)
   }
   return DefaultModel
@@ -108,6 +115,47 @@ export const catalogModelIdsForProvider = (provider: Provider): ReadonlyArray<st
  * heuristic for ids not yet in the catalogue (e.g. a model released since the
  * last `bun run generate-models`).
  */
+/**
+ * Ordered effort levels for the given provider + model.
+ * `undefined` entries in the result mean "provider default".
+ * Returns `undefined` when the provider/model has no effort concept.
+ */
+export const effortLevelsFor = (
+  provider: Provider,
+  _modelId: string,
+): ReadonlyArray<string> | undefined => {
+  switch (provider) {
+    case "anthropic":
+      return ["", "off", "low", "medium", "high"]
+    case "openai":
+      return ["", "none", "minimal", "low", "medium", "high"]
+    case "google":
+      return ["", "off", "minimal", "low", "medium", "high"]
+    case "opencode":
+      return ["", "off", "high"]
+  }
+}
+
+export const effortSettingKeyFor = (
+  provider: Provider,
+):
+  | "anthropicThinkingEffort"
+  | "openAiReasoningEffort"
+  | "geminiThinkingLevel"
+  | "openCodeThinkingMode"
+  | undefined => {
+  switch (provider) {
+    case "anthropic":
+      return "anthropicThinkingEffort"
+    case "openai":
+      return "openAiReasoningEffort"
+    case "google":
+      return "geminiThinkingLevel"
+    case "opencode":
+      return "openCodeThinkingMode"
+  }
+}
+
 export const contextWindowFor = (provider: Provider, modelId: string): number => {
   const cataloged = catalogLookup(provider, modelId)
   if (cataloged !== undefined) return cataloged.contextWindow
@@ -120,6 +168,12 @@ export const contextWindowFor = (provider: Provider, modelId: string): number =>
     // Claude is 200k standard; some models expose a 1M-token beta window.
     if (id.includes("[1m]") || id.includes("-1m")) return 1_000_000
     return 200_000
+  }
+  if (provider === "opencode") {
+    // OpenCode Go hosts a curated mix of open models; most are 128k today.
+    if (id.includes("kimi")) return 256_000
+    if (id.includes("minimax")) return 200_000
+    return 128_000
   }
   // openai
   if (id.includes("gpt-4.1")) return 1_047_576

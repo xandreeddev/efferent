@@ -93,4 +93,19 @@ export const MODEL_CATALOG: Record<string, CatalogEntry> = {
   "openai:o3-pro": { contextWindow: 200000, maxTokens: 100000 },
   "openai:o4-mini": { contextWindow: 200000, maxTokens: 100000 },
   "openai:o4-mini-deep-research": { contextWindow: 200000, maxTokens: 100000 },
+
+  // OpenCode Go — manually maintained (not on models.dev).
+  "opencode:deepseek-v4-pro": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:deepseek-v4-flash": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:glm-5": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:glm-5.1": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:kimi-k2.5": { contextWindow: 256000, maxTokens: 8192 },
+  "opencode:kimi-k2.6": { contextWindow: 256000, maxTokens: 8192 },
+  "opencode:mimo-v2.5": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:mimo-v2.5-pro": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:minimax-m2.5": { contextWindow: 200000, maxTokens: 8192 },
+  "opencode:minimax-m2.7": { contextWindow: 200000, maxTokens: 8192 },
+  "opencode:minimax-m3": { contextWindow: 200000, maxTokens: 8192 },
+  "opencode:qwen3.6-plus": { contextWindow: 128000, maxTokens: 8192 },
+  "opencode:qwen3.7-max": { contextWindow: 128000, maxTokens: 8192 },
 }

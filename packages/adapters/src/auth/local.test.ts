@@ -72,6 +72,54 @@ describe("LocalAuthStore", () => {
     })
   })
 
+  it("writes an OpenAI OAuth credential with a stable installation id", async () => {
+    await run(
+      Effect.gen(function* () {
+        const auth = yield* AuthStore
+        yield* auth.setOAuth("openai", {
+          access: "acc",
+          refresh: "ref",
+          expires: 9_999_999_999_999,
+          accountId: "acct_1",
+        })
+      }),
+    )
+    const onDisk = JSON.parse(readFileSync(authPath(), "utf8"))
+    expect(onDisk.openai).toEqual({
+      type: "oauth",
+      access: "acc",
+      refresh: "ref",
+      expires: 9_999_999_999_999,
+      accountId: "acct_1",
+      installationId: expect.any(String),
+    })
+  })
+
+  it("backfills missing OpenAI OAuth installation ids from old auth.json files", async () => {
+    mkdirSync(join(home, ".efferent"), { recursive: true })
+    writeFileSync(
+      authPath(),
+      JSON.stringify({
+        openai: {
+          type: "oauth",
+          access: "acc",
+          refresh: "ref",
+          expires: 9_999_999_999_999,
+          accountId: "acct_1",
+        },
+      }),
+    )
+    const cred = await run(
+      Effect.gen(function* () {
+        return yield* (yield* AuthStore).get("openai")
+      }),
+    )
+    const onDisk = JSON.parse(readFileSync(authPath(), "utf8"))
+    expect(cred?.type).toBe("oauth")
+    if (cred?.type === "oauth") expect(cred.installationId).toEqual(expect.any(String))
+    expect(onDisk.openai.installationId).toEqual(expect.any(String))
+  })
+
   it("reads the legacy flat-string auth.json as an api_key", async () => {
     mkdirSync(join(home, ".efferent"), { recursive: true })
     writeFileSync(authPath(), JSON.stringify({ google: "g-key" }))

@@ -23,3 +23,15 @@ describe("arrow modifier decoding", () => {
     expect(parse("\x1b[1;6C")).toEqual([{ type: "arrow", dir: "right", shift: true, ctrl: true }])
   })
 })
+
+describe("Shift-Tab parsing", () => {
+  it("plain CSI Z → shiftTab", () => {
+    expect(parse("\x1b[Z")).toEqual([{ type: "shiftTab" }])
+  })
+  it("CSI 1;2Z (xterm shift modifier) → shiftTab", () => {
+    expect(parse("\x1b[1;2Z")).toEqual([{ type: "shiftTab" }])
+  })
+  it("CSI 27;2;9~ (modifyOtherKeys) → shiftTab", () => {
+    expect(parse("\x1b[27;2;9~")).toEqual([{ type: "shiftTab" }])
+  })
+})

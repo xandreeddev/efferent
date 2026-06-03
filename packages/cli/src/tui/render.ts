@@ -41,6 +41,8 @@ export interface AppState {
   readonly modal: ModalState
   /** Open `:model` select box, composited as a centered overlay. */
   readonly modelPicker?: SelectState<unknown> | undefined
+  /** Open effort picker (Shift-Tab), composited as a centered overlay. */
+  readonly effortPicker?: SelectState<unknown> | undefined
   /** Open startup conversation picker, composited as a centered overlay. */
   readonly convPicker?: SelectState<unknown> | undefined
   /** Open `:settings` modal, composited as a centered overlay. */
@@ -361,6 +363,16 @@ export class FrameRenderer {
       }
     }
 
+    // Effort picker overlay (same shape as the model box).
+    if (state.effortPicker !== undefined) {
+      for (const ov of renderSelectBox(state.effortPicker, rows, cols)) {
+        out += moveTo(ov.row, ov.col) + ov.content
+        if (ov.row - 1 >= 0 && ov.row - 1 < this.prev.length) {
+          this.prev[ov.row - 1] = ""
+        }
+      }
+    }
+
     // Startup conversation picker overlay (same shape as the model box).
     if (state.convPicker !== undefined) {
       for (const ov of renderSelectBox(state.convPicker, rows, cols)) {
@@ -401,6 +413,7 @@ export class FrameRenderer {
     //  - otherwise hidden.
     if (
       state.modelPicker !== undefined ||
+      state.effortPicker !== undefined ||
       state.convPicker !== undefined ||
       state.settingsView !== undefined ||
       state.loginFlow !== undefined

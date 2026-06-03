@@ -218,9 +218,7 @@ const sectionHead = (
 /** The Activity stats header: a context gauge + a cumulative one-liner. */
 const renderStats = (s: SessionStats, width: number, now: number): string[] => {
   const cached =
-    s.cacheReadTokens > 0
-      ? `${ansi.dim} (${formatTokens(s.cacheReadTokens)} cached)${ansi.reset}`
-      : ""
+    `${ansi.dim} (${formatTokens(s.cacheReadTokens)} cached)${ansi.reset}`
   const win = s.contextWindow > 0 ? formatTokens(s.contextWindow) : "?"
   const gaugeLine = `${ansi.dim}ctx${ansi.reset} ${gauge(s.inputTokens, s.contextWindow, 8)} ${ansi.fgGray}${formatTokens(s.inputTokens)}/${win}${ansi.reset}${cached}`
   const elapsed = s.startedAt > 0 ? fmtDur(now - s.startedAt) : "0s"

@@ -82,12 +82,22 @@ export const LocalSettingsStoreLive = Layer.effect(
           // for display (`:settings`) and validated by `Schema.partial`.
           const dbUrl = localConfig?.dbUrl ?? homeConfig?.dbUrl
 
+          const anthropicThinkingEffort =
+            localConfig?.anthropicThinkingEffort ?? homeConfig?.anthropicThinkingEffort
+          const openAiReasoningEffort =
+            localConfig?.openAiReasoningEffort ?? homeConfig?.openAiReasoningEffort
+          const geminiThinkingLevel =
+            localConfig?.geminiThinkingLevel ?? homeConfig?.geminiThinkingLevel
+
           const merged: Settings = {
             allowBash: localConfig?.allowBash ?? homeConfig?.allowBash ?? DefaultSettings.allowBash,
             maxSteps: localConfig?.maxSteps ?? homeConfig?.maxSteps ?? DefaultSettings.maxSteps,
             editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
             model: localConfig?.model ?? homeConfig?.model ?? envModel ?? DefaultSettings.model,
             ...(dbUrl !== undefined ? { dbUrl } : {}),
+            ...(anthropicThinkingEffort !== undefined ? { anthropicThinkingEffort } : {}),
+            ...(openAiReasoningEffort !== undefined ? { openAiReasoningEffort } : {}),
+            ...(geminiThinkingLevel !== undefined ? { geminiThinkingLevel } : {}),
           }
 
           yield* Ref.set(stateRef, merged)

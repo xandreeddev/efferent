@@ -17,10 +17,13 @@ import {
   buildScopeRuntime,
   coderAgentConfig,
   defaultModelForProvider,
+  effortLevelsFor,
+  effortSettingKeyFor,
   maskDbUrl,
   parseModel,
   runAgent,
   createHandoff,
+  recoverConversationStats,
   type AgentMessage,
   type AuthData,
   type Checkpoint,
@@ -200,6 +203,8 @@ interface MutableAppState {
   modelList?: ReadonlyArray<ModelInfo>
   /** Open `:model` select box (overlay); owns input while visible. */
   modelPicker?: SelectState<ModelInfo>
+  /** Open effort picker (overlay, Shift-Tab); owns input while visible. */
+  effortPicker?: SelectState<string>
   /**
    * Open conversation picker (overlay), shown at startup when the workspace
    * has prior conversations. `null` value = "start a new conversation".
@@ -282,6 +287,7 @@ const HELP_LINES = [
   "  :settings        open the settings modal (arrow + ↵ to edit)",
   "  :set <k> <v>     update setting directly (e.g. :set maxSteps 15)",
   "  :model           list models; :model <#|id> switches provider/model",
+  "  :effort          open effort picker; :effort <level> sets directly",
 ]
 
 const snapshot = (s: MutableAppState): AppState => ({
@@ -294,6 +300,7 @@ const snapshot = (s: MutableAppState): AppState => ({
   palette: s.palette,
   modal: s.modal,
   modelPicker: s.modelPicker,
+  effortPicker: s.effortPicker,
   convPicker: s.convPicker,
   settingsView: s.settingsView,
   loginFlow: s.loginFlow,
@@ -545,6 +552,17 @@ const runTuiModeCore = (
           )
         : newConversationId()
 
+    const settingsStore = yield* SettingsStore
+    const loadedSettings = yield* settingsStore.get()
+    const initialEffort =
+      initialSel.provider === "anthropic"
+        ? loadedSettings.anthropicThinkingEffort
+        : initialSel.provider === "openai"
+          ? loadedSettings.openAiReasoningEffort
+          : initialSel.provider === "google"
+            ? loadedSettings.geminiThinkingLevel
+            : undefined
+
     const stateRef = yield* Ref.make<MutableAppState>({
       status: {
         modelId: meta.modelId,
@@ -553,6 +571,7 @@ const runTuiModeCore = (
         cacheReadTokens: 0,
         cwd: input.cwd,
         storage: storageLabel(process.env.EFFERENT_DB_URL),
+        effort: initialEffort,
       },
       scrollback: new Scrollback(),
       input: emptyInput,
@@ -590,13 +609,28 @@ const runTuiModeCore = (
       )
       if (history.length > 0) {
         const startupSegments = buildContextView(history, checkpoints)
+        const { lastUsage, cumulativeOutput, cumulativeTotal, turns } =
+          recoverConversationStats(history)
         yield* Ref.update(stateRef, (s) => {
           replayHistory(s.scrollback, history, checkpoints)
           s.conversationHasTurns = true
+          s.status = {
+            ...s.status,
+            inputTokens: lastUsage?.inputTokens ?? 0,
+            cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+          }
           s.sidePane = {
             ...s.sidePane,
             context: startupSegments,
             contextCollapsed: new Set(turnIdsOf(startupSegments)),
+            stats: {
+              ...s.sidePane.stats,
+              inputTokens: lastUsage?.inputTokens ?? 0,
+              cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+              outputTokens: cumulativeOutput,
+              totalTokens: cumulativeTotal,
+              turns,
+            },
           }
           return s
         })
@@ -681,8 +715,18 @@ const runTuiModeCore = (
         })
         const st0 = yield* Ref.get(stateRef)
         const crossProvider = prev.provider !== sel.provider && st0.conversationHasTurns
+        const settingsStore = yield* SettingsStore
+        const freshSettings = yield* settingsStore.get()
+        const newEffort =
+          sel.provider === "anthropic"
+            ? freshSettings.anthropicThinkingEffort
+            : sel.provider === "openai"
+              ? freshSettings.openAiReasoningEffort
+              : sel.provider === "google"
+                ? freshSettings.geminiThinkingLevel
+                : undefined
         yield* Ref.update(stateRef, (s) => {
-          s.status = { ...s.status, modelId: sel.modelId, contextWindow: sel.contextWindow }
+          s.status = { ...s.status, modelId: sel.modelId, contextWindow: sel.contextWindow, effort: newEffort }
           s.sidePane = {
             ...s.sidePane,
             stats: { ...s.sidePane.stats, contextWindow: sel.contextWindow },
@@ -706,7 +750,7 @@ const runTuiModeCore = (
 
     // Per-provider status tags for the provider selector.
     const loginStatuses = (auth: AuthData): ReadonlyArray<ProviderStatus> =>
-      (["anthropic", "google", "openai"] as const).map((p) => ({
+      (["anthropic", "google", "openai", "opencode"] as const).map((p) => ({
         provider: p,
         configured: auth[p]?.type,
       }))
@@ -1291,9 +1335,16 @@ const runTuiModeCore = (
           .listCheckpoints(target)
           .pipe(Effect.catchAll(() => Effect.succeed([])))
         const resumedSegments = buildContextView(history, checkpoints)
+        const { lastUsage, cumulativeOutput, cumulativeTotal, turns } =
+          recoverConversationStats(history)
         yield* Ref.update(stateRef, (s) => {
           s.conversationId = target
           s.scrollback.clear()
+          s.status = {
+            ...s.status,
+            inputTokens: lastUsage?.inputTokens ?? 0,
+            cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+          }
           s.sidePane = {
             ...s.sidePane,
             tree: emptyTree,
@@ -1306,6 +1357,11 @@ const runTuiModeCore = (
               ...emptyStats,
               startedAt: Date.now(),
               contextWindow: s.sidePane.stats.contextWindow,
+              inputTokens: lastUsage?.inputTokens ?? 0,
+              cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+              outputTokens: cumulativeOutput,
+              totalTokens: cumulativeTotal,
+              turns,
             },
             filesChanged: [],
             stackCollapsed: new Set(["files", "skills", "instructions"]),
@@ -1520,9 +1576,16 @@ const runTuiModeCore = (
       yield* Effect.forEach(picked, (m) =>
         store.append(newId, m).pipe(Effect.catchAll(() => Effect.void)),
       )
+      const { lastUsage, cumulativeOutput, cumulativeTotal, turns } =
+        recoverConversationStats(picked)
       yield* Ref.update(stateRef, (s) => {
         s.conversationId = newId
         s.scrollback.clear()
+        s.status = {
+          ...s.status,
+          inputTokens: lastUsage?.inputTokens ?? 0,
+          cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+        }
         s.sidePane = {
           ...s.sidePane,
           tree: emptyTree,
@@ -1536,6 +1599,11 @@ const runTuiModeCore = (
             ...emptyStats,
             startedAt: Date.now(),
             contextWindow: s.sidePane.stats.contextWindow,
+            inputTokens: lastUsage?.inputTokens ?? 0,
+            cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
+            outputTokens: cumulativeOutput,
+            totalTokens: cumulativeTotal,
+            turns,
           },
           filesChanged: [],
           stackCollapsed: new Set(["files", "skills", "instructions"]),
@@ -1591,49 +1659,56 @@ const runTuiModeCore = (
               return "stay" as const
             }
             const hcid = cur0.conversationId
-            yield* Effect.gen(function* () {
-              yield* Ref.update(stateRef, (s) => {
-                s.busy = true
-                s.scrollback.push({ kind: "info", text: "⟳ generating handoff…" })
-                return s
-              })
-              yield* requestRender
-
-              // createHandoff needs only ConversationStore + LanguageModel,
-              // both ambient — no toolkit handler layer required.
-              yield* createHandoff(hcid).pipe(
-                Effect.catchAll((err) => {
-                  const msg =
-                    typeof err === "object" && err !== null && "message" in err
-                      ? String((err as { message: unknown }).message)
-                      : String(err)
-                  return Queue.offer(eventQueue, {
-                    type: "error",
-                    message: `handoff failed: ${msg}`,
-                  })
-                }),
-              )
-
-              const store = yield* ConversationStore
-              const cp = yield* store
-                .getLatestCheckpoint(hcid)
-                .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-
-              yield* rebuildContext(hcid)
-              yield* Ref.update(stateRef, (s) => {
-                s.busy = false
-                if (cp !== undefined) {
-                  s.scrollback.push({ kind: "checkpoint", text: cp.summary })
-                } else {
-                  s.scrollback.push({
-                    kind: "info",
-                    text: "nothing new to hand off",
-                  })
-                }
-                return s
-              })
-              yield* requestRender
+            yield* Ref.update(stateRef, (s) => {
+              s.busy = true
+              s.turnStartedAt = Date.now()
+              s.spinnerFrame = 0
+              s.scrollback.push({ kind: "info", text: "⟳ generating handoff…" })
+              return s
             })
+            startSpinner()
+            yield* requestRender
+
+            // Fork the LLM call so handleKey returns immediately and the
+            // spinner/renders keep ticking while the summary is generated.
+            // createHandoff needs only ConversationStore + LanguageModel,
+            // both ambient — no toolkit handler layer required.
+            yield* Effect.forkDaemon(
+              Effect.gen(function* () {
+                yield* createHandoff(hcid).pipe(
+                  Effect.catchAll((err) => {
+                    const msg =
+                      typeof err === "object" && err !== null && "message" in err
+                        ? String((err as { message: unknown }).message)
+                        : String(err)
+                    return Queue.offer(eventQueue, {
+                      type: "error",
+                      message: `handoff failed: ${msg}`,
+                    })
+                  }),
+                )
+
+                const store = yield* ConversationStore
+                const cp = yield* store
+                  .getLatestCheckpoint(hcid)
+                  .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+
+                yield* rebuildContext(hcid)
+                yield* Ref.update(stateRef, (s) => {
+                  s.busy = false
+                  if (cp !== undefined) {
+                    s.scrollback.push({ kind: "checkpoint", text: cp.summary })
+                  } else {
+                    s.scrollback.push({
+                      kind: "info",
+                      text: "nothing new to hand off",
+                    })
+                  }
+                  return s
+                })
+                yield* requestRender
+              }),
+            )
             return "stay" as const
           }
           case ":context": {
@@ -1797,6 +1872,30 @@ const runTuiModeCore = (
                 kind: "number",
               },
               {
+                key: "anthropicThinkingEffort",
+                label: "claudeThink",
+                value: current.anthropicThinkingEffort ?? "",
+                kind: "enum",
+                options: ["", "off", "low", "medium", "high"],
+                hint: "default/off/low/medium/high",
+              },
+              {
+                key: "openAiReasoningEffort",
+                label: "openaiReason",
+                value: current.openAiReasoningEffort ?? "",
+                kind: "enum",
+                options: ["", "none", "minimal", "low", "medium", "high"],
+                hint: "default/none/minimal/low/medium/high",
+              },
+              {
+                key: "geminiThinkingLevel",
+                label: "geminiThink",
+                value: current.geminiThinkingLevel ?? "",
+                kind: "enum",
+                options: ["", "off", "minimal", "low", "medium", "high"],
+                hint: "default/off/minimal/low/medium/high",
+              },
+              {
                 key: "model",
                 label: "model",
                 value: current.model,
@@ -1836,7 +1935,13 @@ const runTuiModeCore = (
             const settingsStore = yield* SettingsStore
             const current = yield* settingsStore.get()
 
-            const validKeys: ReadonlyArray<keyof typeof current> = ["allowBash", "maxSteps"]
+            const validKeys: ReadonlyArray<keyof typeof current> = [
+              "allowBash",
+              "maxSteps",
+              "anthropicThinkingEffort",
+              "openAiReasoningEffort",
+              "geminiThinkingLevel",
+            ]
             if (!validKeys.includes(k as any)) {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({ kind: "error", text: `Unknown setting: ${k}. Valid settings: ${validKeys.join(", ")}` })
@@ -1873,6 +1978,39 @@ const runTuiModeCore = (
                 yield* requestRender
                 return "stay" as const
               }
+            } else if (key === "anthropicThinkingEffort") {
+              const allowed = ["default", "off", "low", "medium", "high"]
+              if (!allowed.includes(v)) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be one of: ${allowed.join(", ")}` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = (v === "default" ? undefined : v) as any
+            } else if (key === "openAiReasoningEffort") {
+              const allowed = ["default", "none", "minimal", "low", "medium", "high"]
+              if (!allowed.includes(v)) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be one of: ${allowed.join(", ")}` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = (v === "default" ? undefined : v) as any
+            } else if (key === "geminiThinkingLevel") {
+              const allowed = ["default", "off", "minimal", "low", "medium", "high"]
+              if (!allowed.includes(v)) {
+                yield* Ref.update(stateRef, (s) => {
+                  s.scrollback.push({ kind: "error", text: `Setting '${k}' must be one of: ${allowed.join(", ")}` })
+                  return s
+                })
+                yield* requestRender
+                return "stay" as const
+              }
+              typedVal = (v === "default" ? undefined : v) as any
             } else {
               typedVal = v as any
             }
@@ -2067,6 +2205,66 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
           }
+          case ":effort": {
+            const effortRegistry = yield* ModelRegistry
+            const cur = yield* effortRegistry.current
+            const levels = effortLevelsFor(cur.provider, cur.modelId)
+            const settingKey = effortSettingKeyFor(cur.provider)
+            if (levels === undefined || settingKey === undefined) {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "info",
+                  text: `${cur.provider} models don't support a thinking effort setting`,
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const arg = parts.slice(1).join(" ").trim().toLowerCase()
+            if (arg.length === 0) {
+              // No arg → open the picker.
+              const settingsStore = yield* SettingsStore
+              const current = yield* settingsStore.get()
+              const currentVal = (current[settingKey] as string | undefined) ?? ""
+              const options = levels.map((level) => ({
+                value: level,
+                label: level.length === 0 ? "default" : level,
+                active: level === currentVal,
+              }))
+              yield* Ref.update(stateRef, (s) => {
+                s.effortPicker = openSelect("Select thinking effort", options)
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            // Direct set: `:effort <level>`
+            if (!levels.includes(arg) && arg !== "default") {
+              yield* Ref.update(stateRef, (s) => {
+                s.scrollback.push({
+                  kind: "error",
+                  text: `unknown effort '${arg}'. Valid: ${levels.map((l) => (l.length === 0 ? "default" : l)).join(", ")}`,
+                })
+                return s
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            const nextEffort = arg === "default" || arg.length === 0 ? undefined : arg
+            const settingsStore = yield* SettingsStore
+            yield* settingsStore.update((curr) => ({ ...curr, [settingKey]: nextEffort }))
+            yield* Ref.update(stateRef, (s) => {
+              s.status = { ...s.status, effort: nextEffort }
+              s.scrollback.push({
+                kind: "info",
+                text: `thinking effort → ${nextEffort ?? "default"}`,
+              })
+              return s
+            })
+            yield* requestRender
+            return "stay" as const
+          }
           case ":login": {
             yield* openLoginFlow
             return "stay" as const
@@ -2075,7 +2273,7 @@ const runTuiModeCore = (
             const auth = yield* AuthStore
             const all = yield* auth.all
             const arg = parts.slice(1).join(" ").trim().toLowerCase()
-            const configured = (["anthropic", "google", "openai"] as const).filter(
+            const configured = (["anthropic", "google", "openai", "opencode"] as const).filter(
               (p) => all[p] !== undefined,
             )
             if (arg.length === 0) {
@@ -2092,11 +2290,11 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             }
-            if (arg !== "anthropic" && arg !== "google" && arg !== "openai") {
+            if (arg !== "anthropic" && arg !== "google" && arg !== "openai" && arg !== "opencode") {
               yield* Ref.update(stateRef, (s) => {
                 s.scrollback.push({
                   kind: "error",
-                  text: `unknown provider '${arg}' (anthropic | google | openai)`,
+                  text: `unknown provider '${arg}' (anthropic | google | openai | opencode)`,
                 })
                 return s
               })
@@ -2201,6 +2399,19 @@ const runTuiModeCore = (
             yield* requestRender
             return "stay" as const
           }
+          if (key.type === "paste") {
+            const text = key.text.replace(/\r|\n/g, "")
+            yield* Ref.update(stateRef, (st) => {
+              if (st.modelPicker) {
+                for (const ch of text) {
+                  st.modelPicker = filterAppend(st.modelPicker, ch)
+                }
+              }
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
           if (key.type === "enter") {
             const chosen = selectedValue(s.modelPicker)
             yield* Ref.update(stateRef, (st) => {
@@ -2208,6 +2419,50 @@ const runTuiModeCore = (
               return st
             })
             if (chosen !== undefined) yield* applyModelSelection(chosen)
+            yield* requestRender
+            return "stay" as const
+          }
+          return "stay" as const
+        }
+
+        // The effort picker owns all input while open.
+        if (s.effortPicker !== undefined) {
+          if (key.type === "escape" || (key.type === "ctrl" && key.char === "c")) {
+            yield* Ref.update(stateRef, (st) => {
+              delete st.effortPicker
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "arrow" && (key.dir === "up" || key.dir === "down")) {
+            const dir: "up" | "down" = key.dir === "up" ? "up" : "down"
+            yield* Ref.update(stateRef, (st) => {
+              if (st.effortPicker) st.effortPicker = moveSelect(st.effortPicker, dir)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "enter") {
+            const chosen = selectedValue(s.effortPicker)
+            yield* Ref.update(stateRef, (st) => {
+              delete st.effortPicker
+              return st
+            })
+            if (chosen !== undefined) {
+              const sel = parseModel(s.status.modelId)
+              const settingKey = effortSettingKeyFor(sel.provider)
+              if (settingKey !== undefined) {
+                const nextEffort = chosen.length === 0 ? undefined : chosen
+                const settingsStore = yield* SettingsStore
+                yield* settingsStore.update((curr) => ({ ...curr, [settingKey]: nextEffort }))
+                yield* Ref.update(stateRef, (st) => {
+                  st.status = { ...st.status, effort: nextEffort }
+                  return st
+                })
+              }
+            }
             yield* requestRender
             return "stay" as const
           }
@@ -2245,6 +2500,19 @@ const runTuiModeCore = (
             const ch = key.char
             yield* Ref.update(stateRef, (st) => {
               if (st.convPicker) st.convPicker = filterAppend(st.convPicker, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "paste") {
+            const text = key.text.replace(/\r|\n/g, "")
+            yield* Ref.update(stateRef, (st) => {
+              if (st.convPicker) {
+                for (const ch of text) {
+                  st.convPicker = filterAppend(st.convPicker, ch)
+                }
+              }
               return st
             })
             yield* requestRender
@@ -2297,6 +2565,19 @@ const runTuiModeCore = (
               const ch = key.char
               yield* Ref.update(stateRef, (st) => {
                 if (st.settingsView) st.settingsView = editAppend(st.settingsView, ch)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
+            if (key.type === "paste") {
+              const text = key.text.replace(/\r|\n/g, "")
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView) {
+                  for (const ch of text) {
+                    st.settingsView = editAppend(st.settingsView, ch)
+                  }
+                }
                 return st
               })
               yield* requestRender
@@ -2385,6 +2666,22 @@ const runTuiModeCore = (
               yield* requestRender
               return "stay" as const
             }
+            if (rowNow.kind === "enum" && rowNow.options !== undefined) {
+              const idx = rowNow.options.indexOf(rowNow.value)
+              const next = rowNow.options[(idx + 1) % rowNow.options.length] ?? ""
+              const settingsStore = yield* SettingsStore
+              yield* settingsStore.update((curr) => ({
+                ...curr,
+                [rowNow.key]: next.length === 0 ? undefined : next,
+              }))
+              yield* Ref.update(stateRef, (st) => {
+                if (st.settingsView)
+                  st.settingsView = setRowValue(st.settingsView, rowNow.key, next)
+                return st
+              })
+              yield* requestRender
+              return "stay" as const
+            }
             // readonly rows: no-op (a hint already points at :model / :db).
             return "stay" as const
           }
@@ -2436,6 +2733,19 @@ const runTuiModeCore = (
             const ch = key.char
             yield* Ref.update(stateRef, (st) => {
               if (st.loginFlow) st.loginFlow = loginAppend(st.loginFlow, ch)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
+          if (key.type === "paste") {
+            const text = key.text.replace(/\r|\n/g, "")
+            yield* Ref.update(stateRef, (st) => {
+              if (st.loginFlow) {
+                for (const ch of text) {
+                  st.loginFlow = loginAppend(st.loginFlow, ch)
+                }
+              }
               return st
             })
             yield* requestRender
@@ -2929,6 +3239,31 @@ const runTuiModeCore = (
             })
             yield* requestRender
             return "stay" as const
+
+          // Shift-Tab: open a modal to pick the thinking/reasoning effort level.
+          case "cycleEffort": {
+            const sel = parseModel(s.status.modelId)
+            const levels = effortLevelsFor(sel.provider, sel.modelId)
+            const settingKey = effortSettingKeyFor(sel.provider)
+            if (levels === undefined || settingKey === undefined) {
+              yield* requestRender
+              return "stay" as const
+            }
+            const settingsStore = yield* SettingsStore
+            const current = yield* settingsStore.get()
+            const currentVal = (current[settingKey] as string | undefined) ?? ""
+            const options = levels.map((level) => ({
+              value: level,
+              label: level.length === 0 ? "default" : level,
+              active: level === currentVal,
+            }))
+            yield* Ref.update(stateRef, (st) => {
+              st.effortPicker = openSelect("Select thinking effort", options)
+              return st
+            })
+            yield* requestRender
+            return "stay" as const
+          }
 
           // Edit the active command/search body via the input editor.
           case "entryEdit": {
