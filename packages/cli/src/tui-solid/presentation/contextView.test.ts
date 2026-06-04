@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/core"
 import {
-  buildContextRows,
   buildContextRowsData,
   buildContextView,
   messagesForSelectedTurns,
   turnIdsOf,
+  type ContextRowData,
   type ContextSegment,
 } from "./contextView.js"
 
@@ -89,18 +89,20 @@ describe("buildContextView", () => {
   })
 })
 
-describe("buildContextRows", () => {
-  const msgRows = (rows: ReadonlyArray<{ kind: string; messageIndex?: number }>) =>
-    rows.filter((r) => r.kind === "message")
+describe("buildContextRowsData — rows", () => {
+  const msgRows = (rows: ReadonlyArray<ContextRowData>) => rows.filter((r) => r.kind === "message")
 
   test("no checkpoints → header + loaded segment + message rows with positions", () => {
-    const rows = buildContextRows(buildContextView([user("a"), assistant("b"), user("c")], []), new Set())
+    const rows = buildContextRowsData(
+      buildContextView([user("a"), assistant("b"), user("c")], []),
+      new Set(),
+    )
     expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2])
     expect(rows.some((r) => r.kind === "segment" && r.collapsible)).toBe(true)
   })
 
   test("a collapsed segment emits only its header (no message rows)", () => {
-    const rows = buildContextRows(
+    const rows = buildContextRowsData(
       buildContextView([user("a"), assistant("b")], []),
       new Set(["seg:loaded"]),
     )
@@ -110,60 +112,30 @@ describe("buildContextRows", () => {
 
   test("message indices stay continuous across archived + loaded segments", () => {
     const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
-    const rows = buildContextRows(buildContextView(msgs, [cp(1, "S")]), new Set())
+    const rows = buildContextRowsData(buildContextView(msgs, [cp(1, "S")]), new Set())
     expect(msgRows(rows).map((r) => r.messageIndex)).toEqual([0, 1, 2, 3, 4])
   })
 
-  test("an archived segment row carries its handoffIndex and shows a ✦ summary preview", () => {
+  test("an archived segment carries its handoffIndex and a ✦ summary preview row", () => {
     const msgs = [user("a"), assistant("b"), user("c")]
-    const rows = buildContextRows(buildContextView(msgs, [cp(1, "THE SUMMARY")]), new Set())
-    const seg = rows.find((r) => r.kind === "segment" && r.handoffIndex === 1)
-    expect(seg).toBeDefined()
-    // the summary text appears as a preview row under the (expanded) archived segment
-    expect(rows.some((r) => r.kind === "summary" && r.label.includes("THE SUMMARY"))).toBe(true)
+    const rows = buildContextRowsData(buildContextView(msgs, [cp(1, "THE SUMMARY")]), new Set())
+    expect(rows.some((r) => r.kind === "segment" && r.handoffIndex === 1)).toBe(true)
+    expect(
+      rows.some((r) => r.display.kind === "summary" && r.display.text.includes("THE SUMMARY")),
+    ).toBe(true)
   })
 
-  test("a selected handoff renders ◉ on its segment row and counts in the header", () => {
+  test("a selected handoff marks its segment row selected and counts in the header", () => {
     const msgs = [user("a"), assistant("b"), user("c")]
     const segs = buildContextView(msgs, [cp(1, "S")])
-    const rows = buildContextRows(segs, new Set(), new Set(), new Set([1]))
+    const rows = buildContextRowsData(segs, new Set(), new Set(), new Set([1]))
     const seg = rows.find((r) => r.kind === "segment" && r.handoffIndex === 1)
-    expect(seg!.label).toContain("◉")
-    expect(rows[0]!.label).toContain("1 selected")
+    expect(seg).toBeDefined()
+    const segDisplay = seg!.display
+    expect(segDisplay.kind === "segment" && segDisplay.selected).toBe(true)
+    const header = rows[0]!.display
+    expect(header.kind === "header" && header.selectedCount).toBe(1)
   })
-})
-
-describe("buildContextRowsData (structured ↔ ANSI parity)", () => {
-  // Both renderers must walk identically — the side-pane cursor indexes into the
-  // ANSI rows while the OpenTUI viewer renders the structured rows, so any drift
-  // in count/order/structural fields would desync the cursor.
-  const cases: ReadonlyArray<[string, ReadonlyArray<AgentMessage>, ReadonlyArray<Checkpoint>]> = [
-    ["plain", [user("a"), assistant("b"), user("c"), assistant("d")], []],
-    ["one handoff", [user("a"), assistant("b"), user("c"), assistant("d"), user("e")], [cp(1, "S1")]],
-    ["two handoffs", [user("a"), assistant("b"), user("c"), assistant("d"), user("e")], [cp(1, "S1"), cp(3, "S2")]],
-  ]
-
-  for (const [name, msgs, cps] of cases) {
-    test(`${name}: data rows align 1:1 with ANSI rows`, () => {
-      const segs = buildContextView(msgs, cps)
-      const collapsed = new Set<string>(["turn:0"])
-      const selected = new Set<number>([1])
-      const handoffs = new Set<number>(cps.length > 0 ? [1] : [])
-      const data = buildContextRowsData(segs, collapsed, selected, handoffs)
-      const ansi = buildContextRows(segs, collapsed, selected, handoffs)
-      expect(data).toHaveLength(ansi.length)
-      data.forEach((d, i) => {
-        const a = ansi[i]!
-        expect(d.kind).toBe(a.kind)
-        expect(d.depth).toBe(a.depth)
-        expect(d.collapsible).toBe(a.collapsible)
-        expect(d.groupId).toBe(a.groupId)
-        expect(d.messageIndex).toBe(a.messageIndex)
-        expect(d.turnIndex).toBe(a.turnIndex)
-        expect(d.handoffIndex).toBe(a.handoffIndex)
-      })
-    })
-  }
 
   test("display payload carries the un-styled text (no ANSI escapes)", () => {
     const segs = buildContextView([user("hello world"), assistant("hi")], [])
@@ -193,9 +165,9 @@ describe("turn grouping", () => {
     expect(turnIdsOf(buildContextView(msgs, []))).toEqual(["turn:0", "turn:1"])
   })
 
-  test("buildContextRows emits one turn row per turn with a running turnIndex", () => {
+  test("buildContextRowsData emits one turn row per turn with a running turnIndex", () => {
     const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
-    const rows = buildContextRows(buildContextView(msgs, []), new Set())
+    const rows = buildContextRowsData(buildContextView(msgs, []), new Set())
     const turns = rows.filter((r) => r.kind === "turn")
     expect(turns.map((t) => t.turnIndex)).toEqual([0, 1])
     // turn rows carry the first message index of the turn (jump target)
@@ -205,20 +177,23 @@ describe("turn grouping", () => {
 
   test("a folded turn hides its child message rows; the turn row stays", () => {
     const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
-    const rows = buildContextRows(buildContextView(msgs, []), new Set(["turn:0"]))
+    const rows = buildContextRowsData(buildContextView(msgs, []), new Set(["turn:0"]))
     expect(rows.filter((r) => r.kind === "turn")).toHaveLength(2)
     // turn:0 folded → its messages absent; turn:1 expanded → its messages present
     const msgIdxs = rows.filter((r) => r.kind === "message").map((r) => r.messageIndex)
     expect(msgIdxs).toEqual([2, 3])
   })
 
-  test("selected turns render the ◉ marker and the header shows a count", () => {
+  test("selected turns are marked selected and the header shows a count", () => {
     const msgs = [user("a"), assistant("A"), user("b"), assistant("B")]
-    const rows = buildContextRows(buildContextView(msgs, []), new Set(), new Set([1]))
+    const rows = buildContextRowsData(buildContextView(msgs, []), new Set(), new Set([1]))
     const turns = rows.filter((r) => r.kind === "turn")
-    expect(turns[0]!.label).toContain("○")
-    expect(turns[1]!.label).toContain("◉")
-    expect(rows[0]!.label).toContain("1 selected")
+    const d0 = turns[0]!.display
+    const d1 = turns[1]!.display
+    expect(d0.kind === "turn" && d0.selected).toBe(false)
+    expect(d1.kind === "turn" && d1.selected).toBe(true)
+    const header = rows[0]!.display
+    expect(header.kind === "header" && header.selectedCount).toBe(1)
   })
 })
 
@@ -267,11 +242,11 @@ describe("messagesForSelectedTurns", () => {
     )
   })
 
-  test("turn indices line up with buildContextRows across archived + loaded", () => {
+  test("turn indices line up across archived + loaded", () => {
     // 0..4 ; cp folds 0..1 (archived turn 0), loaded has turns 1 ([c,d]) and 2 ([e])
     const msgs = [user("a"), assistant("b"), user("c"), assistant("d"), user("e")]
     const segs = buildContextView(msgs, [cp(1, "S")])
-    const rows = buildContextRows(segs, new Set())
+    const rows = buildContextRowsData(segs, new Set())
     expect(rows.filter((r) => r.kind === "turn").map((t) => t.turnIndex)).toEqual([0, 1, 2])
     // selecting turn 2 yields just [e]
     expect(messagesForSelectedTurns(segs, new Set([2]))).toEqual([user("e")])

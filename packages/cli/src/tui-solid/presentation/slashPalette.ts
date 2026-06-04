@@ -1,5 +1,3 @@
-import { ansi, padRight, truncate } from "./terminal.js"
-
 export interface SlashCommand {
   readonly name: string
   readonly description: string
@@ -72,46 +70,4 @@ export const selectedCommand = (
 ): SlashCommand | undefined => {
   if (!state.visible) return undefined
   return state.matches[state.selected]
-}
-
-/**
- * Render palette rows. Returns at most `maxRows` lines, exactly `cols`
- * wide. Caller positions these directly above the input area.
- *
- * When there are more matches than `maxRows`, the rendered slice is a
- * **window that follows the selection** (so arrowing past the bottom scrolls
- * instead of losing the highlight), with `↑`/`↓` glyphs on the edge rows when
- * more commands sit above/below the window.
- */
-export const renderPalette = (
-  state: PaletteState,
-  cols: number,
-  maxRows: number,
-): string[] => {
-  if (!state.visible) return []
-  const n = state.matches.length
-  const count = Math.min(maxRows, n)
-
-  // Window start: keep `selected` roughly centred, clamped to a valid range.
-  let start = state.selected - Math.floor(count / 2)
-  start = Math.max(0, Math.min(start, n - count))
-
-  const moreAbove = start > 0
-  const moreBelow = start + count < n
-
-  return state.matches.slice(start, start + count).map((c, j) => {
-    const idx = start + j
-    const marker =
-      idx === state.selected
-        ? `${ansi.fgBrightCyan}▸${ansi.reset}`
-        : j === 0 && moreAbove
-          ? `${ansi.dim}↑${ansi.reset}`
-          : j === count - 1 && moreBelow
-            ? `${ansi.dim}↓${ansi.reset}`
-            : " "
-    const name = `${ansi.bold}${c.name}${ansi.reset}`
-    const desc = `${ansi.fgGray}${c.description}${ansi.reset}`
-    const line = `${marker} ${padRight(name, 14)} ${desc}`
-    return truncate(padRight(line, cols), cols)
-  })
 }
