@@ -117,14 +117,14 @@ const finishOAuth = (
     yield* auth.setOAuth(provider, tokens)
     yield* Effect.sync(() => {
       stop()
-      store.run.oauthSession = undefined
+      store.run.setOAuth(undefined)
     })
     yield* afterLogin(store, provider, "subscription")
   }).pipe(
     Effect.catchAll((e) =>
       Effect.sync(() => {
         stop()
-        store.run.oauthSession = undefined
+        store.run.setOAuth(undefined)
         failLogin(store, formatFullError(e))
       }),
     ),
@@ -171,14 +171,14 @@ export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider
     })
     const fiber = yield* Effect.forkDaemon(waiter)
     yield* Effect.sync(() => {
-      store.run.oauthSession = { verifier: pkce.verifier, stop: server.stop, fiber }
+      store.run.setOAuth({ verifier: pkce.verifier, stop: server.stop, fiber })
     })
   })
 
 /** Manual paste of the redirect URL (browser on another machine / no auto-open). */
 export const completeOAuthManual = (store: TuiStore, provider: Provider, redirect: string) =>
   Effect.gen(function* () {
-    const session = store.run.oauthSession
+    const session = store.run.getOAuth()
     const parsed = parseAuthorizationInput(redirect)
     if (parsed.code === undefined) {
       yield* Effect.sync(() =>
@@ -194,12 +194,12 @@ export const completeOAuthManual = (store: TuiStore, provider: Provider, redirec
 /** Tear down an in-flight OAuth login (callback server + waiter) on cancel. */
 export const stopOAuthSession = (store: TuiStore) =>
   Effect.gen(function* () {
-    const sess = store.run.oauthSession
+    const sess = store.run.getOAuth()
     if (sess === undefined) return
     yield* Effect.sync(() => sess.stop())
     yield* Fiber.interrupt(sess.fiber)
     yield* Effect.sync(() => {
-      store.run.oauthSession = undefined
+      store.run.setOAuth(undefined)
     })
   })
 

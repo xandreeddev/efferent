@@ -72,7 +72,7 @@ test("applyResume swaps the conversation, replays it, and seeds the context view
 
   applyResume(store, target, history, [])
 
-  expect(store.run.conversationId).toBe(target)
+  expect(store.run.getConversationId()).toBe(target)
   // the stale block is gone; the replayed history + the "resumed" info line are present
   expect(store.blocks().some((b) => b.kind === "user" && b.text === "stale")).toBe(false)
   expect(store.blocks().some((b) => b.kind === "user" && b.text === "hi")).toBe(true)
@@ -90,7 +90,7 @@ test("applyBuilt switches to the new session and focuses the input", () => {
 
   applyBuilt(store, newId, picked, 1, 0)
 
-  expect(store.run.conversationId).toBe(newId)
+  expect(store.run.getConversationId()).toBe(newId)
   expect(store.focus()).toBe("input")
   expect(store.mode()).toBe("insert")
   expect(store.blocks().some((b) => b.kind === "user" && b.text === "seed")).toBe(true)

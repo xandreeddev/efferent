@@ -25,7 +25,7 @@ export interface SubmitDeps {
  * unchanged in spirit — auth gate, busy→queue, fork `runAgent` with the scope's
  * handler layer, drain the queue in an `ensuring` `finishTurn` — but every UI
  * write goes through the Solid store instead of `Ref.update(stateRef)`. The
- * agent fiber stays Effect-owned (`store.run.runningFiber`), never a signal.
+ * agent fiber stays Effect-owned (`store.run.getFiber()`), never a signal.
  *
  * Returns a recursive `submit` so a queued message resubmits on turn end.
  */
@@ -50,7 +50,7 @@ export const makeSubmit = (
 
       // Busy → queue it for after the current turn.
       if (store.busy()) {
-        store.run.queue.push(text)
+        store.run.enqueue(text)
         store.pushBlock({ kind: "info", text: `queued: ${text}` })
         store.setInput("")
         return
@@ -60,17 +60,16 @@ export const makeSubmit = (
       store.setInput("")
       store.setBusy(true)
       store.setNote("working…")
-      store.run.turnStartedAt = Date.now()
 
-      const cid = store.run.conversationId
+      const cid = store.run.getConversationId()
 
       // Reset busy + drain one queued message. Runs on success, failure, AND
       // interruption (Esc) via `ensuring`, so the loop never gets stuck.
       const finishTurn = Effect.gen(function* () {
-        const next = store.run.queue.shift()
+        const next = store.run.dequeue()
         store.setBusy(false)
         store.setNote(undefined)
-        store.run.runningFiber = undefined
+        store.run.setFiber(undefined)
         if (next !== undefined) yield* submit(next)
       })
 
@@ -93,7 +92,7 @@ export const makeSubmit = (
       )
 
       const fiber = yield* Effect.forkDaemon(runEffect)
-      store.run.runningFiber = fiber
+      store.run.setFiber(fiber)
     })
 
   return submit

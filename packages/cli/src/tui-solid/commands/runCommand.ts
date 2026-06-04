@@ -82,8 +82,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       store.pushBlock({ kind: "info", text: store.status().cwd })
       return
     case ":reset": {
-      store.run.conversationId = newConversationId()
-      store.run.queue = []
+      store.run.newConversation(newConversationId())
       store.clear()
       store.setSidePane((s) => ({
         ...s,
@@ -94,12 +93,12 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       }))
       store.pushBlock({
         kind: "info",
-        text: `new conversation: ${store.run.conversationId.slice(0, 8)}`,
+        text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
       })
       return
     }
     case ":context":
-      void ctx.run(toggleContext(store, store.run.conversationId))
+      void ctx.run(toggleContext(store, store.run.getConversationId()))
       return
     case ":build":
       void ctx.run(buildFromSelection(store, store.status().cwd))
@@ -115,7 +114,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
         store.pushBlock({ kind: "info", text: "can't hand off while a turn is running" })
         return
       }
-      void ctx.run(runHandoff(store, store.run.conversationId))
+      void ctx.run(runHandoff(store, store.run.getConversationId()))
       return
     case ":model":
       void ctx.run(openModelPicker(store))
@@ -171,7 +170,7 @@ const resume = (ctx: TuiContext, arg: string | undefined): void => {
     return
   }
   const n = Number(arg)
-  const list = store.run.browseList
+  const list = store.run.getBrowseList()
   const rawId =
     Number.isInteger(n) && n >= 1 && n <= list.length ? list[n - 1]!.id : arg
   const target = Effect.runSync(decodeCid(rawId).pipe(Effect.option))
