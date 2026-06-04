@@ -19,6 +19,23 @@ export interface FileChange {
   readonly removed: number
 }
 
+/**
+ * Accumulate one file's diffstat into the files-changed list: sum into the
+ * existing row for that path, or append a new one. Pure find-or-append, so the
+ * pump's `tool_call_end` stays a one-liner.
+ */
+export const mergeFileChange = (
+  files: ReadonlyArray<FileChange>,
+  change: FileChange,
+): ReadonlyArray<FileChange> => {
+  if (!files.some((f) => f.path === change.path)) return [...files, change]
+  return files.map((f) =>
+    f.path === change.path
+      ? { path: f.path, added: f.added + change.added, removed: f.removed + change.removed }
+      : f,
+  )
+}
+
 /** At-a-glance session counters surfaced in the Activity header. */
 export interface SessionStats {
   /** Current context size (last turn's input tokens). */

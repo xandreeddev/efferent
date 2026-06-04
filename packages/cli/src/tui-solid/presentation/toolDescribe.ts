@@ -2,6 +2,7 @@
  * Pure formatters that turn raw tool calls/results into short, human
  * labels for the execution tree and the chat scrollback. No IO.
  */
+import type { FileChange } from "./sidePane.js"
 
 const str = (v: unknown): string | undefined =>
   typeof v === "string" ? v : undefined
@@ -169,14 +170,18 @@ export const describeToolResult = (
 }
 
 /**
- * Rich artifacts to render below a tool pill: a unified `diff` (edit_file)
- * or full textual `output` (bash/grep/read_file). Empty when nothing to show.
+ * Rich artifacts to render below a tool pill: a unified `diff` (edit_file) or
+ * full textual `output` (bash/grep/read_file), plus the structured `fileChange`
+ * diffstat for edit/write (path + added/removed) — all read straight off the
+ * typed result, so the pump never re-parses a presentation string. Empty when
+ * nothing to show. The path comes from the result itself (`r.path`, the canonical
+ * display path the diff headers also use), so no call-site bookkeeping is needed.
  */
 export const toolArtifacts = (
   toolName: string,
   ok: boolean,
   result: unknown,
-): { diff?: string; output?: string } => {
+): { diff?: string; output?: string; fileChange?: FileChange } => {
   if (!ok) {
     if (typeof result === "string") return { output: result }
     if (typeof result === "object" && result !== null) {
@@ -196,7 +201,14 @@ export const toolArtifacts = (
   switch (toolName) {
     case "edit_file": {
       const diff = str(r.diff)
-      return diff !== undefined && diff.length > 0 ? { diff } : {}
+      if (diff === undefined || diff.length === 0) return {}
+      const path = str(r.path)
+      const { added, removed } = countDiffLines(diff)
+      return path !== undefined ? { diff, fileChange: { path, added, removed } } : { diff }
+    }
+    case "write_file": {
+      const path = str(r.path)
+      return path !== undefined ? { fileChange: { path, added: num(r.lines) ?? 0, removed: 0 } } : {}
     }
     case "Bash": {
       const stdout = str(r.stdout) ?? ""
