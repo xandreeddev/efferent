@@ -5,6 +5,8 @@
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM"],
     "types": ["bun"],
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "strict": true,
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,

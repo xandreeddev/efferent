@@ -48,6 +48,56 @@ export interface ContextRow {
 }
 
 /**
+ * The **non-ANSI** display payload for one context row, discriminated by kind.
+ * `buildContextRowsData` produces these; `buildContextRows` renders them into the
+ * ANSI `label` the hand-rolled TUI prints, while the Solid/OpenTUI viewer styles
+ * the fields itself (OpenTUI `<text>` can't parse baked-in ANSI). Single source
+ * of truth — both renderers walk the *same* row list, so a cursor index lines up
+ * across them.
+ */
+export type ContextRowDisplay =
+  | {
+      readonly kind: "header"
+      readonly loaded: number
+      readonly archived: number
+      readonly hasFold: boolean
+      readonly hasSummary: boolean
+      readonly selectedCount: number
+    }
+  | {
+      readonly kind: "segment"
+      readonly archived: boolean
+      readonly folded: boolean
+      readonly selected: boolean
+      readonly handoffIndex?: number
+      /** For archived segments: how many real messages this handoff folded. */
+      readonly foldedCount: number
+    }
+  | { readonly kind: "summary"; readonly text: string }
+  | {
+      readonly kind: "turn"
+      readonly folded: boolean
+      readonly selected: boolean
+      readonly subject: string
+      /** Message count in the turn (the trailing `·N`). */
+      readonly steps: number
+      readonly archived: boolean
+    }
+  | { readonly kind: "message"; readonly icon: string; readonly text: string }
+
+/** A context row with structured display data instead of a pre-styled label. */
+export interface ContextRowData {
+  readonly kind: ContextRowKind
+  readonly depth: number
+  readonly collapsible: boolean
+  readonly groupId?: string
+  readonly messageIndex?: number
+  readonly turnIndex?: number
+  readonly handoffIndex?: number
+  readonly display: ContextRowDisplay
+}
+
+/**
  * Partition the full message list (ordered by position, dense from 0) using the
  * checkpoints' fold positions. Each checkpoint folds messages with
  * `position <= messagePosition`; the latest checkpoint's summary is what the
@@ -223,38 +273,37 @@ export const messagesForSelectedTurns = (
 }
 
 /**
- * Flatten the context segments into navigable rows, honouring `collapsed`
- * (folded segment ids). Pure: the running message index === conversation
- * position (a multi-preview assistant message shares one index), so a
- * `message` row's `messageIndex` is a valid `cursorToMessageIndex` jump target.
+ * Flatten the context segments into navigable rows with **structured** display
+ * data (no ANSI), honouring `collapsed` (folded segment ids). Pure: the running
+ * message index === conversation position (a multi-preview assistant message
+ * shares one index), so a `message` row's `messageIndex` is a valid
+ * `cursorToMessageIndex` jump target. `buildContextRows` renders these to ANSI;
+ * the Solid/OpenTUI viewer styles the fields directly.
  */
-export const buildContextRows = (
+export const buildContextRowsData = (
   segments: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
   selected: ReadonlySet<number> = new Set(),
   selectedHandoffs: ReadonlySet<number> = new Set(),
-): ReadonlyArray<ContextRow> => {
-  const rows: ContextRow[] = []
+): ReadonlyArray<ContextRowData> => {
+  const rows: ContextRowData[] = []
   const loaded = loadedMsgCount(segments)
   const archived = archivedMsgCount(segments)
   const hasFold = archived > 0
-  const hasSummary = segments.some((s) => s.kind === "loaded" && s.summary)
-  const fold = (f: boolean): string => `${ansi.fgGray}${f ? "▸" : "▾"}${ansi.reset}`
-  const selectMark = (on: boolean): string =>
-    on ? `${ansi.fgBrightGreen}◉${ansi.reset}` : `${ansi.dim}○${ansi.reset}`
+  const hasSummary = segments.some((s) => s.kind === "loaded" && Boolean(s.summary))
 
   rows.push({
     kind: "header",
     depth: 0,
     collapsible: false,
-    label:
-      `${ansi.bold}${ansi.fgGray}── context ──${ansi.reset} ` +
-      (hasFold
-        ? `${ansi.dim}loaded ${ansi.reset}${ansi.fgGreen}${loaded}${ansi.reset}${ansi.dim}${hasSummary ? " + ✦" : ""} · archived ${archived}${ansi.reset}`
-        : `${ansi.fgGreen}${loaded} msg${loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`) +
-      (selected.size + selectedHandoffs.size > 0
-        ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${selected.size + selectedHandoffs.size} selected${ansi.reset}`
-        : ""),
+    display: {
+      kind: "header",
+      loaded,
+      archived,
+      hasFold,
+      hasSummary,
+      selectedCount: selected.size + selectedHandoffs.size,
+    },
   })
 
   let msgIdx = 0
@@ -273,9 +322,14 @@ export const buildContextRows = (
       // Archived handoffs are a select-and-build unit: selecting one seeds the
       // build with its summary alone (the inner turns drop, mutually exclusive).
       ...(isArchived ? { handoffIndex: seg.handoffIndex } : {}),
-      label: isArchived
-        ? `${fold(segFolded)} ${selectMark(selectedHandoffs.has(seg.handoffIndex))} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${seg.handoffIndex} · summary + ${seg.messages.length} msg${seg.messages.length === 1 ? "" : "s"} folded${ansi.reset}`
-        : `${fold(segFolded)} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`,
+      display: {
+        kind: "segment",
+        archived: isArchived,
+        folded: segFolded,
+        selected: isArchived && selectedHandoffs.has(seg.handoffIndex),
+        ...(isArchived ? { handoffIndex: seg.handoffIndex } : {}),
+        foldedCount: seg.messages.length,
+      },
     })
 
     if (segFolded) {
@@ -291,15 +345,13 @@ export const buildContextRows = (
         kind: "summary",
         depth: 1,
         collapsible: false,
-        label: `   ${ansi.fgBrightMagenta}✦${ansi.reset} ${ansi.dim}${oneLine(seg.summary)}${ansi.reset}`,
+        display: { kind: "summary", text: oneLine(seg.summary) },
       })
     }
 
     for (const turn of turns) {
       const tgid = `turn:${turnIdx}`
       const tFolded = collapsed.has(tgid)
-      const marker = selectMark(selected.has(turnIdx))
-      const subjStyle = isArchived ? ansi.dim : ""
       rows.push({
         kind: "turn",
         depth: 1,
@@ -307,7 +359,14 @@ export const buildContextRows = (
         groupId: tgid,
         turnIndex: turnIdx,
         messageIndex: msgIdx,
-        label: `  ${fold(tFolded)} ${marker} ${subjStyle}${truncate(turnSubject(turn), 200)}${ansi.reset} ${ansi.dim}·${turn.length}${ansi.reset}`,
+        display: {
+          kind: "turn",
+          folded: tFolded,
+          selected: selected.has(turnIdx),
+          subject: turnSubject(turn),
+          steps: turn.length,
+          archived: isArchived,
+        },
       })
 
       if (tFolded) {
@@ -320,7 +379,7 @@ export const buildContextRows = (
               depth: 2,
               collapsible: false,
               messageIndex: msgIdx,
-              label: `     ${ansi.dim}${ln.icon} ${ln.text}${ansi.reset}`,
+              display: { kind: "message", icon: ln.icon, text: ln.text },
             })
           }
           msgIdx++
@@ -331,6 +390,54 @@ export const buildContextRows = (
   }
   return rows
 }
+
+const fold = (f: boolean): string => `${ansi.fgGray}${f ? "▸" : "▾"}${ansi.reset}`
+const selectMark = (on: boolean): string =>
+  on ? `${ansi.fgBrightGreen}◉${ansi.reset}` : `${ansi.dim}○${ansi.reset}`
+
+/** Render one structured row to the ANSI `label` the hand-rolled TUI prints. */
+const renderLabel = (d: ContextRowDisplay): string => {
+  switch (d.kind) {
+    case "header":
+      return (
+        `${ansi.bold}${ansi.fgGray}── context ──${ansi.reset} ` +
+        (d.hasFold
+          ? `${ansi.dim}loaded ${ansi.reset}${ansi.fgGreen}${d.loaded}${ansi.reset}${ansi.dim}${d.hasSummary ? " + ✦" : ""} · archived ${d.archived}${ansi.reset}`
+          : `${ansi.fgGreen}${d.loaded} msg${d.loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`) +
+        (d.selectedCount > 0
+          ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${d.selectedCount} selected${ansi.reset}`
+          : "")
+      )
+    case "segment":
+      return d.archived
+        ? `${fold(d.folded)} ${selectMark(d.selected)} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${d.handoffIndex} · summary + ${d.foldedCount} msg${d.foldedCount === 1 ? "" : "s"} folded${ansi.reset}`
+        : `${fold(d.folded)} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`
+    case "summary":
+      return `   ${ansi.fgBrightMagenta}✦${ansi.reset} ${ansi.dim}${d.text}${ansi.reset}`
+    case "turn": {
+      const subjStyle = d.archived ? ansi.dim : ""
+      return `  ${fold(d.folded)} ${selectMark(d.selected)} ${subjStyle}${truncate(d.subject, 200)}${ansi.reset} ${ansi.dim}·${d.steps}${ansi.reset}`
+    }
+    case "message":
+      return `     ${ansi.dim}${d.icon} ${d.text}${ansi.reset}`
+  }
+}
+
+/**
+ * Flatten the context segments into navigable rows with pre-styled ANSI
+ * `label`s — the hand-rolled side pane's renderer. A thin styling pass over
+ * `buildContextRowsData`, so both renderers share one walk (row count + order +
+ * cursor indices line up exactly).
+ */
+export const buildContextRows = (
+  segments: ReadonlyArray<ContextSegment>,
+  collapsed: ReadonlySet<string>,
+  selected: ReadonlySet<number> = new Set(),
+  selectedHandoffs: ReadonlySet<number> = new Set(),
+): ReadonlyArray<ContextRow> =>
+  buildContextRowsData(segments, collapsed, selected, selectedHandoffs).map(
+    ({ display, ...rest }) => ({ ...rest, label: renderLabel(display) }),
+  )
 
 /**
  * Render the context rows to full-width lines. `cursorIndex` (when `focused`)
