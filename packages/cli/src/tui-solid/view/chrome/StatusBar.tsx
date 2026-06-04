@@ -1,6 +1,6 @@
 import { Show } from "solid-js"
 import { formatTokens, gaugeBar, prettyCwd } from "../../presentation/statusBar.js"
-import { theme } from "../../theme.js"
+import { tokens } from "../../presentation/theme/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -10,25 +10,25 @@ import type { TuiContext } from "../../state/store.js"
  */
 export const StatusBar = (props: { ctx: TuiContext }) => {
   const s = () => props.ctx.store.status()
-  const tokens = () =>
+  const tokenLabel = () =>
     `${formatTokens(s().inputTokens)} (${formatTokens(s().cacheReadTokens)} cached) / ${formatTokens(s().contextWindow)}`
 
   return (
-    <box flexDirection="row" justifyContent="space-between" backgroundColor="#1f2430" flexShrink={0}>
+    <box flexDirection="row" justifyContent="space-between" backgroundColor={tokens.status.bg} flexShrink={0}>
       <box flexDirection="row">
-        <text fg={theme.accent.conversation}>{s().modelId}</text>
+        <text fg={tokens.accent.conversation}>{s().modelId}</text>
         <Show when={s().effort}>
-          <text fg={theme.gray}>{` · `}</text>
-          <text fg={theme.accent.side}>{s().effort}</text>
+          <text fg={tokens.text.muted}>{` · `}</text>
+          <text fg={tokens.accent.side}>{s().effort}</text>
         </Show>
-        <text fg={theme.gray}>{`  ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${tokens()}`}</text>
+        <text fg={tokens.text.muted}>{`  ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${tokenLabel()}`}</text>
         <Show when={props.ctx.store.note()}>
-          <text fg={theme.tool.running}>{`  · ${props.ctx.store.note()}`}</text>
+          <text fg={tokens.state.running}>{`  · ${props.ctx.store.note()}`}</text>
         </Show>
       </box>
       <box flexDirection="row">
-        <text fg={theme.gray}>{s().storage}</text>
-        <text fg={theme.gray}>{`  ${prettyCwd(s().cwd)}`}</text>
+        <text fg={tokens.text.muted}>{s().storage}</text>
+        <text fg={tokens.text.muted}>{`  ${prettyCwd(s().cwd)}`}</text>
       </box>
     </box>
   )

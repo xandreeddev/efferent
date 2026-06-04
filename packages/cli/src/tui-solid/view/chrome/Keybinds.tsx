@@ -1,4 +1,4 @@
-import { theme } from "../../theme.js"
+import { tokens } from "../../presentation/theme/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -32,7 +32,7 @@ const paneLabel = (ctx: TuiContext): string => {
 
 export const Keybinds = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const accent = () => theme.accent[store.focus()]
+  const accent = () => tokens.accent[store.focus()]
   const title = () => ` ${paneLabel(props.ctx)} · ${store.mode().toUpperCase()} `
 
   return (
@@ -43,8 +43,8 @@ export const Keybinds = (props: { ctx: TuiContext }) => {
       flexShrink={0}
       flexDirection="column"
     >
-      <text fg={theme.dim}>{NAV_ROW}</text>
-      <text fg={theme.gray}>{paneRow(props.ctx)}</text>
+      <text fg={tokens.text.dim}>{NAV_ROW}</text>
+      <text fg={tokens.text.muted}>{paneRow(props.ctx)}</text>
     </box>
   )
 }

@@ -7,7 +7,8 @@ import {
   type ScrollbackBlock,
   type ToolBlock,
 } from "../../presentation/conversation.js"
-import { paneBorder, theme } from "../../theme.js"
+import { glyph, tokens } from "../../presentation/theme/index.js"
+import { Pane, RailLine } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
 import type { ConvScroller, TuiContext } from "../../state/store.js"
 
@@ -33,20 +34,6 @@ const ftProp = (filetype: string | undefined): { filetype?: string } =>
   filetype ? { filetype } : {}
 
 /**
- * One event-rail line: a coloured `●` dot followed by content text. OpenTUI
- * `<span>` carries no colour, so per-segment colour is two `<text>`s in a row;
- * the content text grows + wraps so prose flows within the pane width.
- */
-const Rail = (props: { dot: string; fg: string; text: string; wrap?: boolean }) => (
-  <box flexDirection="row">
-    <text fg={props.dot}>● </text>
-    <text fg={props.fg} flexGrow={1} wrapMode={props.wrap ? "word" : "none"}>
-      {props.text}
-    </text>
-  </box>
-)
-
-/**
  * Assistant / reasoning prose, rendered as markdown: a leading `●` dot then a
  * native `<markdown>` — headings, bold/italic, lists, inline code and links are
  * styled (see `markdownSyntaxStyle`) instead of showing literal `**`/`#`/`` ` ``.
@@ -62,13 +49,13 @@ const Rail = (props: { dot: string; fg: string; text: string; wrap?: boolean }) 
  */
 const Prose = (props: { text: string }) => (
   <box flexDirection="column">
-    <text fg={theme.assistant} position="absolute" left={0} top={0}>
-      ●
+    <text fg={tokens.text.assistant} position="absolute" left={0} top={0}>
+      {glyph.railDot}
     </text>
     <markdown
       content={props.text}
       syntaxStyle={syntaxStyle()}
-      fg={theme.text}
+      fg={tokens.text.default}
       paddingLeft={2}
       // Right padding keeps wide content (tables fill the content width) clear of
       // the pane border + the scrollbar column — without it a table's right edge
@@ -87,9 +74,9 @@ const Prose = (props: { text: string }) => (
 
 const ToolPill = (props: { tool: ToolBlock }) => (
   <box flexDirection="column">
-    <Rail dot={theme.tool[props.tool.state]} fg={theme.text} text={props.tool.toolName} />
+    <RailLine dot={tokens.state[props.tool.state]} fg={tokens.text.default} text={props.tool.toolName} />
     <Show when={props.tool.detail}>
-      <text fg={theme.gray}>{`  ⎿ ${props.tool.detail}`}</text>
+      <text fg={tokens.text.muted}>{`  ${glyph.connector} ${props.tool.detail}`}</text>
     </Show>
     {/* edit_file emits a canonical unified diff (--- / +++ / @@) → native <diff>
         gives +/- line colouring; the treeSitterClient + filetype add per-token
@@ -118,17 +105,17 @@ const Block = (props: { block: ScrollbackBlock }) => {
     case "tool":
       return <ToolPill tool={b} />
     case "info":
-      return <text fg={theme.info}>{`  ${b.text}`}</text>
+      return <text fg={tokens.info}>{`  ${b.text}`}</text>
     case "error":
       return (
-        <text fg={theme.error} wrapMode="word">
+        <text fg={tokens.error} wrapMode="word">
           {`  ${b.text}`}
         </text>
       )
     case "user":
-      return <text fg={theme.user}>{b.text}</text>
+      return <text fg={tokens.text.user}>{b.text}</text>
     case "checkpoint":
-      return <text fg={theme.gray}>{`⚑ ${b.text}`}</text>
+      return <text fg={tokens.text.muted}>{`${glyph.handoff} ${b.text}`}</text>
   }
 }
 
@@ -138,8 +125,8 @@ const BodyItemView = (props: { item: BodyItem; collapsed: Set<string> }) => {
     const folded = () => props.collapsed.has(item.id)
     return (
       <box flexDirection="column">
-        <text fg={theme.gray}>
-          {`${folded() ? "▸" : "▾"} ${item.tools.length} tool calls`}
+        <text fg={tokens.text.muted}>
+          {`${folded() ? glyph.fold.closed : glyph.fold.open} ${item.tools.length} tool calls`}
         </text>
         <Show when={!folded()}>
           <For each={item.tools}>{(t) => <ToolPill tool={t} />}</For>
@@ -180,19 +167,11 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   }
   const headerColor = (id: string): string => {
     const m = matchOf(id)
-    return m === "current" ? theme.select : m === "match" ? theme.accent.conversation : theme.turnHeader
+    return m === "current" ? tokens.match.current : m === "match" ? tokens.match.other : tokens.match.header
   }
 
   return (
-    <box
-      border
-      title=" conversation "
-      borderColor={paneBorder("conversation", focused())}
-      flexGrow={1}
-      flexShrink={1}
-      minHeight={0}
-      flexDirection="column"
-    >
+    <Pane kind="conversation" focused={focused()} title="conversation" grow>
       <scrollbox
         ref={sb}
         stickyScroll
@@ -207,7 +186,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             if (item.kind === "checkpoint") {
               return (
                 <box id={id}>
-                  <text fg={theme.gray}>{`⚑ ${item.text}`}</text>
+                  <text fg={tokens.text.muted}>{`${glyph.handoff} ${item.text}`}</text>
                 </box>
               )
             }
@@ -225,8 +204,8 @@ export const Conversation = (props: { ctx: TuiContext }) => {
               <box id={id} flexDirection="column" marginTop={1}>
                 <text fg={headerColor(id)}>
                   {folded()
-                    ? `▸ ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
-                    : `▾ ${item.subject}`}
+                    ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
+                    : `${glyph.fold.open} ${item.subject}`}
                 </text>
                 <Show when={!folded()}>
                   <box flexDirection="column">
@@ -240,6 +219,6 @@ export const Conversation = (props: { ctx: TuiContext }) => {
           }}
         </For>
       </scrollbox>
-    </box>
+    </Pane>
   )
 }

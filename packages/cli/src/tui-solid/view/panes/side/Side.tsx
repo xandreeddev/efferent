@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { paneBorder } from "../../../theme.js"
+import { Pane } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 import { Activity } from "./Activity.js"
 import { ContextView } from "./Context.js"
@@ -17,18 +17,15 @@ export const Side = (props: { ctx: TuiContext }) => {
   const isContext = () => store.sidePane().view === "context"
 
   return (
-    <box
-      border
-      title={isContext() ? " context " : " activity "}
-      borderColor={paneBorder("side", focused())}
-      flexShrink={0}
-      minHeight={0}
-      flexDirection="column"
+    <Pane
+      kind="side"
+      focused={focused()}
+      title={isContext() ? "context" : "activity"}
       width={store.zoomed() && focused() ? "100%" : "38%"}
     >
       <Show when={isContext()} fallback={<Activity ctx={props.ctx} />}>
         <ContextView ctx={props.ctx} />
       </Show>
-    </box>
+    </Pane>
   )
 }

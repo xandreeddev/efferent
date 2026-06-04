@@ -1,10 +1,11 @@
-import { theme } from "../../theme.js"
+import { tokens } from "../../presentation/theme/index.js"
+import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
 /**
- * A centered single-line text-entry overlay — the OpenTUI analogue of
- * `renderPromptBox`, driving the pure `PromptState` (`tui/promptBox.ts`). When
- * `mask` is set the value renders as bullets (API keys never show on screen /
- * in a screenshot — OPSEC). Nav/append/backspace come from `keys/overlay.ts`.
+ * A centered single-line text-entry overlay, driving the pure `PromptState`
+ * (`presentation/promptBox.ts`). When `mask` is set the value renders as bullets
+ * (API keys never show on screen / in a screenshot — OPSEC). Nav/append/backspace
+ * come from `keys/overlay.ts`; the shared `Modal` owns the chrome.
  */
 export const PromptBox = (props: {
   title: string
@@ -14,28 +15,19 @@ export const PromptBox = (props: {
 }) => {
   const shown = () => (props.mask ? "•".repeat(props.value.length) : props.value)
   return (
-    <box
-      flexDirection="column"
-      border
-      title={` ${props.title} `}
-      borderColor={theme.accent.side}
-      backgroundColor={theme.overlayBg}
-      width={72}
-      paddingLeft={1}
-      paddingRight={1}
-    >
-      <text fg={theme.gray} wrapMode="none">
+    <Modal title={props.title} width={MODAL_WIDTH}>
+      <text fg={tokens.text.muted} wrapMode="none">
         {props.prompt}
       </text>
-      <text fg={theme.dim}>{"─".repeat(68)}</text>
+      <Rule width={MODAL_RULE} />
       <box flexDirection="row">
-        <text fg={theme.text} wrapMode="none">
+        <text fg={tokens.text.default} wrapMode="none">
           {shown()}
         </text>
-        <text fg={theme.select}>█</text>
+        <Cursor />
       </box>
-      <text fg={theme.dim}>{"─".repeat(68)}</text>
-      <text fg={theme.gray}>↵ submit · esc back / cancel</text>
-    </box>
+      <Rule width={MODAL_RULE} />
+      <text fg={tokens.text.muted}>↵ submit · esc back / cancel</text>
+    </Modal>
   )
 }

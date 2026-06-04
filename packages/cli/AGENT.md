@@ -21,8 +21,10 @@ packages/cli/src/
 │   ├── actions/       signal→Effect use-cases (submit · session · search · login · …)
 │   ├── keys/          ParsedKey adapter + root dispatch + overlay-first routing
 │   ├── commands/      `:` command dispatch
-│   ├── view/          App.tsx + panes/ + panes/side/ + chrome/ + overlays/ (.tsx)
+│   ├── view/          App.tsx + panes/ + panes/side/ + chrome/ + overlays/ + ui/ (.tsx)
+│   │   └── ui/        token-driven view primitives (Pane · Modal · Rule · Cursor · Marker · RailLine · SectionHead)
 │   └── presentation/  L1 — PURE presentation models + state machines (no Solid, no OpenTUI)
+│       ├── theme/     design system: palette → tokens (semantic) · glyph · themes (palette.ts·tokens.ts·glyphs.ts·themes.ts·index.ts)
 │       ├── conversation.ts  rail block model: turn/tool-group/fold tree (ScrollbackBlock)
 │       ├── statusBar.ts model + token gauge + cwd (formatTokens/gauge + StatusState)
 │       ├── sidePane.ts "activity" + context-viewer STATE + cursor/fold reducers
@@ -44,6 +46,18 @@ packages/cli/src/
 folded in). `terminal.ts` is shared terminal infra and lives at `src/` (a non-TUI mode imports it),
 not under `presentation/`.
 
+**Design system** (`presentation/theme/`, pure L1) is two-tier: `palette.ts` names every raw hex
+**once**; `tokens.ts` exports the semantic `tokens` (the stable interface views paint against —
+`accent`/`text`/`state`/`marker`/`match`/`overlay`/`status`/`syntax`) plus `makeTokens(palette)` and
+`paneBorder`; `glyphs.ts` exports `glyph` (named box-drawing/marker chars). A **theme is one complete
+set of token values** (`themes.ts`: `Theme = { name, tokens }`) — same token names across themes,
+different values; the active theme is the single swap point (`activeTheme` → the exported `tokens`).
+A runtime `:theme` picker / `~/.efferent/theme.json` is the deferred next step (only has to reassign
+the active theme). `view/syntax.ts`'s `SyntaxStyle` is built from `tokens.syntax`. **No raw hex or
+glyph literal lives outside `presentation/theme/`.** The reusable painters in **`view/ui/`** (`Pane`,
+`Modal`, `Rule`, `Cursor`, `Marker`, `RailLine`, `SectionHead`) are the only components that draw
+borders/surfaces/glyphs; every pane/overlay composes them.
+
 ## Rules
 
 - No domain logic. If something looks like a decision about *what* the agent does (vs *how* it's invoked from a terminal), it belongs in `@efferent/core`.
@@ -55,7 +69,7 @@ not under `presentation/`.
 ## TUI invariants
 
 - **Modal + multi-pane**, rendered by OpenTUI (Yoga/flexbox `<box>`/`<text>`/`<scrollbox>`/`<textarea>`, plus native `<markdown>` for assistant prose and `<diff>` for `edit_file` diffs, both **tree-sitter syntax-highlighted** for fenced code + hunks — `view/syntax.ts` holds the combined `SyntaxStyle` + the best-effort `getTreeSitterClient()` accessor (worker destroyed by `runtime.ts` on exit); grammars ship with `@opentui/core` (JS/TS/markdown/zig) and `web-tree-sitter` is a declared runtime dep), not hand-drawn. Regions top→bottom: middle (**two bordered boxes** — conversation and side — with **one empty column between them**, `App.tsx` flex row + `gap`), the **bordered keybind box**, a `:` palette OR `/` search-status line, the input box, status bar, dim footer. Modal overlays (`:model`/`:login`/`:settings`/…) float over everything via an absolutely-positioned `zIndex` layer.
-- **Per-pane accent colours.** The focused box's border + title brighten to that pane's accent: **conversation = cyan, side = magenta, input = green** (unfocused = gray). `theme.ts` + `paneBorder()` (no `PANE_ACCENT`/`render.ts` anymore). The keybind box's border + title use the **focused** pane's accent, title carries `<pane> · <MODE>` (the status bar is `model · tokens · storage · cwd`).
+- **Per-pane accent colours.** The focused box's border + title brighten to that pane's accent: **conversation = cyan, side = magenta, input = green** (unfocused = gray). `tokens.accent` + `paneBorder()` (in `presentation/theme/`; no `PANE_ACCENT`/`render.ts` anymore), applied via the `<Pane>` primitive (`view/ui/`). The keybind box's border + title use the **focused** pane's accent, title carries `<pane> · <MODE>` (the status bar is `model · tokens · storage · cwd`).
 - Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l or Ctrl-arrows**. The input is INSERT, the read-only panes NORMAL (a `mode` flag drives only the legend title — **full vim modal editing, cursor motions + VISUAL, is deferred**; see `docs/roadmap.md`). Conversation NORMAL: j/k·↑↓ scroll · Ctrl-D/U half · PgUp/PgDn · gg/G ends · `Z` fold-all · `/` search (n/N · Esc) · `y` yank. Side pane: j/k·↑↓·gg/G move, Tab/Enter/h/l·←→ fold; context-viewer adds Space pick + `b` build. `:` commands, `z` zoom, `Ctrl-C` 2×-to-quit.
 - **Selection/yank uses OpenTUI's native mouse** (`useMouse:true`): drag-select highlights, `y` (read-only panes) copies the selection via OSC 52 (`renderer.copyToClipboardOSC52`). The input `<textarea>` owns its own selection/edit while typing.
 - The **keybind box** is **two labelled rows** (`view/chrome/Keybinds.tsx`): a dim global **`nav`** row over a dynamic row of the focused pane's real keys.

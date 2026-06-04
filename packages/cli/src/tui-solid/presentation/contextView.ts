@@ -1,4 +1,5 @@
 import { type AgentMessage, type Checkpoint, handoffToMessage } from "@efferent/core"
+import { glyph } from "./theme/index.js"
 
 /**
  * The context viewer model. A conversation is partitioned by handoff
@@ -124,23 +125,23 @@ const archivedMsgCount = (segments: ReadonlyArray<ContextSegment>): number =>
 /** One-line previews for a single message (assistant turns may yield several). */
 const messageLines = (msg: AgentMessage): ReadonlyArray<{ icon: string; text: string }> => {
   if (msg.role === "user") {
-    return [{ icon: "❯", text: oneLine(msg.content) }]
+    return [{ icon: glyph.msg.user, text: oneLine(msg.content) }]
   }
   if (msg.role === "assistant") {
     const out: { icon: string; text: string }[] = []
     for (const p of msg.content) {
       if (p.type === "text" || p.type === "reasoning") {
         const t = oneLine(p.text)
-        if (t.length > 0) out.push({ icon: "●", text: t })
+        if (t.length > 0) out.push({ icon: glyph.msg.assistant, text: t })
       } else if (p.type === "tool-call") {
-        out.push({ icon: "⚙", text: p.toolName })
+        out.push({ icon: glyph.msg.tool, text: p.toolName })
       }
     }
-    return out.length > 0 ? out : [{ icon: "●", text: "(tool calls)" }]
+    return out.length > 0 ? out : [{ icon: glyph.msg.assistant, text: "(tool calls)" }]
   }
   // tool results
   return msg.content.map((p) => ({
-    icon: "↳",
+    icon: glyph.msg.result,
     text: `${p.toolName} ${p.isError ? "error" : "ok"}`,
   }))
 }

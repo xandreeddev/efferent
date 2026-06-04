@@ -1,6 +1,6 @@
 import { createMemo, For, Show } from "solid-js"
 import { computePalette } from "../../presentation/slashPalette.js"
-import { theme } from "../../theme.js"
+import { glyph, tokens } from "../../presentation/theme/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -16,11 +16,11 @@ export const SlashPalette = (props: { ctx: TuiContext }) => {
         <For each={palette().matches.slice(0, 6)}>
           {(c, i) => (
             <box flexDirection="row">
-              <text fg={i() === 0 ? theme.accent.conversation : theme.dim}>
-                {i() === 0 ? "▸ " : "  "}
+              <text fg={i() === 0 ? tokens.accent.conversation : tokens.text.dim}>
+                {i() === 0 ? `${glyph.pointer} ` : "  "}
               </text>
-              <text fg={theme.text}>{c.name.padEnd(12)}</text>
-              <text fg={theme.gray}>{`  ${c.description}`}</text>
+              <text fg={tokens.text.default}>{c.name.padEnd(12)}</text>
+              <text fg={tokens.text.muted}>{`  ${c.description}`}</text>
             </box>
           )}
         </For>

@@ -1,11 +1,10 @@
 import { createMemo, For, Show } from "solid-js"
 import type { SelectOption, SelectState } from "../../presentation/selectBox.js"
-import { theme } from "../../theme.js"
+import { glyph, tokens } from "../../presentation/theme/index.js"
+import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
 const MAX_ROWS = 12
-const BOX_WIDTH = 72
-const INNER = BOX_WIDTH - 4 // border (2) + paddingX (2)
-const LABEL_BUDGET = INNER - 2 // the "▸ " marker column
+const LABEL_BUDGET = MODAL_RULE - 2 // inner content width minus the "▸ " marker column
 
 /** Truncate to fit the modal so long labels (conversation names, model ids)
  *  don't overflow the border. Active rows reserve room for the " ◀ active" tag. */
@@ -39,47 +38,38 @@ export const SelectList = (props: { state: SelectState<unknown> }) => {
 
   const marker = (idx: number, pos: number): string => {
     const w = win()
-    if (idx === s().selected) return "▸"
-    if (pos === 0 && w.moreAbove) return "↑"
-    if (pos === w.rows - 1 && w.moreBelow) return "↓"
+    if (idx === s().selected) return glyph.pointer
+    if (pos === 0 && w.moreAbove) return glyph.more.above
+    if (pos === w.rows - 1 && w.moreBelow) return glyph.more.below
     return " "
   }
 
   return (
-    <box
-      flexDirection="column"
-      border
-      title={` ${s().title} `}
-      borderColor={theme.accent.side}
-      backgroundColor={theme.overlayBg}
-      width={72}
-      paddingLeft={1}
-      paddingRight={1}
-    >
-      {/* filter line + a green cursor block */}
+    <Modal title={s().title} width={MODAL_WIDTH}>
+      {/* filter line + a cursor block */}
       <box flexDirection="row">
-        <text fg={theme.gray} wrapMode="none">{`/ ${s().filter}`}</text>
-        <text fg={theme.select}>█</text>
+        <text fg={tokens.text.muted} wrapMode="none">{`/ ${s().filter}`}</text>
+        <Cursor />
       </box>
-      <text fg={theme.dim}>{"─".repeat(68)}</text>
+      <Rule width={MODAL_RULE} />
 
       <Show
         when={n() > 0}
-        fallback={<text fg={theme.gray}>(no matches)</text>}
+        fallback={<text fg={tokens.text.muted}>(no matches)</text>}
       >
         <For each={visible()}>
           {(row) => {
             const sel = () => row.idx === s().selected
             return (
-              <box flexDirection="row" {...(sel() ? { backgroundColor: theme.cursorLine } : {})}>
-                <text fg={sel() ? theme.accent.conversation : theme.gray}>
+              <box flexDirection="row" {...(sel() ? { backgroundColor: tokens.cursorLine } : {})}>
+                <text fg={sel() ? tokens.accent.conversation : tokens.text.muted}>
                   {`${marker(row.idx, row.pos)} `}
                 </text>
-                <text fg={sel() ? theme.text : theme.gray} wrapMode="none" flexGrow={1}>
+                <text fg={sel() ? tokens.text.default : tokens.text.muted} wrapMode="none" flexGrow={1}>
                   {truncate(row.opt.label, row.opt.active === true ? LABEL_BUDGET - 9 : LABEL_BUDGET)}
                 </text>
                 <Show when={row.opt.active === true}>
-                  <text fg={theme.gray}> ◀ active</text>
+                  <text fg={tokens.text.muted}>{` ${glyph.activeTag} active`}</text>
                 </Show>
               </box>
             )
@@ -87,13 +77,13 @@ export const SelectList = (props: { state: SelectState<unknown> }) => {
         </For>
       </Show>
 
-      <text fg={theme.dim}>{"─".repeat(68)}</text>
+      <Rule width={MODAL_RULE} />
       <box flexDirection="row">
-        <text fg={theme.gray} flexGrow={1}>
+        <text fg={tokens.text.muted} flexGrow={1}>
           ↑↓ move · type filter · ↵ select · esc cancel
         </text>
-        <text fg={theme.gray}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
+        <text fg={tokens.text.muted}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
       </box>
-    </box>
+    </Modal>
   )
 }
