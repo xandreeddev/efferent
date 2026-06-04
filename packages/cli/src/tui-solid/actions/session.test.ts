@@ -1,9 +1,14 @@
 import { test, expect } from "bun:test"
 import type { AgentMessage, ConversationId } from "@efferent/core"
-import { emptySidePane, emptyStats } from "../../tui/sidePane.js"
-import { buildContextView } from "../../tui/contextView.js"
+import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
+import { buildContextView } from "../presentation/contextView.js"
 import { createTuiStore, type TuiStore } from "../state/store.js"
-import { applyBuilt, applyContextRebuild, applyResume } from "./session.js"
+import {
+  applyBuilt,
+  applyContextRebuild,
+  applyResume,
+  conversationPickerOptions,
+} from "./session.js"
 import { replayBlocks } from "./replay.js"
 
 const cid = (s: string): ConversationId => s as unknown as ConversationId
@@ -96,6 +101,31 @@ test("applyBuilt switches to the new session and focuses the input", () => {
   expect(info).toMatchObject({ kind: "info" })
   expect((info as { text: string }).text).toContain("built new session")
   expect((info as { text: string }).text).toContain("1 turn")
+})
+
+test("conversationPickerOptions leads with 'start new', then a row per conversation", () => {
+  const opts = conversationPickerOptions([
+    { id: cid("11111111-1111-1111-1111-111111111111"), createdAt: 0, firstPrompt: "  fix   the\nparser  " },
+    { id: cid("22222222-2222-2222-2222-222222222222"), createdAt: 0 },
+  ])
+  // leading "start new" row carries the null sentinel
+  expect(opts[0]).toMatchObject({ value: null })
+  expect(opts[0]!.label).toContain("Start a new conversation")
+  expect(opts).toHaveLength(3)
+  // first conversation: id as value, whitespace-collapsed prompt preview
+  expect(opts[1]!.value).toBe(cid("11111111-1111-1111-1111-111111111111"))
+  expect(opts[1]!.label).toContain("fix the parser")
+  // missing prompt → "(empty)" fallback
+  expect(opts[2]!.label).toContain("(empty)")
+})
+
+test("conversationPickerOptions caps a long prompt preview (modal truncates to fit)", () => {
+  const long = "x".repeat(200)
+  const [, row] = conversationPickerOptions([
+    { id: cid("33333333-3333-3333-3333-333333333333"), createdAt: 0, firstPrompt: long },
+  ])
+  const preview = row!.label.split(" · ")[1] ?? ""
+  expect(preview.length).toBe(80)
 })
 
 test("applyContextRebuild refreshes segments and resets the cursor + selection", () => {

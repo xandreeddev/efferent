@@ -1,8 +1,16 @@
 import { createMemo, For, Show } from "solid-js"
-import type { SelectOption, SelectState } from "../../../tui/selectBox.js"
+import type { SelectOption, SelectState } from "../../presentation/selectBox.js"
 import { theme } from "../../theme.js"
 
 const MAX_ROWS = 12
+const BOX_WIDTH = 72
+const INNER = BOX_WIDTH - 4 // border (2) + paddingX (2)
+const LABEL_BUDGET = INNER - 2 // the "▸ " marker column
+
+/** Truncate to fit the modal so long labels (conversation names, model ids)
+ *  don't overflow the border. Active rows reserve room for the " ◀ active" tag. */
+const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`
 
 /**
  * A centered, navigable list overlay — the OpenTUI analogue of `renderSelectBox`,
@@ -68,7 +76,7 @@ export const SelectList = (props: { state: SelectState<unknown> }) => {
                   {`${marker(row.idx, row.pos)} `}
                 </text>
                 <text fg={sel() ? theme.text : theme.gray} wrapMode="none" flexGrow={1}>
-                  {row.opt.label}
+                  {truncate(row.opt.label, row.opt.active === true ? LABEL_BUDGET - 9 : LABEL_BUDGET)}
                 </text>
                 <Show when={row.opt.active === true}>
                   <text fg={theme.gray}> ◀ active</text>

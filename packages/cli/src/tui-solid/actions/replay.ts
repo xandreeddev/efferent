@@ -3,8 +3,8 @@ import {
   describeToolCall,
   describeToolResult,
   toolArtifacts,
-} from "../../tui/toolDescribe.js"
-import type { ScrollbackBlock, ToolBlock } from "../model/conversation.js"
+} from "../presentation/toolDescribe.js"
+import type { ScrollbackBlock, ToolBlock } from "../presentation/conversation.js"
 
 /**
  * Turn a persisted message history (+ its handoff checkpoints) into the flat

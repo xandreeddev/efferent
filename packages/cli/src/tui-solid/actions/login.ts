@@ -25,7 +25,7 @@ import {
   loginSetOAuthStatus,
   type LoginFlow,
   type ProviderStatus,
-} from "../../tui/loginFlow.js"
+} from "../presentation/loginFlow.js"
 import { formatFullError } from "../util/errorFormat.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
 import { applyModelSelection } from "./model.js"

@@ -16,7 +16,7 @@ import {
 } from "@efferent/core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
-import { ansi } from "../tui/terminal.js"
+import { ansi } from "../terminal.js"
 
 const truncate = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n)}…`

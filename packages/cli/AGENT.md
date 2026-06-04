@@ -8,6 +8,7 @@ Coding-agent driver — composition root for four modes, plus the OpenTUI/SolidJ
 packages/cli/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
 ├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
+├── terminal.ts        OSC-52 + spinner-frame + ANSI/width helpers (shared infra; print mode uses it too)
 ├── modes/
 │   ├── tui.ts         just the TuiModeInput seam (driver moved to tui-solid/)
 │   ├── print.ts       one-shot, streams final text to stdout
@@ -20,24 +21,28 @@ packages/cli/src/
 │   ├── actions/       signal→Effect use-cases (submit · session · search · login · …)
 │   ├── keys/          ParsedKey adapter + root dispatch + overlay-first routing
 │   ├── commands/      `:` command dispatch
-│   ├── model/         pure presentation models (conversation turn/fold tree)
-│   └── view/          App.tsx + panes/ + panes/side/ + chrome/ + overlays/ (.tsx)
-└── tui/               PURE helpers reused by tui-solid (no render/cursor code left)
-    ├── statusBar.ts   model + token gauge + cwd (formatTokens/gauge + StatusState)
-    ├── sidePane.ts    "activity" + context-viewer STATE + cursor/fold reducers
-    ├── contextView.ts context segments + turn/handoff selection model
-    ├── executionTree.ts sub-agent / tool execution-tree model
-    ├── toolDescribe.ts pure ToolName(arg) labels + result summaries + artifacts
-    ├── slashPalette.ts `:` command catalogue + computePalette
-    ├── selectBox.ts   pure SelectState (`:model`/`:login` menus)
-    ├── promptBox.ts   pure PromptState (masked API-key / paste)
-    ├── settingsView.ts pure SettingsState (`:settings` table)
-    ├── loginFlow.ts   pure `:login` state machine (authMethod → provider → key/oauth)
-    ├── dbStatus.ts    active-store label/describe helpers
-    ├── terminal.ts    OSC-52 + spinner-frame constants (no raw-mode driver now)
-    └── logger.ts      file logger layer
+│   ├── view/          App.tsx + panes/ + panes/side/ + chrome/ + overlays/ (.tsx)
+│   └── presentation/  L1 — PURE presentation models + state machines (no Solid, no OpenTUI)
+│       ├── conversation.ts  rail block model: turn/tool-group/fold tree (ScrollbackBlock)
+│       ├── statusBar.ts model + token gauge + cwd (formatTokens/gauge + StatusState)
+│       ├── sidePane.ts "activity" + context-viewer STATE + cursor/fold reducers
+│       ├── contextView.ts context segments + turn/handoff selection model
+│       ├── executionTree.ts sub-agent / tool execution-tree model
+│       ├── toolDescribe.ts pure ToolName(arg) labels + result summaries + artifacts
+│       ├── slashPalette.ts `:` command catalogue + computePalette
+│       ├── selectBox.ts   pure SelectState (`:model`/`:login` menus)
+│       ├── promptBox.ts   pure PromptState (masked API-key / paste)
+│       ├── settingsView.ts pure SettingsState (`:settings` table)
+│       ├── loginFlow.ts   pure `:login` state machine (authMethod → provider → key/oauth)
+│       ├── dbStatus.ts    active-store label/describe helpers
+│       └── logger.ts      file logger layer
 └── login/oauthServer.ts   loopback OAuth callback server + open-browser helper
 ```
+
+`presentation/` is the TUI's L1 — pure shapes + reducers/derivations, no Solid or OpenTUI imports
+(it was the old `tui/` folder, renamed so the tree no longer reads as two TUIs; `model/conversation.ts`
+folded in). `terminal.ts` is shared terminal infra and lives at `src/` (a non-TUI mode imports it),
+not under `presentation/`.
 
 ## Rules
 
@@ -49,7 +54,7 @@ packages/cli/src/
 
 ## TUI invariants
 
-- **Modal + multi-pane**, rendered by OpenTUI (Yoga/flexbox `<box>`/`<text>`/`<scrollbox>`/`<textarea>`), not hand-drawn. Regions top→bottom: middle (**two bordered boxes** — conversation and side — with **one empty column between them**, `App.tsx` flex row + `gap`), the **bordered keybind box**, a `:` palette OR `/` search-status line, the input box, status bar, dim footer. Modal overlays (`:model`/`:login`/`:settings`/…) float over everything via an absolutely-positioned `zIndex` layer.
+- **Modal + multi-pane**, rendered by OpenTUI (Yoga/flexbox `<box>`/`<text>`/`<scrollbox>`/`<textarea>`, plus native `<markdown>` for assistant prose and `<diff>` for `edit_file` diffs, both **tree-sitter syntax-highlighted** for fenced code + hunks — `view/syntax.ts` holds the combined `SyntaxStyle` + the best-effort `getTreeSitterClient()` accessor (worker destroyed by `runtime.ts` on exit); grammars ship with `@opentui/core` (JS/TS/markdown/zig) and `web-tree-sitter` is a declared runtime dep), not hand-drawn. Regions top→bottom: middle (**two bordered boxes** — conversation and side — with **one empty column between them**, `App.tsx` flex row + `gap`), the **bordered keybind box**, a `:` palette OR `/` search-status line, the input box, status bar, dim footer. Modal overlays (`:model`/`:login`/`:settings`/…) float over everything via an absolutely-positioned `zIndex` layer.
 - **Per-pane accent colours.** The focused box's border + title brighten to that pane's accent: **conversation = cyan, side = magenta, input = green** (unfocused = gray). `theme.ts` + `paneBorder()` (no `PANE_ACCENT`/`render.ts` anymore). The keybind box's border + title use the **focused** pane's accent, title carries `<pane> · <MODE>` (the status bar is `model · tokens · storage · cwd`).
 - Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l or Ctrl-arrows**. The input is INSERT, the read-only panes NORMAL (a `mode` flag drives only the legend title — **full vim modal editing, cursor motions + VISUAL, is deferred**; see `docs/roadmap.md`). Conversation NORMAL: j/k·↑↓ scroll · Ctrl-D/U half · PgUp/PgDn · gg/G ends · `Z` fold-all · `/` search (n/N · Esc) · `y` yank. Side pane: j/k·↑↓·gg/G move, Tab/Enter/h/l·←→ fold; context-viewer adds Space pick + `b` build. `:` commands, `z` zoom, `Ctrl-C` 2×-to-quit.
 - **Selection/yank uses OpenTUI's native mouse** (`useMouse:true`): drag-select highlights, `y` (read-only panes) copies the selection via OSC 52 (`renderer.copyToClipboardOSC52`). The input `<textarea>` owns its own selection/edit while typing.

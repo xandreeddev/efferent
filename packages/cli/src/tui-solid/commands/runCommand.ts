@@ -1,8 +1,8 @@
 import { Effect, Schema } from "effect"
 import { ConversationId } from "@efferent/core"
-import { emptyTree } from "../../tui/executionTree.js"
-import { emptyStats } from "../../tui/sidePane.js"
-import { SLASH_COMMANDS } from "../../tui/slashPalette.js"
+import { emptyTree } from "../presentation/executionTree.js"
+import { emptyStats } from "../presentation/sidePane.js"
+import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
 import type { TuiContext } from "../state/store.js"
 import {
   browseConversations,

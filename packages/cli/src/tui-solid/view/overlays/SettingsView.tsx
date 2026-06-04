@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js"
-import type { SettingsRow, SettingsState } from "../../../tui/settingsView.js"
+import type { SettingsRow, SettingsState } from "../../presentation/settingsView.js"
 import { theme } from "../../theme.js"
 
 const LABEL_W = 14

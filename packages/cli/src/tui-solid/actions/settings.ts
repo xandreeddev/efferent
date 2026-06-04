@@ -10,9 +10,9 @@ import {
   effortSettingKeyFor,
   maskDbUrl,
 } from "@efferent/core"
-import { openSelect, type SelectOption } from "../../tui/selectBox.js"
-import { describeActiveDatabase } from "../../tui/dbStatus.js"
-import { openSettings, setRowValue, type SettingsRow } from "../../tui/settingsView.js"
+import { openSelect, type SelectOption } from "../presentation/selectBox.js"
+import { describeActiveDatabase } from "../presentation/dbStatus.js"
+import { openSettings, setRowValue, type SettingsRow } from "../presentation/settingsView.js"
 import type { EffortSettingKey } from "../state/overlay.js"
 import type { TuiStore } from "../state/store.js"
 

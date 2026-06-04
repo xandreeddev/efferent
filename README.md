@@ -36,7 +36,7 @@ That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth s
 ## Why efferent
 
 - **Effect substrate, all the way down.** Ports and adapters are Layers, tools are an `@effect/ai` `Toolkit`, conversations live in `ConversationStore`. Every error is tagged. Every IO goes through a port. Swap a provider by swapping a Layer.
-- **Modal multi-pane TUI (OpenTUI + SolidJS).** Three panes (conversation / activity / input) with per-pane accent colours, foldable turns + tool groups, a multi-line composer (Shift-Enter sends · Enter newline), `/` search with match highlighting, keyboard scrolling, and mouse drag-select with OSC 52 yank. Rendered by OpenTUI's native core; the UI graph is SolidJS signals — **no React**.
+- **Modal multi-pane TUI (OpenTUI + SolidJS).** Three panes (conversation / activity / input) with per-pane accent colours, foldable turns + tool groups, a multi-line composer (Shift-Enter sends · Enter newline), `/` search with match highlighting, keyboard scrolling, and mouse drag-select with OSC 52 yank. Assistant prose renders as **markdown** (bold/italic/inline-code/lists/links), fenced code blocks and file-edit **diffs** are **syntax-highlighted** (tree-sitter; JS/TS/markdown/zig) — all via OpenTUI's native components, not a hand-rolled ANSI pass. Rendered by OpenTUI's native core; the UI graph is SolidJS signals — **no React**.
 - **Multi-provider router.** One `LanguageModel` port; the active provider/model is resolved **per request** from `~/.efferent/auth.json` + your `:model` choice. Anthropic OAuth (Claude Pro/Max subscription) is wire-complete (live round-trip still being verified). Gemini's `thought_signature` round-trips correctly across turns.
 - **Zero-config storage.** SQLite at `~/.efferent/efferent.db` by default. Postgres optional via `:db pg <url>` (or `EFFERENT_DB_URL`). Migrations bundle into the binary.
 - **Skills + instruction files.** Drop `.md` files in `.efferent/skills/` — names + one-liners auto-inject into the system prompt; bodies lazy-load via `read_skill({name})`. `AGENT.md` (and `AGENT.local.md`) discovered from cwd up to home.
@@ -47,7 +47,7 @@ That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth s
 
 ## Install
 
-Requires [Bun](https://bun.sh) at runtime (≥ 1.2). The npm package is a Bun bundle (core + adapters inlined) with **one** runtime dependency: `@opentui/core`, whose native terminal renderer can't be inlined and loads via FFI per platform.
+Requires [Bun](https://bun.sh) at runtime (≥ 1.2). The npm package is a Bun bundle (core + adapters inlined) with **two** runtime dependencies: `@opentui/core` (its native terminal renderer can't be inlined — it loads via FFI per platform; it also ships the tree-sitter grammars + worker for code highlighting) and `web-tree-sitter` (the highlighter the worker loads). Everything else is inlined.
 
 ```bash
 npm i -g efferent

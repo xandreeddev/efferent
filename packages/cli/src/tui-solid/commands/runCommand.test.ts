@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import type { ConversationId } from "@efferent/core"
-import { emptySidePane, emptyStats } from "../../tui/sidePane.js"
-import { onToolStart } from "../../tui/executionTree.js"
+import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
+import { onToolStart } from "../presentation/executionTree.js"
 import { createTuiStore, type TuiContext, type TuiStore } from "../state/store.js"
 import { runCommand } from "./runCommand.js"
 

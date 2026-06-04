@@ -36,6 +36,9 @@ Today the router sets a stable static `prompt_cache_key`. Threading the conversa
 ### Explicit Gemini context caching
 Implicit context caching is live (stable prefix → `cachedContentTokenCount` surfaces in the gauge). Explicit `cachedContent` resources would let us cache + reuse a known instruction/skill prefix across conversations — but `@effect/ai-google@0.14` always sends full `contents` and `Config` omits `contents`/`tools`/`systemInstruction`, so it isn't expressible without forking the adapter. Watch upstream; reconsider when a `Config.cachedContent` lands. Cost optimisation, not correctness.
 
+### Wider code-highlight language coverage
+Markdown prose, fenced code blocks, and diff hunks are all syntax-highlighted now (tree-sitter via `view/syntax.ts` + the `getTreeSitterClient()` singleton; `web-tree-sitter` is a declared dep, the worker is destroyed on exit). But `@opentui/core` only bundles grammar WASM for **JS / TS / markdown / zig** (`assets/`), so python/rust/go/json/bash/yaml/etc. render un-highlighted. To extend: source the extra `tree-sitter-<lang>.wasm` + `highlights.scm` and register them via `client.addFiletypeParser({ filetype, wasm, queries })` (or ship them under a data dir + `setDataPath`). Decide whether to bundle a curated set (bigger install) or fetch-on-demand into `~/.efferent`. Also still un-styled: `#` heading **colour** in prose (marked headings route around the `markup.heading` scope, which only styles table headers — would need a custom `renderNode`).
+
 ### TodoWrite tool + planning panel
 A `todo_write` tool in `codingToolkit.ts` + a foldable section in the activity pane (`sidePane.ts`) showing the live todo list. Cheap to ship, helps long multi-step turns stay coherent.
 

@@ -5,8 +5,8 @@ import {
   describeToolCall,
   describeToolResult,
   toolArtifacts,
-} from "../../tui/toolDescribe.js"
-import { formatTokens } from "../../tui/statusBar.js"
+} from "../presentation/toolDescribe.js"
+import { formatTokens } from "../presentation/statusBar.js"
 import {
   onAgentEnd as treeAgentEnd,
   onSubAgentEnd as treeSubAgentEnd,
@@ -15,8 +15,8 @@ import {
   onToolStart as treeToolStart,
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
-} from "../../tui/executionTree.js"
-import type { FileChange } from "../../tui/sidePane.js"
+} from "../presentation/executionTree.js"
+import type { FileChange } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /**

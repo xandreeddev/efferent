@@ -1,5 +1,5 @@
 import { createSignal, type Accessor } from "solid-js"
-import type { ScrollbackBlock } from "../model/conversation.js"
+import type { ScrollbackBlock } from "../presentation/conversation.js"
 
 /**
  * A live search over the conversation rail: the query, the ordered ids of the

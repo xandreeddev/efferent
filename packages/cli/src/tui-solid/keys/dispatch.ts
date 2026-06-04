@@ -5,8 +5,8 @@ import {
   sideCurrentRow,
   sideToggleNode,
   sideToggleSelect,
-} from "../../tui/sidePane.js"
-import { buildConversation, foldableIds } from "../model/conversation.js"
+} from "../presentation/sidePane.js"
+import { buildConversation, foldableIds } from "../presentation/conversation.js"
 import { buildFromSelection } from "../actions/session.js"
 import { clearSearch, cycleSearch } from "../actions/search.js"
 import type { TuiContext, TuiStore } from "../state/store.js"

@@ -1,7 +1,7 @@
 import { batch } from "solid-js"
 import { Effect } from "effect"
 import { ConversationStore, createHandoff, type ConversationId } from "@efferent/core"
-import { buildContextView } from "../../tui/contextView.js"
+import { buildContextView } from "../presentation/contextView.js"
 import { formatFullError } from "../util/errorFormat.js"
 import type { TuiStore } from "../state/store.js"
 import { applyContextRebuild } from "./session.js"

@@ -1,6 +1,6 @@
 import { createMemo, Match, Switch } from "solid-js"
-import type { SelectState } from "../../../tui/selectBox.js"
-import type { LoginFlow } from "../../../tui/loginFlow.js"
+import type { SelectState } from "../../presentation/selectBox.js"
+import type { LoginFlow } from "../../presentation/loginFlow.js"
 import { SelectList } from "./SelectList.js"
 import { PromptBox } from "./PromptBox.js"
 

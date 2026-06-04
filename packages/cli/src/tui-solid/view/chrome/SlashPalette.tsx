@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from "solid-js"
-import { computePalette } from "../../../tui/slashPalette.js"
+import { computePalette } from "../../presentation/slashPalette.js"
 import { theme } from "../../theme.js"
 import type { TuiContext } from "../../state/store.js"
 

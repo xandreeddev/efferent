@@ -1,7 +1,7 @@
 import { createSignal, type Accessor } from "solid-js"
-import type { SelectState } from "../../tui/selectBox.js"
-import type { LoginFlow } from "../../tui/loginFlow.js"
-import type { SettingsState } from "../../tui/settingsView.js"
+import type { SelectState } from "../presentation/selectBox.js"
+import type { LoginFlow } from "../presentation/loginFlow.js"
+import type { SettingsState } from "../presentation/settingsView.js"
 
 /** The mutable settings key an effort picker writes (mirrors `effortSettingKeyFor`). */
 export type EffortSettingKey =
@@ -19,6 +19,7 @@ export type SelectPurpose =
   | { readonly tag: "model" }
   | { readonly tag: "effort"; readonly key: EffortSettingKey }
   | { readonly tag: "search" }
+  | { readonly tag: "conversation" }
 
 /**
  * The single active overlay (a modal floats above the panes and owns all input
