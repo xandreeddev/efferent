@@ -1,5 +1,6 @@
 import type { Effect } from "effect"
 import type {
+  AuthFlow,
   AuthStore,
   ConversationStore,
   FileSystem,
@@ -30,6 +31,7 @@ export type AppServices =
   | ModelRegistry
   | WebSearch
   | AuthStore
+  | AuthFlow
   | LlmInfo
 
 /**

@@ -1,5 +1,6 @@
 import { Effect, Fiber } from "effect"
 import {
+  AuthFlow,
   AuthStore,
   ModelRegistry,
   Shell,
@@ -8,16 +9,6 @@ import {
   type AuthData,
   type Provider,
 } from "@efferent/core"
-import {
-  ANTHROPIC_CALLBACK_PORT,
-  OPENAI_CALLBACK_PORT,
-  anthropicAuthorizeUrl,
-  exchangeAnthropicCode,
-  exchangeOpenAiCode,
-  generatePkce,
-  openaiAuthorizeUrl,
-  parseAuthorizationInput,
-} from "@efferent/adapters"
 import { browserCommand, startCallbackServer } from "../../login/oauthServer.js"
 import {
   openLogin,
@@ -111,9 +102,7 @@ const finishOAuth = (
 ) =>
   Effect.gen(function* () {
     const auth = yield* AuthStore
-    const tokens = yield* (provider === "openai"
-      ? exchangeOpenAiCode(code, verifier)
-      : exchangeAnthropicCode(code, verifier))
+    const tokens = yield* (yield* AuthFlow).exchange(provider, code, verifier)
     yield* auth.setOAuth(provider, tokens)
     yield* Effect.sync(() => {
       stop()
@@ -137,7 +126,8 @@ const finishOAuth = (
  */
 export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider) =>
   Effect.gen(function* () {
-    if (provider !== "anthropic" && provider !== "openai") {
+    const authFlow = yield* AuthFlow
+    if (!authFlow.supportsOAuth(provider)) {
       yield* Effect.sync(() => {
         store.closeOverlay()
         store.pushBlock({
@@ -147,31 +137,27 @@ export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider
       })
       return
     }
-    const pkce = yield* generatePkce()
-    const url = provider === "openai" ? openaiAuthorizeUrl(pkce) : anthropicAuthorizeUrl(pkce)
-    const server =
-      provider === "openai"
-        ? startCallbackServer(OPENAI_CALLBACK_PORT, "/auth/callback")
-        : startCallbackServer(ANTHROPIC_CALLBACK_PORT)
+    const begun = yield* authFlow.begin(provider)
+    const server = startCallbackServer(begun.callbackPort, begun.callbackPath)
     const shell = yield* Shell
     yield* shell
-      .exec({ command: browserCommand(url), cwd, timeoutMs: 5_000 })
+      .exec({ command: browserCommand(begun.authorizeUrl), cwd, timeoutMs: 5_000 })
       .pipe(Effect.catchAll(() => Effect.void))
     yield* Effect.sync(() => {
       const o = store.overlay()
       if (o.kind === "login") setFlow(store, loginSetOAuthStatus(o.flow, "waiting for browser login"))
       store.pushBlock({
         kind: "info",
-        text: `Opening your browser to log in. If it didn't open, visit:\n${url}`,
+        text: `Opening your browser to log in. If it didn't open, visit:\n${begun.authorizeUrl}`,
       })
     })
     const waiter = Effect.gen(function* () {
       const { code } = yield* Effect.promise(() => server.waitForCode)
-      yield* finishOAuth(store, provider, code, pkce.verifier, server.stop)
+      yield* finishOAuth(store, provider, code, begun.verifier, server.stop)
     })
     const fiber = yield* Effect.forkDaemon(waiter)
     yield* Effect.sync(() => {
-      store.run.setOAuth({ verifier: pkce.verifier, stop: server.stop, fiber })
+      store.run.setOAuth({ verifier: begun.verifier, stop: server.stop, fiber })
     })
   })
 
@@ -179,7 +165,7 @@ export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider
 export const completeOAuthManual = (store: TuiStore, provider: Provider, redirect: string) =>
   Effect.gen(function* () {
     const session = store.run.getOAuth()
-    const parsed = parseAuthorizationInput(redirect)
+    const parsed = (yield* AuthFlow).parseRedirect(redirect)
     if (parsed.code === undefined) {
       yield* Effect.sync(() =>
         store.pushBlock({ kind: "error", text: "couldn't find an authorization code in that input" }),

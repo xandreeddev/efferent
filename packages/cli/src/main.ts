@@ -16,6 +16,7 @@ import {
   type Scope,
 } from "@efferent/core"
 import {
+  AuthFlowLive,
   ConversationStoreLive,
   HttpLive,
   LocalAuthStoreLive,
@@ -48,6 +49,9 @@ const AppLive = Layer.mergeAll(
   LocalFileSystemLive,
   LocalShellLive,
   HttpLive,
+  // OAuth protocol port — dependency-free; the `:login` driver uses it instead
+  // of reaching into adapter OAuth internals.
+  AuthFlowLive,
   // Web search is its own grounding-only provider call (Gemini/OpenAI),
   // configured independently of the chat model — it resolves its key from the
   // AuthStore (below) and carries its own HTTP client.
