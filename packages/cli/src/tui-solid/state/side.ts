@@ -1,5 +1,5 @@
 import { createSignal, type Accessor } from "solid-js"
-import type { SidePaneState } from "../../tui/sidePane.js"
+import type { SidePaneState } from "../presentation/sidePane.js"
 
 /**
  * Side-pane slice: the whole `SidePaneState` (activity tree + stats + files +

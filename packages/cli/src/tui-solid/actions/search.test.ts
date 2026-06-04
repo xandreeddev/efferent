@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import type { ConversationId } from "@efferent/core"
-import { emptySidePane, emptyStats } from "../../tui/sidePane.js"
+import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { createTuiStore, type ConvScroller, type TuiStore } from "../state/store.js"
 import { clearSearch, cycleSearch, runSearch } from "./search.js"
 

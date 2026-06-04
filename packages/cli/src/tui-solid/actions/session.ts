@@ -12,11 +12,45 @@ import {
   messagesForSelectedTurns,
   turnIdsOf,
   type ContextSegment,
-} from "../../tui/contextView.js"
-import { emptyTree } from "../../tui/executionTree.js"
-import { emptyStats, type SidePaneState } from "../../tui/sidePane.js"
+} from "../presentation/contextView.js"
+import { emptyTree } from "../presentation/executionTree.js"
+import { emptyStats, type SidePaneState } from "../presentation/sidePane.js"
+import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
+
+/** A conversation row as `listByWorkspace` returns it. */
+type ConversationSummary = {
+  readonly id: ConversationId
+  readonly createdAt: number
+  readonly firstPrompt?: string
+}
+
+/**
+ * Options for the startup conversation picker: a leading "start new" row (value
+ * `null`) then one row per prior conversation (`<date> · <first-prompt preview>`,
+ * value = its id). Mirrors the old hand-rolled `conversationPickerOptions`.
+ */
+export const conversationPickerOptions = (
+  list: ReadonlyArray<ConversationSummary>,
+): ReadonlyArray<SelectOption<ConversationId | null>> => [
+  { value: null, label: "+ Start a new conversation" },
+  ...list.map((c) => {
+    // Compact date (e.g. "Jun 4, 1:55 PM") leaves room for the name; the modal
+    // truncates the whole label to its width, so no fixed slice is needed here.
+    const date = new Date(c.createdAt).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    const preview =
+      c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+        ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80) // modal truncates to fit
+        : "(empty)"
+    return { value: c.id, label: `${date} · ${preview}` }
+  }),
+]
 
 const COLLAPSED_SECTIONS = ["files", "skills", "instructions"] as const
 
@@ -229,6 +263,28 @@ export const buildFromSelection = (store: TuiStore, cwd: string) =>
     )
     yield* Effect.sync(() =>
       batch(() => applyBuilt(store, newId, picked, turnCount, handoffCount)),
+    )
+  })
+
+/**
+ * Startup conversation picker: if this workspace has prior conversations, float a
+ * "Resume a conversation" select over the (already-interactive) TUI. Selecting a
+ * row resumes it (`submitSelect` → `resumeConversation`); "start new" / Esc just
+ * dismisses, leaving the fresh conversation. A no-op when there are none, so a
+ * brand-new workspace boots straight to an empty rail. Mirrors the old TUI's
+ * boot-time `convPicker` (deferred at the OpenTUI cutover, now restored).
+ */
+export const openConversationPicker = (store: TuiStore, cwd: string) =>
+  Effect.gen(function* () {
+    const cs = yield* ConversationStore
+    const list = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll(() => Effect.succeed([])))
+    if (list.length === 0) return
+    yield* Effect.sync(() =>
+      store.setOverlay({
+        kind: "select",
+        sel: openSelect("Resume a conversation", conversationPickerOptions(list)),
+        purpose: { tag: "conversation" },
+      }),
     )
   })
 

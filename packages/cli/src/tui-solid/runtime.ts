@@ -14,12 +14,13 @@ import {
 } from "@efferent/core"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
-import { fileLoggerLayer } from "../tui/logger.js"
-import { storageLabel } from "../tui/dbStatus.js"
-import { emptySidePane, emptyStats, type SidePaneState } from "../tui/sidePane.js"
+import { fileLoggerLayer } from "./presentation/logger.js"
+import { storageLabel } from "./presentation/dbStatus.js"
+import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
 import { App } from "./view/App.js"
+import { treeSitterClient } from "./view/syntax.js"
 import { makeSubmit } from "./actions/submit.js"
-import { loadInitialConversation } from "./actions/session.js"
+import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { makeEventReducer, runEventPump } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
 
@@ -118,9 +119,14 @@ export const runTuiModeSolid = (
         })
       }
 
-      // `--resume <id>`: replay the conversation's history into the rail on boot.
+      // Boot conversation handling: an explicit `--resume <id>` replays that
+      // conversation's history into the rail; otherwise, if the workspace has
+      // prior conversations, float the startup picker over the fresh session
+      // (Esc / "start new" dismisses it). No prior conversations → empty rail.
       if (input.resumeConversationId !== undefined) {
         yield* loadInitialConversation(store, cid)
+      } else {
+        yield* openConversationPicker(store, input.cwd)
       }
 
       const submit = makeSubmit({
@@ -170,6 +176,16 @@ export const runTuiModeSolid = (
           }),
         ),
         (r) => Effect.sync(() => r.destroy()),
+      )
+
+      // 6b. Tree-sitter highlight worker (syntax colouring of code blocks + diff
+      //     hunks) is a singleton in @opentui/core that lazily spawns a Worker on
+      //     first highlight. That Worker keeps Bun alive, so we MUST terminate it
+      //     on every exit path — destroy() is a no-op if it never started.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => treeSitterClient()?.destroy() ?? Promise.resolve()).pipe(
+          Effect.ignore,
+        ),
       )
 
       // 7. Drain the agent event queue into the signal store (scoped fiber).

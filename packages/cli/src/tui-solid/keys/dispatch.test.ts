@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import type { ConversationId } from "@efferent/core"
-import { emptySidePane, emptyStats } from "../../tui/sidePane.js"
+import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { createTuiStore, type ConvScroller, type TuiContext, type TuiStore } from "../state/store.js"
 import { dispatch } from "./dispatch.js"
 import type { Key } from "./ParsedKey.js"

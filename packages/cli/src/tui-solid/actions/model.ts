@@ -1,7 +1,7 @@
 import { batch } from "solid-js"
 import { Effect } from "effect"
 import { ModelRegistry, SettingsStore, type ModelInfo } from "@efferent/core"
-import { openSelect, type SelectOption } from "../../tui/selectBox.js"
+import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import type { TuiStore } from "../state/store.js"
 
 /**

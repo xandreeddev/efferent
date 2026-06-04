@@ -4,7 +4,7 @@ import {
   buildContextRowsData,
   type ContextRowData,
   type ContextRowDisplay,
-} from "../../../../tui/contextView.js"
+} from "../../../presentation/contextView.js"
 import { theme } from "../../../theme.js"
 import type { TuiContext } from "../../../state/store.js"
 

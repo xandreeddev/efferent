@@ -1,7 +1,7 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { Fiber } from "effect"
 import type { ConversationId } from "@efferent/core"
-import type { StatusState } from "../../tui/statusBar.js"
+import type { StatusState } from "../presentation/statusBar.js"
 
 /**
  * Run-lifecycle state owned by the Effect side, NOT reactive: the active

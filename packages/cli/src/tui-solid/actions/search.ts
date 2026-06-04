@@ -1,4 +1,4 @@
-import { buildConversation, conversationItemId, itemText } from "../model/conversation.js"
+import { buildConversation, conversationItemId, itemText } from "../presentation/conversation.js"
 import type { TuiStore } from "../state/store.js"
 
 /**

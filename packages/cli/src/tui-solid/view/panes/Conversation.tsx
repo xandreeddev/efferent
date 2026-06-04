@@ -1,4 +1,4 @@
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { pathToFiletype, type ScrollBoxRenderable } from "@opentui/core"
 import { createMemo, For, onMount, Show } from "solid-js"
 import {
   buildConversation,
@@ -6,9 +6,31 @@ import {
   type BodyItem,
   type ScrollbackBlock,
   type ToolBlock,
-} from "../../model/conversation.js"
+} from "../../presentation/conversation.js"
 import { paneBorder, theme } from "../../theme.js"
+import { syntaxStyle, treeSitterClient } from "../syntax.js"
 import type { ConvScroller, TuiContext } from "../../state/store.js"
+
+/** Language for a diff's hunk highlighting, parsed from its `+++ <path>` header
+ *  (the canonical unified diff core emits). Undefined → no language grammar; the
+ *  `<diff>` still renders with `+/-` line colouring, just no per-token colour. */
+const diffFiletype = (diff: string): string | undefined => {
+  const path = diff.match(/^\+\+\+ (.+)$/m)?.[1]?.trim()
+  return path ? pathToFiletype(path) : undefined
+}
+
+/**
+ * Optional highlight props. `<markdown>`/`<diff>`/`<code>` type `treeSitterClient`
+ * and `filetype` as present-or-absent (not `| undefined`) under
+ * `exactOptionalPropertyTypes`, so we spread them in only when defined — omitting
+ * the key when there's no worker (degrades to un-highlighted) or no language.
+ */
+const tsProp = (): { treeSitterClient?: never } | { treeSitterClient: NonNullable<ReturnType<typeof treeSitterClient>> } => {
+  const ts = treeSitterClient()
+  return ts ? { treeSitterClient: ts } : {}
+}
+const ftProp = (filetype: string | undefined): { filetype?: string } =>
+  filetype ? { filetype } : {}
 
 /**
  * One event-rail line: a coloured `●` dot followed by content text. OpenTUI
@@ -24,16 +46,64 @@ const Rail = (props: { dot: string; fg: string; text: string; wrap?: boolean }) 
   </box>
 )
 
+/**
+ * Assistant / reasoning prose, rendered as markdown: a leading `●` dot then a
+ * native `<markdown>` — headings, bold/italic, lists, inline code and links are
+ * styled (see `markdownSyntaxStyle`) instead of showing literal `**`/`#`/`` ` ``.
+ * The text arrives complete per turn (we use `generateText`, not `streamText`),
+ * so `streaming` stays off.
+ *
+ * Layout: `<markdown>` advertises a rigid min-content width, so as a flex item in
+ * a row it would NOT shrink to the pane and wouldn't wrap (unlike `<text>`, which
+ * does). The fix is to let it be a normal block child of a column box — it then
+ * stretches to the pane width and wraps — with `paddingLeft={2}` for the hanging
+ * indent, and float the `●` over the top-left with `position:absolute` (out of
+ * flow, so the markdown still starts at the top). No width math needed.
+ */
+const Prose = (props: { text: string }) => (
+  <box flexDirection="column">
+    <text fg={theme.assistant} position="absolute" left={0} top={0}>
+      ●
+    </text>
+    <markdown
+      content={props.text}
+      syntaxStyle={syntaxStyle()}
+      fg={theme.text}
+      paddingLeft={2}
+      // Right padding keeps wide content (tables fill the content width) clear of
+      // the pane border + the scrollbar column — without it a table's right edge
+      // collides with the border (`┐│`).
+      paddingRight={2}
+      // OpenTUI's default table widthMode is "full" — every table balloons to the
+      // pane width (huge empty cells) and overflows/crops when the pane is narrow.
+      // "content" sizes tables to their content; "word" wraps cells so a wide
+      // table shrinks to fit instead of cropping; cellPaddingX gives the cell text
+      // breathing room from the borders (`│ Command │` not `│Command│`).
+      tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1 }}
+      {...tsProp()}
+    />
+  </box>
+)
+
 const ToolPill = (props: { tool: ToolBlock }) => (
   <box flexDirection="column">
     <Rail dot={theme.tool[props.tool.state]} fg={theme.text} text={props.tool.toolName} />
     <Show when={props.tool.detail}>
       <text fg={theme.gray}>{`  ⎿ ${props.tool.detail}`}</text>
     </Show>
+    {/* edit_file emits a canonical unified diff (--- / +++ / @@) → native <diff>
+        gives +/- line colouring; the treeSitterClient + filetype add per-token
+        hunk highlighting (JS/TS/markdown/zig; other langs render +/- only). */}
     <Show when={props.tool.diff}>
-      <text fg={theme.gray} wrapMode="none">
-        {props.tool.diff}
-      </text>
+      {(diff) => (
+        <diff
+          diff={diff()}
+          view="unified"
+          syntaxStyle={syntaxStyle()}
+          {...tsProp()}
+          {...ftProp(diffFiletype(diff()))}
+        />
+      )}
     </Show>
   </box>
 )
@@ -44,7 +114,7 @@ const Block = (props: { block: ScrollbackBlock }) => {
   switch (b.kind) {
     case "assistant":
     case "reasoning":
-      return <Rail dot={theme.assistant} fg={theme.text} text={b.text} wrap />
+      return <Prose text={b.text} />
     case "tool":
       return <ToolPill tool={b} />
     case "info":

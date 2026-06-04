@@ -1,17 +1,17 @@
-import type { ModelInfo } from "@efferent/core"
+import type { ConversationId, ModelInfo } from "@efferent/core"
 import {
   filterAppend,
   filterBackspace,
   moveSelect,
   selectedValue,
   type SelectState,
-} from "../../tui/selectBox.js"
+} from "../presentation/selectBox.js"
 import {
   loginAppend,
   loginBack,
   loginBackspace,
   loginMove,
-} from "../../tui/loginFlow.js"
+} from "../presentation/loginFlow.js"
 import {
   beginEdit,
   cancelEdit,
@@ -21,8 +21,9 @@ import {
   isEditing,
   moveSettings,
   type SettingsState,
-} from "../../tui/settingsView.js"
+} from "../presentation/settingsView.js"
 import { applyModelSelection } from "../actions/model.js"
+import { resumeConversation } from "../actions/session.js"
 import {
   applyEffort,
   applySearchModel,
@@ -58,6 +59,12 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
       // `undefined` is a valid pick here (the auto default).
       void ctx.run(applySearchModel(store, value as string | undefined))
       return
+    case "conversation": {
+      // A ConversationId resumes it; `null` (start new) or no pick → stay fresh.
+      const id = value as ConversationId | null | undefined
+      if (id != null) void ctx.run(resumeConversation(store, id))
+      return
+    }
   }
 }
 

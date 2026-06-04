@@ -1,6 +1,6 @@
 import type { ConversationId } from "@efferent/core"
-import type { StatusState } from "../../tui/statusBar.js"
-import type { SidePaneState } from "../../tui/sidePane.js"
+import type { StatusState } from "../presentation/statusBar.js"
+import type { SidePaneState } from "../presentation/sidePane.js"
 import { createConversationSlice, type ConversationSlice } from "./conversation.js"
 import { createSideSlice, type SideSlice } from "./side.js"
 import { createSessionSlice, type SessionSlice } from "./session.js"

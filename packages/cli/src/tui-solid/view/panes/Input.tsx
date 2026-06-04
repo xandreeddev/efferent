@@ -44,9 +44,21 @@ export const InputBox = (props: { ctx: TuiContext }) => {
   let ref!: TextareaRenderable
 
   // Imperatively blur/focus so a non-focused textarea stops consuming keys.
+  // Initial mount focuses synchronously (so the user can type at once); every
+  // LATER transition into focus is DEFERRED a macrotask. The keystroke that
+  // closes an overlay flips `focused()` true on the same tick, and a synchronous
+  // `ref.focus()` would let that very Enter reach the textarea as a stray
+  // newline — deferring keeps it blurred while the closing key is processed, then
+  // focuses for the next one. Blur is always synchronous (stop keys immediately).
+  let primed = false
   createEffect(() => {
-    if (focused()) ref.focus()
-    else ref.blur()
+    if (focused()) {
+      if (primed) setTimeout(() => focused() && ref.focus(), 0)
+      else ref.focus()
+    } else {
+      ref.blur()
+    }
+    primed = true
   })
 
   // Grow the box with the content (1..MAX_ROWS visible rows).
@@ -76,7 +88,6 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     <box border title=" input " borderColor={paneBorder("input", focused())} flexShrink={0}>
       <textarea
         ref={ref}
-        focused={focused()}
         height={rows()}
         keyBindings={KEY_BINDINGS}
         placeholder="Message…  (Shift-Enter send · Enter newline · Ctrl-C quit)"
