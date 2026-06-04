@@ -128,8 +128,8 @@ test("conversationPickerOptions caps a long prompt preview (modal truncates to f
 test("applyContextRebuild refreshes segments and resets the cursor + selection", () => {
   const store = newStore()
   // pre-dirty the selection/cursor so we can see the reset
-  store.setSidePane((s) => ({
-    ...s,
+  store.setNav((n) => ({
+    ...n,
     contextSelected: new Set([3]),
     contextCursor: 9,
   }))

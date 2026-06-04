@@ -84,14 +84,36 @@ export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats =>
   turns: s.turns + 1,
 })
 
-export interface SidePaneState {
+/**
+ * **Projection** — *what the side pane shows*. Written only by the event pump as
+ * the agent runs (the execution tree, stats, files, skills/instructions) and by
+ * the data actions that rebuild the context segments. Carries no cursor/fold/
+ * selection — that's {@link SidePaneNav}. Splitting the two means a projection
+ * write *cannot* express a cursor move (the field isn't here), so the pump can't
+ * scribble nav state by accident.
+ */
+export interface SidePaneProjection {
   readonly tree: ExecutionTree
   readonly skillsLoaded: ReadonlyArray<string>
   readonly instructions: ReadonlyArray<SidePaneInstruction>
-  /** Which view the side pane shows: the live agent stack, or the context viewer. */
-  readonly view: "stack" | "context"
+  /** At-a-glance session counters (Activity header). */
+  readonly stats: SessionStats
+  /** Files touched this session, with running diffstat (Activity "files" section). */
+  readonly filesChanged: ReadonlyArray<FileChange>
   /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
   readonly context?: ReadonlyArray<ContextSegment>
+}
+
+/**
+ * **Nav** — *where the cursor is / what's folded or selected*. Written only by
+ * keystrokes (the `keys/` dispatch). Carries no tree/stats/files, so a nav write
+ * can't clobber the live projection. The reducers below take `(nav, projection)`
+ * and return a new `nav`: they *read* the projection (the context segments) to
+ * compute rows, but only ever *write* nav.
+ */
+export interface SidePaneNav {
+  /** Which view the side pane shows: the live agent stack, or the context viewer. */
+  readonly view: "stack" | "context"
   /** Context-tree cursor: index into the navigable rows. */
   readonly contextCursor: number
   /** Folded context-tree segment/turn ids. */
@@ -100,84 +122,111 @@ export interface SidePaneState {
   readonly contextSelected: ReadonlySet<number>
   /** Selected handoff indices — each seeds the build with its summary alone. */
   readonly contextHandoffSelected: ReadonlySet<number>
-  /** At-a-glance session counters (Activity header). */
-  readonly stats: SessionStats
-  /** Files touched this session, with running diffstat (Activity "files" section). */
-  readonly filesChanged: ReadonlyArray<FileChange>
   /** Folded Activity fold ids: section names + tree containers ("node:<id>"). */
   readonly stackCollapsed: ReadonlySet<string>
   /** Activity (stack) view cursor: index into its navigable rows. */
   readonly stackCursor: number
 }
 
-export const emptySidePane: SidePaneState = {
+/** The merged view both halves compose to — what the components read (the side
+ *  slice exposes a `createMemo` over `projection ⊕ nav` so renderers are untouched). */
+export type SidePaneState = SidePaneProjection & SidePaneNav
+
+export const emptyProjection: SidePaneProjection = {
   tree: emptyTree,
   skillsLoaded: [],
   instructions: [],
+  stats: emptyStats,
+  filesChanged: [],
+}
+
+export const emptyNav: SidePaneNav = {
   view: "stack",
   contextCursor: 0,
   contextCollapsed: new Set(),
   contextSelected: new Set(),
   contextHandoffSelected: new Set(),
-  stats: emptyStats,
-  filesChanged: [],
   stackCollapsed: new Set(["files", "skills", "instructions"]),
   stackCursor: 0,
 }
+
+export const emptySidePane: SidePaneState = { ...emptyProjection, ...emptyNav }
+
+/** Split a merged side-pane state into its projection + nav halves — lets the
+ *  side slice seed its two signals from one initial `SidePaneState`. */
+export const splitSidePane = (
+  s: SidePaneState,
+): { projection: SidePaneProjection; nav: SidePaneNav } => ({
+  projection: {
+    tree: s.tree,
+    skillsLoaded: s.skillsLoaded,
+    instructions: s.instructions,
+    stats: s.stats,
+    filesChanged: s.filesChanged,
+    ...(s.context !== undefined ? { context: s.context } : {}),
+  },
+  nav: {
+    view: s.view,
+    contextCursor: s.contextCursor,
+    contextCollapsed: s.contextCollapsed,
+    contextSelected: s.contextSelected,
+    contextHandoffSelected: s.contextHandoffSelected,
+    stackCollapsed: s.stackCollapsed,
+    stackCursor: s.stackCursor,
+  },
+})
 
 // --- context-tree navigation (pure; the driver re-derives rows each call) ---
 
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(n, hi))
 
-export const contextRows = (state: SidePaneState): ReadonlyArray<ContextRowData> =>
+export const contextRows = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): ReadonlyArray<ContextRowData> =>
   buildContextRowsData(
-    state.context ?? [],
-    state.contextCollapsed,
-    state.contextSelected,
-    state.contextHandoffSelected,
+    projection.context ?? [],
+    nav.contextCollapsed,
+    nav.contextSelected,
+    nav.contextHandoffSelected,
   )
 
-/** Window start that keeps the cursor visible (centred-ish), like followCursor. */
-export const sideStart = (total: number, cursor: number, height: number): number =>
-  total <= height ? 0 : clamp(cursor - Math.floor(height / 2), 0, total - height)
-
-/** Window-relative row of the cursor for a pane `height`, or -1 if none. */
-export const sideCursorRowAt = (state: SidePaneState, height: number): number => {
-  const rows = contextRows(state)
-  if (rows.length === 0 || height <= 0) return -1
-  const cursor = clamp(state.contextCursor, 0, rows.length - 1)
-  const start = sideStart(rows.length, cursor, height)
-  const r = cursor - start
-  return r >= 0 && r < height ? r : -1
+export const sideCursorMove = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  delta: number,
+): SidePaneNav => {
+  const n = contextRows(nav, projection).length
+  if (n === 0) return nav
+  return { ...nav, contextCursor: clamp(nav.contextCursor + delta, 0, n - 1) }
 }
-
-export const sideCursorMove = (state: SidePaneState, delta: number): SidePaneState => {
-  const n = contextRows(state).length
-  if (n === 0) return state
-  return { ...state, contextCursor: clamp(state.contextCursor + delta, 0, n - 1) }
-}
-export const sideCursorToTop = (state: SidePaneState): SidePaneState => ({
-  ...state,
+export const sideCursorToTop = (nav: SidePaneNav): SidePaneNav => ({
+  ...nav,
   contextCursor: 0,
 })
-export const sideCursorToEnd = (state: SidePaneState): SidePaneState => {
-  const n = contextRows(state).length
-  return { ...state, contextCursor: Math.max(0, n - 1) }
+export const sideCursorToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
+  const n = contextRows(nav, projection).length
+  return { ...nav, contextCursor: Math.max(0, n - 1) }
 }
 /** Fold/unfold the segment under the cursor (no-op on non-collapsible rows). */
-export const sideToggleNode = (state: SidePaneState): SidePaneState => {
-  const rows = contextRows(state)
-  const row = rows[clamp(state.contextCursor, 0, Math.max(0, rows.length - 1))]
-  if (row === undefined || !row.collapsible || row.groupId === undefined) return state
-  const next = new Set(state.contextCollapsed)
+export const sideToggleNode = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
+  const rows = contextRows(nav, projection)
+  const row = rows[clamp(nav.contextCursor, 0, Math.max(0, rows.length - 1))]
+  if (row === undefined || !row.collapsible || row.groupId === undefined) return nav
+  const next = new Set(nav.contextCollapsed)
   if (next.has(row.groupId)) next.delete(row.groupId)
   else next.add(row.groupId)
-  return { ...state, contextCollapsed: next }
+  return { ...nav, contextCollapsed: next }
 }
 /** The row under the cursor (for the driver's Enter = jump-or-fold decision). */
-export const sideCurrentRow = (state: SidePaneState): ContextRowData | undefined =>
-  contextRows(state)[clamp(state.contextCursor, 0, Math.max(0, contextRows(state).length - 1))]
+export const sideCurrentRow = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): ContextRowData | undefined => {
+  const rows = contextRows(nav, projection)
+  return rows[clamp(nav.contextCursor, 0, Math.max(0, rows.length - 1))]
+}
 
 /**
  * Toggle selection of the unit under the cursor: a `turn` row (its messages) or
@@ -185,14 +234,14 @@ export const sideCurrentRow = (state: SidePaneState): ContextRowData | undefined
  * turns are mutually exclusive — selecting one clears the other for that handoff
  * (summary OR raw messages, never both). No-op on other rows.
  */
-export const sideToggleSelect = (state: SidePaneState): SidePaneState => {
-  const row = sideCurrentRow(state)
-  const segments = state.context ?? []
+export const sideToggleSelect = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
+  const row = sideCurrentRow(nav, projection)
+  const segments = projection.context ?? []
 
   // Archived handoff: select its summary; drop its inner turns.
   if (row?.kind === "segment" && row.handoffIndex !== undefined) {
-    const handoffs = new Set(state.contextHandoffSelected)
-    const turns = new Set(state.contextSelected)
+    const handoffs = new Set(nav.contextHandoffSelected)
+    const turns = new Set(nav.contextSelected)
     if (handoffs.has(row.handoffIndex)) {
       handoffs.delete(row.handoffIndex)
     } else {
@@ -202,13 +251,13 @@ export const sideToggleSelect = (state: SidePaneState): SidePaneState => {
         for (let i = range.start; i < range.start + range.count; i++) turns.delete(i)
       }
     }
-    return { ...state, contextHandoffSelected: handoffs, contextSelected: turns }
+    return { ...nav, contextHandoffSelected: handoffs, contextSelected: turns }
   }
 
   // Turn: select its messages; if it belongs to a selected handoff, drop that handoff.
   if (row?.kind === "turn" && row.turnIndex !== undefined) {
-    const turns = new Set(state.contextSelected)
-    const handoffs = new Set(state.contextHandoffSelected)
+    const turns = new Set(nav.contextSelected)
+    const handoffs = new Set(nav.contextHandoffSelected)
     if (turns.has(row.turnIndex)) {
       turns.delete(row.turnIndex)
     } else {
@@ -216,9 +265,9 @@ export const sideToggleSelect = (state: SidePaneState): SidePaneState => {
       const owner = handoffOwningTurn(segments, row.turnIndex)
       if (owner !== undefined) handoffs.delete(owner)
     }
-    return { ...state, contextSelected: turns, contextHandoffSelected: handoffs }
+    return { ...nav, contextSelected: turns, contextHandoffSelected: handoffs }
   }
 
-  return state
+  return nav
 }
 

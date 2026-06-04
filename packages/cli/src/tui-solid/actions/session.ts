@@ -14,7 +14,13 @@ import {
   type ContextSegment,
 } from "../presentation/contextView.js"
 import { emptyTree } from "../presentation/executionTree.js"
-import { emptyStats, type SidePaneState } from "../presentation/sidePane.js"
+import {
+  emptyNav,
+  emptyStats,
+  type SidePaneNav,
+  type SidePaneProjection,
+  type SidePaneState,
+} from "../presentation/sidePane.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
@@ -52,27 +58,20 @@ export const conversationPickerOptions = (
   }),
 ]
 
-const COLLAPSED_SECTIONS = ["files", "skills", "instructions"] as const
-
-/** The fresh side-pane state for a conversation switch (resume / build). */
+/**
+ * The fresh side-pane halves for a conversation switch (resume / build): a reset
+ * projection (preserving the prev skills/instructions, fresh tree/files + the new
+ * context + stats) and a fresh nav folded to `collapsed`. Returns the two halves
+ * so the caller writes each through its own segregated setter.
+ */
 const switchedSidePane = (
-  prev: SidePaneState,
+  prev: SidePaneProjection,
   context: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
   stats: SidePaneState["stats"],
-): SidePaneState => ({
-  ...prev,
-  tree: emptyTree,
-  view: "stack",
-  context,
-  contextCollapsed: collapsed,
-  contextSelected: new Set(),
-  contextHandoffSelected: new Set(),
-  contextCursor: 0,
-  stats,
-  filesChanged: [],
-  stackCollapsed: new Set(COLLAPSED_SECTIONS),
-  stackCursor: 0,
+): { projection: SidePaneProjection; nav: SidePaneNav } => ({
+  projection: { ...prev, tree: emptyTree, context, stats, filesChanged: [] },
+  nav: { ...emptyNav, contextCollapsed: collapsed },
 })
 
 const statsFrom = (
@@ -99,15 +98,16 @@ const statsFrom = (
 export const applyContextRebuild = (
   store: TuiStore,
   segments: ReadonlyArray<ContextSegment>,
-): void =>
-  store.setSidePane((s) => ({
-    ...s,
-    context: segments,
+): void => {
+  store.setProjection((p) => ({ ...p, context: segments }))
+  store.setNav((n) => ({
+    ...n,
     contextCollapsed: new Set(turnIdsOf(segments)),
     contextSelected: new Set(),
     contextHandoffSelected: new Set(),
     contextCursor: 0,
   }))
+}
 
 /**
  * Swap the loaded conversation to `target` (resume — full replay for browsing).
@@ -125,8 +125,10 @@ export const applyResume = (
   const stats = statsFrom(store.sidePane(), history)
   store.run.newConversation(target)
   store.setBlocks(replayBlocks(history, checkpoints))
-  // stats are the single source — switchedSidePane writes them; the status bar reads them.
-  store.setSidePane((s) => switchedSidePane(s, segments, new Set(turnIdsOf(segments)), stats))
+  // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
+  const switched = switchedSidePane(store.projection(), segments, new Set(turnIdsOf(segments)), stats)
+  store.setProjection(() => switched.projection)
+  store.setNav(() => switched.nav)
   if (announce) {
     store.pushBlock({
       kind: "info",
@@ -146,7 +148,9 @@ export const applyBuilt = (
   const stats = statsFrom(store.sidePane(), picked)
   store.run.newConversation(newId)
   store.setBlocks(replayBlocks(picked, []))
-  store.setSidePane((s) => switchedSidePane(s, buildContextView(picked, []), new Set(), stats))
+  const switched = switchedSidePane(store.projection(), buildContextView(picked, []), new Set(), stats)
+  store.setProjection(() => switched.projection)
+  store.setNav(() => switched.nav)
   store.setFocus("input")
   store.setMode("insert")
   const units = [
@@ -184,7 +188,7 @@ export const toggleContext = (store: TuiStore, cid: ConversationId) =>
       batch(() => {
         const opening = store.sidePane().view !== "context"
         applyContextRebuild(store, segments)
-        store.setSidePane((s) => ({ ...s, view: opening ? "context" : "stack" }))
+        store.setNav((n) => ({ ...n, view: opening ? "context" : "stack" }))
         if (opening) {
           store.setFocus("side")
           store.setMode("normal")

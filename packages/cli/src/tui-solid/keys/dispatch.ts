@@ -111,13 +111,13 @@ const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
   // `G` (lowercased name + shift) → bottom; `g` arms a `gg` two-stroke.
   if (key.name === "g" && key.shift) {
     store.setGPending(false)
-    store.setSidePane(sideCursorToEnd)
+    store.setNav((n) => sideCursorToEnd(n, store.projection()))
     return true
   }
   if (key.name === "g" && !key.ctrl && !key.meta) {
     if (store.gPending()) {
       store.setGPending(false)
-      store.setSidePane(sideCursorToTop)
+      store.setNav(sideCursorToTop)
     } else {
       store.setGPending(true)
     }
@@ -128,28 +128,28 @@ const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
   switch (key.name) {
     case "j":
     case "down":
-      store.setSidePane((s) => sideCursorMove(s, 1))
+      store.setNav((n) => sideCursorMove(n, store.projection(), 1))
       return true
     case "k":
     case "up":
-      store.setSidePane((s) => sideCursorMove(s, -1))
+      store.setNav((n) => sideCursorMove(n, store.projection(), -1))
       return true
     case "tab":
     case "h":
     case "l":
     case "left":
     case "right":
-      store.setSidePane(sideToggleNode)
+      store.setNav((n) => sideToggleNode(n, store.projection()))
       return true
     case "return": {
       // Enter folds a collapsible row; jumping the conversation cursor to a
       // message row arrives with the conversation-pane vim cursor in Phase E.
-      const row = sideCurrentRow(store.sidePane())
-      if (row?.collapsible === true) store.setSidePane(sideToggleNode)
+      const row = sideCurrentRow(store.nav(), store.projection())
+      if (row?.collapsible === true) store.setNav((n) => sideToggleNode(n, store.projection()))
       return true
     }
     case "space":
-      store.setSidePane(sideToggleSelect)
+      store.setNav((n) => sideToggleSelect(n, store.projection()))
       return true
     case "b":
       void ctx.run(buildFromSelection(store, store.status().cwd))
