@@ -1,25 +1,7 @@
 import { Show } from "solid-js"
-import { homedir } from "node:os"
-import { formatTokens } from "../../../tui/statusBar.js"
+import { formatTokens, gaugeBar, prettyCwd } from "../../presentation/statusBar.js"
 import { theme } from "../../theme.js"
 import type { TuiContext } from "../../state/store.js"
-
-/** Plain ▓░ context gauge (the ANSI version lives in the old statusBar.ts). */
-const gaugeStr = (used: number, total: number, width: number): string => {
-  if (total <= 0) return "─".repeat(width)
-  const filled = Math.max(0, Math.min(width, Math.round((used / total) * width)))
-  return "▓".repeat(filled) + "░".repeat(width - filled)
-}
-
-const home = (() => {
-  try {
-    return homedir()
-  } catch {
-    return ""
-  }
-})()
-const prettyCwd = (cwd: string): string =>
-  home !== "" && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd
 
 /**
  * Status bar: `model · tokens · storage · cwd` (+ an ephemeral busy note).
@@ -39,7 +21,7 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
           <text fg={theme.gray}>{` · `}</text>
           <text fg={theme.accent.side}>{s().effort}</text>
         </Show>
-        <text fg={theme.gray}>{`  ${gaugeStr(s().inputTokens, s().contextWindow, 8)} ${tokens()}`}</text>
+        <text fg={theme.gray}>{`  ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${tokens()}`}</text>
         <Show when={props.ctx.store.note()}>
           <text fg={theme.tool.running}>{`  · ${props.ctx.store.note()}`}</text>
         </Show>

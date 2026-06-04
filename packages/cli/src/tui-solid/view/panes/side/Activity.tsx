@@ -1,17 +1,11 @@
 import { homedir } from "node:os"
 import { For, Show } from "solid-js"
-import { SPINNER_FRAMES } from "../../../../tui/terminal.js"
-import { formatTokens } from "../../../../tui/statusBar.js"
-import type { NodeStatus, TreeNode } from "../../../../tui/executionTree.js"
-import type { FileChange, SidePaneState } from "../../../../tui/sidePane.js"
+import { SPINNER_FRAMES } from "../../../../terminal.js"
+import { formatTokens, gaugeBar } from "../../../presentation/statusBar.js"
+import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
+import type { FileChange, SidePaneState } from "../../../presentation/sidePane.js"
 import { theme } from "../../../theme.js"
 import type { TuiContext } from "../../../state/store.js"
-
-const gaugeStr = (used: number, total: number, width: number): string => {
-  if (total <= 0) return "─".repeat(width)
-  const filled = Math.max(0, Math.min(width, Math.round((used / total) * width)))
-  return "▓".repeat(filled) + "░".repeat(width - filled)
-}
 
 const fmtDur = (ms: number): string => {
   if (ms < 1000) return `${ms}ms`
@@ -42,7 +36,7 @@ const Stats = (props: { ctx: TuiContext }) => {
   return (
     <box flexDirection="column" flexShrink={0}>
       <text fg={theme.gray}>
-        {`ctx ${gaugeStr(s().inputTokens, s().contextWindow, 8)} ${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
+        {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
       </text>
       <text fg={theme.dim}>
         {`${formatTokens(s().outputTokens)} tok out · ${s().turns} turn${s().turns === 1 ? "" : "s"} · ${elapsed()}`}

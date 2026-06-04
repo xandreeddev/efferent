@@ -4,7 +4,6 @@ import {
   filterBackspace,
   moveSelect,
   openSelect,
-  renderSelectBox,
   selectedValue,
   type SelectOption,
 } from "./selectBox.js"
@@ -14,8 +13,6 @@ const opts: ReadonlyArray<SelectOption<string>> = [
   { value: "b", label: "google:gemini-3.5-flash", active: true },
   { value: "c", label: "openai:gpt-4o" },
 ]
-
-const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
 
 describe("selectBox", () => {
   it("openSelect preselects the active option", () => {
@@ -49,24 +46,5 @@ describe("selectBox", () => {
     expect(selectedValue(s)).toBeUndefined()
     s = filterBackspace(s)
     expect(s.matches.length).toBe(3)
-  })
-
-  it("renders a bordered box with the title, the highlight marker, and a counter", () => {
-    const lines = renderSelectBox(openSelect("Select a model", opts), 40, 80).map(
-      (o) => stripAnsi(o.content),
-    )
-    const blob = lines.join("\n")
-    expect(blob).toContain("Select a model")
-    expect(blob).toContain("▸")
-    expect(blob).toContain("◀ active")
-    expect(blob).toContain("2/3")
-  })
-
-  it("renders a '(no matches)' row when the filter excludes everything", () => {
-    const s = filterAppend(openSelect("m", opts), "zzz")
-    const blob = renderSelectBox(s, 40, 80)
-      .map((o) => stripAnsi(o.content))
-      .join("\n")
-    expect(blob).toContain("(no matches)")
   })
 })

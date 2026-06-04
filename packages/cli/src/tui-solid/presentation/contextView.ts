@@ -1,5 +1,4 @@
 import { type AgentMessage, type Checkpoint, handoffToMessage } from "@efferent/core"
-import { ansi, padRight, truncate } from "./terminal.js"
 
 /**
  * The context viewer model. A conversation is partitioned by handoff
@@ -27,33 +26,14 @@ export type ContextSegment =
       readonly messages: ReadonlyArray<AgentMessage>
     }
 
-/**
- * A flat, navigable row of the context tree (one visual line). The side pane
- * cursors over these: `segment` rows are foldable fold-handles; `message` rows
- * carry the conversation `messageIndex` so Enter can jump the conversation
- * cursor to that message. `label` is pre-styled (icon + one-line text).
- */
 export type ContextRowKind = "header" | "segment" | "summary" | "turn" | "message"
-export interface ContextRow {
-  readonly kind: ContextRowKind
-  readonly depth: number
-  readonly label: string
-  readonly collapsible: boolean
-  readonly groupId?: string
-  readonly messageIndex?: number
-  /** For `turn` rows: the global turn index — the unit of select-and-build. */
-  readonly turnIndex?: number
-  /** For archived `segment` rows: the handoff index — a select-and-build unit (its summary). */
-  readonly handoffIndex?: number
-}
 
 /**
- * The **non-ANSI** display payload for one context row, discriminated by kind.
- * `buildContextRowsData` produces these; `buildContextRows` renders them into the
- * ANSI `label` the hand-rolled TUI prints, while the Solid/OpenTUI viewer styles
- * the fields itself (OpenTUI `<text>` can't parse baked-in ANSI). Single source
- * of truth — both renderers walk the *same* row list, so a cursor index lines up
- * across them.
+ * The display payload for one context row, discriminated by kind — the OpenTUI
+ * context viewer styles these fields itself (no baked-in ANSI). The side pane
+ * cursors over the rows: `segment` rows are foldable; `messageIndex` lets Enter
+ * jump the conversation to that message; `turnIndex`/`handoffIndex` mark the
+ * select-and-build units.
  */
 export type ContextRowDisplay =
   | {
@@ -391,73 +371,3 @@ export const buildContextRowsData = (
   return rows
 }
 
-const fold = (f: boolean): string => `${ansi.fgGray}${f ? "▸" : "▾"}${ansi.reset}`
-const selectMark = (on: boolean): string =>
-  on ? `${ansi.fgBrightGreen}◉${ansi.reset}` : `${ansi.dim}○${ansi.reset}`
-
-/** Render one structured row to the ANSI `label` the hand-rolled TUI prints. */
-const renderLabel = (d: ContextRowDisplay): string => {
-  switch (d.kind) {
-    case "header":
-      return (
-        `${ansi.bold}${ansi.fgGray}── context ──${ansi.reset} ` +
-        (d.hasFold
-          ? `${ansi.dim}loaded ${ansi.reset}${ansi.fgGreen}${d.loaded}${ansi.reset}${ansi.dim}${d.hasSummary ? " + ✦" : ""} · archived ${d.archived}${ansi.reset}`
-          : `${ansi.fgGreen}${d.loaded} msg${d.loaded === 1 ? "" : "s"}${ansi.reset}${ansi.dim} · no handoff yet${ansi.reset}`) +
-        (d.selectedCount > 0
-          ? `${ansi.dim} · ${ansi.reset}${ansi.fgBrightGreen}${d.selectedCount} selected${ansi.reset}`
-          : "")
-      )
-    case "segment":
-      return d.archived
-        ? `${fold(d.folded)} ${selectMark(d.selected)} ${ansi.fgBrightMagenta}⚑${ansi.reset}${ansi.dim} handoff #${d.handoffIndex} · summary + ${d.foldedCount} msg${d.foldedCount === 1 ? "" : "s"} folded${ansi.reset}`
-        : `${fold(d.folded)} ${ansi.fgGreen}●${ansi.reset}${ansi.bold} loaded context${ansi.reset}`
-    case "summary":
-      return `   ${ansi.fgBrightMagenta}✦${ansi.reset} ${ansi.dim}${d.text}${ansi.reset}`
-    case "turn": {
-      const subjStyle = d.archived ? ansi.dim : ""
-      return `  ${fold(d.folded)} ${selectMark(d.selected)} ${subjStyle}${truncate(d.subject, 200)}${ansi.reset} ${ansi.dim}·${d.steps}${ansi.reset}`
-    }
-    case "message":
-      return `     ${ansi.dim}${d.icon} ${d.text}${ansi.reset}`
-  }
-}
-
-/**
- * Flatten the context segments into navigable rows with pre-styled ANSI
- * `label`s — the hand-rolled side pane's renderer. A thin styling pass over
- * `buildContextRowsData`, so both renderers share one walk (row count + order +
- * cursor indices line up exactly).
- */
-export const buildContextRows = (
-  segments: ReadonlyArray<ContextSegment>,
-  collapsed: ReadonlySet<string>,
-  selected: ReadonlySet<number> = new Set(),
-  selectedHandoffs: ReadonlySet<number> = new Set(),
-): ReadonlyArray<ContextRow> =>
-  buildContextRowsData(segments, collapsed, selected, selectedHandoffs).map(
-    ({ display, ...rest }) => ({ ...rest, label: renderLabel(display) }),
-  )
-
-/**
- * Render the context rows to full-width lines. `cursorIndex` (when `focused`)
- * gets the bright cursor-line tint — the side pane's hardware block cursor
- * sits on the same row.
- */
-export const renderContextView = (
-  rows: ReadonlyArray<ContextRow>,
-  cols: number,
-  cursorIndex = -1,
-  focused = false,
-): string[] =>
-  rows.map((r, i) => {
-    const line = padRight(truncate(r.label, cols), cols)
-    if (focused && i === cursorIndex) {
-      return (
-        ansi.bgCursorLine +
-        line.split(ansi.reset).join(ansi.reset + ansi.bgCursorLine) +
-        ansi.reset
-      )
-    }
-    return line
-  })

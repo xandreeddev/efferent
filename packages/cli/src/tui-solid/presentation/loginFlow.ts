@@ -8,13 +8,11 @@
  */
 
 import { type Provider } from "@efferent/core"
-import type { OverlayLine } from "./modal.js"
 import {
   filterAppend,
   filterBackspace,
   moveSelect,
   openSelect,
-  renderSelectBox,
   type SelectOption,
   type SelectState,
   selectedValue,
@@ -24,7 +22,6 @@ import {
   promptAppend,
   promptBackspace,
   type PromptState,
-  renderPromptBox,
 } from "./promptBox.js"
 
 export type AuthMethod = "subscription" | "api_key"
@@ -281,28 +278,5 @@ export const loginAdvance = (flow: LoginFlow): LoginAdvance => {
         ? { kind: "none" }
         : { kind: "localUrl", provider: flow.provider, baseUrl }
     }
-  }
-}
-
-/** Render the active step's overlay. */
-export const renderLoginFlow = (
-  flow: LoginFlow,
-  termRows: number,
-  termCols: number,
-): OverlayLine[] => {
-  switch (flow.step) {
-    case "authMethod":
-    case "provider":
-      return renderSelectBox(flow.sel, termRows, termCols)
-    case "apiKey":
-      return renderPromptBox(flow.prompt, termRows, termCols)
-    case "oauth":
-      return renderPromptBox(
-        { ...flow.manual, prompt: `${flow.status} — ${flow.manual.prompt}` },
-        termRows,
-        termCols,
-      )
-    case "localUrl":
-      return renderPromptBox(flow.prompt, termRows, termCols)
   }
 }
