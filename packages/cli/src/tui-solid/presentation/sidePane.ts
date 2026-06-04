@@ -43,6 +43,30 @@ export const emptyStats: SessionStats = {
   startedAt: 0,
 }
 
+/** One turn's token usage, as carried by the agent's `assistant_message`. */
+export interface TokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens: number
+  readonly cacheReadTokens: number
+}
+
+/**
+ * Fold one turn's usage into the running session stats — the **single** place
+ * stats accumulate (status bar + Activity both read the result). `inputTokens`/
+ * `cacheReadTokens` are the latest turn's context size (replaced each turn);
+ * `outputTokens`/`totalTokens` accumulate; `turns` +1. `contextWindow` and
+ * `startedAt` are preserved.
+ */
+export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats => ({
+  ...s,
+  inputTokens: u.inputTokens,
+  cacheReadTokens: u.cacheReadTokens,
+  outputTokens: s.outputTokens + u.outputTokens,
+  totalTokens: s.totalTokens + u.totalTokens,
+  turns: s.turns + 1,
+})
+
 export interface SidePaneState {
   readonly tree: ExecutionTree
   readonly skillsLoaded: ReadonlyArray<string>

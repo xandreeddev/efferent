@@ -16,7 +16,7 @@ import {
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../presentation/executionTree.js"
-import type { FileChange } from "../presentation/sidePane.js"
+import { accumulateUsage, type FileChange } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /**
@@ -24,8 +24,9 @@ import type { TuiStore } from "../state/store.js"
  * Solid crossing. The branch logic is lifted verbatim from the old `consumer`
  * forkDaemon (`tui.ts:1070-1332`); only the write target changes: conversation
  * blocks go through `store.pushBlock`/`store.updateTool`, the execution tree +
- * stats + diffstat through `store.setSidePane` (reusing the pure reducers from
- * `tui/executionTree.ts`), and the status tokens through `store.setStatus`.
+ * diffstat through `store.setSidePane` (reusing the pure reducers from
+ * `presentation/executionTree.ts`), and per-turn usage through `store.setStats`
+ * (the single source the status bar + Activity both read).
  *
  * Events carry no unique tool-call id, so — exactly like the old TUI — start↔end
  * are matched by tool name (most recent in-flight wins), the scrollback pill gets
@@ -204,17 +205,12 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         }
         if (event.usage !== undefined) {
           const u = event.usage
-          store.setStatus({ inputTokens: u.inputTokens, cacheReadTokens: u.cacheReadTokens })
+          // Single source: fold usage into the session stats (the status bar +
+          // Activity both read these). The per-turn `· N tok` is a separate
+          // annotation on the execution tree, not a copy of the stats.
+          store.setStats((s) => accumulateUsage(s, u))
           store.setSidePane((s) => ({
             ...s,
-            stats: {
-              ...s.stats,
-              inputTokens: u.inputTokens,
-              cacheReadTokens: u.cacheReadTokens,
-              outputTokens: s.stats.outputTokens + u.outputTokens,
-              totalTokens: s.stats.totalTokens + u.totalTokens,
-              turns: s.stats.turns + 1,
-            },
             tree: treeTurnDetail(s.tree, `${formatTokens(u.outputTokens)} tok`),
           }))
         }

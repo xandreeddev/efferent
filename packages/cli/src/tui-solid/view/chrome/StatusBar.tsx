@@ -10,8 +10,9 @@ import type { TuiContext } from "../../state/store.js"
  */
 export const StatusBar = (props: { ctx: TuiContext }) => {
   const s = () => props.ctx.store.status()
+  const st = () => props.ctx.store.stats()
   const tokenLabel = () =>
-    `${formatTokens(s().inputTokens)} (${formatTokens(s().cacheReadTokens)} cached) / ${formatTokens(s().contextWindow)}`
+    `${formatTokens(st().inputTokens)} (${formatTokens(st().cacheReadTokens)} cached) / ${formatTokens(st().contextWindow)}`
 
   return (
     <box flexDirection="row" justifyContent="space-between" backgroundColor={tokens.status.bg} flexShrink={0}>
@@ -21,7 +22,7 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
           <text fg={tokens.text.muted}>{` · `}</text>
           <text fg={tokens.accent.side}>{s().effort}</text>
         </Show>
-        <text fg={tokens.text.muted}>{`  ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${tokenLabel()}`}</text>
+        <text fg={tokens.text.muted}>{`  ${gaugeBar(st().inputTokens, st().contextWindow, 8)} ${tokenLabel()}`}</text>
         <Show when={props.ctx.store.note()}>
           <text fg={tokens.state.running}>{`  · ${props.ctx.store.note()}`}</text>
         </Show>

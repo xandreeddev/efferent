@@ -1,15 +1,17 @@
+/**
+ * Status-bar **display config** — model + workspace chrome only. Token/usage
+ * numbers (input/cacheRead/contextWindow) deliberately live in `SessionStats`
+ * (`sidePane.ts`), the single source the bar reads via `store.stats()`; keeping
+ * them out of here is what stops the two from drifting (the old triple-write).
+ * The transient busy `note` is its own session signal, not part of this shape.
+ */
 export interface StatusState {
   readonly modelId: string
-  readonly contextWindow: number
-  readonly inputTokens: number
-  readonly cacheReadTokens: number
   readonly cwd: string
-  /** Active conversation store, e.g. "sqlite" or "pg". Shown between tokens and cwd. */
+  /** Active conversation store, e.g. "sqlite" or "pg". Shown before cwd. */
   readonly storage: string
   /** Optional thinking/reasoning effort level shown next to the model. */
   readonly effort?: string | undefined
-  /** Optional ephemeral note, e.g. "thinking…", "waiting for tool…". */
-  readonly note?: string | undefined
 }
 
 export const formatTokens = (n: number): string => {

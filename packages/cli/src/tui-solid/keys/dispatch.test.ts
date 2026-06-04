@@ -11,9 +11,6 @@ const newStore = (): TuiStore =>
   createTuiStore({
     status: {
       modelId: "m",
-      contextWindow: 1000,
-      inputTokens: 0,
-      cacheReadTokens: 0,
       cwd: "/work",
       storage: "sqlite",
     },
