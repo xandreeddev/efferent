@@ -30,8 +30,8 @@ export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
             : undefined
     yield* Effect.sync(() =>
       batch(() => {
-        store.setStatus({ modelId: sel.modelId, contextWindow: sel.contextWindow, effort: newEffort })
-        store.setSidePane((s) => ({ ...s, stats: { ...s.stats, contextWindow: sel.contextWindow } }))
+        store.setStatus({ modelId: sel.modelId, effort: newEffort })
+        store.setStats((s) => ({ ...s, contextWindow: sel.contextWindow }))
         store.pushBlock({ kind: "info", text: `switched to ${sel.provider}:${sel.modelId}` })
         if (prev.provider !== sel.provider && store.blocks().some((b) => b.kind === "user")) {
           store.pushBlock({

@@ -98,9 +98,6 @@ export const runTuiModeSolid = (
       const store = createTuiStore({
         status: {
           modelId: meta.modelId,
-          contextWindow: meta.contextWindow,
-          inputTokens: 0,
-          cacheReadTokens: 0,
           cwd: input.cwd,
           storage: storageLabel(process.env.EFFERENT_DB_URL),
           effort,

@@ -126,7 +126,7 @@ export const applyResume = (
   store.run.conversationId = target
   store.run.queue = []
   store.setBlocks(replayBlocks(history, checkpoints))
-  store.setStatus({ inputTokens: stats.inputTokens, cacheReadTokens: stats.cacheReadTokens })
+  // stats are the single source — switchedSidePane writes them; the status bar reads them.
   store.setSidePane((s) => switchedSidePane(s, segments, new Set(turnIdsOf(segments)), stats))
   if (announce) {
     store.pushBlock({
@@ -148,7 +148,6 @@ export const applyBuilt = (
   store.run.conversationId = newId
   store.run.queue = []
   store.setBlocks(replayBlocks(picked, []))
-  store.setStatus({ inputTokens: stats.inputTokens, cacheReadTokens: stats.cacheReadTokens })
   store.setSidePane((s) => switchedSidePane(s, buildContextView(picked, []), new Set(), stats))
   store.setFocus("input")
   store.setMode("insert")
