@@ -24,9 +24,10 @@ import type { TuiStore } from "../state/store.js"
  * Solid crossing. The branch logic is lifted verbatim from the old `consumer`
  * forkDaemon (`tui.ts:1070-1332`); only the write target changes: conversation
  * blocks go through `store.pushBlock`/`store.updateTool`, the execution tree +
- * diffstat through `store.setSidePane` (reusing the pure reducers from
+ * diffstat through `store.setProjection` (reusing the pure reducers from
  * `presentation/executionTree.ts`), and per-turn usage through `store.setStats`
- * (the single source the status bar + Activity both read).
+ * (the single source the status bar + Activity both read). The pump only ever
+ * writes the projection half — nav (cursor/folds) is the keyboard's.
  *
  * Events carry no unique tool-call id, so — exactly like the old TUI — start↔end
  * are matched by tool name (most recent in-flight wins), the scrollback pill gets
@@ -50,17 +51,17 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
     const now = Date.now()
     switch (event.type) {
       case "turn_start":
-        store.setSidePane((s) => ({ ...s, tree: treeTurnStart(s.tree, event.turnIndex, now) }))
+        store.setProjection((p) => ({ ...p, tree: treeTurnStart(p.tree, event.turnIndex, now) }))
         return
 
       case "tool_call_start": {
         // Delegations are the sub-agent container, not a tool node.
         if (isDelegate(event.toolName)) return
         const label = describeToolCall(event.toolName, event.args)
-        store.setSidePane((s) => {
-          const { tree, id } = treeToolStart(s.tree, label, now)
+        store.setProjection((p) => {
+          const { tree, id } = treeToolStart(p.tree, label, now)
           toolTreeId.set(event.toolName, id)
-          return { ...s, tree }
+          return { ...p, tree }
         })
         // Top-level tools get a compact chat pill; sub-agent inner tools live
         // only in the tree.
@@ -78,9 +79,9 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         const detail = describeToolResult(event.toolName, event.ok, event.result)
         const nodeId = toolTreeId.get(event.toolName)
         if (nodeId !== undefined) {
-          store.setSidePane((s) => ({
-            ...s,
-            tree: treeToolEnd(s.tree, nodeId, event.ok, detail, now),
+          store.setProjection((p) => ({
+            ...p,
+            tree: treeToolEnd(p.tree, nodeId, event.ok, detail, now),
           }))
           toolTreeId.delete(event.toolName)
         }
@@ -99,7 +100,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // re-parsing the human detail string). Covers sub-agent inner edits too.
         if (artifacts.fileChange !== undefined) {
           const fc = artifacts.fileChange
-          store.setSidePane((s) => ({ ...s, filesChanged: mergeFileChange(s.filesChanged, fc) }))
+          store.setProjection((p) => ({ ...p, filesChanged: mergeFileChange(p.filesChanged, fc) }))
         }
         return
       }
@@ -111,9 +112,9 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         const sid = `sa${toolSeq}`
         subAgentScrollId.set(event.name, sid)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
-        store.setSidePane((s) => ({
-          ...s,
-          tree: treeSubAgentStart(s.tree, `delegate → ${event.name}`, now),
+        store.setProjection((p) => ({
+          ...p,
+          tree: treeSubAgentStart(p.tree, `delegate → ${event.name}`, now),
         }))
         return
       }
@@ -149,18 +150,18 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           filesDetail,
           event.usage !== undefined ? `${formatTokens(event.usage.inputTokens)} ctx` : undefined,
         )
-        store.setSidePane((s) => ({
-          ...s,
-          tree: treeSubAgentEnd(s.tree, event.ok, nodeDetail, now),
+        store.setProjection((p) => ({
+          ...p,
+          tree: treeSubAgentEnd(p.tree, event.ok, nodeDetail, now),
         }))
         return
       }
 
       case "skill_load":
-        store.setSidePane((s) =>
-          s.skillsLoaded.includes(event.name)
-            ? s
-            : { ...s, skillsLoaded: [...s.skillsLoaded, event.name] },
+        store.setProjection((p) =>
+          p.skillsLoaded.includes(event.name)
+            ? p
+            : { ...p, skillsLoaded: [...p.skillsLoaded, event.name] },
         )
         return
 
@@ -177,16 +178,16 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           // Activity both read these). The per-turn `· N tok` is a separate
           // annotation on the execution tree, not a copy of the stats.
           store.setStats((s) => accumulateUsage(s, u))
-          store.setSidePane((s) => ({
-            ...s,
-            tree: treeTurnDetail(s.tree, `${formatTokens(u.outputTokens)} tok`),
+          store.setProjection((p) => ({
+            ...p,
+            tree: treeTurnDetail(p.tree, `${formatTokens(u.outputTokens)} tok`),
           }))
         }
         return
       }
 
       case "agent_end":
-        store.setSidePane((s) => ({ ...s, tree: treeAgentEnd(s.tree, now) }))
+        store.setProjection((p) => ({ ...p, tree: treeAgentEnd(p.tree, now) }))
         if (event.finalText.trim().length === 0) {
           store.pushBlock({
             kind: "info",

@@ -84,12 +84,11 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":reset": {
       store.run.newConversation(newConversationId())
       store.clear()
-      store.setSidePane((s) => ({
-        ...s,
+      store.setProjection((p) => ({
+        ...p,
         tree: emptyTree,
         filesChanged: [],
-        skillsLoaded: s.skillsLoaded,
-        stats: { ...emptyStats, startedAt: Date.now(), contextWindow: s.stats.contextWindow },
+        stats: { ...emptyStats, startedAt: Date.now(), contextWindow: p.stats.contextWindow },
       }))
       store.pushBlock({
         kind: "info",

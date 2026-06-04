@@ -62,7 +62,7 @@ test(":exit / :quit invoke ctx.exit", () => {
 test(":reset starts a fresh conversation and clears tree + scrollback", () => {
   const store = newStore()
   store.pushBlock({ kind: "user", text: "old" })
-  store.setSidePane((s) => ({ ...s, tree: onToolStart(s.tree, "read x", 0).tree }))
+  store.setProjection((p) => ({ ...p, tree: onToolStart(p.tree, "read x", 0).tree }))
   const before = store.run.getConversationId()
   runCommand(ctxOf(store), ":reset")
   expect(store.run.getConversationId()).not.toBe(before)

@@ -161,13 +161,8 @@ test("the side pane switches to the context viewer and renders the turn tree", a
     // Build context segments and flip the side pane into the context view —
     // exactly what `toggleContext` does after fetching records.
     const segs = buildContextView([user("fix the parser"), assistant("done")], [])
-    store.setSidePane((s) => ({
-      ...s,
-      view: "context",
-      context: segs,
-      contextCollapsed: new Set(),
-      contextCursor: 0,
-    }))
+    store.setProjection((p) => ({ ...p, context: segs }))
+    store.setNav((n) => ({ ...n, view: "context", contextCollapsed: new Set(), contextCursor: 0 }))
     store.setFocus("side")
 
     const frame = await waitForFrame((f) => f.includes("context") && f.includes("fix the parser"))
@@ -188,10 +183,10 @@ test("selecting a turn in the context viewer shows the ◉ marker and a count", 
   })
   try {
     const segs = buildContextView([user("turn one"), assistant("a"), user("turn two"), assistant("b")], [])
-    store.setSidePane((s) => ({
-      ...s,
+    store.setProjection((p) => ({ ...p, context: segs }))
+    store.setNav((n) => ({
+      ...n,
       view: "context",
-      context: segs,
       contextCollapsed: new Set(),
       contextSelected: new Set([1]),
       contextCursor: 0,
