@@ -178,11 +178,11 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
   // Ctrl-C → 2×-to-quit: first press arms (with a hint), a second within 2 s exits.
   if (key.ctrl && key.name === "c") {
     const now = Date.now()
-    const armed = store.run.ctrlCArmedAt
+    const armed = store.run.getCtrlCArmedAt()
     if (armed !== undefined && now - armed < 2000) {
       ctx.exit()
     } else {
-      store.run.ctrlCArmedAt = now
+      store.run.setCtrlCArmedAt(now)
       store.pushBlock({ kind: "info", text: "press Ctrl-C again to quit" })
     }
     return

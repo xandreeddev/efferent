@@ -123,8 +123,7 @@ export const applyResume = (
 ): void => {
   const segments = buildContextView(history, checkpoints)
   const stats = statsFrom(store.sidePane(), history)
-  store.run.conversationId = target
-  store.run.queue = []
+  store.run.newConversation(target)
   store.setBlocks(replayBlocks(history, checkpoints))
   // stats are the single source — switchedSidePane writes them; the status bar reads them.
   store.setSidePane((s) => switchedSidePane(s, segments, new Set(turnIdsOf(segments)), stats))
@@ -145,8 +144,7 @@ export const applyBuilt = (
   handoffCount: number,
 ): void => {
   const stats = statsFrom(store.sidePane(), picked)
-  store.run.conversationId = newId
-  store.run.queue = []
+  store.run.newConversation(newId)
   store.setBlocks(replayBlocks(picked, []))
   store.setSidePane((s) => switchedSidePane(s, buildContextView(picked, []), new Set(), stats))
   store.setFocus("input")
@@ -294,7 +292,7 @@ export const browseConversations = (store: TuiStore, cwd: string) =>
     const list = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll(() => Effect.succeed([])))
     yield* Effect.sync(() =>
       batch(() => {
-        store.run.browseList = list
+        store.run.setBrowseList(list)
         store.pushBlock({ kind: "info", text: `conversations in ${cwd}:` })
         if (list.length === 0) {
           store.pushBlock({ kind: "info", text: "  (none)" })
@@ -306,7 +304,7 @@ export const browseConversations = (store: TuiStore, cwd: string) =>
             c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
               ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 50)
               : "(empty)"
-          const here = c.id === store.run.conversationId ? " ← current" : ""
+          const here = c.id === store.run.getConversationId() ? " ← current" : ""
           store.pushBlock({ kind: "info", text: `  [${i + 1}] ${date} · ${preview}${here}` })
         })
         store.pushBlock({ kind: "info", text: "  :resume <#> to open one" })

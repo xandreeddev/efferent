@@ -145,7 +145,7 @@ export const runTuiModeSolid = (
           void Runtime.runPromise(rt)(submit(text))
         },
         interrupt: () => {
-          const fiber = store.run.runningFiber
+          const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
         exit: () => {

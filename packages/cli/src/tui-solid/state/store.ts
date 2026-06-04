@@ -11,7 +11,7 @@ import { createOverlaySlice, type OverlaySlice } from "./overlay.js"
 // "…/state/store.js"` without chasing each slice file.
 export type { AppServices, TuiContext } from "../TuiContext.js"
 export type { FocusPane, UiMode } from "./ui.js"
-export type { RunState } from "./session.js"
+export type { RunHandle, OAuthSession, BrowseEntry } from "./session.js"
 export type { Overlay, SelectPurpose, EffortSettingKey } from "./overlay.js"
 export type { SearchState, ConvScroller } from "./conversation.js"
 
