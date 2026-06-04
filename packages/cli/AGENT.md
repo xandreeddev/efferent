@@ -1,6 +1,6 @@
 # @efferent/cli
 
-Coding-agent driver — composition root for four modes, plus a hand-rolled TUI.
+Coding-agent driver — composition root for four modes, plus the OpenTUI/SolidJS TUI.
 
 ## Layout
 
@@ -9,25 +9,33 @@ packages/cli/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
 ├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
 ├── modes/
-│   ├── tui.ts         full-screen TUI driver (TTY default)
+│   ├── tui.ts         just the TuiModeInput seam (driver moved to tui-solid/)
 │   ├── print.ts       one-shot, streams final text to stdout
 │   ├── json.ts        same loop as print but JSONL events on stdout
 │   └── rpc.ts         bidirectional JSON-RPC over stdio
-└── tui/
-    ├── terminal.ts    raw mode, ANSI escapes, alt buffer, getTermSize
-    ├── keys.ts        stdin byte → discriminated Key event parser
-    ├── render.ts      diffing frame composer (status + scrollback + palette + input + modal)
-    ├── statusBar.ts   model + token gauge + cwd (exports formatTokens/gauge)
-    ├── scrollback.ts  ●/⎿ event rail: user turn / assistant / tool / diff / info / error blocks
-    ├── sidePane.ts    "activity" dashboard (stats + tree + files/skills/instructions) + context viewer
+├── tui-solid/         the TUI driver — OpenTUI native renderer + SolidJS (no React)
+│   ├── runtime.ts     composition root + the Effect⇄Solid⇄OpenTUI three-runtime bridge
+│   ├── state/         signal slices (conversation · side · session · ui · overlay)
+│   ├── events/        Effect→signal event pump (drains the AgentEvent queue)
+│   ├── actions/       signal→Effect use-cases (submit · session · search · login · …)
+│   ├── keys/          ParsedKey adapter + root dispatch + overlay-first routing
+│   ├── commands/      `:` command dispatch
+│   ├── model/         pure presentation models (conversation turn/fold tree)
+│   └── view/          App.tsx + panes/ + panes/side/ + chrome/ + overlays/ (.tsx)
+└── tui/               PURE helpers reused by tui-solid (no render/cursor code left)
+    ├── statusBar.ts   model + token gauge + cwd (formatTokens/gauge + StatusState)
+    ├── sidePane.ts    "activity" + context-viewer STATE + cursor/fold reducers
+    ├── contextView.ts context segments + turn/handoff selection model
+    ├── executionTree.ts sub-agent / tool execution-tree model
     ├── toolDescribe.ts pure ToolName(arg) labels + result summaries + artifacts
-    ├── input.ts       multi-line editor (Enter/Ctrl-J newline in INSERT; submit from NORMAL via Enter)
-    ├── slashPalette.ts /<cmd> autocomplete overlay
-    ├── modal.ts       generic centered y/n confirm
-    ├── selectBox.ts   reusable navigable select overlay (`:model`, `:login` menus)
-    ├── promptBox.ts   reusable masked single-line input overlay (API-key / paste)
+    ├── slashPalette.ts `:` command catalogue + computePalette
+    ├── selectBox.ts   pure SelectState (`:model`/`:login` menus)
+    ├── promptBox.ts   pure PromptState (masked API-key / paste)
+    ├── settingsView.ts pure SettingsState (`:settings` table)
     ├── loginFlow.ts   pure `:login` state machine (authMethod → provider → key/oauth)
-    └── markdown.ts    minimal markdown → ANSI converter
+    ├── dbStatus.ts    active-store label/describe helpers
+    ├── terminal.ts    OSC-52 + spinner-frame constants (no raw-mode driver now)
+    └── logger.ts      file logger layer
 └── login/oauthServer.ts   loopback OAuth callback server + open-browser helper
 ```
 
@@ -41,13 +49,13 @@ packages/cli/src/
 
 ## TUI invariants
 
-- **Modal + multi-pane** (vim-flavoured). Regions top→bottom: middle (**two separate bordered boxes** — conversation and side — with **one empty column between them**), the **bordered keybind box**, overlay (`:` palette OR `/` search), input box, status bar, dim footer (logs path + key hints). Input is pinned above the status/footer.
-- **Per-pane accent colours.** The focused box's border + title brighten to that pane's accent: **conversation = bright cyan, side = bright magenta, input = bright green** (unfocused = dim gray). `PANE_ACCENT` in `render.ts`; `bcol/hseg/vbar/dashes/corner` take an `accent`. The keybind box's border + title use the **currently-focused** pane's accent, and its title carries `<pane> · <MODE>` (e.g. `conversation · NORMAL`) — the **only** place the vim mode is shown (the status bar is `model · tokens · storage · cwd`, where `storage` is the active store `sqlite`/`pg`; no mode/pane).
-- Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l or Ctrl-arrows** (peers — a non-moving Ctrl-arrow falls back to that pane's in-pane motion). INSERT only on the input; NORMAL + VISUAL on the read-only panes. NORMAL: j/k · Ctrl-D/U · PgUp/PgDn · gg/G · {/} scroll, Home/End line ends, `/` search (n/N), `:` commands. Arrow keys are full peers of hjkl everywhere — including the side pane, where ←/→ fold a node just like h/l. VISUAL: `v` select, `y` yanks to clipboard (OSC 52). No mouse tracking — native click-drag selection still works. See `SCOPE.md` for the full spec.
-- The **keybind box** is **two labelled rows** (`legend.ts`): a dim **`nav`** row (the global movement set — pane switching / `:` / `/` / zoom, identical in every pane) over a dynamic row of the focused pane's own keys. A `:`/`/` entry takes the top row (`cmd`/`find`) and blanks the bottom one.
-- Renders are full-frame composed then line-diffed against the previous frame to avoid flicker.
-- Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-C, `:exit`, signal).
-- Bash safety: non-interactive modes gate on `--allow-bash` (the `allowBash` flag flows into `codingToolkitLayer`; a denied call returns to the model as a tool failure). The TUI currently allows bash unconditionally — a `promptForBash` modal is defined in `tui.ts` but **not yet wired** into `onBeforeToolCall` (see `docs/roadmap.md`).
+- **Modal + multi-pane**, rendered by OpenTUI (Yoga/flexbox `<box>`/`<text>`/`<scrollbox>`/`<textarea>`), not hand-drawn. Regions top→bottom: middle (**two bordered boxes** — conversation and side — with **one empty column between them**, `App.tsx` flex row + `gap`), the **bordered keybind box**, a `:` palette OR `/` search-status line, the input box, status bar, dim footer. Modal overlays (`:model`/`:login`/`:settings`/…) float over everything via an absolutely-positioned `zIndex` layer.
+- **Per-pane accent colours.** The focused box's border + title brighten to that pane's accent: **conversation = cyan, side = magenta, input = green** (unfocused = gray). `theme.ts` + `paneBorder()` (no `PANE_ACCENT`/`render.ts` anymore). The keybind box's border + title use the **focused** pane's accent, title carries `<pane> · <MODE>` (the status bar is `model · tokens · storage · cwd`).
+- Three focusable panes (conversation / side / input) swapped with **Ctrl-h/j/k/l or Ctrl-arrows**. The input is INSERT, the read-only panes NORMAL (a `mode` flag drives only the legend title — **full vim modal editing, cursor motions + VISUAL, is deferred**; see `docs/roadmap.md`). Conversation NORMAL: j/k·↑↓ scroll · Ctrl-D/U half · PgUp/PgDn · gg/G ends · `Z` fold-all · `/` search (n/N · Esc) · `y` yank. Side pane: j/k·↑↓·gg/G move, Tab/Enter/h/l·←→ fold; context-viewer adds Space pick + `b` build. `:` commands, `z` zoom, `Ctrl-C` 2×-to-quit.
+- **Selection/yank uses OpenTUI's native mouse** (`useMouse:true`): drag-select highlights, `y` (read-only panes) copies the selection via OSC 52 (`renderer.copyToClipboardOSC52`). The input `<textarea>` owns its own selection/edit while typing.
+- The **keybind box** is **two labelled rows** (`view/chrome/Keybinds.tsx`): a dim global **`nav`** row over a dynamic row of the focused pane's real keys.
+- The renderer (alt buffer / raw mode / mouse / frame loop) is OpenTUI's, wrapped in an `Effect.acquireRelease` so the terminal is restored on success, failure, AND interruption.
+- Bash safety: non-interactive modes gate on `--allow-bash` (the `allowBash` flag flows into `codingToolkitLayer`; a denied call returns to the model as a tool failure). The TUI passes `allowBash:true`; a per-command approval modal consulted from `onBeforeToolCall` is **not yet wired** (see `docs/roadmap.md`).
 
 ## Hardcoded knobs (move to a settings layer later)
 

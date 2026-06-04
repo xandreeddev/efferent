@@ -1,6 +1,6 @@
 # efferent
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, modal vim TUI, zero-config local history, multi-provider (Claude / Gemini / OpenAI), colocated evals. No Electron, no React, no Ink — just keystrokes, ANSI, and an Effect runtime.
+> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS), zero-config local history, multi-provider (Claude / Gemini / OpenAI), colocated evals. No Electron, no React, no Ink — a native-rendered terminal UI on an Effect runtime.
 
 ```bash
 npm i -g efferent          # requires Bun (https://bun.sh)
@@ -23,20 +23,20 @@ That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth s
   │     ⎿  exit 0 · 1.2s                    │ ▸ AGENT.md (3)  │
   │ ● Fixed — the regex was anchored too…   │                 │
   └─────────────────────────────────────────┘ └────────────────┘
-  ┌─ nav ─ Ctrl-hjkl panes · : cmd · / find · z zoom ─────────┐
-  │ conv ─ j/k scroll · gg/G ends · {/} turns · v/y yank ─────│
-  └───────────────────────────────────────────────────────────┘
-  ┌─ input ─ INSERT ─────────────────────────────── conversation · NORMAL ─┐
+  ┌─ nav ─ Ctrl-hjkl panes · : cmd · / search · z zoom · ^C quit ─┐
+  │ conv ─ j/k scroll · ^D/^U · gg/G ends · / search · Z fold · y yank │
+  └───────────────────────────────────────────────────────────────┘
+  ┌─ input · INSERT ───────────────────────────────────────────────────────┐
   │ run the tests                                                          │
   └────────────────────────────────────────────────────────────────────────┘
    gemini-3.5-flash · 18k (12k cached) / 1M · sqlite · ~/proj
-   logs: ~/.efferent/efferent.log · Esc NORMAL · i INSERT
+   logs: ~/.efferent/efferent.log · ⇧↵ send · esc interrupt · ^C quit
 ```
 
 ## Why efferent
 
 - **Effect substrate, all the way down.** Ports and adapters are Layers, tools are an `@effect/ai` `Toolkit`, conversations live in `ConversationStore`. Every error is tagged. Every IO goes through a port. Swap a provider by swapping a Layer.
-- **Modal vim TUI, hand-rolled.** Three panes (conversation / activity / input), per-pane accent colours, real block cursor, charwise + linewise VISUAL with OSC 52 yank, foldable turns, foldable tool groups, expandable tool output (`Ctrl-R`). No mouse-mode hijacking — your terminal's native click-drag selection still works.
+- **Modal multi-pane TUI (OpenTUI + SolidJS).** Three panes (conversation / activity / input) with per-pane accent colours, foldable turns + tool groups, a multi-line composer (Shift-Enter sends · Enter newline), `/` search with match highlighting, keyboard scrolling, and mouse drag-select with OSC 52 yank. Rendered by OpenTUI's native core; the UI graph is SolidJS signals — **no React**.
 - **Multi-provider router.** One `LanguageModel` port; the active provider/model is resolved **per request** from `~/.efferent/auth.json` + your `:model` choice. Anthropic OAuth (Claude Pro/Max subscription) is wire-complete (live round-trip still being verified). Gemini's `thought_signature` round-trips correctly across turns.
 - **Zero-config storage.** SQLite at `~/.efferent/efferent.db` by default. Postgres optional via `:db pg <url>` (or `EFFERENT_DB_URL`). Migrations bundle into the binary.
 - **Skills + instruction files.** Drop `.md` files in `.efferent/skills/` — names + one-liners auto-inject into the system prompt; bodies lazy-load via `read_skill({name})`. `AGENT.md` (and `AGENT.local.md`) discovered from cwd up to home.
@@ -47,7 +47,7 @@ That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth s
 
 ## Install
 
-Requires [Bun](https://bun.sh) at runtime (≥ 1.2). The npm package is a single self-contained Bun bundle.
+Requires [Bun](https://bun.sh) at runtime (≥ 1.2). The npm package is a Bun bundle (core + adapters inlined) with **one** runtime dependency: `@opentui/core`, whose native terminal renderer can't be inlined and loads via FFI per platform.
 
 ```bash
 npm i -g efferent
@@ -130,7 +130,7 @@ Layout:
 packages/
 ├── core/       pure domain — entities, ports, use cases, prompts (effect + @effect/ai only)
 ├── adapters/   Layer impls of core ports — provider SDKs + IO live here
-├── cli/        composition root + four modes + hand-rolled TUI
+├── cli/        composition root + four modes + the OpenTUI/SolidJS TUI
 └── evals/      Effect-native eval framework + the agent's suites
 ```
 
@@ -145,7 +145,7 @@ The dependency direction is strictly inward: `cli` → `adapters` → `core`. `c
 
 ## Tech
 
-`effect@3.21` · `@effect/ai@0.35` (provider-agnostic) · `@effect/ai-google@0.14` · `@effect/ai-openai@0.39` · `@effect/cli@0.75` · `@effect/platform-bun@0.89` · `bun ≥ 1.2`. SQLite via `bun:sqlite`; Postgres via the bundled Effect adapter; raw mode + ANSI + Bun streams for the TUI.
+`effect@3.21` · `@effect/ai@0.35` (provider-agnostic) · `@effect/ai-google@0.14` · `@effect/ai-openai@0.39` · `@effect/cli@0.75` · `@effect/platform-bun@0.89` · `@opentui/core@0.3` + `@opentui/solid` + `solid-js` (TUI) · `bun ≥ 1.2`. SQLite via `bun:sqlite`; Postgres via the bundled Effect adapter; OpenTUI's native renderer + SolidJS signals for the TUI.
 
 ## License
 

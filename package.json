@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun --hot packages/cli/src/main.ts",
     "start": "bun packages/cli/src/main.ts",
-    "build": "bun build packages/cli/src/main.ts --target=bun --outfile packages/cli/dist/efferent.js",
+    "build": "bun run scripts/build.ts",
     "eval": "bun packages/evals/src/run.ts",
     "generate-models": "bun packages/core/scripts/generateModelCatalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -17,6 +17,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "effect": "^3.21.2"
+    "@opentui/core": "0.3.1",
+    "@opentui/solid": "0.3.1",
+    "effect": "^3.21.2",
+    "solid-js": "^1.9.13"
   }
 }

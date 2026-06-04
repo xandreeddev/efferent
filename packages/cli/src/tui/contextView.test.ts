@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/core"
 import {
   buildContextRows,
+  buildContextRowsData,
   buildContextView,
   messagesForSelectedTurns,
   turnIdsOf,
@@ -129,6 +130,50 @@ describe("buildContextRows", () => {
     const seg = rows.find((r) => r.kind === "segment" && r.handoffIndex === 1)
     expect(seg!.label).toContain("◉")
     expect(rows[0]!.label).toContain("1 selected")
+  })
+})
+
+describe("buildContextRowsData (structured ↔ ANSI parity)", () => {
+  // Both renderers must walk identically — the side-pane cursor indexes into the
+  // ANSI rows while the OpenTUI viewer renders the structured rows, so any drift
+  // in count/order/structural fields would desync the cursor.
+  const cases: ReadonlyArray<[string, ReadonlyArray<AgentMessage>, ReadonlyArray<Checkpoint>]> = [
+    ["plain", [user("a"), assistant("b"), user("c"), assistant("d")], []],
+    ["one handoff", [user("a"), assistant("b"), user("c"), assistant("d"), user("e")], [cp(1, "S1")]],
+    ["two handoffs", [user("a"), assistant("b"), user("c"), assistant("d"), user("e")], [cp(1, "S1"), cp(3, "S2")]],
+  ]
+
+  for (const [name, msgs, cps] of cases) {
+    test(`${name}: data rows align 1:1 with ANSI rows`, () => {
+      const segs = buildContextView(msgs, cps)
+      const collapsed = new Set<string>(["turn:0"])
+      const selected = new Set<number>([1])
+      const handoffs = new Set<number>(cps.length > 0 ? [1] : [])
+      const data = buildContextRowsData(segs, collapsed, selected, handoffs)
+      const ansi = buildContextRows(segs, collapsed, selected, handoffs)
+      expect(data).toHaveLength(ansi.length)
+      data.forEach((d, i) => {
+        const a = ansi[i]!
+        expect(d.kind).toBe(a.kind)
+        expect(d.depth).toBe(a.depth)
+        expect(d.collapsible).toBe(a.collapsible)
+        expect(d.groupId).toBe(a.groupId)
+        expect(d.messageIndex).toBe(a.messageIndex)
+        expect(d.turnIndex).toBe(a.turnIndex)
+        expect(d.handoffIndex).toBe(a.handoffIndex)
+      })
+    })
+  }
+
+  test("display payload carries the un-styled text (no ANSI escapes)", () => {
+    const segs = buildContextView([user("hello world"), assistant("hi")], [])
+    const data = buildContextRowsData(segs, new Set())
+    const turn = data.find((r) => r.kind === "turn")
+    expect(turn?.display.kind).toBe("turn")
+    if (turn?.display.kind === "turn") {
+      expect(turn.display.subject).toBe("hello world")
+      expect(turn.display.subject).not.toContain("\x1b")
+    }
   })
 })
 

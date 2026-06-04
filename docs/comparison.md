@@ -2,7 +2,7 @@
 
 Where efferent sits in the coding-agent-CLI landscape, against the two reference points that matter: Anthropic's **Claude Code** (the de-facto Pareto front of features) and **pi** (`~/Workspace/xandreed/pi`, the closest peer — a serious TS agent of roughly our weight class). Up to date with efferent `main`.
 
-> **Framing.** The goal is *understanding*, not parity. efferent's wedge is **Effect services + ports/adapters + colocated evals + a hand-rolled modal TUI**. Several Claude Code features are deliberately off-thesis. See `docs/roadmap.md` for what's planned and what we're consciously skipping.
+> **Framing.** The goal is *understanding*, not parity. efferent's wedge is **Effect services + ports/adapters + colocated evals + a modal TUI (OpenTUI + SolidJS, no React)**. Several Claude Code features are deliberately off-thesis. See `docs/roadmap.md` for what's planned and what we're consciously skipping.
 
 ---
 
@@ -90,4 +90,4 @@ Claude Code's surface is the ceiling — a vast tool/slash-command surface and d
 
 efferent already matches pi on tool foundations and **exceeds** it on web tools, multi-provider routing, OAuth subscriptions, sub-agent delegation, and the evals harness. It still trails pi on streaming, compaction, and extensibility — all on the Tier-1/2 roadmap.
 
-Against Claude Code's full surface we trail considerably on breadth (plugins, MCP, memdir, Team mode, image input) but match it on the fundamentals (rich tool display, diffs, web tools, OAuth, sub-agents, handoff, multi-provider) and *exceed* it in one specific dimension that matters for build-in-public: **the substrate**. An Effect-based agent with ports/adapters, typed errors, colocated evals, and a hand-rolled vim TUI is a different bet than "more features." That's the thing the roadmap protects.
+Against Claude Code's full surface we trail considerably on breadth (plugins, MCP, memdir, Team mode, image input) but match it on the fundamentals (rich tool display, diffs, web tools, OAuth, sub-agents, handoff, multi-provider) and *exceed* it in one specific dimension that matters for build-in-public: **the substrate**. An Effect-based agent with ports/adapters, typed errors, colocated evals, and a modal OpenTUI/SolidJS TUI is a different bet than "more features." That's the thing the roadmap protects.

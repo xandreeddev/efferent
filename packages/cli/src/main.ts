@@ -29,7 +29,6 @@ import {
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
-import { runTuiMode } from "./modes/tui.js"
 
 /* ------------------------------------------------------------------ */
 /* Composition root                                                    */
@@ -278,13 +277,33 @@ const root = Command.make(
         case "tui": {
           // The startup conversation picker now lives *inside* the TUI (it's an
           // overlay over the live agent), so we only pass an explicit --resume.
-          yield* runTuiMode({
+          const tuiInput = {
             cwd: workspace,
             skills,
             rootScope,
             instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
-          })
+          }
+          // The TUI (OpenTUI + SolidJS), loaded lazily so the native
+          // @opentui/core FFI lib is touched ONLY on this path — print/json/rpc
+          // never import it. If the native renderer can't start (e.g. its
+          // platform lib is missing), surface a clear error and exit non-zero
+          // rather than crashing with a defect.
+          const { runTuiModeSolid } = yield* Effect.promise(
+            () => import("./tui-solid/runtime.js"),
+          )
+          yield* runTuiModeSolid(tuiInput).pipe(
+            Effect.catchAllDefect((defect) =>
+              Effect.sync(() => {
+                process.stderr.write(
+                  `efferent: the terminal UI failed to start (${String(defect)}). ` +
+                    `It needs @opentui/core's native library for this platform; ` +
+                    `use --print / --mode json / --mode rpc for non-interactive runs.\n`,
+                )
+                process.exitCode = 1
+              }),
+            ),
+          )
           return
         }
       }
