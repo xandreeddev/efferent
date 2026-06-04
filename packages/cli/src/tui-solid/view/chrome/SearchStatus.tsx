@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { theme } from "../../theme.js"
+import { tokens } from "../../presentation/theme/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -13,8 +13,8 @@ export const SearchStatus = (props: { ctx: TuiContext }) => {
     <Show when={s()}>
       {(st) => (
         <box flexDirection="row" flexShrink={0}>
-          <text fg={theme.select}>{`/${st().query}  `}</text>
-          <text fg={st().matchIds.length === 0 ? theme.error : theme.gray}>
+          <text fg={tokens.match.current}>{`/${st().query}  `}</text>
+          <text fg={st().matchIds.length === 0 ? tokens.error : tokens.text.muted}>
             {st().matchIds.length === 0
               ? "no matches"
               : `[${st().index + 1}/${st().matchIds.length}]  n/N next·prev · Esc clear`}

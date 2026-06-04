@@ -5,10 +5,9 @@ import {
   type ContextRowData,
   type ContextRowDisplay,
 } from "../../../presentation/contextView.js"
-import { theme } from "../../../theme.js"
+import { glyph, tokens } from "../../../presentation/theme/index.js"
+import { Marker, foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
-
-const fold = (f: boolean): string => (f ? "▸" : "▾")
 
 /**
  * One context row, styled from its structured `display` payload — the OpenTUI
@@ -26,24 +25,22 @@ const Row = (props: { row: ContextRowData; active: boolean }) => {
     <box
       flexDirection="row"
       marginLeft={indent()}
-      {...(props.active ? { backgroundColor: theme.cursorLine } : {})}
+      {...(props.active ? { backgroundColor: tokens.cursorLine } : {})}
     >
       {renderSegments(d)}
     </box>
   )
 }
 
-const sel = (on: boolean) => <text fg={on ? theme.select : theme.dim}>{on ? "◉ " : "○ "}</text>
-
 const renderSegments = (d: () => ContextRowDisplay) => {
   const v = d()
   switch (v.kind) {
     case "header":
       return (
-        <text fg={theme.gray} wrapMode="none">
+        <text fg={tokens.text.muted} wrapMode="none">
           {`── context ── ` +
             (v.hasFold
-              ? `loaded ${v.loaded}${v.hasSummary ? " + ✦" : ""} · archived ${v.archived}`
+              ? `loaded ${v.loaded}${v.hasSummary ? ` + ${glyph.summary}` : ""} · archived ${v.archived}`
               : `${v.loaded} msg${v.loaded === 1 ? "" : "s"} · no handoff yet`) +
             (v.selectedCount > 0 ? ` · ${v.selectedCount} selected` : "")}
         </text>
@@ -51,25 +48,25 @@ const renderSegments = (d: () => ContextRowDisplay) => {
     case "segment":
       return v.archived ? (
         <>
-          <text fg={theme.gray}>{`${fold(v.folded)} `}</text>
-          {sel(v.selected)}
-          <text fg={theme.magenta}>⚑ </text>
-          <text fg={theme.dim} wrapMode="none">
+          <text fg={tokens.text.muted}>{`${foldCaret(v.folded)} `}</text>
+          <Marker on={v.selected} />
+          <text fg={tokens.marker.handoff}>{`${glyph.handoff} `}</text>
+          <text fg={tokens.text.dim} wrapMode="none">
             {`handoff #${v.handoffIndex} · summary + ${v.foldedCount} msg${v.foldedCount === 1 ? "" : "s"} folded`}
           </text>
         </>
       ) : (
         <>
-          <text fg={theme.gray}>{`${fold(v.folded)} `}</text>
-          <text fg={theme.green}>● </text>
-          <text fg={theme.text}>loaded context</text>
+          <text fg={tokens.text.muted}>{`${foldCaret(v.folded)} `}</text>
+          <text fg={tokens.marker.loaded}>{`${glyph.loaded} `}</text>
+          <text fg={tokens.text.default}>loaded context</text>
         </>
       )
     case "summary":
       return (
         <>
-          <text fg={theme.magenta}>✦ </text>
-          <text fg={theme.dim} wrapMode="none">
+          <text fg={tokens.marker.handoff}>{`${glyph.summary} `}</text>
+          <text fg={tokens.text.dim} wrapMode="none">
             {v.text}
           </text>
         </>
@@ -77,17 +74,17 @@ const renderSegments = (d: () => ContextRowDisplay) => {
     case "turn":
       return (
         <>
-          <text fg={theme.gray}>{`${fold(v.folded)} `}</text>
-          {sel(v.selected)}
-          <text fg={v.archived ? theme.dim : theme.text} wrapMode="none">
+          <text fg={tokens.text.muted}>{`${foldCaret(v.folded)} `}</text>
+          <Marker on={v.selected} />
+          <text fg={v.archived ? tokens.text.dim : tokens.text.default} wrapMode="none">
             {v.subject}
           </text>
-          <text fg={theme.dim}>{` ·${v.steps}`}</text>
+          <text fg={tokens.text.dim}>{` ·${v.steps}`}</text>
         </>
       )
     case "message":
       return (
-        <text fg={theme.dim} wrapMode="none">
+        <text fg={tokens.text.dim} wrapMode="none">
           {`${v.icon} ${v.text}`}
         </text>
       )
@@ -126,7 +123,7 @@ export const ContextView = (props: { ctx: TuiContext }) => {
     <scrollbox ref={sb} scrollY flexGrow={1} flexDirection="column">
       <Show
         when={rows().length > 0}
-        fallback={<text fg={theme.dim}>(no conversation yet)</text>}
+        fallback={<text fg={tokens.text.dim}>(no conversation yet)</text>}
       >
         <For each={rows()}>
           {(row, i) => (

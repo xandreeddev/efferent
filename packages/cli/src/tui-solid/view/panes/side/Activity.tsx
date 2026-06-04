@@ -1,10 +1,10 @@
 import { homedir } from "node:os"
 import { For, Show } from "solid-js"
-import { SPINNER_FRAMES } from "../../../../terminal.js"
 import { formatTokens, gaugeBar } from "../../../presentation/statusBar.js"
 import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
 import type { FileChange, SidePaneState } from "../../../presentation/sidePane.js"
-import { theme } from "../../../theme.js"
+import { glyph, tokens } from "../../../presentation/theme/index.js"
+import { SectionHead } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 
 const fmtDur = (ms: number): string => {
@@ -26,7 +26,7 @@ const prettyPath = (p: string): string =>
   home !== "" && p.startsWith(home) ? `~${p.slice(home.length)}` : p
 
 const statusColor = (status: NodeStatus): string =>
-  status === "running" ? theme.tool.running : status === "error" ? theme.tool.error : theme.tool.ok
+  status === "running" ? tokens.state.running : status === "error" ? tokens.state.error : tokens.state.ok
 
 /** The Activity stats header: a context gauge + a cumulative one-liner. */
 const Stats = (props: { ctx: TuiContext }) => {
@@ -35,10 +35,10 @@ const Stats = (props: { ctx: TuiContext }) => {
   const elapsed = () => (s().startedAt > 0 ? fmtDur(Date.now() - s().startedAt) : "0s")
   return (
     <box flexDirection="column" flexShrink={0}>
-      <text fg={theme.gray}>
+      <text fg={tokens.text.muted}>
         {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
       </text>
-      <text fg={theme.dim}>
+      <text fg={tokens.text.dim}>
         {`${formatTokens(s().outputTokens)} tok out · ${s().turns} turn${s().turns === 1 ? "" : "s"} · ${elapsed()}`}
       </text>
     </box>
@@ -55,18 +55,18 @@ const TreeNodeView = (props: {
   const isContainer = n.kind === "turn" || n.kind === "subagent"
   const foldId = isContainer ? `node:${n.id}` : undefined
   const folded = () => foldId !== undefined && props.collapsed.has(foldId)
-  const glyph = () => {
-    if (isContainer) return folded() ? "▸" : "▾"
-    if (n.status === "running") return SPINNER_FRAMES[props.spinner % SPINNER_FRAMES.length]
-    return n.status === "error" ? "✗" : "✓"
+  const nodeGlyph = () => {
+    if (isContainer) return folded() ? glyph.fold.closed : glyph.fold.open
+    if (n.status === "running") return glyph.spinner[props.spinner % glyph.spinner.length]
+    return n.status === "error" ? glyph.error : glyph.ok
   }
   const glyphColor = () =>
     isContainer
       ? n.status === "running"
-        ? theme.tool.running
+        ? tokens.state.running
         : n.status === "error"
-          ? theme.tool.error
-          : theme.gray
+          ? tokens.state.error
+          : tokens.text.muted
       : statusColor(n.status)
   const suffix = () => {
     const count =
@@ -80,9 +80,9 @@ const TreeNodeView = (props: {
   return (
     <box flexDirection="column">
       <box flexDirection="row" marginLeft={props.depth * 2}>
-        <text fg={glyphColor()}>{`${glyph()} `}</text>
-        <text fg={theme.text}>{n.label}</text>
-        <text fg={theme.dim}>{suffix()}</text>
+        <text fg={glyphColor()}>{`${nodeGlyph()} `}</text>
+        <text fg={tokens.text.default}>{n.label}</text>
+        <text fg={tokens.text.dim}>{suffix()}</text>
       </box>
       <Show when={!folded()}>
         <For each={n.children}>
@@ -99,21 +99,6 @@ const TreeNodeView = (props: {
     </box>
   )
 }
-
-const SectionHead = (props: {
-  label: string
-  count: number
-  collapsed: boolean
-  summary?: string | undefined
-}) => (
-  <box flexDirection="row">
-    <text fg={theme.gray}>{`${props.collapsed ? "▸" : "▾"} ${props.label} `}</text>
-    <text fg={theme.dim}>{`(${props.count})`}</text>
-    <Show when={props.summary}>
-      <text fg={theme.gray}>{props.summary}</text>
-    </Show>
-  </box>
-)
 
 const FilesSection = (props: { files: ReadonlyArray<FileChange>; collapsed: boolean }) => {
   const tot = () =>
@@ -133,10 +118,10 @@ const FilesSection = (props: { files: ReadonlyArray<FileChange>; collapsed: bool
         <For each={props.files}>
           {(f) => (
             <box flexDirection="row" marginLeft={3}>
-              <text fg={theme.gray}>{`${prettyPath(f.path)} `}</text>
-              <text fg={theme.tool.ok}>{`+${f.added}`}</text>
-              <text fg={theme.dim}>/</text>
-              <text fg={theme.tool.error}>{`-${f.removed}`}</text>
+              <text fg={tokens.text.muted}>{`${prettyPath(f.path)} `}</text>
+              <text fg={tokens.state.ok}>{`+${f.added}`}</text>
+              <text fg={tokens.text.dim}>/</text>
+              <text fg={tokens.state.error}>{`-${f.removed}`}</text>
             </box>
           )}
         </For>
@@ -150,7 +135,7 @@ const ListSection = (props: { label: string; items: ReadonlyArray<string>; colla
     <SectionHead label={props.label} count={props.items.length} collapsed={props.collapsed} />
     <Show when={!props.collapsed && props.items.length > 0}>
       <For each={props.items}>
-        {(i) => <text fg={theme.gray} marginLeft={3}>{`· ${i}`}</text>}
+        {(i) => <text fg={tokens.text.muted} marginLeft={3}>{`· ${i}`}</text>}
       </For>
     </Show>
   </box>
@@ -180,7 +165,7 @@ export const Activity = (props: { ctx: TuiContext }) => {
         flexGrow={1}
         flexDirection="column"
       >
-        <Show when={sp().tree.roots.length > 0} fallback={<text fg={theme.dim}>(idle)</text>}>
+        <Show when={sp().tree.roots.length > 0} fallback={<text fg={tokens.text.dim}>(idle)</text>}>
           <For each={sp().tree.roots}>
             {(root) => (
               <TreeNodeView node={root} depth={0} collapsed={sp().stackCollapsed} spinner={store.spinner()} />

@@ -2,7 +2,8 @@ import type { TextareaRenderable } from "@opentui/core"
 import { createEffect, createMemo } from "solid-js"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
-import { paneBorder, theme } from "../../theme.js"
+import { tokens } from "../../presentation/theme/index.js"
+import { Pane } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -85,13 +86,13 @@ export const InputBox = (props: { ctx: TuiContext }) => {
   }
 
   return (
-    <box border title=" input " borderColor={paneBorder("input", focused())} flexShrink={0}>
+    <Pane kind="input" focused={focused()} title="input">
       <textarea
         ref={ref}
         height={rows()}
         keyBindings={KEY_BINDINGS}
         placeholder="Message…  (Shift-Enter send · Enter newline · Ctrl-C quit)"
-        textColor={theme.text}
+        textColor={tokens.text.default}
         wrapMode="word"
         onContentChange={() => {
           // A <textarea> fires a *contentless* content-change (the `"input"`
@@ -102,6 +103,6 @@ export const InputBox = (props: { ctx: TuiContext }) => {
         }}
         onSubmit={submit}
       />
-    </box>
+    </Pane>
   )
 }

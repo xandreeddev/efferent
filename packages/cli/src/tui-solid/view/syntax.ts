@@ -1,5 +1,5 @@
 import { SyntaxStyle, getTreeSitterClient, type TreeSitterClient } from "@opentui/core"
-import { theme } from "../theme.js"
+import { tokens } from "../presentation/theme/index.js"
 
 /**
  * The one style table shared by `<markdown>`, `<diff>` and `<code>`. It carries
@@ -12,8 +12,8 @@ import { theme } from "../theme.js"
  *    capture-name convention) — used to colour fenced code blocks inside markdown
  *    and the hunk contents of a `<diff>`, when a `treeSitterClient` is supplied.
  *    The shipped grammars cover **JS / TS / markdown / zig** (see
- *    `@opentui/core/assets`); other languages render un-highlighted. Palette is a
- *    One-Dark-ish set, consistent with `theme.ts`.
+ *    `@opentui/core/assets`); other languages render un-highlighted. Colours are
+ *    the semantic `tokens.syntax` roles (one source for both families).
  *
  * Built lazily and once. `SyntaxStyle.fromStyles` calls into OpenTUI's native lib
  * (`resolveRenderLib`), only loaded by `createCliRenderer`, so it can't be
@@ -26,57 +26,57 @@ export const syntaxStyle = (): SyntaxStyle => {
   if (cachedStyle === undefined) {
     cachedStyle = SyntaxStyle.fromStyles({
       // --- markdown prose (marked → markup.* lookups) ---
-      "markup.heading": { fg: theme.turnHeader, bold: true },
+      "markup.heading": { fg: tokens.syntax.heading, bold: true },
       "markup.strong": { bold: true },
       "markup.italic": { italic: true },
       "markup.strikethrough": { dim: true },
-      "markup.raw": { fg: theme.green }, // inline `code` + un-highlighted fences
-      "markup.quote": { fg: theme.gray, italic: true },
-      "markup.list": { fg: theme.gray },
-      "markup.link": { fg: theme.accent.conversation, underline: true },
-      "markup.link.label": { fg: theme.accent.conversation, underline: true },
-      "markup.link.url": { fg: theme.dim, underline: true },
+      "markup.raw": { fg: tokens.syntax.raw }, // inline `code` + un-highlighted fences
+      "markup.quote": { fg: tokens.syntax.quote, italic: true },
+      "markup.list": { fg: tokens.syntax.list },
+      "markup.link": { fg: tokens.syntax.link, underline: true },
+      "markup.link.label": { fg: tokens.syntax.link, underline: true },
+      "markup.link.url": { fg: tokens.syntax.linkUrl, underline: true },
       // --- code (tree-sitter capture scopes) ---
-      keyword: { fg: "#c678dd" },
-      "keyword.return": { fg: "#c678dd" },
-      "keyword.function": { fg: "#c678dd" },
-      "keyword.import": { fg: "#c678dd" },
-      "keyword.operator": { fg: "#c678dd" },
-      "keyword.conditional": { fg: "#c678dd" },
-      "keyword.repeat": { fg: "#c678dd" },
-      "keyword.exception": { fg: "#c678dd" },
-      "keyword.modifier": { fg: "#c678dd" },
-      string: { fg: "#98c379" },
-      "string.escape": { fg: "#56b6c2" },
-      "string.regexp": { fg: "#98c379" },
-      "string.special": { fg: "#56b6c2" },
-      "string.special.url": { fg: theme.accent.conversation, underline: true },
-      number: { fg: "#d19a66" },
-      boolean: { fg: "#d19a66" },
-      constant: { fg: "#d19a66" },
-      "constant.builtin": { fg: "#d19a66" },
-      function: { fg: "#61afef" },
-      "function.call": { fg: "#61afef" },
-      "function.method": { fg: "#61afef" },
-      "function.method.call": { fg: "#61afef" },
-      "function.builtin": { fg: "#61afef" },
-      constructor: { fg: "#e5c07b" },
-      type: { fg: "#e5c07b" },
-      "type.builtin": { fg: "#e5c07b" },
-      comment: { fg: "#7f848e", italic: true },
-      "comment.documentation": { fg: "#7f848e", italic: true },
-      variable: { fg: "#e06c75" },
-      "variable.parameter": { fg: "#d19a66" },
-      "variable.member": { fg: "#e06c75" },
-      "variable.builtin": { fg: "#e5c07b" },
-      property: { fg: "#e06c75" },
-      operator: { fg: "#56b6c2" },
-      "punctuation.delimiter": { fg: "#abb2bf" },
-      "punctuation.bracket": { fg: "#abb2bf" },
-      "punctuation.special": { fg: "#56b6c2" },
-      module: { fg: "#e5c07b" },
-      label: { fg: "#61afef" },
-      attribute: { fg: "#d19a66" },
+      keyword: { fg: tokens.syntax.keyword },
+      "keyword.return": { fg: tokens.syntax.keyword },
+      "keyword.function": { fg: tokens.syntax.keyword },
+      "keyword.import": { fg: tokens.syntax.keyword },
+      "keyword.operator": { fg: tokens.syntax.keyword },
+      "keyword.conditional": { fg: tokens.syntax.keyword },
+      "keyword.repeat": { fg: tokens.syntax.keyword },
+      "keyword.exception": { fg: tokens.syntax.keyword },
+      "keyword.modifier": { fg: tokens.syntax.keyword },
+      string: { fg: tokens.syntax.string },
+      "string.escape": { fg: tokens.syntax.escape },
+      "string.regexp": { fg: tokens.syntax.string },
+      "string.special": { fg: tokens.syntax.escape },
+      "string.special.url": { fg: tokens.syntax.link, underline: true },
+      number: { fg: tokens.syntax.number },
+      boolean: { fg: tokens.syntax.number },
+      constant: { fg: tokens.syntax.number },
+      "constant.builtin": { fg: tokens.syntax.number },
+      function: { fg: tokens.syntax.function },
+      "function.call": { fg: tokens.syntax.function },
+      "function.method": { fg: tokens.syntax.function },
+      "function.method.call": { fg: tokens.syntax.function },
+      "function.builtin": { fg: tokens.syntax.function },
+      constructor: { fg: tokens.syntax.type },
+      type: { fg: tokens.syntax.type },
+      "type.builtin": { fg: tokens.syntax.type },
+      comment: { fg: tokens.syntax.comment, italic: true },
+      "comment.documentation": { fg: tokens.syntax.comment, italic: true },
+      variable: { fg: tokens.syntax.variable },
+      "variable.parameter": { fg: tokens.syntax.param },
+      "variable.member": { fg: tokens.syntax.variable },
+      "variable.builtin": { fg: tokens.syntax.type },
+      property: { fg: tokens.syntax.variable },
+      operator: { fg: tokens.syntax.escape },
+      "punctuation.delimiter": { fg: tokens.syntax.punctuation },
+      "punctuation.bracket": { fg: tokens.syntax.punctuation },
+      "punctuation.special": { fg: tokens.syntax.escape },
+      module: { fg: tokens.syntax.type },
+      label: { fg: tokens.syntax.function },
+      attribute: { fg: tokens.syntax.param },
     })
   }
   return cachedStyle
