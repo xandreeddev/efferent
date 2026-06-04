@@ -16,7 +16,7 @@ import {
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../presentation/executionTree.js"
-import { accumulateUsage, type FileChange } from "../presentation/sidePane.js"
+import { accumulateUsage, mergeFileChange } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /**
@@ -37,7 +37,6 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   const toolTreeId = new Map<string, number>() // toolName → tree node id
   const toolScrollId = new Map<string, string>() // toolName → scrollback pill id
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
-  const toolPath = new Map<string, string>() // edit/write toolName → path (diffstat)
   let subAgentDepth = 0
   let toolSeq = 0
 
@@ -57,10 +56,6 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
       case "tool_call_start": {
         // Delegations are the sub-agent container, not a tool node.
         if (isDelegate(event.toolName)) return
-        if (event.toolName === "edit_file" || event.toolName === "write_file") {
-          const p = (event.args as { path?: unknown }).path
-          if (typeof p === "string") toolPath.set(event.toolName, p)
-        }
         const label = describeToolCall(event.toolName, event.args)
         store.setSidePane((s) => {
           const { tree, id } = treeToolStart(s.tree, label, now)
@@ -89,9 +84,9 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           }))
           toolTreeId.delete(event.toolName)
         }
+        const artifacts = toolArtifacts(event.toolName, event.ok, event.result)
         const sid = toolScrollId.get(event.toolName)
         if (sid !== undefined) {
-          const artifacts = toolArtifacts(event.toolName, event.ok, event.result)
           store.updateTool(sid, {
             state: event.ok ? "ok" : "error",
             ...(detail !== undefined ? { detail } : {}),
@@ -100,38 +95,11 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           })
           toolScrollId.delete(event.toolName)
         }
-        // Files-changed diffstat (edit/write only, on success).
-        if (event.ok && (event.toolName === "edit_file" || event.toolName === "write_file")) {
-          const path = toolPath.get(event.toolName)
-          toolPath.delete(event.toolName)
-          if (path !== undefined) {
-            let added = 0
-            let removed = 0
-            if (detail !== undefined) {
-              const m = /\+(\d+)\/-(\d+)/.exec(detail)
-              if (m !== null) {
-                added = Number(m[1])
-                removed = Number(m[2])
-              } else {
-                const w = /(\d+)/.exec(detail) // write_file: "wrote N lines"
-                if (w !== null) added = Number(w[1])
-              }
-            }
-            store.setSidePane((s) => {
-              const existing = s.filesChanged.find((f) => f.path === path)
-              const next: FileChange =
-                existing !== undefined
-                  ? { path, added: existing.added + added, removed: existing.removed + removed }
-                  : { path, added, removed }
-              return {
-                ...s,
-                filesChanged:
-                  existing !== undefined
-                    ? s.filesChanged.map((f) => (f.path === path ? next : f))
-                    : [...s.filesChanged, next],
-              }
-            })
-          }
+        // Files-changed diffstat — structured, straight off the tool result (no
+        // re-parsing the human detail string). Covers sub-agent inner edits too.
+        if (artifacts.fileChange !== undefined) {
+          const fc = artifacts.fileChange
+          store.setSidePane((s) => ({ ...s, filesChanged: mergeFileChange(s.filesChanged, fc) }))
         }
         return
       }
