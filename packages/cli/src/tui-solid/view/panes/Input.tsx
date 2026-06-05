@@ -1,5 +1,5 @@
 import type { TextareaRenderable } from "@opentui/core"
-import { createEffect, createMemo } from "solid-js"
+import { createEffect, createMemo, onMount } from "solid-js"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
 import { tokens } from "../../presentation/theme/index.js"
@@ -60,6 +60,17 @@ export const InputBox = (props: { ctx: TuiContext }) => {
       ref.blur()
     }
     primed = true
+  })
+
+  // Register the input handle so a `/`-in-pane keystroke can seed the buffer
+  // (the dispatch flips focus here; the effect above then focuses the ref).
+  onMount(() => {
+    store.inputControl.current = {
+      seed: (text) => {
+        ref.setText(text)
+        store.setInput(text)
+      },
+    }
   })
 
   // Grow the box with the content (1..MAX_ROWS visible rows).

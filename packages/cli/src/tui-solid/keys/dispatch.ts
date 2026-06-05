@@ -31,6 +31,20 @@ const toggleFoldAll = (store: TuiStore): void => {
   store.setCollapsed(anyFolded ? new Set() : new Set(ids))
 }
 
+/** n next · N prev · Esc clear — when a search is active (any focused pane). */
+const searchNavKey = (store: TuiStore, key: Key): boolean => {
+  if (store.search() === undefined) return false
+  if (key.name === "n" && !key.ctrl && !key.meta) {
+    cycleSearch(store, key.shift ? -1 : 1)
+    return true
+  }
+  if (key.name === "escape") {
+    clearSearch(store)
+    return true
+  }
+  return false
+}
+
 /** The conversation's navigable rows + the clamped fold-cursor index. */
 const convNav = (store: TuiStore) => {
   const rows = buildConversationRows(buildConversation(store.blocks()), store.collapsed())
@@ -68,16 +82,7 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
   store.setGPending(false)
 
   // Active search: n next · N prev · Esc clears.
-  if (store.search() !== undefined) {
-    if (key.name === "n" && !key.ctrl && !key.meta) {
-      cycleSearch(store, key.shift ? -1 : 1)
-      return true
-    }
-    if (key.name === "escape") {
-      clearSearch(store)
-      return true
-    }
-  }
+  if (searchNavKey(store, key)) return true
 
   // `{`/`}` paragraph step · `[`/`]` message step (move the fold cursor).
   const bracket = bracketMotion(key)
@@ -169,6 +174,9 @@ const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
   }
   store.setGPending(false)
 
+  // Active search: n next · N prev · Esc clears.
+  if (searchNavKey(store, key)) return true
+
   // `{`/`}` paragraph step (one row) · `[`/`]` message step (segment/turn head).
   const bracket = bracketMotion(key)
   if (bracket === "paragraph-prev") {
@@ -251,6 +259,9 @@ const sideStackKey = (ctx: TuiContext, key: Key): boolean => {
     return true
   }
   store.setGPending(false)
+
+  // Active search: n next · N prev · Esc clears.
+  if (searchNavKey(store, key)) return true
 
   const bracket = bracketMotion(key)
   if (bracket === "paragraph-prev") {
@@ -349,6 +360,17 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
   if (key.ctrl && (key.name === "j" || key.name === "down")) {
     store.setFocus("input")
     store.setMode("insert")
+    return
+  }
+
+  // `/` in a read-only pane opens a search FOR that pane: remember which pane,
+  // drop to the input, and seed the buffer with "/" so the user just types the
+  // query (submit routes via `searchPane`).
+  if (key.name === "/" && !key.ctrl && !key.meta && store.focus() !== "input") {
+    store.setSearchPane(store.focus() === "side" ? "side" : "conversation")
+    store.setFocus("input")
+    store.setMode("insert")
+    store.inputControl.current?.seed("/")
     return
   }
 

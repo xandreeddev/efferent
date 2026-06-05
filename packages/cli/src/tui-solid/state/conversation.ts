@@ -2,14 +2,26 @@ import { createSignal, type Accessor } from "solid-js"
 import type { ScrollbackBlock } from "../presentation/conversation.js"
 
 /**
- * A live search over the conversation rail: the query, the ordered ids of the
- * top-level items that matched (resolved via `conversationItemId`), and the
- * current position. `undefined` ⇒ no active search.
+ * A live search over one pane. For the **conversation** the matches are the
+ * top-level item ids (resolved via `conversationItemId`); for the **side** pane
+ * they are the matching row indices (as strings — the stack/context cursors are
+ * index-based, so the cursor jumps straight to `Number(matchIds[index])`). The
+ * query + `[i/N]` position drive the status line; `undefined` ⇒ no active search.
  */
 export interface SearchState {
   readonly query: string
+  /** Which pane this search ran against (drives n/N + how matchIds resolve). */
+  readonly pane: "conversation" | "side"
   readonly matchIds: ReadonlyArray<string>
   readonly index: number
+}
+
+/** A minimal handle onto the input `<textarea>`, registered by the pane, so a
+ *  `/`-in-pane keystroke can seed the buffer + focus it without `keys/` importing
+ *  OpenTUI (mirrors {@link ConvScroller}). */
+export interface InputControl {
+  /** Replace the buffer (and the mirrored store text) with `text`. */
+  seed: (text: string) => void
 }
 
 /**
@@ -54,11 +66,17 @@ export interface ConversationSlice {
   readonly setBlocks: (next: ScrollbackBlock[]) => void
   /** Clear the conversation (`:clear`). */
   readonly clear: () => void
-  /** The active conversation search, or `undefined`. */
+  /** The active search (conversation or side), or `undefined`. */
   readonly search: Accessor<SearchState | undefined>
   readonly setSearch: (next: SearchState | undefined) => void
+  /** Which pane a freshly-started `/` search targets (set by the `/`-in-pane key;
+   *  a bare `/foo` typed in the input defaults to the conversation). */
+  readonly searchPane: Accessor<"conversation" | "side">
+  readonly setSearchPane: (pane: "conversation" | "side") => void
   /** Non-reactive scroller handle, registered by the conversation pane. */
   readonly convScroller: { current?: ConvScroller }
+  /** Non-reactive input handle, registered by the input pane (`/`-in-pane seed). */
+  readonly inputControl: { current?: InputControl }
 }
 
 export const createConversationSlice = (): ConversationSlice => {
@@ -66,7 +84,9 @@ export const createConversationSlice = (): ConversationSlice => {
   const [collapsed, setCollapsedSig] = createSignal<Set<string>>(new Set())
   const [convCursor, setConvCursorSig] = createSignal(0)
   const [search, setSearchSig] = createSignal<SearchState | undefined>(undefined)
+  const [searchPane, setSearchPaneSig] = createSignal<"conversation" | "side">("conversation")
   const convScroller: { current?: ConvScroller } = {}
+  const inputControl: { current?: InputControl } = {}
 
   return {
     blocks,
@@ -86,6 +106,9 @@ export const createConversationSlice = (): ConversationSlice => {
     },
     search,
     setSearch: (next) => setSearchSig(next),
+    searchPane,
+    setSearchPane: (pane) => setSearchPaneSig(pane),
     convScroller,
+    inputControl,
   }
 }

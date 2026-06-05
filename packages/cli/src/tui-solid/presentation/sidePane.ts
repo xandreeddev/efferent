@@ -398,6 +398,23 @@ export const stackRows = (
   projection: SidePaneProjection,
 ): ReadonlyArray<StackRowData> => buildStackRowsData(projection, nav.stackCollapsed)
 
+/** The searchable text of one Activity row (for `/` search over the side pane). */
+export const stackRowText = (row: StackRowData): string => {
+  const d = row.display
+  switch (d.kind) {
+    case "node":
+      return `${d.node.label} ${d.node.detail ?? ""}`
+    case "section":
+      return d.label
+    case "file":
+      return d.file.path
+    case "skill":
+      return d.name
+    case "instruction":
+      return d.path
+  }
+}
+
 /** `{`/`}` (and plain `j`/`k`, one line == one row here) — paragraph step. */
 export const stackParagraph = (
   nav: SidePaneNav,

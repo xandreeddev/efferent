@@ -70,7 +70,30 @@ test("runSearch with no hit keeps an empty search so the status line can report 
   const store = newStore()
   seed(store)
   runSearch(store, "zzz-nope")
-  expect(store.search()).toEqual({ query: "zzz-nope", matchIds: [], index: 0 })
+  expect(store.search()).toEqual({ query: "zzz-nope", pane: "conversation", matchIds: [], index: 0 })
+})
+
+test("runSearch on the side pane matches Activity rows and moves the stack cursor", () => {
+  const store = newStore()
+  store.setSearchPane("side")
+  store.setProjection((p) => ({
+    ...p,
+    tree: {
+      roots: [
+        { id: 1, kind: "turn", label: "edit lexer.ts", status: "ok", startedAt: 0, endedAt: 0, children: [] },
+        { id: 2, kind: "turn", label: "edit parser.ts", status: "ok", startedAt: 0, endedAt: 0, children: [] },
+      ],
+      openPath: [],
+      nextId: 3,
+    },
+  }))
+  runSearch(store, "parser")
+  const s = store.search()
+  if (s === undefined) throw new Error("expected a side search")
+  expect(s.pane).toBe("side")
+  expect(s.matchIds).toEqual(["1"]) // row index 1 — the "edit parser.ts" node
+  expect(store.focus()).toBe("side")
+  expect(store.nav().stackCursor).toBe(1) // cursor jumped to the match
 })
 
 test("clearSearch drops the search; clear() also drops it", () => {

@@ -66,6 +66,23 @@ export type ContextRowDisplay =
     }
   | { readonly kind: "message"; readonly icon: string; readonly text: string }
 
+/** The searchable text of one context row (for `/` search over the side pane). */
+export const contextRowText = (row: ContextRowData): string => {
+  const d = row.display
+  switch (d.kind) {
+    case "header":
+      return ""
+    case "segment":
+      return d.archived ? `handoff ${d.handoffIndex ?? ""}` : "loaded context"
+    case "summary":
+      return d.text
+    case "turn":
+      return d.subject
+    case "message":
+      return d.text
+  }
+}
+
 /** A context row with structured display data instead of a pre-styled label. */
 export interface ContextRowData {
   readonly kind: ContextRowKind
