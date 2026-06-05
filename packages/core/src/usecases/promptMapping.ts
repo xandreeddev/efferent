@@ -183,21 +183,25 @@ export const responseReasoning = (content: ReadonlyArray<unknown>): string =>
     .join("")
     .trim()
 
-/** Tool-call summaries `{ toolName, args }` from one turn's response content. */
+/** Tool-call summaries `{ id, toolName, args }` from one turn's response content.
+ *  `id` is the provider tool-call id — the stable key that pairs a call with its
+ *  result (two same-named calls in one turn share a name but not an id). */
 export const responseToolCalls = (
   content: ReadonlyArray<unknown>,
-): Array<{ toolName: string; args: unknown }> =>
+): Array<{ id: string; toolName: string; args: unknown }> =>
   (content as ReadonlyArray<AnyPart>)
     .filter((p) => p.type === "tool-call")
-    .map((p) => ({ toolName: p.name ?? "", args: p.params ?? {} }))
+    .map((p) => ({ id: p.id ?? "", toolName: p.name ?? "", args: p.params ?? {} }))
 
-/** Tool-result summaries from one turn's response content. */
+/** Tool-result summaries from one turn's response content; `id` matches the
+ *  originating tool call's id. */
 export const responseToolResults = (
   content: ReadonlyArray<unknown>,
-): Array<{ toolName: string; ok: boolean; result: unknown }> =>
+): Array<{ id: string; toolName: string; ok: boolean; result: unknown }> =>
   (content as ReadonlyArray<AnyPart>)
     .filter((p) => p.type === "tool-result")
     .map((p) => ({
+      id: p.id ?? "",
       toolName: p.name ?? "",
       ok: !(p.isFailure ?? false),
       result: p.result,

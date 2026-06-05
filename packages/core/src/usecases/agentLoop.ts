@@ -193,6 +193,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         for (const tc of toolCalls) {
           yield* hooks.onBeforeToolCall({
             turnIndex,
+            toolCallId: tc.id,
             toolName: tc.toolName,
             args: tc.args,
           })
@@ -202,6 +203,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         for (const tr of responseToolResults(content)) {
           yield* hooks.onAfterToolCall({
             turnIndex,
+            toolCallId: tr.id,
             toolName: tr.toolName,
             args: {},
             ok: tr.ok,

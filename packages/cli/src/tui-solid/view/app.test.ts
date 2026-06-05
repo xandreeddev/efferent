@@ -52,12 +52,14 @@ test("conversation rail renders a user turn, assistant prose, and a tool pill", 
     reduce({
       type: "tool_call_start",
       turnIndex: 0,
+      id: "call_a",
       toolName: "read_file",
       args: { path: "a.ts" },
     })
     reduce({
       type: "tool_call_end",
       turnIndex: 0,
+      id: "call_a",
       toolName: "read_file",
       ok: true,
       result: { content: "hello" },
@@ -94,6 +96,7 @@ test("activity pane shows the execution tree, stats header, and sections", async
     reduce({
       type: "tool_call_start",
       turnIndex: 0,
+      id: "call_x",
       toolName: "read_file",
       args: { path: "x.ts" },
     })
@@ -103,7 +106,7 @@ test("activity pane shows the execution tree, stats header, and sections", async
       text: "done",
       usage: { inputTokens: 5000, outputTokens: 340, totalTokens: 5340, cacheReadTokens: 0 },
     })
-    reduce({ type: "tool_call_end", turnIndex: 0, toolName: "read_file", ok: true, result: { content: "y" } })
+    reduce({ type: "tool_call_end", turnIndex: 0, id: "call_x", toolName: "read_file", ok: true, result: { content: "y" } })
     reduce({ type: "agent_end", finalText: "done", messages: [] })
 
     const frame = await waitForFrame((f) => f.includes("activity") && f.includes("turn 1"))
