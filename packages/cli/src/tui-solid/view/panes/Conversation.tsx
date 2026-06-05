@@ -1,5 +1,5 @@
 import { pathToFiletype, type ScrollBoxRenderable } from "@opentui/core"
-import { createEffect, createMemo, For, onMount, Show } from "solid-js"
+import { createMemo, For, onMount, Show } from "solid-js"
 import {
   buildConversation,
   buildConversationRows,
@@ -160,16 +160,16 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   })
 
   // The fold cursor: a flat row list (one per logical unit) the `{}`/`[]` motions
-  // move over. `activeKey` is the rendered box id to tint + scroll into view —
-  // only while the pane is focused, so an unfocused conversation shows no cursor.
+  // move over. `activeKey` is the rendered box id to *tint* — only while the pane
+  // is focused, so an unfocused conversation shows no cursor. Scroll-into-view is
+  // driven imperatively by the motion keys (`keys/dispatch`), NOT reactively here:
+  // a reactive effect would also fire on streamed content and yank the view back
+  // to a stale cursor, leaving the freshly-appended bottom unscrolled. Sticky-
+  // bottom (below) owns "follow new content"; the cursor owns "jump on keypress".
   const rows = createMemo(() => buildConversationRows(items(), store.collapsed()))
   const activeKey = createMemo(() =>
     focused() ? rows()[clampCursor(rows().length, store.convCursor())]?.key : undefined,
   )
-  createEffect(() => {
-    const k = activeKey()
-    if (k !== undefined && sb) sb.scrollChildIntoView(k)
-  })
   const cursorBg = (key: string) =>
     activeKey() === key ? { backgroundColor: tokens.cursorLine } : {}
 
@@ -190,11 +190,12 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     <Pane kind="conversation" focused={focused()} title="conversation" grow>
       <scrollbox
         ref={sb}
-        stickyScroll={!focused()}
+        stickyScroll
         stickyStart="bottom"
         scrollY
         flexGrow={1}
         flexDirection="column"
+        verticalScrollbarOptions={{ visible: false }}
       >
         <For each={items()}>
           {(item, i) => {
