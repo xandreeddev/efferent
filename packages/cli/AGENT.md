@@ -51,10 +51,14 @@ not under `presentation/`.
 `accent`/`text`/`state`/`marker`/`match`/`overlay`/`status`/`syntax`) plus `makeTokens(palette)` and
 `paneBorder`; `glyphs.ts` exports `glyph` (named box-drawing/marker chars). A **theme is one complete
 set of token values** (`themes.ts`: `Theme = { name, tokens }`) — same token names across themes,
-different values; the active theme is the single swap point (`activeTheme` → the exported `tokens`).
-A runtime `:theme` picker / `~/.efferent/theme.json` is the deferred next step (only has to reassign
-the active theme). `view/syntax.ts`'s `SyntaxStyle` is built from `tokens.syntax`. **No raw hex or
-glyph literal lives outside `presentation/theme/`.** The reusable painters in **`view/ui/`** (`Pane`,
+different values. `presentation/theme/` is **pure + static** (its `tokens` is a const). Runtime
+switching lives one layer out in **`state/theme.ts`** (L2): a process-global active-theme Solid signal,
+plus a **Proxy-backed reactive `tokens`/`paneBorder`** every view imports — so **`:theme`** (picker like
+`:model`, or `:theme <name>`) swaps the whole UI live with **zero token call-site changes** (consumers
+still write `tokens.text.default`). Ships `one-dark` + `tokyo-night`; the choice persists to `config.json`
+(`Settings.theme`) and is seeded at boot in `runtime.ts`. `view/syntax.ts`'s `SyntaxStyle` is built from
+`tokens.syntax` and **memoised per theme name** so fenced code + diff hunks follow a switch. **No raw hex
+or glyph literal lives outside `presentation/theme/`.** The reusable painters in **`view/ui/`** (`Pane`,
 `Modal`, `Rule`, `Cursor`, `Marker`, `RailLine`, `SectionHead`) are the only components that draw
 borders/surfaces/glyphs; every pane/overlay composes them.
 
