@@ -444,8 +444,19 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
   // A modal overlay owns all input while open (Esc/Ctrl-C close it there).
   if (overlayKey(ctx, key)) return
 
+  // Ctrl-Shift-C → copy the current mouse selection (the conventional terminal
+  // copy gesture, any focus). Same path as `y`, but global. MUST precede the
+  // Ctrl-C quit handler — otherwise Shift+Ctrl+C arms the quit instead of copying.
+  // (Only fires if the terminal forwards it to the app, which OpenTUI's Kitty-
+  // protocol request enables; terminals that intercept it copy their own — empty
+  // in mouse mode — selection, which can't be fixed in code.)
+  if (key.ctrl && key.shift && key.name === "c") {
+    ctx.copySelection()
+    return
+  }
+
   // Ctrl-C → 2×-to-quit: first press arms (with a hint), a second within 2 s exits.
-  if (key.ctrl && key.name === "c") {
+  if (key.ctrl && !key.shift && key.name === "c") {
     const now = Date.now()
     const armed = store.run.getCtrlCArmedAt()
     if (armed !== undefined && now - armed < 2000) {
