@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/core"
+import type { ExecutionTree, TreeNode } from "./executionTree.js"
 import { buildContextView, type ContextRowData } from "./contextView.js"
 import {
+  buildStackRowsData,
   contextRows,
   emptyNav,
   emptyProjection,
   sideToggleSelect,
+  stackFold,
+  stackMessage,
+  stackParagraph,
   type SidePaneNav,
   type SidePaneProjection,
 } from "./sidePane.js"
@@ -81,5 +86,103 @@ describe("sideToggleSelect — handoffs and turns are mutually exclusive", () =>
     const on = toggle(onHandoff(baseNav(), 1))
     const off = toggle(onHandoff(on, 1))
     expect([...off.contextHandoffSelected]).toEqual([])
+  })
+})
+
+// --- Activity (stack) view ---
+
+const tool = (id: number, label: string): TreeNode => ({
+  id,
+  kind: "tool",
+  label,
+  status: "ok",
+  startedAt: 0,
+  endedAt: 0,
+  children: [],
+})
+const turnNode = (id: number, label: string, children: ReadonlyArray<TreeNode>): TreeNode => ({
+  id,
+  kind: "turn",
+  label,
+  status: "ok",
+  startedAt: 0,
+  endedAt: 0,
+  children,
+})
+const tree: ExecutionTree = {
+  roots: [turnNode(1, "turn 1", [tool(2, "read_file"), tool(3, "edit_file")])],
+  openPath: [],
+  nextId: 4,
+}
+const stackProjection: SidePaneProjection = {
+  ...emptyProjection,
+  tree,
+  skillsLoaded: ["spike-notes"],
+  filesChanged: [{ path: "/a/b.ts", added: 3, removed: 1 }],
+}
+
+describe("buildStackRowsData", () => {
+  test("flattens tree (expanded) + the three section headers, marking heads", () => {
+    const rows = buildStackRowsData(stackProjection, new Set())
+    expect(rows.map((r) => r.key)).toEqual([
+      "stack:node:1",
+      "stack:node:2",
+      "stack:node:3",
+      "stack:section:files",
+      "stack:file:0",
+      "stack:section:skills",
+      "stack:skill:0",
+      "stack:section:instructions",
+    ])
+    // heads = the tree root + the three section headers (the [] stops)
+    expect(rows.filter((r) => r.head).map((r) => r.key)).toEqual([
+      "stack:node:1",
+      "stack:section:files",
+      "stack:section:skills",
+      "stack:section:instructions",
+    ])
+    // foldable rows carry the foldId the cursor toggles
+    expect(rows.find((r) => r.key === "stack:node:1")?.foldId).toBe("node:1")
+    expect(rows.find((r) => r.key === "stack:section:files")?.foldId).toBe("files")
+    expect(rows.find((r) => r.key === "stack:node:2")?.foldId).toBeUndefined()
+  })
+
+  test("a folded tree container hides its children", () => {
+    const rows = buildStackRowsData(stackProjection, new Set(["node:1"]))
+    expect(rows.some((r) => r.key === "stack:node:2")).toBe(false)
+    expect(rows.find((r) => r.key === "stack:node:1")?.display).toMatchObject({ folded: true })
+  })
+
+  test("a folded section header hides its child rows", () => {
+    const rows = buildStackRowsData(stackProjection, new Set(["files"]))
+    expect(rows.some((r) => r.key === "stack:file:0")).toBe(false)
+  })
+})
+
+describe("Activity cursor motions", () => {
+  // Sections expanded so the row indices below are stable and obvious.
+  const nav = (over: Partial<SidePaneNav> = {}): SidePaneNav => ({
+    ...emptyNav,
+    stackCollapsed: new Set(),
+    ...over,
+  })
+
+  test("stackParagraph steps one row, clamped", () => {
+    expect(stackParagraph(nav({ stackCursor: 0 }), stackProjection, 1).stackCursor).toBe(1)
+    expect(stackParagraph(nav({ stackCursor: 0 }), stackProjection, -1).stackCursor).toBe(0)
+  })
+
+  test("stackMessage jumps head-to-head (root → files header at index 3)", () => {
+    // rows: 0 node1(head) 1 node2 2 node3 3 files(head) 4 file0 5 skills(head) ...
+    expect(stackMessage(nav({ stackCursor: 0 }), stackProjection, 1).stackCursor).toBe(3)
+    expect(stackMessage(nav({ stackCursor: 4 }), stackProjection, -1).stackCursor).toBe(3)
+  })
+
+  test("stackFold toggles the container under the cursor", () => {
+    const folded = stackFold(nav({ stackCursor: 0 }), stackProjection)
+    expect([...folded.stackCollapsed]).toContain("node:1")
+    // a leaf row (node:2 at index 1) is a no-op
+    const onLeaf = stackFold(nav({ stackCursor: 1 }), stackProjection)
+    expect(onLeaf.stackCollapsed.has("node:2")).toBe(false)
   })
 })

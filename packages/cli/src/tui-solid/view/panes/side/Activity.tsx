@@ -1,10 +1,16 @@
 import { homedir } from "node:os"
-import { For, Show } from "solid-js"
+import type { ScrollBoxRenderable } from "@opentui/core"
+import { createEffect, For, Show } from "solid-js"
 import { formatTokens, gaugeBar } from "../../../presentation/statusBar.js"
 import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
-import type { FileChange, SidePaneState } from "../../../presentation/sidePane.js"
+import {
+  buildStackRowsData,
+  type StackRowData,
+  type StackRowDisplay,
+} from "../../../presentation/sidePane.js"
+import { clampCursor } from "../../../presentation/paneNav.js"
 import { glyph, tokens } from "../../../presentation/theme/index.js"
-import { SectionHead } from "../../ui/index.js"
+import { SectionHead, foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 
 const fmtDur = (ms: number): string => {
@@ -45,18 +51,14 @@ const Stats = (props: { ctx: TuiContext }) => {
   )
 }
 
-const TreeNodeView = (props: {
-  node: TreeNode
-  depth: number
-  collapsed: ReadonlySet<string>
-  spinner: number
-}) => {
+/** One execution-tree node's own line (its children are sibling rows). The glyph
+ *  + duration are live (spinner frame, elapsed), so they're computed here, not in
+ *  the pure row. */
+const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) => {
   const n = props.node
   const isContainer = n.kind === "turn" || n.kind === "subagent"
-  const foldId = isContainer ? `node:${n.id}` : undefined
-  const folded = () => foldId !== undefined && props.collapsed.has(foldId)
   const nodeGlyph = () => {
-    if (isContainer) return folded() ? glyph.fold.closed : glyph.fold.open
+    if (isContainer) return foldCaret(props.folded)
     if (n.status === "running") return glyph.spinner[props.spinner % glyph.spinner.length]
     return n.status === "error" ? glyph.error : glyph.ok
   }
@@ -70,7 +72,7 @@ const TreeNodeView = (props: {
       : statusColor(n.status)
   const suffix = () => {
     const count =
-      folded() && n.children.length > 0
+      props.folded && n.children.length > 0
         ? ` · ${n.children.length} tool${n.children.length === 1 ? "" : "s"}`
         : ""
     const detail = n.detail !== undefined ? ` ${n.detail}` : ""
@@ -78,79 +80,72 @@ const TreeNodeView = (props: {
     return `${count}${detail}${dur}`
   }
   return (
-    <box flexDirection="column">
-      <box flexDirection="row" marginLeft={props.depth * 2}>
-        <text fg={glyphColor()}>{`${nodeGlyph()} `}</text>
-        <text fg={tokens.text.default}>{n.label}</text>
-        <text fg={tokens.text.dim}>{suffix()}</text>
-      </box>
-      <Show when={!folded()}>
-        <For each={n.children}>
-          {(c) => (
-            <TreeNodeView
-              node={c}
-              depth={props.depth + 1}
-              collapsed={props.collapsed}
-              spinner={props.spinner}
-            />
-          )}
-        </For>
-      </Show>
-    </box>
+    <>
+      <text fg={glyphColor()}>{`${nodeGlyph()} `}</text>
+      <text fg={tokens.text.default}>{n.label}</text>
+      <text fg={tokens.text.dim}>{suffix()}</text>
+    </>
   )
 }
 
-const FilesSection = (props: { files: ReadonlyArray<FileChange>; collapsed: boolean }) => {
-  const tot = () =>
-    props.files.reduce((a, f) => ({ added: a.added + f.added, removed: a.removed + f.removed }), {
-      added: 0,
-      removed: 0,
-    })
-  return (
-    <box flexDirection="column">
-      <SectionHead
-        label="files"
-        count={props.files.length}
-        collapsed={props.collapsed}
-        summary={props.files.length > 0 ? ` +${tot().added}/-${tot().removed}` : undefined}
-      />
-      <Show when={!props.collapsed && props.files.length > 0}>
-        <For each={props.files}>
-          {(f) => (
-            <box flexDirection="row" marginLeft={3}>
-              <text fg={tokens.text.muted}>{`${prettyPath(f.path)} `}</text>
-              <text fg={tokens.state.ok}>{`+${f.added}`}</text>
-              <text fg={tokens.text.dim}>/</text>
-              <text fg={tokens.state.error}>{`-${f.removed}`}</text>
-            </box>
-          )}
-        </For>
-      </Show>
-    </box>
-  )
+/** Inner content for one Activity row, by display kind. The wrapping box (indent
+ *  + cursor tint + id) is applied by the caller. */
+const StackRowView = (props: { display: StackRowDisplay; spinner: number }) => {
+  const d = props.display
+  switch (d.kind) {
+    case "node":
+      return <NodeRow node={d.node} folded={d.folded} spinner={props.spinner} />
+    case "section":
+      return (
+        <SectionHead label={d.label} count={d.count} collapsed={d.folded} summary={d.summary} />
+      )
+    case "file":
+      return (
+        <>
+          <text fg={tokens.text.muted}>{`${prettyPath(d.file.path)} `}</text>
+          <text fg={tokens.state.ok}>{`+${d.file.added}`}</text>
+          <text fg={tokens.text.dim}>/</text>
+          <text fg={tokens.state.error}>{`-${d.file.removed}`}</text>
+        </>
+      )
+    case "skill":
+      return <text fg={tokens.text.muted}>{`· ${d.name}`}</text>
+    case "instruction":
+      return <text fg={tokens.text.muted}>{`· ${prettyPath(d.path)}`}</text>
+  }
 }
 
-const ListSection = (props: { label: string; items: ReadonlyArray<string>; collapsed: boolean }) => (
-  <box flexDirection="column">
-    <SectionHead label={props.label} count={props.items.length} collapsed={props.collapsed} />
-    <Show when={!props.collapsed && props.items.length > 0}>
-      <For each={props.items}>
-        {(i) => <text fg={tokens.text.muted} marginLeft={3}>{`· ${i}`}</text>}
-      </For>
-    </Show>
-  </box>
-)
+/** Left indent (cells) for a row — matches the old tree depth + section nesting. */
+const indentOf = (row: StackRowData): number => {
+  switch (row.display.kind) {
+    case "node":
+      return row.depth * 2
+    case "section":
+      return 0
+    default:
+      return 3
+  }
+}
 
 /**
- * The side pane's Activity view: a pinned stats header, the live execution tree,
- * and the foldable files/skills/instructions sections. Reproduces
- * `renderSidePane`'s stack view (`tui/sidePane.ts`) as Solid components. The
- * pane shell + view switch live in `Side.tsx`; the context viewer in `Context.tsx`.
+ * The side pane's Activity view: a pinned stats header, then the live execution
+ * tree + the foldable files/skills/instructions sections flattened into one
+ * navigable row list (`buildStackRowsData`) so the block cursor maps 1:1 to the
+ * rendered line — the same shape `Context.tsx` uses. `j/k`·`{}` step rows, `[]`
+ * jumps heads, `⇥/↵` fold the row under the cursor (driven in `keys/dispatch`).
+ * The focused cursor row gets the `cursorLine` tint and is scrolled into view.
  */
 export const Activity = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const sp = (): SidePaneState => store.sidePane()
   const focused = () => store.focus() === "side"
+  const rows = () => buildStackRowsData(store.projection(), store.nav().stackCollapsed)
+  const cursor = () => clampCursor(rows().length, store.nav().stackCursor)
+
+  let sb!: ScrollBoxRenderable
+  createEffect(() => {
+    const i = cursor()
+    if (focused() && sb) sb.scrollChildIntoView(`stk-row-${i}`)
+  })
 
   return (
     <>
@@ -158,28 +153,28 @@ export const Activity = (props: { ctx: TuiContext }) => {
       <Stats ctx={props.ctx} />
       <text flexShrink={0}> </text>
       <scrollbox
-        focused={focused()}
-        stickyScroll
+        ref={sb}
+        stickyScroll={!focused()}
         stickyStart="bottom"
         scrollY
         flexGrow={1}
         flexDirection="column"
       >
-        <Show when={sp().tree.roots.length > 0} fallback={<text fg={tokens.text.dim}>(idle)</text>}>
-          <For each={sp().tree.roots}>
-            {(root) => (
-              <TreeNodeView node={root} depth={0} collapsed={sp().stackCollapsed} spinner={store.spinner()} />
-            )}
-          </For>
+        <Show when={store.projection().tree.roots.length === 0}>
+          <text fg={tokens.text.dim}>(idle)</text>
         </Show>
-        <text> </text>
-        <FilesSection files={sp().filesChanged} collapsed={sp().stackCollapsed.has("files")} />
-        <ListSection label="skills" items={sp().skillsLoaded} collapsed={sp().stackCollapsed.has("skills")} />
-        <ListSection
-          label="instructions"
-          items={sp().instructions.map((i) => prettyPath(i.path))}
-          collapsed={sp().stackCollapsed.has("instructions")}
-        />
+        <For each={rows()}>
+          {(row, i) => (
+            <box
+              id={`stk-row-${i()}`}
+              flexDirection="row"
+              marginLeft={indentOf(row)}
+              {...(focused() && i() === cursor() ? { backgroundColor: tokens.cursorLine } : {})}
+            >
+              <StackRowView display={row.display} spinner={store.spinner()} />
+            </box>
+          )}
+        </For>
       </scrollbox>
     </>
   )
