@@ -69,18 +69,37 @@ const harness = (): Harness => {
   return h
 }
 
-test("conversation pane: j/k scroll a line, Ctrl-D/U a half page, gg/G hit the ends", () => {
+test("conversation pane: j/k scroll a line, Ctrl-D/U a half page (the viewport)", () => {
   const h = harness()
   h.store.setFocus("conversation")
   dispatch(h.ctx, key("j"))
   dispatch(h.ctx, key("k"))
   dispatch(h.ctx, key("d", { ctrl: true }))
   dispatch(h.ctx, key("u", { ctrl: true }))
-  // gg → top (two strokes), G → bottom
+  expect(h.scroll).toEqual(["by:1", "by:-1", "by:10", "by:-10"])
+})
+
+test("conversation pane: {}/[] move the fold cursor, gg/G hit the ends, Tab folds it", () => {
+  const h = harness()
+  h.store.setFocus("conversation")
+  h.store.setBlocks([
+    { kind: "user", text: "a" },
+    { kind: "assistant", text: "b" },
+    { kind: "user", text: "c" },
+    { kind: "assistant", text: "d" },
+  ])
+  // rows: 0 turn:0(head) · 1 b:1 · 2 turn:2(head) · 3 b:3
+  dispatch(h.ctx, key("g", { shift: true })) // G → last unit
+  expect(h.store.convCursor()).toBe(3)
   dispatch(h.ctx, key("g"))
-  dispatch(h.ctx, key("g"))
-  dispatch(h.ctx, key("g", { shift: true }))
-  expect(h.scroll).toEqual(["by:1", "by:-1", "by:10", "by:-10", "top", "bottom"])
+  dispatch(h.ctx, key("g")) // gg → first unit
+  expect(h.store.convCursor()).toBe(0)
+  dispatch(h.ctx, key("}")) // paragraph step → next row
+  expect(h.store.convCursor()).toBe(1)
+  dispatch(h.ctx, key("]")) // message step → next head (turn:2)
+  expect(h.store.convCursor()).toBe(2)
+  dispatch(h.ctx, key("tab")) // fold the unit under the cursor
+  expect([...h.store.collapsed()]).toEqual(["turn:2"])
 })
 
 test("conversation pane: Z folds all turns, then unfolds them", () => {

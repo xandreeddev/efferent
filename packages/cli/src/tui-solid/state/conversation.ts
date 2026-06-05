@@ -40,6 +40,9 @@ export interface ConversationSlice {
   readonly blocks: Accessor<ScrollbackBlock[]>
   readonly collapsed: Accessor<Set<string>>
   readonly setCollapsed: (next: Set<string>) => void
+  /** The conversation fold cursor: index into `buildConversationRows`. */
+  readonly convCursor: Accessor<number>
+  readonly setConvCursor: (next: number) => void
   /** Append a conversation block (append-only; tools update in place by id). */
   readonly pushBlock: (block: ScrollbackBlock) => void
   /** Patch the most recent tool block with the given id. */
@@ -61,6 +64,7 @@ export interface ConversationSlice {
 export const createConversationSlice = (): ConversationSlice => {
   const [blocks, setBlocksSig] = createSignal<ScrollbackBlock[]>([])
   const [collapsed, setCollapsedSig] = createSignal<Set<string>>(new Set())
+  const [convCursor, setConvCursorSig] = createSignal(0)
   const [search, setSearchSig] = createSignal<SearchState | undefined>(undefined)
   const convScroller: { current?: ConvScroller } = {}
 
@@ -68,6 +72,8 @@ export const createConversationSlice = (): ConversationSlice => {
     blocks,
     collapsed,
     setCollapsed: (next) => setCollapsedSig(next),
+    convCursor,
+    setConvCursor: (next) => setConvCursorSig(next),
     pushBlock: (block) => setBlocksSig((bs) => [...bs, block]),
     updateTool: (id, patch) =>
       setBlocksSig((bs) =>

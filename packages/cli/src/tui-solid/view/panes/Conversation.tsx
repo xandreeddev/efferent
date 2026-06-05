@@ -1,12 +1,14 @@
 import { pathToFiletype, type ScrollBoxRenderable } from "@opentui/core"
-import { createMemo, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, For, onMount, Show } from "solid-js"
 import {
   buildConversation,
+  buildConversationRows,
   conversationItemId,
   type BodyItem,
   type ScrollbackBlock,
   type ToolBlock,
 } from "../../presentation/conversation.js"
+import { clampCursor } from "../../presentation/paneNav.js"
 import { glyph, tokens } from "../../presentation/theme/index.js"
 import { Pane, RailLine } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
@@ -157,6 +159,20 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     store.convScroller.current = scroller
   })
 
+  // The fold cursor: a flat row list (one per logical unit) the `{}`/`[]` motions
+  // move over. `activeKey` is the rendered box id to tint + scroll into view —
+  // only while the pane is focused, so an unfocused conversation shows no cursor.
+  const rows = createMemo(() => buildConversationRows(items(), store.collapsed()))
+  const activeKey = createMemo(() =>
+    focused() ? rows()[clampCursor(rows().length, store.convCursor())]?.key : undefined,
+  )
+  createEffect(() => {
+    const k = activeKey()
+    if (k !== undefined && sb) sb.scrollChildIntoView(k)
+  })
+  const cursorBg = (key: string) =>
+    activeKey() === key ? { backgroundColor: tokens.cursorLine } : {}
+
   // Which search bucket a top-level item id falls in — drives match highlight.
   const matchOf = (id: string): "current" | "match" | "none" => {
     const s = store.search()
@@ -174,7 +190,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     <Pane kind="conversation" focused={focused()} title="conversation" grow>
       <scrollbox
         ref={sb}
-        stickyScroll
+        stickyScroll={!focused()}
         stickyStart="bottom"
         scrollY
         flexGrow={1}
@@ -185,7 +201,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const id = conversationItemId(item, i())
             if (item.kind === "checkpoint") {
               return (
-                <box id={id}>
+                <box id={id} {...cursorBg(id)}>
                   <text fg={tokens.text.muted}>{`${glyph.handoff} ${item.text}`}</text>
                 </box>
               )
@@ -194,7 +210,11 @@ export const Conversation = (props: { ctx: TuiContext }) => {
               return (
                 <box id={id} flexDirection="column">
                   <For each={item.body}>
-                    {(b) => <BodyItemView item={b} collapsed={store.collapsed()} />}
+                    {(b) => (
+                      <box id={b.id} {...cursorBg(b.id)}>
+                        <BodyItemView item={b} collapsed={store.collapsed()} />
+                      </box>
+                    )}
                   </For>
                 </box>
               )
@@ -202,15 +222,21 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const folded = () => store.collapsed().has(item.id)
             return (
               <box id={id} flexDirection="column" marginTop={1}>
-                <text fg={headerColor(id)}>
-                  {folded()
-                    ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
-                    : `${glyph.fold.open} ${item.subject}`}
-                </text>
+                <box {...cursorBg(item.id)}>
+                  <text fg={headerColor(id)}>
+                    {folded()
+                      ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
+                      : `${glyph.fold.open} ${item.subject}`}
+                  </text>
+                </box>
                 <Show when={!folded()}>
                   <box flexDirection="column">
                     <For each={item.body}>
-                      {(b) => <BodyItemView item={b} collapsed={store.collapsed()} />}
+                      {(b) => (
+                        <box id={b.id} {...cursorBg(b.id)}>
+                          <BodyItemView item={b} collapsed={store.collapsed()} />
+                        </box>
+                      )}
                     </For>
                   </box>
                 </Show>
