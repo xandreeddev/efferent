@@ -22,12 +22,16 @@ export type AgentEvent =
   | {
       readonly type: "tool_call_start"
       readonly turnIndex: number
+      /** Provider tool-call id — pairs start↔end exactly (two same-named calls in
+       *  one turn share a name but not an id). May be empty (provider omitted it). */
+      readonly id: string
       readonly toolName: string
       readonly args: unknown
     }
   | {
       readonly type: "tool_call_end"
       readonly turnIndex: number
+      readonly id: string
       readonly toolName: string
       readonly ok: boolean
       readonly result: unknown
@@ -83,6 +87,7 @@ export const makeEventHooks = <R = never>(
           yield* Queue.offer(queue, {
             type: "tool_call_start",
             turnIndex: event.turnIndex,
+            id: event.toolCallId,
             toolName: event.toolName,
             args: event.args,
           })
@@ -92,6 +97,7 @@ export const makeEventHooks = <R = never>(
         Queue.offer(queue, {
           type: "tool_call_start",
           turnIndex: event.turnIndex,
+          id: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
         }).pipe(Effect.as({ action: "continue" as const })),
@@ -99,6 +105,7 @@ export const makeEventHooks = <R = never>(
     Queue.offer(queue, {
       type: "tool_call_end",
       turnIndex: event.turnIndex,
+      id: event.toolCallId,
       toolName: event.toolName,
       ok: event.ok,
       result: event.result,

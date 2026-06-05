@@ -29,17 +29,36 @@ import type { TuiStore } from "../state/store.js"
  * (the single source the status bar + Activity both read). The pump only ever
  * writes the projection half — nav (cursor/folds) is the keyboard's.
  *
- * Events carry no unique tool-call id, so — exactly like the old TUI — start↔end
- * are matched by tool name (most recent in-flight wins), the scrollback pill gets
- * a `t<n>` id and the tree node its numeric id. This closure holds that matching
+ * start↔end are matched by the provider **tool-call id**, kept as a FIFO queue
+ * per key so that multiple calls of the SAME tool in one turn each resolve their
+ * own tree node + scrollback pill — the old name-keyed "most recent in-flight
+ * wins" let a second same-named start overwrite the first, stranding it "running"
+ * forever. When a provider omits the id we fall back to the tool name, still FIFO
+ * so same-named calls pair in emission order. This closure holds that matching
  * state, so one reducer instance lives per pump.
  */
 export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void) => {
-  const toolTreeId = new Map<string, number>() // toolName → tree node id
-  const toolScrollId = new Map<string, string>() // toolName → scrollback pill id
+  const toolTreeIds = new Map<string, number[]>() // matchKey → FIFO of tree node ids
+  const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
   let subAgentDepth = 0
   let toolSeq = 0
+
+  // The id pairs a start with its end; empty/absent → fall back to the name.
+  const matchKey = (e: { id?: string; toolName: string }): string =>
+    e.id !== undefined && e.id.length > 0 ? e.id : e.toolName
+  const enqueue = <V>(m: Map<string, V[]>, k: string, v: V): void => {
+    const q = m.get(k)
+    if (q !== undefined) q.push(v)
+    else m.set(k, [v])
+  }
+  const dequeue = <V>(m: Map<string, V[]>, k: string): V | undefined => {
+    const q = m.get(k)
+    if (q === undefined || q.length === 0) return undefined
+    const v = q.shift()
+    if (q.length === 0) m.delete(k)
+    return v
+  }
 
   const isDelegate = (name: string): boolean => name.startsWith("delegate_to_")
   const joinDetail = (
@@ -60,7 +79,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         const label = describeToolCall(event.toolName, event.args)
         store.setProjection((p) => {
           const { tree, id } = treeToolStart(p.tree, label, now)
-          toolTreeId.set(event.toolName, id)
+          enqueue(toolTreeIds, matchKey(event), id)
           return { ...p, tree }
         })
         // Top-level tools get a compact chat pill; sub-agent inner tools live
@@ -68,7 +87,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         if (subAgentDepth === 0) {
           toolSeq++
           const sid = `t${toolSeq}`
-          toolScrollId.set(event.toolName, sid)
+          enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
         }
         return
@@ -77,16 +96,15 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
       case "tool_call_end": {
         if (isDelegate(event.toolName)) return
         const detail = describeToolResult(event.toolName, event.ok, event.result)
-        const nodeId = toolTreeId.get(event.toolName)
+        const nodeId = dequeue(toolTreeIds, matchKey(event))
         if (nodeId !== undefined) {
           store.setProjection((p) => ({
             ...p,
             tree: treeToolEnd(p.tree, nodeId, event.ok, detail, now),
           }))
-          toolTreeId.delete(event.toolName)
         }
         const artifacts = toolArtifacts(event.toolName, event.ok, event.result)
-        const sid = toolScrollId.get(event.toolName)
+        const sid = dequeue(toolScrollIds, matchKey(event))
         if (sid !== undefined) {
           store.updateTool(sid, {
             state: event.ok ? "ok" : "error",
@@ -94,7 +112,6 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
             ...(artifacts.output !== undefined ? { output: artifacts.output } : {}),
           })
-          toolScrollId.delete(event.toolName)
         }
         // Files-changed diffstat — structured, straight off the tool result (no
         // re-parsing the human detail string). Covers sub-agent inner edits too.

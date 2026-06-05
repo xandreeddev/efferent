@@ -27,12 +27,17 @@ export interface AgentAssistantMessageEvent {
 
 export interface AgentBeforeToolCallEvent {
   readonly turnIndex: number
+  /** Provider tool-call id — pairs this start with its end (distinguishes two
+   *  same-named calls in one turn). Empty when the provider omits one. */
+  readonly toolCallId: string
   readonly toolName: string
   readonly args: unknown
 }
 
 export interface AgentAfterToolCallEvent {
   readonly turnIndex: number
+  /** Matches the originating {@link AgentBeforeToolCallEvent.toolCallId}. */
+  readonly toolCallId: string
   readonly toolName: string
   readonly args: unknown
   readonly ok: boolean
