@@ -107,7 +107,14 @@ const Block = (props: { block: ScrollbackBlock }) => {
     case "tool":
       return <ToolPill tool={b} />
     case "info":
-      return <text fg={tokens.info}>{`  ${b.text}`}</text>
+      // An ephemeral system note (resume/built/quit hints — never persisted).
+      // Rendered as a first-class rail line (● marker, its own colour) with a
+      // blank line BEFORE it so it isn't glued to the message above.
+      return (
+        <box flexDirection="row" marginTop={1}>
+          <text fg={tokens.info}>{`${glyph.railDot} ${b.text}`}</text>
+        </box>
+      )
     case "error":
       return (
         <text fg={tokens.error} wrapMode="word">
