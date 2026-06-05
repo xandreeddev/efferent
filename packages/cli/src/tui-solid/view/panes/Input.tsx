@@ -69,6 +69,9 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     store.inputControl.current = {
       seed: (text) => {
         ref.setText(text)
+        // `setText` resets the cursor to offset 0; move it to the end so a Tab-
+        // completed command / recalled message is ready to keep typing or edit.
+        ref.cursorOffset = text.length
         store.setInput(text)
       },
     }
