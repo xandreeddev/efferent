@@ -197,6 +197,10 @@ export const Conversation = (props: { ctx: TuiContext }) => {
         flexDirection="column"
         verticalScrollbarOptions={{ visible: false }}
       >
+        {/* A blank line top + bottom so the first/last message (incl. the
+            "resumed" / "press Ctrl-C again" info lines) isn't glued to the
+            pane border or the sticky-bottom scroll edge. */}
+        <text flexShrink={0}> </text>
         <For each={items()}>
           {(item, i) => {
             const id = conversationItemId(item, i())
@@ -245,6 +249,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             )
           }}
         </For>
+        <text flexShrink={0}> </text>
       </scrollbox>
     </Pane>
   )
