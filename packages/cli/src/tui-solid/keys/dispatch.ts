@@ -88,16 +88,21 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
   const { store } = ctx
   const scr = store.convScroller.current
 
-  // `G` → last unit; `g` arms a `gg` two-stroke (→ first unit).
+  // `G` → last unit + the ABSOLUTE bottom; `g` arms a `gg` two-stroke (→ first
+  // unit + the ABSOLUTE top). gg/G scroll to the edge, not `scrollIntoView` — a
+  // huge first/last message is taller than the viewport, so a minimal "into view"
+  // scroll stops at its near edge and never reaches the very top/bottom.
   if (key.name === "g" && key.shift) {
     store.setGPending(false)
-    moveConvCursor(store, rowToEnd(convNav(store).rows))
+    store.setConvCursor(rowToEnd(convNav(store).rows))
+    scr?.scrollToBottom()
     return true
   }
   if (key.name === "g" && !key.ctrl && !key.meta) {
     if (store.gPending()) {
       store.setGPending(false)
-      moveConvCursor(store, rowToTop())
+      store.setConvCursor(rowToTop())
+      scr?.scrollToTop()
     } else {
       store.setGPending(true)
     }
