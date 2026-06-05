@@ -162,3 +162,37 @@ describe("buildConversationRows — the fold-cursor row list", () => {
     ])
   })
 })
+
+describe("big / multi-line user messages become foldable", () => {
+  const summary = "[System note: earlier history handed off]\n\n" + "x".repeat(200)
+
+  test("first line is the subject; full text is the first (foldable) body item", () => {
+    const items = buildConversation([
+      { kind: "user", text: summary },
+      { kind: "assistant", text: "ok" },
+    ])
+    const turn = items[0]!
+    if (turn.kind !== "turn") throw new Error("expected turn")
+    expect(turn.subject).toBe("[System note: earlier history handed off]")
+    expect(turn.steps).toBe(2) // the user block + the assistant block
+    const first = turn.body[0]!
+    expect(first.kind).toBe("block")
+    if (first.kind !== "block") throw new Error("expected block")
+    expect(first.block.kind).toBe("user")
+    expect((first.block as { text: string }).text).toBe(summary) // full text kept
+    // foldId = the turn; folding it hides the (now-body) full text
+    const rows = buildConversationRows(items, new Set(["turn:0"]))
+    expect(rows.map((r) => r.key)).toEqual(["turn:0"]) // body hidden when folded
+  })
+
+  test("a short single-line prompt stays the full subject (no body duplication)", () => {
+    const items = buildConversation([
+      { kind: "user", text: "do the thing" },
+      { kind: "assistant", text: "ok" },
+    ])
+    const turn = items[0]!
+    if (turn.kind !== "turn") throw new Error("expected turn")
+    expect(turn.subject).toBe("do the thing")
+    expect(turn.body).toHaveLength(1) // assistant only — no duplicated user block
+  })
+})
