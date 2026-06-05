@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
 import type { ConversationId } from "@efferent/core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
+import { emptyHistory, pushPrompt } from "../presentation/promptHistory.js"
 import { createTuiStore, type ConvScroller, type TuiContext, type TuiStore } from "../state/store.js"
 import { dispatch } from "./dispatch.js"
 import type { Key } from "./ParsedKey.js"
@@ -151,4 +152,76 @@ test("Ctrl-h/j/k/l move pane focus and set the mode", () => {
   dispatch(h.ctx, key("j", { ctrl: true }))
   expect(h.store.focus()).toBe("input")
   expect(h.store.mode()).toBe("insert")
+})
+
+// --- input pane (INSERT): command palette + prompt history -------------------
+
+/** Wire an inputControl that mirrors seeded text into the store (like InputBox). */
+const wireInput = (h: Harness): { seeds: string[] } => {
+  const seeds: string[] = []
+  h.store.inputControl.current = {
+    seed: (t) => {
+      seeds.push(t)
+      h.store.setInput(t)
+    },
+  }
+  return { seeds }
+}
+
+test("command mode: Enter runs the highlighted command (no Shift needed)", () => {
+  const h = harness()
+  wireInput(h)
+  h.store.pushBlock({ kind: "user", text: "scrollback" })
+  h.store.setInput(":clear")
+  dispatch(h.ctx, key("return")) // plain Enter
+  expect(h.store.blocks()).toEqual([]) // :clear ran (store.clear)
+  expect(h.store.input()).toBe("") // buffer cleared
+})
+
+test("command mode: Tab completes the buffer to the highlighted command + space", () => {
+  const h = harness()
+  const { seeds } = wireInput(h)
+  h.store.setInput(":mod")
+  dispatch(h.ctx, key("tab"))
+  expect(seeds.at(-1)).toBe(":model ")
+  // → completes too
+  h.store.setInput(":mod")
+  dispatch(h.ctx, key("right"))
+  expect(seeds.at(-1)).toBe(":model ")
+})
+
+test("command mode: ↑/↓ move the palette highlight (wrapping)", () => {
+  const h = harness()
+  wireInput(h)
+  h.store.setInput(":s") // matches :settings / :set / :search
+  expect(h.store.paletteIndex()).toBe(0)
+  dispatch(h.ctx, key("down"))
+  expect(h.store.paletteIndex()).toBe(1)
+  dispatch(h.ctx, key("up"))
+  expect(h.store.paletteIndex()).toBe(0)
+  dispatch(h.ctx, key("up")) // wraps to the last visible match
+  expect(h.store.paletteIndex()).toBeGreaterThan(0)
+})
+
+test("history: ↑/↓ recall sent messages on an empty single-line buffer", () => {
+  const h = harness()
+  const { seeds } = wireInput(h)
+  h.store.setHistory(pushPrompt(pushPrompt(emptyHistory, "first"), "second"))
+  h.store.setInput("")
+  dispatch(h.ctx, key("up"))
+  expect(seeds.at(-1)).toBe("second") // newest first
+  dispatch(h.ctx, key("up"))
+  expect(seeds.at(-1)).toBe("first")
+  dispatch(h.ctx, key("down"))
+  expect(seeds.at(-1)).toBe("second")
+})
+
+test("history is NOT triggered in command mode (palette owns ↑/↓)", () => {
+  const h = harness()
+  const { seeds } = wireInput(h)
+  h.store.setHistory(pushPrompt(emptyHistory, "a message"))
+  h.store.setInput(":") // command mode
+  dispatch(h.ctx, key("up"))
+  // no history recall seeded; ↑ moved the palette instead
+  expect(seeds).not.toContain("a message")
 })

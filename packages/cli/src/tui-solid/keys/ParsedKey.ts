@@ -14,4 +14,14 @@ export interface Key {
   readonly shift: boolean
   readonly meta: boolean
   readonly option: boolean
+  /**
+   * Suppress the default action of the **focused renderable** (the input
+   * `<textarea>`) for this key. OpenTUI's key handler fires global listeners
+   * (our `dispatch`) *before* the focused renderable and skips the renderable if
+   * the event was `preventDefault()`-ed — so calling this lets `dispatch` claim a
+   * key (Enter to run a command, Tab to complete, ↑ to recall history) without
+   * the textarea also inserting a newline / moving the cursor. Optional because
+   * unit tests pass plain `Key` objects with no event behind them.
+   */
+  readonly preventDefault?: () => void
 }
