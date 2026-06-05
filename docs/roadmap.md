@@ -100,4 +100,4 @@ These are *not* on the roadmap. Revisit only if a concrete need surfaces.
 
 ## Mouse support — intentionally absent
 
-Not deferred — **deliberately excluded**. The TUI never enters mouse-reporting mode, which keeps your terminal's native click-drag selection working. Navigation + selection are fully keyboard-modal: `Ctrl-hjkl` panes, `j/k` / arrows / `gg/G` / `{/}` scroll, `/` search, `v`+`y` yank to OSC 52 clipboard. If the user community ever wants mouse-mode, it's an opt-in flag — not a default.
+Not deferred — **deliberately excluded**. The TUI never enters mouse-reporting mode, which keeps your terminal's native click-drag selection working. Navigation + selection are fully keyboard-modal: `Ctrl-hjkl` panes, `j/k`/arrows scroll, a **fold cursor** (`{}`/`[]` paragraph/message · `gg/G` ends · `⇥`/`↵` fold), `/` per-pane search, `y` yank to OSC 52 clipboard. If the user community ever wants mouse-mode, it's an opt-in flag — not a default.
