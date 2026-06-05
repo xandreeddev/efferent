@@ -14,11 +14,11 @@ const paneRow = (ctx: TuiContext): string => {
   const { store } = ctx
   switch (store.focus()) {
     case "conversation":
-      return "conv  j/k·↑↓ scroll · ^D/^U half · gg/G ends · / search (n/N) · Z fold all"
+      return "conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · / search · Z fold all"
     case "side":
       return store.sidePane().view === "context"
-        ? "ctx   j/k move · h/l·←→ fold · ↵ jump · Space pick · b build · i insert"
-        : "act   j/k·↑↓ move · ⇥/↵/←→ fold · i insert"
+        ? "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · / search"
+        : "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · / search · i insert"
     case "input":
       return "input type to compose · ⇧↵ send · ↵ newline · : cmd · / search"
   }
