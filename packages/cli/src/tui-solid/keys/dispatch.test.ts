@@ -241,3 +241,19 @@ test("conversation pane: Tab folds the ENCLOSING turn from a body row", () => {
   // cursor parked on the (now folded) head
   expect(h.store.convCursor()).toBe(0)
 })
+
+test("Ctrl-Shift-C copies the selection (and does NOT arm quit)", () => {
+  const h = harness()
+  dispatch(h.ctx, key("c", { ctrl: true, shift: true }))
+  expect(h.copied).toBe(1) // copied the selection
+  expect(h.exited).toBe(false)
+  // and it didn't arm the 2x-quit (no "press Ctrl-C again" hint)
+  expect(h.store.blocks().some((b) => b.kind === "info")).toBe(false)
+})
+
+test("plain Ctrl-C still arms quit (shift excluded)", () => {
+  const h = harness()
+  dispatch(h.ctx, key("c", { ctrl: true }))
+  expect(h.copied).toBe(0)
+  expect(h.store.blocks().at(-1)).toMatchObject({ kind: "info" })
+})
