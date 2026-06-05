@@ -13,7 +13,7 @@ import {
   stackToEnd,
   stackToTop,
 } from "../presentation/sidePane.js"
-import { buildConversation, buildConversationRows, foldableIds } from "../presentation/conversation.js"
+import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { buildFromSelection } from "../actions/session.js"
 import { clearSearch, cycleSearch } from "../actions/search.js"
@@ -24,11 +24,18 @@ import type { Key } from "./ParsedKey.js"
 
 export type { Key } from "./ParsedKey.js"
 
-/** Fold all turns/tool-groups, or unfold them all if any are folded (`Z`). */
+/**
+ * `Z` toggles between fully-compact and fully-expanded. Turns and tool groups
+ * default oppositely (turn expanded, group collapsed-to-summary), so "compact" =
+ * every turn folded (∈ set) AND every group collapsed (∉ set). From compact we
+ * expand both (groups ∈ set, turns ∉); otherwise we make it compact.
+ */
 const toggleFoldAll = (store: TuiStore): void => {
-  const ids = foldableIds(buildConversation(store.blocks()))
-  const anyFolded = ids.some((id) => store.collapsed().has(id))
-  store.setCollapsed(anyFolded ? new Set() : new Set(ids))
+  const { turns, groups } = foldIdsByKind(buildConversation(store.blocks()))
+  const collapsed = store.collapsed()
+  const compact =
+    turns.every((id) => collapsed.has(id)) && groups.every((id) => !collapsed.has(id))
+  store.setCollapsed(compact ? new Set(groups) : new Set(turns))
 }
 
 /** n next · N prev · Esc clear — when a search is active (any focused pane). */

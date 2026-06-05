@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test"
 import {
   buildConversation,
   buildConversationRows,
-  foldableIds,
+  foldIdsByKind,
+  toolGroupState,
+  toolGroupSummary,
   type ScrollbackBlock,
+  type ToolBlock,
+  type ToolPillState,
 } from "./conversation.js"
 
 const tool = (id: string, name: string): ScrollbackBlock => ({
@@ -83,20 +87,46 @@ describe("buildConversation — turn/tool-group structure", () => {
   })
 })
 
-describe("foldableIds", () => {
-  test("lists each turn id and tool-group id in render order", () => {
+describe("foldIdsByKind", () => {
+  test("splits turn ids from tool-group ids in render order", () => {
     const items = buildConversation(turnWithThreeTools())
-    expect(foldableIds(items)).toEqual(["turn:0", "grp:1"])
+    expect(foldIdsByKind(items)).toEqual({ turns: ["turn:0"], groups: ["grp:1"] })
   })
 
-  test("checkpoints are not foldable; loose tool groups are", () => {
+  test("checkpoints aren't foldable; a loose tool group is a group", () => {
     const items = buildConversation([
       { kind: "checkpoint", text: "summary" },
       tool("9", "read x"),
       tool("10", "read y"),
     ])
-    // checkpoint item + a loose run with one tool group
-    expect(foldableIds(items)).toEqual(["grp:9"])
+    expect(foldIdsByKind(items)).toEqual({ turns: [], groups: ["grp:9"] })
+  })
+})
+
+describe("toolGroupSummary / toolGroupState — the collapsed one-line aggregate", () => {
+  const t = (name: string, state: ToolPillState, detail?: string): ToolBlock => ({
+    kind: "tool",
+    id: name,
+    toolName: name,
+    state,
+    ...(detail !== undefined ? { detail } : {}),
+  })
+
+  test("names the verbs, counts the calls, rolls up the diffstat", () => {
+    const tools = [t("Read(a.ts)", "ok"), t("Grep(parse)", "ok"), t("Edit(a.ts)", "ok", "+5/-2")]
+    expect(toolGroupSummary(tools)).toBe("read · grep · edit  (3 tools, +5 -2)")
+    expect(toolGroupState(tools)).toBe("ok")
+  })
+
+  test("collapses repeated verbs and surfaces running / failed counts", () => {
+    const tools = [t("Read(a.ts)", "ok"), t("Read(b.ts)", "running"), t("Bash(x)", "error")]
+    expect(toolGroupSummary(tools)).toBe("read ×2 · bash  (3 tools, 1 running, 1 failed)")
+    // any error dominates the aggregate state (shows through the fold)
+    expect(toolGroupState(tools)).toBe("error")
+  })
+
+  test("aggregate state is running when a call is in flight and none errored", () => {
+    expect(toolGroupState([t("Read(a)", "ok"), t("Read(b)", "running")])).toBe("running")
   })
 })
 
