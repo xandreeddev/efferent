@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow, type NavRow } from "./paneNav.js"
+import {
+  clampCursor,
+  enclosingFoldId,
+  foldAt,
+  rowIndexOfKey,
+  rowToEnd,
+  rowToTop,
+  stepHead,
+  stepRow,
+  type NavRow,
+} from "./paneNav.js"
 
 // rows: 0 head · 1 child · 2 child · 3 head · 4 child · 5 head(foldable)
 const rows: ReadonlyArray<NavRow> = [
@@ -61,5 +71,31 @@ describe("foldAt", () => {
   test("no-op on a row without a foldId (returns the same set)", () => {
     const before = new Set(["x"])
     expect(foldAt(rows, 1, before)).toBe(before)
+  })
+})
+
+describe("enclosingFoldId / rowIndexOfKey", () => {
+  test("a foldable row returns its own fold id", () => {
+    expect(enclosingFoldId(rows, 3)).toBe("fold:b") // on head b
+    expect(enclosingFoldId(rows, 5)).toBe("fold:c")
+  })
+
+  test("a body row returns the nearest PRECEDING foldable (its enclosing unit)", () => {
+    expect(enclosingFoldId(rows, 4)).toBe("fold:b") // b1 → fold its turn b
+  })
+
+  test("no foldable at/above the cursor → undefined", () => {
+    expect(enclosingFoldId(rows, 2)).toBeUndefined() // a/a1/a2 aren't foldable
+  })
+
+  test("foldAt toggles the enclosing fold from a body row", () => {
+    const folded = foldAt(rows, 4, new Set()) // on b1
+    expect([...folded]).toEqual(["fold:b"])
+    expect([...foldAt(rows, 4, folded)]).toEqual([]) // toggles back off
+  })
+
+  test("rowIndexOfKey finds a head by key, else the fallback", () => {
+    expect(rowIndexOfKey(rows, "b", 0)).toBe(3)
+    expect(rowIndexOfKey(rows, "nope", 2)).toBe(2)
   })
 })

@@ -51,16 +51,45 @@ export const rowToTop = (): number => 0
 export const rowToEnd = <R>(rows: ReadonlyArray<R>): number => Math.max(0, rows.length - 1)
 
 /**
- * `⇥`/`↵` — toggle the fold id of the row under the cursor in `collapsed`,
- * returning a new set. No-op (returns the same set) when the row has no
- * `foldId`.
+ * The fold id `⇥`/`↵` should toggle for the cursor row: the row's own `foldId`
+ * if it has one, else the nearest **preceding** foldable row's — so folding from
+ * a body line (assistant prose, a tool result) collapses its *enclosing* turn or
+ * tool group, which is what "collapse this message" means. `undefined` when no
+ * foldable unit is at/above the cursor.
+ */
+export const enclosingFoldId = <R extends { readonly foldId?: string }>(
+  rows: ReadonlyArray<R>,
+  cursor: number,
+): string | undefined => {
+  for (let i = clampCursor(rows.length, cursor); i >= 0; i--) {
+    const id = rows[i]?.foldId
+    if (id !== undefined) return id
+  }
+  return undefined
+}
+
+/** The row index whose `key` equals `key` (a fold head's key == its foldId), or
+ *  the clamped cursor when absent — used to park the cursor on a folded head. */
+export const rowIndexOfKey = <R extends { readonly key: string }>(
+  rows: ReadonlyArray<R>,
+  key: string,
+  fallback: number,
+): number => {
+  const i = rows.findIndex((r) => r.key === key)
+  return i === -1 ? clampCursor(rows.length, fallback) : i
+}
+
+/**
+ * `⇥`/`↵` — toggle the {@link enclosingFoldId} of the cursor row in `collapsed`,
+ * returning a new set. No-op (returns the same set) when nothing foldable is at
+ * or above the cursor.
  */
 export const foldAt = <R extends { readonly foldId?: string }>(
   rows: ReadonlyArray<R>,
   cursor: number,
   collapsed: ReadonlySet<string>,
 ): ReadonlySet<string> => {
-  const id = rows[clampCursor(rows.length, cursor)]?.foldId
+  const id = enclosingFoldId(rows, cursor)
   if (id === undefined) return collapsed
   const next = new Set(collapsed)
   if (next.has(id)) next.delete(id)
