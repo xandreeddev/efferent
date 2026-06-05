@@ -107,6 +107,22 @@ const isBoundary = (block: ScrollbackBlock): boolean =>
   block.kind === "user" || block.kind === "checkpoint"
 
 /**
+ * A "big" user message (a pasted blob, or a resumed handoff summary seeded as a
+ * `user` message) shouldn't be the turn's whole SUBJECT — folding a turn hides
+ * its body, not its header, so a giant subject is un-collapsible and dominates
+ * the rail. Such a message instead shows just its first line as the subject and
+ * moves its full text into the (foldable) body. Short prompts are untouched.
+ */
+const isBigUser = (text: string): boolean =>
+  text.length > 160 || text.split("\n").length >= 3
+
+/** First line of a user message, truncated, for use as a turn-header subject. */
+const subjectLine = (text: string): string => {
+  const line = (text.split("\n", 1)[0] ?? text).trimEnd()
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line
+}
+
+/**
  * Partition the flat block list into the conversation rail's top-level items:
  * user-led turns, standalone checkpoints, and loose runs (leading content or
  * content emitted right after a fold). Mirrors `scrollback.ts` `flatten()`.
@@ -123,12 +139,16 @@ export const buildConversation = (
       while (j < blocks.length && !isBoundary(blocks[j]!)) j++
       const body: Indexed[] = []
       for (let k = i + 1; k < j; k++) body.push({ block: blocks[k]!, index: k })
+      // A big/multi-line user message → first line as the subject, full text as
+      // the first body item so the turn fold can collapse it.
+      const big = isBigUser(block.text)
+      const turnBody: Indexed[] = big ? [{ block, index: i }, ...body] : body
       items.push({
         kind: "turn",
         id: `turn:${i}`,
-        subject: block.text,
-        steps: body.length,
-        body: buildBody(body),
+        subject: big ? subjectLine(block.text) : block.text,
+        steps: turnBody.length,
+        body: buildBody(turnBody),
       })
       i = j
     } else if (block.kind === "checkpoint") {
