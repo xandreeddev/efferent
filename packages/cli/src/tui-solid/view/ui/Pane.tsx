@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js"
-import { paneBorder, type PaneKind } from "../../presentation/theme/index.js"
+import { paneBorder, type PaneKind } from "../../state/theme.js"
 
 /**
  * A bordered, focus-accented pane box — the shared shell for the conversation,

@@ -35,6 +35,12 @@ export const Settings = Schema.Struct({
         "Dedicated web search model as '<provider>:<modelId>' (google/openai only); used by search_web independently of the chat model.",
     }),
   ),
+  theme: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Active TUI colour theme name (e.g. 'one-dark', 'tokyo-night'). Switch at runtime with :theme; unknown names fall back to the default.",
+    }),
+  ),
   dbUrl: Schema.optional(
     Schema.String.annotations({
       description:

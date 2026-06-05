@@ -56,3 +56,32 @@ export const defaultPalette: Palette = {
   bgStatus: "#1f2430", // status-bar background
   cursorLine: "#2d2d3d", // focused-row background tint
 } as const
+
+/**
+ * Tokyo Night (night variant) — a cool blue/purple dark palette. Same key set as
+ * {@link defaultPalette} (the contract is the palette shape), different values;
+ * {@link makeTokens} derives the full token set from it. Two palette hues fold
+ * onto two roles each (blue = conversation accent + functions; purple = side
+ * accent + keywords), which is idiomatic Tokyo Night.
+ */
+export const tokyoNightPalette: Palette = {
+  cyan: "#7aa2f7", // TN blue — conversation accent / links / assistant
+  magenta: "#bb9af7", // TN purple — side accent / handoff / overlay border
+  green: "#9ece6a", // TN green — input accent / select marker / cursor
+  greenMuted: "#9ece6a", // TN green — tool ok / strings / loaded ●
+  yellow: "#e0af68", // TN yellow — running state / types
+  red: "#f7768e", // TN red — errors / variables
+  blue: "#7aa2f7", // TN blue — turn headers / functions
+  purple: "#bb9af7", // TN purple — keywords
+  orange: "#ff9e64", // TN orange — numbers / parameters
+  teal: "#73daca", // TN teal — escapes / operators
+  text: "#c0caf5", // TN fg — primary prose
+  textUser: "#a9b1d6", // TN fg-dark — user messages
+  gray: "#737aa2", // TN dark5 — secondary / muted text
+  dim: "#545c7e", // TN dark3 — unfocused borders / faint hints
+  comment: "#565f89", // TN comment
+  punctuation: "#a9b1d6", // TN fg-dark — code punctuation
+  bgOverlay: "#1f2335", // TN bg-dark — modal background
+  bgStatus: "#16161e", // TN bg-darker — status-bar background
+  cursorLine: "#2f334d", // TN bg-highlight — focused-row tint
+} as const

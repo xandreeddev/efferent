@@ -11,7 +11,7 @@ import {
   type ToolBlock,
 } from "../../presentation/conversation.js"
 import { clampCursor } from "../../presentation/paneNav.js"
-import { glyph, tokens } from "../../presentation/theme/index.js"
+import { glyph, tokens } from "../../state/theme.js"
 import { Pane, RailLine } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
 import type { ConvScroller, TuiContext } from "../../state/store.js"

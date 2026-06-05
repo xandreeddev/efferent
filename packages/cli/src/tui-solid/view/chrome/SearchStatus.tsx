@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { tokens } from "../../presentation/theme/index.js"
+import { tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**

@@ -16,6 +16,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":model", description: "Open the model picker (↑↓/filter/↵), or :model <id> to switch" },
   { name: ":search", description: "Open the web search model picker, or :search openai:gpt-4o / default" },
   { name: ":effort", description: "Open the thinking/reasoning effort picker, or :effort <level>" },
+  { name: ":theme", description: "Switch the colour theme (↑↓/↵), or :theme <name>" },
   { name: ":login", description: "Add a provider — subscription (OAuth) or API key" },
   { name: ":logout", description: "Remove a provider's credential: :logout <provider>" },
   { name: ":db", description: "Show or set the store: :db pg <url> / :db sqlite [path] [global]" },

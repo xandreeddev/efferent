@@ -1,6 +1,6 @@
 import { createMemo, For, Show } from "solid-js"
 import type { SelectOption, SelectState } from "../../presentation/selectBox.js"
-import { glyph, tokens } from "../../presentation/theme/index.js"
+import { glyph, tokens } from "../../state/theme.js"
 import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
 const MAX_ROWS = 12

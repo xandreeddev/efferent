@@ -1,4 +1,4 @@
-import { tokens } from "../../presentation/theme/index.js"
+import { tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /** Dim footer below the status bar (logs path + key hints). Fixed height. */
