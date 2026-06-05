@@ -1,4 +1,4 @@
-import { defaultPalette } from "./palette.js"
+import { defaultPalette, tokyoNightPalette } from "./palette.js"
 import { makeTokens, type PaneKind, type Tokens } from "./tokens.js"
 
 /**
@@ -22,12 +22,14 @@ export interface Theme {
   readonly tokens: Tokens
 }
 
-/** The theme registry, keyed by name. One built-in so far. */
+/** The theme registry, keyed by name. The runtime `:theme` picker lists these. */
 export const themes: Record<string, Theme> = {
   "one-dark": { name: "one-dark", tokens: makeTokens(defaultPalette) },
+  "tokyo-night": { name: "tokyo-night", tokens: makeTokens(tokyoNightPalette) },
 }
 
-/** The active theme's name — the single swap point. */
+/** The default theme's name — the static fallback. At runtime, `state/theme.ts`
+ *  wraps this in a Solid signal so `:theme` can switch it live. */
 export const activeThemeName = "one-dark"
 
 /** The resolved active theme. */

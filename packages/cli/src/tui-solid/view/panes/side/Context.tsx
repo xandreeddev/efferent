@@ -5,7 +5,7 @@ import {
   type ContextRowData,
   type ContextRowDisplay,
 } from "../../../presentation/contextView.js"
-import { glyph, tokens } from "../../../presentation/theme/index.js"
+import { glyph, tokens } from "../../../state/theme.js"
 import { Marker, foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 

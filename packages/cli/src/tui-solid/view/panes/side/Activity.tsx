@@ -9,7 +9,7 @@ import {
   type StackRowDisplay,
 } from "../../../presentation/sidePane.js"
 import { clampCursor } from "../../../presentation/paneNav.js"
-import { glyph, tokens } from "../../../presentation/theme/index.js"
+import { glyph, tokens } from "../../../state/theme.js"
 import { SectionHead, foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 

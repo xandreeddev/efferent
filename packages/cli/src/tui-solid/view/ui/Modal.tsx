@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js"
-import { tokens } from "../../presentation/theme/index.js"
+import { tokens } from "../../state/theme.js"
 
 /** Default modal width (cols). Inner content rules span {@link MODAL_RULE}. */
 export const MODAL_WIDTH = 72

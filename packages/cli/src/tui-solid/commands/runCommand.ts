@@ -12,6 +12,7 @@ import {
 } from "../actions/session.js"
 import { runHandoff } from "../actions/handoff.js"
 import { openModelPicker } from "../actions/model.js"
+import { applyTheme, openThemePicker } from "../actions/theme.js"
 import {
   applyDb,
   applySetting,
@@ -124,6 +125,11 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":search":
       void ctx.run(openSearchPicker(store))
       return
+    case ":theme": {
+      const name = arg?.trim()
+      void ctx.run(name === undefined || name.length === 0 ? openThemePicker(store) : applyTheme(store, name))
+      return
+    }
     case ":login":
       void ctx.run(openLoginFlow(store))
       return

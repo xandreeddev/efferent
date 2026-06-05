@@ -19,6 +19,7 @@ export type SelectPurpose =
   | { readonly tag: "model" }
   | { readonly tag: "effort"; readonly key: EffortSettingKey }
   | { readonly tag: "search" }
+  | { readonly tag: "theme" }
   | { readonly tag: "conversation" }
 
 /**

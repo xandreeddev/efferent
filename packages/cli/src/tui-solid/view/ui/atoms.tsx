@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { glyph, tokens } from "../../presentation/theme/index.js"
+import { glyph, tokens } from "../../state/theme.js"
 
 /** A horizontal divider rule of `width` cells (dim `─`). */
 export const Rule = (props: { width: number }) => (

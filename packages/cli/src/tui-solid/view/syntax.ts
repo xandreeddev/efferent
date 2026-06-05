@@ -1,5 +1,5 @@
 import { SyntaxStyle, getTreeSitterClient, type TreeSitterClient } from "@opentui/core"
-import { tokens } from "../presentation/theme/index.js"
+import { activeThemeName, tokens } from "../state/theme.js"
 
 /**
  * The one style table shared by `<markdown>`, `<diff>` and `<code>`. It carries
@@ -15,16 +15,22 @@ import { tokens } from "../presentation/theme/index.js"
  *    `@opentui/core/assets`); other languages render un-highlighted. Colours are
  *    the semantic `tokens.syntax` roles (one source for both families).
  *
- * Built lazily and once. `SyntaxStyle.fromStyles` calls into OpenTUI's native lib
- * (`resolveRenderLib`), only loaded by `createCliRenderer`, so it can't be
- * constructed at module load or ctx-build time (tests build the ctx before the
- * renderer). It's an immutable, process-wide render resource — like a font.
+ * Built lazily, **once per theme**. `SyntaxStyle.fromStyles` calls into OpenTUI's
+ * native lib (`resolveRenderLib`), only loaded by `createCliRenderer`, so it can't
+ * be constructed at module load or ctx-build time (tests build the ctx before the
+ * renderer). Each style is an immutable, process-wide render resource — like a
+ * font — so it's memoised by theme name: a `:theme` switch reads the active name
+ * (a tracked signal), so any `<markdown>`/`<diff>` reading `syntaxStyle()` in JSX
+ * re-renders with the new theme's colours; the first switch builds + caches that
+ * theme's style, later switches reuse it.
  */
-let cachedStyle: SyntaxStyle | undefined
+const styleCache = new Map<string, SyntaxStyle>()
 
 export const syntaxStyle = (): SyntaxStyle => {
-  if (cachedStyle === undefined) {
-    cachedStyle = SyntaxStyle.fromStyles({
+  const name = activeThemeName() // reactive dependency → follows `:theme`
+  const cached = styleCache.get(name)
+  if (cached === undefined) {
+    const built = SyntaxStyle.fromStyles({
       // --- markdown prose (marked → markup.* lookups) ---
       "markup.heading": { fg: tokens.syntax.heading, bold: true },
       "markup.strong": { bold: true },
@@ -78,8 +84,10 @@ export const syntaxStyle = (): SyntaxStyle => {
       label: { fg: tokens.syntax.function },
       attribute: { fg: tokens.syntax.param },
     })
+    styleCache.set(name, built)
+    return built
   }
-  return cachedStyle
+  return cached
 }
 
 /**

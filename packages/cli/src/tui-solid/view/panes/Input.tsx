@@ -2,7 +2,7 @@ import type { TextareaRenderable } from "@opentui/core"
 import { createEffect, createMemo, onMount } from "solid-js"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
-import { tokens } from "../../presentation/theme/index.js"
+import { tokens } from "../../state/theme.js"
 import { Pane } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
 

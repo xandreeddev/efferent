@@ -23,6 +23,7 @@ import {
   type SettingsState,
 } from "../presentation/settingsView.js"
 import { applyModelSelection } from "../actions/model.js"
+import { applyTheme } from "../actions/theme.js"
 import { resumeConversation } from "../actions/session.js"
 import {
   applyEffort,
@@ -58,6 +59,9 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
     case "search":
       // `undefined` is a valid pick here (the auto default).
       void ctx.run(applySearchModel(store, value as string | undefined))
+      return
+    case "theme":
+      if (value !== undefined) void ctx.run(applyTheme(store, value as string))
       return
     case "conversation": {
       // A ConversationId resumes it; `null` (start new) or no pick → stay fresh.

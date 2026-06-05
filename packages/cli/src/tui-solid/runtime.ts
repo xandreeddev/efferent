@@ -23,6 +23,7 @@ import { makeSubmit } from "./actions/submit.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { makeEventReducer, runEventPump } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
+import { setTheme } from "./state/theme.js"
 
 const logFilePath = (): string => join(homedir(), ".efferent", "efferent.log")
 
@@ -59,6 +60,9 @@ export const runTuiModeSolid = (
       const registry = yield* ModelRegistry
       const sel = yield* registry.current
       const settings = yield* (yield* SettingsStore).get()
+      // Seed the active colour theme from config before the first render (an
+      // unknown / absent name leaves the default). `:theme` switches it live.
+      if (settings.theme !== undefined) setTheme(settings.theme)
       const effort =
         sel.provider === "anthropic"
           ? settings.anthropicThinkingEffort

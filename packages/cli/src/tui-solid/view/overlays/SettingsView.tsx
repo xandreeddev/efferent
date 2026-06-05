@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js"
 import type { SettingsRow, SettingsState } from "../../presentation/settingsView.js"
-import { glyph, tokens } from "../../presentation/theme/index.js"
+import { glyph, tokens } from "../../state/theme.js"
 import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
 const LABEL_W = 14
