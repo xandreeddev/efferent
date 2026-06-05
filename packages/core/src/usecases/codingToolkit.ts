@@ -303,6 +303,33 @@ export const Failure = Schema.Struct({
 export type Failure = typeof Failure.Type
 
 /**
+ * A safe grep flag token: a short (`-i`, `-iw`) or long (`--ignore-case`) flag of
+ * letters and hyphens only — no `=value`, no whitespace, no shell metacharacters.
+ * `grep`'s `flags` arg is interpolated unquoted into a `bash -c` command, so every
+ * token must match this or the call is rejected (it was a command-injection hole).
+ */
+const SAFE_GREP_FLAG = /^--?[A-Za-z][A-Za-z-]*$/
+
+/**
+ * Validate the user/model-supplied grep `flags` string. Returns `{ ok: true,
+ * extra }` with the leading-space-prefixed, re-joined flags ready to splice into
+ * the command, or `{ ok: false, bad }` naming the first token that isn't a
+ * {@link SAFE_GREP_FLAG} — the handler turns that into a model-visible failure
+ * rather than running it. Pure + exported so the guard is unit-tested directly.
+ */
+export type GrepFlags =
+  | { readonly ok: true; readonly extra: string }
+  | { readonly ok: false; readonly bad: string }
+
+export const parseGrepFlags = (flags: string | undefined): GrepFlags => {
+  if (flags === undefined) return { ok: true, extra: "" }
+  const tokens = flags.trim().split(/\s+/).filter((t) => t.length > 0)
+  const bad = tokens.find((t) => !SAFE_GREP_FLAG.test(t))
+  if (bad !== undefined) return { ok: false, bad }
+  return { ok: true, extra: tokens.length > 0 ? ` ${tokens.join(" ")}` : "" }
+}
+
+/**
  * Normalise an arbitrary thrown/failed value into the shared `Failure`
  * struct. An already-tagged failure (a `{ error: "<Tag>", message? }`
  * object, e.g. `OutOfScope` / `EditFailed`) is preserved verbatim so the
@@ -466,7 +493,7 @@ export const Grep = Tool.make("grep", {
     flags: Schema.optional(
       Schema.String.annotations({
         description:
-          "Extra grep flags (e.g. '-i' for case-insensitive). -rnE are always set.",
+          "Extra grep flags, e.g. '-i' (case-insensitive) or '-w' (word match). -rnE are always set. Only bare flags (letters/hyphens, like -i, -iw, --ignore-case) are accepted — no '=value' forms or shell characters.",
       }),
     ),
     context: Schema.optional(
@@ -748,8 +775,23 @@ export const makeCodingHandlers = (
       grep: ({ pattern, dir, flags, context }) =>
         Effect.gen(function* () {
           const target = dir !== undefined ? resolvePath(displayRoot, dir) : displayRoot
-          const ctxFlag = context !== undefined ? ` -C ${context}` : ""
-          const extra = flags !== undefined ? ` ${flags}` : ""
+          // `context` is a schema-validated Number; floor it for a clean integer.
+          const ctxFlag = context !== undefined ? ` -C ${Math.max(0, Math.trunc(context))}` : ""
+          // `flags` is interpolated UNQUOTED into a `bash -c` grep command, so it
+          // must not carry shell metacharacters. `parseGrepFlags` allows only bare
+          // grep flags and rejects anything else (`; rm`, `$(…)`, `--include=*`) as
+          // a model-visible failure instead of executing it — closing a command-
+          // injection vector that also bypassed the bash gate.
+          const parsedFlags = parseGrepFlags(flags)
+          if (!parsedFlags.ok) {
+            return yield* Effect.fail({
+              error: "InvalidFlags",
+              message: `grep flag ${JSON.stringify(
+                parsedFlags.bad,
+              )} is not allowed — pass only bare grep flags (letters/hyphens, e.g. -i, -iw, --ignore-case); no '=value' forms or shell characters.`,
+            })
+          }
+          const extra = parsedFlags.extra
           const escaped = pattern.replace(/'/g, "'\\''")
           const cmd = `grep -rnE${ctxFlag}${extra} --exclude-dir=.git --exclude-dir=node_modules '${escaped}' ${JSON.stringify(target)} || true`
           const r = yield* shell.exec({ command: cmd, cwd: displayRoot, timeoutMs: 30_000 })
