@@ -1,4 +1,4 @@
-import { buildConversation, conversationItemId, itemText } from "../presentation/conversation.js"
+import { buildConversation, buildConversationRows, conversationItemId, itemText } from "../presentation/conversation.js"
 import { buildStackRowsData, stackRowText } from "../presentation/sidePane.js"
 import { buildContextRowsData, contextRowText } from "../presentation/contextView.js"
 import type { TuiStore } from "../state/store.js"
@@ -20,7 +20,14 @@ const scrollToCurrent = (store: TuiStore): void => {
   const s = store.search()
   if (s === undefined) return
   const id = s.matchIds[s.index]
-  if (id !== undefined) store.convScroller.current?.scrollIntoView(id)
+  if (id === undefined) return
+  store.convScroller.current?.scrollIntoView(id)
+  // Park the fold cursor on the current match so it gets the row highlight (and
+  // the tint moves with n/N). A top-level item id is also a nav-row key for turns
+  // / checkpoints; a `loose:` run has no own row, so the cursor just stays put.
+  const rows = buildConversationRows(buildConversation(store.blocks()), store.collapsed())
+  const idx = rows.findIndex((r) => r.key === id)
+  if (idx !== -1) store.setConvCursor(idx)
 }
 
 const runConversationSearch = (store: TuiStore, query: string, q: string): void => {

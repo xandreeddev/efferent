@@ -63,6 +63,9 @@ export interface Tokens {
   readonly status: { readonly bg: string }
   /** Focused-row background tint (context viewer / select list / settings). */
   readonly cursorLine: string
+  /** The "no tint" background — an explicit transparent so a row that loses the
+   *  cursor RESETS its fill (a removed `backgroundColor` prop doesn't repaint). */
+  readonly bgNone: string
   readonly info: string
   readonly error: string
   readonly syntax: SyntaxTokens
@@ -91,6 +94,7 @@ export const makeTokens = (p: Palette): Tokens => ({
   overlay: { bg: p.bgOverlay, border: p.magenta },
   status: { bg: p.bgStatus },
   cursorLine: p.cursorLine,
+  bgNone: "transparent",
   info: p.gray,
   error: p.red,
   syntax: {

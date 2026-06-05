@@ -205,8 +205,16 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   const activeKey = createMemo(() =>
     focused() ? rows()[clampCursor(rows().length, store.convCursor())]?.key : undefined,
   )
-  const cursorBg = (key: string) =>
-    activeKey() === key ? { backgroundColor: tokens.cursorLine } : {}
+  // One background per row, ALWAYS set (never a removed prop): the cursor wins,
+  // else the current search match, else an explicit transparent. Returning `{}`
+  // for inactive rows (a removed `backgroundColor`) didn't repaint — old tints
+  // lingered as the cursor moved, so every visited row stayed highlighted.
+  const rowBg = (key: string): string =>
+    activeKey() === key
+      ? tokens.cursorLine
+      : matchOf(key) === "current"
+        ? tokens.cursorLine
+        : tokens.bgNone
 
   // Which search bucket a top-level item id falls in — drives match highlight.
   const matchOf = (id: string): "current" | "match" | "none" => {
@@ -241,7 +249,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const id = conversationItemId(item, i())
             if (item.kind === "checkpoint") {
               return (
-                <box id={id} marginTop={1} {...cursorBg(id)}>
+                <box id={id} marginTop={1} backgroundColor={rowBg(id)}>
                   <text fg={tokens.text.muted}>{`${glyph.handoff} ${item.text}`}</text>
                 </box>
               )
@@ -251,7 +259,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                 <box id={id} flexDirection="column">
                   <For each={item.body}>
                     {(b) => (
-                      <box id={b.id} marginTop={1} {...cursorBg(b.id)}>
+                      <box id={b.id} marginTop={1} backgroundColor={rowBg(b.id)}>
                         <BodyItemView item={b} collapsed={store.collapsed()} />
                       </box>
                     )}
@@ -262,7 +270,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const folded = () => store.collapsed().has(item.id)
             return (
               <box id={id} flexDirection="column" marginTop={1}>
-                <box {...cursorBg(item.id)}>
+                <box backgroundColor={rowBg(item.id)}>
                   <text fg={headerColor(id)}>
                     {folded()
                       ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
@@ -273,7 +281,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                   <box flexDirection="column">
                     <For each={item.body}>
                       {(b) => (
-                        <box id={b.id} marginTop={1} {...cursorBg(b.id)}>
+                        <box id={b.id} marginTop={1} backgroundColor={rowBg(b.id)}>
                           <BodyItemView item={b} collapsed={store.collapsed()} />
                         </box>
                       )}
