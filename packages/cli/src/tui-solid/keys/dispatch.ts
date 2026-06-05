@@ -14,7 +14,7 @@ import {
   stackToTop,
 } from "../presentation/sidePane.js"
 import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
-import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
+import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import { buildFromSelection } from "../actions/session.js"
@@ -156,10 +156,19 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
     case "left":
     case "right":
     case "return": {
-      // Fold the turn / tool-group under the cursor (no-op on a leaf row).
+      // Fold the ENCLOSING turn / tool-group of the cursor row (works from a body
+      // line too), then park the cursor on that head so it isn't stranded on a row
+      // the fold just hid, and the tint follows.
       const { rows, cursor } = convNav(store)
-      const next = foldAt(rows, cursor, store.collapsed())
-      if (next !== store.collapsed()) store.setCollapsed(new Set(next))
+      const id = enclosingFoldId(rows, cursor)
+      if (id !== undefined) {
+        const collapsed = store.collapsed()
+        const next = new Set(collapsed)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        store.setCollapsed(next)
+        store.setConvCursor(rowIndexOfKey(convNav(store).rows, id, cursor))
+      }
       return true
     }
     case "z":

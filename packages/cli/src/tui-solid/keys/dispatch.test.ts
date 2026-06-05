@@ -225,3 +225,19 @@ test("history is NOT triggered in command mode (palette owns ↑/↓)", () => {
   // no history recall seeded; ↑ moved the palette instead
   expect(seeds).not.toContain("a message")
 })
+
+test("conversation pane: Tab folds the ENCLOSING turn from a body row", () => {
+  const h = harness()
+  h.store.setFocus("conversation")
+  h.store.setBlocks([
+    { kind: "user", text: "do it" },
+    { kind: "assistant", text: "sure" },
+  ])
+  // rows: 0 turn:0(head, foldId) · 1 b:1 (assistant body, no foldId)
+  dispatch(h.ctx, key("g", { shift: true })) // G → last row (the body line)
+  expect(h.store.convCursor()).toBe(1)
+  dispatch(h.ctx, key("tab")) // fold from the body row → folds turn:0
+  expect([...h.store.collapsed()]).toEqual(["turn:0"])
+  // cursor parked on the (now folded) head
+  expect(h.store.convCursor()).toBe(0)
+})
