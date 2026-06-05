@@ -3,6 +3,10 @@ export interface SlashCommand {
   readonly description: string
 }
 
+/** Max command rows shown (and navigable) in the palette — the view slices to
+ *  this and the keymap wraps the highlight within it, so they can't drift. */
+export const PALETTE_VISIBLE = 6
+
 // Commands use a `:` prefix (vim ex-style); `/` is reserved for search.
 export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":exit", description: "Quit the agent" },

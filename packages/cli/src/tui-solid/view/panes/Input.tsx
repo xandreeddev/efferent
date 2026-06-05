@@ -2,6 +2,7 @@ import type { TextareaRenderable } from "@opentui/core"
 import { createEffect, createMemo, onMount } from "solid-js"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
+import { pushPrompt } from "../../presentation/promptHistory.js"
 import { tokens } from "../../state/theme.js"
 import { Pane } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
@@ -90,10 +91,14 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     if (v.length === 0) return
     ref.setText("")
     store.setInput("")
-    // `:` → ex-style command · `/` → conversation search · else send the message.
+    // `:` → ex-style command · `/` → conversation search · else send the message
+    // (and remember it for ↑/↓ recall — commands/searches aren't message history).
     if (v.startsWith(":")) runCommand(props.ctx, v)
     else if (v.startsWith("/") && v.length > 1) runSearch(store, v.slice(1))
-    else props.ctx.submit(value)
+    else {
+      store.setHistory(pushPrompt(store.history(), value))
+      props.ctx.submit(value)
+    }
   }
 
   return (
@@ -110,7 +115,19 @@ export const InputBox = (props: { ctx: TuiContext }) => {
           // event with `plainText` is single-line-<input> only), so read the
           // buffer off the ref. The zero-arg handler satisfies the prop's
           // (broken) `(event) & (value)` intersection type.
-          if (focused()) store.setInput(ref.plainText)
+          if (!focused()) return
+          const t = ref.plainText
+          store.setInput(t)
+          // Typing re-filters the palette from the top.
+          store.setPaletteIndex(0)
+          // If the buffer no longer matches the recalled entry (the user edited
+          // it, or typed a fresh draft), stop browsing history so the next ↑
+          // starts from the newest again. A recall seeds exactly the shown text,
+          // so this won't fire on the recall itself.
+          const h = store.history()
+          if (h.pos !== null && t !== (h.entries[h.pos] ?? h.draft)) {
+            store.setHistory({ ...h, pos: null })
+          }
         }}
         onSubmit={submit}
       />

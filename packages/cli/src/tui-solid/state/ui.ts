@@ -1,4 +1,5 @@
 import { createSignal, type Accessor } from "solid-js"
+import { emptyHistory, type PromptHistory } from "../presentation/promptHistory.js"
 
 export type FocusPane = "conversation" | "side" | "input"
 export type UiMode = "insert" | "normal" | "visual"
@@ -21,6 +22,12 @@ export interface UiSlice {
   /** A `g` was pressed and is awaiting a second stroke (`gg` → top). */
   readonly gPending: Accessor<boolean>
   readonly setGPending: (b: boolean) => void
+  /** Highlighted row in the `:` command palette (↑/↓ move it; Tab/↵ act on it). */
+  readonly paletteIndex: Accessor<number>
+  readonly setPaletteIndex: (i: number) => void
+  /** Sent-message history for ↑/↓ recall in the input (readline-style). */
+  readonly history: Accessor<PromptHistory>
+  readonly setHistory: (h: PromptHistory) => void
 }
 
 export const createUiSlice = (): UiSlice => {
@@ -29,6 +36,8 @@ export const createUiSlice = (): UiSlice => {
   const [input, setInputSig] = createSignal("")
   const [zoomed, setZoomedSig] = createSignal(false)
   const [gPending, setGPendingSig] = createSignal(false)
+  const [paletteIndex, setPaletteIndexSig] = createSignal(0)
+  const [history, setHistorySig] = createSignal<PromptHistory>(emptyHistory)
 
   return {
     focus,
@@ -41,5 +50,9 @@ export const createUiSlice = (): UiSlice => {
     setZoomed: (b) => setZoomedSig(b),
     gPending,
     setGPending: (b) => setGPendingSig(b),
+    paletteIndex,
+    setPaletteIndex: (i) => setPaletteIndexSig(i),
+    history,
+    setHistory: (h) => setHistorySig(h),
   }
 }

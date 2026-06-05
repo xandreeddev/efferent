@@ -15,8 +15,11 @@ import {
 } from "../presentation/sidePane.js"
 import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
+import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
+import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import { buildFromSelection } from "../actions/session.js"
-import { clearSearch, cycleSearch } from "../actions/search.js"
+import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
+import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
 import { bracketMotion } from "./brackets.js"
 import { overlayKey } from "./overlay.js"
@@ -334,10 +337,92 @@ const sideStackKey = (ctx: TuiContext, key: Key): boolean => {
 }
 
 /**
+ * Input-pane (INSERT) keys claimed BEFORE the focused `<textarea>`. OpenTUI fires
+ * global key listeners (this dispatch) before the focused renderable and skips it
+ * when the event is `preventDefault()`-ed, so `dispatch` can take a key the
+ * textarea would otherwise handle (see `Key.preventDefault`):
+ *
+ *  - command palette open (buffer is a bare `:token`): `↑`/`↓` move the highlight,
+ *    `⇥`/`→` complete the buffer to it, `↵` runs it (no Shift-Enter needed);
+ *  - any `:command` / `/search` line: `↵` runs it;
+ *  - a single-line ordinary message: `↑`/`↓` recall sent-message history.
+ *
+ * Anything else (typing, multi-line `↵`→newline, cursor motion) falls through to
+ * the textarea. Returns true (after `preventDefault`) iff it consumed the key.
+ */
+const inputKey = (ctx: TuiContext, key: Key): boolean => {
+  const { store } = ctx
+  if (key.ctrl || key.meta || key.option) return false
+  const text = store.input()
+  const claim = (): true => {
+    key.preventDefault?.()
+    return true
+  }
+
+  const isCommand = text.startsWith(":")
+  const isSearch = text.startsWith("/") && text.length > 1
+  const paletteOpen = isCommand && !text.includes(" ") && !text.includes("\n")
+  // The navigable/visible slice (keymap + view agree via PALETTE_VISIBLE).
+  const matches = paletteOpen ? computePalette(text).matches.slice(0, PALETTE_VISIBLE) : []
+  const palIdx = clampCursor(matches.length, store.paletteIndex())
+
+  if (paletteOpen && !key.shift && matches.length > 0) {
+    if (key.name === "up") {
+      store.setPaletteIndex((palIdx - 1 + matches.length) % matches.length)
+      return claim()
+    }
+    if (key.name === "down") {
+      store.setPaletteIndex((palIdx + 1) % matches.length)
+      return claim()
+    }
+    if (key.name === "tab" || key.name === "right") {
+      // Complete to the highlighted command + a trailing space (ready for args).
+      store.inputControl.current?.seed(`${matches[palIdx]!.name} `)
+      store.setPaletteIndex(0)
+      return claim()
+    }
+  }
+
+  // Enter (no Shift) runs a command / search line outright.
+  if (key.name === "return" && !key.shift && (isCommand || isSearch)) {
+    store.inputControl.current?.seed("")
+    store.setPaletteIndex(0)
+    if (isCommand) {
+      // A bare `:token` runs the *highlighted* command; an args line runs as typed.
+      runCommand(ctx, paletteOpen && matches[palIdx] !== undefined ? matches[palIdx]!.name : text)
+    } else {
+      runSearch(store, text.slice(1))
+    }
+    return claim()
+  }
+
+  // Single-line ordinary buffer: ↑/↓ recall sent-message history.
+  if (!key.shift && !isCommand && !isSearch && !text.includes("\n")) {
+    if (key.name === "up") {
+      const r = historyPrev(store.history(), text)
+      if (r !== undefined) {
+        store.setHistory(r.history)
+        store.inputControl.current?.seed(r.text)
+      }
+      return claim()
+    }
+    if (key.name === "down") {
+      const r = historyNext(store.history())
+      if (r !== undefined) {
+        store.setHistory(r.history)
+        store.inputControl.current?.seed(r.text)
+      }
+      return claim()
+    }
+  }
+  return false
+}
+
+/**
  * Root key dispatch — the global precedence the focused `<textarea>` doesn't
- * consume. Order: overlay → quit → interrupt → pane focus → side/conversation
- * nav → zoom. Vim modal editing is deferred; the read-only panes route only
- * scroll / fold / search / context-viewer keys.
+ * consume. Order: overlay → quit → interrupt → pane focus → input keys →
+ * side/conversation nav → zoom. Vim modal editing is deferred; the read-only
+ * panes route only scroll / fold / search / context-viewer keys.
  */
 export const dispatch = (ctx: TuiContext, key: Key): void => {
   const { store } = ctx
@@ -393,6 +478,13 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
     store.setFocus("input")
     store.setMode("insert")
     store.inputControl.current?.seed("/")
+    return
+  }
+
+  // Input pane (INSERT): palette nav/complete/run + prompt-history recall, claimed
+  // before the textarea (via preventDefault) so the right keys reach the command
+  // line instead of inserting a newline / moving the cursor.
+  if (store.focus() === "input" && store.overlay().kind === "none" && inputKey(ctx, key)) {
     return
   }
 
