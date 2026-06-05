@@ -177,18 +177,79 @@ export const itemText = (item: ConversationItem): string => {
   return parts.join(" ")
 }
 
-/** Every foldable section id in render order — drives fold-all / unfold-all. */
-export const foldableIds = (items: ReadonlyArray<ConversationItem>): string[] => {
-  const ids: string[] = []
+/**
+ * Foldable ids split by kind — drives fold-all / unfold-all (`Z`). The two kinds
+ * have **opposite defaults**: a turn defaults expanded (its id ∈ `collapsed` ⇒
+ * folded), a tool group defaults collapsed to its one-line summary (its id ∈
+ * `collapsed` ⇒ expanded). So `Z` can't treat them uniformly — it folds every
+ * turn + collapses every group ("compact"), then expands both, by setting the
+ * right membership per kind.
+ */
+export const foldIdsByKind = (
+  items: ReadonlyArray<ConversationItem>,
+): { readonly turns: ReadonlyArray<string>; readonly groups: ReadonlyArray<string> } => {
+  const turns: string[] = []
+  const groups: string[] = []
   for (const item of items) {
     if (item.kind === "turn") {
-      ids.push(item.id)
-      for (const b of item.body) if (b.kind === "toolGroup") ids.push(b.id)
+      turns.push(item.id)
+      for (const b of item.body) if (b.kind === "toolGroup") groups.push(b.id)
     } else if (item.kind === "loose") {
-      for (const b of item.body) if (b.kind === "toolGroup") ids.push(b.id)
+      for (const b of item.body) if (b.kind === "toolGroup") groups.push(b.id)
     }
   }
-  return ids
+  return { turns, groups }
+}
+
+/** A tool call's short verb for the group summary: the head of its `ToolName(arg)`
+ *  label, lowercased — `Edit(a.ts)` → `edit`, `Bash(npm i)` → `bash`. */
+const toolVerb = (label: string): string => {
+  const i = label.indexOf("(")
+  return (i === -1 ? label : label.slice(0, i)).toLowerCase()
+}
+
+/** Aggregate state of a tool group: error if any failed, else running if any is
+ *  still in flight, else ok. Drives the collapsed summary's caret colour. */
+export const toolGroupState = (tools: ReadonlyArray<ToolBlock>): ToolPillState =>
+  tools.some((t) => t.state === "error")
+    ? "error"
+    : tools.some((t) => t.state === "running")
+      ? "running"
+      : "ok"
+
+/**
+ * The one-line summary a collapsed tool group shows, e.g.
+ * `read · grep · edit  (3 tools, +5 -2)`. Names each call's verb (consecutive
+ * repeats collapse to `read ×3`), counts the calls, rolls up the edit diffstat
+ * parsed from the per-tool `+a/-b` detail, and surfaces any still-running /
+ * failed counts so a fold never hides a problem.
+ */
+export const toolGroupSummary = (tools: ReadonlyArray<ToolBlock>): string => {
+  const runs: Array<{ verb: string; n: number }> = []
+  for (const t of tools) {
+    const verb = toolVerb(t.toolName)
+    const last = runs[runs.length - 1]
+    if (last !== undefined && last.verb === verb) last.n += 1
+    else runs.push({ verb, n: 1 })
+  }
+  const verbs = runs.map((r) => (r.n > 1 ? `${r.verb} ×${r.n}` : r.verb)).join(" · ")
+
+  let added = 0
+  let removed = 0
+  for (const t of tools) {
+    const m = t.detail?.match(/\+(\d+)\/-(\d+)/)
+    if (m) {
+      added += Number(m[1])
+      removed += Number(m[2])
+    }
+  }
+  const meta: string[] = [`${tools.length} tools`]
+  if (added > 0 || removed > 0) meta.push(`+${added} -${removed}`)
+  const running = tools.filter((t) => t.state === "running").length
+  const failed = tools.filter((t) => t.state === "error").length
+  if (running > 0) meta.push(`${running} running`)
+  if (failed > 0) meta.push(`${failed} failed`)
+  return `${verbs}  (${meta.join(", ")})`
 }
 
 /**

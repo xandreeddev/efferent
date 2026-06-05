@@ -4,6 +4,8 @@ import {
   buildConversation,
   buildConversationRows,
   conversationItemId,
+  toolGroupState,
+  toolGroupSummary,
   type BodyItem,
   type ScrollbackBlock,
   type ToolBlock,
@@ -108,10 +110,11 @@ const Block = (props: { block: ScrollbackBlock }) => {
       return <ToolPill tool={b} />
     case "info":
       // An ephemeral system note (resume/built/quit hints — never persisted).
-      // Rendered as a first-class rail line (● marker, its own colour) with a
-      // blank line BEFORE it so it isn't glued to the message above.
+      // A first-class rail line: ● marker in its own colour. The blank line
+      // before it comes from the body-item spacing (every item is marginTop:1),
+      // so it isn't glued to the message above.
       return (
-        <box flexDirection="row" marginTop={1}>
+        <box flexDirection="row">
           <text fg={tokens.info}>{`${glyph.railDot} ${b.text}`}</text>
         </box>
       )
@@ -128,20 +131,45 @@ const Block = (props: { block: ScrollbackBlock }) => {
   }
 }
 
+/**
+ * A run of ≥2 tool calls, aggregated. Collapsed BY DEFAULT to a one-line summary
+ * (`▸ read · grep · edit  (3 tools, +5 -2)`) — the caret coloured by the group's
+ * aggregate state so a failure/running call still shows through the fold. Tab/↵
+ * (membership in `collapsed` ⇒ expanded, the inverse polarity of a turn) opens it
+ * to the individual pills, each spaced by a blank line.
+ */
+const ToolGroupView = (props: { item: Extract<BodyItem, { kind: "toolGroup" }>; collapsed: Set<string> }) => {
+  const item = props.item
+  const expanded = () => props.collapsed.has(item.id)
+  return (
+    <box flexDirection="column">
+      <box flexDirection="row">
+        <text fg={tokens.state[toolGroupState(item.tools)]}>
+          {`${expanded() ? glyph.fold.open : glyph.fold.closed} `}
+        </text>
+        <text fg={tokens.text.muted} flexGrow={1} wrapMode="word">
+          {toolGroupSummary(item.tools)}
+        </text>
+      </box>
+      <Show when={expanded()}>
+        <box flexDirection="column" marginLeft={2}>
+          <For each={item.tools}>
+            {(t) => (
+              <box marginTop={1}>
+                <ToolPill tool={t} />
+              </box>
+            )}
+          </For>
+        </box>
+      </Show>
+    </box>
+  )
+}
+
 const BodyItemView = (props: { item: BodyItem; collapsed: Set<string> }) => {
   const item = props.item
   if (item.kind === "toolGroup") {
-    const folded = () => props.collapsed.has(item.id)
-    return (
-      <box flexDirection="column">
-        <text fg={tokens.text.muted}>
-          {`${folded() ? glyph.fold.closed : glyph.fold.open} ${item.tools.length} tool calls`}
-        </text>
-        <Show when={!folded()}>
-          <For each={item.tools}>{(t) => <ToolPill tool={t} />}</For>
-        </Show>
-      </box>
-    )
+    return <ToolGroupView item={item} collapsed={props.collapsed} />
   }
   return <Block block={item.block} />
 }
@@ -213,7 +241,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const id = conversationItemId(item, i())
             if (item.kind === "checkpoint") {
               return (
-                <box id={id} {...cursorBg(id)}>
+                <box id={id} marginTop={1} {...cursorBg(id)}>
                   <text fg={tokens.text.muted}>{`${glyph.handoff} ${item.text}`}</text>
                 </box>
               )
@@ -223,7 +251,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                 <box id={id} flexDirection="column">
                   <For each={item.body}>
                     {(b) => (
-                      <box id={b.id} {...cursorBg(b.id)}>
+                      <box id={b.id} marginTop={1} {...cursorBg(b.id)}>
                         <BodyItemView item={b} collapsed={store.collapsed()} />
                       </box>
                     )}
@@ -245,7 +273,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                   <box flexDirection="column">
                     <For each={item.body}>
                       {(b) => (
-                        <box id={b.id} {...cursorBg(b.id)}>
+                        <box id={b.id} marginTop={1} {...cursorBg(b.id)}>
                           <BodyItemView item={b} collapsed={store.collapsed()} />
                         </box>
                       )}
