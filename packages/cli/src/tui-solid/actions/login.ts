@@ -152,7 +152,19 @@ export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider
       })
     })
     const waiter = Effect.gen(function* () {
-      const { code } = yield* Effect.promise(() => server.waitForCode)
+      const { code, state } = yield* Effect.promise(() => server.waitForCode)
+      // CSRF / authorization-code-injection guard: the callback `state` must echo
+      // the PKCE verifier we generated (the protocol uses verifier-as-state). A
+      // mismatch means the redirect didn't originate from the login we started, so
+      // reject without exchanging the code.
+      if (state !== begun.verifier) {
+        yield* Effect.sync(() => {
+          server.stop()
+          store.run.setOAuth(undefined)
+          failLogin(store, "OAuth state mismatch — the login callback didn't match this session; run :login again.")
+        })
+        return
+      }
       yield* finishOAuth(store, provider, code, begun.verifier, server.stop)
     })
     const fiber = yield* Effect.forkDaemon(waiter)
@@ -172,9 +184,30 @@ export const completeOAuthManual = (store: TuiStore, provider: Provider, redirec
       )
       return
     }
-    if (session !== undefined) yield* Fiber.interrupt(session.fiber)
-    const verifier = session?.verifier ?? parsed.state ?? ""
-    yield* finishOAuth(store, provider, parsed.code, verifier, session?.stop ?? (() => {}))
+    // PKCE needs the verifier from the login WE started. Without an in-flight
+    // session there's nothing to bind the code to — refuse rather than fall back
+    // to a pasted `state` as the verifier (which would defeat PKCE entirely).
+    if (session === undefined) {
+      yield* Effect.sync(() =>
+        store.pushBlock({
+          kind: "error",
+          text: "no in-flight login to complete — run :login again, then paste the redirect.",
+        }),
+      )
+      return
+    }
+    // When the pasted redirect carries a `state`, it must echo our verifier.
+    if (parsed.state !== undefined && parsed.state !== session.verifier) {
+      yield* Effect.sync(() =>
+        store.pushBlock({
+          kind: "error",
+          text: "OAuth state mismatch — that redirect doesn't match this login; run :login again.",
+        }),
+      )
+      return
+    }
+    yield* Fiber.interrupt(session.fiber)
+    yield* finishOAuth(store, provider, parsed.code, session.verifier, session.stop)
   })
 
 /** Tear down an in-flight OAuth login (callback server + waiter) on cancel. */
