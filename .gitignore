@@ -34,3 +34,6 @@ pg-data/
 test.db
 test.db-shm
 test.db-wal
+
+# Scratch handoff notes — session-local, never committed
+HANDOFF.md
