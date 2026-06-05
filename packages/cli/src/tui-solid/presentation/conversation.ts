@@ -18,6 +18,8 @@
  * by id (never spliced) — the same guarantee the old `blockSeq` WeakMap gave.
  */
 
+import type { NavRow } from "./paneNav.js"
+
 export type ToolPillState = "running" | "ok" | "error"
 
 export type ScrollbackBlock =
@@ -187,4 +189,33 @@ export const foldableIds = (items: ReadonlyArray<ConversationItem>): string[] =>
     }
   }
   return ids
+}
+
+/**
+ * Flatten the conversation into the navigable rows the fold cursor moves over —
+ * one row per logical "paragraph". A `turn` yields a foldable header row (a `[`/
+ * `]` message stop) then, when expanded, one row per body item (a `toolGroup` is
+ * itself foldable); a `loose` run yields its body rows (the first a head); a
+ * `checkpoint` is a single head row. Each `key` equals the rendered box id, so
+ * the cursor tint + `scrollChildIntoView` line up; `{`/`}` step rows, `[`/`]`
+ * jump head-to-head.
+ */
+export const buildConversationRows = (
+  items: ReadonlyArray<ConversationItem>,
+  collapsed: ReadonlySet<string>,
+): ReadonlyArray<NavRow> => {
+  const rows: NavRow[] = []
+  const bodyRow = (b: BodyItem, head: boolean): NavRow =>
+    b.kind === "toolGroup" ? { key: b.id, foldId: b.id, head } : { key: b.id, head }
+  for (const item of items) {
+    if (item.kind === "checkpoint") {
+      rows.push({ key: item.id, head: true })
+    } else if (item.kind === "turn") {
+      rows.push({ key: item.id, foldId: item.id, head: true })
+      if (!collapsed.has(item.id)) item.body.forEach((b) => rows.push(bodyRow(b, false)))
+    } else {
+      item.body.forEach((b, k) => rows.push(bodyRow(b, k === 0)))
+    }
+  }
+  return rows
 }

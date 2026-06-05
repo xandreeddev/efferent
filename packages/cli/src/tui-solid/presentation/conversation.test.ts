@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   buildConversation,
+  buildConversationRows,
   foldableIds,
   type ScrollbackBlock,
 } from "./conversation.js"
@@ -96,5 +97,38 @@ describe("foldableIds", () => {
     ])
     // checkpoint item + a loose run with one tool group
     expect(foldableIds(items)).toEqual(["grp:9"])
+  })
+})
+
+describe("buildConversationRows — the fold-cursor row list", () => {
+  test("turn header + its body rows; the header is a foldable head, bodies aren't", () => {
+    const rows = buildConversationRows(buildConversation(turnWithThreeTools()), new Set())
+    expect(rows.map((r) => r.key)).toEqual(["turn:0", "b:1", "grp:1"])
+    // turn header: head + foldable; assistant block: plain; tool group: foldable
+    expect(rows[0]).toMatchObject({ key: "turn:0", foldId: "turn:0", head: true })
+    expect(rows[1]).toMatchObject({ key: "b:1", head: false })
+    expect(rows[1]!.foldId).toBeUndefined()
+    expect(rows[2]).toMatchObject({ key: "grp:1", foldId: "grp:1", head: false })
+  })
+
+  test("a folded turn hides its body rows (just the header remains)", () => {
+    const rows = buildConversationRows(buildConversation(turnWithThreeTools()), new Set(["turn:0"]))
+    expect(rows.map((r) => r.key)).toEqual(["turn:0"])
+  })
+
+  test("checkpoints and loose-run starts are heads (the [] stops)", () => {
+    const rows = buildConversationRows(
+      buildConversation([
+        { kind: "checkpoint", text: "summary" },
+        tool("9", "read x"),
+        tool("10", "read y"),
+      ]),
+      new Set(),
+    )
+    // checkpoint head, then the loose run's single tool group (its first row a head)
+    expect(rows.map((r) => ({ key: r.key, head: r.head ?? false }))).toEqual([
+      { key: "b:0", head: true },
+      { key: "grp:9", head: true },
+    ])
   })
 })

@@ -13,7 +13,8 @@ import {
   stackToEnd,
   stackToTop,
 } from "../presentation/sidePane.js"
-import { buildConversation, foldableIds } from "../presentation/conversation.js"
+import { buildConversation, buildConversationRows, foldableIds } from "../presentation/conversation.js"
+import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { buildFromSelection } from "../actions/session.js"
 import { clearSearch, cycleSearch } from "../actions/search.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -30,26 +31,35 @@ const toggleFoldAll = (store: TuiStore): void => {
   store.setCollapsed(anyFolded ? new Set() : new Set(ids))
 }
 
+/** The conversation's navigable rows + the clamped fold-cursor index. */
+const convNav = (store: TuiStore) => {
+  const rows = buildConversationRows(buildConversation(store.blocks()), store.collapsed())
+  return { rows, cursor: clampCursor(rows.length, store.convCursor()) }
+}
+
 /**
- * Conversation-pane navigation (NORMAL, vim deferred). Drives the scroller the
- * pane registered: j/k·↑/↓ scroll a line, Ctrl-D/U a half page, PgUp/PgDn a
- * page, gg/G top/bottom. `Z` folds/unfolds all turns. When a search is active,
- * n/N cycle matches and Esc clears it. Returns true iff it consumed the key.
+ * Conversation-pane navigation (NORMAL). Two decoupled things, vim-style:
+ * `j/k`·↑/↓ scroll a line, Ctrl-D/U a half page, PgUp/PgDn a page (the viewport);
+ * `{`/`}` step the fold cursor by paragraph, `[`/`]` by message, gg/G to the
+ * first/last unit (the cursor — the view scrolls it into view). Tab/Enter/h/l·←→
+ * fold the unit under the cursor; `Z` folds/unfolds all. While a search is
+ * active, n/N cycle matches and Esc clears it. Returns true iff it consumed the
+ * key.
  */
 const conversationKey = (ctx: TuiContext, key: Key): boolean => {
   const { store } = ctx
   const scr = store.convScroller.current
 
-  // `G` → bottom; `g` arms a `gg` two-stroke (→ top).
+  // `G` → last unit; `g` arms a `gg` two-stroke (→ first unit).
   if (key.name === "g" && key.shift) {
     store.setGPending(false)
-    scr?.scrollToBottom()
+    store.setConvCursor(rowToEnd(convNav(store).rows))
     return true
   }
   if (key.name === "g" && !key.ctrl && !key.meta) {
     if (store.gPending()) {
       store.setGPending(false)
-      scr?.scrollToTop()
+      store.setConvCursor(rowToTop())
     } else {
       store.setGPending(true)
     }
@@ -69,9 +79,23 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
     }
   }
 
-  const rows = scr?.viewportRows() ?? 20
-  const half = Math.max(1, Math.floor(rows / 2))
-  const page = Math.max(1, Math.floor(rows * 0.9))
+  // `{`/`}` paragraph step · `[`/`]` message step (move the fold cursor).
+  const bracket = bracketMotion(key)
+  if (bracket !== undefined) {
+    const { rows, cursor } = convNav(store)
+    store.setConvCursor(
+      bracket === "paragraph-prev"
+        ? stepRow(rows, cursor, -1)
+        : bracket === "paragraph-next"
+          ? stepRow(rows, cursor, 1)
+          : stepHead(rows, cursor, bracket === "message-next" ? 1 : -1),
+    )
+    return true
+  }
+
+  const vrows = scr?.viewportRows() ?? 20
+  const half = Math.max(1, Math.floor(vrows / 2))
+  const page = Math.max(1, Math.floor(vrows * 0.9))
 
   switch (key.name) {
     case "j":
@@ -96,6 +120,18 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
     case "pageup":
       scr?.scrollBy(-page)
       return true
+    case "tab":
+    case "h":
+    case "l":
+    case "left":
+    case "right":
+    case "return": {
+      // Fold the turn / tool-group under the cursor (no-op on a leaf row).
+      const { rows, cursor } = convNav(store)
+      const next = foldAt(rows, cursor, store.collapsed())
+      if (next !== store.collapsed()) store.setCollapsed(new Set(next))
+      return true
+    }
     case "z":
       // `Z` folds all; plain `z` falls through to the zoom toggle below.
       if (!key.shift) return false
@@ -300,6 +336,9 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
   if (key.ctrl && (key.name === "h" || key.name === "k" || key.name === "up")) {
     store.setFocus("conversation")
     store.setMode("normal")
+    // Land the fold cursor on the newest unit (bottom, where sticky-scroll sits)
+    // so re-entering the pane shows the cursor on-screen, not off at the top.
+    store.setConvCursor(rowToEnd(convNav(store).rows))
     return
   }
   if (key.ctrl && (key.name === "l" || key.name === "right")) {
