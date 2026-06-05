@@ -1,4 +1,4 @@
-import { emptyTree, type ExecutionTree } from "./executionTree.js"
+import { emptyTree, type ExecutionTree, type TreeNode } from "./executionTree.js"
 import {
   archivedTurnRanges,
   buildContextRowsData,
@@ -6,6 +6,7 @@ import {
   type ContextSegment,
   handoffOwningTurn,
 } from "./contextView.js"
+import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
 
 export interface SidePaneInstruction {
   readonly path: string
@@ -209,6 +210,17 @@ export const sideCursorToEnd = (nav: SidePaneNav, projection: SidePaneProjection
   const n = contextRows(nav, projection).length
   return { ...nav, contextCursor: Math.max(0, n - 1) }
 }
+/** `[`/`]` — jump the context cursor to the prev/next head (a segment or turn row). */
+export const sideCursorToHead = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  dir: 1 | -1,
+): SidePaneNav => {
+  const heads = contextRows(nav, projection).map((r) => ({
+    head: r.kind === "segment" || r.kind === "turn",
+  }))
+  return { ...nav, contextCursor: stepHead(heads, nav.contextCursor, dir) }
+}
 /** Fold/unfold the segment under the cursor (no-op on non-collapsible rows). */
 export const sideToggleNode = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
   const rows = contextRows(nav, projection)
@@ -269,5 +281,151 @@ export const sideToggleSelect = (nav: SidePaneNav, projection: SidePaneProjectio
   }
 
   return nav
+}
+
+// --- Activity (stack) view navigation (pure; rows re-derived each call) ---
+
+/**
+ * The display payload for one Activity row, discriminated by kind. Structured
+ * (not pre-styled) so the view computes the live bits itself — the running-node
+ * spinner frame and the elapsed duration must update per frame, so they can't be
+ * baked into a pure row. `node` rows carry the whole {@link TreeNode}; the view
+ * renders just that node's own line (children are their own flattened rows).
+ */
+export type StackRowDisplay =
+  | { readonly kind: "node"; readonly node: TreeNode; readonly folded: boolean }
+  | {
+      readonly kind: "section"
+      readonly label: string
+      readonly count: number
+      readonly folded: boolean
+      readonly summary?: string
+    }
+  | { readonly kind: "file"; readonly file: FileChange }
+  | { readonly kind: "skill"; readonly name: string }
+  | { readonly kind: "instruction"; readonly path: string }
+
+/** One navigable Activity row: a {@link NavRow} (key/foldId/head) + indent depth
+ *  + its structured display. Foldable rows carry `foldId` (`node:<id>` or the
+ *  section name); top-level rows (tree roots + section headers) are `head`s. */
+export interface StackRowData {
+  readonly key: string
+  readonly depth: number
+  readonly foldId?: string
+  readonly head?: boolean
+  readonly display: StackRowDisplay
+}
+
+/**
+ * Flatten the Activity dashboard into ordered navigable rows, honouring
+ * `stackCollapsed` (folded tree containers + section headers). Mirrors
+ * `Activity.tsx`'s render order exactly so the cursor index ↔ rendered row line
+ * up: the execution tree (depth-first; `turn`/`subagent` are foldable
+ * containers, `tool`/`skill` are leaves), then the `files`/`skills`/
+ * `instructions` section headers with their child rows when expanded.
+ */
+export const buildStackRowsData = (
+  projection: SidePaneProjection,
+  collapsed: ReadonlySet<string>,
+): ReadonlyArray<StackRowData> => {
+  const rows: StackRowData[] = []
+
+  const walk = (node: TreeNode, depth: number): void => {
+    const container = node.kind === "turn" || node.kind === "subagent"
+    const foldId = container ? `node:${node.id}` : undefined
+    const folded = foldId !== undefined && collapsed.has(foldId)
+    rows.push({
+      key: `stack:node:${node.id}`,
+      depth,
+      ...(foldId !== undefined ? { foldId } : {}),
+      head: depth === 0,
+      display: { kind: "node", node, folded },
+    })
+    if (!folded) for (const child of node.children) walk(child, depth + 1)
+  }
+  for (const root of projection.tree.roots) walk(root, 0)
+
+  const section = (
+    id: "files" | "skills" | "instructions",
+    count: number,
+    summary: string | undefined,
+    children: () => void,
+  ): void => {
+    const folded = collapsed.has(id)
+    rows.push({
+      key: `stack:section:${id}`,
+      depth: 0,
+      foldId: id,
+      head: true,
+      display: { kind: "section", label: id, count, folded, ...(summary ? { summary } : {}) },
+    })
+    if (!folded) children()
+  }
+
+  const files = projection.filesChanged
+  const totals = files.reduce(
+    (a, f) => ({ added: a.added + f.added, removed: a.removed + f.removed }),
+    { added: 0, removed: 0 },
+  )
+  section(
+    "files",
+    files.length,
+    files.length > 0 ? ` +${totals.added}/-${totals.removed}` : undefined,
+    () =>
+      files.forEach((file, i) =>
+        rows.push({ key: `stack:file:${i}`, depth: 1, display: { kind: "file", file } }),
+      ),
+  )
+  section("skills", projection.skillsLoaded.length, undefined, () =>
+    projection.skillsLoaded.forEach((name, i) =>
+      rows.push({ key: `stack:skill:${i}`, depth: 1, display: { kind: "skill", name } }),
+    ),
+  )
+  section("instructions", projection.instructions.length, undefined, () =>
+    projection.instructions.forEach((ins, i) =>
+      rows.push({
+        key: `stack:instr:${i}`,
+        depth: 1,
+        display: { kind: "instruction", path: ins.path },
+      }),
+    ),
+  )
+  return rows
+}
+
+export const stackRows = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): ReadonlyArray<StackRowData> => buildStackRowsData(projection, nav.stackCollapsed)
+
+/** `{`/`}` (and plain `j`/`k`, one line == one row here) — paragraph step. */
+export const stackParagraph = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  delta: number,
+): SidePaneNav => ({ ...nav, stackCursor: stepRow(stackRows(nav, projection), nav.stackCursor, delta) })
+/** `[`/`]` — jump to the prev/next head (tree root or section header). */
+export const stackMessage = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  dir: 1 | -1,
+): SidePaneNav => ({ ...nav, stackCursor: stepHead(stackRows(nav, projection), nav.stackCursor, dir) })
+export const stackToTop = (nav: SidePaneNav): SidePaneNav => ({ ...nav, stackCursor: rowToTop() })
+export const stackToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
+  ...nav,
+  stackCursor: rowToEnd(stackRows(nav, projection)),
+})
+/** `⇥`/`↵` — fold the tree container / section under the cursor (no-op on leaves). */
+export const stackFold = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
+  ...nav,
+  stackCollapsed: foldAt(stackRows(nav, projection), nav.stackCursor, nav.stackCollapsed),
+})
+/** The row under the cursor (for the driver's `↵` fold-or-noop decision). */
+export const stackCurrentRow = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): StackRowData | undefined => {
+  const rows = stackRows(nav, projection)
+  return rows[clampCursor(rows.length, nav.stackCursor)]
 }
 

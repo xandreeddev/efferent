@@ -1,15 +1,23 @@
 import {
   sideCursorMove,
   sideCursorToEnd,
+  sideCursorToHead,
   sideCursorToTop,
   sideCurrentRow,
   sideToggleNode,
   sideToggleSelect,
+  stackCurrentRow,
+  stackFold,
+  stackMessage,
+  stackParagraph,
+  stackToEnd,
+  stackToTop,
 } from "../presentation/sidePane.js"
 import { buildConversation, foldableIds } from "../presentation/conversation.js"
 import { buildFromSelection } from "../actions/session.js"
 import { clearSearch, cycleSearch } from "../actions/search.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
+import { bracketMotion } from "./brackets.js"
 import { overlayKey } from "./overlay.js"
 import type { Key } from "./ParsedKey.js"
 
@@ -125,6 +133,25 @@ const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
   }
   store.setGPending(false)
 
+  // `{`/`}` paragraph step (one row) · `[`/`]` message step (segment/turn head).
+  const bracket = bracketMotion(key)
+  if (bracket === "paragraph-prev") {
+    store.setNav((n) => sideCursorMove(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "paragraph-next") {
+    store.setNav((n) => sideCursorMove(n, store.projection(), 1))
+    return true
+  }
+  if (bracket === "message-prev") {
+    store.setNav((n) => sideCursorToHead(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "message-next") {
+    store.setNav((n) => sideCursorToHead(n, store.projection(), 1))
+    return true
+  }
+
   switch (key.name) {
     case "j":
     case "down":
@@ -154,6 +181,80 @@ const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
     case "b":
       void ctx.run(buildFromSelection(store, store.status().cwd))
       return true
+    case "i":
+      store.setFocus("input")
+      store.setMode("insert")
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * Activity (stack) view navigation when the side pane is focused (NORMAL). The
+ * same motion vocabulary as the context viewer minus select/build: j/k·`{}` step
+ * one row, `[]` jumps the prev/next tree-root or section head, gg/G jump to the
+ * ends, Tab/Enter/h/l·←/→ fold the container/section under the cursor, i drops to
+ * the input. Returns true iff it consumed the key.
+ */
+const sideStackKey = (ctx: TuiContext, key: Key): boolean => {
+  const { store } = ctx
+
+  if (key.name === "g" && key.shift) {
+    store.setGPending(false)
+    store.setNav((n) => stackToEnd(n, store.projection()))
+    return true
+  }
+  if (key.name === "g" && !key.ctrl && !key.meta) {
+    if (store.gPending()) {
+      store.setGPending(false)
+      store.setNav(stackToTop)
+    } else {
+      store.setGPending(true)
+    }
+    return true
+  }
+  store.setGPending(false)
+
+  const bracket = bracketMotion(key)
+  if (bracket === "paragraph-prev") {
+    store.setNav((n) => stackParagraph(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "paragraph-next") {
+    store.setNav((n) => stackParagraph(n, store.projection(), 1))
+    return true
+  }
+  if (bracket === "message-prev") {
+    store.setNav((n) => stackMessage(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "message-next") {
+    store.setNav((n) => stackMessage(n, store.projection(), 1))
+    return true
+  }
+
+  switch (key.name) {
+    case "j":
+    case "down":
+      store.setNav((n) => stackParagraph(n, store.projection(), 1))
+      return true
+    case "k":
+    case "up":
+      store.setNav((n) => stackParagraph(n, store.projection(), -1))
+      return true
+    case "tab":
+    case "h":
+    case "l":
+    case "left":
+    case "right":
+      store.setNav((n) => stackFold(n, store.projection()))
+      return true
+    case "return": {
+      const row = stackCurrentRow(store.nav(), store.projection())
+      if (row?.foldId !== undefined) store.setNav((n) => stackFold(n, store.projection()))
+      return true
+    }
     case "i":
       store.setFocus("input")
       store.setMode("insert")
@@ -219,6 +320,17 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
     store.focus() === "side" &&
     store.sidePane().view === "context" &&
     sideContextKey(ctx, key)
+  ) {
+    return
+  }
+
+  // Side pane, Activity view: cursor / fold over the live execution dashboard.
+  if (
+    !key.ctrl &&
+    !key.meta &&
+    store.focus() === "side" &&
+    store.sidePane().view === "stack" &&
+    sideStackKey(ctx, key)
   ) {
     return
   }
