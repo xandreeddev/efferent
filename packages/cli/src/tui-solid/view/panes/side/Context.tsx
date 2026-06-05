@@ -120,7 +120,13 @@ export const ContextView = (props: { ctx: TuiContext }) => {
   })
 
   return (
-    <scrollbox ref={sb} scrollY flexGrow={1} flexDirection="column">
+    <scrollbox
+      ref={sb}
+      scrollY
+      flexGrow={1}
+      flexDirection="column"
+      verticalScrollbarOptions={{ visible: false }}
+    >
       <Show
         when={rows().length > 0}
         fallback={<text fg={tokens.text.dim}>(no conversation yet)</text>}

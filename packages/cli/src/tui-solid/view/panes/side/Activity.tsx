@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import type { ScrollBoxRenderable } from "@opentui/core"
-import { createEffect, For, Show } from "solid-js"
+import { createEffect, For, on, Show } from "solid-js"
 import { formatTokens, gaugeBar } from "../../../presentation/statusBar.js"
 import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
 import {
@@ -142,10 +142,18 @@ export const Activity = (props: { ctx: TuiContext }) => {
   const cursor = () => clampCursor(rows().length, store.nav().stackCursor)
 
   let sb!: ScrollBoxRenderable
-  createEffect(() => {
-    const i = cursor()
-    if (focused() && sb) sb.scrollChildIntoView(`stk-row-${i}`)
-  })
+  // Scroll the cursor into view ONLY when it actually moves (not on every tree
+  // append) — otherwise a streaming run would yank the view back to a stale
+  // cursor and strand the freshly-added bottom nodes. Sticky-bottom owns "follow
+  // new content"; the cursor owns "jump on keypress".
+  createEffect(
+    on(
+      () => store.nav().stackCursor,
+      () => {
+        if (focused() && sb) sb.scrollChildIntoView(`stk-row-${cursor()}`)
+      },
+    ),
+  )
 
   return (
     <>
@@ -154,11 +162,12 @@ export const Activity = (props: { ctx: TuiContext }) => {
       <text flexShrink={0}> </text>
       <scrollbox
         ref={sb}
-        stickyScroll={!focused()}
+        stickyScroll
         stickyStart="bottom"
         scrollY
         flexGrow={1}
         flexDirection="column"
+        verticalScrollbarOptions={{ visible: false }}
       >
         <Show when={store.projection().tree.roots.length === 0}>
           <text fg={tokens.text.dim}>(idle)</text>

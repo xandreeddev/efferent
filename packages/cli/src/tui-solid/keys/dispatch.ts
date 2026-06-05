@@ -52,6 +52,20 @@ const convNav = (store: TuiStore) => {
 }
 
 /**
+ * Move the conversation fold cursor to `next` and scroll that row into view —
+ * **imperatively**, only on a motion keypress. (Scrolling reactively on the
+ * cursor signal would also fire as content streams, fighting the scrollbox's
+ * sticky-bottom and stranding fresh output below the fold.)
+ */
+const moveConvCursor = (store: TuiStore, next: number): void => {
+  const { rows } = convNav(store)
+  const i = clampCursor(rows.length, next)
+  store.setConvCursor(i)
+  const key = rows[i]?.key
+  if (key !== undefined) store.convScroller.current?.scrollIntoView(key)
+}
+
+/**
  * Conversation-pane navigation (NORMAL). Two decoupled things, vim-style:
  * `j/k`·↑/↓ scroll a line, Ctrl-D/U a half page, PgUp/PgDn a page (the viewport);
  * `{`/`}` step the fold cursor by paragraph, `[`/`]` by message, gg/G to the
@@ -67,13 +81,13 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
   // `G` → last unit; `g` arms a `gg` two-stroke (→ first unit).
   if (key.name === "g" && key.shift) {
     store.setGPending(false)
-    store.setConvCursor(rowToEnd(convNav(store).rows))
+    moveConvCursor(store, rowToEnd(convNav(store).rows))
     return true
   }
   if (key.name === "g" && !key.ctrl && !key.meta) {
     if (store.gPending()) {
       store.setGPending(false)
-      store.setConvCursor(rowToTop())
+      moveConvCursor(store, rowToTop())
     } else {
       store.setGPending(true)
     }
@@ -88,7 +102,8 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
   const bracket = bracketMotion(key)
   if (bracket !== undefined) {
     const { rows, cursor } = convNav(store)
-    store.setConvCursor(
+    moveConvCursor(
+      store,
       bracket === "paragraph-prev"
         ? stepRow(rows, cursor, -1)
         : bracket === "paragraph-next"
