@@ -109,8 +109,8 @@ current one (scrolling it into view as it goes):
 
 ## The side pane
 
-The right pane has **two views**: the default **activity dashboard** and the **context
-viewer** (toggled with `:context`).
+The right pane has **three views**: the default **activity dashboard**, the **context
+viewer** (toggled with `:context`), and the **agent context tree** (toggled with `:tree`).
 
 ### Activity (default)
 
@@ -150,6 +150,24 @@ Selecting a **handoff** contributes only its summary (one synthetic message), no
 originals — so a handoff and its own inner turns are mutually exclusive (picking one clears the
 other). The original conversation is never modified; `:build` seeds a *new* one.
 
+### Agent context tree (`:tree`)
+
+A navigable tree of every **sub-agent** this conversation spawned via `run_agent`, persisted
+across sessions. Each node shows its folder, status (`✓` ok / `✗` error / `●` running), how it
+came to be (**spawned** / **branched** / **resumed**), its seed kind, files-changed count, and
+the return summary. Children hang under their parent, so you can see how context branched and
+evolved. The view refreshes live while a run is spawning sub-agents.
+
+| Action | Keys |
+|---|---|
+| Move / fold / jump | `j` `k` · `{` `}` · `[` `]` · `gg` `G` · `⇥`/`↵`/`h`/`l`/`←`/`→` |
+| **Drop** the node + its descendants | `d` (guarded — a running node can't be dropped) |
+| Search the rows | `/` |
+| Back to the composer | `i` |
+
+The agent drives resume/branch itself (`run_agent({ seedFromNode, seedMode: "resume" \| "branch" })`);
+human-initiated re-runs from the tree are on the roadmap.
+
 ---
 
 ## The input composer
@@ -187,6 +205,7 @@ A unique prefix resolves (`:mod` → `:model`).
 | `:reset` | Start a fresh conversation (forgets history) |
 | `:handoff` | Summarize & hand off — replace the loaded history with a brief, keep the originals |
 | `:context` | Toggle the context viewer (turn tree — `Space` select, `b` build) |
+| `:tree` | Toggle the agent context tree (sub-agents: spawned / branched / resumed — `d` drop) |
 | `:build` | Build a new session from the turns selected in `:context` |
 | `:browse` | List the conversations in this workspace |
 | `:resume <#\|id>` | Resume one (a `:browse` number or a raw id) |

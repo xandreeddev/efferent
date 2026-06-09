@@ -7,7 +7,7 @@ description: Owns packages/core/. Pure domain — entities, ports, use cases, pr
 - `entities/` — Schema-backed types and building blocks: `Conversation` (messages/result), `AgentHooks`, `Skill`, `Scope` (the scope-tree node), `Model`, `Settings`. Pure values; no IO.
 - `ports/` — `Context.Tag` services describing capabilities: `ConversationStore`, `FileSystem`, `Shell`, `Http`, `LlmInfo`, `ModelRegistry`, `SettingsStore`. Each port file pairs its tagged errors with the Tag declaration.
 - `usecases/` — Functions returning `Effect.Effect<A, E, Port1 | Port2>`. The loop (`agentLoop.ts`, `runAgent.ts`), the `@effect/ai` toolkit (`codingToolkit.ts` — `Tool.make` defs + `makeCodingHandlers`/`codingToolkitLayer`), the scope machinery (`discoverScopeTree.ts`, `buildScopeRuntime.ts`), agent configs (`agentConfig.ts`, `coderAgentConfig.ts`), discovery (`loadSkills.ts`, `discoverInstructionFiles.ts`), and `promptMapping.ts` (our `AgentMessage` ↔ `@effect/ai` `Prompt`/`Response`).
-- `prompts/` — System-prompt strings/functions (`coder.ts`: `coderSystemPrompt`, `renderScopeSystemPrompt`, `renderDelegationsSection`).
+- `prompts/` — System-prompt strings/functions (`coder.ts`: `coderSystemPrompt`, `renderScopeSystemPrompt`, `subAgentsSection`).
 - `src/index.ts` — public surface; everything other packages import comes through here.
 
 ## Hard rules

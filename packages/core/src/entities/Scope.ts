@@ -12,20 +12,19 @@
  *     confined to its `rootDir`; reads (`read_file`/`grep`/`glob`/`ls`)
  *     stay workspace-wide so a worker can learn from sibling packages.
  *
- * A parent reaches its *direct* children through `delegate_to_<name>`
- * tools; a child's toolkit recursively carries delegate tools for *its*
- * own children. Delegation is ephemeral — the sub-agent runs in a fresh
- * context window (just the task + its scope instructions), keeping noise
- * off the orchestrating thread. It returns a one-line summary plus the
- * files it actually wrote.
+ * Sub-agents are spawned with the generic `run_agent` tool (any folder,
+ * on demand) — a scope is no longer a pre-wired delegation target. The
+ * tree's remaining roles: the root scope anchors the workspace prompt +
+ * binding, and a folder's `SCOPE.md` body is ambient context injected
+ * into any sub-agent that runs scoped there (`getScopePromptBody`).
  *
  * Pure value (`node:path` only); no IO. Built by `discoverScopeTree`,
  * turned into a runnable `{ toolkit, handlerLayer }` by `buildScopeRuntime`.
  */
 export interface Scope {
-  /** Slug used as the delegation tool name (`delegate_to_<name>`). Root: `"root"`. */
+  /** Frontmatter `name` slug — inert metadata now. Root: `"root"`. */
   readonly name: string
-  /** One-line summary used by the parent's prompt to describe when to delegate. */
+  /** Frontmatter one-liner — inert metadata now (kept for prompts/UI hints). */
   readonly description: string
   /** Absolute path; writes + bash by this scope are confined here. Root: the workspace. */
   readonly rootDir: string
@@ -37,6 +36,6 @@ export interface Scope {
   readonly isRoot: boolean
   /** Whether writes are confined to `rootDir`. False for the root (owns everything). */
   readonly enforceWrite: boolean
-  /** Direct children — the scopes this one can `delegate_to_<name>`. */
+  /** Direct children — nested `SCOPE.md` directories under this one. */
   readonly children: ReadonlyArray<Scope>
 }
