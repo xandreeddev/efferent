@@ -1,4 +1,5 @@
 // Entities
+export * from "./entities/AgentContext.js"
 export * from "./entities/AgentHooks.js"
 export * from "./entities/Conversation.js"
 export * from "./entities/Model.js"
@@ -9,6 +10,7 @@ export * from "./entities/Settings.js"
 // Ports
 export * from "./ports/AuthFlow.js"
 export * from "./ports/AuthStore.js"
+export * from "./ports/ContextTreeStore.js"
 export * from "./ports/ConversationStore.js"
 export * from "./ports/FileSystem.js"
 export * from "./ports/Http.js"
