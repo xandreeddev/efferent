@@ -19,6 +19,7 @@ import { storageLabel } from "./presentation/dbStatus.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
+import { makeTuiApproval } from "./approval.js"
 import { makeSubmit } from "./actions/submit.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { makeEventReducer, runEventPump } from "./events/eventPump.js"
@@ -130,6 +131,10 @@ export const runTuiModeSolid = (
         yield* openConversationPicker(store, input.cwd)
       }
 
+      // Interactive bash approval: the agent fiber suspends on the Approval
+      // port; the modal's keys answer through `ctx.resolveApproval`.
+      const approval = makeTuiApproval(store)
+
       const submit = makeSubmit({
         store,
         scopeRuntime,
@@ -137,6 +142,7 @@ export const runTuiModeSolid = (
         eventQueue,
         rootScope: input.rootScope,
         cwd: input.cwd,
+        approvalLayer: approval.layer,
       })
       const reduce = makeEventReducer(store)
 
@@ -162,6 +168,7 @@ export const runTuiModeSolid = (
           store.pushBlock({ kind: "info", text: `copied ${text.length} chars to clipboard` })
           return true
         },
+        resolveApproval: approval.resolve,
       }
 
       // 6. Renderer — owns alt-screen / raw mode / mouse / render loop. No

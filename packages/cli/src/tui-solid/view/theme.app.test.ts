@@ -26,6 +26,7 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   interrupt: () => {},
   exit: () => {},
   copySelection: () => false,
+  resolveApproval: () => {},
 })
 
 test("the App paints under tokyo-night (the reactive token proxy survives the native renderer)", async () => {

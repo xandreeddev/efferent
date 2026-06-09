@@ -1,6 +1,7 @@
 import { Show } from "solid-js"
 import type { Overlay as OverlayState } from "../../state/store.js"
 import type { TuiContext } from "../../state/store.js"
+import { ApprovalView } from "./ApprovalView.js"
 import { SelectList } from "./SelectList.js"
 import { Login } from "./Login.js"
 import { SettingsView } from "./SettingsView.js"
@@ -35,6 +36,9 @@ export const Overlay = (props: { ctx: TuiContext }) => {
         </Show>
         <Show when={o().kind === "settings"}>
           <SettingsView state={(o() as Extract<OverlayState, { kind: "settings" }>).state} />
+        </Show>
+        <Show when={o().kind === "approval"}>
+          <ApprovalView state={(o() as Extract<OverlayState, { kind: "approval" }>).state} />
         </Show>
       </box>
     </Show>

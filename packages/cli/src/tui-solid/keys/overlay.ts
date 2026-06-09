@@ -33,6 +33,13 @@ import {
   toggleAllowBash,
 } from "../actions/settings.js"
 import { advanceLogin, stopOAuthSession } from "../actions/login.js"
+import {
+  backToChoose,
+  beginDenyReason,
+  reasonAppend,
+  reasonBackspace,
+  type ApprovalState,
+} from "../presentation/approvalView.js"
 import type { SelectPurpose, TuiContext } from "../state/store.js"
 import type { Key } from "./ParsedKey.js"
 
@@ -177,6 +184,53 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       return true
     }
     return true
+  }
+
+  if (o.kind === "approval") {
+    const state: ApprovalState = o.state
+    if (state.mode === "deny") {
+      if (key.name === "escape") {
+        store.setOverlay({ kind: "approval", state: backToChoose(state) })
+        return true
+      }
+      if (key.name === "return") {
+        const reason = state.reason.trim()
+        ctx.resolveApproval(reason.length > 0 ? { kind: "deny", reason } : { kind: "deny" })
+        return true
+      }
+      if (key.name === "backspace") {
+        store.setOverlay({ kind: "approval", state: reasonBackspace(state) })
+        return true
+      }
+      const ch = printable(key)
+      if (ch !== undefined) {
+        store.setOverlay({ kind: "approval", state: reasonAppend(state, ch) })
+      }
+      return true
+    }
+    // choose mode: three of the four answers are rules. Esc is a deny — the
+    // safe default for "get this out of my face" must not run the command.
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+      ctx.resolveApproval({ kind: "deny" })
+      return true
+    }
+    if (key.name === "a") {
+      ctx.resolveApproval({ kind: "allow", scope: "once" })
+      return true
+    }
+    if (key.name === "s") {
+      ctx.resolveApproval({ kind: "allow", scope: "session" })
+      return true
+    }
+    if (key.name === "p") {
+      ctx.resolveApproval({ kind: "allow", scope: "project" })
+      return true
+    }
+    if (key.name === "d") {
+      store.setOverlay({ kind: "approval", state: beginDenyReason(state) })
+      return true
+    }
+    return true // a modal owns all input while open
   }
 
   if (o.kind === "settings") {

@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import type { Skill } from "../entities/Skill.js"
+import { Approval, bashRuleKey } from "../ports/Approval.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
@@ -673,6 +674,7 @@ export const makeCodingHandlers = (
     const shell = yield* Shell
     const http = yield* Http
     const webSearch = yield* WebSearchPort
+    const approval = yield* Approval
     const { rootDir, displayRoot, enforceWrite, allowBash } = binding
     const skillByName = new Map(skills.map((s) => [s.name, s] as const))
 
@@ -756,6 +758,24 @@ export const makeCodingHandlers = (
               error: "BashNotAllowed",
               message:
                 "bash execution is disabled in this mode — re-run with --allow-bash to enable",
+            })
+          }
+          // Human approval (interactive modes prompt; headless is allow-all
+          // behind the --allow-bash gate above). A denial is data: the model
+          // reads the reason and adjusts inside the same turn.
+          const decision = yield* approval.request({
+            tool: "Bash",
+            summary: command,
+            cwd: rootDir,
+            ruleKey: bashRuleKey(command),
+          })
+          if (decision.kind === "deny") {
+            return yield* Effect.fail({
+              error: "Denied",
+              message:
+                decision.reason !== undefined && decision.reason.trim().length > 0
+                  ? `the user denied this command: ${decision.reason.trim()} — adjust your approach; don't retry it verbatim.`
+                  : "the user denied this command. Don't retry it verbatim — adjust your approach or ask what they'd prefer.",
             })
           }
           const r = yield* shell.exec({

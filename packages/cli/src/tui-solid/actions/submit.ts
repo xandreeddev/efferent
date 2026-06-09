@@ -1,11 +1,13 @@
-import { Effect, Queue } from "effect"
+import { Effect, Queue, type Layer } from "effect"
 import {
   AuthStore,
   buildScopeRuntime,
   coderAgentConfig,
   runAgent,
   type AgentHooks,
+  type Approval,
   type Scope,
+  type SettingsStore,
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
@@ -19,6 +21,8 @@ export interface SubmitDeps {
   readonly eventQueue: Queue.Queue<AgentEvent>
   readonly rootScope: Scope
   readonly cwd: string
+  /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
+  readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore>
 }
 
 /**
@@ -33,7 +37,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, approvalLayer } = deps
 
   const submit = (text: string): Effect.Effect<void, never, AppServices> =>
     Effect.gen(function* () {
@@ -87,6 +91,10 @@ export const makeSubmit = (
         cwd,
       ).pipe(
         Effect.provide(scopeRuntime.handlerLayer),
+        // Approval provided AFTER the handler layer so it satisfies both the
+        // root build above and the nested child-handler builds that resolve
+        // it from the running fiber's context during run_agent spawns.
+        Effect.provide(approvalLayer),
         Effect.catchAll((err) => {
           const msg = formatFullError(err)
           return Effect.logError(msg).pipe(

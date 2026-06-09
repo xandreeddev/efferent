@@ -29,6 +29,12 @@ export const Settings = Schema.Struct({
         "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap. Unset → 500000.",
     }),
   ),
+  approvedBashRules: Schema.optional(
+    Schema.Array(Schema.String).annotations({
+      description:
+        "Bash approval rules allowed for this project ('cmd:bun test', 'exact:…') — written by the TUI approval modal's 'always allow in this project' answer.",
+    }),
+  ),
   editorMode: EditorMode.annotations({
     description: "TUI input editor mode: 'insert' (default emacs-style) or 'vi' (modal vi-lite).",
   }),

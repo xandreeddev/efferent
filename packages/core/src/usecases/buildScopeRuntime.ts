@@ -12,6 +12,7 @@ import type {
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { Scope } from "../entities/Scope.js"
 import { renderScopeSystemPrompt } from "../prompts/coder.js"
+import type { Approval } from "../ports/Approval.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
@@ -54,7 +55,7 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    FileSystem | Shell | Http | WebSearch | ContextTreeStore
+    FileSystem | Shell | Http | WebSearch | ContextTreeStore | Approval
   >
 }
 

@@ -26,6 +26,7 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   interrupt: () => {},
   exit: onExit,
   copySelection: () => false,
+  resolveApproval: () => {},
 })
 
 test(":clear empties the conversation", () => {

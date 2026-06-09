@@ -23,6 +23,7 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   interrupt: () => {},
   exit: () => {},
   copySelection: () => false,
+  resolveApproval: () => {},
 })
 
 /**

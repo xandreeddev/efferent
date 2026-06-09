@@ -1,6 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
+  ApprovalAllowAllLive,
   ContextTreeStore,
   ConversationId,
   ConversationStore,
@@ -80,6 +81,9 @@ export const runJsonMode = (
       input.cwd,
     ).pipe(
       Effect.provide(runtime.handlerLayer),
+      // Headless: --allow-bash already encodes the standing decision; the
+      // Approval port answers allow-all behind that gate (no prompts in CI).
+      Effect.provide(ApprovalAllowAllLive),
       Effect.catchAll((err) =>
         Effect.gen(function* () {
           const msg =

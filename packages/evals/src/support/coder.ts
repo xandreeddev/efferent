@@ -1,6 +1,7 @@
 import { homedir } from "node:os"
 import { Effect, Ref } from "effect"
 import {
+  ApprovalAllowAllLive,
   type AgentHooks,
   buildScopeRuntime,
   coderAgentConfig,
@@ -83,6 +84,8 @@ export const runCoder = (
 
       const result = yield* runAgent(config, id, prompt, hooks, dir).pipe(
         Effect.provide(runtime.handlerLayer),
+        // Evals never prompt: static allow-all approval.
+        Effect.provide(ApprovalAllowAllLive),
       )
 
       const tools = yield* Ref.get(toolsRef)

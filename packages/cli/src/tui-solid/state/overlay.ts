@@ -1,4 +1,5 @@
 import { createSignal, type Accessor } from "solid-js"
+import type { ApprovalState } from "../presentation/approvalView.js"
 import type { SelectState } from "../presentation/selectBox.js"
 import type { LoginFlow } from "../presentation/loginFlow.js"
 import type { SettingsState } from "../presentation/settingsView.js"
@@ -39,6 +40,7 @@ export type Overlay =
     }
   | { readonly kind: "login"; readonly flow: LoginFlow }
   | { readonly kind: "settings"; readonly state: SettingsState }
+  | { readonly kind: "approval"; readonly state: ApprovalState }
 
 export interface OverlaySlice {
   readonly overlay: Accessor<Overlay>
