@@ -33,13 +33,12 @@ export interface SpawnInput {
   readonly seedMessages: ReadonlyArray<AgentMessage>
 }
 
-/** Fields written when a node's run finishes — see {@link ContextTreeStore.recordReturn}. */
+/** Fields written when a node's run finishes — see {@link ContextTreeStore.recordReturn}. `endedAt` is stamped by the store. */
 export interface ContextReturn {
   readonly status: "ok" | "error"
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
   readonly usage?: ContextUsage
-  readonly endedAt: number
 }
 
 /**

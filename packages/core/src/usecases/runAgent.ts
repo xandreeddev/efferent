@@ -6,6 +6,7 @@ import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
+import { RunContextRef } from "./runContext.js"
 import type { AgentConfig } from "./agentConfig.js"
 
 /**
@@ -52,7 +53,16 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       toolkit: config.toolkit,
       maxSteps: settings.maxSteps,
       ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
-    })
+    }).pipe(
+      // Seed the run context so the generic `run_agent` tool tags spawned
+      // context-tree nodes with this conversation (and a null parent — top-level
+      // spawns are tree roots; each spawn re-seeds for its own children).
+      Effect.locally(RunContextRef, {
+        rootConversationId: conversationId,
+        parentNodeId: null,
+        depth: 0,
+      }),
+    )
 
     // Persist only what the loop produced this run. The input was
     // `prefix + active + userMsg`; everything after that is new.

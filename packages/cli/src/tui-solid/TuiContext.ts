@@ -2,6 +2,7 @@ import type { Effect } from "effect"
 import type {
   AuthFlow,
   AuthStore,
+  ContextTreeStore,
   ConversationStore,
   FileSystem,
   Http,
@@ -26,6 +27,7 @@ export type AppServices =
   | Http
   | Shell
   | ConversationStore
+  | ContextTreeStore
   | LanguageModel.LanguageModel
   | SettingsStore
   | ModelRegistry

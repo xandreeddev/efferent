@@ -1,13 +1,18 @@
-import { relative } from "node:path"
+import { basename, resolve } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Layer, Ref, Schema } from "effect"
+import { Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import {
+  ContextNodeId,
+  type ContextUsage,
+} from "../entities/AgentContext.js"
 import type {
   AgentAfterToolCallEvent,
   AgentHooks,
 } from "../entities/AgentHooks.js"
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { Scope } from "../entities/Scope.js"
-import type { Skill } from "../entities/Skill.js"
+import { renderScopeSystemPrompt } from "../prompts/coder.js"
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
@@ -17,88 +22,113 @@ import {
   codingToolkit,
   Failure,
   makeCodingHandlers,
+  type ScopeBinding,
   toFailure,
 } from "./codingToolkit.js"
+import { getScopePromptBody } from "./discoverScopeTree.js"
+import { RunContextRef } from "./runContext.js"
 
 /**
- * A runnable scope: the per-scope `@effect/ai` Toolkit (the base coding
- * tools + a `delegate_to_<child>` tool per direct child) and its handler
- * `Layer`. Provided to a `runAgentLoop` call to make a scope executable.
+ * A runnable scope: the `@effect/ai` Toolkit (base coding tools + the generic
+ * `run_agent` tool) and its handler `Layer`. Provided to a `runAgentLoop` call
+ * to make the root agent executable. Spawning a sub-agent is no longer a static
+ * per-child `delegate_to_<name>` tool — it's the one `run_agent` tool the agent
+ * configures at call time (folder + task), which persists a context-tree node
+ * and runs a folder-scoped loop on demand.
  *
- * The dynamic toolkit can't be precisely typed (its tool set is built at
- * runtime), so we erase to `Record<string, Tool.Any>`. `runAgentLoop` is
- * generic over exactly that, and `failureMode: "return"` makes results
- * model-facing data — so the erasure costs nothing at the call site.
+ * The dynamic toolkit can't be precisely typed, so we erase to
+ * `Record<string, Tool.Any>`; `failureMode: "return"` makes results model-facing
+ * data, so the erasure costs nothing at the call site.
  */
 export interface ScopeRuntime {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    FileSystem | Shell | Http | WebSearch
+    FileSystem | Shell | Http | WebSearch | ContextTreeStore
   >
 }
 
 export interface BuildScopeRuntimeOptions {
-  readonly skills: ReadonlyArray<Skill>
+  readonly skills: ReadonlyArray<import("../entities/Skill.js").Skill>
   /** Step budget for each (nested) sub-agent loop. Default 12. */
   readonly maxSteps?: number
-  /** Max delegation depth; beyond it a scope is built as a leaf. Default 6. */
+  /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 6. */
   readonly maxDepth?: number
-  /** Allow the `bash` tool across the whole scope tree. Default true. */
+  /** Allow the `bash` tool. Default true. */
   readonly allowBash?: boolean
 }
+
+const clip = (s: string, n: number): string =>
+  s.length <= n ? s : `${s.slice(0, n)}…`
 
 /** Base coding tool definitions (read/write/edit/bash/grep/glob/ls/read_skill/web_fetch). */
 const baseToolDefs = Object.values(codingToolkit.tools) as ReadonlyArray<Tool.Any>
 
-const delegateName = (scope: Scope): string => `delegate_to_${scope.name}`
-
-const makeDelegateTool = (displayRoot: string, child: Scope) =>
-  Tool.make(delegateName(child), {
-    description:
-      `Delegate a focused task to the '${child.name}' sub-agent. ${child.description} ` +
-      `It runs in a fresh context window — it sees only the task you pass plus its own scope instructions. ` +
-      `It reads anywhere but writes/runs bash only inside ${relative(displayRoot, child.rootDir) || "."}. ` +
-      `Returns { summary, filesChanged }.`,
-    parameters: {
-      task: Schema.String.annotations({
-        description:
-          "The focused task: what to change and any constraints. The sub-agent has no prior context — be explicit.",
-      }),
-    },
-    success: Schema.Struct({
-      summary: Schema.String,
-      filesChanged: Schema.Array(Schema.String),
+/**
+ * The one generic delegation tool. Static (no per-scope wiring): the agent
+ * picks the folder + task at call time, and optionally resumes/branches an
+ * existing context node by id. Folder sandboxing is applied per call via a
+ * `ScopeBinding`; the folder's `SCOPE.md` body is injected as ambient context.
+ */
+const RunAgentTool = Tool.make("run_agent", {
+  description:
+    "Spawn a sub-agent to do focused work scoped to a folder. It reads anywhere but " +
+    "writes/runs bash only inside that folder, runs in its own persisted context, and " +
+    "returns { summary, filesChanged, nodeId }. Prefer it when a change is localized to one " +
+    "area; it keeps your own context focused. Be explicit in 'task' — the sub-agent starts " +
+    "fresh unless you resume/branch a node. To continue prior work, pass seedFromNode with " +
+    "seedMode: 'resume' (keep working in that node) or 'branch' (a new node from its context).",
+  parameters: {
+    folder: Schema.String.annotations({
+      description:
+        "Folder to scope the sub-agent to, relative to the workspace root (e.g. 'packages/adapters').",
     }),
-    failure: Failure,
-    failureMode: "return",
-  })
+    task: Schema.String.annotations({
+      description:
+        "The focused task: what to change and any constraints. The sub-agent has no prior context unless seeded — be explicit.",
+    }),
+    seedFromNode: Schema.optional(Schema.String).annotations({
+      description: "An existing context-node id to resume or branch from (from a prior run_agent result).",
+    }),
+    seedMode: Schema.optional(Schema.Literal("resume", "branch")).annotations({
+      description: "With seedFromNode: 'resume' continues that node; 'branch' starts a new node seeded from it. Defaults to 'branch'.",
+    }),
+  },
+  success: Schema.Struct({
+    summary: Schema.String,
+    filesChanged: Schema.Array(Schema.String),
+    nodeId: Schema.String,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** The toolkit is static now: base tools + the one `run_agent` tool. */
+const genericToolkit = Toolkit.make(
+  ...([...baseToolDefs, RunAgentTool] as ReadonlyArray<Tool.Any>),
+) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
 
 /**
- * Inner hooks for a nested sub-agent loop. Forwards the parent's tool-call
- * + sub-agent + skill events (so the TUI side-pane shows nested activity),
- * chains a file-tracker onto `onAfterToolCall` (write/edit successes feed
- * the delegation's `filesChanged`), and — deliberately — does NOT forward
- * `onTurnStart`/`onAssistantMessage`/`onAgentEnd`: those belong to the
- * outer loop, and forwarding `onAgentEnd` would prematurely end the turn.
+ * Inner hooks for a spawned sub-agent's loop. Forwards the parent's tool-call +
+ * sub-agent + skill events (so the TUI shows nested activity), chains a
+ * file-tracker onto `onAfterToolCall` (write/edit successes feed the node's
+ * `filesChanged`), accumulates token usage, and — deliberately — does NOT
+ * forward `onTurnStart`/`onAssistantMessage`/`onAgentEnd` (those belong to the
+ * outer loop; forwarding `onAgentEnd` would end the turn early).
  */
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
-  usageRef: Ref.Ref<{ inputTokens: number; outputTokens: number; cacheReadTokens: number }>,
+  usageRef: Ref.Ref<ContextUsage>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
       if (!event.ok) return
-      if (event.toolName !== "write_file" && event.toolName !== "edit_file") {
-        return
-      }
+      if (event.toolName !== "write_file" && event.toolName !== "edit_file") return
       const path = (event.result as { path?: unknown })?.path
       if (typeof path !== "string") return
-      yield* Ref.update(filesRef, (arr) =>
-        arr.includes(path) ? arr : [...arr, path],
-      )
+      yield* Ref.update(filesRef, (arr) => (arr.includes(path) ? arr : [...arr, path]))
     })
 
   const parentAfter = parent?.onAfterToolCall
@@ -136,105 +166,244 @@ const makeInnerHooks = <R>(
   }
 }
 
+interface RunSpawnedArgs<R> {
+  readonly store: ContextTreeStore["Type"]
+  readonly displayRoot: string
+  readonly opts: BuildScopeRuntimeOptions
+  readonly hooks: AgentHooks<R> | undefined
+  readonly nodeId: ContextNodeId
+  readonly folder: string
+  readonly task: string
+  readonly seedMessages: ReadonlyArray<AgentMessage>
+  readonly parentDepth: number
+  readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
+}
+
 /**
- * Turn a `Scope` into a runnable `{ toolkit, handlerLayer }`.
- *
- * The toolkit is the base coding tools (scope-confined writes/bash via
- * `makeCodingHandlers`) plus one `delegate_to_<child>` tool per direct
- * child. A delegate handler runs the child's loop **ephemerally**
- * (`runAgentLoop`, no persistence) with the child's own runtime —
- * recursively built one level deeper — self-providing the child's handler
- * layer. `LanguageModel`/`FileSystem`/`Shell`/`Http` are resolved from the
- * context the layer is built in (the composition root), which `@effect/ai`
- * merges into every handler invocation — so the nested loop is fully
- * satisfied without explicit threading.
- *
- * Recursion is lazy (per delegation call) so file-tracking hooks chain
- * correctly down the tree; it terminates at leaves (and is capped at
- * `maxDepth` as a backstop — the scope tree is acyclic by construction).
+ * Run a spawned sub-agent over its already-created node: render the scoped
+ * system prompt (+ ambient `SCOPE.md` body), run the loop with the generic
+ * toolkit under the folder's `ScopeBinding`, persist the produced tail to the
+ * node, record the return, and emit the sub-agent start/end events (carrying the
+ * node id). Re-seeds `RunContextRef` so nested `run_agent` calls see this node
+ * as their parent.
+ */
+const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
+  Effect.gen(function* () {
+    const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
+    const label = basename(folder) || folder
+    const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
+    const usageRef = yield* Ref.make<ContextUsage>({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+    })
+
+    if (hooks?.onSubAgentStart) {
+      yield* hooks.onSubAgentStart({ name: label, task, nodeId })
+    }
+    const innerHooks = makeInnerHooks(hooks, filesRef, usageRef)
+
+    const binding: ScopeBinding = {
+      rootDir: folder,
+      displayRoot,
+      enforceWrite: true,
+      allowBash: opts.allowBash ?? true,
+    }
+    const body = yield* getScopePromptBody(folder)
+    const system = renderScopeSystemPrompt({
+      name: label,
+      rootDir: folder,
+      displayRoot,
+      body: body ?? "",
+      now: new Date(),
+    })
+
+    const childLayer = genericToolkit.toLayer(buildGenericHandlers(binding, opts, hooks))
+    const childRc = {
+      rootConversationId: args.rootConversationId,
+      parentNodeId: nodeId,
+      depth: args.parentDepth + 1,
+    }
+
+    const outcome = yield* runAgentLoop({
+      system,
+      messages: seedMessages,
+      toolkit: genericToolkit,
+      maxSteps: opts.maxSteps ?? 12,
+      hooks: innerHooks,
+    }).pipe(
+      Effect.provide(childLayer),
+      Effect.locally(RunContextRef, childRc),
+      Effect.map((r) => ({ ok: true as const, r })),
+      Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
+    )
+
+    const files = yield* Ref.get(filesRef)
+    const usage = yield* Ref.get(usageRef)
+    const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
+
+    if (outcome.ok) {
+      const tail = outcome.r.messages.slice(seedMessages.length)
+      for (const m of tail) yield* store.append(nodeId, m)
+      yield* store.recordReturn(nodeId, {
+        status: "ok",
+        summary: outcome.r.finalText,
+        filesChanged: files,
+        ...(hasUsage ? { usage } : {}),
+      })
+      if (hooks?.onSubAgentEnd) {
+        yield* hooks.onSubAgentEnd({
+          name: label,
+          nodeId,
+          ok: true,
+          summary: outcome.r.finalText,
+          filesChanged: files,
+          ...(hasUsage ? { usage } : {}),
+        })
+      }
+      return { summary: outcome.r.finalText, filesChanged: files, nodeId }
+    }
+
+    const f = toFailure(outcome.e)
+    const summary = f.message ? `${f.error}: ${f.message}` : f.error
+    yield* store.recordReturn(nodeId, {
+      status: "error",
+      summary,
+      filesChanged: files,
+      ...(hasUsage ? { usage } : {}),
+    })
+    if (hooks?.onSubAgentEnd) {
+      yield* hooks.onSubAgentEnd({
+        name: label,
+        nodeId,
+        ok: false,
+        summary,
+        filesChanged: files,
+        ...(hasUsage ? { usage } : {}),
+      })
+    }
+    return yield* Effect.fail(f)
+  })
+
+/** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent. */
+const makeRunAgentHandler =
+  <R>(
+    store: ContextTreeStore["Type"],
+    displayRoot: string,
+    opts: BuildScopeRuntimeOptions,
+    hooks: AgentHooks<R> | undefined,
+  ) =>
+  (params: {
+    readonly folder: string
+    readonly task: string
+    readonly seedFromNode?: string
+    readonly seedMode?: "resume" | "branch"
+  }) =>
+    Effect.gen(function* () {
+      const rc = yield* FiberRef.get(RunContextRef)
+      const maxDepth = opts.maxDepth ?? 6
+      if (rc.depth >= maxDepth) {
+        return yield* Effect.fail({
+          error: "MaxDepthReached",
+          message: `sub-agent nesting limit (${maxDepth}) reached — do this part yourself.`,
+        })
+      }
+      const { folder, task, seedFromNode, seedMode } = params
+
+      // Resume / branch an existing node.
+      if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
+        const nodeId = yield* Schema.decodeUnknown(ContextNodeId)(seedFromNode.trim()).pipe(
+          Effect.mapError(() => ({
+            error: "InvalidNodeId",
+            message: `'${seedFromNode}' is not a valid context-node id.`,
+          })),
+        )
+        const node = yield* store.get(nodeId)
+        if (seedMode === "resume") {
+          yield* store.append(nodeId, { role: "user", content: task })
+          const seedMessages = yield* store.listMessages(nodeId)
+          return yield* runSpawnedAgent({
+            store, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+          })
+        }
+        const sourceMsgs = yield* store.listMessages(nodeId)
+        const seedMessages: ReadonlyArray<AgentMessage> = [
+          ...sourceMsgs,
+          { role: "user", content: task },
+        ]
+        const childId = yield* store.spawn({
+          parentId: nodeId,
+          rootConversationId: rc.rootConversationId,
+          edgeKind: "branched",
+          folder: node.folder,
+          displayRoot,
+          seed: { kind: "selection", sourceNodeId: nodeId, turnCount: sourceMsgs.length },
+          seedMessages,
+        })
+        return yield* runSpawnedAgent({
+          store, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+        })
+      }
+
+      // Fresh spawn.
+      const folderAbs = resolve(displayRoot, folder)
+      const seedMessages: ReadonlyArray<AgentMessage> = [{ role: "user", content: task }]
+      const nodeId = yield* store.spawn({
+        parentId: rc.parentNodeId,
+        rootConversationId: rc.rootConversationId,
+        edgeKind: "spawned",
+        folder: folderAbs,
+        displayRoot,
+        seed: { kind: "task", preview: clip(task, 80) },
+        seedMessages,
+      })
+      return yield* runSpawnedAgent({
+        store, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+      })
+    }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+/**
+ * Build the generic handler record for a `ScopeBinding`: the base coding
+ * handlers (scope-confined writes/bash) + the `run_agent` handler. Resolves
+ * `FileSystem`/`Shell`/`Http`/`WebSearch` (via `makeCodingHandlers`) and
+ * `ContextTreeStore` from context at layer-build; the handler's per-call
+ * `LanguageModel` need is resolved from the ambient runtime (as before).
+ */
+const buildGenericHandlers = <R>(
+  binding: ScopeBinding,
+  opts: BuildScopeRuntimeOptions,
+  hooks: AgentHooks<R> | undefined,
+) =>
+  Effect.gen(function* () {
+    const base = yield* makeCodingHandlers(binding, opts.skills)
+    const store = yield* ContextTreeStore
+    const run_agent = makeRunAgentHandler(store, binding.displayRoot, opts, hooks)
+    return { ...base, run_agent } as never
+  })
+
+/**
+ * Turn the root `Scope` into a runnable `{ toolkit, handlerLayer }`. The toolkit
+ * is static (base tools + `run_agent`); the handler layer binds the root scope
+ * (write-unconfined workspace) and carries the `run_agent` handler that spawns
+ * folder-scoped sub-agents on demand. `runAgent` seeds `RunContextRef` so the
+ * first spawn is tagged with the conversation.
  */
 export const buildScopeRuntime = <R = never>(
   scope: Scope,
   opts: BuildScopeRuntimeOptions,
   hooks?: AgentHooks<R>,
-  depth = 0,
 ): ScopeRuntime => {
-  const maxDepth = opts.maxDepth ?? 6
-  const children = depth < maxDepth ? scope.children : []
-
-  const toolDefs = [
-    ...baseToolDefs,
-    ...children.map((c) => makeDelegateTool(scope.displayRoot, c)),
-  ]
-  const toolkit = Toolkit.make(
-    ...(toolDefs as ReadonlyArray<Tool.Any>),
-  ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
-
-  const binding = {
+  const binding: ScopeBinding = {
     rootDir: scope.rootDir,
     displayRoot: scope.displayRoot,
     enforceWrite: scope.enforceWrite,
     allowBash: opts.allowBash ?? true,
   }
-
-  const makeDelegateHandler =
-    (child: Scope) =>
-    ({ task }: { readonly task: string }) =>
-      Effect.gen(function* () {
-        const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
-        const usageRef = yield* Ref.make({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 })
-        if (hooks?.onSubAgentStart) {
-          yield* hooks.onSubAgentStart({ name: child.name, task })
-        }
-        const innerHooks = makeInnerHooks(hooks, filesRef, usageRef)
-        const childRuntime = buildScopeRuntime(child, opts, innerHooks, depth + 1)
-
-        const emitEnd = (ok: boolean, summary: string) =>
-          Effect.gen(function* () {
-            if (!hooks?.onSubAgentEnd) return
-            const files = yield* Ref.get(filesRef)
-            const usage = yield* Ref.get(usageRef)
-            yield* hooks.onSubAgentEnd({
-              name: child.name,
-              ok,
-              summary,
-              filesChanged: files,
-              ...(usage.outputTokens > 0 || usage.inputTokens > 0 ? { usage } : {}),
-            })
-          })
-
-        const messages: ReadonlyArray<AgentMessage> = [
-          { role: "user", content: task },
-        ]
-        const res = yield* runAgentLoop({
-          system: child.systemPrompt,
-          messages,
-          toolkit: childRuntime.toolkit,
-          maxSteps: opts.maxSteps ?? 12,
-          hooks: innerHooks,
-        }).pipe(
-          Effect.provide(childRuntime.handlerLayer),
-          Effect.tap((r) => emitEnd(true, r.finalText)),
-          Effect.tapError((e) => {
-            const f = toFailure(e)
-            return emitEnd(false, f.message ? `${f.error}: ${f.message}` : f.error)
-          }),
-        )
-
-        const filesChanged = yield* Ref.get(filesRef)
-        return { summary: res.finalText, filesChanged }
-      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
-
-  const handlerLayer = toolkit.toLayer(
-    Effect.gen(function* () {
-      const base = yield* makeCodingHandlers(binding, opts.skills)
-      const delegates: Record<string, unknown> = {}
-      for (const child of children) {
-        delegates[delegateName(child)] = makeDelegateHandler(child)
-      }
-      return { ...base, ...delegates } as never
-    }),
-  )
-
-  return { toolkit, handlerLayer }
+  const handlerLayer = genericToolkit.toLayer(
+    buildGenericHandlers(binding, opts, hooks),
+  ) as ScopeRuntime["handlerLayer"]
+  return { toolkit: genericToolkit, handlerLayer }
 }

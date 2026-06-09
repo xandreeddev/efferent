@@ -1,6 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
+  ContextTreeStore,
   ConversationId,
   ConversationStore,
   FileSystem,
@@ -77,7 +78,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -135,12 +136,11 @@ const handleSend = (
     const rootScope =
       cwd === defaults.cwd
         ? defaults.rootScope
-        : yield* discoverScopeTree(cwd, (children, body) => {
+        : yield* discoverScopeTree(cwd, (_children, body) => {
             const base = coderSystemPrompt(
               cwd,
               new Date(),
               defaults.skills,
-              children,
               [],
             )
             return body !== undefined && body.trim().length > 0
@@ -190,7 +190,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -220,7 +220,7 @@ export const runRpcMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
 > =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes
