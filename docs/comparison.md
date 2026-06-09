@@ -21,13 +21,15 @@ Where efferent sits in the coding-agent-CLI landscape, against the two reference
 | **Handoff (manual)** | ✅ `:handoff` + checkpoints + cumulative folds | ✅ via `/compact` | ✅ |
 | **Context curation UI** | ✅ `:context` tree → `Space` select → `:build` new session | 🟡 branch tree | 🟡 |
 | **Sub-agent delegation** | ✅ generic `run_agent` (folder-scoped, `SCOPE.md` as ambient context) | ❌ (single-agent) | ✅ AgentTool/Task/Team |
-| **Sub-agent context persistence** | ✅ branching context tree — every spawn persisted; `resume`/`branch` a node; `:tree` browser | ❌ | ❌ (ephemeral Task contexts) |
+| **Sub-agent context persistence** | ✅ branching context tree — every spawn persisted; `resume`/`branch` a node; `:tree` browser; staleness stamps (git HEAD) | ❌ | ❌ (ephemeral Task contexts) |
+| **Parallel sub-agents** | ✅ concurrent fan-out (bounded), per-folder locks, structured interruption | ❌ | ✅ parallel Task |
+| **Sub-agent spend control** | ✅ shared per-turn token budget; graceful exhaustion the model reads | ❌ | ❌ |
 | **Todo / planning** | ❌ | ❌ | ✅ TodoWrite + Task* |
 | **MCP — host (expose)** | 🟡 stack supports it, not wired | ❌ | — |
 | **MCP — consume** | ❌ | ❌ | ✅ full client |
 | **Extension system** | ❌ (planned: extensions-as-Layers) | ✅ runtime `.ts` (jiti, `ExtensionAPI`) | ✅ plugins + bundled |
 | **Hooks (Pre/PostToolUse)** | ❌ | ✅ extension lifecycle | ✅ shell hooks |
-| **Permissions / approval** | 🟡 `allowBash` flag; confirm modal unwired | ❌ (unrestricted) | ✅ allow/deny + prompts |
+| **Permissions / approval** | ✅ rule-keyed bash approval (once/session/project, deny-with-reason → model) | ❌ (unrestricted) | ✅ allow/deny + prompts |
 | **Skills** | ✅ `.efferent/skills/*.md` ancestor-walk + home, `read_skill` | ✅ `.pi/skills/` | ✅ bundled + local + MCP |
 | **Instruction files** | ✅ `AGENT.md` + `AGENT.local.md`, dedup, 4K/file 12K total | 🟡 skills only | ✅ CLAUDE.md discovery |
 | **Memory dir / notes** | ❌ | ❌ | ✅ memdir |

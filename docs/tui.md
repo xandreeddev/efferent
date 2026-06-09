@@ -154,9 +154,12 @@ other). The original conversation is never modified; `:build` seeds a *new* one.
 
 A navigable tree of every **sub-agent** this conversation spawned via `run_agent`, persisted
 across sessions. Each node shows its folder, status (`✓` ok / `✗` error / `●` running), how it
-came to be (**spawned** / **branched** / **resumed**), its seed kind, files-changed count, and
-the return summary. Children hang under their parent, so you can see how context branched and
-evolved. The view refreshes live while a run is spawning sub-agents.
+came to be (**spawned** / **branched** / **resumed**), its seed kind, files-changed count,
+**billed tokens**, and the return summary — plus a yellow **`stale`** badge when the repo's
+HEAD moved since the node ran (resuming a stale node auto-injects a what-changed brief so the
+model re-reads before editing). Children hang under their parent, so you can see how context
+branched and evolved. Sub-agents in different folders run **in parallel** — expect several `●`
+nodes at once; the view refreshes live while a run is spawning them.
 
 | Action | Keys |
 |---|---|
@@ -167,6 +170,31 @@ evolved. The view refreshes live while a run is spawning sub-agents.
 
 The agent drives resume/branch itself (`run_agent({ seedFromNode, seedMode: "resume" \| "branch" })`);
 human-initiated re-runs from the tree are on the roadmap.
+
+---
+
+## Bash approval
+
+When the agent wants to run a shell command, a modal asks — and three of the four answers are
+**rules** that stop future prompts for the same command family:
+
+```
+┌─ Bash wants to run ────────────────────────────┐
+│  bun test packages/core                        │
+│  in ~/work/myrepo                              │
+│  ──────────────────────────────────            │
+│  a  allow once                                 │
+│  s  allow bun test … for this session          │
+│  p  always allow bun test … in this project    │
+│  d  deny — tell the agent why                  │
+└────────────────────────────────────────────────┘
+```
+
+`p` persists to the project's `.efferent/config.json` (`approvedBashRules`). `d` opens a reason
+line — **the agent reads your reason** as the tool failure and adjusts course in the same turn.
+`Esc` denies (the safe default never runs the command). Commands with pipes/substitutions only
+ever match exactly; plain commands match on `command + subcommand`. Headless modes (`--print`,
+`--mode json/rpc`) never prompt — they keep the static `--allow-bash` gate.
 
 ---
 
