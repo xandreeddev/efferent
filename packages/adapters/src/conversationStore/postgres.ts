@@ -9,6 +9,10 @@ import {
   ConversationStoreError,
   Checkpoint,
 } from "@efferent/core"
+import {
+  encodeMessageContent,
+  reassembleMessageRow,
+} from "../database/messageCodec.js"
 
 const wrapSql = <A, R>(
   effect: Effect.Effect<A, unknown, R>,
@@ -23,15 +27,10 @@ interface MessageRow {
   readonly content: unknown
 }
 
-const decodeMessage = (row: MessageRow) => {
-  // `role` is denormalised into its own column for query convenience, but
-  // the actual message payload lives in `content` (jsonb). Reassemble before
-  // decoding through the schema union.
-  const raw =
-    row.content !== null && typeof row.content === "object"
-      ? { role: row.role, ...(row.content as Record<string, unknown>) }
-      : row.content
-  return Schema.decodeUnknown(AgentMessage)(raw).pipe(
+const decodeMessage = (row: MessageRow) =>
+  Schema.decodeUnknown(AgentMessage)(
+    reassembleMessageRow(row.role, row.content),
+  ).pipe(
     Effect.mapError(
       (cause) =>
         new ConversationStoreError({
@@ -40,13 +39,6 @@ const decodeMessage = (row: MessageRow) => {
         }),
     ),
   )
-}
-
-const encodeMessageContent = (msg: AgentMessage): string => {
-  // Store role in its own column; everything else goes in jsonb.
-  const { role: _role, ...rest } = msg as Record<string, unknown>
-  return JSON.stringify(rest)
-}
 
 export const PostgresConversationStoreLive = Layer.effect(
   ConversationStore,
