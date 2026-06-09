@@ -24,6 +24,7 @@ import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHe
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import { buildFromSelection } from "../actions/session.js"
+import { dropNode } from "../actions/contextTree.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -421,6 +422,15 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
     case "return": {
       const row = treeCurrentRow(store.nav(), store.projection())
       if (row?.foldId !== undefined) store.setNav((n) => treeFold(n, store.projection()))
+      return true
+    }
+    case "d": {
+      // Drop the node (+ descendants) under the cursor — but never a still-running
+      // one (its in-flight run would fail to record its return).
+      const row = treeCurrentRow(store.nav(), store.projection())
+      if (row !== undefined && row.display.status !== "running") {
+        void ctx.run(dropNode(store, store.run.getConversationId(), row.display.nodeId))
+      }
       return true
     }
     case "i":

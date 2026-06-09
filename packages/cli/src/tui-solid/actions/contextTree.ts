@@ -1,6 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { batch } from "solid-js"
-import { ContextTreeStore, type ConversationId } from "@efferent/core"
+import { ContextNodeId, ContextTreeStore, type ConversationId } from "@efferent/core"
+import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /** Load the persisted context-tree nodes for `cid` into the side projection. */
@@ -31,6 +32,26 @@ export const toggleTree = (store: TuiStore, cid: ConversationId) =>
           store.setFocus("input")
           store.setMode("insert")
         }
+      }),
+    )
+  })
+
+/**
+ * `d` in the tree view — drop the node under the cursor and its descendants
+ * (cascade), then reload + clamp the cursor. A no-op on an unparseable id; the
+ * caller guards against dropping a still-running node.
+ */
+export const dropNode = (store: TuiStore, cid: ConversationId, nodeId: string) =>
+  Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
+    if (decoded._tag === "None") return
+    const cts = yield* ContextTreeStore
+    yield* cts.drop(decoded.value)
+    yield* loadTreeNodes(store, cid)
+    yield* Effect.sync(() =>
+      store.setNav((n) => {
+        const count = treeRows(n, store.projection()).length
+        return { ...n, treeCursor: Math.max(0, Math.min(n.treeCursor, count - 1)) }
       }),
     )
   })
