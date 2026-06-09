@@ -88,7 +88,10 @@ export const makeTuiApproval = (store: TuiStore): TuiApproval => {
     layer,
     resolve: (decision) => {
       const p = pending
-      store.closeOverlay()
+      // Only close OUR modal — if interruption already swapped the overlay
+      // (or none is pending), closing whatever else is showing would eat an
+      // unrelated picker/login flow.
+      if (store.overlay().kind === "approval") store.closeOverlay()
       p?.(decision)
     },
   }
