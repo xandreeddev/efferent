@@ -9,13 +9,17 @@ import { Config, Effect, Layer, Option } from "effect"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
+import { PostgresContextTreeStoreLive } from "../contextTreeStore/postgres.js"
+import { SqliteContextTreeStoreLive } from "../contextTreeStore/sqlite.js"
 
 import pg0001 from "./migrations/0001_init.js"
 import pg0002 from "./migrations/0002_conversations.js"
 import pg0003 from "./migrations/0003_unified_messages.js"
 import pg0004 from "./migrations/0004_conversation_workspace.js"
 import pg0005 from "./migrations/0005_checkpoints.js"
+import pg0006 from "./migrations/0006_context_tree.js"
 import sqlite0001 from "./migrations-sqlite/0001_init.js"
+import sqlite0002 from "./migrations-sqlite/0002_context_tree.js"
 
 /**
  * Database layer + ConversationStore, selected at runtime from a single
@@ -55,10 +59,12 @@ const pgLoader = Migrator.fromRecord({
   "0003_unified_messages": pg0003,
   "0004_conversation_workspace": pg0004,
   "0005_checkpoints": pg0005,
+  "0006_context_tree": pg0006,
 })
 
 const sqliteLoader = Migrator.fromRecord({
   "0001_init": sqlite0001,
+  "0002_context_tree": sqlite0002,
 })
 
 /** Postgres client + migrator (only built when EFFERENT_DB_URL is set). */
@@ -99,5 +105,30 @@ export const ConversationStoreLive = Layer.unwrapEffect(
       : SqliteConversationStoreLive.pipe(
           Layer.provide(sqliteDatabaseLive(target.filename)),
         )
+  }),
+)
+
+/**
+ * Both SQL stores (`ConversationStore` + `ContextTreeStore`) over a SINGLE
+ * database stack — one client, one migrator run. Providing each store its own
+ * self-contained DB layer would open two connections and race the migrator on
+ * the same file, so the composition root provides this combined layer instead
+ * of `ConversationStoreLive` alone.
+ */
+export const StoresLive = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const raw = Option.getOrUndefined(
+      yield* Config.option(Config.string("EFFERENT_DB_URL")),
+    )
+    const target = parseDbTarget(raw)
+    return target.kind === "postgres"
+      ? Layer.merge(
+          PostgresConversationStoreLive,
+          PostgresContextTreeStoreLive,
+        ).pipe(Layer.provide(PgDatabaseLive))
+      : Layer.merge(
+          SqliteConversationStoreLive,
+          SqliteContextTreeStoreLive,
+        ).pipe(Layer.provide(sqliteDatabaseLive(target.filename)))
   }),
 )

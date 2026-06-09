@@ -9,6 +9,10 @@ import {
   ConversationStoreError,
   Checkpoint,
 } from "@efferent/core"
+import {
+  encodeMessageContent,
+  reassembleMessageRow,
+} from "../database/messageCodec.js"
 
 /**
  * SQLite ConversationStore — the zero-config default (bun:sqlite via
@@ -16,7 +20,8 @@ import {
  * but in SQLite dialect: no `::uuid`/`::text`/`::jsonb` casts (ids are TEXT,
  * content is a TEXT JSON string), and the browse preview uses `json_extract`
  * instead of the `->>` operator. Ids/timestamps are app-generated, so there
- * are no DB-side defaults to differ.
+ * are no DB-side defaults to differ. Message (de)serialization is shared via
+ * `../database/messageCodec`.
  */
 
 const wrapSql = <A, R>(
@@ -32,16 +37,10 @@ interface MessageRow {
   readonly content: unknown
 }
 
-const decodeMessage = (row: MessageRow) => {
-  // `content` is stored as a TEXT JSON string in SQLite; parse it, then
-  // re-attach the denormalised `role` column before schema decoding.
-  const parsed =
-    typeof row.content === "string" ? JSON.parse(row.content) : row.content
-  const raw =
-    parsed !== null && typeof parsed === "object"
-      ? { role: row.role, ...(parsed as Record<string, unknown>) }
-      : parsed
-  return Schema.decodeUnknown(AgentMessage)(raw).pipe(
+const decodeMessage = (row: MessageRow) =>
+  Schema.decodeUnknown(AgentMessage)(
+    reassembleMessageRow(row.role, row.content),
+  ).pipe(
     Effect.mapError(
       (cause) =>
         new ConversationStoreError({
@@ -50,13 +49,6 @@ const decodeMessage = (row: MessageRow) => {
         }),
     ),
   )
-}
-
-const encodeMessageContent = (msg: AgentMessage): string => {
-  // Store role in its own column; everything else as a JSON string.
-  const { role: _role, ...rest } = msg as Record<string, unknown>
-  return JSON.stringify(rest)
-}
 
 export const SqliteConversationStoreLive = Layer.effect(
   ConversationStore,
