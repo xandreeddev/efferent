@@ -28,6 +28,7 @@ const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
   Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue)
+      if (event.type === "flush") return // drain sentinel — never emitted
       yield* writeJson(event)
     }
   })
@@ -95,6 +96,9 @@ export const runJsonMode = (
       ),
     )
 
-    yield* Effect.sleep("50 millis")
-    yield* Fiber.interrupt(consumer)
+    // Deterministic drain: the run is done, so a sentinel is strictly the last
+    // event; joining the consumer guarantees agent_end (and every trailing tool
+    // event) hit stdout before the process exits. No sleep, no race.
+    yield* Queue.offer(queue, { type: "flush" })
+    yield* Fiber.join(consumer)
   })

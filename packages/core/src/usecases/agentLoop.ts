@@ -105,6 +105,10 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     let messages: ReadonlyArray<AgentMessage> = input.messages
     let finalText = ""
     let turnIndex = 0
+    // Everything the loop appends — model responses AND its own synthetic
+    // correctives — tracked explicitly so callers persist exactly this,
+    // never an index-arithmetic slice of the (transformable) buffer.
+    const newTail: AgentMessage[] = []
 
     // Resolve the toolkit's handler once (it reads the handler Layer from
     // context), then wrap it so a malformed tool call is fed back as a tool
@@ -162,17 +166,16 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           600,
         )
         yield* Effect.logWarning(`recovering from malformed response: ${desc}`)
-        messages = [
-          ...messages,
-          {
-            role: "user",
-            content:
-              `Your previous reply could not be parsed: ${desc}\n\n` +
-              `This usually means you called a tool that doesn't exist or used the wrong ` +
-              `argument shape. The only tools available are: ${toolNames.join(", ")}. ` +
-              `Reply again using one of those tools, or plain text if you're done.`,
-          },
-        ]
+        const corrective: AgentMessage = {
+          role: "user",
+          content:
+            `Your previous reply could not be parsed: ${desc}\n\n` +
+            `This usually means you called a tool that doesn't exist or used the wrong ` +
+            `argument shape. The only tools available are: ${toolNames.join(", ")}. ` +
+            `Reply again using one of those tools, or plain text if you're done.`,
+        }
+        messages = [...messages, corrective]
+        newTail.push(corrective)
         turnIndex++
         continue
       }
@@ -184,6 +187,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       const usage = extractUsage(res.usage, content)
       attachUsageToAssistant(tail, usage)
       messages = [...messages, ...tail]
+      newTail.push(...tail)
 
       const text = res.text
       if (text.length > 0) finalText = text
@@ -243,5 +247,5 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       yield* hooks.onAgentEnd({ messages, finalText })
     }
 
-    return { finalText, messages } satisfies AgentResult as AgentResult
+    return { finalText, messages, newTail } satisfies AgentResult as AgentResult
   })

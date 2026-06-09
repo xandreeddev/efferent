@@ -686,6 +686,14 @@ export const makeCodingHandlers = (
           })
         : Effect.void
 
+    // A turn's tool calls resolve CONCURRENTLY (agentLoop's `concurrency`), so
+    // mutating tools must not interleave: two edit_file calls on the same file
+    // are a read-modify-write race that silently loses one edit, and bash can
+    // race an edit it depends on. Reads + web stay parallel (the win); writes
+    // and shell serialize on this one-permit gate per handler set. Bash holds
+    // it only around the exec — never while waiting on the approval modal.
+    const writeGate = Effect.unsafeMakeSemaphore(1)
+
     return codingToolkit.of({
       read_file: ({ path, offset, limit }) =>
         Effect.gen(function* () {
@@ -708,7 +716,7 @@ export const makeCodingHandlers = (
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       write_file: ({ path, content }) =>
-        Effect.gen(function* () {
+        writeGate.withPermits(1)(Effect.gen(function* () {
           const abs = resolvePath(displayRoot, path)
           yield* rejectIfOutOfScope(abs)
           yield* fs.write(abs, content)
@@ -717,10 +725,10 @@ export const makeCodingHandlers = (
             bytes: new TextEncoder().encode(content).byteLength,
             lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length,
           }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        })).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       edit_file: ({ path, edits, oldText, newText }) =>
-        Effect.gen(function* () {
+        writeGate.withPermits(1)(Effect.gen(function* () {
           const normalized = normalizeEdits({ edits, oldText, newText })
           if (normalized.length === 0) {
             return yield* Effect.fail({
@@ -749,7 +757,7 @@ export const makeCodingHandlers = (
               displayPath(displayRoot, abs),
             ),
           }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        })).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       Bash: ({ command, timeout }) =>
         Effect.gen(function* () {
@@ -778,11 +786,13 @@ export const makeCodingHandlers = (
                   : "the user denied this command. Don't retry it verbatim — adjust your approach or ask what they'd prefer.",
             })
           }
-          const r = yield* shell.exec({
-            command,
-            cwd: rootDir,
-            timeoutMs: timeout ?? 60_000,
-          })
+          const r = yield* writeGate.withPermits(1)(
+            shell.exec({
+              command,
+              cwd: rootDir,
+              timeoutMs: timeout ?? 60_000,
+            }),
+          )
           return {
             exitCode: r.exitCode ?? -1,
             stdout: truncateOutput(r.stdout, 32_000),

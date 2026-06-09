@@ -154,6 +154,13 @@ export const LocalAuthStoreLive = Layer.effect(
   AuthStore,
   Effect.gen(function* () {
     const ref = yield* Ref.make<AuthData>(readAuthFile())
+    // Single-flight gate for OAuth refreshes. resolveKey is called per request
+    // — and requests are CONCURRENT now (tool concurrency + parallel
+    // sub-agents) — so two near-expiry calls would otherwise both refresh,
+    // and with rotating refresh tokens the loser's write poisons the stored
+    // credential (silent logout). One gate across providers is fine: a
+    // refresh is rare and fast.
+    const refreshGate = yield* Effect.makeSemaphore(1)
 
     const write = (provider: Provider, next: AuthData) =>
       Effect.try({
@@ -189,32 +196,54 @@ export const LocalAuthStoreLive = Layer.effect(
             if (cred.expires - Date.now() > REFRESH_SKEW_MS) {
               return Effect.succeed(Redacted.make(cred.access))
             }
-            const refresh =
-              p === "anthropic"
-                ? refreshAnthropicToken(cred.refresh)
-                : p === "openai"
-                  ? refreshOpenAiToken(cred.refresh)
-                  : Effect.succeed({
-                      access: cred.access,
-                      refresh: cred.refresh,
-                      expires: cred.expires,
-                      ...(cred.accountId !== undefined ? { accountId: cred.accountId } : {}),
-                      ...(cred.installationId !== undefined
-                        ? { installationId: cred.installationId }
-                        : {}),
-                    } satisfies OAuthTokens)
-            return refresh.pipe(
-              Effect.map((tokens) => ({
-                ...tokens,
-                ...(tokens.installationId !== undefined || cred.installationId === undefined
-                  ? {}
-                  : { installationId: cred.installationId }),
-              })),
-              Effect.flatMap((tokens) =>
-                set(p, oauthCredential(p, tokens)).pipe(
-                  Effect.as(Redacted.make(tokens.access)),
-                ),
-              ),
+            // Near-expiry: refresh under the single-flight gate, re-reading
+            // inside it — the winner refreshes, every queued waiter sees the
+            // fresh credential on its re-read and returns without a second
+            // round-trip (or a second rotation).
+            return refreshGate.withPermits(1)(
+              Effect.gen(function* () {
+                const cur = (yield* Ref.get(ref))[p]
+                if (cur === undefined) return undefined
+                if (cur.type !== "oauth") {
+                  return cur.type === "api_key"
+                    ? Redacted.make(cur.key)
+                    : Redacted.make("ollama")
+                }
+                if (cur.expires - Date.now() > REFRESH_SKEW_MS) {
+                  return Redacted.make(cur.access)
+                }
+                const refresh =
+                  p === "anthropic"
+                    ? refreshAnthropicToken(cur.refresh)
+                    : p === "openai"
+                      ? refreshOpenAiToken(cur.refresh)
+                      : Effect.succeed({
+                          access: cur.access,
+                          refresh: cur.refresh,
+                          expires: cur.expires,
+                          ...(cur.accountId !== undefined ? { accountId: cur.accountId } : {}),
+                          ...(cur.installationId !== undefined
+                            ? { installationId: cur.installationId }
+                            : {}),
+                        } satisfies OAuthTokens)
+                const tokens = yield* refresh.pipe(
+                  Effect.map((tokens) => ({
+                    ...tokens,
+                    ...(tokens.installationId !== undefined || cur.installationId === undefined
+                      ? {}
+                      : { installationId: cur.installationId }),
+                  })),
+                  Effect.mapError(
+                    (e) =>
+                      new AuthError({
+                        provider: p,
+                        message: `OAuth token refresh failed (${e instanceof Error ? e.message : String((e as { message?: unknown })?.message ?? e)}) — run :login ${p} again.`,
+                      }),
+                  ),
+                )
+                yield* set(p, oauthCredential(p, tokens))
+                return Redacted.make(tokens.access)
+              }),
             )
           }),
         ),

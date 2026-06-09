@@ -72,10 +72,10 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       }),
     )
 
-    // Persist only what the loop produced this run. The input was
-    // `prefix + active + userMsg`; everything after that is new.
-    const newTail = result.messages.slice(prefix.length + active.length + 1)
-    for (const m of newTail) {
+    // Persist exactly what the loop appended (model responses + any synthetic
+    // correctives it injected) — reported explicitly by the loop, never
+    // reconstructed by index arithmetic on the transformable buffer.
+    for (const m of result.newTail) {
       yield* store.append(conversationId, m)
     }
 

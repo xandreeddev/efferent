@@ -121,6 +121,7 @@ const handleSend = (
       Effect.gen(function* () {
         while (true) {
           const event = yield* Queue.take(queue)
+          if (event.type === "flush") return // drain sentinel — never notified
           writeLine({
             jsonrpc: "2.0",
             method: "agent.event",
@@ -167,8 +168,10 @@ const handleSend = (
       Effect.either,
     )
 
-    yield* Effect.sleep("50 millis")
-    yield* Fiber.interrupt(consumer)
+    // Deterministic drain: sentinel + join so every agent.event notification
+    // precedes the JSON-RPC response on stdout.
+    yield* Queue.offer(queue, { type: "flush" })
+    yield* Fiber.join(consumer)
 
     if (ran._tag === "Left") {
       const err = ran.left

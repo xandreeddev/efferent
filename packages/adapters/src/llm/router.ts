@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
 import { AuthStore, LlmInfo, ModelRegistry, SettingsStore, type ModelSelection } from "@efferent/core"
 import { Effect, Layer, Stream } from "effect"
@@ -24,9 +24,24 @@ export const RouterLanguageModelLive = Layer.effect(
     const resolveAndBuild = (sel: ModelSelection) =>
       Effect.gen(function* () {
         const cred = yield* authStore.get(sel.provider)
+        // A resolveKey FAILURE is a failed OAuth refresh — surface it (the
+        // error says "run :login <provider> again"); masking it as "no
+        // credential" reads as the model silently vanishing. The error is a
+        // real AiError at runtime (rendered by every mode's failure path);
+        // statically it's erased — `ExtractError<Options>` is a generic this
+        // signature can't widen (same cast class as `prependClaudeCode`).
         const key = yield* authStore
           .resolveKey(sel.provider)
-          .pipe(Effect.orElseSucceed(() => undefined))
+          .pipe(
+            Effect.mapError(
+              (e) =>
+                new AiError.UnknownError({
+                  module: "Router",
+                  method: "resolveKey",
+                  description: e.message,
+                }) as never,
+            ),
+          )
         const settings = yield* settingsStore.get()
         return yield* makeProviderLanguageModel(sel, key, cred, settings)
       })
