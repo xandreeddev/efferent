@@ -1,5 +1,6 @@
 import { basename } from "node:path"
 import type { AgentContextNode } from "@efferent/core"
+import { formatTokens } from "./statusBar.js"
 
 /**
  * The browseable, branching **agent-context tree** (the `:tree` view): the
@@ -19,6 +20,8 @@ export type TreeRowDisplay = {
   readonly seedKind: "task" | "selection" | "handoff"
   readonly summary?: string
   readonly filesCount: number
+  /** Billed tokens (input+output) this node consumed, formatted (`"38k tok"`). */
+  readonly tokens?: string
   readonly folded: boolean
   readonly hasChildren: boolean
   readonly nodeId: string
@@ -83,6 +86,9 @@ export const buildTreeRowsData = (
         seedKind: node.seed.kind,
         ...(node.returnSummary !== undefined ? { summary: firstLine(node.returnSummary) } : {}),
         filesCount: node.filesChanged.length,
+        ...(node.usage !== undefined
+          ? { tokens: `${formatTokens(node.usage.inputTokens + node.usage.outputTokens)} tok` }
+          : {}),
         folded,
         hasChildren,
         nodeId: node.id,
