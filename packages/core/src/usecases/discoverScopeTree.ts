@@ -112,7 +112,6 @@ export const discoverScopeTree = (
           displayRoot: workspaceRoot,
           body: raw.body,
           now,
-          children,
         }),
         isRoot: false,
         enforceWrite: true,

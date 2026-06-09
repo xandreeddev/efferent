@@ -17,13 +17,13 @@ import {
 } from "@efferent/core"
 import {
   AuthFlowLive,
-  ConversationStoreLive,
   HttpLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
   ModelLive,
+  StoresLive,
   WebSearchLive,
 } from "@efferent/adapters"
 
@@ -44,7 +44,8 @@ const CredentialsLive = Layer.mergeAll(
 )
 
 const AppLive = Layer.mergeAll(
-  ConversationStoreLive,
+  // Both SQL stores (ConversationStore + ContextTreeStore) over one DB stack.
+  StoresLive,
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
@@ -200,12 +201,11 @@ const root = Command.make(
       // like a plain workspace-wide agent.
       const rootScope: Scope = yield* discoverScopeTree(
         workspace,
-        (children, body) => {
+        (_children, body) => {
           const base = coderSystemPrompt(
             workspace,
             new Date(),
             skills,
-            children,
             instructionFiles,
           )
           return body !== undefined && body.trim().length > 0

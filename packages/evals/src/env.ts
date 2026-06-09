@@ -2,6 +2,7 @@ import type { LanguageModel } from "@effect/ai"
 import { Layer } from "effect"
 import type {
   AuthStore,
+  ContextTreeStore,
   ConversationStore,
   FileSystem,
   Http,
@@ -20,6 +21,7 @@ import {
   WebSearchLive,
 } from "@efferent/adapters"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"
+import { InMemoryContextTreeStoreLive } from "./support/inMemoryContextTreeStore.js"
 
 /**
  * The environment every suite runs in — the same ports the CLI composes in
@@ -31,6 +33,7 @@ export type EvalEnv =
   | LanguageModel.LanguageModel
   | AuthStore
   | ConversationStore
+  | ContextTreeStore
   | SettingsStore
   | FileSystem
   | Shell
@@ -48,6 +51,7 @@ const CredentialsLive = Layer.mergeAll(EnvAuthStoreLive, SettingsLive)
 export const EvalEnvLive: Layer.Layer<EvalEnv> = Layer.mergeAll(
   ModelLive, // requires AuthStore + SettingsStore
   InMemoryConversationStoreLive,
+  InMemoryContextTreeStoreLive,
   FsLive,
   LocalShellLive,
   HttpLive,

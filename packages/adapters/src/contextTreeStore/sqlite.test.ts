@@ -81,7 +81,6 @@ describe("SqliteContextTreeStore", () => {
           summary: "did the thing",
           filesChanged: ["a.ts", "b.ts"],
           usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 5 },
-          endedAt: 1234,
         })
         return yield* store.get(id)
       }),
@@ -90,7 +89,7 @@ describe("SqliteContextTreeStore", () => {
     expect(node.returnSummary).toBe("did the thing")
     expect(node.filesChanged).toEqual(["a.ts", "b.ts"])
     expect(node.usage).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 5 })
-    expect(node.endedAt).toBe(1234)
+    expect(typeof node.endedAt).toBe("number")
   })
 
   test("branch seeds a child from a finished node's resulting messages", async () => {
@@ -99,7 +98,7 @@ describe("SqliteContextTreeStore", () => {
         const store = yield* ContextTreeStore
         const parent = yield* spawnRoot("/f", [user("seed")])
         yield* store.append(parent, user("parent work"))
-        yield* store.recordReturn(parent, { status: "ok", summary: "done", filesChanged: [], endedAt: 1 })
+        yield* store.recordReturn(parent, { status: "ok", summary: "done", filesChanged: [] })
         const parentMsgs = yield* store.listMessages(parent)
         const child = yield* store.spawn({
           parentId: parent,
@@ -129,7 +128,7 @@ describe("SqliteContextTreeStore", () => {
       Effect.gen(function* () {
         const store = yield* ContextTreeStore
         const id = yield* spawnRoot("/f", [user("seed")])
-        yield* store.recordReturn(id, { status: "ok", summary: "v1", filesChanged: [], endedAt: 1 })
+        yield* store.recordReturn(id, { status: "ok", summary: "v1", filesChanged: [] })
         yield* store.append(id, user("more work"))
         return {
           msgs: yield* store.listMessages(id),

@@ -200,7 +200,7 @@ export const PostgresContextTreeStoreLive = Layer.effect(
                 return_summary = ${result.summary},
                 files_changed = ${JSON.stringify(result.filesChanged)}::jsonb,
                 usage = ${result.usage !== undefined ? JSON.stringify(result.usage) : null}::jsonb,
-                ended_at = ${result.endedAt}
+                ended_at = ${Date.now()}
               WHERE id = ${id}::uuid
             `,
             "Failed to record context return",

@@ -1,6 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
+  ContextTreeStore,
   ConversationId,
   ConversationStore,
   FileSystem,
@@ -84,6 +85,7 @@ export const runPrintMode = (
   | Shell
   | LanguageModel.LanguageModel
   | ConversationStore
+  | ContextTreeStore
   | SettingsStore
   | WebSearch
 > =>

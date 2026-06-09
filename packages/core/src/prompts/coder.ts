@@ -4,15 +4,6 @@ import {
   renderInstructionsSection,
 } from "../usecases/discoverInstructionFiles.js"
 
-/**
- * Minimal shape needed to advertise a delegation target — satisfied by a
- * `Scope` (its direct children become the `delegate_to_<name>` advert).
- */
-export interface DelegateInfo {
-  readonly name: string
-  readonly description: string
-}
-
 const systemSection = `# System
 - All text you output outside of tool use is displayed to the user. Use it sparingly — see "Doing tasks" below.
 - Not every message is a task. If the user sends a greeting, thanks, or small talk ("hi", "nice", "thanks"), or asks something that needs no workspace access, just reply in one short line and do NOT call any tools. Reach for tools only when there's an actual task or a question about the files/commands in this workspace.
@@ -48,22 +39,10 @@ ${lines}
 `
 }
 
-export const renderDelegationsSection = (
-  delegates: ReadonlyArray<DelegateInfo>,
-): string => {
-  if (delegates.length === 0) return ""
-  const lines = delegates
-    .map((s) => `- delegate_to_${s.name}({ task }) — ${s.description}`)
-    .join("\n")
-  return `
-# Delegations
-This scope has nested sub-scopes available. Each owns a directory (declared by a SCOPE.md file) and can only write/run bash inside it; you call it via the tool below with a focused 'task' string. The sub-agent runs in a fresh context window — it sees only the task you pass plus its own scope-specific instructions — and returns a one-line summary and the files it wrote.
-
-Prefer delegating when a change is localized to a single scope; it keeps your own context focused. For changes that span multiple scopes (e.g. add a port AND its adapter), delegate in dependency order: the dependent scope first, then the consumer.
-
-${lines}
+const subAgentsSection = `
+# Sub-agents
+You can offload focused, localized work to a sub-agent with run_agent({ folder, task }). It runs scoped to that folder — it reads anywhere, but writes and runs bash only inside it — in its own fresh, persisted context, and returns a one-line summary, the files it changed, and a node id. Prefer it when a change is localized to one area (a package or directory): it keeps your own context focused. For work spanning several folders, spawn in dependency order (the dependency first, then its consumer). A folder's SCOPE.md (if present) is injected as standing context for any sub-agent that runs there. To continue a prior sub-agent, pass seedFromNode (its node id) with seedMode: "resume" (keep working in that node) or "branch" (a new node seeded from its context).
 `
-}
 
 interface RenderScopeSystemPromptArgs {
   readonly name: string
@@ -71,7 +50,6 @@ interface RenderScopeSystemPromptArgs {
   readonly displayRoot: string
   readonly body: string
   readonly now: Date
-  readonly children: ReadonlyArray<DelegateInfo>
 }
 
 /**
@@ -104,8 +82,9 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - glob({ pattern, dir? }) — find files anywhere.
 - ls({ path?, recursive? }) — list anywhere.
 - search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
-- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.${args.children.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a sub-task to a nested scope (see Delegations)." : ""}
-${renderDelegationsSection(args.children)}
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
+- run_agent({ folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
+${subAgentsSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - When a file is named or its path is known, read it directly with 'read_file' — don't grep/glob/ls to locate it first.
@@ -127,7 +106,6 @@ export const coderSystemPrompt = (
   cwd: string,
   now: Date = new Date(),
   skills: ReadonlyArray<Skill> = [],
-  scopedAgents: ReadonlyArray<DelegateInfo> = [],
   instructionFiles: ReadonlyArray<InstructionFile> = [],
 ): string =>
   `You are a coding assistant operating inside a terminal harness called 'efferent'. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there.
@@ -149,8 +127,9 @@ ${systemSection}
 - glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
-- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${scopedAgents.length > 0 ? "\n- delegate_to_<name>({ task }) — hand a focused task to a scoped sub-agent (see Delegations below)." : ""}
-${renderSkillsSection(skills)}${renderDelegationsSection(scopedAgents)}
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
+- run_agent({ folder, task }) — spawn a sub-agent scoped to a folder for focused, localized work (see Sub-agents below).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
+${renderSkillsSection(skills)}${subAgentsSection}
 ${doingTasksSection}
 
 ${actionsSection}

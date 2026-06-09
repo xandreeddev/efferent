@@ -27,8 +27,8 @@ const buildConfig = (dir: string) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
-    const rootScope = yield* discoverScopeTree(dir, (children, body) => {
-      const base = coderSystemPrompt(dir, new Date(), skills, children, instructionFiles)
+    const rootScope = yield* discoverScopeTree(dir, (_children, body) => {
+      const base = coderSystemPrompt(dir, new Date(), skills, instructionFiles)
       return body !== undefined && body.trim().length > 0
         ? `${base}\n\n# Project scope\n\n${body}`
         : base

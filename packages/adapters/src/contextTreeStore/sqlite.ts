@@ -196,7 +196,7 @@ export const SqliteContextTreeStoreLive = Layer.effect(
                 return_summary = ${result.summary},
                 files_changed = ${JSON.stringify(result.filesChanged)},
                 usage = ${result.usage !== undefined ? JSON.stringify(result.usage) : null},
-                ended_at = ${result.endedAt}
+                ended_at = ${Date.now()}
               WHERE id = ${id}
             `,
             "Failed to record context return",

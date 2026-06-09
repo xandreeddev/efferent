@@ -1,6 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
+  ContextTreeStore,
   ConversationId,
   ConversationStore,
   FileSystem,
@@ -51,6 +52,7 @@ export const runJsonMode = (
   | Shell
   | LanguageModel.LanguageModel
   | ConversationStore
+  | ContextTreeStore
   | SettingsStore
   | WebSearch
 > =>
