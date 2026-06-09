@@ -130,7 +130,9 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         const label = `Task(${event.name})`
         toolSeq++
         const sid = `sa${toolSeq}`
-        subAgentScrollId.set(event.name, sid)
+        // Keyed by nodeId when present: parallel fan-out can run two spawns
+        // with the same basename, and a name key would cross their pills.
+        subAgentScrollId.set(event.nodeId ?? event.name, sid)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
         store.setProjection((p) => ({
           ...p,
@@ -145,7 +147,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           event.filesChanged.length > 0
             ? `${event.filesChanged.length} file${event.filesChanged.length === 1 ? "" : "s"}`
             : undefined
-        const endSid = subAgentScrollId.get(event.name)
+        const endSid = subAgentScrollId.get(event.nodeId ?? event.name)
         if (endSid !== undefined) {
           const pillDetail = joinDetail(
             filesDetail,
@@ -157,7 +159,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             state: event.ok ? "ok" : "error",
             ...(pillDetail !== undefined ? { detail: pillDetail } : {}),
           })
-          subAgentScrollId.delete(event.name)
+          subAgentScrollId.delete(event.nodeId ?? event.name)
         }
         if (event.summary.trim().length > 0) {
           store.pushBlock(
