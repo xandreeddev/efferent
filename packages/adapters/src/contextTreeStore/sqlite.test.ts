@@ -9,6 +9,7 @@ import {
 import { SqliteContextTreeStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0002 from "../database/migrations-sqlite/0002_context_tree.js"
+import sqlite0003 from "../database/migrations-sqlite/0003_workspace_ref.js"
 
 // Exercises the REAL SQLite context-tree store (the unit suites elsewhere use
 // the in-memory store, which never touches SQL). A fresh in-memory db per run;
@@ -25,6 +26,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ContextTreeStore>): Promise<A> =>
     Effect.gen(function* () {
       yield* sqlite0001 // conversations/messages/checkpoints (not used here, realistic order)
       yield* sqlite0002 // context_nodes + context_messages
+      yield* sqlite0003 // + workspace_ref staleness stamp
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -81,6 +83,7 @@ describe("SqliteContextTreeStore", () => {
           summary: "did the thing",
           filesChanged: ["a.ts", "b.ts"],
           usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 5 },
+          workspaceRef: "abc123def",
         })
         return yield* store.get(id)
       }),
@@ -89,6 +92,7 @@ describe("SqliteContextTreeStore", () => {
     expect(node.returnSummary).toBe("did the thing")
     expect(node.filesChanged).toEqual(["a.ts", "b.ts"])
     expect(node.usage).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 5 })
+    expect(node.workspaceRef).toBe("abc123def")
     expect(typeof node.endedAt).toBe("number")
   })
 

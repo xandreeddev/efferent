@@ -107,6 +107,8 @@ export interface SidePaneProjection {
   readonly context?: ReadonlyArray<ContextSegment>
   /** Persisted agent-context-tree nodes (from `listTree`); shown when view==="tree". */
   readonly treeNodes?: ReadonlyArray<AgentContextNode>
+  /** Workspace git HEAD at tree-load time — nodes stamped with another ref are stale. */
+  readonly treeWorkspaceRef?: string
 }
 
 /**
@@ -176,6 +178,7 @@ export const splitSidePane = (
     filesChanged: s.filesChanged,
     ...(s.context !== undefined ? { context: s.context } : {}),
     ...(s.treeNodes !== undefined ? { treeNodes: s.treeNodes } : {}),
+    ...(s.treeWorkspaceRef !== undefined ? { treeWorkspaceRef: s.treeWorkspaceRef } : {}),
   },
   nav: {
     view: s.view,
@@ -465,7 +468,7 @@ export const treeRows = (
   nav: SidePaneNav,
   projection: SidePaneProjection,
 ): ReadonlyArray<TreeRowData> =>
-  buildTreeRowsData(projection.treeNodes ?? [], nav.treeCollapsed)
+  buildTreeRowsData(projection.treeNodes ?? [], nav.treeCollapsed, projection.treeWorkspaceRef)
 
 /** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
 export const treeParagraph = (

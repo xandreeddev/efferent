@@ -43,6 +43,7 @@ interface NodeRow {
   readonly return_summary: string | null
   readonly files_changed: unknown
   readonly usage: unknown
+  readonly workspace_ref: string | null
   readonly created_at: string
   readonly ended_at: string | null
 }
@@ -75,6 +76,9 @@ const decodeNode = (row: NodeRow) => {
     ...(row.usage !== null && row.usage !== undefined
       ? { usage: parseJsonColumn(row.usage) }
       : {}),
+    ...(row.workspace_ref !== null && row.workspace_ref !== undefined
+      ? { workspaceRef: row.workspace_ref }
+      : {}),
     createdAt: Number(row.created_at),
     ...(row.ended_at !== null && row.ended_at !== undefined
       ? { endedAt: Number(row.ended_at) }
@@ -93,7 +97,7 @@ const decodeNode = (row: NodeRow) => {
 
 const SELECT_NODE = (sql: SqlClient.SqlClient) => sql`
   SELECT id::text, parent_id::text, root_conversation_id::text, edge_kind, folder,
-         display_root, seed, status, return_summary, files_changed, usage, created_at, ended_at
+         display_root, seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
 `
 
 export const PostgresContextTreeStoreLive = Layer.effect(
@@ -145,12 +149,12 @@ export const PostgresContextTreeStoreLive = Layer.effect(
             sql`
               INSERT INTO context_nodes (
                 id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                seed, status, return_summary, files_changed, usage, created_at, ended_at
+                seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
               )
               VALUES (
                 ${id}::uuid, ${input.parentId ?? null}::uuid, ${input.rootConversationId ?? null}::uuid,
                 ${input.edgeKind}, ${input.folder}, ${input.displayRoot},
-                ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, '[]'::jsonb, ${null}::jsonb,
+                ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, '[]'::jsonb, ${null}::jsonb, ${null},
                 ${createdAt}, ${null}
               )
             `,
@@ -200,6 +204,7 @@ export const PostgresContextTreeStoreLive = Layer.effect(
                 return_summary = ${result.summary},
                 files_changed = ${JSON.stringify(result.filesChanged)}::jsonb,
                 usage = ${result.usage !== undefined ? JSON.stringify(result.usage) : null}::jsonb,
+                workspace_ref = ${result.workspaceRef ?? null},
                 ended_at = ${Date.now()}
               WHERE id = ${id}::uuid
             `,
