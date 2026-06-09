@@ -1,5 +1,6 @@
 import type { Effect } from "effect"
 import type {
+  ApprovalDecision,
   AuthFlow,
   AuthStore,
   ContextTreeStore,
@@ -54,4 +55,10 @@ export interface TuiContext {
    * — the non-vim copy path (OpenTUI owns mouse drag-select; this yanks it).
    */
   readonly copySelection: () => boolean
+  /**
+   * Answer the pending bash-approval request (the agent fiber is suspended on
+   * it). Called by the approval modal's key handler; a no-op when nothing is
+   * pending. The UI→Effect counterpart of the `Approval` port's ask.
+   */
+  readonly resolveApproval: (decision: ApprovalDecision) => void
 }

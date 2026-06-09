@@ -65,6 +65,7 @@ const harness = (): Harness => {
         h.copied += 1
         return true
       },
+      resolveApproval: () => {},
     },
   }
   return h

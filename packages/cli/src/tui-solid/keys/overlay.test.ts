@@ -29,6 +29,7 @@ const ctxOf = (store: TuiStore): TuiContext => ({
   interrupt: () => {},
   exit: () => {},
   copySelection: () => false,
+  resolveApproval: () => {},
 })
 
 const key = (name: string, mods: Partial<Key> = {}): Key => ({
@@ -212,4 +213,77 @@ test("settings: Esc with no edit closes the modal", () => {
   openSettingsOverlay(store)
   overlayKey(ctxOf(store), key("escape"))
   expect(store.overlay().kind).toBe("none")
+})
+
+/* --- approval modal ---------------------------------------------------- */
+
+import { openApproval } from "../presentation/approvalView.js"
+import type { ApprovalDecision } from "@efferent/core"
+
+const openApprovalOverlay = (store: TuiStore): void =>
+  store.setOverlay({
+    kind: "approval",
+    state: openApproval({
+      tool: "Bash",
+      summary: "bun test packages/core",
+      cwd: "/work",
+      ruleKey: "cmd:bun test",
+    }),
+  })
+
+const ctxCapturing = (store: TuiStore, sink: ApprovalDecision[]): TuiContext => ({
+  ...ctxOf(store),
+  resolveApproval: (d) => {
+    sink.push(d)
+    store.closeOverlay()
+  },
+})
+
+test("approval: a / s / p resolve allow with the right scope", () => {
+  for (const [k, scope] of [
+    ["a", "once"],
+    ["s", "session"],
+    ["p", "project"],
+  ] as const) {
+    const store = newStore()
+    const got: ApprovalDecision[] = []
+    openApprovalOverlay(store)
+    overlayKey(ctxCapturing(store, got), key(k))
+    expect(got).toEqual([{ kind: "allow", scope }])
+    expect(store.overlay().kind).toBe("none")
+  }
+})
+
+test("approval: Esc in choose mode denies (the safe default never runs the command)", () => {
+  const store = newStore()
+  const got: ApprovalDecision[] = []
+  openApprovalOverlay(store)
+  overlayKey(ctxCapturing(store, got), key("escape"))
+  expect(got).toEqual([{ kind: "deny" }])
+})
+
+test("approval: d collects a typed reason; Enter denies with it; Esc backs out", () => {
+  const store = newStore()
+  const got: ApprovalDecision[] = []
+  const ctx = ctxCapturing(store, got)
+  openApprovalOverlay(store)
+  overlayKey(ctx, key("d"))
+  for (const ch of "no") overlayKey(ctx, key(ch))
+  // Esc returns to choose without resolving
+  overlayKey(ctx, key("escape"))
+  const o = store.overlay()
+  expect(o.kind === "approval" && o.state.mode).toBe("choose")
+  expect(got).toEqual([])
+  // again, this time submit the reason
+  overlayKey(ctx, key("d"))
+  for (const ch of "use the fixture") overlayKey(ctx, key(ch))
+  overlayKey(ctx, key("return"))
+  expect(got).toEqual([{ kind: "deny", reason: "use the fixture" }])
+})
+
+test("approval: unrelated keys are swallowed while the modal is open (no pane leak)", () => {
+  const store = newStore()
+  openApprovalOverlay(store)
+  expect(overlayKey(ctxOf(store), key("j"))).toBe(true)
+  expect(store.overlay().kind).toBe("approval")
 })

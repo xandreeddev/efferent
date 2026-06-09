@@ -8,6 +8,7 @@ export * from "./entities/Skill.js"
 export * from "./entities/Settings.js"
 
 // Ports
+export * from "./ports/Approval.js"
 export * from "./ports/AuthFlow.js"
 export * from "./ports/AuthStore.js"
 export * from "./ports/ContextTreeStore.js"

@@ -1,6 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Queue, Schema, Fiber } from "effect"
 import {
+  ApprovalAllowAllLive,
   ContextTreeStore,
   ConversationId,
   ConversationStore,
@@ -159,7 +160,12 @@ const handleSend = (
       prompt,
       hooks,
       cwd,
-    ).pipe(Effect.provide(runtime.handlerLayer), Effect.either)
+    ).pipe(
+      Effect.provide(runtime.handlerLayer),
+      // Headless: allow-all behind the --allow-bash gate (no prompts).
+      Effect.provide(ApprovalAllowAllLive),
+      Effect.either,
+    )
 
     yield* Effect.sleep("50 millis")
     yield* Fiber.interrupt(consumer)
