@@ -491,10 +491,18 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
 
   // Enter (no Shift) runs a command / search line outright.
   if (key.name === "return" && !key.shift && (isCommand || isSearch)) {
+    // A bare ":" is vim's no-op, not "run whatever happens to be highlighted"
+    // — the first palette entry is :exit, so without this guard a stray
+    // Enter right after `:` quits the whole app.
+    if (text === ":") {
+      store.inputControl.current?.seed("")
+      store.setPaletteIndex(0)
+      return claim()
+    }
     store.inputControl.current?.seed("")
     store.setPaletteIndex(0)
     if (isCommand) {
-      // A bare `:token` runs the *highlighted* command; an args line runs as typed.
+      // A typed `:token` runs the *highlighted* command; an args line runs as typed.
       runCommand(ctx, paletteOpen && matches[palIdx] !== undefined ? matches[palIdx]!.name : text)
     } else {
       runSearch(store, text.slice(1))
@@ -595,6 +603,16 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
     store.setFocus("input")
     store.setMode("insert")
     store.inputControl.current?.seed("/")
+    return
+  }
+
+  // `:` in a read-only pane opens the command palette — the nav row promises
+  // `: cmd` from every pane, so it must work without Ctrl-J first. Same shape
+  // as `/`: drop to the input and seed the prefix.
+  if (key.name === ":" && !key.ctrl && !key.meta && store.focus() !== "input") {
+    store.setFocus("input")
+    store.setMode("insert")
+    store.inputControl.current?.seed(":")
     return
   }
 

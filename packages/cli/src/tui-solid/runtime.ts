@@ -26,7 +26,10 @@ import { makeEventReducer, runEventPump } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
 import { setTheme } from "./state/theme.js"
 
-const logFilePath = (): string => join(homedir(), ".efferent", "efferent.log")
+// Honors EFFERENT_HOME like every other config-dir consumer (auth.json, the
+// SQLite default) — relocating the home must relocate the log too.
+const logFilePath = (): string =>
+  join(process.env.EFFERENT_HOME ?? join(homedir(), ".efferent"), "efferent.log")
 
 const decodeConversationId = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
