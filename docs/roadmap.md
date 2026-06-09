@@ -39,6 +39,9 @@ Implicit context caching is live (stable prefix → `cachedContentTokenCount` su
 ### Wider code-highlight language coverage
 Markdown prose, fenced code blocks, and diff hunks are all syntax-highlighted now (tree-sitter via `view/syntax.ts` + the `getTreeSitterClient()` singleton; `web-tree-sitter` is a declared dep, the worker is destroyed on exit). But `@opentui/core` only bundles grammar WASM for **JS / TS / markdown / zig** (`assets/`), so python/rust/go/json/bash/yaml/etc. render un-highlighted. To extend: source the extra `tree-sitter-<lang>.wasm` + `highlights.scm` and register them via `client.addFiletypeParser({ filetype, wasm, queries })` (or ship them under a data dir + `setDataPath`). Decide whether to bundle a curated set (bigger install) or fetch-on-demand into `~/.efferent`. Also still un-styled: `#` heading **colour** in prose (marked headings route around the `markup.heading` scope, which only styles table headers — would need a custom `renderNode`).
 
+### Human-driven resume/branch from `:tree`
+The agent already resumes/branches persisted sub-agent contexts via `run_agent({ seedFromNode, seedMode })`, and `:tree` browses + drops (`d`) nodes. The missing half is a key in the tree view that *re-runs* a node from the UI: pick the node, choose resume vs branch, type the task — then drive a real run through the submit pipeline (event queue, busy flag, fiber ownership). All the seeding machinery exists in core; the work is TUI submit-level wiring.
+
 ### TodoWrite tool + planning panel
 A `todo_write` tool in `codingToolkit.ts` + a foldable section in the activity pane (`sidePane.ts`) showing the live todo list. Cheap to ship, helps long multi-step turns stay coherent.
 
@@ -68,7 +71,7 @@ A small event bus around tool calls — user-provided shell commands triggered o
 A `~/.efferent/memory/` (or per-project `.efferent/memory/`) with file-per-fact persistent notes the agent can `read`/`write`/`search`. New `Memory` port + a small retrieval policy (recency + keyword for v1; embeddings later). Pairs with the @-file references above.
 
 ### Session branching
-Today history is flat — `:resume <id>` continues a conversation. Branching would let `:branch` create a fork from any point in the conversation viewer (turn-granular, like `:build` already supports) and switch between them. The `checkpoints` table model already supports the data shape; the UI is the work.
+Today top-level history is flat — `:resume <id>` continues a conversation, and `:context` + `:build` curates a new one. (The *sub-agent* layer already branches: `run_agent` resume/branch over the persistent context tree.) Conversation-level branching would let `:branch` fork from any point in the conversation viewer and switch between forks. The `checkpoints` table model already supports the data shape; the UI is the work.
 
 ### Image attachments
 `@effect/ai` `Prompt` has `FilePart`s; the CLI just needs an input syntax (`:attach <path>`) and to encode the bytes. Useful for screenshots-of-errors flows.
@@ -89,7 +92,7 @@ A real win for language-aware navigation (find-references, go-to-definition). Bi
 These are *not* on the roadmap. Revisit only if a concrete need surfaces.
 
 - **Plugins marketplace** — extensions-as-Layers is the on-thesis answer; a marketplace is off-thesis for a lean Effect CLI.
-- **Team / coordinator multi-agent mode** — Claude Code's `coordinatorMode` orchestrates teams of agents. Heavy; sub-agent delegation already handles the cases we actually need.
+- **Team / coordinator multi-agent mode** — Claude Code's `coordinatorMode` orchestrates teams of agents. Heavy; `run_agent` over the persistent context tree (spawn / resume / branch, recursive) already handles the cases we actually need.
 - **Cron / remote-trigger / scheduling** — agents that fire on a schedule or react to webhooks. Outside the CLI's wedge.
 - **ToolSearch** — only useful at large tool counts (Claude Code carries a vast tool surface). With our handful, it's pointless.
 - **Output styles** — purely cosmetic theming. We have the per-pane accent system; that's enough.
@@ -98,6 +101,6 @@ These are *not* on the roadmap. Revisit only if a concrete need surfaces.
 
 ---
 
-## Mouse support — intentionally absent
+## Mouse support — keyboard-first, OpenTUI-native selection
 
-Not deferred — **deliberately excluded**. The TUI never enters mouse-reporting mode, which keeps your terminal's native click-drag selection working. Navigation + selection are fully keyboard-modal: `Ctrl-hjkl` panes, `j/k`/arrows scroll, a **fold cursor** (`{}`/`[]` paragraph/message · `gg/G` ends · `⇥`/`↵` fold), `/` per-pane search, `y` yank to OSC 52 clipboard. If the user community ever wants mouse-mode, it's an opt-in flag — not a default.
+Navigation is fully keyboard-modal: `Ctrl-hjkl` panes, `j/k`/arrows scroll, a **fold cursor** (`{}`/`[]` paragraph/message · `gg/G` ends · `⇥`/`↵` fold), `/` per-pane search. Since the OpenTUI cutover the renderer runs with `useMouse: true` — drag-select is OpenTUI-native and `y` yanks the selection to the clipboard via OSC 52 (this replaced the old hand-rolled TUI's "no mouse-reporting mode" stance). No other mouse interactions (clicking, scrolling panes) are bound, and none are planned — the keyboard is the interface.

@@ -41,7 +41,7 @@ That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth s
 - **Zero-config storage.** SQLite at `~/.efferent/efferent.db` by default. Postgres optional via `:db pg <url>` (or `EFFERENT_DB_URL`). Migrations bundle into the binary.
 - **Skills + instruction files.** Drop `.md` files in `.efferent/skills/` — names + one-liners auto-inject into the system prompt; bodies lazy-load via `read_skill({name})`. `AGENT.md` (and `AGENT.local.md`) discovered from cwd up to home.
 - **Web tools, no extra key.** `web_fetch` (HTTP + HTML→text) and `search_web` (Google or OpenAI **server-side** grounding — uses whichever provider you've logged in).
-- **Sub-agent delegation.** Nested `SCOPE.md` files in your repo become `delegate_to_<scope>` tools — a focused sub-agent writes only in its directory, returns a summary, and bills its tokens into the parent's activity tree.
+- **Sub-agents over a persistent context tree.** One generic `run_agent` tool spawns a folder-scoped sub-agent on demand — writes confined to its folder, that folder's `SCOPE.md` injected as ambient context. Every sub-agent's context is **persisted**: the agent can `resume` it (keep going in the same context) or `branch` it (fork a new context from its messages), and `:tree` browses the whole branching execution history.
 - **Handoff + context curation.** `:handoff` summarises the loaded view, writes a checkpoint, keeps originals untouched. `:context` opens a tree of turns + handoffs you can select and `:build` into a fresh session.
 - **Headless modes too.** `--print` for one-shots, `--mode json` for JSONL events, `--mode rpc` for bidirectional JSON-RPC over stdio — same loop, different renderer.
 
@@ -98,20 +98,19 @@ description: How to write a commit message for this repo.
 
 Names + one-liners inject into the system prompt at startup. Bodies are lazy-loaded by the model via `read_skill({name})` when relevant. Closer-to-cwd shadows farther on name collisions.
 
-## Sub-agent scopes
+## Sub-agents & the context tree
 
-Drop a `SCOPE.md` in any subdirectory:
+The agent spawns sub-agents with a single generic tool:
 
-```markdown
----
-name: adapters
-description: Owns packages/adapters/. Concrete implementations of @efferent/core ports.
----
-
-(directory rules, layering, naming conventions)
+```
+run_agent({ folder, task, seedFromNode?, seedMode? })
 ```
 
-The parent agent gets a `delegate_to_adapters` tool. The sub-agent inherits the toolkit, can only **write** inside its directory, runs in a fresh context window, and returns a one-line summary + `filesChanged`. Token usage rolls up into the activity tree.
+The sub-agent gets the full coding toolkit but can only **write** inside `folder` (bash is cwd-bound there too), runs in a fresh context window, and returns a summary + `filesChanged` + a `nodeId`. Token usage rolls up into the parent's activity tree.
+
+Every spawn is **persisted as a node in a branching context tree** (same SQLite/Postgres store as conversations). With `seedFromNode`, the parent can come back to an earlier sub-agent: `seedMode: "resume"` continues in that node's context; `seedMode: "branch"` forks a new node seeded from its messages. `:tree` in the TUI browses the whole tree — status, provenance (spawned / branched / resumed), seed kind, files changed, return summary — and `d` prunes a node and its descendants.
+
+A `SCOPE.md` in any subdirectory is **ambient context**: its body is injected into any sub-agent that runs scoped to that folder (directory rules, layering, naming conventions — things every agent working there should know). It's plain markdown with optional frontmatter; it no longer defines an agent.
 
 ## Develop
 

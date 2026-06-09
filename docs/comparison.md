@@ -20,7 +20,8 @@ Where efferent sits in the coding-agent-CLI landscape, against the two reference
 | **Compaction** | 🟡 hook wired, no impl | ✅ branch summarisation + `/compact` | ✅ auto + microcompaction |
 | **Handoff (manual)** | ✅ `:handoff` + checkpoints + cumulative folds | ✅ via `/compact` | ✅ |
 | **Context curation UI** | ✅ `:context` tree → `Space` select → `:build` new session | 🟡 branch tree | 🟡 |
-| **Sub-agent delegation** | ✅ `SCOPE.md`-driven `delegate_to_<child>` tools | ❌ (single-agent) | ✅ AgentTool/Task/Team |
+| **Sub-agent delegation** | ✅ generic `run_agent` (folder-scoped, `SCOPE.md` as ambient context) | ❌ (single-agent) | ✅ AgentTool/Task/Team |
+| **Sub-agent context persistence** | ✅ branching context tree — every spawn persisted; `resume`/`branch` a node; `:tree` browser | ❌ | ❌ (ephemeral Task contexts) |
 | **Todo / planning** | ❌ | ❌ | ✅ TodoWrite + Task* |
 | **MCP — host (expose)** | 🟡 stack supports it, not wired | ❌ | — |
 | **MCP — consume** | ❌ | ❌ | ✅ full client |

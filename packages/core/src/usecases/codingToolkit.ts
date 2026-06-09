@@ -661,7 +661,7 @@ export interface ScopeBinding {
  * Build the coding-tool handler record for a scope, resolving
  * `FileSystem`/`Shell`/`Http` from context once at build time. Shared by
  * `codingToolkitLayer` (root, back-compat) and `buildScopeRuntime` (which
- * merges in `delegate_to_<child>` handlers). Each returned handler is an
+ * adds the `run_agent` handler). Each returned handler is an
  * `R = never` Effect (it closes over the resolved services).
  */
 export const makeCodingHandlers = (

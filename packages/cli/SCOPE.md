@@ -54,7 +54,7 @@ src/
 - **No mouse tracking** is enabled — the TUI stays out of mouse-reporting mode so terminal-native click-drag selection keeps working; copying is also available keyboard-side via VISUAL + `y`.
 - `Scrollback` memoizes per-block wrapped lines (keyed by block identity + cols + expanded) so a keystroke/spinner tick re-flattens cached arrays instead of re-wrapping. Above/below "↑ N above" / "↓ N below" indicators are independent (top and bottom rows).
 - Side pane shows the live agent stack (parent + any in-flight sub-agent + its current tool), skills loaded this session via `read_skill`, and AGENT.md files discovered at startup. Hidden under 60 cols. The divider leans bright toward the focused side.
-- Sub-agent inner tool calls do NOT push pills to scrollback — they update the side pane's top frame's `currentTool`. The parent's `delegate_to_<name>` pill stays in the scrollback.
+- Sub-agent inner tool calls do NOT push pills to scrollback — they update the side pane's top frame's `currentTool`. The parent's `run_agent` call renders as the sub-agent container itself (via `subagent_start`/`subagent_end`), not as a separate tool pill.
 - Renders are full-frame composed then line-diffed against the previous frame to avoid flicker.
 - Raw mode + alt buffer + bracketed-paste; restored on exit (Ctrl-C, `:exit`, signal).
 - Bash safety: non-interactive modes gate on `--allow-bash` via the `allowBash` flag passed to `codingToolkitLayer`; a denied call is returned to the model as a tool failure. The TUI currently allows bash unconditionally — a `promptForBash` modal is defined in `tui.ts` but **not yet wired** into `onBeforeToolCall` (see `docs/roadmap.md`).

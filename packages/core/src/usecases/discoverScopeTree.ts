@@ -16,9 +16,11 @@ import { FileSystem } from "../ports/FileSystem.js"
  * rendered here via `renderScopeSystemPrompt`.
  *
  * Each child `SCOPE.md`:
- *   - frontmatter: `name` (slug → `delegate_to_<name>`) + `description`
- *     (one-liner). Required; malformed/dupe-name files are skipped.
- *   - body: scope-specific instructions, injected verbatim.
+ *   - frontmatter: `name` + `description` — inert metadata now (sub-agents
+ *     are spawned via the generic `run_agent` tool, not per-scope tools).
+ *     Required; malformed/dupe-name files are skipped.
+ *   - body: ambient folder context — injected verbatim into any sub-agent
+ *     scoped to that folder (`getScopePromptBody`).
  *   - location: the containing directory is the writeable/bash scope.
  *
  * Never fails — an unreadable workspace yields a bare root with no children
