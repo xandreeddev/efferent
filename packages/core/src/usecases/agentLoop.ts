@@ -34,7 +34,20 @@ export interface RunAgentLoopInput<
   readonly toolkit: Toolkit.Toolkit<Tools>
   readonly maxSteps?: number
   readonly hooks?: AgentHooks<R>
+  /**
+   * Concurrency for resolving one step's tool calls (`@effect/ai` runs the
+   * handlers with `Effect.forEach`). Parallelism is what makes fan-out worth
+   * the latency: a model that emits three `run_agent` calls in one turn gets
+   * three sub-agents running at once (folder sandboxing keeps disjoint
+   * folders write-safe; same-folder spawns serialize on a per-folder lock).
+   * Bounded — not unbounded — so a 20-call turn doesn't stampede the
+   * provider's rate limit. Default {@link DEFAULT_TOOL_CONCURRENCY}.
+   */
+  readonly toolConcurrency?: number
 }
+
+/** Tool calls resolved concurrently per step (interruption-safe via Effect). */
+export const DEFAULT_TOOL_CONCURRENCY = 4
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
 
@@ -126,6 +139,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       const outcome = yield* LanguageModel.generateText({
         prompt,
         toolkit,
+        concurrency: input.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
       }).pipe(
         Effect.map((res) => ({ _tag: "ok" as const, res })),
         Effect.catchAll((err) =>

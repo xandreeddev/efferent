@@ -26,6 +26,7 @@ import {
   toFailure,
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
+import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { RunContextRef } from "./runContext.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import {
@@ -190,6 +191,7 @@ const makeInnerHooks = <R>(
 interface RunSpawnedArgs<R> {
   readonly store: ContextTreeStore["Type"]
   readonly shell: Shell["Type"]
+  readonly locks: FolderLocks
   readonly displayRoot: string
   readonly opts: BuildScopeRuntimeOptions
   readonly hooks: AgentHooks<R> | undefined
@@ -209,9 +211,15 @@ interface RunSpawnedArgs<R> {
  * node, record the return, and emit the sub-agent start/end events (carrying the
  * node id). Re-seeds `RunContextRef` so nested `run_agent` calls see this node
  * as their parent.
+ *
+ * The whole run holds the folder's lock: spawns into *different* folders fan
+ * out in parallel (the loop resolves a step's tool calls concurrently), while
+ * same-folder spawns — which would race on the same files — queue. Start/end
+ * events fire inside the lock, so a queued same-name run never interleaves
+ * its lifecycle with the one before it.
  */
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
-  Effect.gen(function* () {
+  withFolderLock(args.locks, args.folder)(Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = basename(folder) || folder
     const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
@@ -242,7 +250,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       now: new Date(),
     })
 
-    const childLayer = genericToolkit.toLayer(buildGenericHandlers(binding, opts, hooks))
+    const childLayer = genericToolkit.toLayer(
+      buildGenericHandlers(binding, opts, hooks, args.locks),
+    )
     const childRc = {
       rootConversationId: args.rootConversationId,
       parentNodeId: nodeId,
@@ -325,13 +335,14 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       })
     }
     return yield* Effect.fail(f)
-  })
+  }))
 
 /** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent. */
 const makeRunAgentHandler =
   <R>(
     store: ContextTreeStore["Type"],
     shell: Shell["Type"],
+    locks: FolderLocks,
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
@@ -381,7 +392,7 @@ const makeRunAgentHandler =
           yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
-            store, shell, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
           })
@@ -401,7 +412,7 @@ const makeRunAgentHandler =
           seedMessages,
         })
         return yield* runSpawnedAgent({
-          store, shell, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
         })
@@ -420,7 +431,7 @@ const makeRunAgentHandler =
         seedMessages,
       })
       return yield* runSpawnedAgent({
-        store, shell, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
       })
@@ -437,12 +448,13 @@ const buildGenericHandlers = <R>(
   binding: ScopeBinding,
   opts: BuildScopeRuntimeOptions,
   hooks: AgentHooks<R> | undefined,
+  locks: FolderLocks,
 ) =>
   Effect.gen(function* () {
     const base = yield* makeCodingHandlers(binding, opts.skills)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
-    const run_agent = makeRunAgentHandler(store, shell, binding.displayRoot, opts, hooks)
+    const run_agent = makeRunAgentHandler(store, shell, locks, binding.displayRoot, opts, hooks)
     return { ...base, run_agent } as never
   })
 
@@ -464,8 +476,11 @@ export const buildScopeRuntime = <R = never>(
     enforceWrite: scope.enforceWrite,
     allowBash: opts.allowBash ?? true,
   }
+  // One locks map per runtime: parallel spawns into the SAME folder serialize
+  // even across subtrees (cousins included); disjoint folders fan out freely.
+  const locks = makeFolderLocks()
   const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks),
+    buildGenericHandlers(binding, opts, hooks, locks),
   ) as ScopeRuntime["handlerLayer"]
   return { toolkit: genericToolkit, handlerLayer }
 }
