@@ -60,7 +60,10 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
     return v
   }
 
-  const isDelegate = (name: string): boolean => name.startsWith("delegate_to_")
+  // `run_agent` is represented by the sub-agent container (Task pill + tree
+  // node) built from the subagent_start/end events, not by a tool pill of its
+  // own (it would be redundant). (Replaces the old `delegate_to_*` filtering.)
+  const isSpawn = (name: string): boolean => name === "run_agent"
   const joinDetail = (
     ...parts: ReadonlyArray<string | undefined>
   ): string | undefined =>
@@ -74,8 +77,8 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         return
 
       case "tool_call_start": {
-        // Delegations are the sub-agent container, not a tool node.
-        if (isDelegate(event.toolName)) return
+        // The spawn tool is the sub-agent container, not a tool node.
+        if (isSpawn(event.toolName)) return
         const label = describeToolCall(event.toolName, event.args)
         store.setProjection((p) => {
           const { tree, id } = treeToolStart(p.tree, label, now)
@@ -94,7 +97,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
       }
 
       case "tool_call_end": {
-        if (isDelegate(event.toolName)) return
+        if (isSpawn(event.toolName)) return
         const detail = describeToolResult(event.toolName, event.ok, event.result)
         const nodeId = dequeue(toolTreeIds, matchKey(event))
         if (nodeId !== undefined) {
@@ -131,7 +134,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
         store.setProjection((p) => ({
           ...p,
-          tree: treeSubAgentStart(p.tree, `delegate → ${event.name}`, now),
+          tree: treeSubAgentStart(p.tree, `run_agent → ${event.name}`, now),
         }))
         return
       }
