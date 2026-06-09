@@ -75,6 +75,14 @@ export const AgentContextNode = Schema.Struct({
   returnSummary: Schema.optional(Schema.String),
   filesChanged: Schema.Array(Schema.String),
   usage: Schema.optional(ContextUsage),
+  /**
+   * The workspace git ref (HEAD) when this node's run finished — the world its
+   * context describes. A later resume/branch compares it against the current
+   * HEAD: if they differ, the node is **stale** (its in-context file reads may
+   * no longer match the tree) and the spawner injects a staleness brief.
+   * Absent on running nodes and non-git workspaces.
+   */
+  workspaceRef: Schema.optional(Schema.String),
   createdAt: Schema.Number,
   endedAt: Schema.optional(Schema.Number),
 })

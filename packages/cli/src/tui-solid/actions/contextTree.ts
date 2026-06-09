@@ -1,15 +1,31 @@
 import { Effect, Schema } from "effect"
 import { batch } from "solid-js"
-import { ContextNodeId, ContextTreeStore, type ConversationId } from "@efferent/core"
+import {
+  ContextNodeId,
+  ContextTreeStore,
+  getWorkspaceRef,
+  type ConversationId,
+} from "@efferent/core"
 import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
-/** Load the persisted context-tree nodes for `cid` into the side projection. */
+/**
+ * Load the persisted context-tree nodes for `cid` into the side projection,
+ * along with the workspace's current git HEAD — nodes stamped with a different
+ * ref render a `stale` badge (their context describes an older world).
+ */
 export const loadTreeNodes = (store: TuiStore, cid: ConversationId) =>
   Effect.gen(function* () {
     const cts = yield* ContextTreeStore
     const nodes = yield* cts.listTree(cid)
-    yield* Effect.sync(() => store.setProjection((p) => ({ ...p, treeNodes: nodes })))
+    const head = yield* getWorkspaceRef(store.status().cwd)
+    yield* Effect.sync(() =>
+      store.setProjection((p) => ({
+        ...p,
+        treeNodes: nodes,
+        ...(head !== undefined ? { treeWorkspaceRef: head } : {}),
+      })),
+    )
   })
 
 /**

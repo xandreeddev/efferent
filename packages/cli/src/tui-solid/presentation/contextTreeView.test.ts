@@ -45,6 +45,20 @@ describe("buildTreeRowsData", () => {
     expect(rows[0]!.display.folded).toBe(true)
   })
 
+  test("a finished node stamped with another ref is stale; running/unstamped never are", () => {
+    const nodes = [
+      node("a", null, "/ws/a", 1, { workspaceRef: "old" }),
+      node("b", null, "/ws/b", 2, { workspaceRef: "cur" }),
+      node("c", null, "/ws/c", 3, { status: "running", workspaceRef: "old" }),
+      node("d", null, "/ws/d", 4), // unstamped (non-git or pre-migration)
+    ]
+    const rows = buildTreeRowsData(nodes, new Set(), "cur")
+    expect(rows.map((r) => r.display.stale)).toEqual([true, false, false, false])
+    // no current ref known → nothing is marked stale
+    const without = buildTreeRowsData(nodes, new Set())
+    expect(without.every((r) => !r.display.stale)).toBe(true)
+  })
+
   test("siblings are ordered oldest-first; display carries status/edge/seed", () => {
     const nodes = [
       node("a", null, "/ws/a", 5, { status: "running" }),

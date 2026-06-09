@@ -56,6 +56,9 @@ const renderNode = (d: () => TreeRowDisplay) => {
       <Show when={meta.length > 0}>
         <text fg={tokens.text.dim}>{`  ${meta}`}</text>
       </Show>
+      <Show when={v.stale}>
+        <text fg={tokens.state.running}>{"  stale"}</text>
+      </Show>
       <Show when={v.summary !== undefined && v.summary.length > 0}>
         <text fg={tokens.text.dim} wrapMode="none">{`  — ${v.summary}`}</text>
       </Show>
@@ -74,7 +77,8 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const sp = () => store.sidePane()
   const focused = () => store.focus() === "side"
-  const rows = () => buildTreeRowsData(sp().treeNodes ?? [], sp().treeCollapsed)
+  const rows = () =>
+    buildTreeRowsData(sp().treeNodes ?? [], sp().treeCollapsed, sp().treeWorkspaceRef)
   const cursor = () => sp().treeCursor
 
   let sb!: ScrollBoxRenderable

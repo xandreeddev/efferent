@@ -22,6 +22,8 @@ export type TreeRowDisplay = {
   readonly filesCount: number
   /** Billed tokens (input+output) this node consumed, formatted (`"38k tok"`). */
   readonly tokens?: string
+  /** The workspace moved since this node ran — its context describes an older world. */
+  readonly stale: boolean
   readonly folded: boolean
   readonly hasChildren: boolean
   readonly nodeId: string
@@ -60,10 +62,15 @@ const childrenByParent = (
  * Flatten the tree into ordered navigable rows, honouring `collapsed` (folded
  * nodes hide their descendants). Forest roots (`parentId === null`) are `head`s;
  * a node with children is foldable (`foldId = "tree:<id>"`).
+ *
+ * `currentRef` is the workspace's git HEAD at load time: a finished node
+ * stamped with a *different* ref is marked `stale` — resuming it hands the
+ * model in-context file reads from an older world.
  */
 export const buildTreeRowsData = (
   nodes: ReadonlyArray<AgentContextNode>,
   collapsed: ReadonlySet<string>,
+  currentRef?: string,
 ): ReadonlyArray<TreeRowData> => {
   const byParent = childrenByParent(nodes)
   const rows: TreeRowData[] = []
@@ -89,6 +96,11 @@ export const buildTreeRowsData = (
         ...(node.usage !== undefined
           ? { tokens: `${formatTokens(node.usage.inputTokens + node.usage.outputTokens)} tok` }
           : {}),
+        stale:
+          node.status !== "running" &&
+          node.workspaceRef !== undefined &&
+          currentRef !== undefined &&
+          node.workspaceRef !== currentRef,
         folded,
         hasChildren,
         nodeId: node.id,

@@ -39,6 +39,8 @@ export interface ContextReturn {
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
   readonly usage?: ContextUsage
+  /** Workspace git ref (HEAD) at finish — the staleness stamp. Omit when not in git. */
+  readonly workspaceRef?: string
 }
 
 /**

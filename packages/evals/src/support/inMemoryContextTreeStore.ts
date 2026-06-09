@@ -89,6 +89,7 @@ export const InMemoryContextTreeStoreLive = Layer.effect(
             returnSummary: result.summary,
             filesChanged: result.filesChanged,
             ...(result.usage !== undefined ? { usage: result.usage } : {}),
+            ...(result.workspaceRef !== undefined ? { workspaceRef: result.workspaceRef } : {}),
             endedAt: Date.now(),
           }
           yield* Ref.update(ref, (m) => {

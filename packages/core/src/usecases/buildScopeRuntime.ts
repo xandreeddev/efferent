@@ -27,6 +27,7 @@ import {
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { RunContextRef } from "./runContext.js"
+import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import {
   BUDGET_STOP_NOTE,
   budgetExhaustedFailure,
@@ -188,6 +189,7 @@ const makeInnerHooks = <R>(
 
 interface RunSpawnedArgs<R> {
   readonly store: ContextTreeStore["Type"]
+  readonly shell: Shell["Type"]
   readonly displayRoot: string
   readonly opts: BuildScopeRuntimeOptions
   readonly hooks: AgentHooks<R> | undefined
@@ -265,6 +267,14 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     const usage = yield* Ref.get(usageRef)
     const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
 
+    // Staleness stamp: the world this node's context describes. A later
+    // resume/branch compares it to the then-current HEAD (best-effort —
+    // non-git workspaces just never stamp).
+    const wsRef = yield* getWorkspaceRef(args.displayRoot).pipe(
+      Effect.provideService(Shell, args.shell),
+    )
+    const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
+
     if (outcome.ok) {
       const tail = outcome.r.messages.slice(seedMessages.length)
       for (const m of tail) yield* store.append(nodeId, m)
@@ -280,6 +290,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
         summary,
         filesChanged: files,
         ...(hasUsage ? { usage } : {}),
+        ...stamp,
       })
       if (hooks?.onSubAgentEnd) {
         yield* hooks.onSubAgentEnd({
@@ -301,6 +312,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       summary,
       filesChanged: files,
       ...(hasUsage ? { usage } : {}),
+      ...stamp,
     })
     if (hooks?.onSubAgentEnd) {
       yield* hooks.onSubAgentEnd({
@@ -319,6 +331,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
 const makeRunAgentHandler =
   <R>(
     store: ContextTreeStore["Type"],
+    shell: Shell["Type"],
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
@@ -355,11 +368,20 @@ const makeRunAgentHandler =
           })),
         )
         const node = yield* store.get(nodeId)
+        // The node's context is a cache of an older world: if HEAD moved
+        // since it last ran, prepend what changed in its folder so the model
+        // re-reads instead of trusting stale in-context file contents.
+        const brief = yield* buildStalenessBrief({
+          workspaceDir: displayRoot,
+          nodeFolder: node.folder,
+          stampedRef: node.workspaceRef,
+        }).pipe(Effect.provideService(Shell, shell))
+        const taskMsg = brief !== undefined ? `${brief}\n\n${task}` : task
         if (seedMode === "resume") {
-          yield* store.append(nodeId, { role: "user", content: task })
+          yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
-            store, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            store, shell, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
           })
@@ -367,7 +389,7 @@ const makeRunAgentHandler =
         const sourceMsgs = yield* store.listMessages(nodeId)
         const seedMessages: ReadonlyArray<AgentMessage> = [
           ...sourceMsgs,
-          { role: "user", content: task },
+          { role: "user", content: taskMsg },
         ]
         const childId = yield* store.spawn({
           parentId: nodeId,
@@ -379,7 +401,7 @@ const makeRunAgentHandler =
           seedMessages,
         })
         return yield* runSpawnedAgent({
-          store, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          store, shell, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
         })
@@ -398,7 +420,7 @@ const makeRunAgentHandler =
         seedMessages,
       })
       return yield* runSpawnedAgent({
-        store, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        store, shell, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
       })
@@ -419,7 +441,8 @@ const buildGenericHandlers = <R>(
   Effect.gen(function* () {
     const base = yield* makeCodingHandlers(binding, opts.skills)
     const store = yield* ContextTreeStore
-    const run_agent = makeRunAgentHandler(store, binding.displayRoot, opts, hooks)
+    const shell = yield* Shell
+    const run_agent = makeRunAgentHandler(store, shell, binding.displayRoot, opts, hooks)
     return { ...base, run_agent } as never
   })
 
