@@ -7,6 +7,7 @@ import { SettingsStore } from "../ports/SettingsStore.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
+import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
 import type { AgentConfig } from "./agentConfig.js"
 
 /**
@@ -47,6 +48,12 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
     const userMsg: AgentMessage = { role: "user", content: userPrompt }
     yield* store.append(conversationId, userMsg)
 
+    // One shared spend pool for every sub-agent this turn may spawn — fresh
+    // per top-level run, so a prior turn's spend never starves this one.
+    const tokenPool = yield* makeTokenPool(
+      settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
+    )
+
     const result = yield* runAgentLoop({
       system: config.systemPrompt,
       messages: [...prefix, ...active, userMsg],
@@ -61,6 +68,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         rootConversationId: conversationId,
         parentNodeId: null,
         depth: 0,
+        tokenPool,
       }),
     )
 

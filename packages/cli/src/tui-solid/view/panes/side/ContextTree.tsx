@@ -42,6 +42,7 @@ const renderNode = (d: () => TreeRowDisplay) => {
     v.edgeKind !== "spawned" ? v.edgeKind : undefined,
     v.seedKind !== "task" ? `seed:${v.seedKind}` : undefined,
     v.filesCount > 0 ? `${v.filesCount}f` : undefined,
+    v.tokens,
   ]
     .filter((x): x is string => x !== undefined)
     .join(" · ")

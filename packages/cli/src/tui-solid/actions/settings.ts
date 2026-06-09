@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { Effect } from "effect"
 import {
   AuthStore,
+  DEFAULT_SUB_AGENT_TOKEN_BUDGET,
   FileSystem,
   ModelRegistry,
   SettingsStore,
@@ -129,6 +130,13 @@ export const openSettingsView = (store: TuiStore) =>
       { key: "allowBash", label: "allowBash", value: String(current.allowBash), kind: "boolean" },
       { key: "maxSteps", label: "maxSteps", value: String(current.maxSteps), kind: "number" },
       {
+        key: "subAgentTokenBudget",
+        label: "subAgentBudget",
+        value: String(current.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET),
+        kind: "readonly",
+        hint: "use :set subAgentTokenBudget <n> (0 = off)",
+      },
+      {
         key: "anthropicThinkingEffort",
         label: "claudeThink",
         value: current.anthropicThinkingEffort ?? "",
@@ -229,6 +237,20 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       if (value !== "true" && value !== "false") return yield* err("Setting 'allowBash' must be 'true' or 'false'")
       yield* settings.update((curr) => ({ ...curr, allowBash: value === "true" }))
       yield* Effect.sync(() => store.pushBlock({ kind: "info", text: `Updated allowBash → ${value}` }))
+      return
+    }
+    if (key === "subAgentTokenBudget") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 0) {
+        return yield* err("Setting 'subAgentTokenBudget' must be a number ≥ 0 (0 disables the cap)")
+      }
+      yield* settings.update((curr) => ({ ...curr, subAgentTokenBudget: Math.floor(num) }))
+      yield* Effect.sync(() =>
+        store.pushBlock({
+          kind: "info",
+          text: `Updated subAgentTokenBudget → ${num === 0 ? "off" : Math.floor(num)}`,
+        }),
+      )
       return
     }
     if (key in ENUM_ALLOWED) {

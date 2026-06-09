@@ -27,6 +27,13 @@ import {
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { RunContextRef } from "./runContext.js"
+import {
+  BUDGET_STOP_NOTE,
+  budgetExhaustedFailure,
+  drainPool,
+  poolExhausted,
+  type TokenPool,
+} from "./tokenBudget.js"
 
 /**
  * A runnable scope: the `@effect/ai` Toolkit (base coding tools + the generic
@@ -116,11 +123,18 @@ const genericToolkit = Toolkit.make(
  * `filesChanged`), accumulates token usage, and — deliberately — does NOT
  * forward `onTurnStart`/`onAssistantMessage`/`onAgentEnd` (those belong to the
  * outer loop; forwarding `onAgentEnd` would end the turn early).
+ *
+ * Budget wiring: each LLM call's billed tokens drain the shared `pool`, and
+ * `onShouldStopAfterTurn` halts the loop at the next turn *boundary* once the
+ * pool is spent (never mid-tool-call — the message buffer stays pairing-valid),
+ * flagging `budgetStopRef` so the caller can mark the result partial.
  */
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
   usageRef: Ref.Ref<ContextUsage>,
+  pool: TokenPool,
+  budgetStopRef: Ref.Ref<boolean>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -151,9 +165,15 @@ const makeInnerHooks = <R>(
             inputTokens: u.inputTokens,
             outputTokens: acc.outputTokens + u.outputTokens,
             cacheReadTokens: u.cacheReadTokens,
-          }))
+          })).pipe(Effect.zipRight(drainPool(pool, u)))
         : Effect.void
     },
+    onShouldStopAfterTurn: () =>
+      Effect.gen(function* () {
+        const spent = yield* poolExhausted(pool)
+        if (spent) yield* Ref.set(budgetStopRef, true)
+        return spent
+      }),
     ...(parent?.onSubAgentStart !== undefined
       ? { onSubAgentStart: parent.onSubAgentStart }
       : {}),
@@ -177,6 +197,7 @@ interface RunSpawnedArgs<R> {
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
+  readonly tokenPool: TokenPool
 }
 
 /**
@@ -201,7 +222,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     if (hooks?.onSubAgentStart) {
       yield* hooks.onSubAgentStart({ name: label, task, nodeId })
     }
-    const innerHooks = makeInnerHooks(hooks, filesRef, usageRef)
+    const budgetStopRef = yield* Ref.make(false)
+    const innerHooks = makeInnerHooks(hooks, filesRef, usageRef, args.tokenPool, budgetStopRef)
 
     const binding: ScopeBinding = {
       rootDir: folder,
@@ -223,6 +245,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       rootConversationId: args.rootConversationId,
       parentNodeId: nodeId,
       depth: args.parentDepth + 1,
+      tokenPool: args.tokenPool,
     }
 
     const outcome = yield* runAgentLoop({
@@ -245,9 +268,16 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     if (outcome.ok) {
       const tail = outcome.r.messages.slice(seedMessages.length)
       for (const m of tail) yield* store.append(nodeId, m)
+      // A budget stop is an *ok* outcome with a partial result — say so, so
+      // the parent model (and the human in :tree) knows not to trust it as
+      // complete, instead of silently presenting half the work as done.
+      const stoppedByBudget = yield* Ref.get(budgetStopRef)
+      const summary = stoppedByBudget
+        ? `${outcome.r.finalText}\n\n${BUDGET_STOP_NOTE}`.trim()
+        : outcome.r.finalText
       yield* store.recordReturn(nodeId, {
         status: "ok",
-        summary: outcome.r.finalText,
+        summary,
         filesChanged: files,
         ...(hasUsage ? { usage } : {}),
       })
@@ -256,12 +286,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
           name: label,
           nodeId,
           ok: true,
-          summary: outcome.r.finalText,
+          summary,
           filesChanged: files,
           ...(hasUsage ? { usage } : {}),
         })
       }
-      return { summary: outcome.r.finalText, filesChanged: files, nodeId }
+      return { summary, filesChanged: files, nodeId }
     }
 
     const f = toFailure(outcome.e)
@@ -308,6 +338,12 @@ const makeRunAgentHandler =
           message: `sub-agent nesting limit (${maxDepth}) reached — do this part yourself.`,
         })
       }
+      // Depth bounds termination; the shared pool bounds spend. A drained
+      // pool refuses new spawns (model-readable, like every other failure
+      // here) — running sub-agents stop at their next turn boundary.
+      if (yield* poolExhausted(rc.tokenPool)) {
+        return yield* Effect.fail(budgetExhaustedFailure)
+      }
       const { folder, task, seedFromNode, seedMode } = params
 
       // Resume / branch an existing node.
@@ -325,6 +361,7 @@ const makeRunAgentHandler =
           return yield* runSpawnedAgent({
             store, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+            tokenPool: rc.tokenPool,
           })
         }
         const sourceMsgs = yield* store.listMessages(nodeId)
@@ -344,6 +381,7 @@ const makeRunAgentHandler =
         return yield* runSpawnedAgent({
           store, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+          tokenPool: rc.tokenPool,
         })
       }
 
@@ -362,6 +400,7 @@ const makeRunAgentHandler =
       return yield* runSpawnedAgent({
         store, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+        tokenPool: rc.tokenPool,
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 

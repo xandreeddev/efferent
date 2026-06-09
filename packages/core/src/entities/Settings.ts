@@ -23,6 +23,12 @@ export const Settings = Schema.Struct({
   maxSteps: Schema.Number.annotations({
     description: "The maximum number of steps allowed in the agent loop.",
   }),
+  subAgentTokenBudget: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap. Unset → 500000.",
+    }),
+  ),
   editorMode: EditorMode.annotations({
     description: "TUI input editor mode: 'insert' (default emacs-style) or 'vi' (modal vi-lite).",
   }),
