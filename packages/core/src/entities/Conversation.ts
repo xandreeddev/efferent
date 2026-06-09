@@ -103,11 +103,16 @@ export type ToolResult = typeof ToolResult.Type
 /**
  * Result of one `runAgent` invocation. `finalText` is extracted from
  * the last assistant message's text parts; `messages` is the FULL
- * conversation state at the end of the run (loaded history + new tail).
- * Callers slice off what they already had to find what's new.
+ * conversation state at the end of the run (loaded history + new tail);
+ * `newTail` is exactly what the loop APPENDED — including synthetic
+ * messages it injected itself (malformed-response correctives). Persist
+ * `newTail`; never reconstruct it by index arithmetic on `messages`,
+ * which silently breaks the moment a context transform reshapes the
+ * buffer mid-run (auto-compaction).
  */
 export const AgentResult = Schema.Struct({
   finalText: Schema.String,
   messages: Schema.Array(AgentMessage),
+  newTail: Schema.Array(AgentMessage),
 })
 export type AgentResult = typeof AgentResult.Type

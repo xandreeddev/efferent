@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { Effect, Exit } from "effect"
 import { LanguageModel, type Toolkit } from "@effect/ai"
 import { recoverMalformedToolCalls, runAgentLoop } from "./agentLoop.js"
+import { generateHandoffBrief } from "./handoff.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 
 /**
@@ -134,5 +135,50 @@ describe("runAgentLoop malformed-response recovery", () => {
     // 3 retries are tolerated; the 4th consecutive failure surfaces, not hangs.
     expect(Exit.isFailure(exit)).toBe(true)
     expect(model.calls()).toBe(4)
+  })
+})
+
+describe("runAgentLoop newTail (the persist boundary)", () => {
+  it("a clean run reports exactly what was appended — empty here, not an index slice", async () => {
+    const model = scriptedModel(["done"])
+    const res = await Effect.runPromise(
+      runAgentLoop({ system: "s", messages: seed, toolkit: oneToolToolkit, maxSteps: 5 }).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, model.layer),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    // scripted "done" carries no content parts → nothing was appended.
+    expect(res.newTail).toEqual([])
+    expect(res.messages).toEqual([...seed])
+  })
+
+  it("the synthetic corrective from malformed recovery is IN newTail — it must persist", async () => {
+    const model = scriptedModel(["malformed", "done"])
+    const res = await Effect.runPromise(
+      runAgentLoop({ system: "s", messages: seed, toolkit: oneToolToolkit, maxSteps: 5 }).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, model.layer),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    expect(res.newTail.length).toBe(1)
+    expect(res.newTail[0]!.role).toBe("user")
+    expect(String(res.newTail[0]!.content)).toContain("could not be parsed")
+    // The full buffer is exactly input + tail — callers never do arithmetic.
+    expect(res.messages).toEqual([...seed, ...res.newTail])
+  })
+})
+
+describe("generateHandoffBrief", () => {
+  it("summarizes the loaded view through the model and trims the reply", async () => {
+    // scriptedModel's "done" responses carry text "done"; that IS the brief here.
+    const model = scriptedModel(["done"])
+    const brief = await Effect.runPromise(
+      generateHandoffBrief([
+        { role: "user", content: "we did things" },
+        { role: "assistant", content: "indeed" },
+      ] as ReadonlyArray<AgentMessage>).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, model.layer),
+      ) as Effect.Effect<string, unknown, never>,
+    )
+    expect(brief).toBe("done")
+    expect(model.calls()).toBe(1)
   })
 })

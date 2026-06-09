@@ -11,6 +11,11 @@ import type {
  * accordingly. Modeled loosely on Pi's AgentEventSink.
  */
 export type AgentEvent =
+  // Internal drain sentinel: offered by a mode AFTER its run completes so the
+  // consumer fiber exits its loop having rendered everything before it —
+  // deterministic, no sleep, no interruption racing a half-rendered event.
+  // Never serialized to stdout/stderr/RPC.
+  | { readonly type: "flush" }
   | { readonly type: "turn_start"; readonly turnIndex: number }
   | {
       readonly type: "assistant_message"

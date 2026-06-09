@@ -287,8 +287,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
 
     if (outcome.ok) {
-      const tail = outcome.r.messages.slice(seedMessages.length)
-      for (const m of tail) yield* store.append(nodeId, m)
+      for (const m of outcome.r.newTail) yield* store.append(nodeId, m)
       // A budget stop is an *ok* outcome with a partial result — say so, so
       // the parent model (and the human in :tree) knows not to trust it as
       // complete, instead of silently presenting half the work as done.

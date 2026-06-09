@@ -41,6 +41,7 @@ const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
   Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue)
+      if (event.type === "flush") return // drain sentinel — never rendered
       switch (event.type) {
         case "tool_call_start":
           yield* writeStderr(
@@ -132,8 +133,10 @@ export const runPrintMode = (
       ),
     )
 
-    yield* Effect.sleep("50 millis") // let queue drain
-    yield* Fiber.interrupt(consumer)
+    // Deterministic drain: sentinel + join (the run is done, nothing else
+    // produces), so every trailing event renders before the final text.
+    yield* Queue.offer(queue, { type: "flush" })
+    yield* Fiber.join(consumer)
 
     if (result !== undefined) {
       process.stdout.write(result.finalText + "\n")
