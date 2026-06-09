@@ -12,6 +12,12 @@ import {
   stackParagraph,
   stackToEnd,
   stackToTop,
+  treeCurrentRow,
+  treeFold,
+  treeMessage,
+  treeParagraph,
+  treeToEnd,
+  treeToTop,
 } from "../presentation/sidePane.js"
 import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
@@ -351,6 +357,82 @@ const sideStackKey = (ctx: TuiContext, key: Key): boolean => {
 }
 
 /**
+ * Context-tree (`:tree`) navigation when the side pane is focused (NORMAL). A
+ * read-only browse of the persistent branching agent-context tree: j/k·`{}` step
+ * one node, `[]` jumps forest roots, gg/G jump to the ends, Tab/Enter/h/l·←/→
+ * fold the node under the cursor, i drops to the input. Returns true iff it
+ * consumed the key.
+ */
+const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
+  const { store } = ctx
+
+  if (key.name === "g" && key.shift) {
+    store.setGPending(false)
+    store.setNav((n) => treeToEnd(n, store.projection()))
+    return true
+  }
+  if (key.name === "g" && !key.ctrl && !key.meta) {
+    if (store.gPending()) {
+      store.setGPending(false)
+      store.setNav(treeToTop)
+    } else {
+      store.setGPending(true)
+    }
+    return true
+  }
+  store.setGPending(false)
+
+  if (searchNavKey(store, key)) return true
+
+  const bracket = bracketMotion(key)
+  if (bracket === "paragraph-prev") {
+    store.setNav((n) => treeParagraph(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "paragraph-next") {
+    store.setNav((n) => treeParagraph(n, store.projection(), 1))
+    return true
+  }
+  if (bracket === "message-prev") {
+    store.setNav((n) => treeMessage(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "message-next") {
+    store.setNav((n) => treeMessage(n, store.projection(), 1))
+    return true
+  }
+
+  switch (key.name) {
+    case "j":
+    case "down":
+      store.setNav((n) => treeParagraph(n, store.projection(), 1))
+      return true
+    case "k":
+    case "up":
+      store.setNav((n) => treeParagraph(n, store.projection(), -1))
+      return true
+    case "tab":
+    case "h":
+    case "l":
+    case "left":
+    case "right":
+      store.setNav((n) => treeFold(n, store.projection()))
+      return true
+    case "return": {
+      const row = treeCurrentRow(store.nav(), store.projection())
+      if (row?.foldId !== undefined) store.setNav((n) => treeFold(n, store.projection()))
+      return true
+    }
+    case "i":
+      store.setFocus("input")
+      store.setMode("insert")
+      return true
+    default:
+      return false
+  }
+}
+
+/**
  * Input-pane (INSERT) keys claimed BEFORE the focused `<textarea>`. OpenTUI fires
  * global key listeners (this dispatch) before the focused renderable and skips it
  * when the event is `preventDefault()`-ed, so `dispatch` can take a key the
@@ -531,6 +613,17 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
     store.focus() === "side" &&
     store.sidePane().view === "stack" &&
     sideStackKey(ctx, key)
+  ) {
+    return
+  }
+
+  // Side pane, context-tree view: cursor / fold over the persistent agent tree.
+  if (
+    !key.ctrl &&
+    !key.meta &&
+    store.focus() === "side" &&
+    store.sidePane().view === "tree" &&
+    sideTreeKey(ctx, key)
   ) {
     return
   }

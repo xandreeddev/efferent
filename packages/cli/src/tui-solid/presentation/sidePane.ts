@@ -7,6 +7,8 @@ import {
   handoffOwningTurn,
 } from "./contextView.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
+import { buildTreeRowsData, type TreeRowData } from "./contextTreeView.js"
+import type { AgentContextNode } from "@efferent/core"
 
 export interface SidePaneInstruction {
   readonly path: string
@@ -103,6 +105,8 @@ export interface SidePaneProjection {
   readonly filesChanged: ReadonlyArray<FileChange>
   /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
   readonly context?: ReadonlyArray<ContextSegment>
+  /** Persisted agent-context-tree nodes (from `listTree`); shown when view==="tree". */
+  readonly treeNodes?: ReadonlyArray<AgentContextNode>
 }
 
 /**
@@ -113,8 +117,8 @@ export interface SidePaneProjection {
  * compute rows, but only ever *write* nav.
  */
 export interface SidePaneNav {
-  /** Which view the side pane shows: the live agent stack, or the context viewer. */
-  readonly view: "stack" | "context"
+  /** Which view the side pane shows: the live agent stack, the context viewer, or the context tree. */
+  readonly view: "stack" | "context" | "tree"
   /** Context-tree cursor: index into the navigable rows. */
   readonly contextCursor: number
   /** Folded context-tree segment/turn ids. */
@@ -127,6 +131,10 @@ export interface SidePaneNav {
   readonly stackCollapsed: ReadonlySet<string>
   /** Activity (stack) view cursor: index into its navigable rows. */
   readonly stackCursor: number
+  /** Context-tree (`:tree`) cursor: index into its navigable rows. */
+  readonly treeCursor: number
+  /** Folded context-tree node ids ("tree:<id>"). */
+  readonly treeCollapsed: ReadonlySet<string>
 }
 
 /** The merged view both halves compose to — what the components read (the side
@@ -149,6 +157,8 @@ export const emptyNav: SidePaneNav = {
   contextHandoffSelected: new Set(),
   stackCollapsed: new Set(["files", "skills", "instructions"]),
   stackCursor: 0,
+  treeCursor: 0,
+  treeCollapsed: new Set(),
 }
 
 export const emptySidePane: SidePaneState = { ...emptyProjection, ...emptyNav }
@@ -165,6 +175,7 @@ export const splitSidePane = (
     stats: s.stats,
     filesChanged: s.filesChanged,
     ...(s.context !== undefined ? { context: s.context } : {}),
+    ...(s.treeNodes !== undefined ? { treeNodes: s.treeNodes } : {}),
   },
   nav: {
     view: s.view,
@@ -174,6 +185,8 @@ export const splitSidePane = (
     contextHandoffSelected: s.contextHandoffSelected,
     stackCollapsed: s.stackCollapsed,
     stackCursor: s.stackCursor,
+    treeCursor: s.treeCursor,
+    treeCollapsed: s.treeCollapsed,
   },
 })
 
@@ -444,5 +457,44 @@ export const stackCurrentRow = (
 ): StackRowData | undefined => {
   const rows = stackRows(nav, projection)
   return rows[clampCursor(rows.length, nav.stackCursor)]
+}
+
+// --- context-tree (`:tree`) view navigation (pure; rows re-derived each call) ---
+
+export const treeRows = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): ReadonlyArray<TreeRowData> =>
+  buildTreeRowsData(projection.treeNodes ?? [], nav.treeCollapsed)
+
+/** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
+export const treeParagraph = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  delta: number,
+): SidePaneNav => ({ ...nav, treeCursor: stepRow(treeRows(nav, projection), nav.treeCursor, delta) })
+/** `[`/`]` — jump to the prev/next forest root (a `head` row). */
+export const treeMessage = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  dir: 1 | -1,
+): SidePaneNav => ({ ...nav, treeCursor: stepHead(treeRows(nav, projection), nav.treeCursor, dir) })
+export const treeToTop = (nav: SidePaneNav): SidePaneNav => ({ ...nav, treeCursor: rowToTop() })
+export const treeToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
+  ...nav,
+  treeCursor: rowToEnd(treeRows(nav, projection)),
+})
+/** `⇥`/`↵` — fold the node under the cursor (no-op on leaf nodes). */
+export const treeFold = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
+  ...nav,
+  treeCollapsed: foldAt(treeRows(nav, projection), nav.treeCursor, nav.treeCollapsed),
+})
+/** The row under the cursor (for resume/branch/drop + fold decisions). */
+export const treeCurrentRow = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): TreeRowData | undefined => {
+  const rows = treeRows(nav, projection)
+  return rows[clampCursor(rows.length, nav.treeCursor)]
 }
 

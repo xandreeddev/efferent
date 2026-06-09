@@ -26,6 +26,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":db", description: "Show or set the store: :db pg <url> / :db sqlite [path] [global]" },
   { name: ":handoff", description: "Summarize & hand off — replace loaded history, keep originals" },
   { name: ":context", description: "Toggle the context viewer (turn tree — Space select, b build)" },
+  { name: ":tree", description: "Toggle the agent context tree (sub-agents: spawned/branched/resumed)" },
   { name: ":build", description: "Build a new session from the turns selected in :context" },
   { name: ":browse", description: "List conversations in this workspace" },
   { name: ":resume", description: "Resume a conversation, e.g. :resume 2" },
