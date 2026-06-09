@@ -40,10 +40,12 @@ export type AgentEvent =
       readonly type: "subagent_start"
       readonly name: string
       readonly task: string
+      readonly nodeId?: string
     }
   | {
       readonly type: "subagent_end"
       readonly name: string
+      readonly nodeId?: string
       readonly ok: boolean
       readonly summary: string
       readonly filesChanged: ReadonlyArray<string>
@@ -115,6 +117,7 @@ export const makeEventHooks = <R = never>(
       type: "subagent_start",
       name: event.name,
       task: event.task,
+      ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
     }).pipe(Effect.asVoid),
   onSubAgentEnd: (event) =>
     Queue.offer(queue, {
@@ -123,6 +126,7 @@ export const makeEventHooks = <R = never>(
       ok: event.ok,
       summary: event.summary,
       filesChanged: event.filesChanged,
+      ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
     }).pipe(Effect.asVoid),
   onSkillLoad: (event) =>

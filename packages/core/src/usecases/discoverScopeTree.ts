@@ -186,3 +186,24 @@ const parseScopeFile = (content: string): ParsedScope | undefined => {
   if (name === undefined || description === undefined) return undefined
   return { name, description, body }
 }
+
+/**
+ * Ambient folder context: the body of a folder's `SCOPE.md`, to be injected
+ * into any agent that runs scoped to that folder. This is `SCOPE.md`'s new
+ * role — "extra context for the folder" rather than "defines a delegatable
+ * agent". Frontmatter (if present) is stripped; a bodyless / missing /
+ * unreadable `SCOPE.md` yields `undefined`.
+ */
+export const getScopePromptBody = (
+  folder: string,
+): Effect.Effect<string | undefined, never, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem
+    const read = yield* fs
+      .read(resolve(folder, "SCOPE.md"))
+      .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+    if (read === undefined) return undefined
+    const parsed = parseScopeFile(read.content)
+    const body = parsed !== undefined ? parsed.body : read.content
+    return body.trim().length > 0 ? body : undefined
+  })

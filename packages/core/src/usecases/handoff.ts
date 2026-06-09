@@ -44,6 +44,30 @@ const renderTranscript = (messages: ReadonlyArray<AgentMessage>): string =>
     .join("\n\n")
 
 /**
+ * Summarize a loaded view into a handoff brief — the LLM-as-summarizer half of
+ * `createHandoff`, also used to seed a spawned sub-agent from chosen context.
+ * Renders the view as a flat transcript (one user message) so the model
+ * summarizes rather than continues it.
+ */
+export const generateHandoffBrief = (view: ReadonlyArray<AgentMessage>) =>
+  Effect.gen(function* () {
+    const prompt = Prompt.make([
+      { role: "system", content: HANDOFF_PROMPT },
+      {
+        role: "user",
+        content:
+          "Summarize the following conversation transcript into a handoff, " +
+          "following your instructions exactly. Reply with ONLY the summary.\n\n" +
+          "<transcript>\n" +
+          renderTranscript(view) +
+          "\n</transcript>",
+      },
+    ] as never)
+    const res = yield* LanguageModel.generateText({ prompt })
+    return res.text.trim()
+  })
+
+/**
  * Create a handoff for `conversationId`: summarize the **currently loaded
  * view** — the prior handoff summary (if any) plus the real messages since the
  * last fold — and record a checkpoint at the current head. From the next turn
@@ -67,19 +91,6 @@ export const createHandoff = (conversationId: ConversationId) =>
       ...active,
     ]
 
-    const prompt = Prompt.make([
-      { role: "system", content: HANDOFF_PROMPT },
-      {
-        role: "user",
-        content:
-          "Summarize the following conversation transcript into a handoff, " +
-          "following your instructions exactly. Reply with ONLY the summary.\n\n" +
-          "<transcript>\n" +
-          renderTranscript(view) +
-          "\n</transcript>",
-      },
-    ] as never)
-
-    const res = yield* LanguageModel.generateText({ prompt })
-    yield* store.checkpoint(conversationId, res.text.trim())
+    const summary = yield* generateHandoffBrief(view)
+    yield* store.checkpoint(conversationId, summary)
   })
