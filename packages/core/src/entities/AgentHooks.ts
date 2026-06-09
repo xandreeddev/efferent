@@ -57,10 +57,14 @@ export interface AgentEndEvent {
 export interface AgentSubAgentStartEvent {
   readonly name: string
   readonly task: string
+  /** The persisted context-tree node id for this sub-agent run, when one exists. */
+  readonly nodeId?: string
 }
 
 export interface AgentSubAgentEndEvent {
   readonly name: string
+  /** The persisted context-tree node id for this sub-agent run, when one exists. */
+  readonly nodeId?: string
   readonly ok: boolean
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
