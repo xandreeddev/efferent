@@ -16,9 +16,14 @@ const paneRow = (ctx: TuiContext): string => {
     case "conversation":
       return "conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · / search · Z fold all"
     case "side":
-      return store.sidePane().view === "context"
-        ? "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · / search"
-        : "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · / search · i insert"
+      switch (store.sidePane().view) {
+        case "context":
+          return "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · / search"
+        case "tree":
+          return "tree  j/k·{} move · [] root · ⇥/↵ fold · d drop · / search · i insert"
+        default:
+          return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · / search · i insert"
+      }
     case "input":
       return "input type to compose · ⇧↵ send · ↵ newline · : cmd · / search"
   }
@@ -26,7 +31,11 @@ const paneRow = (ctx: TuiContext): string => {
 
 const paneLabel = (ctx: TuiContext): string => {
   const { store } = ctx
-  if (store.focus() === "side" && store.sidePane().view === "context") return "context"
+  if (store.focus() === "side") {
+    const v = store.sidePane().view
+    if (v === "context") return "context"
+    if (v === "tree") return "tree"
+  }
   return store.focus()
 }
 

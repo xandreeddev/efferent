@@ -9,6 +9,7 @@ import {
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
+import { loadTreeNodes } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
 
 export interface SubmitDeps {
@@ -70,6 +71,11 @@ export const makeSubmit = (
         store.setBusy(false)
         store.setNote(undefined)
         store.run.setFiber(undefined)
+        // If the context-tree view is open, refresh it — a run may have spawned
+        // or updated sub-agent nodes. Best-effort; a store hiccup never blocks.
+        if (store.sidePane().view === "tree") {
+          yield* loadTreeNodes(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        }
         if (next !== undefined) yield* submit(next)
       })
 
