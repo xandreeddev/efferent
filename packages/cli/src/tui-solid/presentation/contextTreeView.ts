@@ -1,5 +1,6 @@
 import { basename } from "node:path"
 import type { AgentContextNode } from "@efferent/core"
+import { glyph } from "./theme/index.js"
 import { formatTokens } from "./statusBar.js"
 
 /**
@@ -29,10 +30,23 @@ export type TreeRowDisplay = {
   readonly nodeId: string
 }
 
-/** One navigable tree row: a `NavRow` (key/foldId/head) + indent depth + display. */
+/**
+ * The row's git-graph rail, split so the view can colour the connector by
+ * edge kind while the ancestor continuation columns stay dim. Both built from
+ * fixed 2-char glyph cells, so total rail width = depth × 2.
+ */
+export interface TreeRail {
+  /** Ancestor columns: `│ ` where that ancestor has more siblings below, else `  `. */
+  readonly prefix: string
+  /** This row's connector: `├─` mid-child, `└─` last child, empty for roots. */
+  readonly connector: string
+}
+
+/** One navigable tree row: a `NavRow` (key/foldId/head) + rail/depth + display. */
 export interface TreeRowData {
   readonly key: string
   readonly depth: number
+  readonly rail: TreeRail
   readonly foldId?: string
   readonly head?: boolean
   readonly display: TreeRowDisplay
@@ -63,6 +77,13 @@ const childrenByParent = (
  * nodes hide their descendants). Forest roots (`parentId === null`) are `head`s;
  * a node with children is foldable (`foldId = "tree:<id>"`).
  *
+ * Each row carries a git-log-`--graph`-style rail built by the classic
+ * ancestor-flags walk: `flags[i]` says whether the ancestor at depth `i+1` has
+ * further siblings below (draw `│ ` in that column, else blank), and the row's
+ * own connector is `├─` / `└─` by last-child-ness. Folding stays rail-correct
+ * for free — it hides descendants, never siblings, so the visible rows'
+ * continuation columns are unaffected.
+ *
  * `currentRef` is the workspace's git HEAD at load time: a finished node
  * stamped with a *different* ref is marked `stale` — resuming it hands the
  * model in-context file reads from an older world.
@@ -75,14 +96,27 @@ export const buildTreeRowsData = (
   const byParent = childrenByParent(nodes)
   const rows: TreeRowData[] = []
 
-  const walk = (node: AgentContextNode, depth: number): void => {
+  const walk = (
+    node: AgentContextNode,
+    depth: number,
+    flags: ReadonlyArray<boolean>,
+    isLast: boolean,
+  ): void => {
     const children = byParent.get(node.id) ?? []
     const hasChildren = children.length > 0
     const foldId = hasChildren ? `tree:${node.id}` : undefined
     const folded = foldId !== undefined && collapsed.has(foldId)
+    const rail: TreeRail =
+      depth === 0
+        ? { prefix: "", connector: "" }
+        : {
+            prefix: flags.map((f) => (f ? glyph.tree.vert : glyph.tree.skip)).join(""),
+            connector: isLast ? glyph.tree.corner : glyph.tree.tee,
+          }
     rows.push({
       key: `tree-row:${node.id}`,
       depth,
+      rail,
       ...(foldId !== undefined ? { foldId } : {}),
       head: depth === 0,
       display: {
@@ -106,10 +140,16 @@ export const buildTreeRowsData = (
         nodeId: node.id,
       },
     })
-    if (!folded) for (const c of children) walk(c, depth + 1)
+    if (!folded) {
+      // A root's children start a fresh rail (roots are visually separate
+      // trees); deeper children inherit this node's continuation column.
+      const childFlags = depth === 0 ? [] : [...flags, !isLast]
+      children.forEach((c, i) => walk(c, depth + 1, childFlags, i === children.length - 1))
+    }
   }
 
-  for (const root of byParent.get(null) ?? []) walk(root, 0)
+  const roots = byParent.get(null) ?? []
+  roots.forEach((r, i) => walk(r, 0, [], i === roots.length - 1))
   return rows
 }
 

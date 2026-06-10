@@ -18,19 +18,27 @@ const statusColor = (s: Status): string =>
 
 /**
  * One context-tree row, styled from its structured `display` — the same shape
- * `Context.tsx` uses. A status glyph (✓/✗/● coloured by run state, legible
- * without colour too), the scope folder, then dim metadata (provenance edge,
- * non-default seed, files-changed count) and the return summary.
+ * `Context.tsx` uses. The git-graph rail leads (dim ancestor columns + a `├─`/
+ * `└─` connector, branched forks tinted in the side accent so a fork point
+ * pops), then a status glyph (✓/✗/● coloured by run state, legible without
+ * colour too), the scope folder, dim metadata (provenance edge, non-default
+ * seed, files-changed count) and the return summary.
  */
 const Row = (props: { row: TreeRowData; active: boolean }) => {
   const d = (): TreeRowDisplay => props.row.display
-  const indent = () => props.row.depth * 2
   return (
     <box
       flexDirection="row"
-      marginLeft={indent()}
       {...(props.active ? { backgroundColor: tokens.cursorLine } : {})}
     >
+      <Show when={props.row.rail.prefix.length > 0}>
+        <text fg={tokens.text.dim}>{props.row.rail.prefix}</text>
+      </Show>
+      <Show when={props.row.rail.connector.length > 0}>
+        <text fg={d().edgeKind === "branched" ? tokens.accent.side : tokens.text.dim}>
+          {props.row.rail.connector}
+        </text>
+      </Show>
       {renderNode(d)}
     </box>
   )
