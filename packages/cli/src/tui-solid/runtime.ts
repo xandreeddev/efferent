@@ -187,6 +187,15 @@ export const runTuiModeSolid = (
         resolveApproval: approval.resolve,
       }
 
+      // 6-pre. Exit feedback. Registered BEFORE the renderer, so it runs AFTER
+      //    the renderer's destroy (finalizers run in reverse): by then the alt
+      //    screen is gone and this lands on the user's real terminal, while the
+      //    rest of teardown (worker, DB, logger layers, event-loop drain) still
+      //    runs — a visible beat instead of a silent freeze if it ever stalls.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => process.stderr.write("efferent: cleaning up…\n")),
+      )
+
       // 6. Renderer — owns alt-screen / raw mode / mouse / render loop. No
       //    exitOnCtrlC or exitSignals: we drive exit through `exitDeferred`, and
       //    the scope finalizer (below) restores the terminal on every path.
