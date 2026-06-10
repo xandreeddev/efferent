@@ -23,6 +23,8 @@ export type AgentEvent =
       readonly text: string
       readonly reasoning?: string
       readonly usage?: TokenUsage
+      /** Set for sub-agent narration: the run's context-tree node id. */
+      readonly nodeId?: string
     }
   | {
       readonly type: "tool_call_start"
@@ -32,6 +34,8 @@ export type AgentEvent =
       readonly id: string
       readonly toolName: string
       readonly args: unknown
+      /** Set for sub-agent inner calls: the run's context-tree node id. */
+      readonly nodeId?: string
     }
   | {
       readonly type: "tool_call_end"
@@ -40,12 +44,16 @@ export type AgentEvent =
       readonly toolName: string
       readonly ok: boolean
       readonly result: unknown
+      /** Set for sub-agent inner calls: the run's context-tree node id. */
+      readonly nodeId?: string
     }
   | {
       readonly type: "subagent_start"
       readonly name: string
       readonly task: string
       readonly nodeId?: string
+      /** The parent node's id — nests this run under its enclosing sub-agent. */
+      readonly parentNodeId?: string
     }
   | {
       readonly type: "subagent_end"
@@ -87,6 +95,7 @@ export const makeEventHooks = <R = never>(
         ? { reasoning: event.reasoning }
         : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
+      ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
     }).pipe(Effect.asVoid),
   onBeforeToolCall: extraBeforeTool
     ? (event) =>
@@ -97,6 +106,7 @@ export const makeEventHooks = <R = never>(
             id: event.toolCallId,
             toolName: event.toolName,
             args: event.args,
+            ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
           })
           return yield* extraBeforeTool(event)
         })
@@ -107,6 +117,7 @@ export const makeEventHooks = <R = never>(
           id: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
+          ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
         }).pipe(Effect.as({ action: "continue" as const })),
   onAfterToolCall: (event) =>
     Queue.offer(queue, {
@@ -116,6 +127,7 @@ export const makeEventHooks = <R = never>(
       toolName: event.toolName,
       ok: event.ok,
       result: event.result,
+      ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
     }).pipe(Effect.asVoid),
   onSubAgentStart: (event) =>
     Queue.offer(queue, {
@@ -123,6 +135,7 @@ export const makeEventHooks = <R = never>(
       name: event.name,
       task: event.task,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
+      ...(event.parentNodeId !== undefined ? { parentNodeId: event.parentNodeId } : {}),
     }).pipe(Effect.asVoid),
   onSubAgentEnd: (event) =>
     Queue.offer(queue, {

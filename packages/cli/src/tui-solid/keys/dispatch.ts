@@ -442,6 +442,12 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       const row = treeCurrentRow(store.nav(), store.projection())
       if (row === undefined) return true
       if (row.display.kind === "conversation") {
+        // Enter on the ALREADY-ACTIVE conversation = "back to the parent":
+        // drop any open agent preview so its live rail shows again.
+        if (row.display.active && store.nodePreview() !== undefined) {
+          closeNodePreview(store)
+          return true
+        }
         void ctx.run(
           switchToConversation(store, row.display.conversationId as ConversationId),
         )

@@ -117,8 +117,8 @@ credential to exercise end-to-end · ⚠ known rough edge (listed at the bottom)
    (`bunfig.toml` preload is cwd-relative). `--cwd` from the repo root and the npm bundle are
    the supported paths; the failure message should say so (today it's a raw module-resolve
    error).
-4. **Activity pane under parallel sub-agents** models one open sub-agent at a time — inner
-   tool attribution can interleave during a parallel burst. `:tree` (store-backed) is the
-   source of truth; cosmetic.
+4. ~~Activity pane under parallel sub-agents~~ — FIXED: inner events carry their node id and
+   the pump keys each run to its own Activity container (parallel runs stay siblings; tools
+   and end-states attribute by id, never "deepest open").
 5. Shell adapter: no process group on timeout kill (grandchildren may survive) + unbounded
    output buffering before truncation. Hardening, not breakage.

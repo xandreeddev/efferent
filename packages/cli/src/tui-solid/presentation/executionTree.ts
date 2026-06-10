@@ -194,6 +194,63 @@ export const onSubAgentStart = (
   return { ...t, openPath: [...t.openPath, id] }
 }
 
+/**
+ * **Keyed** sub-agent container: appended under `parentId` (its enclosing
+ * sub-agent's tree node) when given, else under the deepest open turn, else at
+ * root — and NEVER pushed onto `openPath`. The stack model breaks under
+ * parallel fan-out (a second start nests inside the first; an end closes
+ * whichever is deepest); keyed containers + {@link onToolStartUnder} attribute
+ * interleaved events to the right run by id.
+ */
+export const onSubAgentStartKeyed = (
+  tree: ExecutionTree,
+  label: string,
+  parentId: number | undefined,
+  now: number,
+): { tree: ExecutionTree; id: number } => {
+  const id = tree.nextId
+  const full: TreeNode = {
+    id,
+    kind: "subagent",
+    label,
+    status: "running",
+    startedAt: now,
+    children: [],
+  }
+  const anchor = parentId ?? openTurnId(tree)
+  const roots =
+    anchor === undefined ? [...tree.roots, full] : appendChild(tree.roots, anchor, full)
+  return { tree: { ...tree, roots, nextId: id + 1 }, id }
+}
+
+/** A tool node under a specific container (a keyed sub-agent's tree id). */
+export const onToolStartUnder = (
+  tree: ExecutionTree,
+  parentId: number,
+  label: string,
+  now: number,
+): { tree: ExecutionTree; id: number } => {
+  const id = tree.nextId
+  const full: TreeNode = {
+    id,
+    kind: "tool",
+    label,
+    status: "running",
+    startedAt: now,
+    children: [],
+  }
+  return { tree: { ...tree, roots: appendChild(tree.roots, parentId, full), nextId: id + 1 }, id }
+}
+
+/** Close a keyed sub-agent container by its tree id (parallel-safe). */
+export const onSubAgentEndKeyed = (
+  tree: ExecutionTree,
+  id: number,
+  ok: boolean,
+  detail: string | undefined,
+  now: number,
+): ExecutionTree => closeNode(tree, id, ok ? "ok" : "error", detail, now)
+
 export const onSubAgentEnd = (
   tree: ExecutionTree,
   ok: boolean,
