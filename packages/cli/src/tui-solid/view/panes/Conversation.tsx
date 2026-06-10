@@ -12,6 +12,7 @@ import {
   type ToolBlock,
 } from "../../presentation/conversation.js"
 import { clampCursor } from "../../presentation/paneNav.js"
+import { formatTokens } from "../../presentation/statusBar.js"
 import { glyph, tokens } from "../../state/theme.js"
 import { Pane, RailLine } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
@@ -112,6 +113,69 @@ const ToolPill = (props: { tool: ToolBlock }) => (
   </box>
 )
 
+/**
+ * One fan-out burst's live container: `● Running N agents…` while any row
+ * runs, `● Ran N agents` when done — each agent a railed row with its tool
+ * count + billed tokens, a running row showing its current tool under a `⎿`.
+ */
+const AgentsBlock = (props: { block: Extract<ScrollbackBlock, { kind: "agents" }> }) => {
+  const agents = () => props.block.agents
+  const running = () => agents().filter((a) => a.status === "running").length
+  const failed = () => agents().some((a) => a.status === "error")
+  const head = () =>
+    running() > 0
+      ? `Running ${agents().length} agent${agents().length === 1 ? "" : "s"}…`
+      : `Ran ${agents().length} agent${agents().length === 1 ? "" : "s"}`
+  const headColor = () =>
+    running() > 0 ? tokens.state.running : failed() ? tokens.state.error : tokens.state.ok
+  return (
+    <box flexDirection="column">
+      <box flexDirection="row">
+        <text fg={headColor()}>{`${glyph.railDot} `}</text>
+        <text fg={tokens.text.muted}>{head()}</text>
+      </box>
+      <For each={agents()}>
+        {(a, i) => (
+          <box flexDirection="column">
+            <box flexDirection="row">
+              <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
+                {`  ${i() === agents().length - 1 ? glyph.tree.corner : glyph.tree.tee} `}
+              </text>
+              <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
+                {a.name}
+              </text>
+              <text fg={tokens.text.dim} wrapMode="none">
+                {`  · ${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}${a.tokens > 0 ? ` · ${formatTokens(a.tokens)} tok` : ""}`}
+              </text>
+            </box>
+            <box flexDirection="row">
+              <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
+                {`  ${i() === agents().length - 1 ? "  " : glyph.tree.vert} ${glyph.connector}  `}
+              </text>
+              <text
+                fg={
+                  a.status === "running"
+                    ? tokens.text.dim
+                    : a.status === "ok"
+                      ? tokens.state.ok
+                      : tokens.state.error
+                }
+                wrapMode="none"
+              >
+                {a.status === "running"
+                  ? (a.currentTool ?? "thinking…")
+                  : a.status === "ok"
+                    ? "Done"
+                    : "Failed"}
+              </text>
+            </box>
+          </box>
+        )}
+      </For>
+    </box>
+  )
+}
+
 /** Render one non-tool block of the rail. */
 const Block = (props: { block: ScrollbackBlock }) => {
   const b = props.block
@@ -121,6 +185,8 @@ const Block = (props: { block: ScrollbackBlock }) => {
       return <Prose text={b.text} />
     case "tool":
       return <ToolPill tool={b} />
+    case "agents":
+      return <AgentsBlock block={b} />
     case "info":
       // An ephemeral system note (resume/built/quit hints — never persisted).
       // A first-class rail line: ● marker in its own colour. The blank line

@@ -43,6 +43,26 @@ export type ScrollbackBlock =
   | { readonly kind: "info"; readonly text: string }
   | { readonly kind: "error"; readonly text: string }
   | { readonly kind: "checkpoint"; readonly text: string }
+  | {
+      /** One live container for a turn's parallel sub-agent fan-out — a
+       *  Claude-style `Running N agents…` block with one row per run,
+       *  updated in place by the event pump (never one pill per spawn). */
+      readonly kind: "agents"
+      readonly id: string
+      readonly agents: ReadonlyArray<AgentRunRow>
+    }
+
+/** One sub-agent's live row inside an `agents` block. */
+export interface AgentRunRow {
+  readonly nodeId: string
+  readonly name: string
+  readonly status: ToolPillState
+  readonly toolUses: number
+  /** Billed tokens so far (Σ input+output per LLM call in the run). */
+  readonly tokens: number
+  /** The tool currently executing, for the running row's live sub-line. */
+  readonly currentTool?: string
+}
 
 export type ToolBlock = Extract<ScrollbackBlock, { kind: "tool" }>
 
@@ -180,6 +200,8 @@ const blockText = (block: ScrollbackBlock): string => {
   switch (block.kind) {
     case "tool":
       return [block.toolName, block.detail, block.output].filter(Boolean).join(" ")
+    case "agents":
+      return block.agents.map((a) => a.name).join(" ")
     default:
       return block.text
   }
