@@ -35,6 +35,14 @@ export const glyph = {
   activeTag: "◀",
   /** Context-viewer message-line icons, by role. */
   msg: { user: "❯", assistant: "●", tool: "⚙", result: "↳" },
+  /**
+   * Git-graph rails for the `:tree` view — fixed 2-char cells so every depth
+   * column aligns: `vert` continues an ancestor's sibling line, `skip` is the
+   * blank cell under a finished line, `tee`/`corner` connect a mid/last child.
+   */
+  tree: { vert: "│ ", skip: "  ", tee: "├─", corner: "└─" },
+  /** The seed/run boundary rule in a node-session preview (`── seed … ──`). */
+  seedRule: "──",
   /** Animated spinner frames for running tree nodes. */
   spinner: SPINNER_FRAMES,
 } as const

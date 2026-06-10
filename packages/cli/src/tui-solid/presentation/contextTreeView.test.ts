@@ -59,6 +59,50 @@ describe("buildTreeRowsData", () => {
     expect(without.every((r) => !r.display.stale)).toBe(true)
   })
 
+  test("rails: roots bare, mid-children ├─, last children └─, continuation │", () => {
+    // a → (b, c); b → d   (d sits under a non-last child → │ continuation)
+    // e → f               (separate root tree; f under a last-ish lone child)
+    const nodes = [
+      node("a", null, "/ws/a", 1),
+      node("b", "a", "/ws/b", 2),
+      node("c", "a", "/ws/c", 3),
+      node("d", "b", "/ws/d", 4),
+      node("e", null, "/ws/e", 5),
+      node("f", "e", "/ws/f", 6),
+      node("g", "f", "/ws/g", 7),
+    ]
+    const rows = buildTreeRowsData(nodes, new Set())
+    const rail = (folder: string) => {
+      const r = rows.find((x) => x.display.folder === folder)!
+      return r.rail.prefix + r.rail.connector
+    }
+    expect(rail("a")).toBe("") // root: no rail
+    expect(rail("b")).toBe("├─") // mid child
+    expect(rail("d")).toBe("│ └─") // under a non-last child → continuation
+    expect(rail("c")).toBe("└─") // last child
+    expect(rail("e")).toBe("") // second root: fresh rail
+    expect(rail("f")).toBe("└─") // only child
+    expect(rail("g")).toBe("  └─") // under a last child → blank column
+  })
+
+  test("rails: folding one subtree leaves sibling rails unchanged", () => {
+    const nodes = [
+      node("a", null, "/ws/a", 1),
+      node("b", "a", "/ws/b", 2),
+      node("d", "b", "/ws/d", 3),
+      node("c", "a", "/ws/c", 4),
+    ]
+    const open = buildTreeRowsData(nodes, new Set())
+    const folded = buildTreeRowsData(nodes, new Set(["tree:b"]))
+    const railOf = (rows: typeof open, folder: string) => {
+      const r = rows.find((x) => x.display.folder === folder)!
+      return r.rail.prefix + r.rail.connector
+    }
+    expect(folded.map((r) => r.display.folder)).toEqual(["a", "b", "c"]) // d hidden
+    expect(railOf(folded, "b")).toBe(railOf(open, "b"))
+    expect(railOf(folded, "c")).toBe(railOf(open, "c"))
+  })
+
   test("siblings are ordered oldest-first; display carries status/edge/seed", () => {
     const nodes = [
       node("a", null, "/ws/a", 5, { status: "running" }),
