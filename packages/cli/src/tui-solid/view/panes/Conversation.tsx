@@ -5,6 +5,7 @@ import {
   buildConversationRows,
   conversationItemId,
   isRenderableDiff,
+  toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
   type BodyItem,
@@ -219,7 +220,9 @@ const Block = (props: { block: ScrollbackBlock }) => {
  */
 const ToolGroupView = (props: { item: Extract<BodyItem, { kind: "toolGroup" }>; collapsed: Set<string> }) => {
   const item = props.item
-  const expanded = () => props.collapsed.has(item.id)
+  // A group still running shows its live pills (feedback while processing);
+  // it settles to the one-line summary when the last call lands.
+  const expanded = () => toolGroupExpanded(item.id, item.tools, props.collapsed)
   return (
     <box flexDirection="column">
       <box flexDirection="row">

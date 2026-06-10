@@ -126,6 +126,9 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // bounded so a persistently-broken model can't spin forever.
     let consecutiveMalformed = 0
     const MAX_MALFORMED = 3
+    // Whether the latest response still asked for tool calls — at loop exit
+    // this distinguishes "finished" from "cut off by the step cap".
+    let stillWantedMore = false
 
     while (turnIndex < maxSteps) {
       if (hooks?.onTransformContext) {
@@ -233,7 +236,11 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       turnIndex++
 
       const wantsMore = res.finishReason === "tool-calls" && toolCalls.length > 0
-      if (!wantsMore) break
+      if (!wantsMore) {
+        stillWantedMore = false
+        break
+      }
+      stillWantedMore = true
       if (hooks?.onShouldStopAfterTurn) {
         const stop = yield* hooks.onShouldStopAfterTurn({
           turnIndex,
@@ -247,5 +254,13 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       yield* hooks.onAgentEnd({ messages, finalText })
     }
 
-    return { finalText, messages, newTail } satisfies AgentResult as AgentResult
+    // Exhausted the step cap while the model still asked for tools → the last
+    // text is mid-thought, not a final answer. Tell the caller.
+    const stoppedAtMaxSteps = turnIndex >= maxSteps && stillWantedMore
+    return {
+      finalText,
+      messages,
+      newTail,
+      ...(stoppedAtMaxSteps ? { stoppedAtMaxSteps } : {}),
+    } satisfies AgentResult as AgentResult
   })
