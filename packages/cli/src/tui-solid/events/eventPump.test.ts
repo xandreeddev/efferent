@@ -46,3 +46,40 @@ describe("eventPump — tool start/end matching (FIFO per call id)", () => {
     expect(toolStates(store)).toEqual(["ok", "ok"])
   })
 })
+
+describe("eventPump — preview streaming is read live, not captured at spawn", () => {
+  const previewBlocks = (store: TuiStore): string[] =>
+    (store.nodePreview()?.blocks ?? []).map((b) => b.kind)
+
+  test("a preview opened MID-RUN starts receiving the node's events", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    // Spawn with NO preview open — the old captured flag stayed unset forever.
+    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" })
+    reduce({ type: "tool_call_start", turnIndex: 0, id: "a", toolName: "ls", args: {}, nodeId: "n1" })
+    expect(previewBlocks(store)).toEqual([]) // nothing open yet
+    // The human opens the node's session while it runs.
+    store.setNodePreview({ nodeId: "n1", title: "agent: cli", blocks: [], savedCollapsed: new Set() })
+    reduce({ type: "tool_call_start", turnIndex: 0, id: "b", toolName: "read_file", args: { path: "p" }, nodeId: "n1" })
+    reduce({ type: "assistant_message", turnIndex: 0, text: "done", nodeId: "n1" })
+    expect(previewBlocks(store)).toEqual(["tool", "assistant"])
+    // Ends keep pairing: the pill opened in the preview resolves there.
+    reduce({ type: "tool_call_end", turnIndex: 0, id: "b", toolName: "read_file", ok: true, result: {}, nodeId: "n1" })
+    const pill = store.nodePreview()!.blocks.find((b) => b.kind === "tool") as { state: string }
+    expect(pill.state).toBe("ok")
+  })
+
+  test("a watched node that ALSO has a grouped-block row gets both closed on end", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" }) // unwatched → agents block row
+    store.setNodePreview({ nodeId: "n1", title: "agent: cli", blocks: [], savedCollapsed: new Set() })
+    reduce({ type: "subagent_end", name: "cli", ok: false, summary: "boom", filesChanged: [], nodeId: "n1" })
+    // The failure lands in the preview AND the grouped row closes as error.
+    expect(previewBlocks(store)).toContain("error")
+    const agents = store.blocks().find((b) => b.kind === "agents") as { agents: ReadonlyArray<{ status: string }> }
+    expect(agents.agents[0]!.status).toBe("error")
+  })
+})

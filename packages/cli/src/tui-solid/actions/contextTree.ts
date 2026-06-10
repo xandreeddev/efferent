@@ -182,7 +182,7 @@ export const openNodePreview = (
       text: [
         `agent ${folder} · ${node.edgeKind} · seed: ${node.seed.kind}`,
         node.seed.preview !== undefined ? ` — ${node.seed.preview}` : "",
-        node.status === "running" ? " · running (snapshot)" : "",
+        node.status === "running" ? " · running (live)" : "",
       ].join(""),
     }
     const blocks: ScrollbackBlock[] = [

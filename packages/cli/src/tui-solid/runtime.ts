@@ -161,7 +161,17 @@ export const runTuiModeSolid = (
         cwd: input.cwd,
         approvalLayer: approval.layer,
       })
-      const reduce = makeEventReducer(store)
+      const reduce = makeEventReducer(store, {
+        // Live navigator reload on sub-agent spawn/end (current session — it
+        // can change via the sessions view, so resolve the id per call).
+        refreshNav: () => {
+          Runtime.runFork(rt)(
+            refreshNav(store, store.run.getConversationId()).pipe(
+              Effect.catchAll(() => Effect.void),
+            ),
+          )
+        },
+      })
 
       // 5. Exit signal + the context the JSX consumes.
       const exitDeferred = yield* Deferred.make<void>()
