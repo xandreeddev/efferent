@@ -209,7 +209,9 @@ export const openNodePreview = (
         if (store.search()?.pane === "conversation") store.setSearch(undefined)
         store.setFocus("conversation")
         store.setMode("normal")
-        store.convScroller.current?.scrollToTop()
+        // Land on the node's LATEST work (same as opening a conversation) —
+        // the header/seed markers are still there for gg readers.
+        store.convScroller.current?.scrollToBottom()
       }),
     )
   })
