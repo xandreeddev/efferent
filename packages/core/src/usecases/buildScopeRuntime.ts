@@ -174,6 +174,7 @@ const makeInnerHooks = <R>(
     })
 
   const parentAfter = parent?.onAfterToolCall
+  const parentAssistant = parent?.onAssistantMessage
   return {
     ...(parent?.onBeforeToolCall !== undefined
       ? { onBeforeToolCall: parent.onBeforeToolCall }
@@ -188,13 +189,20 @@ const makeInnerHooks = <R>(
         : trackFiles,
     onAssistantMessage: (event) => {
       const u = event.usage
-      return u !== undefined
-        ? Ref.update(usageRef, (acc) => ({
-            inputTokens: u.inputTokens,
-            outputTokens: acc.outputTokens + u.outputTokens,
-            cacheReadTokens: u.cacheReadTokens,
-          })).pipe(Effect.zipRight(drainPool(pool, u)))
-        : Effect.void
+      const track =
+        u !== undefined
+          ? Ref.update(usageRef, (acc) => ({
+              inputTokens: u.inputTokens,
+              outputTokens: acc.outputTokens + u.outputTokens,
+              cacheReadTokens: u.cacheReadTokens,
+            })).pipe(Effect.zipRight(drainPool(pool, u)))
+          : Effect.void
+      // Forward inner narration to the parent's event stream too — the TUI
+      // shows it live when this node's session is open in the preview (the
+      // pump depth-guards it off the parent rail; usage stays node-local).
+      return parentAssistant !== undefined
+        ? parentAssistant(event).pipe(Effect.zipRight(track))
+        : track
     },
     onShouldStopAfterTurn: () =>
       Effect.gen(function* () {

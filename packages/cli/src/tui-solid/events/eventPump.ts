@@ -41,8 +41,15 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   const toolTreeIds = new Map<string, number[]>() // matchKey → FIFO of tree node ids
   const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
+  const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of preview pill ids
   let subAgentDepth = 0
   let toolSeq = 0
+  // The node id of a sub-agent run whose session is OPEN in the conversation
+  // pane (a human-driven resume, or an agent spawn the user is watching): its
+  // events stream into the preview overlay instead of vanishing into the
+  // Activity tab — without this, a resumed node runs with zero visible
+  // progress and reads as "stuck".
+  let previewRunNode: string | undefined
 
   // The id pairs a start with its end; empty/absent → fall back to the name.
   const matchKey = (e: { id?: string; toolName: string }): string =>
@@ -86,12 +93,18 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           return { ...p, tree }
         })
         // Top-level tools get a compact chat pill; sub-agent inner tools live
-        // only in the tree.
+        // only in the tree — unless their node's session is open in the
+        // preview, where they stream as live pills.
         if (subAgentDepth === 0) {
           toolSeq++
           const sid = `t${toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
+        } else if (previewRunNode !== undefined) {
+          toolSeq++
+          const pid = `pv${toolSeq}`
+          enqueue(previewToolIds, matchKey(event), pid)
+          store.appendPreviewBlock({ kind: "tool", id: pid, toolName: label, state: "running" })
         }
         return
       }
@@ -116,6 +129,14 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             ...(artifacts.output !== undefined ? { output: artifacts.output } : {}),
           })
         }
+        const pid = dequeue(previewToolIds, matchKey(event))
+        if (pid !== undefined) {
+          store.patchPreviewTool(pid, {
+            state: event.ok ? "ok" : "error",
+            ...(detail !== undefined ? { detail } : {}),
+            ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
+          })
+        }
         // Files-changed diffstat — structured, straight off the tool result (no
         // re-parsing the human detail string). Covers sub-agent inner edits too.
         if (artifacts.fileChange !== undefined) {
@@ -127,6 +148,18 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
 
       case "subagent_start": {
         subAgentDepth++
+        // This run's session is on-screen (the human resumed it from the
+        // preview, or is watching the node the agent spawned into): its
+        // events stream into the preview, and the parent rail gets no Task
+        // pill — the run isn't the parent conversation's doing.
+        if (event.nodeId !== undefined && store.nodePreview()?.nodeId === event.nodeId) {
+          previewRunNode = event.nodeId
+          store.setProjection((p) => ({
+            ...p,
+            tree: treeSubAgentStart(p.tree, `run_agent → ${event.name}`, now),
+          }))
+          return
+        }
         const label = `Task(${event.name})`
         toolSeq++
         const sid = `sa${toolSeq}`
@@ -147,6 +180,19 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           event.filesChanged.length > 0
             ? `${event.filesChanged.length} file${event.filesChanged.length === 1 ? "" : "s"}`
             : undefined
+        // The watched run finished: its prose already streamed into the
+        // preview (assistant_message), and a failure must not be silent there.
+        if (event.nodeId !== undefined && previewRunNode === event.nodeId) {
+          previewRunNode = undefined
+          if (!event.ok && event.summary.trim().length > 0) {
+            store.appendPreviewBlock({ kind: "error", text: event.summary })
+          }
+          store.setProjection((p) => ({
+            ...p,
+            tree: treeSubAgentEnd(p.tree, event.ok, filesDetail, now),
+          }))
+          return
+        }
         const endSid = subAgentScrollId.get(event.nodeId ?? event.name)
         if (endSid !== undefined) {
           const pillDetail = joinDetail(
@@ -188,6 +234,21 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         return
 
       case "assistant_message": {
+        // Sub-agent narration (depth > 0, forwarded by the inner hooks) never
+        // lands on the parent rail and never counts toward the conversation
+        // gauge (node usage is tracked on its tree node) — it streams into
+        // the preview when that node's session is open, else tree-only.
+        if (subAgentDepth > 0) {
+          if (previewRunNode !== undefined) {
+            if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
+              store.appendPreviewBlock({ kind: "reasoning", text: event.reasoning })
+            }
+            if (event.text.trim().length > 0) {
+              store.appendPreviewBlock({ kind: "assistant", text: event.text })
+            }
+          }
+          return
+        }
         if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
           store.pushBlock({ kind: "reasoning", text: event.reasoning })
         }

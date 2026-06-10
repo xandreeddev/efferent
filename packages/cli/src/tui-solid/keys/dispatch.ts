@@ -196,6 +196,14 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
       if (!key.shift) return false
       toggleFoldAll(store)
       return true
+    case "i":
+      // To the composer — the strip promises `i type` here (and it's how you
+      // talk to the agent whose session preview you're reading). The side
+      // panes already had this; the conversation pane silently didn't, so a
+      // preview-then-type flow swallowed every keystroke as navigation.
+      store.setFocus("input")
+      store.setMode("insert")
+      return true
     default:
       return false
   }
