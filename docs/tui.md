@@ -20,7 +20,7 @@ Top to bottom, the TUI is five stacked regions:
 
 ```
 ┌─ conversation ─────────────────────────┐ ┌─ activity ─────────┐ ← the two read-only panes,
-│ the event rail: your prompts, the       │ │activity·context·tree│   one empty column between;
+│ the event rail: your prompts, the       │ │activity·context·agents│ one empty column between;
 │ agent's prose, tool calls, diffs        │ │ ctx  18k/1M        │   the side pane's tab row
 └─────────────────────────────────────────┘ └────────────────────┘   shows its three views
  j/k scroll · ↵ fold · w next pane · v views · i type · ? keys     ← keybind strip (1 row;
@@ -51,7 +51,7 @@ cyan, side = magenta, input = green** (unfocused = gray).
 | Leave the composer (input → conversation, NORMAL) | `Esc` (on a `:`/`/` line it cancels the line first) |
 | Cycle panes (conversation → side → input) | `w` (in NORMAL) |
 | Jump straight to a pane | `Ctrl-k` (conversation) / `Ctrl-l` (side) / `Ctrl-j` (input) — also `Ctrl-arrows` and `Ctrl-h` where the terminal supports them |
-| Cycle the side pane's views | `v` (activity → context → tree) |
+| Cycle the side pane's views | `v` (activity → context → agents; never moves focus) |
 | Back to the composer | `i` |
 | Toggle the full keybind box | `?` (in NORMAL) |
 | Zoom the focused pane | `z` |
@@ -121,7 +121,7 @@ current one (scrolling it into view as it goes):
 ## The side pane
 
 The right pane has **three views**: the default **activity dashboard**, the **context
-viewer** (toggled with `:context`), and the **agent context tree** (toggled with `:tree`).
+viewer** (toggled with `:context`), and the **agent navigation pane** (toggled with `:tree`).
 
 ### Activity (default)
 
@@ -161,26 +161,38 @@ Selecting a **handoff** contributes only its summary (one synthetic message), no
 originals — so a handoff and its own inner turns are mutually exclusive (picking one clears the
 other). The original conversation is never modified; `:build` seeds a *new* one.
 
-### Agent context tree (`:tree`)
+### Agent navigation pane (`:tree`)
 
-A navigable tree of every **sub-agent** this conversation spawned via `run_agent`, persisted
-across sessions. Each node shows its folder, status (`✓` ok / `✗` error / `●` running), how it
-came to be (**spawned** / **branched** / **resumed**), its seed kind, files-changed count,
-**billed tokens**, and the return summary — plus a yellow **`stale`** badge when the repo's
-HEAD moved since the node ran (resuming a stale node auto-injects a what-changed brief so the
-model re-reads before editing). Children hang under their parent, so you can see how context
-branched and evolved. Sub-agents in different folders run **in parallel** — expect several `●`
-nodes at once; the view refreshes live while a run is spawning them.
+The workspace's whole session graph, drawn as a **git-log-`--graph`-style tree**. The depth-0
+roots are your **conversations** (the manual branches — every chat, resume, and `:build` fork;
+the live one is tagged **`◀ active`**). Beneath each hangs its **agent branch** subtree: every
+sub-agent that conversation spawned via `run_agent`, persisted across sessions, connected by
+`├─`/`└─` rails with `│` continuation columns (a **branched** fork's connector is tinted in the
+side accent). Each node shows its folder, status (`✓` ok / `✗` error / `●` running), provenance
+(**spawned** / **branched** / **resumed**), seed kind, files-changed count, **billed tokens**,
+and the return summary — plus a yellow **`stale`** badge when the repo's HEAD moved since the
+node ran (resuming a stale node auto-injects a what-changed brief so the model re-reads before
+editing). Sub-agents in different folders run **in parallel** — expect several `●` nodes at
+once; the view refreshes when a run finishes spawning them.
 
 | Action | Keys |
 |---|---|
-| Move / fold / jump | `j` `k` · `{` `}` · `[` `]` · `gg` `G` · `⇥`/`↵`/`h`/`l`/`←`/`→` |
-| **Drop** the node + its descendants | `d` (guarded — a running node can't be dropped) |
+| Move / jump | `j` `k` · `{` `}` · `[` `]` (conversation roots) · `gg` `G` |
+| Fold a subtree | `⇥` / `h` / `l` / `←` / `→` |
+| **Open** the row | `↵` — a conversation becomes the **active session**; an agent node opens a read-only **session preview** in the conversation pane (`↵` again / `q` / `Esc` when idle closes it) |
+| **Fork** an agent node | `c` — copies its full context into a **new conversation**, makes it active, and drops you in the composer (take over where the agent stopped) |
+| **Drop** a node + its descendants | `d` (nodes only; a running node can't be dropped) |
 | Search the rows | `/` |
 | Back to the composer | `i` |
 
+The **session preview** replays the node's persisted messages as a normal rail — title flips to
+`agent: <folder>`, a header line gives folder · provenance · seed, and (for nodes that recorded
+it) `── seed … ──` / `── run starts ──` rules mark where the spawn-time context ends and the
+agent's own work begins. It's an overlay: a running turn keeps appending to the live rail
+underneath, untouched. Session swaps and forks are refused while a turn is running.
+
 The agent drives resume/branch itself (`run_agent({ seedFromNode, seedMode: "resume" \| "branch" })`);
-human-initiated re-runs from the tree are on the roadmap.
+`c` is the human-driven fork. Re-running a node in place from the tree is on the roadmap.
 
 ---
 
@@ -244,7 +256,7 @@ A unique prefix resolves (`:mod` → `:model`).
 | `:reset` | Start a fresh conversation (forgets history) |
 | `:handoff` | Summarize & hand off — replace the loaded history with a brief, keep the originals |
 | `:context` | Toggle the context viewer (turn tree — `Space` select, `b` build) |
-| `:tree` | Toggle the agent context tree (sub-agents: spawned / branched / resumed — `d` drop) |
+| `:tree` | Toggle the agent navigation pane (sessions + sub-agents — `↵` switch/preview, `c` fork, `d` drop) |
 | `:build` | Build a new session from the turns selected in `:context` |
 | `:browse` | List the conversations in this workspace |
 | `:resume <#\|id>` | Resume one (a `:browse` number or a raw id) |

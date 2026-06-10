@@ -35,7 +35,7 @@ const Row = (props: { row: TreeRowData; active: boolean }) => {
       {...(props.active ? { backgroundColor: tokens.cursorLine } : {})}
     >
       <Show when={props.row.rail.prefix.length > 0}>
-        <text fg={tokens.text.dim}>{props.row.rail.prefix}</text>
+        <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{props.row.rail.prefix}</text>
       </Show>
       <Show when={props.row.rail.connector.length > 0}>
         <text
@@ -44,6 +44,8 @@ const Row = (props: { row: TreeRowData; active: boolean }) => {
               ? tokens.accent.side
               : tokens.text.dim
           }
+          wrapMode="none"
+          flexShrink={0}
         >
           {props.row.rail.connector}
         </text>
@@ -62,15 +64,15 @@ const renderConversation = (d: () => TreeConversationDisplay) => {
   const v = d()
   return (
     <>
-      <text fg={tokens.text.muted}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
       <text fg={v.active ? tokens.text.default : tokens.text.muted} wrapMode="none">
         {v.label}
       </text>
       <Show when={v.active}>
-        <text fg={tokens.accent.side}>{`  ${glyph.activeTag} active`}</text>
+        <text fg={tokens.accent.side} wrapMode="none" flexShrink={0}>{`  ${glyph.activeTag} active`}</text>
       </Show>
       <Show when={v.nodeCount > 0}>
-        <text fg={tokens.text.dim}>{`  · ${v.nodeCount} agent${v.nodeCount === 1 ? "" : "s"}`}</text>
+        <text fg={tokens.text.dim} wrapMode="none">{`  · ${v.nodeCount} agent${v.nodeCount === 1 ? "" : "s"}`}</text>
       </Show>
     </>
   )
@@ -88,16 +90,16 @@ const renderNode = (d: () => TreeNodeDisplay) => {
     .join(" · ")
   return (
     <>
-      <text fg={tokens.text.muted}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
-      <text fg={statusColor(v.status)}>{`${statusGlyph(v.status)} `}</text>
-      <text fg={tokens.text.default} wrapMode="none">
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
+      <text fg={statusColor(v.status)} wrapMode="none" flexShrink={0}>{`${statusGlyph(v.status)} `}</text>
+      <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
         {v.folder}
       </text>
       <Show when={meta.length > 0}>
-        <text fg={tokens.text.dim}>{`  ${meta}`}</text>
+        <text fg={tokens.text.dim} wrapMode="none">{`  ${meta}`}</text>
       </Show>
       <Show when={v.stale}>
-        <text fg={tokens.state.running}>{"  stale"}</text>
+        <text fg={tokens.state.running} wrapMode="none" flexShrink={0}>{"  stale"}</text>
       </Show>
       <Show when={v.summary !== undefined && v.summary.length > 0}>
         <text fg={tokens.text.dim} wrapMode="none">{`  — ${v.summary}`}</text>
