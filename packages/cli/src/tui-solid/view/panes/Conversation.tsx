@@ -317,7 +317,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   }
   const headerColor = (id: string): string => {
     const m = matchOf(id)
-    return m === "current" ? tokens.match.current : m === "match" ? tokens.match.other : tokens.match.header
+    return m === "current" ? tokens.match.current : m === "match" ? tokens.match.other : tokens.text.user
   }
 
   return (
@@ -366,16 +366,21 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const folded = () => store.collapsed().has(item.id)
             return (
               <box id={id} flexDirection="column" marginTop={1}>
-                {/* The turn head is the rail's primary scanning anchor — the
-                    green bar gives it weight a colored line alone doesn't
-                    ("where did I ask X" is the #1 navigation task). */}
+                {/* The turn head IS the user's message, styled like a typed
+                    prompt (`❯ …`, quiet gray) — Claude-style, not a chrome-heavy
+                    bar+caret banner. The blank-line rhythm + the distinct glyph
+                    keep it scannable; fold state shows as a trailing `▸ N steps`
+                    only when collapsed, so the common (expanded) case is clean. */}
                 <box flexDirection="row" backgroundColor={rowBg(item.id)}>
-                  <text fg={tokens.marker.select}>{`${glyph.turnBar} `}</text>
-                  <text fg={headerColor(id)}>
-                    {folded()
-                      ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`
-                      : `${glyph.fold.open} ${item.subject}`}
+                  <text fg={tokens.text.dim} flexShrink={0}>{`${glyph.msg.user} `}</text>
+                  <text fg={headerColor(id)} wrapMode="word" flexShrink={1}>
+                    {item.subject}
                   </text>
+                  <Show when={folded()}>
+                    <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
+                      {`  ${glyph.fold.closed} ${item.steps} step${item.steps === 1 ? "" : "s"}`}
+                    </text>
+                  </Show>
                 </box>
                 <Show when={!folded()}>
                   <box flexDirection="column">
