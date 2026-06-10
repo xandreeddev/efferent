@@ -145,7 +145,9 @@ const indentOf = (row: StackRowData): number => {
  */
 export const Activity = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const focused = () => store.focus() === "side"
+  // Owns the cursor only when the side pane is focused AND the activity view
+  // holds the keys (in the split layout the agents tree may hold them).
+  const focused = () => store.focus() === "side" && store.sidePane().view === "stack"
   const rows = () => buildStackRowsData(store.projection(), store.nav().stackCollapsed)
   const cursor = () => clampCursor(rows().length, store.nav().stackCursor)
 

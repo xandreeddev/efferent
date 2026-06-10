@@ -72,18 +72,16 @@ export const makeSubmit = (
         store.setNote(undefined)
         store.run.setFiber(undefined)
         // Re-fetch the node's session (it grew) if its preview is still open,
-        // and land on the fresh tail; refresh the navigator's counters too.
+        // and land on the fresh tail; refresh the always-visible navigator.
         if (store.nodePreview()?.nodeId === preview.nodeId) {
           yield* openNodePreview(store, preview.nodeId, { focus: false }).pipe(
             Effect.catchAll(() => Effect.void),
           )
           store.convScroller.current?.scrollToBottom()
         }
-        if (store.sidePane().view === "tree") {
-          yield* loadNavTree(store, store.run.getConversationId()).pipe(
-            Effect.catchAll(() => Effect.void),
-          )
-        }
+        yield* loadNavTree(store, store.run.getConversationId()).pipe(
+          Effect.catchAll(() => Effect.void),
+        )
         if (next !== undefined) yield* submit(next)
       })
 
@@ -165,11 +163,9 @@ export const makeSubmit = (
         store.setBusy(false)
         store.setNote(undefined)
         store.run.setFiber(undefined)
-        // If the context-tree view is open, refresh it — a run may have spawned
-        // or updated sub-agent nodes. Best-effort; a store hiccup never blocks.
-        if (store.sidePane().view === "tree") {
-          yield* loadNavTree(store, cid).pipe(Effect.catchAll(() => Effect.void))
-        }
+        // Refresh the always-visible navigator — a run may have spawned or
+        // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
+        yield* loadNavTree(store, cid).pipe(Effect.catchAll(() => Effect.void))
         if (next !== undefined) yield* submit(next)
       })
 

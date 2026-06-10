@@ -120,8 +120,12 @@ current one (scrolling it into view as it goes):
 
 ## The side pane
 
-The right pane has **three views**: the default **activity dashboard**, the **context
-viewer** (toggled with `:context`), and the **agent navigation pane** (toggled with `:tree`).
+The right pane shows the **activity dashboard** (top half) and the **agent navigation pane**
+(bottom half) **at the same time, split 50/50** — the tab row and each half's `└─` header
+mark which half currently owns the keyboard (`v` cycles ownership; `:tree` jumps to the
+agents half). The **context viewer** (`:context`) is a curation tool and takes the whole
+pane while active. The navigator is loaded at boot and refreshed at every turn end — no
+command needed to see your sessions and sub-agents.
 
 ### Activity (default)
 

@@ -21,6 +21,7 @@ import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { makeTuiApproval } from "./approval.js"
 import { makeSubmit } from "./actions/submit.js"
+import { loadNavTree } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { makeEventReducer, runEventPump } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
@@ -141,6 +142,10 @@ export const runTuiModeSolid = (
         })
         yield* openConversationPicker(store, input.cwd)
       }
+
+      // The navigator (agents half of the side pane) is always visible now —
+      // seed it at boot so prior sessions/sub-agents show without `:tree`.
+      yield* loadNavTree(store, cid).pipe(Effect.catchAll(() => Effect.void))
 
       // Interactive bash approval: the agent fiber suspends on the Approval
       // port; the modal's keys answer through `ctx.resolveApproval`.

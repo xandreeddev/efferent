@@ -118,7 +118,9 @@ const renderNode = (d: () => TreeNodeDisplay) => {
 export const ContextTreeView = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const sp = () => store.sidePane()
-  const focused = () => store.focus() === "side"
+  // Owns the cursor only when the side pane is focused AND the agents view
+  // holds the keys (in the split layout activity may hold them).
+  const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
   const rows = () =>
     buildNavRows(
       sp().treeConversations ?? [],
