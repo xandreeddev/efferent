@@ -199,6 +199,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             `run_agent → ${event.name}`,
             anchor,
             now,
+            event.nodeId,
           )
           if (event.nodeId !== undefined) subTreeByNode.set(event.nodeId, id)
           return tree

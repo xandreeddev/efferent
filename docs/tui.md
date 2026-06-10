@@ -120,12 +120,13 @@ current one (scrolling it into view as it goes):
 
 ## The side pane
 
-The right pane shows the **activity dashboard** (top half) and the **agent navigation pane**
-(bottom half) **at the same time, split 50/50** — the tab row and each half's `└─` header
-mark which half currently owns the keyboard (`v` cycles ownership; `:tree` jumps to the
-agents half). The **context viewer** (`:context`) is a curation tool and takes the whole
-pane while active. The navigator is loaded at boot and refreshed at every turn end — no
-command needed to see your sessions and sub-agents.
+The right pane has **three views** (`v` cycles, the tab row shows where you are): the
+**activity dashboard** and the **context viewer** take the whole pane; the **agents** view
+(`:tree`) splits it into two reactive sections — the navigator tree in the **lower half**
+holds the cursor, and the **upper half is a detail section that follows it**: a node row
+shows the full (unclipped) return summary, seed, files changed, billed tokens — and its
+**live tool feed while the node is running**; a conversation row shows the session and how
+to act on it. The navigator's data loads at boot and refreshes at every turn end.
 
 ### Activity (default)
 
