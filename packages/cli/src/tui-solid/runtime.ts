@@ -20,6 +20,7 @@ import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/si
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { makeTuiApproval } from "./approval.js"
+import { stopOAuthSession } from "./actions/login.js"
 import { makeSubmit } from "./actions/submit.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
@@ -220,6 +221,14 @@ export const runTuiModeSolid = (
           Effect.ignore,
         ),
       )
+
+      // 6c. A `:login` OAuth flow the user started but never finished in the
+      //     browser leaves its callback server listening — and since a clean
+      //     exit waits for the event loop to drain (runMain doesn't hard-exit
+      //     on code 0), that listener would hold the process open forever.
+      //     The overlay's Esc/Ctrl-C cancel paths already stop it; this covers
+      //     the forgotten one. No-op when no login is in flight.
+      yield* Effect.addFinalizer(() => stopOAuthSession(store).pipe(Effect.ignore))
 
       // 7. Drain the agent event queue into the signal store (scoped fiber).
       yield* Effect.forkScoped(runEventPump(eventQueue, reduce))
