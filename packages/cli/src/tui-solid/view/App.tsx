@@ -8,7 +8,6 @@ import { Keybinds } from "./chrome/Keybinds.js"
 import { SlashPalette } from "./chrome/SlashPalette.js"
 import { SearchStatus } from "./chrome/SearchStatus.js"
 import { StatusBar } from "./chrome/StatusBar.js"
-import { Footer } from "./chrome/Footer.js"
 import { Overlay } from "./overlays/Overlay.js"
 import type { TuiContext } from "../state/store.js"
 
@@ -22,10 +21,13 @@ export const App = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   useKeyboard((key) => dispatch(props.ctx, key))
   const dims = useTerminalDimensions()
-  const wide = () => dims().width >= 60
+  // Below ~110 cols the side pane is too narrow to read (every row clips) yet
+  // still eats 40% of the width — hide it and give the conversation the full
+  // pane. It stays reachable: focusing it (w / ^l / :tree / :context) zooms it.
+  const wide = () => dims().width >= 110
 
-  const showConv = () => !store.zoomed() || store.focus() !== "side"
-  const showSide = () => wide() && (!store.zoomed() || store.focus() === "side")
+  const showConv = () => (wide() && !store.zoomed()) || store.focus() !== "side"
+  const showSide = () => (wide() && !store.zoomed()) || store.focus() === "side"
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -42,7 +44,6 @@ export const App = (props: { ctx: TuiContext }) => {
       <SearchStatus ctx={props.ctx} />
       <InputBox ctx={props.ctx} />
       <StatusBar ctx={props.ctx} />
-      <Footer ctx={props.ctx} />
       {/* Modal layer — absolutely positioned, floats over everything above. */}
       <Overlay ctx={props.ctx} />
     </box>

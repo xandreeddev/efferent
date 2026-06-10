@@ -111,7 +111,8 @@ export const runTuiModeSolid = (
           effort,
         },
         conversationId: cid,
-        footer: `logs: tail -f ${logFilePath()}   ·   ⇧↵ send · esc interrupt · ^C quit`,
+        // No longer a permanent footer row — surfaced by `:help` instead.
+        footer: `logs: tail -f ${logFilePath()}`,
         sidePane,
       })
       // No credential yet → greet with the `:login` hint (the send-gate in
@@ -131,6 +132,13 @@ export const runTuiModeSolid = (
       if (input.resumeConversationId !== undefined) {
         yield* loadInitialConversation(store, cid)
       } else {
+        // First contact: one line that teaches the three interactions that
+        // unlock everything else. Only on a fresh session — a resumed rail
+        // speaks for itself.
+        store.pushBlock({
+          kind: "info",
+          text: "type to chat (⇧↵ sends) · : for commands (:help) · ? for keys",
+        })
         yield* openConversationPicker(store, input.cwd)
       }
 
@@ -168,7 +176,7 @@ export const runTuiModeSolid = (
           const text = renderer.getSelection()?.getSelectedText() ?? ""
           if (text.length === 0) return false
           renderer.copyToClipboardOSC52(text)
-          store.pushBlock({ kind: "info", text: `copied ${text.length} chars to clipboard` })
+          store.toast(`copied ${text.length} chars to clipboard`)
           return true
         },
         resolveApproval: approval.resolve,

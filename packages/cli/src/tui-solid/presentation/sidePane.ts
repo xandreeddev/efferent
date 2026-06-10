@@ -51,6 +51,8 @@ export interface SessionStats {
   readonly turns: number
   /** Session start (ms) for the elapsed readout; 0 = not started. */
   readonly startedAt: number
+  /** `inputTokens` is a chars/4 resume estimate (no persisted usage) — shown `~`. */
+  readonly estimated?: boolean
 }
 
 export const emptyStats: SessionStats = {
@@ -85,6 +87,8 @@ export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats =>
   outputTokens: s.outputTokens + u.outputTokens,
   totalTokens: s.totalTokens + u.totalTokens,
   turns: s.turns + 1,
+  // A real provider count replaces any resume estimate.
+  estimated: false,
 })
 
 /**

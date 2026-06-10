@@ -21,7 +21,7 @@ export const applyTheme = (store: TuiStore, name: string) =>
       return
     }
     yield* (yield* SettingsStore).update((s) => ({ ...s, theme: name }))
-    store.pushBlock({ kind: "info", text: `theme: ${name}` })
+    store.toast(`theme: ${name}`)
   })
 
 /**

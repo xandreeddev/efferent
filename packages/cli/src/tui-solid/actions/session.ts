@@ -80,15 +80,24 @@ const statsFrom = (
 ): SidePaneState["stats"] => {
   const { lastUsage, cumulativeOutput, cumulativeTotal, turns } =
     recoverConversationStats(history)
+  // History without persisted usage (pre-annotation records): a 0/1M gauge
+  // would claim a resumed session costs nothing on its next turn. Estimate at
+  // ~4 chars/token and mark it (the gauge shows `~`); the first real provider
+  // count replaces it.
+  const estimate =
+    lastUsage === undefined && history.length > 0
+      ? Math.round(JSON.stringify(history).length / 4)
+      : undefined
   return {
     ...emptyStats,
     startedAt: Date.now(),
     contextWindow: prev.stats.contextWindow,
-    inputTokens: lastUsage?.inputTokens ?? 0,
+    inputTokens: lastUsage?.inputTokens ?? estimate ?? 0,
     cacheReadTokens: lastUsage?.cacheReadTokens ?? 0,
     outputTokens: cumulativeOutput,
     totalTokens: cumulativeTotal,
     turns,
+    ...(estimate !== undefined ? { estimated: true } : {}),
   }
 }
 

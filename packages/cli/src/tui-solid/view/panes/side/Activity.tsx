@@ -39,13 +39,21 @@ const Stats = (props: { ctx: TuiContext }) => {
   const s = () => props.ctx.store.sidePane().stats
   const win = () => (s().contextWindow > 0 ? formatTokens(s().contextWindow) : "?")
   const elapsed = () => (s().startedAt > 0 ? fmtDur(Date.now() - s().startedAt) : "0s")
+  const ran = () => s().turns > 0 || s().outputTokens > 0
+  // `~` marks a resume estimate (chars/4 over the loaded history) until the
+  // first real provider count replaces it — a precise-looking wrong number
+  // is worse than an approximate honest one.
+  const approx = () => (s().estimated === true ? "~" : "")
   return (
     <box flexDirection="column" flexShrink={0}>
       <text fg={tokens.text.muted}>
-        {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
+        {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${approx()}${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
       </text>
+      {/* A wall of zeros tells a new user nothing — say what WILL be here. */}
       <text fg={tokens.text.dim}>
-        {`${formatTokens(s().outputTokens)} tok out · ${s().turns} turn${s().turns === 1 ? "" : "s"} · ${elapsed()}`}
+        {ran()
+          ? `${formatTokens(s().outputTokens)} tok out · ${s().turns} turn${s().turns === 1 ? "" : "s"} · ${elapsed()}`
+          : "no run yet — send a message to start"}
       </text>
     </box>
   )

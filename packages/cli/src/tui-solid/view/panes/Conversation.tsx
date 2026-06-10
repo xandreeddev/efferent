@@ -4,6 +4,7 @@ import {
   buildConversation,
   buildConversationRows,
   conversationItemId,
+  isRenderableDiff,
   toolGroupState,
   toolGroupSummary,
   type BodyItem,
@@ -84,16 +85,28 @@ const ToolPill = (props: { tool: ToolBlock }) => (
     </Show>
     {/* edit_file emits a canonical unified diff (--- / +++ / @@) → native <diff>
         gives +/- line colouring; the treeSitterClient + filetype add per-token
-        hunk highlighting (JS/TS/markdown/zig; other langs render +/- only). */}
+        hunk highlighting (JS/TS/markdown/zig; other langs render +/- only).
+        A diff that wouldn't survive the native parser (model-emitted = untrusted)
+        renders as a plain dim block instead — degrade to "less pretty", never to
+        a parser error painted into the rail. */}
     <Show when={props.tool.diff}>
       {(diff) => (
-        <diff
-          diff={diff()}
-          view="unified"
-          syntaxStyle={syntaxStyle()}
-          {...tsProp()}
-          {...ftProp(diffFiletype(diff()))}
-        />
+        <Show
+          when={isRenderableDiff(diff())}
+          fallback={
+            <box paddingLeft={2}>
+              <text fg={tokens.text.dim}>{diff()}</text>
+            </box>
+          }
+        >
+          <diff
+            diff={diff()}
+            view="unified"
+            syntaxStyle={syntaxStyle()}
+            {...tsProp()}
+            {...ftProp(diffFiletype(diff()))}
+          />
+        </Show>
       )}
     </Show>
   </box>
@@ -270,7 +283,11 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const folded = () => store.collapsed().has(item.id)
             return (
               <box id={id} flexDirection="column" marginTop={1}>
-                <box backgroundColor={rowBg(item.id)}>
+                {/* The turn head is the rail's primary scanning anchor — the
+                    green bar gives it weight a colored line alone doesn't
+                    ("where did I ask X" is the #1 navigation task). */}
+                <box flexDirection="row" backgroundColor={rowBg(item.id)}>
+                  <text fg={tokens.marker.select}>{`${glyph.turnBar} `}</text>
                   <text fg={headerColor(id)}>
                     {folded()
                       ? `${glyph.fold.closed} ${item.subject} · ${item.steps} step${item.steps === 1 ? "" : "s"}`

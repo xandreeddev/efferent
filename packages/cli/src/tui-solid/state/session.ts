@@ -93,6 +93,14 @@ export interface SessionSlice {
   readonly setBusy: (b: boolean) => void
   readonly note: Accessor<string | undefined>
   readonly setNote: (n: string | undefined) => void
+  /**
+   * Transient feedback (theme switched · copied · queued · unknown command):
+   * shows in the status-bar note slot and clears itself after a few seconds.
+   * Ephemera never lands in the conversation rail — the rail is the permanent
+   * record. A toast never clobbers a newer note (e.g. "working…"), and a
+   * newer note simply replaces a live toast.
+   */
+  readonly toast: (text: string) => void
   readonly footer: Accessor<string>
   /** Non-reactive, Effect-owned run lifecycle, behind typed methods. */
   readonly run: RunHandle
@@ -117,6 +125,13 @@ export const createSessionSlice = (init: SessionInit): SessionSlice => {
     setBusy: (b) => setBusySig(b),
     note,
     setNote: (n) => setNoteSig(n),
+    toast: (text) => {
+      setNoteSig(text)
+      setTimeout(() => {
+        // Clear only if this toast is still showing — never a newer note.
+        setNoteSig((cur) => (cur === text ? undefined : cur))
+      }, 4000)
+    },
     footer,
     run: createRunHandle(init.conversationId),
   }

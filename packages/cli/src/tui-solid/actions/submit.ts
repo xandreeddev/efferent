@@ -56,7 +56,7 @@ export const makeSubmit = (
       // Busy → queue it for after the current turn.
       if (store.busy()) {
         store.run.enqueue(text)
-        store.pushBlock({ kind: "info", text: `queued: ${text}` })
+        store.toast(`queued: ${text}`)
         store.setInput("")
         return
       }
