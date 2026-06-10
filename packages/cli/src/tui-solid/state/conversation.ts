@@ -63,6 +63,11 @@ export interface ConversationSlice {
     id: string,
     patch: Partial<Extract<ScrollbackBlock, { kind: "tool" }>>,
   ) => void
+  /** Replace the agent rows of the `agents` block with the given id. */
+  readonly updateAgents: (
+    id: string,
+    agents: Extract<ScrollbackBlock, { kind: "agents" }>["agents"],
+  ) => void
   /** Replace the entire block list — used by resume / build-a-new-session. */
   readonly setBlocks: (next: ScrollbackBlock[]) => void
   /** Active node-session preview overlaying the conversation pane, if any. */
@@ -118,6 +123,10 @@ export const createConversationSlice = (): ConversationSlice => {
     updateTool: (id, patch) =>
       setBlocksSig((bs) =>
         bs.map((b) => (b.kind === "tool" && b.id === id ? { ...b, ...patch } : b)),
+      ),
+    updateAgents: (id, agents) =>
+      setBlocksSig((bs) =>
+        bs.map((b) => (b.kind === "agents" && b.id === id ? { ...b, agents } : b)),
       ),
     setBlocks: (next) => setBlocksSig(next),
     nodePreview,

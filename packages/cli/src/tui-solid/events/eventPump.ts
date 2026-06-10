@@ -1,6 +1,7 @@
 import { Effect, Queue } from "effect"
 import { batch } from "solid-js"
 import type { AgentEvent } from "../../events.js"
+import type { AgentRunRow } from "../presentation/conversation.js"
 import {
   describeToolCall,
   describeToolResult,
@@ -44,6 +45,11 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
   const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of preview pill ids
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
+  // One live "Running N agents…" rail block per fan-out burst: rows keyed by
+  // node id, updated in place (Claude-style), reset when the parent's next
+  // turn starts. Replaces the old one-Task-pill-per-spawn rail.
+  const agentRows = new Map<string, AgentRunRow>()
+  let agentsBlockId: string | undefined
   let subAgentDepth = 0
   let toolSeq = 0
   // The node id of a sub-agent run whose session is OPEN in the conversation
@@ -78,10 +84,24 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   ): string | undefined =>
     parts.filter((p): p is string => p !== undefined).join(" · ") || undefined
 
+  const syncAgents = (): void => {
+    if (agentsBlockId !== undefined) store.updateAgents(agentsBlockId, [...agentRows.values()])
+  }
+  const touchAgentRow = (nodeId: string, f: (row: AgentRunRow) => AgentRunRow): void => {
+    const row = agentRows.get(nodeId)
+    if (row === undefined) return
+    agentRows.set(nodeId, f(row))
+    syncAgents()
+  }
+
   return (event: AgentEvent): void => {
     const now = Date.now()
     switch (event.type) {
       case "turn_start":
+        // The parent moved on — the fan-out burst (if any) is over; the next
+        // spawn starts a fresh agents block.
+        agentsBlockId = undefined
+        agentRows.clear()
         store.setProjection((p) => ({ ...p, tree: treeTurnStart(p.tree, event.turnIndex, now) }))
         return
 
@@ -115,6 +135,13 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           enqueue(previewToolIds, matchKey(event), pid)
           store.appendPreviewBlock({ kind: "tool", id: pid, toolName: label, state: "running" })
         }
+        if (event.nodeId !== undefined) {
+          touchAgentRow(event.nodeId, (r) => ({
+            ...r,
+            toolUses: r.toolUses + 1,
+            currentTool: label,
+          }))
+        }
         return
       }
 
@@ -145,6 +172,9 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             ...(detail !== undefined ? { detail } : {}),
             ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
           })
+        }
+        if (event.nodeId !== undefined) {
+          touchAgentRow(event.nodeId, ({ currentTool: _done, ...r }) => r)
         }
         // Files-changed diffstat — structured, straight off the tool result (no
         // re-parsing the human detail string). Covers sub-agent inner edits too.
@@ -178,12 +208,28 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           store.setProjection((p) => ({ ...p, tree: startTree(p) }))
           return
         }
+        if (event.nodeId !== undefined) {
+          // One grouped block per burst; each spawn is a live row in it.
+          if (agentsBlockId === undefined) {
+            toolSeq++
+            agentsBlockId = `ag${toolSeq}`
+            store.pushBlock({ kind: "agents", id: agentsBlockId, agents: [] })
+          }
+          agentRows.set(event.nodeId, {
+            nodeId: event.nodeId,
+            name: event.name,
+            status: "running",
+            toolUses: 0,
+            tokens: 0,
+          })
+          syncAgents()
+          store.setProjection((p) => ({ ...p, tree: startTree(p) }))
+          return
+        }
         const label = `Task(${event.name})`
         toolSeq++
         const sid = `sa${toolSeq}`
-        // Keyed by nodeId when present: parallel fan-out can run two spawns
-        // with the same basename, and a name key would cross their pills.
-        subAgentScrollId.set(event.nodeId ?? event.name, sid)
+        subAgentScrollId.set(event.name, sid)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
         store.setProjection((p) => ({ ...p, tree: startTree(p) }))
         return
@@ -212,7 +258,29 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           }
           return
         }
-        const endSid = subAgentScrollId.get(event.nodeId ?? event.name)
+        if (event.nodeId !== undefined && agentRows.has(event.nodeId)) {
+          // Close the row in the grouped block. An ok summary stays off the
+          // rail (the parent's prose relays results; ↵ on the node shows the
+          // full session) — a failure is always loud.
+          touchAgentRow(event.nodeId, ({ currentTool: _t, ...r }) => ({
+            ...r,
+            status: event.ok ? "ok" : "error",
+            ...(event.usage !== undefined && r.tokens === 0
+              ? { tokens: event.usage.inputTokens + event.usage.outputTokens }
+              : {}),
+          }))
+          if (!event.ok && event.summary.trim().length > 0) {
+            store.pushBlock({ kind: "error", text: `${event.name}: ${event.summary}` })
+          }
+          if (ownTreeId !== undefined) {
+            store.setProjection((p) => ({
+              ...p,
+              tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, filesDetail, now),
+            }))
+          }
+          return
+        }
+        const endSid = subAgentScrollId.get(event.name)
         if (endSid !== undefined) {
           const pillDetail = joinDetail(
             filesDetail,
@@ -224,7 +292,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             state: event.ok ? "ok" : "error",
             ...(pillDetail !== undefined ? { detail: pillDetail } : {}),
           })
-          subAgentScrollId.delete(event.nodeId ?? event.name)
+          subAgentScrollId.delete(event.name)
         }
         if (event.summary.trim().length > 0) {
           store.pushBlock(
@@ -260,6 +328,13 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // gauge (node usage is tracked on its tree node) — it streams into
         // the preview when that node's session is open, else tree-only.
         if (event.nodeId !== undefined || subAgentDepth > 0) {
+          if (event.nodeId !== undefined && event.usage !== undefined) {
+            const u = event.usage
+            touchAgentRow(event.nodeId, (r) => ({
+              ...r,
+              tokens: r.tokens + u.inputTokens + u.outputTokens,
+            }))
+          }
           if (event.nodeId !== undefined && event.nodeId === previewRunNode) {
             if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
               store.appendPreviewBlock({ kind: "reasoning", text: event.reasoning })
