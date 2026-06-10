@@ -114,5 +114,9 @@ export const AgentResult = Schema.Struct({
   finalText: Schema.String,
   messages: Schema.Array(AgentMessage),
   newTail: Schema.Array(AgentMessage),
+  /** The loop hit `maxSteps` while the model still wanted more tool calls —
+   *  `finalText` is mid-thought narration, NOT a deliverable. Callers
+   *  surfacing the result should mark it partial. */
+  stoppedAtMaxSteps: Schema.optional(Schema.Boolean),
 })
 export type AgentResult = typeof AgentResult.Type

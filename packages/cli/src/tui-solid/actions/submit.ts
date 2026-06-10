@@ -12,7 +12,7 @@ import {
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
-import { subjectLine } from "../presentation/conversation.js"
+import { buildConversation, subjectLine } from "../presentation/conversation.js"
 import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
@@ -94,6 +94,9 @@ export const makeSubmit = (
           ...(settings.subAgentTokenBudget !== undefined
             ? { budget: settings.subAgentTokenBudget }
             : {}),
+          ...(settings.subAgentMaxSteps !== undefined
+            ? { maxSteps: settings.subAgentMaxSteps }
+            : {}),
         })
         .pipe(
           Effect.provide(approvalLayer),
@@ -152,6 +155,16 @@ export const makeSubmit = (
         }
       }
 
+      // Rail rhythm: every turn existing BEFORE this message folds to
+      // `❯ subject ▸ N steps`, so the new one — expanded, its running tool
+      // group showing live pills — is the only expanded story on screen.
+      // (Computed before the push so the fresh turn itself stays open.)
+      const prevTurns = buildConversation(store.blocks())
+        .filter((i) => i.kind === "turn")
+        .map((i) => i.id)
+      if (prevTurns.length > 0) {
+        store.setCollapsed(new Set([...store.collapsed(), ...prevTurns]))
+      }
       store.pushBlock({ kind: "user", text })
       store.setInput("")
       // Sending snaps the rail to the bottom even if the user had scrolled up

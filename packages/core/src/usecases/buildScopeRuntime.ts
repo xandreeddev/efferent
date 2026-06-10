@@ -73,6 +73,7 @@ export interface ScopeRuntime {
     readonly nodeId: ContextNodeId
     readonly task: string
     readonly budget?: number
+    readonly maxSteps?: number
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },
     Failure,
@@ -86,9 +87,19 @@ export interface ScopeRuntime {
   >
 }
 
+/** Default step (turn) cap per spawned sub-agent — overridable via
+ *  `Settings.subAgentMaxSteps` (threaded through `RunContext`) or
+ *  `BuildScopeRuntimeOptions.maxSteps`. */
+export const DEFAULT_SUB_AGENT_MAX_STEPS = 80
+
+/** Appended to a sub-agent's summary when the step cap cut it off mid-work —
+ *  without it the run's mid-thought last sentence reads as the deliverable. */
+export const STEP_STOP_NOTE =
+  "[stopped early: the step limit was reached — this result is partial]"
+
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<import("../entities/Skill.js").Skill>
-  /** Step budget for each (nested) sub-agent loop. Default 12. */
+  /** Step budget for each (nested) sub-agent loop. Default 80. */
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
   readonly maxDepth?: number
@@ -258,6 +269,8 @@ interface RunSpawnedArgs<R> {
   readonly parentNodeId: string | null
   readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
   readonly tokenPool: TokenPool
+  /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
+  readonly maxSteps?: number
 }
 
 /**
@@ -319,13 +332,14 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       parentNodeId: nodeId,
       depth: args.parentDepth + 1,
       tokenPool: args.tokenPool,
+      ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
     }
 
     const outcome = yield* runAgentLoop({
       system,
       messages: seedMessages,
       toolkit: genericToolkit,
-      maxSteps: opts.maxSteps ?? 12,
+      maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
       hooks: innerHooks,
     }).pipe(
       Effect.provide(childLayer),
@@ -348,13 +362,20 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
 
     if (outcome.ok) {
       for (const m of outcome.r.newTail) yield* store.append(nodeId, m)
-      // A budget stop is an *ok* outcome with a partial result — say so, so
-      // the parent model (and the human in :tree) knows not to trust it as
-      // complete, instead of silently presenting half the work as done.
+      // A budget OR step-cap stop is an *ok* outcome with a partial result —
+      // say so, so the parent model (and the human in :tree) knows not to
+      // trust it as complete. Without the step marker, a capped run's
+      // mid-thought last sentence reads as the deliverable.
       const stoppedByBudget = yield* Ref.get(budgetStopRef)
-      const summary = stoppedByBudget
-        ? `${outcome.r.finalText}\n\n${BUDGET_STOP_NOTE}`.trim()
-        : outcome.r.finalText
+      const stopNote = stoppedByBudget
+        ? BUDGET_STOP_NOTE
+        : outcome.r.stoppedAtMaxSteps === true
+          ? STEP_STOP_NOTE
+          : undefined
+      const summary =
+        stopNote !== undefined
+          ? `${outcome.r.finalText}\n\n${stopNote}`.trim()
+          : outcome.r.finalText
       yield* store.recordReturn(nodeId, {
         status: "ok",
         summary,
@@ -456,6 +477,7 @@ const makeRunAgentHandler =
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
+            ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
           })
         }
         const sourceMsgs = yield* store.listMessages(nodeId)
@@ -486,6 +508,7 @@ const makeRunAgentHandler =
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
+          ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
         })
       }
 
@@ -506,6 +529,7 @@ const makeRunAgentHandler =
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
+        ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
@@ -558,7 +582,7 @@ export const buildScopeRuntime = <R = never>(
   // The human-driven mirror of the handler's resume branch: same staleness
   // brief, same append-then-rerun, same persistence — minus the FiberRef (the
   // driver IS the root, so the resumed node runs at depth 0 with a fresh pool).
-  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget }) =>
+  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget, maxSteps }) =>
     Effect.gen(function* () {
       const store = yield* ContextTreeStore
       const shell = yield* Shell
@@ -587,6 +611,7 @@ export const buildScopeRuntime = <R = never>(
         parentNodeId: node.parentId,
         rootConversationId: node.rootConversationId,
         tokenPool,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
       ScopeRuntime["resumeNode"]

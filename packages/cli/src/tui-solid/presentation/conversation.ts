@@ -260,6 +260,18 @@ export const toolGroupState = (tools: ReadonlyArray<ToolBlock>): ToolPillState =
       : "ok"
 
 /**
+ * Whether a tool group renders expanded: the user opened it (inverse-polarity
+ * membership in `collapsed`), or it's STILL RUNNING — live work always shows
+ * its individual pills so the rail gives feedback while processing; once the
+ * last call lands it settles back to the one-line summary.
+ */
+export const toolGroupExpanded = (
+  id: string,
+  tools: ReadonlyArray<ToolBlock>,
+  collapsed: ReadonlySet<string>,
+): boolean => collapsed.has(id) || tools.some((t) => t.state === "running")
+
+/**
  * The one-line summary a collapsed tool group shows, e.g.
  * `read · grep · edit  (3 tools, +5 -2)`. Names each call's verb (consecutive
  * repeats collapse to `read ×3`), counts the calls, rolls up the edit diffstat

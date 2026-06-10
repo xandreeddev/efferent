@@ -69,6 +69,9 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         parentNodeId: null,
         depth: 0,
         tokenPool,
+        ...(settings.subAgentMaxSteps !== undefined
+          ? { subAgentMaxSteps: settings.subAgentMaxSteps }
+          : {}),
       }),
     )
 

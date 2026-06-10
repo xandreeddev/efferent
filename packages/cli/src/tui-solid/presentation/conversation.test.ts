@@ -3,6 +3,7 @@ import {
   buildConversation,
   buildConversationRows,
   foldIdsByKind,
+  toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
   type ScrollbackBlock,
@@ -127,6 +128,14 @@ describe("toolGroupSummary / toolGroupState — the collapsed one-line aggregate
 
   test("aggregate state is running when a call is in flight and none errored", () => {
     expect(toolGroupState([t("Read(a)", "ok"), t("Read(b)", "running")])).toBe("running")
+  })
+
+  test("a group renders expanded while ANY call runs, settles collapsed when done", () => {
+    const live = [t("Read(a)", "ok"), t("Read(b)", "running")]
+    expect(toolGroupExpanded("grp:x", live, new Set())).toBe(true) // live feedback
+    const done = [t("Read(a)", "ok"), t("Read(b)", "ok")]
+    expect(toolGroupExpanded("grp:x", done, new Set())).toBe(false) // settles
+    expect(toolGroupExpanded("grp:x", done, new Set(["grp:x"]))).toBe(true) // user-opened
   })
 })
 

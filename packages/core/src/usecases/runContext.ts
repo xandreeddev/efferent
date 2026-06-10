@@ -21,6 +21,10 @@ export interface RunContext {
   readonly parentNodeId: ContextNodeId | null
   readonly depth: number
   readonly tokenPool: TokenPool
+  /** Per-sub-agent step cap (`Settings.subAgentMaxSteps`), threaded live per
+   *  run like the pool so `:set` applies on the next turn — absent → the
+   *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
+  readonly subAgentMaxSteps?: number
 }
 
 export const initialRunContext: RunContext = {

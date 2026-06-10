@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { Effect } from "effect"
 import {
   AuthStore,
+  DEFAULT_SUB_AGENT_MAX_STEPS,
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
   FileSystem,
   ModelRegistry,
@@ -137,6 +138,13 @@ export const openSettingsView = (store: TuiStore) =>
         hint: "use :set subAgentTokenBudget <n> (0 = off)",
       },
       {
+        key: "subAgentMaxSteps",
+        label: "subAgentSteps",
+        value: String(current.subAgentMaxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS),
+        kind: "readonly",
+        hint: "use :set subAgentMaxSteps <n>",
+      },
+      {
         key: "anthropicThinkingEffort",
         label: "claudeThink",
         value: current.anthropicThinkingEffort ?? "",
@@ -251,6 +259,15 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
           text: `Updated subAgentTokenBudget → ${num === 0 ? "off" : Math.floor(num)}`,
         }),
       )
+      return
+    }
+    if (key === "subAgentMaxSteps") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 1) {
+        return yield* err("Setting 'subAgentMaxSteps' must be a number ≥ 1")
+      }
+      yield* settings.update((curr) => ({ ...curr, subAgentMaxSteps: Math.floor(num) }))
+      yield* Effect.sync(() => store.toast(`Updated subAgentMaxSteps → ${Math.floor(num)}`))
       return
     }
     if (key in ENUM_ALLOWED) {
