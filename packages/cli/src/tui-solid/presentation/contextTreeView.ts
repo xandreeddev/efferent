@@ -26,6 +26,8 @@ export interface TreeNodeDisplay {
   readonly tokens?: string
   /** The workspace moved since this node ran — its context describes an older world. */
   readonly stale: boolean
+  /** This node's session is open in the preview — the composer feeds IT. */
+  readonly active: boolean
   readonly folded: boolean
   readonly hasChildren: boolean
   readonly nodeId: string
@@ -135,6 +137,11 @@ export const buildNavRows = (
      *  `rootConversationId` — for a pre-scoped node list whose synthetic root
      *  may not know the real conversation id yet. */
     readonly adoptAll?: boolean
+    /** The agent node whose session the composer currently feeds (an open
+     *  preview): IT carries the `active` tag, and conversation rows lose
+     *  theirs — "active" means "where a typed message goes", and only one
+     *  row can claim that. */
+    readonly activeNodeId?: string
   } = {},
 ): ReadonlyArray<TreeRowData> => {
   const byParent = childrenByParent(nodes)
@@ -172,6 +179,7 @@ export const buildNavRows = (
           node.workspaceRef !== undefined &&
           currentRef !== undefined &&
           node.workspaceRef !== currentRef,
+        active: node.id === opts.activeNodeId,
         folded,
         hasChildren,
         nodeId: node.id,
@@ -218,7 +226,8 @@ export const buildNavRows = (
       display: {
         kind: "conversation",
         label: conv.label,
-        active: conv.active,
+        // An open node preview steals the tag — the composer feeds that node.
+        active: conv.active && opts.activeNodeId === undefined,
         conversationId: conv.id,
         nodeCount: countSubtree(agentRoots),
         folded,

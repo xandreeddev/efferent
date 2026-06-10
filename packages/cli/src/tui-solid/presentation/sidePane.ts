@@ -479,6 +479,10 @@ export const stackCurrentRow = (
 export const treeRows = (
   nav: SidePaneNav,
   projection: SidePaneProjection,
+  /** Agent node whose session the composer feeds (an open preview) — that row
+   *  carries the `◀ active` tag instead of the root. Display-only: row order
+   *  and count are identical, so cursor-mapping callers may omit it. */
+  activeNodeId?: string,
 ): ReadonlyArray<TreeRowData> => {
   // The active session is the tree's depth-0 anchor — the ROOT AGENT. Its
   // sub-agents rail beneath it, and Enter on it is "back to the root" (close
@@ -496,7 +500,7 @@ export const treeRows = (
     projection.treeWorkspaceRef,
     // treeNodes is already scoped to the active session — every node belongs
     // under the root regardless of whether the sessions list has loaded yet.
-    { adoptAll: true },
+    { adoptAll: true, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
   )
 }
 
