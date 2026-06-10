@@ -17,45 +17,51 @@ import { replayBlocks } from "./replay.js"
 import { applyResume, conversationLabel, openContextView, resumeConversation } from "./session.js"
 
 /**
- * Load the agent navigator's data into the side projection: every conversation
- * in the workspace (the manual branches — `activeCid` marked as the live one)
- * plus all of their persisted context-tree nodes (the agent branches), along
- * with the workspace's current git HEAD — nodes stamped with a different ref
- * render a `stale` badge (their context describes an older world). Best-effort
- * throughout: a store hiccup degrades to fewer rows, never a dead view.
+ * Load the ACTIVE session's agent-context nodes (the `agents` view shows only
+ * the current conversation's execution tree), plus the workspace's git HEAD —
+ * nodes stamped with a different ref render a `stale` badge (their context
+ * describes an older world). Best-effort: a store hiccup never breaks the view.
  */
-export const loadNavTree = (store: TuiStore, activeCid: ConversationId) =>
+export const loadAgentTree = (store: TuiStore, activeCid: ConversationId) =>
   Effect.gen(function* () {
-    const cwd = store.status().cwd
-    const cs = yield* ConversationStore
     const cts = yield* ContextTreeStore
-    const list = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll(() => Effect.succeed([])))
-    // The active conversation may be brand-new (no messages persisted yet) and
-    // absent from listByWorkspace — show it anyway, labelled as current.
-    const conversations: NavConversation[] = list.map((c) => ({
-      id: c.id,
-      label: conversationLabel(c),
-      active: c.id === activeCid,
-    }))
-    if (!conversations.some((c) => c.active)) {
-      conversations.unshift({ id: activeCid, label: "(current session)", active: true })
-    }
-    const perConv = yield* Effect.forEach(conversations, (c) =>
-      cts
-        .listTree(c.id as ConversationId)
-        .pipe(Effect.catchAll(() => Effect.succeed([]))),
-    )
-    const nodes = perConv.flat()
-    const head = yield* getWorkspaceRef(cwd)
+    const nodes = yield* cts.listTree(activeCid).pipe(Effect.catchAll(() => Effect.succeed([])))
+    const head = yield* getWorkspaceRef(store.status().cwd)
     yield* Effect.sync(() =>
       store.setProjection((p) => ({
         ...p,
         treeNodes: nodes,
-        treeConversations: conversations,
         ...(head !== undefined ? { treeWorkspaceRef: head } : {}),
       })),
     )
   })
+
+/**
+ * Load the workspace's conversations into the `sessions` view: every session
+ * sharing this path, the active one marked — Enter there swaps between them.
+ */
+export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
+  Effect.gen(function* () {
+    const cs = yield* ConversationStore
+    const list = yield* cs
+      .listByWorkspace(store.status().cwd)
+      .pipe(Effect.catchAll(() => Effect.succeed([])))
+    // The active conversation may be brand-new (no messages persisted yet) and
+    // absent from listByWorkspace — show it anyway, labelled as current.
+    const sessions: NavConversation[] = list.map((c) => ({
+      id: c.id,
+      label: conversationLabel(c),
+      active: c.id === activeCid,
+    }))
+    if (!sessions.some((c) => c.active)) {
+      sessions.unshift({ id: activeCid, label: "(current session)", active: true })
+    }
+    yield* Effect.sync(() => store.setProjection((p) => ({ ...p, sessions })))
+  })
+
+/** Refresh both navigator data sets (boot + every turn end). */
+export const refreshNav = (store: TuiStore, activeCid: ConversationId) =>
+  Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid))
 
 /**
  * Switch the side pane to the context-tree viewer, loading the persisted
@@ -64,9 +70,41 @@ export const loadNavTree = (store: TuiStore, activeCid: ConversationId) =>
  */
 export const openTreeView = (store: TuiStore, cid: ConversationId) =>
   Effect.gen(function* () {
-    yield* loadNavTree(store, cid)
+    yield* loadAgentTree(store, cid)
     yield* Effect.sync(() =>
       store.setNav((n) => ({ ...n, view: "tree", treeCursor: 0 })),
+    )
+  })
+
+/** Switch the side pane to the sessions list. Focus-free (the `v` cycle). */
+export const openSessionsView = (store: TuiStore, cid: ConversationId) =>
+  Effect.gen(function* () {
+    yield* loadSessions(store, cid)
+    yield* Effect.sync(() =>
+      store.setNav((n) => ({ ...n, view: "sessions", sessionsCursor: 0 })),
+    )
+  })
+
+/** `:sessions` — toggle the workspace sessions list. Mirrors `toggleTree`. */
+export const toggleSessions = (store: TuiStore, cid: ConversationId) =>
+  Effect.gen(function* () {
+    const opening = store.sidePane().view !== "sessions"
+    if (opening) {
+      yield* openSessionsView(store, cid)
+      yield* Effect.sync(() => {
+        store.setFocus("side")
+        store.setMode("normal")
+      })
+      return
+    }
+    yield* Effect.sync(() =>
+      batch(() => {
+        store.setNav((n) => ({ ...n, view: "stack", sessionsCursor: 0 }))
+        if (store.focus() === "side") {
+          store.setFocus("input")
+          store.setMode("insert")
+        }
+      }),
     )
   })
 
@@ -99,17 +137,17 @@ export const toggleTree = (store: TuiStore, cid: ConversationId) =>
   })
 
 /**
- * `v` — pure 3-way side-view cycle: activity → context → tree → activity.
+ * `v` — the side-view cycle: activity → context → agents → sessions → activity.
  * Loads each view's data on entry but **never moves focus or mode** — the
- * close-to-input behaviour belongs to the `:context`/`:tree` toggles, not the
- * cycle (it's what made `v` on the last view dump the keypress into the
- * textarea).
+ * close-to-input behaviour belongs to the typed toggles, not the cycle (it's
+ * what made `v` on the last view dump the keypress into the textarea).
  */
 export const cycleSideView = (store: TuiStore, cid: ConversationId) =>
   Effect.gen(function* () {
     const view = store.sidePane().view
     if (view === "stack") yield* openContextView(store, cid)
     else if (view === "context") yield* openTreeView(store, cid)
+    else if (view === "tree") yield* openSessionsView(store, cid)
     else yield* Effect.sync(() => store.setNav((n) => ({ ...n, view: "stack" })))
   })
 
@@ -211,9 +249,11 @@ export const switchToConversation = (store: TuiStore, target: ConversationId) =>
     }
     yield* Effect.sync(() => closeNodePreview(store))
     yield* resumeConversation(store, target)
-    // resume resets the side nav to the activity view — reopen the navigator.
-    yield* openTreeView(store, target)
+    // resume resets the side nav — restore the SESSIONS view (where the swap
+    // came from) with fresh data so the active mark moves and hopping goes on.
+    yield* refreshNav(store, target)
     yield* Effect.sync(() => {
+      store.setNav((n) => ({ ...n, view: "sessions" }))
       store.setFocus("side")
       store.setMode("normal")
     })
@@ -258,7 +298,8 @@ export const continueFromNode = (store: TuiStore, cwd: string, nodeId: string) =
         })
       }),
     )
-    yield* openTreeView(store, newId)
+    yield* refreshNav(store, newId)
+    yield* Effect.sync(() => store.setNav((n) => ({ ...n, view: "tree" })))
     // The point of forking is to keep typing — land in the composer.
     yield* Effect.sync(() => {
       store.setFocus("input")
@@ -277,7 +318,7 @@ export const dropNode = (store: TuiStore, cid: ConversationId, nodeId: string) =
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
     yield* cts.drop(decoded.value)
-    yield* loadNavTree(store, cid)
+    yield* loadAgentTree(store, cid)
     yield* Effect.sync(() =>
       store.setNav((n) => {
         const count = treeRows(n, store.projection()).length

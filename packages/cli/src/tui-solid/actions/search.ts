@@ -1,5 +1,11 @@
 import { buildConversation, buildConversationRows, conversationItemId, itemText } from "../presentation/conversation.js"
-import { buildStackRowsData, stackRowText } from "../presentation/sidePane.js"
+import {
+  buildStackRowsData,
+  sessionsRows,
+  stackRowText,
+  treeRows,
+} from "../presentation/sidePane.js"
+import { treeRowText } from "../presentation/contextTreeView.js"
 import { buildContextRowsData, contextRowText } from "../presentation/contextView.js"
 import type { TuiStore } from "../state/store.js"
 
@@ -51,6 +57,19 @@ const runConversationSearch = (store: TuiStore, query: string, q: string): void 
 /** The focused side view's row texts + a setter for its (index-based) cursor. */
 const sideView = (store: TuiStore): { texts: string[]; setCursor: (i: number) => void } => {
   const nav = store.nav()
+  if (store.sidePane().view === "tree") {
+    const rows = treeRows(nav, store.projection())
+    return {
+      texts: rows.map(treeRowText),
+      setCursor: (i) => store.setNav((n) => ({ ...n, treeCursor: i })),
+    }
+  }
+  if (store.sidePane().view === "sessions") {
+    return {
+      texts: sessionsRows(store.projection()).map((r) => r.label),
+      setCursor: (i) => store.setNav((n) => ({ ...n, sessionsCursor: i })),
+    }
+  }
   if (store.sidePane().view === "stack") {
     const rows = buildStackRowsData(store.projection(), nav.stackCollapsed)
     return {

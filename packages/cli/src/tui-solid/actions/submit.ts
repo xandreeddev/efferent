@@ -13,7 +13,7 @@ import {
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
-import { loadNavTree, openNodePreview } from "./contextTree.js"
+import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
 
 export interface SubmitDeps {
@@ -79,7 +79,7 @@ export const makeSubmit = (
           )
           store.convScroller.current?.scrollToBottom()
         }
-        yield* loadNavTree(store, store.run.getConversationId()).pipe(
+        yield* refreshNav(store, store.run.getConversationId()).pipe(
           Effect.catchAll(() => Effect.void),
         )
         if (next !== undefined) yield* submit(next)
@@ -165,7 +165,7 @@ export const makeSubmit = (
         store.run.setFiber(undefined)
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
-        yield* loadNavTree(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
         if (next !== undefined) yield* submit(next)
       })
 

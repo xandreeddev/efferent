@@ -29,7 +29,9 @@ const paneRow = (ctx: TuiContext): string => {
         case "context":
           return "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · v views · i type"
         case "tree":
-          return "agents j/k·{} move · [] root · ⇥ fold · ↵ open/switch · c fork · d drop · q close · v views"
+          return "agents j/k·{} move · [] root · ⇥ fold · ↵ open · c fork · d drop · q close · v views"
+        case "sessions":
+          return "sess  j/k move · gg/G ends · ↵ switch session · v views · i type"
         default:
           return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type"
       }
@@ -47,8 +49,10 @@ const strip = (ctx: TuiContext): string => {
       ? store.sidePane().view === "context"
         ? "Space pick · b build"
         : store.sidePane().view === "tree"
-          ? "↵ open/switch · c fork · d drop"
-          : "↵ fold"
+          ? "↵ open · c fork · d drop"
+          : store.sidePane().view === "sessions"
+            ? "↵ switch session"
+            : "↵ fold"
       : store.nodePreview() !== undefined
         ? "j/k scroll · q close preview"
         : "j/k scroll · ↵ fold"
@@ -61,6 +65,7 @@ const paneLabel = (ctx: TuiContext): string => {
     const v = store.sidePane().view
     if (v === "context") return "context"
     if (v === "tree") return "agents"
+    if (v === "sessions") return "sessions"
   }
   return store.focus()
 }

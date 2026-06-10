@@ -109,10 +109,10 @@ export interface SidePaneProjection {
   readonly filesChanged: ReadonlyArray<FileChange>
   /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
   readonly context?: ReadonlyArray<ContextSegment>
-  /** Persisted agent-context-tree nodes (from `listTree`); shown when view==="tree". */
+  /** The ACTIVE session's persisted agent-context nodes; shown when view==="tree". */
   readonly treeNodes?: ReadonlyArray<AgentContextNode>
-  /** Workspace conversations — the navigator's roots (active one marked). */
-  readonly treeConversations?: ReadonlyArray<NavConversation>
+  /** Workspace conversations (active one marked); shown when view==="sessions". */
+  readonly sessions?: ReadonlyArray<NavConversation>
   /** Workspace git HEAD at tree-load time — nodes stamped with another ref are stale. */
   readonly treeWorkspaceRef?: string
 }
@@ -125,8 +125,9 @@ export interface SidePaneProjection {
  * compute rows, but only ever *write* nav.
  */
 export interface SidePaneNav {
-  /** Which view the side pane shows: the live agent stack, the context viewer, or the context tree. */
-  readonly view: "stack" | "context" | "tree"
+  /** Which view the side pane shows: live activity, the context viewer, the
+   *  active session's agent tree, or the workspace sessions list. */
+  readonly view: "stack" | "context" | "tree" | "sessions"
   /** Context-tree cursor: index into the navigable rows. */
   readonly contextCursor: number
   /** Folded context-tree segment/turn ids. */
@@ -143,6 +144,8 @@ export interface SidePaneNav {
   readonly treeCursor: number
   /** Folded context-tree node ids ("tree:<id>"). */
   readonly treeCollapsed: ReadonlySet<string>
+  /** Sessions (`:sessions`) cursor: index into the conversations list. */
+  readonly sessionsCursor: number
 }
 
 /** The merged view both halves compose to — what the components read (the side
@@ -167,6 +170,7 @@ export const emptyNav: SidePaneNav = {
   stackCursor: 0,
   treeCursor: 0,
   treeCollapsed: new Set(),
+  sessionsCursor: 0,
 }
 
 export const emptySidePane: SidePaneState = { ...emptyProjection, ...emptyNav }
@@ -184,7 +188,7 @@ export const splitSidePane = (
     filesChanged: s.filesChanged,
     ...(s.context !== undefined ? { context: s.context } : {}),
     ...(s.treeNodes !== undefined ? { treeNodes: s.treeNodes } : {}),
-    ...(s.treeConversations !== undefined ? { treeConversations: s.treeConversations } : {}),
+    ...(s.sessions !== undefined ? { sessions: s.sessions } : {}),
     ...(s.treeWorkspaceRef !== undefined ? { treeWorkspaceRef: s.treeWorkspaceRef } : {}),
   },
   nav: {
@@ -197,6 +201,7 @@ export const splitSidePane = (
     stackCursor: s.stackCursor,
     treeCursor: s.treeCursor,
     treeCollapsed: s.treeCollapsed,
+    sessionsCursor: s.sessionsCursor,
   },
 })
 
@@ -475,12 +480,33 @@ export const treeRows = (
   nav: SidePaneNav,
   projection: SidePaneProjection,
 ): ReadonlyArray<TreeRowData> =>
-  buildNavRows(
-    projection.treeConversations ?? [],
-    projection.treeNodes ?? [],
-    nav.treeCollapsed,
-    projection.treeWorkspaceRef,
-  )
+  buildNavRows([], projection.treeNodes ?? [], nav.treeCollapsed, projection.treeWorkspaceRef)
+
+// --- sessions (`:sessions`) view navigation: a flat list, index cursor ---
+
+export const sessionsRows = (
+  projection: SidePaneProjection,
+): ReadonlyArray<NavConversation> => projection.sessions ?? []
+
+export const sessionsMove = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+  delta: number,
+): SidePaneNav => ({
+  ...nav,
+  sessionsCursor: clamp(nav.sessionsCursor + delta, 0, Math.max(0, sessionsRows(projection).length - 1)),
+})
+export const sessionsToTop = (nav: SidePaneNav): SidePaneNav => ({ ...nav, sessionsCursor: 0 })
+export const sessionsToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
+  ...nav,
+  sessionsCursor: Math.max(0, sessionsRows(projection).length - 1),
+})
+/** The conversation under the sessions cursor, or undefined on an empty list. */
+export const sessionsCurrentRow = (
+  nav: SidePaneNav,
+  projection: SidePaneProjection,
+): NavConversation | undefined =>
+  sessionsRows(projection)[clamp(nav.sessionsCursor, 0, Math.max(0, sessionsRows(projection).length - 1))]
 
 /** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
 export const treeParagraph = (
