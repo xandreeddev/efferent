@@ -1,11 +1,11 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { createEffect, For, Show } from "solid-js"
 import {
-  buildNavRows,
   type TreeConversationDisplay,
   type TreeNodeDisplay,
   type TreeRowData,
 } from "../../../presentation/contextTreeView.js"
+import { treeRows } from "../../../presentation/sidePane.js"
 import { glyph, tokens } from "../../../state/theme.js"
 import { foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
@@ -121,9 +121,9 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
   // Owns the cursor only when the side pane is focused AND the agents view
   // holds the keys (in the split layout activity may hold them).
   const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
-  // Current session only — conversations live in the `sessions` view now.
-  const rows = () =>
-    buildNavRows([], sp().treeNodes ?? [], sp().treeCollapsed, sp().treeWorkspaceRef)
+  // The SHARED flatten (root-agent anchor + this session's nodes) — must match
+  // the keymap's `treeRows` exactly or the cursor and the pixels disagree.
+  const rows = () => treeRows(sp(), sp())
   const cursor = () => sp().treeCursor
 
   let sb!: ScrollBoxRenderable

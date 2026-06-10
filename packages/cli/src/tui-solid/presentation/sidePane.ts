@@ -479,8 +479,26 @@ export const stackCurrentRow = (
 export const treeRows = (
   nav: SidePaneNav,
   projection: SidePaneProjection,
-): ReadonlyArray<TreeRowData> =>
-  buildNavRows([], projection.treeNodes ?? [], nav.treeCollapsed, projection.treeWorkspaceRef)
+): ReadonlyArray<TreeRowData> => {
+  // The active session is the tree's depth-0 anchor — the ROOT AGENT. Its
+  // sub-agents rail beneath it, and Enter on it is "back to the root" (close
+  // any open node preview; the composer feeds it again).
+  const active = projection.sessions?.find((s) => s.active)
+  const root = {
+    id: active?.id ?? "root",
+    label: active?.label ?? "(current session)",
+    active: true,
+  }
+  return buildNavRows(
+    [root],
+    projection.treeNodes ?? [],
+    nav.treeCollapsed,
+    projection.treeWorkspaceRef,
+    // treeNodes is already scoped to the active session — every node belongs
+    // under the root regardless of whether the sessions list has loaded yet.
+    { adoptAll: true },
+  )
+}
 
 // --- sessions (`:sessions`) view navigation: a flat list, index cursor ---
 
