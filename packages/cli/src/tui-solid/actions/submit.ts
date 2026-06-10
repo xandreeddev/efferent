@@ -129,6 +129,7 @@ export const makeSubmit = (
           text: "no provider configured — run :login to add one (subscription or API key)",
         })
         store.setInput("")
+        store.convScroller.current?.scrollToBottom()
         return
       }
 
@@ -151,6 +152,10 @@ export const makeSubmit = (
 
       store.pushBlock({ kind: "user", text })
       store.setInput("")
+      // Sending snaps the rail to the bottom even if the user had scrolled up
+      // to read (which disengages sticky-follow): your own message — and the
+      // reply about to stream under it — is always brought into view.
+      store.convScroller.current?.scrollToBottom()
       store.setBusy(true)
       store.setNote("working…")
 
