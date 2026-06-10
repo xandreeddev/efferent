@@ -8,7 +8,7 @@ import { glyph, tokens } from "../../../state/theme.js"
 import type { TuiContext } from "../../../state/store.js"
 
 /**
- * The navigator's **detail section** (upper half of the side pane in the
+ * The navigator's **detail section** (below the tree in the side pane's
  * agents view): a live mirror of whatever the tree cursor is on. A node row
  * shows the node's full record — status, provenance, seed, billed tokens, the
  * UNCLIPPED return summary, files changed — plus, while the node is running,

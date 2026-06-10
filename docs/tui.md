@@ -127,8 +127,8 @@ NORMAL; the tab row shows where you are):
 - **context** — the loaded-context viewer/curator (full pane).
 - **agents** (`:tree`) — **the active session's execution tree only**, anchored by a
   depth-0 **root agent row** (the active session, `◀ active`) with its sub-agents railed
-  beneath, split into two reactive sections: the tree in the lower half holds the cursor,
-  and the upper **detail section follows it** — full (unclipped) return summary, seed,
+  beneath, split into two reactive sections: the tree on top holds the cursor, and the
+  **detail section below follows it** — full (unclipped) return summary, seed,
   files changed, billed tokens, and a running node's **live tool feed**. `↵` opens/talks
   to a node; `↵` on the root closes any open preview — **back to the root agent**; `c`
   forks, `d` drops.

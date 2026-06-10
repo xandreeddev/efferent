@@ -19,10 +19,10 @@ const VIEWS = [
 /**
  * The side pane: a bordered box with three views (`v` cycles, the tab row
  * shows where you are). **activity** and **context** take the whole pane; the
- * **agents** view splits it — the navigator tree in the LOWER half holds the
- * cursor, and the UPPER half is a live **detail section** mirroring whatever
- * the cursor is on (full summary / files / seed for a node, its live tool
- * feed while running, session identity for a conversation). Width: a fixed
+ * **agents** view splits it — the navigator tree on TOP holds the cursor,
+ * and BELOW it a live **detail section** mirrors whatever the cursor is on
+ * (full summary / files / seed for a node, its live tool feed while running,
+ * session identity for a conversation). Width: a fixed
  * 38% column, or the full middle region when this pane is focused + zoomed.
  */
 export const Side = (props: { ctx: TuiContext }) => {
@@ -72,15 +72,16 @@ export const Side = (props: { ctx: TuiContext }) => {
           <ContextView ctx={props.ctx} />
         </Match>
         <Match when={view() === "tree"}>
-          {/* Content-sized detail (capped at half) — the tree gets the rest;
-              a three-line detail must not cost fifty percent of the pane. */}
-          <box flexDirection="column" flexShrink={0} maxHeight="50%" overflow="hidden">
-            {sectionHead("selected")}
-            <NodeDetail ctx={props.ctx} />
-          </box>
-          <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden" marginTop={1}>
+          {/* Tree on top (holds the cursor); the detail mirrors the cursor
+              BELOW it, content-sized (capped at half) — a three-line detail
+              must not cost fifty percent of the pane. */}
+          <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
             {sectionHead("agents")}
             <ContextTreeView ctx={props.ctx} />
+          </box>
+          <box flexDirection="column" flexShrink={0} maxHeight="50%" overflow="hidden" marginTop={1}>
+            {sectionHead("selected")}
+            <NodeDetail ctx={props.ctx} />
           </box>
         </Match>
         <Match when={view() === "sessions"}>
