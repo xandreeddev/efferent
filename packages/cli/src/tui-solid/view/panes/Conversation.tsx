@@ -268,7 +268,17 @@ export const Conversation = (props: { ctx: TuiContext }) => {
       // "absolute" → ± rows; "content" → ±1 whole content (top/bottom, clamped).
       scrollBy: (lines) => sb.scrollBy(lines, "absolute"),
       scrollToTop: () => sb.scrollBy(-1, "content"),
-      scrollToBottom: () => sb.scrollBy(1, "content"),
+      // Bottom needs a SETTLE, not one call: callers fire right after swapping
+      // the whole block list, but OpenTUI lays the new content out on a later
+      // frame — a single scroll lands at the OLD bottom, which the new layout
+      // reads as a manual mid-scroll and permanently disengages sticky-bottom
+      // (the rail stops following). Landing exactly at the true bottom is what
+      // re-engages it, so re-scroll across a couple of layout frames.
+      scrollToBottom: () => {
+        sb.scrollBy(1, "content")
+        setTimeout(() => sb.scrollBy(1, "content"), 40)
+        setTimeout(() => sb.scrollBy(1, "content"), 120)
+      },
       scrollIntoView: (id) => sb.scrollChildIntoView(id),
       viewportRows: () => sb.viewport?.height ?? 20,
     }

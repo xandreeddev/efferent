@@ -10,7 +10,7 @@ import {
   resumeConversation,
   toggleContext,
 } from "../actions/session.js"
-import { toggleSessions, toggleTree } from "../actions/contextTree.js"
+import { refreshNav, toggleSessions, toggleTree } from "../actions/contextTree.js"
 import { runHandoff } from "../actions/handoff.js"
 import { openModelPicker } from "../actions/model.js"
 import { applyTheme, openThemePicker } from "../actions/theme.js"
@@ -191,5 +191,11 @@ const resume = (ctx: TuiContext, arg: string | undefined): void => {
     store.pushBlock({ kind: "info", text: `not a conversation: ${arg}` })
     return
   }
-  void ctx.run(resumeConversation(store, target.value))
+  // The navigator (agents/sessions views) keys off the active conversation —
+  // without a refresh its root row keeps the PREVIOUS session's label.
+  void ctx.run(
+    resumeConversation(store, target.value).pipe(
+      Effect.zipRight(refreshNav(store, target.value).pipe(Effect.catchAll(() => Effect.void))),
+    ),
+  )
 }
