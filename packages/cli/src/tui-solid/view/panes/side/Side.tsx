@@ -72,11 +72,13 @@ export const Side = (props: { ctx: TuiContext }) => {
           <ContextView ctx={props.ctx} />
         </Match>
         <Match when={view() === "tree"}>
-          <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+          {/* Content-sized detail (capped at half) — the tree gets the rest;
+              a three-line detail must not cost fifty percent of the pane. */}
+          <box flexDirection="column" flexShrink={0} maxHeight="50%" overflow="hidden">
             {sectionHead("selected")}
             <NodeDetail ctx={props.ctx} />
           </box>
-          <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+          <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden" marginTop={1}>
             {sectionHead("agents")}
             <ContextTreeView ctx={props.ctx} />
           </box>
