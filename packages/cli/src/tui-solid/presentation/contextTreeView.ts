@@ -4,15 +4,16 @@ import { glyph } from "./theme/index.js"
 import { formatTokens } from "./statusBar.js"
 
 /**
- * The browseable, branching **agent-context tree** (the `:tree` view): the
- * persistent record of every sub-agent spawned/resumed/branched in a
- * conversation, reconstructed from the flat `listTree` result by `parentId`.
- * Mirrors `contextView`/`sidePane` exactly — a pure flattener → ordered
+ * The **agent navigation pane** (the `:tree` view): every session in the
+ * workspace — the *manual branches* (conversations, incl. `:build` forks) as
+ * roots, each with its *agent branches* (the persistent sub-agent context
+ * tree from `listTree`) nested beneath, reconstructed by `parentId`. Mirrors
+ * `contextView`/`sidePane` exactly — a pure flattener → ordered
  * {@link TreeRowData}, the shared `paneNav` motions move a cursor over it, and
  * `ContextTree.tsx` renders each row's structured `display`. No Solid/OpenTUI.
  */
 
-export type TreeRowDisplay = {
+export interface TreeNodeDisplay {
   readonly kind: "node"
   /** Scope dir basename, for a compact label. */
   readonly folder: string
@@ -28,6 +29,28 @@ export type TreeRowDisplay = {
   readonly folded: boolean
   readonly hasChildren: boolean
   readonly nodeId: string
+}
+
+/** A conversation root in the navigator — Enter makes it the active session. */
+export interface TreeConversationDisplay {
+  readonly kind: "conversation"
+  readonly label: string
+  /** This is the live session the input feeds. */
+  readonly active: boolean
+  readonly conversationId: string
+  /** How many agent-context nodes hang off it (all depths). */
+  readonly nodeCount: number
+  readonly folded: boolean
+  readonly hasChildren: boolean
+}
+
+export type TreeRowDisplay = TreeNodeDisplay | TreeConversationDisplay
+
+/** A workspace conversation as the navigator consumes it (label pre-formatted). */
+export interface NavConversation {
+  readonly id: string
+  readonly label: string
+  readonly active: boolean
 }
 
 /**
@@ -72,10 +95,24 @@ const childrenByParent = (
   return byParent
 }
 
+const rail = (
+  depth: number,
+  flags: ReadonlyArray<boolean>,
+  isLast: boolean,
+): TreeRail =>
+  depth === 0
+    ? { prefix: "", connector: "" }
+    : {
+        prefix: flags.map((f) => (f ? glyph.tree.vert : glyph.tree.skip)).join(""),
+        connector: isLast ? glyph.tree.corner : glyph.tree.tee,
+      }
+
 /**
- * Flatten the tree into ordered navigable rows, honouring `collapsed` (folded
- * nodes hide their descendants). Forest roots (`parentId === null`) are `head`s;
- * a node with children is foldable (`foldId = "tree:<id>"`).
+ * Flatten the navigator into ordered rows, honouring `collapsed` (a folded row
+ * hides its descendants). With conversations, each is a depth-0 `head` whose
+ * agent-context roots nest at depth 1; without (`conversations` empty — e.g. a
+ * store hiccup), the agent nodes render as a plain forest, exactly the old
+ * `:tree`. Fold ids: `tree:conv:<id>` for conversations, `tree:<id>` for nodes.
  *
  * Each row carries a git-log-`--graph`-style rail built by the classic
  * ancestor-flags walk: `flags[i]` says whether the ancestor at depth `i+1` has
@@ -88,7 +125,8 @@ const childrenByParent = (
  * stamped with a *different* ref is marked `stale` — resuming it hands the
  * model in-context file reads from an older world.
  */
-export const buildTreeRowsData = (
+export const buildNavRows = (
+  conversations: ReadonlyArray<NavConversation>,
   nodes: ReadonlyArray<AgentContextNode>,
   collapsed: ReadonlySet<string>,
   currentRef?: string,
@@ -96,7 +134,7 @@ export const buildTreeRowsData = (
   const byParent = childrenByParent(nodes)
   const rows: TreeRowData[] = []
 
-  const walk = (
+  const walkNode = (
     node: AgentContextNode,
     depth: number,
     flags: ReadonlyArray<boolean>,
@@ -106,17 +144,10 @@ export const buildTreeRowsData = (
     const hasChildren = children.length > 0
     const foldId = hasChildren ? `tree:${node.id}` : undefined
     const folded = foldId !== undefined && collapsed.has(foldId)
-    const rail: TreeRail =
-      depth === 0
-        ? { prefix: "", connector: "" }
-        : {
-            prefix: flags.map((f) => (f ? glyph.tree.vert : glyph.tree.skip)).join(""),
-            connector: isLast ? glyph.tree.corner : glyph.tree.tee,
-          }
     rows.push({
       key: `tree-row:${node.id}`,
       depth,
-      rail,
+      rail: rail(depth, flags, isLast),
       ...(foldId !== undefined ? { foldId } : {}),
       head: depth === 0,
       display: {
@@ -141,18 +172,68 @@ export const buildTreeRowsData = (
       },
     })
     if (!folded) {
-      // A root's children start a fresh rail (roots are visually separate
-      // trees); deeper children inherit this node's continuation column.
+      // A depth-0 root's children start a fresh rail (separate trees); deeper
+      // children inherit this node's continuation column.
       const childFlags = depth === 0 ? [] : [...flags, !isLast]
-      children.forEach((c, i) => walk(c, depth + 1, childFlags, i === children.length - 1))
+      children.forEach((c, i) => walkNode(c, depth + 1, childFlags, i === children.length - 1))
     }
   }
 
-  const roots = byParent.get(null) ?? []
-  roots.forEach((r, i) => walk(r, 0, [], i === roots.length - 1))
+  if (conversations.length === 0) {
+    const roots = byParent.get(null) ?? []
+    roots.forEach((r, i) => walkNode(r, 0, [], i === roots.length - 1))
+    return rows
+  }
+
+  const countSubtree = (roots: ReadonlyArray<AgentContextNode>): number => {
+    let n = 0
+    const stack = [...roots]
+    for (let cur = stack.pop(); cur !== undefined; cur = stack.pop()) {
+      n++
+      stack.push(...(byParent.get(cur.id) ?? []))
+    }
+    return n
+  }
+
+  for (const conv of conversations) {
+    const agentRoots = (byParent.get(null) ?? []).filter(
+      (r) => r.rootConversationId === conv.id,
+    )
+    const hasChildren = agentRoots.length > 0
+    const foldId = hasChildren ? `tree:conv:${conv.id}` : undefined
+    const folded = foldId !== undefined && collapsed.has(foldId)
+    rows.push({
+      key: `tree-row:conv:${conv.id}`,
+      depth: 0,
+      rail: { prefix: "", connector: "" },
+      ...(foldId !== undefined ? { foldId } : {}),
+      head: true,
+      display: {
+        kind: "conversation",
+        label: conv.label,
+        active: conv.active,
+        conversationId: conv.id,
+        nodeCount: countSubtree(agentRoots),
+        folded,
+        hasChildren,
+      },
+    })
+    if (!folded) {
+      agentRoots.forEach((r, i) => walkNode(r, 1, [], i === agentRoots.length - 1))
+    }
+  }
   return rows
 }
 
+/** The old node-only `:tree` flatten — `buildNavRows` with no conversations. */
+export const buildTreeRowsData = (
+  nodes: ReadonlyArray<AgentContextNode>,
+  collapsed: ReadonlySet<string>,
+  currentRef?: string,
+): ReadonlyArray<TreeRowData> => buildNavRows([], nodes, collapsed, currentRef)
+
 /** The searchable text of one tree row (for `/` search over the side pane). */
 export const treeRowText = (row: TreeRowData): string =>
-  `${row.display.folder} ${row.display.summary ?? ""}`.trim()
+  row.display.kind === "conversation"
+    ? row.display.label
+    : `${row.display.folder} ${row.display.summary ?? ""}`.trim()

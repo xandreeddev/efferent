@@ -23,12 +23,15 @@ import { buildConversation, buildConversationRows, foldIdsByKind } from "../pres
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
+import type { ConversationId } from "@efferent/core"
 import { buildFromSelection } from "../actions/session.js"
 import {
   closeNodePreview,
+  continueFromNode,
   cycleSideView,
   dropNode,
   openNodePreview,
+  switchToConversation,
 } from "../actions/contextTree.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
@@ -425,19 +428,41 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       store.setNav((n) => treeFold(n, store.projection()))
       return true
     case "return": {
-      // Enter opens the node's session as a conversation-pane preview (Enter
-      // again on the same node closes it); folding stays on Tab/h/l/←/→.
+      // Enter "opens" the row: a conversation becomes the ACTIVE session; an
+      // agent node opens as a conversation-pane preview (Enter again on the
+      // same node closes it). Folding stays on Tab/h/l/←/→.
       const row = treeCurrentRow(store.nav(), store.projection())
       if (row === undefined) return true
-      if (store.nodePreview()?.nodeId === row.display.nodeId) closeNodePreview(store)
-      else void ctx.run(openNodePreview(store, row.display.nodeId))
+      if (row.display.kind === "conversation") {
+        void ctx.run(
+          switchToConversation(store, row.display.conversationId as ConversationId),
+        )
+      } else if (store.nodePreview()?.nodeId === row.display.nodeId) {
+        closeNodePreview(store)
+      } else {
+        void ctx.run(openNodePreview(store, row.display.nodeId))
+      }
+      return true
+    }
+    case "c": {
+      // Continue from an agent node: fork its context into a new conversation
+      // and make that the active session (the human takes over from there).
+      const row = treeCurrentRow(store.nav(), store.projection())
+      if (row !== undefined && row.display.kind === "node") {
+        void ctx.run(continueFromNode(store, store.status().cwd, row.display.nodeId))
+      }
       return true
     }
     case "d": {
       // Drop the node (+ descendants) under the cursor — but never a still-running
-      // one (its in-flight run would fail to record its return).
+      // one (its in-flight run would fail to record its return), and never a
+      // conversation row (deleting whole sessions is not a one-key action).
       const row = treeCurrentRow(store.nav(), store.projection())
-      if (row !== undefined && row.display.status !== "running") {
+      if (
+        row !== undefined &&
+        row.display.kind === "node" &&
+        row.display.status !== "running"
+      ) {
         void ctx.run(dropNode(store, store.run.getConversationId(), row.display.nodeId))
       }
       return true
