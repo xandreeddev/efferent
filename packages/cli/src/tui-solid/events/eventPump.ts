@@ -39,7 +39,16 @@ import type { TuiStore } from "../state/store.js"
  * so same-named calls pair in emission order. This closure holds that matching
  * state, so one reducer instance lives per pump.
  */
-export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void) => {
+export const makeEventReducer = (
+  store: TuiStore,
+  opts: {
+    /** Fire-and-forget navigator reload (agents/sessions views). Called on
+     *  sub-agent spawn/end so a RUNNING node is reachable in the agents pane
+     *  mid-turn — without it the tree only refreshes at turn end and you
+     *  can't open a live agent's session while it works. */
+    readonly refreshNav?: () => void
+  } = {},
+): ((event: AgentEvent) => void) => {
   const toolTreeIds = new Map<string, number[]>() // matchKey → FIFO of tree node ids
   const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
@@ -52,12 +61,6 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   let agentsBlockId: string | undefined
   let subAgentDepth = 0
   let toolSeq = 0
-  // The node id of a sub-agent run whose session is OPEN in the conversation
-  // pane (a human-driven resume, or an agent spawn the user is watching): its
-  // events stream into the preview overlay instead of vanishing into the
-  // Activity tab — without this, a resumed node runs with zero visible
-  // progress and reads as "stuck".
-  let previewRunNode: string | undefined
 
   // The id pairs a start with its end; empty/absent → fall back to the name.
   const matchKey = (e: { id?: string; toolName: string }): string =>
@@ -83,6 +86,12 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
     ...parts: ReadonlyArray<string | undefined>
   ): string | undefined =>
     parts.filter((p): p is string => p !== undefined).join(" · ") || undefined
+
+  // Is this node's session on-screen RIGHT NOW (preview overlay open on it)?
+  // Read live per event — a captured "preview was open at spawn" flag freezes
+  // a preview opened mid-run into a snapshot that only updates at the end.
+  const watchedNode = (nodeId: string | undefined): boolean =>
+    nodeId !== undefined && store.nodePreview()?.nodeId === nodeId
 
   const syncAgents = (): void => {
     if (agentsBlockId !== undefined) store.updateAgents(agentsBlockId, [...agentRows.values()])
@@ -129,7 +138,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           const sid = `t${toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
-        } else if (event.nodeId !== undefined && event.nodeId === previewRunNode) {
+        } else if (watchedNode(event.nodeId)) {
           toolSeq++
           const pid = `pv${toolSeq}`
           enqueue(previewToolIds, matchKey(event), pid)
@@ -187,6 +196,10 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
 
       case "subagent_start": {
         subAgentDepth++
+        // Surface the freshly-spawned node in the agents navigator NOW — it's
+        // already persisted, and waiting for turn end would make a running
+        // agent unreachable mid-turn.
+        opts.refreshNav?.()
         // This run's session is on-screen (the human resumed it from the
         // preview, or is watching the node the agent spawned into): its
         // events stream into the preview, and the parent rail gets no Task
@@ -204,8 +217,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           if (event.nodeId !== undefined) subTreeByNode.set(event.nodeId, id)
           return tree
         }
-        if (event.nodeId !== undefined && store.nodePreview()?.nodeId === event.nodeId) {
-          previewRunNode = event.nodeId
+        if (watchedNode(event.nodeId)) {
           store.setProjection((p) => ({ ...p, tree: startTree(p) }))
           return
         }
@@ -238,19 +250,24 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
 
       case "subagent_end": {
         subAgentDepth = Math.max(0, subAgentDepth - 1)
+        // Status glyph / summary / tokens just landed on the persisted node.
+        opts.refreshNav?.()
         const filesDetail =
           event.filesChanged.length > 0
             ? `${event.filesChanged.length} file${event.filesChanged.length === 1 ? "" : "s"}`
             : undefined
         // The watched run finished: its prose already streamed into the
         // preview (assistant_message), and a failure must not be silent there.
+        // Watched and grouped-block states can BOTH hold (a node spawned
+        // unwatched whose preview was opened mid-run), so the preview append
+        // composes with the row close instead of short-circuiting it.
         const ownTreeId = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
         if (event.nodeId !== undefined) subTreeByNode.delete(event.nodeId)
-        if (event.nodeId !== undefined && previewRunNode === event.nodeId) {
-          previewRunNode = undefined
-          if (!event.ok && event.summary.trim().length > 0) {
-            store.appendPreviewBlock({ kind: "error", text: event.summary })
-          }
+        if (watchedNode(event.nodeId) && !event.ok && event.summary.trim().length > 0) {
+          store.appendPreviewBlock({ kind: "error", text: event.summary })
+        }
+        if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
+          // Human-driven resume (no rail presence) — close its tree node only.
           if (ownTreeId !== undefined) {
             store.setProjection((p) => ({
               ...p,
@@ -336,7 +353,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
               tokens: r.tokens + u.inputTokens + u.outputTokens,
             }))
           }
-          if (event.nodeId !== undefined && event.nodeId === previewRunNode) {
+          if (watchedNode(event.nodeId)) {
             if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
               store.appendPreviewBlock({ kind: "reasoning", text: event.reasoning })
             }
