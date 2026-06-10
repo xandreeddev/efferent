@@ -191,8 +191,14 @@ it) `── seed … ──` / `── run starts ──` rules mark where the s
 agent's own work begins. It's an overlay: a running turn keeps appending to the live rail
 underneath, untouched. Session swaps and forks are refused while a turn is running.
 
+**While a preview is open, the composer talks to that agent.** The input title flips to
+`input → agent: <folder>`; sending a message appends it to the node's persisted context and
+**re-runs that sub-agent in place** (folder-scoped, staleness brief if the repo moved, its
+children hang off the node) — it does *not* go to the parent conversation. The preview
+re-fetches when the run ends; `q`/Esc returns the composer to the active session.
+
 The agent drives resume/branch itself (`run_agent({ seedFromNode, seedMode: "resume" \| "branch" })`);
-`c` is the human-driven fork. Re-running a node in place from the tree is on the roadmap.
+the preview follow-up is the human-driven resume, `c` the human-driven fork.
 
 ---
 

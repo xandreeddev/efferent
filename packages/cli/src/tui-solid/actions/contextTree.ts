@@ -121,9 +121,18 @@ export const cycleSideView = (store: TuiStore, cid: ConversationId) =>
  * conversation pane so the preview is visible even below the narrow
  * breakpoint (where only the focused pane renders); `↵` on the same node,
  * `q`, or Esc (idle) drop the overlay and return to the tree.
+ *
+ * `opts.focus: false` = a **refresh** of an already-open preview (a follow-up
+ * turn just grew the node): re-fetch the blocks but leave focus, mode, cursor,
+ * and scroll alone — the user may be mid-typing the next message.
  */
-export const openNodePreview = (store: TuiStore, nodeId: string) =>
+export const openNodePreview = (
+  store: TuiStore,
+  nodeId: string,
+  opts: { readonly focus?: boolean } = {},
+) =>
   Effect.gen(function* () {
+    const focus = opts.focus ?? true
     const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
@@ -138,9 +147,13 @@ export const openNodePreview = (store: TuiStore, nodeId: string) =>
         node.status === "running" ? " · running (snapshot)" : "",
       ].join(""),
     }
-    const blocks = [
+    const blocks: ScrollbackBlock[] = [
       header,
       ...withSeedMarkers(replayBlocks(messages, []), node.seed.kind, node.seedMessageCount),
+      // A failed run leaves no assistant message — surface its recorded error.
+      ...(node.status === "error"
+        ? [{ kind: "error", text: node.returnSummary ?? "run failed" } as const]
+        : []),
     ]
     yield* Effect.sync(() =>
       batch(() => {
@@ -153,6 +166,7 @@ export const openNodePreview = (store: TuiStore, nodeId: string) =>
           savedCollapsed: prior?.savedCollapsed ?? store.collapsed(),
         })
         store.setCollapsed(new Set())
+        if (!focus) return
         store.setConvCursor(0)
         if (store.search()?.pane === "conversation") store.setSearch(undefined)
         store.setFocus("conversation")

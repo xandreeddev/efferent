@@ -1,17 +1,19 @@
-import { Effect, Queue, type Layer } from "effect"
+import { Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
   buildScopeRuntime,
   coderAgentConfig,
+  ContextNodeId,
   runAgent,
+  SettingsStore,
   type AgentHooks,
   type Approval,
   type Scope,
-  type SettingsStore,
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
-import { loadNavTree } from "./contextTree.js"
+import type { NodePreview } from "../presentation/nodePreview.js"
+import { loadNavTree, openNodePreview } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
 
 export interface SubmitDeps {
@@ -39,6 +41,76 @@ export const makeSubmit = (
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
   const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, approvalLayer } = deps
 
+  /**
+   * Follow-up typed while a node-session preview is open: the message goes to
+   * THAT sub-agent, not the active conversation — `scopeRuntime.resumeNode`
+   * appends it to the node's persisted context and re-runs the folder-scoped
+   * loop in place. The preview shows the sent line immediately and re-fetches
+   * the node's messages when the run ends (success, failure, or Esc).
+   */
+  const submitToNode = (
+    preview: NodePreview,
+    nodeId: typeof ContextNodeId.Type,
+    text: string,
+  ): Effect.Effect<void, never, AppServices> =>
+    Effect.gen(function* () {
+      const folder = preview.title.replace(/^agent: /, "")
+      store.setNodePreview({
+        ...preview,
+        blocks: [...preview.blocks, { kind: "user", text }],
+      })
+      store.setInput("")
+      store.setBusy(true)
+      store.setNote(`working in agent ${folder}…`)
+      store.convScroller.current?.scrollToBottom()
+
+      const settings = yield* (yield* SettingsStore).get()
+
+      const finishTurn = Effect.gen(function* () {
+        const next = store.run.dequeue()
+        store.setBusy(false)
+        store.setNote(undefined)
+        store.run.setFiber(undefined)
+        // Re-fetch the node's session (it grew) if its preview is still open,
+        // and land on the fresh tail; refresh the navigator's counters too.
+        if (store.nodePreview()?.nodeId === preview.nodeId) {
+          yield* openNodePreview(store, preview.nodeId, { focus: false }).pipe(
+            Effect.catchAll(() => Effect.void),
+          )
+          store.convScroller.current?.scrollToBottom()
+        }
+        if (store.sidePane().view === "tree") {
+          yield* loadNavTree(store, store.run.getConversationId()).pipe(
+            Effect.catchAll(() => Effect.void),
+          )
+        }
+        if (next !== undefined) yield* submit(next)
+      })
+
+      const runEffect = scopeRuntime
+        .resumeNode({
+          nodeId,
+          task: text,
+          ...(settings.subAgentTokenBudget !== undefined
+            ? { budget: settings.subAgentTokenBudget }
+            : {}),
+        })
+        .pipe(
+          Effect.provide(approvalLayer),
+          Effect.catchAll((f) => {
+            const msg = f.message !== undefined ? `${f.error}: ${f.message}` : f.error
+            return Effect.logError(msg).pipe(
+              Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+            )
+          }),
+          Effect.asVoid,
+          Effect.ensuring(finishTurn),
+        )
+
+      const fiber = yield* Effect.forkDaemon(runEffect)
+      store.run.setFiber(fiber)
+    })
+
   const submit = (text: string): Effect.Effect<void, never, AppServices> =>
     Effect.gen(function* () {
       // No provider configured → guide to :login instead of a deep 401.
@@ -59,6 +131,15 @@ export const makeSubmit = (
         store.toast(`queued: ${text}`)
         store.setInput("")
         return
+      }
+
+      // An open node-session preview routes the message to that sub-agent.
+      const preview = store.nodePreview()
+      if (preview !== undefined) {
+        const decoded = Schema.decodeUnknownOption(ContextNodeId)(preview.nodeId)
+        if (decoded._tag === "Some") {
+          return yield* submitToNode(preview, decoded.value, text)
+        }
       }
 
       store.pushBlock({ kind: "user", text })

@@ -1,5 +1,5 @@
 import { basename, resolve } from "node:path"
-import { Tool, Toolkit } from "@effect/ai"
+import { LanguageModel, Tool, Toolkit } from "@effect/ai"
 import { Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import {
   ContextNodeId,
@@ -33,7 +33,9 @@ import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import {
   BUDGET_STOP_NOTE,
   budgetExhaustedFailure,
+  DEFAULT_SUB_AGENT_TOKEN_BUDGET,
   drainPool,
+  makeTokenPool,
   poolExhausted,
   type TokenPool,
 } from "./tokenBudget.js"
@@ -56,6 +58,29 @@ export interface ScopeRuntime {
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
     FileSystem | Shell | Http | WebSearch | ContextTreeStore | Approval
+  >
+  /**
+   * **Human-driven resume**: continue an existing context-tree node in place —
+   * the driver's counterpart of `run_agent({ seedFromNode, seedMode: "resume" })`.
+   * Appends the task to the node's persisted context (prefixed with a staleness
+   * brief when the workspace HEAD moved), re-runs the folder-scoped loop over
+   * the full history, and records the return. Children it spawns hang off the
+   * node; `budget` caps the turn's sub-agent spend (≤ 0 disables).
+   */
+  readonly resumeNode: (args: {
+    readonly nodeId: ContextNodeId
+    readonly task: string
+    readonly budget?: number
+  }) => Effect.Effect<
+    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },
+    Failure,
+    | FileSystem
+    | Shell
+    | Http
+    | WebSearch
+    | ContextTreeStore
+    | Approval
+    | LanguageModel.LanguageModel
   >
 }
 
@@ -482,5 +507,42 @@ export const buildScopeRuntime = <R = never>(
   const handlerLayer = genericToolkit.toLayer(
     buildGenericHandlers(binding, opts, hooks, locks),
   ) as ScopeRuntime["handlerLayer"]
-  return { toolkit: genericToolkit, handlerLayer }
+
+  // The human-driven mirror of the handler's resume branch: same staleness
+  // brief, same append-then-rerun, same persistence — minus the FiberRef (the
+  // driver IS the root, so the resumed node runs at depth 0 with a fresh pool).
+  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget }) =>
+    Effect.gen(function* () {
+      const store = yield* ContextTreeStore
+      const shell = yield* Shell
+      const node = yield* store.get(nodeId)
+      const tokenPool = yield* makeTokenPool(budget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET)
+      const brief = yield* buildStalenessBrief({
+        workspaceDir: binding.displayRoot,
+        nodeFolder: node.folder,
+        stampedRef: node.workspaceRef,
+      }).pipe(Effect.provideService(Shell, shell))
+      const taskMsg = brief !== undefined ? `${brief}\n\n${task}` : task
+      yield* store.append(nodeId, { role: "user", content: taskMsg })
+      const seedMessages = yield* store.listMessages(nodeId)
+      return yield* runSpawnedAgent({
+        store,
+        shell,
+        locks,
+        displayRoot: binding.displayRoot,
+        opts,
+        hooks,
+        nodeId,
+        folder: node.folder,
+        task,
+        seedMessages,
+        parentDepth: 0,
+        rootConversationId: node.rootConversationId,
+        tokenPool,
+      })
+    }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
+      ScopeRuntime["resumeNode"]
+    >
+
+  return { toolkit: genericToolkit, handlerLayer, resumeNode }
 }
