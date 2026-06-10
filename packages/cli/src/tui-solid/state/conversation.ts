@@ -1,5 +1,6 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { ScrollbackBlock } from "../presentation/conversation.js"
+import type { NodePreview } from "../presentation/nodePreview.js"
 
 /**
  * A live search over one pane. For the **conversation** the matches are the
@@ -64,6 +65,16 @@ export interface ConversationSlice {
   ) => void
   /** Replace the entire block list — used by resume / build-a-new-session. */
   readonly setBlocks: (next: ScrollbackBlock[]) => void
+  /** Active node-session preview overlaying the conversation pane, if any. */
+  readonly nodePreview: Accessor<NodePreview | undefined>
+  readonly setNodePreview: (p: NodePreview | undefined) => void
+  /**
+   * What the conversation pane currently shows: the preview overlay when one is
+   * open, else the live blocks. Every conversation-pane *reader* (view, fold
+   * cursor, search) goes through this; *writers* (pump, actions) keep targeting
+   * the live `blocks`, so a running turn never clobbers an open preview.
+   */
+  readonly viewBlocks: () => ReadonlyArray<ScrollbackBlock>
   /** Clear the conversation (`:clear`). */
   readonly clear: () => void
   /** The active search (conversation or side), or `undefined`. */
@@ -84,6 +95,7 @@ export const createConversationSlice = (): ConversationSlice => {
   const [collapsed, setCollapsedSig] = createSignal<Set<string>>(new Set())
   const [convCursor, setConvCursorSig] = createSignal(0)
   const [search, setSearchSig] = createSignal<SearchState | undefined>(undefined)
+  const [nodePreview, setNodePreviewSig] = createSignal<NodePreview | undefined>(undefined)
   const [searchPane, setSearchPaneSig] = createSignal<"conversation" | "side">("conversation")
   const convScroller: { current?: ConvScroller } = {}
   const inputControl: { current?: InputControl } = {}
@@ -100,9 +112,13 @@ export const createConversationSlice = (): ConversationSlice => {
         bs.map((b) => (b.kind === "tool" && b.id === id ? { ...b, ...patch } : b)),
       ),
     setBlocks: (next) => setBlocksSig(next),
+    nodePreview,
+    setNodePreview: (p) => setNodePreviewSig(p),
+    viewBlocks: () => nodePreview()?.blocks ?? blocks(),
     clear: () => {
       setBlocksSig([])
       setSearchSig(undefined)
+      setNodePreviewSig(undefined)
     },
     search,
     setSearch: (next) => setSearchSig(next),

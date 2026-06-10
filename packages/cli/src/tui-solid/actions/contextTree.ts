@@ -1,3 +1,4 @@
+import { basename } from "node:path"
 import { Effect, Schema } from "effect"
 import { batch } from "solid-js"
 import {
@@ -6,8 +7,11 @@ import {
   getWorkspaceRef,
   type ConversationId,
 } from "@efferent/core"
+import type { ScrollbackBlock } from "../presentation/conversation.js"
+import { withSeedMarkers } from "../presentation/nodePreview.js"
 import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
+import { replayBlocks } from "./replay.js"
 import { openContextView } from "./session.js"
 
 /**
@@ -84,6 +88,70 @@ export const cycleSideView = (store: TuiStore, cid: ConversationId) =>
     else if (view === "context") yield* openTreeView(store, cid)
     else yield* Effect.sync(() => store.setNav((n) => ({ ...n, view: "stack" })))
   })
+
+/**
+ * `↵` in the tree view — open the node's full session as a **preview overlay**
+ * on the conversation pane: its persisted messages replayed into rail blocks,
+ * a header line (folder · provenance · seed preview), and the seed/run
+ * boundary marked when the node recorded its seed count. Focus moves to the
+ * conversation pane so the preview is visible even below the narrow
+ * breakpoint (where only the focused pane renders); `↵` on the same node,
+ * `q`, or Esc (idle) drop the overlay and return to the tree.
+ */
+export const openNodePreview = (store: TuiStore, nodeId: string) =>
+  Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
+    if (decoded._tag === "None") return
+    const cts = yield* ContextTreeStore
+    const node = yield* cts.get(decoded.value)
+    const messages = yield* cts.listMessages(decoded.value)
+    const folder = basename(node.folder) || node.folder
+    const header: ScrollbackBlock = {
+      kind: "info",
+      text: [
+        `agent ${folder} · ${node.edgeKind} · seed: ${node.seed.kind}`,
+        node.seed.preview !== undefined ? ` — ${node.seed.preview}` : "",
+        node.status === "running" ? " · running (snapshot)" : "",
+      ].join(""),
+    }
+    const blocks = [
+      header,
+      ...withSeedMarkers(replayBlocks(messages, []), node.seed.kind, node.seedMessageCount),
+    ]
+    yield* Effect.sync(() =>
+      batch(() => {
+        const prior = store.nodePreview()
+        store.setNodePreview({
+          nodeId,
+          title: `agent: ${folder}`,
+          blocks,
+          // Swapping preview→preview must keep the ORIGINAL live fold set.
+          savedCollapsed: prior?.savedCollapsed ?? store.collapsed(),
+        })
+        store.setCollapsed(new Set())
+        store.setConvCursor(0)
+        if (store.search()?.pane === "conversation") store.setSearch(undefined)
+        store.setFocus("conversation")
+        store.setMode("normal")
+        store.convScroller.current?.scrollToTop()
+      }),
+    )
+  })
+
+/** Drop the preview overlay: restore the live rail, folds, and side focus. */
+export const closeNodePreview = (store: TuiStore): void => {
+  const p = store.nodePreview()
+  if (p === undefined) return
+  batch(() => {
+    store.setNodePreview(undefined)
+    store.setCollapsed(new Set(p.savedCollapsed))
+    if (store.search()?.pane === "conversation") store.setSearch(undefined)
+    store.setConvCursor(0)
+    store.setFocus("side")
+    store.setMode("normal")
+    store.convScroller.current?.scrollToBottom()
+  })
+}
 
 /**
  * `d` in the tree view — drop the node under the cursor and its descendants

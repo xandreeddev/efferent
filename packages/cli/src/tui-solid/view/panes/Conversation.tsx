@@ -189,7 +189,9 @@ const BodyItemView = (props: { item: BodyItem; collapsed: Set<string> }) => {
 
 export const Conversation = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const items = createMemo(() => buildConversation(store.blocks()))
+  // `viewBlocks` overlays an open node-session preview; writers (the event
+  // pump) keep appending to the live `blocks` underneath.
+  const items = createMemo(() => buildConversation(store.viewBlocks()))
   const focused = () => store.focus() === "conversation"
   // Solid assigns this during render (before onMount), so the scroller can be
   // registered for the keymap to drive.
@@ -243,7 +245,12 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   }
 
   return (
-    <Pane kind="conversation" focused={focused()} title="conversation" grow>
+    <Pane
+      kind="conversation"
+      focused={focused()}
+      title={store.nodePreview()?.title ?? "conversation"}
+      grow
+    >
       <scrollbox
         ref={sb}
         stickyScroll

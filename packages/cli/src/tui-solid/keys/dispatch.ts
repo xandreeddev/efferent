@@ -24,7 +24,12 @@ import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHe
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import { buildFromSelection } from "../actions/session.js"
-import { cycleSideView, dropNode } from "../actions/contextTree.js"
+import {
+  closeNodePreview,
+  cycleSideView,
+  dropNode,
+  openNodePreview,
+} from "../actions/contextTree.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -41,7 +46,7 @@ export type { Key } from "./ParsedKey.js"
  * expand both (groups ∈ set, turns ∉); otherwise we make it compact.
  */
 const toggleFoldAll = (store: TuiStore): void => {
-  const { turns, groups } = foldIdsByKind(buildConversation(store.blocks()))
+  const { turns, groups } = foldIdsByKind(buildConversation(store.viewBlocks()))
   const collapsed = store.collapsed()
   const compact =
     turns.every((id) => collapsed.has(id)) && groups.every((id) => !collapsed.has(id))
@@ -64,7 +69,7 @@ const searchNavKey = (store: TuiStore, key: Key): boolean => {
 
 /** The conversation's navigable rows + the clamped fold-cursor index. */
 const convNav = (store: TuiStore) => {
-  const rows = buildConversationRows(buildConversation(store.blocks()), store.collapsed())
+  const rows = buildConversationRows(buildConversation(store.viewBlocks()), store.collapsed())
   return { rows, cursor: clampCursor(rows.length, store.convCursor()) }
 }
 
@@ -420,8 +425,12 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       store.setNav((n) => treeFold(n, store.projection()))
       return true
     case "return": {
+      // Enter opens the node's session as a conversation-pane preview (Enter
+      // again on the same node closes it); folding stays on Tab/h/l/←/→.
       const row = treeCurrentRow(store.nav(), store.projection())
-      if (row?.foldId !== undefined) store.setNav((n) => treeFold(n, store.projection()))
+      if (row === undefined) return true
+      if (store.nodePreview()?.nodeId === row.display.nodeId) closeNodePreview(store)
+      else void ctx.run(openNodePreview(store, row.display.nodeId))
       return true
     }
     case "d": {
@@ -586,6 +595,19 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
+  // Esc (idle) closes an open node-session preview — but an active search is
+  // finer-grained and clears first (the pane handlers below own that), and a
+  // busy Esc stays an interrupt (above). `q` closes regardless of busy.
+  if (
+    key.name === "escape" &&
+    store.nodePreview() !== undefined &&
+    store.focus() !== "input" &&
+    store.search() === undefined
+  ) {
+    closeNodePreview(store)
+    return
+  }
+
   // Esc in the idle input — the modifier-free way OUT of the composer, for
   // vi hands and tmux users alike (Ctrl-H never arrives in legacy terminals).
   // On a `:`/`/` line it cancels the command first (vim cmdline behavior);
@@ -725,6 +747,19 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
 
   // Conversation pane: scroll / fold-all / search nav (Ctrl-D/U allowed here).
   if (!key.meta && store.focus() === "conversation" && conversationKey(ctx, key)) {
+    return
+  }
+
+  // `q` drops an open node-session preview from any read-only pane — the
+  // always-available close (Esc is taken by interrupt while a turn runs).
+  if (
+    key.name === "q" &&
+    !key.ctrl &&
+    !key.meta &&
+    store.nodePreview() !== undefined &&
+    store.focus() !== "input"
+  ) {
+    closeNodePreview(store)
     return
   }
 

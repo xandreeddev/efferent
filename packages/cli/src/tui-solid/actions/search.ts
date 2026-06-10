@@ -25,13 +25,13 @@ const scrollToCurrent = (store: TuiStore): void => {
   // Park the fold cursor on the current match so it gets the row highlight (and
   // the tint moves with n/N). A top-level item id is also a nav-row key for turns
   // / checkpoints; a `loose:` run has no own row, so the cursor just stays put.
-  const rows = buildConversationRows(buildConversation(store.blocks()), store.collapsed())
+  const rows = buildConversationRows(buildConversation(store.viewBlocks()), store.collapsed())
   const idx = rows.findIndex((r) => r.key === id)
   if (idx !== -1) store.setConvCursor(idx)
 }
 
 const runConversationSearch = (store: TuiStore, query: string, q: string): void => {
-  const items = buildConversation(store.blocks())
+  const items = buildConversation(store.viewBlocks())
   const matchIds = items
     .map((it, i) => ({ it, id: conversationItemId(it, i) }))
     .filter(({ it }) => itemText(it).toLowerCase().includes(q))
