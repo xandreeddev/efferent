@@ -26,10 +26,25 @@ import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
 
 /** A conversation row as `listByWorkspace` returns it. */
-type ConversationSummary = {
+export type ConversationSummary = {
   readonly id: ConversationId
   readonly createdAt: number
   readonly firstPrompt?: string
+}
+
+/** Compact one-line label for a conversation: `<date> · <first-prompt preview>`. */
+export const conversationLabel = (c: ConversationSummary): string => {
+  const date = new Date(c.createdAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+  const preview =
+    c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+      ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80)
+      : "(empty)"
+  return `${date} · ${preview}`
 }
 
 /**
@@ -41,21 +56,9 @@ export const conversationPickerOptions = (
   list: ReadonlyArray<ConversationSummary>,
 ): ReadonlyArray<SelectOption<ConversationId | null>> => [
   { value: null, label: "+ Start a new conversation" },
-  ...list.map((c) => {
-    // Compact date (e.g. "Jun 4, 1:55 PM") leaves room for the name; the modal
-    // truncates the whole label to its width, so no fixed slice is needed here.
-    const date = new Date(c.createdAt).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    })
-    const preview =
-      c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
-        ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80) // modal truncates to fit
-        : "(empty)"
-    return { value: c.id, label: `${date} · ${preview}` }
-  }),
+  // Compact date (e.g. "Jun 4, 1:55 PM") leaves room for the name; the modal
+  // truncates the whole label to its width, so no fixed slice is needed here.
+  ...list.map((c) => ({ value: c.id, label: conversationLabel(c) })),
 ]
 
 /**

@@ -7,7 +7,7 @@ import {
   handoffOwningTurn,
 } from "./contextView.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
-import { buildTreeRowsData, type TreeRowData } from "./contextTreeView.js"
+import { buildNavRows, type NavConversation, type TreeRowData } from "./contextTreeView.js"
 import type { AgentContextNode } from "@efferent/core"
 
 export interface SidePaneInstruction {
@@ -111,6 +111,8 @@ export interface SidePaneProjection {
   readonly context?: ReadonlyArray<ContextSegment>
   /** Persisted agent-context-tree nodes (from `listTree`); shown when view==="tree". */
   readonly treeNodes?: ReadonlyArray<AgentContextNode>
+  /** Workspace conversations — the navigator's roots (active one marked). */
+  readonly treeConversations?: ReadonlyArray<NavConversation>
   /** Workspace git HEAD at tree-load time — nodes stamped with another ref are stale. */
   readonly treeWorkspaceRef?: string
 }
@@ -182,6 +184,7 @@ export const splitSidePane = (
     filesChanged: s.filesChanged,
     ...(s.context !== undefined ? { context: s.context } : {}),
     ...(s.treeNodes !== undefined ? { treeNodes: s.treeNodes } : {}),
+    ...(s.treeConversations !== undefined ? { treeConversations: s.treeConversations } : {}),
     ...(s.treeWorkspaceRef !== undefined ? { treeWorkspaceRef: s.treeWorkspaceRef } : {}),
   },
   nav: {
@@ -472,7 +475,12 @@ export const treeRows = (
   nav: SidePaneNav,
   projection: SidePaneProjection,
 ): ReadonlyArray<TreeRowData> =>
-  buildTreeRowsData(projection.treeNodes ?? [], nav.treeCollapsed, projection.treeWorkspaceRef)
+  buildNavRows(
+    projection.treeConversations ?? [],
+    projection.treeNodes ?? [],
+    nav.treeCollapsed,
+    projection.treeWorkspaceRef,
+  )
 
 /** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
 export const treeParagraph = (
