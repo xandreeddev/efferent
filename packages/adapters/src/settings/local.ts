@@ -76,30 +76,25 @@ export const LocalSettingsStoreLive = Layer.effect(
             ),
           )
 
-          // `dbUrl` is workspace > home; no env seeding here — the
-          // EFFERENT_DB_URL env precedence is handled at the store selector
-          // (see adapters/src/database/migrator.ts). This field is surfaced
-          // for display (`:settings`) and validated by `Schema.partial`.
-          const dbUrl = localConfig?.dbUrl ?? homeConfig?.dbUrl
-
-          const searchModel = localConfig?.searchModel ?? homeConfig?.searchModel
-          const anthropicThinkingEffort =
-            localConfig?.anthropicThinkingEffort ?? homeConfig?.anthropicThinkingEffort
-          const openAiReasoningEffort =
-            localConfig?.openAiReasoningEffort ?? homeConfig?.openAiReasoningEffort
-          const geminiThinkingLevel =
-            localConfig?.geminiThinkingLevel ?? homeConfig?.geminiThinkingLevel
-
+          // GENERIC merge — every Settings key, workspace > home > defaults
+          // (the env model slots between home and the static default). The old
+          // hand-enumerated merge silently DROPPED any field it forgot
+          // (approvedBashRules, theme, subAgentTokenBudget, …): the field
+          // loaded as absent, and the next `update()` rewrote config.json
+          // without it — `:set` anything and unrelated settings vanished.
+          // (`dbUrl` needs no special case here: EFFERENT_DB_URL env
+          // precedence is handled at the store selector, migrator.ts.)
+          const defined = (o: object | undefined): Partial<Settings> =>
+            o === undefined
+              ? {}
+              : (Object.fromEntries(
+                  Object.entries(o).filter(([, v]) => v !== undefined),
+                ) as Partial<Settings>)
           const merged: Settings = {
-            allowBash: localConfig?.allowBash ?? homeConfig?.allowBash ?? DefaultSettings.allowBash,
-            maxSteps: localConfig?.maxSteps ?? homeConfig?.maxSteps ?? DefaultSettings.maxSteps,
-            editorMode: localConfig?.editorMode ?? homeConfig?.editorMode ?? DefaultSettings.editorMode,
-            model: localConfig?.model ?? homeConfig?.model ?? envModel ?? DefaultSettings.model,
-            ...(dbUrl !== undefined ? { dbUrl } : {}),
-            ...(searchModel !== undefined ? { searchModel } : {}),
-            ...(anthropicThinkingEffort !== undefined ? { anthropicThinkingEffort } : {}),
-            ...(openAiReasoningEffort !== undefined ? { openAiReasoningEffort } : {}),
-            ...(geminiThinkingLevel !== undefined ? { geminiThinkingLevel } : {}),
+            ...DefaultSettings,
+            ...(envModel !== undefined ? { model: envModel } : {}),
+            ...defined(homeConfig),
+            ...defined(localConfig),
           }
 
           yield* Ref.set(stateRef, merged)
