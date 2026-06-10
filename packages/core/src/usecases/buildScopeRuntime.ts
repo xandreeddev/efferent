@@ -28,6 +28,8 @@ import {
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
+import { generateHandoffBrief } from "./handoff.js"
+import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import {
@@ -133,8 +135,12 @@ const RunAgentTool = Tool.make("run_agent", {
         "direct follow-up on that node's own work (continue/fix/extend it). An unrelated task, " +
         "even in the same folder, gets a fresh spawn instead.",
     }),
-    seedMode: Schema.optional(Schema.Literal("resume", "branch")).annotations({
-      description: "With seedFromNode: 'resume' continues that node; 'branch' starts a new node seeded from it. Defaults to 'branch'.",
+    seedMode: Schema.optional(Schema.Literal("resume", "branch", "handoff")).annotations({
+      description:
+        "With seedFromNode: 'handoff' (PREFER for follow-ups) seeds a fresh node with a generated " +
+        "brief of the source's work — continuity at a fraction of the tokens; 'resume' continues " +
+        "the node verbatim (full history every turn — only when exact file contents in its context " +
+        "matter); 'branch' copies the full history into a new node. Defaults to 'branch'.",
     }),
   },
   success: Schema.Struct({
@@ -405,7 +411,7 @@ const makeRunAgentHandler =
     readonly folder: string
     readonly task: string
     readonly seedFromNode?: string
-    readonly seedMode?: "resume" | "branch"
+    readonly seedMode?: "resume" | "branch" | "handoff"
   }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
@@ -453,17 +459,26 @@ const makeRunAgentHandler =
           })
         }
         const sourceMsgs = yield* store.listMessages(nodeId)
-        const seedMessages: ReadonlyArray<AgentMessage> = [
-          ...sourceMsgs,
-          { role: "user", content: taskMsg },
-        ]
+        // "handoff": continuity at a fraction of the tokens — a generated
+        // brief of the source node's work seeds a FRESH node instead of its
+        // verbatim history. "branch" (default): the full history, copied.
+        const seedMessages: ReadonlyArray<AgentMessage> =
+          seedMode === "handoff"
+            ? [
+                handoffToMessage(yield* generateHandoffBrief(sourceMsgs)),
+                { role: "user", content: taskMsg },
+              ]
+            : [...sourceMsgs, { role: "user", content: taskMsg }]
         const childId = yield* store.spawn({
           parentId: nodeId,
           rootConversationId: rc.rootConversationId,
           edgeKind: "branched",
           folder: node.folder,
           displayRoot,
-          seed: { kind: "selection", sourceNodeId: nodeId, turnCount: sourceMsgs.length },
+          seed:
+            seedMode === "handoff"
+              ? { kind: "handoff", sourceNodeId: nodeId, preview: clip(task, 80) }
+              : { kind: "selection", sourceNodeId: nodeId, turnCount: sourceMsgs.length },
           seedMessages,
         })
         return yield* runSpawnedAgent({
