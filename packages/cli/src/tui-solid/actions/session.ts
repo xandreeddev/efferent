@@ -147,6 +147,12 @@ export const applyResume = (
       text: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing`,
     })
   }
+  // Land at the newest message. Sticky-bottom only follows APPENDS — a whole-
+  // history swap keeps the old scroll offset, so a long conversation opened from
+  // the picker/sessions view showed its top. Deferred a beat: the scrollbox
+  // clamps against its content height, which OpenTUI lays out on the next frame.
+  const scroller = store.convScroller.current
+  if (scroller !== undefined) setTimeout(() => scroller.scrollToBottom(), 50)
 }
 
 /** Switch to a freshly-built conversation seeded with the picked units. */

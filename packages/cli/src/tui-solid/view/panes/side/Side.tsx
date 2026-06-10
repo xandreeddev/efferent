@@ -42,9 +42,10 @@ export const Side = (props: { ctx: TuiContext }) => {
   // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
   const full = () => focused() && (store.zoomed() || dims().width < 110)
 
+  // A rule-style head (`── agents ──`) — the corner glyph read as a tree row.
   const sectionHead = (label: string) => (
     <text fg={focused() ? tokens.accent.side : tokens.text.dim} flexShrink={0}>
-      {`${glyph.tree.corner} ${label}`}
+      {`${glyph.seedRule} ${label} ${glyph.seedRule}`}
     </text>
   )
 
@@ -55,14 +56,16 @@ export const Side = (props: { ctx: TuiContext }) => {
       title={title()}
       width={full() ? "100%" : "38%"}
     >
-      <box flexDirection="row" flexShrink={0}>
+      {/* The view switcher: the active tab leads with a pointer in the side
+          accent; a blank line below separates the chrome from the content. */}
+      <box flexDirection="row" flexShrink={0} marginBottom={1}>
         <For each={VIEWS}>
           {(v, i) => (
             <>
               <text fg={view() === v.id ? tokens.accent.side : tokens.text.dim}>
-                {v.label}
+                {view() === v.id ? `${glyph.pointer} ${v.label}` : v.label}
               </text>
-              {i() < VIEWS.length - 1 && <text fg={tokens.text.dim}>{" · "}</text>}
+              {i() < VIEWS.length - 1 && <text fg={tokens.text.dim}>{"  ·  "}</text>}
             </>
           )}
         </For>
