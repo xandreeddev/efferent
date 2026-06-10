@@ -33,6 +33,12 @@ import {
   openNodePreview,
   switchToConversation,
 } from "../actions/contextTree.js"
+import {
+  sessionsCurrentRow,
+  sessionsMove,
+  sessionsToEnd,
+  sessionsToTop,
+} from "../presentation/sidePane.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -436,22 +442,11 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       store.setNav((n) => treeFold(n, store.projection()))
       return true
     case "return": {
-      // Enter "opens" the row: a conversation becomes the ACTIVE session; an
-      // agent node opens as a conversation-pane preview (Enter again on the
-      // same node closes it). Folding stays on Tab/h/l/←/→.
+      // Enter opens the node's session as a conversation-pane preview (Enter
+      // again on the same node closes it). Folding stays on Tab/h/l/←/→.
       const row = treeCurrentRow(store.nav(), store.projection())
-      if (row === undefined) return true
-      if (row.display.kind === "conversation") {
-        // Enter on the ALREADY-ACTIVE conversation = "back to the parent":
-        // drop any open agent preview so its live rail shows again.
-        if (row.display.active && store.nodePreview() !== undefined) {
-          closeNodePreview(store)
-          return true
-        }
-        void ctx.run(
-          switchToConversation(store, row.display.conversationId as ConversationId),
-        )
-      } else if (store.nodePreview()?.nodeId === row.display.nodeId) {
+      if (row === undefined || row.display.kind !== "node") return true
+      if (store.nodePreview()?.nodeId === row.display.nodeId) {
         closeNodePreview(store)
       } else {
         void ctx.run(openNodePreview(store, row.display.nodeId))
@@ -479,6 +474,72 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       ) {
         void ctx.run(dropNode(store, store.run.getConversationId(), row.display.nodeId))
       }
+      return true
+    }
+    case "i":
+      store.setFocus("input")
+      store.setMode("insert")
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * Sessions-list navigation when the side pane is focused (NORMAL): a flat list
+ * of the workspace's conversations. `j/k`·`{}`·↑↓ move, `gg`/`G` jump, `↵`
+ * makes the row the ACTIVE session (on the already-active row it closes an
+ * open agent preview — "back to the parent's rail"), `i` drops to the input.
+ */
+const sideSessionsKey = (ctx: TuiContext, key: Key): boolean => {
+  const { store } = ctx
+
+  if (key.name === "g" && key.shift) {
+    store.setGPending(false)
+    store.setNav((n) => sessionsToEnd(n, store.projection()))
+    return true
+  }
+  if (key.name === "g" && !key.ctrl && !key.meta) {
+    if (store.gPending()) {
+      store.setGPending(false)
+      store.setNav(sessionsToTop)
+    } else {
+      store.setGPending(true)
+    }
+    return true
+  }
+  store.setGPending(false)
+
+  if (searchNavKey(store, key)) return true
+
+  const bracket = bracketMotion(key)
+  if (bracket === "paragraph-prev" || bracket === "message-prev") {
+    store.setNav((n) => sessionsMove(n, store.projection(), -1))
+    return true
+  }
+  if (bracket === "paragraph-next" || bracket === "message-next") {
+    store.setNav((n) => sessionsMove(n, store.projection(), 1))
+    return true
+  }
+
+  switch (key.name) {
+    case "j":
+    case "down":
+      store.setNav((n) => sessionsMove(n, store.projection(), 1))
+      return true
+    case "k":
+    case "up":
+      store.setNav((n) => sessionsMove(n, store.projection(), -1))
+      return true
+    case "return": {
+      const row = sessionsCurrentRow(store.nav(), store.projection())
+      if (row === undefined) return true
+      if (row.active) {
+        if (store.nodePreview() !== undefined) closeNodePreview(store)
+        else store.toast("already the active session")
+        return true
+      }
+      void ctx.run(switchToConversation(store, row.id as ConversationId))
       return true
     }
     case "i":
@@ -732,13 +793,13 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // `v` on the side pane cycles its views: activity → context → tree → activity.
-  // The three views are siblings of one surface; cycling beats remembering
-  // three commands (the title tabs show where you are). `cycleSideView` never
-  // moves focus, and `preventDefault` insures against the sync-fallthrough
-  // class: an Effect that refocuses the input can complete before OpenTUI
-  // delivers this same keypress to the focused renderable, typing a literal v.
-  if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() === "side") {
+  // `v` cycles the side views (activity → context → agents → sessions) from
+  // ANY pane in NORMAL — the side pane is ambient state, so swapping what it
+  // shows shouldn't require focusing it first. `cycleSideView` never moves
+  // focus, and `preventDefault` insures against the sync-fallthrough class:
+  // an Effect that refocuses the input can complete before OpenTUI delivers
+  // this same keypress to the focused renderable, typing a literal v.
+  if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() !== "input") {
     key.preventDefault?.()
     void ctx.run(cycleSideView(store, store.run.getConversationId()))
     return
@@ -780,6 +841,17 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     store.focus() === "side" &&
     store.sidePane().view === "tree" &&
     sideTreeKey(ctx, key)
+  ) {
+    return
+  }
+
+  // Side pane, sessions list: cursor / switch the active session.
+  if (
+    !key.ctrl &&
+    !key.meta &&
+    store.focus() === "side" &&
+    store.sidePane().view === "sessions" &&
+    sideSessionsKey(ctx, key)
   ) {
     return
   }

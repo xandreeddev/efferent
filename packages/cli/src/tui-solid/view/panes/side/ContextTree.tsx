@@ -121,13 +121,9 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
   // Owns the cursor only when the side pane is focused AND the agents view
   // holds the keys (in the split layout activity may hold them).
   const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
+  // Current session only — conversations live in the `sessions` view now.
   const rows = () =>
-    buildNavRows(
-      sp().treeConversations ?? [],
-      sp().treeNodes ?? [],
-      sp().treeCollapsed,
-      sp().treeWorkspaceRef,
-    )
+    buildNavRows([], sp().treeNodes ?? [], sp().treeCollapsed, sp().treeWorkspaceRef)
   const cursor = () => sp().treeCursor
 
   let sb!: ScrollBoxRenderable

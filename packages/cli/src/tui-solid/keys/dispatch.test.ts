@@ -255,14 +255,16 @@ test("Ctrl-Shift-C copies the selection (and does NOT arm quit)", () => {
   expect(h.store.blocks().some((b) => b.kind === "info")).toBe(false)
 })
 
-test("v on the side pane cycles tree→activity: preventDefault'd, focus never moves", async () => {
-  // The original bug: `v` from the tree view routed through toggleTree, whose
+test("v on the side pane cycles sessions→activity: preventDefault'd, focus never moves", async () => {
+  // The original bug: `v` from the last view routed through a toggle whose
   // close branch refocused the input — the keypress then fell through to the
   // textarea as a literal "v". The cycle must stay on the side pane.
+  // (sessions→stack is the cycle's only service-free branch, so the test can
+  // run the dispatched effect for real.)
   const h = harness()
   h.store.setFocus("side")
   h.store.setMode("normal")
-  h.store.setNav((n) => ({ ...n, view: "tree" }))
+  h.store.setNav((n) => ({ ...n, view: "sessions" }))
   let prevented = 0
   const ran: Array<Promise<unknown>> = []
   const ctx: TuiContext = {

@@ -10,7 +10,7 @@ import {
   resumeConversation,
   toggleContext,
 } from "../actions/session.js"
-import { toggleTree } from "../actions/contextTree.js"
+import { toggleSessions, toggleTree } from "../actions/contextTree.js"
 import { runHandoff } from "../actions/handoff.js"
 import { openModelPicker } from "../actions/model.js"
 import { applyTheme, openThemePicker } from "../actions/theme.js"
@@ -104,6 +104,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       return
     case ":tree":
       void ctx.run(toggleTree(store, store.run.getConversationId()))
+      return
+    case ":sessions":
+      void ctx.run(toggleSessions(store, store.run.getConversationId()))
       return
     case ":build":
       void ctx.run(buildFromSelection(store, store.status().cwd))

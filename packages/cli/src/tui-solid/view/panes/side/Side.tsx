@@ -7,11 +7,13 @@ import { Activity } from "./Activity.js"
 import { ContextView } from "./Context.js"
 import { ContextTreeView } from "./ContextTree.js"
 import { NodeDetail } from "./NodeDetail.js"
+import { SessionsView } from "./Sessions.js"
 
 const VIEWS = [
   { id: "stack", label: "activity" },
   { id: "context", label: "context" },
   { id: "tree", label: "agents" },
+  { id: "sessions", label: "sessions" },
 ] as const
 
 /**
@@ -29,7 +31,13 @@ export const Side = (props: { ctx: TuiContext }) => {
   const focused = () => store.focus() === "side"
   const view = () => store.sidePane().view
   const title = () =>
-    view() === "context" ? "context" : view() === "tree" ? "agents" : "activity"
+    view() === "context"
+      ? "context"
+      : view() === "tree"
+        ? "agents"
+        : view() === "sessions"
+          ? "sessions"
+          : "activity"
   // Full region when zoomed OR when the narrow breakpoint hid the other pane
   // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
   const full = () => focused() && (store.zoomed() || dims().width < 110)
@@ -72,6 +80,9 @@ export const Side = (props: { ctx: TuiContext }) => {
             {sectionHead("agents")}
             <ContextTreeView ctx={props.ctx} />
           </box>
+        </Match>
+        <Match when={view() === "sessions"}>
+          <SessionsView ctx={props.ctx} />
         </Match>
       </Switch>
     </Pane>
