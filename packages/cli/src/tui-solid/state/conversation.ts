@@ -68,6 +68,14 @@ export interface ConversationSlice {
   /** Active node-session preview overlaying the conversation pane, if any. */
   readonly nodePreview: Accessor<NodePreview | undefined>
   readonly setNodePreview: (p: NodePreview | undefined) => void
+  /** Append a live block to the open preview (no-op when none is open) —
+   *  how a resumed node's run streams into the session view. */
+  readonly appendPreviewBlock: (block: ScrollbackBlock) => void
+  /** Patch a tool pill inside the open preview by id (no-op when none). */
+  readonly patchPreviewTool: (
+    id: string,
+    patch: Partial<Extract<ScrollbackBlock, { kind: "tool" }>>,
+  ) => void
   /**
    * What the conversation pane currently shows: the preview overlay when one is
    * open, else the live blocks. Every conversation-pane *reader* (view, fold
@@ -114,6 +122,19 @@ export const createConversationSlice = (): ConversationSlice => {
     setBlocks: (next) => setBlocksSig(next),
     nodePreview,
     setNodePreview: (p) => setNodePreviewSig(p),
+    appendPreviewBlock: (block) =>
+      setNodePreviewSig((p) => (p === undefined ? p : { ...p, blocks: [...p.blocks, block] })),
+    patchPreviewTool: (id, patch) =>
+      setNodePreviewSig((p) =>
+        p === undefined
+          ? p
+          : {
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.kind === "tool" && b.id === id ? { ...b, ...patch } : b,
+              ),
+            },
+      ),
     viewBlocks: () => nodePreview()?.blocks ?? blocks(),
     clear: () => {
       setBlocksSig([])

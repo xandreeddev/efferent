@@ -1,4 +1,4 @@
-import { Effect, Queue, Schema, type Layer } from "effect"
+import { Cause, Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
   buildScopeRuntime,
@@ -103,6 +103,15 @@ export const makeSubmit = (
               Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
             )
           }),
+          // A DEFECT (untyped die) skips catchAll — without this it killed the
+          // fiber with no log, no error block, and a cleared spinner: the exact
+          // "sent a message and it got stuck" shape. Surface it like any error.
+          Effect.catchAllDefect((d) => {
+            const msg = `node resume crashed: ${String(d)}`
+            return Effect.logError(msg).pipe(
+              Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+            )
+          }),
           Effect.asVoid,
           Effect.ensuring(finishTurn),
         )
@@ -182,13 +191,30 @@ export const makeSubmit = (
             Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
           )
         }),
+        Effect.catchAllDefect((d) => {
+          const msg = `agent run crashed: ${String(d)}`
+          return Effect.logError(msg).pipe(
+            Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+          )
+        }),
         Effect.asVoid,
         Effect.ensuring(finishTurn),
       )
 
       const fiber = yield* Effect.forkDaemon(runEffect)
       store.run.setFiber(fiber)
-    })
+    }).pipe(
+      // The caller void-discards the promise (`ctx.submit`), so a defect in
+      // the pre-fork section (gates, routing, settings read) would otherwise
+      // vanish without a trace. Make it loud and reset the busy state.
+      Effect.catchAllCause((cause) =>
+        Effect.sync(() => {
+          store.setBusy(false)
+          store.setNote(undefined)
+          store.pushBlock({ kind: "error", text: `submit crashed: ${Cause.pretty(cause)}` })
+        }).pipe(Effect.zipRight(Effect.logError(Cause.pretty(cause)))),
+      ),
+    )
 
   return submit
 }
