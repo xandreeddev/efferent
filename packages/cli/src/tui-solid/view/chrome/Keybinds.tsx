@@ -17,26 +17,29 @@ import type { TuiContext } from "../../state/store.js"
  * not the headline. Both audiences read the same row: vi hands see Esc/w,
  * non-vi users see a visible, modifier-free path to every pane.
  */
-const NAV_FULL = "nav   esc panes · w next pane · ^k/^l conv/side · : cmd · / search · z zoom · ^C quit"
+// Labels pad to one fixed column so the box rows align ("agents" is the widest).
+const LABEL_W = 7
+const NAV_FULL = `${"nav".padEnd(LABEL_W)} esc panes · w next pane · ^k/^l conv/side · : cmd · / search · z zoom · ^C quit`
 
 const paneRow = (ctx: TuiContext): string => {
   const { store } = ctx
+  const row = (label: string, keys: string) => `${label.padEnd(LABEL_W)} ${keys}`
   switch (store.focus()) {
     case "conversation":
-      return "conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · Z fold all · w side · i type"
+      return row("conv", "j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · Z fold all · w side · i type")
     case "side":
       switch (store.sidePane().view) {
         case "context":
-          return "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · v views · i type"
+          return row("context", "j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · v views · i type")
         case "tree":
-          return "agents j/k·{} move · [] root · ⇥ fold · ↵ open · c fork · d drop · q close · v views"
+          return row("agents", "j/k·{} move · [] root · ⇥ fold · ↵ open · c fork · d drop · q close · v views")
         case "sessions":
-          return "sess  j/k move · gg/G ends · ↵ switch session · v views · i type"
+          return row("sess", "j/k move · gg/G ends · ↵ switch session · v views · i type")
         default:
-          return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type"
+          return row("act", "j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type")
       }
     case "input":
-      return "input ↵ send · ⇧↵/^J newline · esc panes · : cmd · / search"
+      return row("input", "↵ send · ⇧↵/^J newline · esc panes · : cmd · / search")
   }
 }
 
@@ -79,9 +82,15 @@ export const Keybinds = (props: { ctx: TuiContext }) => {
     <Show
       when={store.keysExpanded()}
       fallback={
-        <text fg={tokens.text.dim} flexShrink={0}>
-          {` ${strip(props.ctx)}`}
-        </text>
+        <box flexDirection="row" flexShrink={0}>
+          {/* The focused context's name leads in its accent — without it the
+              strip is an anonymous key soup and you can't tell what pane the
+              keys belong to. */}
+          <text fg={accent()} flexShrink={0}>{` ${paneLabel(props.ctx)} `}</text>
+          <text fg={tokens.text.dim} wrapMode="none">
+            {` ${strip(props.ctx)}`}
+          </text>
+        </box>
       }
     >
       <box
