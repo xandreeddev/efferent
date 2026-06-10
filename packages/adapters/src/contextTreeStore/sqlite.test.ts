@@ -10,6 +10,7 @@ import { SqliteContextTreeStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0002 from "../database/migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "../database/migrations-sqlite/0003_workspace_ref.js"
+import sqlite0004 from "../database/migrations-sqlite/0004_seed_count.js"
 
 // Exercises the REAL SQLite context-tree store (the unit suites elsewhere use
 // the in-memory store, which never touches SQL). A fresh in-memory db per run;
@@ -27,6 +28,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ContextTreeStore>): Promise<A> =>
       yield* sqlite0001 // conversations/messages/checkpoints (not used here, realistic order)
       yield* sqlite0002 // context_nodes + context_messages
       yield* sqlite0003 // + workspace_ref staleness stamp
+      yield* sqlite0004 // + seed_message_count boundary stamp
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -57,6 +59,7 @@ describe("SqliteContextTreeStore", () => {
     expect(result.node.status).toBe("running")
     expect(result.node.folder).toBe("/tmp/ws/adapters")
     expect(result.node.seed.kind).toBe("task")
+    expect(result.node.seedMessageCount).toBe(1)
     expect(result.messages.map((m) => (m.role === "user" ? m.content : ""))).toEqual(["add the store"])
   })
 
@@ -122,6 +125,7 @@ describe("SqliteContextTreeStore", () => {
     )
     expect(result.childNode.edgeKind).toBe("branched")
     expect(result.childNode.parentId).not.toBeNull()
+    expect(result.childNode.seedMessageCount).toBe(result.parentMsgs.length)
     expect(result.childMsgs.map((m) => (m.role === "user" ? m.content : ""))).toEqual(
       result.parentMsgs.map((m) => (m.role === "user" ? m.content : "")),
     )

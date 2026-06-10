@@ -44,6 +44,7 @@ interface NodeRow {
   readonly files_changed: unknown
   readonly usage: unknown
   readonly workspace_ref: string | null
+  readonly seed_message_count: number | string | null
   readonly created_at: string
   readonly ended_at: string | null
 }
@@ -79,6 +80,9 @@ const decodeNode = (row: NodeRow) => {
     ...(row.workspace_ref !== null && row.workspace_ref !== undefined
       ? { workspaceRef: row.workspace_ref }
       : {}),
+    ...(row.seed_message_count !== null && row.seed_message_count !== undefined
+      ? { seedMessageCount: Number(row.seed_message_count) }
+      : {}),
     createdAt: Number(row.created_at),
     ...(row.ended_at !== null && row.ended_at !== undefined
       ? { endedAt: Number(row.ended_at) }
@@ -97,7 +101,8 @@ const decodeNode = (row: NodeRow) => {
 
 const SELECT_NODE = (sql: SqlClient.SqlClient) => sql`
   SELECT id::text, parent_id::text, root_conversation_id::text, edge_kind, folder,
-         display_root, seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+         display_root, seed, status, return_summary, files_changed, usage, workspace_ref,
+         seed_message_count, created_at, ended_at
 `
 
 export const PostgresContextTreeStoreLive = Layer.effect(
@@ -149,13 +154,14 @@ export const PostgresContextTreeStoreLive = Layer.effect(
             sql`
               INSERT INTO context_nodes (
                 id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+                seed, status, return_summary, files_changed, usage, workspace_ref,
+                seed_message_count, created_at, ended_at
               )
               VALUES (
                 ${id}::uuid, ${input.parentId ?? null}::uuid, ${input.rootConversationId ?? null}::uuid,
                 ${input.edgeKind}, ${input.folder}, ${input.displayRoot},
                 ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, '[]'::jsonb, ${null}::jsonb, ${null},
-                ${createdAt}, ${null}
+                ${input.seedMessages.length}, ${createdAt}, ${null}
               )
             `,
             "Failed to spawn context node",

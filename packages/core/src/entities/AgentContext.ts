@@ -71,6 +71,12 @@ export const AgentContextNode = Schema.Struct({
   /** Workspace anchor used to rebuild the `ScopeBinding` (relative-path display). */
   displayRoot: Schema.String,
   seed: ContextSeed,
+  /**
+   * How many of this node's messages were materialized at spawn (positions
+   * `0..n-1` = the seed; the run's appended tail follows). Lets a viewer mark
+   * the seed/run boundary. Absent on rows created before the column existed.
+   */
+  seedMessageCount: Schema.optional(Schema.Number),
   status: ContextNodeStatus,
   returnSummary: Schema.optional(Schema.String),
   filesChanged: Schema.Array(Schema.String),

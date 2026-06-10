@@ -19,9 +19,11 @@ import pg0004 from "./migrations/0004_conversation_workspace.js"
 import pg0005 from "./migrations/0005_checkpoints.js"
 import pg0006 from "./migrations/0006_context_tree.js"
 import pg0007 from "./migrations/0007_workspace_ref.js"
+import pg0008 from "./migrations/0008_seed_count.js"
 import sqlite0001 from "./migrations-sqlite/0001_init.js"
 import sqlite0002 from "./migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "./migrations-sqlite/0003_workspace_ref.js"
+import sqlite0004 from "./migrations-sqlite/0004_seed_count.js"
 
 /**
  * Database layer + ConversationStore, selected at runtime from a single
@@ -63,12 +65,14 @@ const pgLoader = Migrator.fromRecord({
   "0005_checkpoints": pg0005,
   "0006_context_tree": pg0006,
   "0007_workspace_ref": pg0007,
+  "0008_seed_count": pg0008,
 })
 
 const sqliteLoader = Migrator.fromRecord({
   "0001_init": sqlite0001,
   "0002_context_tree": sqlite0002,
   "0003_workspace_ref": sqlite0003,
+  "0004_seed_count": sqlite0004,
 })
 
 /** Postgres client + migrator (only built when EFFERENT_DB_URL is set). */
