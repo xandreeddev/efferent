@@ -8,6 +8,7 @@ import {
 } from "@efferent/core"
 import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
+import { openContextView } from "./session.js"
 
 /**
  * Load the persisted context-tree nodes for `cid` into the side projection,
@@ -29,6 +30,19 @@ export const loadTreeNodes = (store: TuiStore, cid: ConversationId) =>
   })
 
 /**
+ * Switch the side pane to the context-tree viewer, loading the persisted
+ * sub-agent nodes. **Focus-free** — the `v` view cycle uses this directly;
+ * `toggleTree` layers the `:tree` command's focus choreography on top.
+ */
+export const openTreeView = (store: TuiStore, cid: ConversationId) =>
+  Effect.gen(function* () {
+    yield* loadTreeNodes(store, cid)
+    yield* Effect.sync(() =>
+      store.setNav((n) => ({ ...n, view: "tree", treeCursor: 0 })),
+    )
+  })
+
+/**
  * `:tree` — toggle the context-tree viewer. Opening loads the persisted
  * sub-agent nodes for the current conversation and focuses the side pane;
  * closing returns to the Activity dashboard (and the input, if the side held
@@ -37,19 +51,38 @@ export const loadTreeNodes = (store: TuiStore, cid: ConversationId) =>
 export const toggleTree = (store: TuiStore, cid: ConversationId) =>
   Effect.gen(function* () {
     const opening = store.sidePane().view !== "tree"
-    if (opening) yield* loadTreeNodes(store, cid)
+    if (opening) {
+      yield* openTreeView(store, cid)
+      yield* Effect.sync(() => {
+        store.setFocus("side")
+        store.setMode("normal")
+      })
+      return
+    }
     yield* Effect.sync(() =>
       batch(() => {
-        store.setNav((n) => ({ ...n, view: opening ? "tree" : "stack", treeCursor: 0 }))
-        if (opening) {
-          store.setFocus("side")
-          store.setMode("normal")
-        } else if (store.focus() === "side") {
+        store.setNav((n) => ({ ...n, view: "stack", treeCursor: 0 }))
+        if (store.focus() === "side") {
           store.setFocus("input")
           store.setMode("insert")
         }
       }),
     )
+  })
+
+/**
+ * `v` — pure 3-way side-view cycle: activity → context → tree → activity.
+ * Loads each view's data on entry but **never moves focus or mode** — the
+ * close-to-input behaviour belongs to the `:context`/`:tree` toggles, not the
+ * cycle (it's what made `v` on the last view dump the keypress into the
+ * textarea).
+ */
+export const cycleSideView = (store: TuiStore, cid: ConversationId) =>
+  Effect.gen(function* () {
+    const view = store.sidePane().view
+    if (view === "stack") yield* openContextView(store, cid)
+    else if (view === "context") yield* openTreeView(store, cid)
+    else yield* Effect.sync(() => store.setNav((n) => ({ ...n, view: "stack" })))
   })
 
 /**

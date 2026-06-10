@@ -183,25 +183,44 @@ const listAll = (cs: ConversationStore["Type"], cid: ConversationId) =>
   })
 
 /**
- * Toggle the context viewer: rebuild its segments from the current
- * conversation's records, flip `view`, and move focus to the side pane (NORMAL,
- * for the block cursor) on open / back to the input on close. Lifted from
- * `tui.ts`'s `:context` handler + `rebuildContext`.
+ * Switch the side pane to the context viewer, rebuilding its segments from the
+ * current conversation's records. **Focus-free** — the `v` view cycle uses this
+ * directly (cycling must never move focus off the side pane); `toggleContext`
+ * layers the `:context` command's focus choreography on top.
  */
-export const toggleContext = (store: TuiStore, cid: ConversationId) =>
+export const openContextView = (store: TuiStore, cid: ConversationId) =>
   Effect.gen(function* () {
     const cs = yield* ConversationStore
     const { history, checkpoints } = yield* listAll(cs, cid)
     const segments = buildContextView(history, checkpoints)
     yield* Effect.sync(() =>
       batch(() => {
-        const opening = store.sidePane().view !== "context"
         applyContextRebuild(store, segments)
-        store.setNav((n) => ({ ...n, view: opening ? "context" : "stack" }))
-        if (opening) {
-          store.setFocus("side")
-          store.setMode("normal")
-        } else if (store.focus() === "side") {
+        store.setNav((n) => ({ ...n, view: "context" }))
+      }),
+    )
+  })
+
+/**
+ * `:context` — toggle the context viewer: open via `openContextView` and move
+ * focus to the side pane (NORMAL, for the block cursor); close back to the
+ * input. Lifted from `tui.ts`'s `:context` handler + `rebuildContext`.
+ */
+export const toggleContext = (store: TuiStore, cid: ConversationId) =>
+  Effect.gen(function* () {
+    const opening = store.sidePane().view !== "context"
+    if (opening) {
+      yield* openContextView(store, cid)
+      yield* Effect.sync(() => {
+        store.setFocus("side")
+        store.setMode("normal")
+      })
+      return
+    }
+    yield* Effect.sync(() =>
+      batch(() => {
+        store.setNav((n) => ({ ...n, view: "stack" }))
+        if (store.focus() === "side") {
           store.setFocus("input")
           store.setMode("insert")
         }

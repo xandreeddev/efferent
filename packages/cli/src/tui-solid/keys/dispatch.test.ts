@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test"
+import { Effect } from "effect"
 import type { ConversationId } from "@efferent/core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { emptyHistory, pushPrompt } from "../presentation/promptHistory.js"
@@ -252,6 +253,35 @@ test("Ctrl-Shift-C copies the selection (and does NOT arm quit)", () => {
   expect(h.exited).toBe(false)
   // and it didn't arm the 2x-quit (no "press Ctrl-C again" hint)
   expect(h.store.blocks().some((b) => b.kind === "info")).toBe(false)
+})
+
+test("v on the side pane cycles tree→activity: preventDefault'd, focus never moves", async () => {
+  // The original bug: `v` from the tree view routed through toggleTree, whose
+  // close branch refocused the input — the keypress then fell through to the
+  // textarea as a literal "v". The cycle must stay on the side pane.
+  const h = harness()
+  h.store.setFocus("side")
+  h.store.setMode("normal")
+  h.store.setNav((n) => ({ ...n, view: "tree" }))
+  let prevented = 0
+  const ran: Array<Promise<unknown>> = []
+  const ctx: TuiContext = {
+    ...h.ctx,
+    // Run the dispatched effect for real — the tree→stack branch is pure.
+    run: (eff) => {
+      const p = Effect.runPromise(eff as Effect.Effect<never>)
+      ran.push(p)
+      return p
+    },
+  }
+  dispatch(ctx, { ...key("v"), preventDefault: () => void (prevented += 1) })
+  await Promise.all(ran)
+  expect(prevented).toBe(1)
+  expect(ran.length).toBe(1)
+  expect(h.store.sidePane().view).toBe("stack")
+  expect(h.store.focus()).toBe("side")
+  expect(h.store.mode()).toBe("normal")
+  expect(h.store.input()).toBe("") // no stray character reached the buffer
 })
 
 test("plain Ctrl-C still arms quit (shift excluded)", () => {

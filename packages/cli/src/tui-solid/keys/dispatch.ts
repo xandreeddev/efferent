@@ -23,8 +23,8 @@ import { buildConversation, buildConversationRows, foldIdsByKind } from "../pres
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
-import { buildFromSelection, toggleContext } from "../actions/session.js"
-import { dropNode, toggleTree } from "../actions/contextTree.js"
+import { buildFromSelection } from "../actions/session.js"
+import { cycleSideView, dropNode } from "../actions/contextTree.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -673,11 +673,13 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
 
   // `v` on the side pane cycles its views: activity → context → tree → activity.
   // The three views are siblings of one surface; cycling beats remembering
-  // three commands (the title tabs show where you are).
+  // three commands (the title tabs show where you are). `cycleSideView` never
+  // moves focus, and `preventDefault` insures against the sync-fallthrough
+  // class: an Effect that refocuses the input can complete before OpenTUI
+  // delivers this same keypress to the focused renderable, typing a literal v.
   if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() === "side") {
-    const cid = store.run.getConversationId()
-    const view = store.sidePane().view
-    void ctx.run(view === "stack" ? toggleContext(store, cid) : toggleTree(store, cid))
+    key.preventDefault?.()
+    void ctx.run(cycleSideView(store, store.run.getConversationId()))
     return
   }
 
