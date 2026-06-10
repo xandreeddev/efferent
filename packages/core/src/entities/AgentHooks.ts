@@ -23,6 +23,9 @@ export interface AgentAssistantMessageEvent {
   readonly reasoning?: string
   readonly toolCalls: ReadonlyArray<ToolCall>
   readonly usage?: TokenUsage
+  /** Set when this message belongs to a sub-agent run: its context-tree node
+   *  id — lets a consumer attribute interleaved parallel runs correctly. */
+  readonly subAgentNodeId?: string
 }
 
 export interface AgentBeforeToolCallEvent {
@@ -32,6 +35,8 @@ export interface AgentBeforeToolCallEvent {
   readonly toolCallId: string
   readonly toolName: string
   readonly args: unknown
+  /** The sub-agent (context-tree node id) this call runs inside, if any. */
+  readonly subAgentNodeId?: string
 }
 
 export interface AgentAfterToolCallEvent {
@@ -42,6 +47,8 @@ export interface AgentAfterToolCallEvent {
   readonly args: unknown
   readonly ok: boolean
   readonly result: unknown
+  /** The sub-agent (context-tree node id) this call ran inside, if any. */
+  readonly subAgentNodeId?: string
 }
 
 export interface AgentShouldStopEvent {
@@ -59,6 +66,8 @@ export interface AgentSubAgentStartEvent {
   readonly task: string
   /** The persisted context-tree node id for this sub-agent run, when one exists. */
   readonly nodeId?: string
+  /** The parent node's id, for nesting under an enclosing sub-agent's container. */
+  readonly parentNodeId?: string
 }
 
 export interface AgentSubAgentEndEvent {

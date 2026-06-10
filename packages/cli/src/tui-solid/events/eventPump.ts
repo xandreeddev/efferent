@@ -9,10 +9,11 @@ import {
 import { formatTokens } from "../presentation/statusBar.js"
 import {
   onAgentEnd as treeAgentEnd,
-  onSubAgentEnd as treeSubAgentEnd,
-  onSubAgentStart as treeSubAgentStart,
+  onSubAgentEndKeyed as treeSubAgentEndKeyed,
+  onSubAgentStartKeyed as treeSubAgentStartKeyed,
   onToolEnd as treeToolEnd,
   onToolStart as treeToolStart,
+  onToolStartUnder as treeToolStartUnder,
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../presentation/executionTree.js"
@@ -42,6 +43,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
   const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
   const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of preview pill ids
+  const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
   let subAgentDepth = 0
   let toolSeq = 0
   // The node id of a sub-agent run whose session is OPEN in the conversation
@@ -87,20 +89,27 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // The spawn tool is the sub-agent container, not a tool node.
         if (isSpawn(event.toolName)) return
         const label = describeToolCall(event.toolName, event.args)
+        // Inner calls carry their node id — attribute to THAT run's container
+        // (parallel fan-out interleaves events; "deepest open" lies). A
+        // top-level call still lands under the open turn.
+        const owner = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
         store.setProjection((p) => {
-          const { tree, id } = treeToolStart(p.tree, label, now)
+          const { tree, id } =
+            owner !== undefined
+              ? treeToolStartUnder(p.tree, owner, label, now)
+              : treeToolStart(p.tree, label, now)
           enqueue(toolTreeIds, matchKey(event), id)
           return { ...p, tree }
         })
         // Top-level tools get a compact chat pill; sub-agent inner tools live
         // only in the tree — unless their node's session is open in the
         // preview, where they stream as live pills.
-        if (subAgentDepth === 0) {
+        if (event.nodeId === undefined && subAgentDepth === 0) {
           toolSeq++
           const sid = `t${toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
-        } else if (previewRunNode !== undefined) {
+        } else if (event.nodeId !== undefined && event.nodeId === previewRunNode) {
           toolSeq++
           const pid = `pv${toolSeq}`
           enqueue(previewToolIds, matchKey(event), pid)
@@ -152,12 +161,21 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // preview, or is watching the node the agent spawned into): its
         // events stream into the preview, and the parent rail gets no Task
         // pill — the run isn't the parent conversation's doing.
+        const anchor =
+          event.parentNodeId !== undefined ? subTreeByNode.get(event.parentNodeId) : undefined
+        const startTree = (p: { tree: Parameters<typeof treeSubAgentStartKeyed>[0] }) => {
+          const { tree, id } = treeSubAgentStartKeyed(
+            p.tree,
+            `run_agent → ${event.name}`,
+            anchor,
+            now,
+          )
+          if (event.nodeId !== undefined) subTreeByNode.set(event.nodeId, id)
+          return tree
+        }
         if (event.nodeId !== undefined && store.nodePreview()?.nodeId === event.nodeId) {
           previewRunNode = event.nodeId
-          store.setProjection((p) => ({
-            ...p,
-            tree: treeSubAgentStart(p.tree, `run_agent → ${event.name}`, now),
-          }))
+          store.setProjection((p) => ({ ...p, tree: startTree(p) }))
           return
         }
         const label = `Task(${event.name})`
@@ -167,10 +185,7 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // with the same basename, and a name key would cross their pills.
         subAgentScrollId.set(event.nodeId ?? event.name, sid)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
-        store.setProjection((p) => ({
-          ...p,
-          tree: treeSubAgentStart(p.tree, `run_agent → ${event.name}`, now),
-        }))
+        store.setProjection((p) => ({ ...p, tree: startTree(p) }))
         return
       }
 
@@ -182,15 +197,19 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
             : undefined
         // The watched run finished: its prose already streamed into the
         // preview (assistant_message), and a failure must not be silent there.
+        const ownTreeId = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
+        if (event.nodeId !== undefined) subTreeByNode.delete(event.nodeId)
         if (event.nodeId !== undefined && previewRunNode === event.nodeId) {
           previewRunNode = undefined
           if (!event.ok && event.summary.trim().length > 0) {
             store.appendPreviewBlock({ kind: "error", text: event.summary })
           }
-          store.setProjection((p) => ({
-            ...p,
-            tree: treeSubAgentEnd(p.tree, event.ok, filesDetail, now),
-          }))
+          if (ownTreeId !== undefined) {
+            store.setProjection((p) => ({
+              ...p,
+              tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, filesDetail, now),
+            }))
+          }
           return
         }
         const endSid = subAgentScrollId.get(event.nodeId ?? event.name)
@@ -218,10 +237,12 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
           filesDetail,
           event.usage !== undefined ? `${formatTokens(event.usage.inputTokens)} ctx` : undefined,
         )
-        store.setProjection((p) => ({
-          ...p,
-          tree: treeSubAgentEnd(p.tree, event.ok, nodeDetail, now),
-        }))
+        if (ownTreeId !== undefined) {
+          store.setProjection((p) => ({
+            ...p,
+            tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, nodeDetail, now),
+          }))
+        }
         return
       }
 
@@ -238,8 +259,8 @@ export const makeEventReducer = (store: TuiStore): ((event: AgentEvent) => void)
         // lands on the parent rail and never counts toward the conversation
         // gauge (node usage is tracked on its tree node) — it streams into
         // the preview when that node's session is open, else tree-only.
-        if (subAgentDepth > 0) {
-          if (previewRunNode !== undefined) {
+        if (event.nodeId !== undefined || subAgentDepth > 0) {
+          if (event.nodeId !== undefined && event.nodeId === previewRunNode) {
             if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
               store.appendPreviewBlock({ kind: "reasoning", text: event.reasoning })
             }

@@ -159,6 +159,7 @@ const genericToolkit = Toolkit.make(
  */
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
+  nodeId: string,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
   usageRef: Ref.Ref<ContextUsage>,
   pool: TokenPool,
@@ -173,20 +174,26 @@ const makeInnerHooks = <R>(
       yield* Ref.update(filesRef, (arr) => (arr.includes(path) ? arr : [...arr, path]))
     })
 
+  const parentBefore = parent?.onBeforeToolCall
   const parentAfter = parent?.onAfterToolCall
   const parentAssistant = parent?.onAssistantMessage
+  // Every forwarded event is stamped with this node's id — under parallel
+  // fan-out the consumer attributes interleaved events to the right sub-agent
+  // by key, not by "whichever opened last".
   return {
-    ...(parent?.onBeforeToolCall !== undefined
-      ? { onBeforeToolCall: parent.onBeforeToolCall }
+    ...(parentBefore !== undefined
+      ? {
+          onBeforeToolCall: (e: Parameters<typeof parentBefore>[0]) =>
+            parentBefore({ ...e, subAgentNodeId: nodeId }),
+        }
       : {}),
-    onAfterToolCall:
+    onAfterToolCall: (e) =>
       parentAfter !== undefined
-        ? (e) =>
-            Effect.gen(function* () {
-              yield* parentAfter(e)
-              yield* trackFiles(e)
-            })
-        : trackFiles,
+        ? Effect.gen(function* () {
+            yield* parentAfter({ ...e, subAgentNodeId: nodeId })
+            yield* trackFiles(e)
+          })
+        : trackFiles(e),
     onAssistantMessage: (event) => {
       const u = event.usage
       const track =
@@ -199,9 +206,9 @@ const makeInnerHooks = <R>(
           : Effect.void
       // Forward inner narration to the parent's event stream too — the TUI
       // shows it live when this node's session is open in the preview (the
-      // pump depth-guards it off the parent rail; usage stays node-local).
+      // pump keeps it off the parent rail; usage stays node-local).
       return parentAssistant !== undefined
-        ? parentAssistant(event).pipe(Effect.zipRight(track))
+        ? parentAssistant({ ...event, subAgentNodeId: nodeId }).pipe(Effect.zipRight(track))
         : track
     },
     onShouldStopAfterTurn: () =>
@@ -234,6 +241,8 @@ interface RunSpawnedArgs<R> {
   readonly task: string
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
+  /** The node's parent in the context tree (for consumer-side nesting). */
+  readonly parentNodeId: string | null
   readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
   readonly tokenPool: TokenPool
 }
@@ -264,10 +273,15 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     })
 
     if (hooks?.onSubAgentStart) {
-      yield* hooks.onSubAgentStart({ name: label, task, nodeId })
+      yield* hooks.onSubAgentStart({
+        name: label,
+        task,
+        nodeId,
+        ...(args.parentNodeId !== null ? { parentNodeId: args.parentNodeId } : {}),
+      })
     }
     const budgetStopRef = yield* Ref.make(false)
-    const innerHooks = makeInnerHooks(hooks, filesRef, usageRef, args.tokenPool, budgetStopRef)
+    const innerHooks = makeInnerHooks(hooks, nodeId, filesRef, usageRef, args.tokenPool, budgetStopRef)
 
     const binding: ScopeBinding = {
       rootDir: folder,
@@ -426,7 +440,8 @@ const makeRunAgentHandler =
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
             store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
-            parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+            parentDepth: rc.depth, parentNodeId: node.parentId,
+            rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
           })
         }
@@ -446,7 +461,8 @@ const makeRunAgentHandler =
         })
         return yield* runSpawnedAgent({
           store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
-          parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+          parentDepth: rc.depth, parentNodeId: nodeId,
+          rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
         })
       }
@@ -465,7 +481,8 @@ const makeRunAgentHandler =
       })
       return yield* runSpawnedAgent({
         store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
-        parentDepth: rc.depth, rootConversationId: rc.rootConversationId,
+        parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
+        rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
@@ -545,6 +562,7 @@ export const buildScopeRuntime = <R = never>(
         task,
         seedMessages,
         parentDepth: 0,
+        parentNodeId: node.parentId,
         rootConversationId: node.rootConversationId,
         tokenPool,
       })
