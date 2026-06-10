@@ -49,6 +49,7 @@ export const InMemoryContextTreeStoreLive = Layer.effect(
             folder: input.folder,
             displayRoot: input.displayRoot,
             seed: input.seed,
+            seedMessageCount: input.seedMessages.length,
             status: "running",
             filesChanged: [],
             createdAt: Date.now(),

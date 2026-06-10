@@ -45,6 +45,7 @@ interface NodeRow {
   readonly files_changed: unknown
   readonly usage: unknown
   readonly workspace_ref: string | null
+  readonly seed_message_count: number | null
   readonly created_at: number
   readonly ended_at: number | null
 }
@@ -79,6 +80,9 @@ const decodeNode = (row: NodeRow) => {
       : {}),
     ...(row.workspace_ref !== null && row.workspace_ref !== undefined
       ? { workspaceRef: row.workspace_ref }
+      : {}),
+    ...(row.seed_message_count !== null && row.seed_message_count !== undefined
+      ? { seedMessageCount: Number(row.seed_message_count) }
       : {}),
     createdAt: Number(row.created_at),
     ...(row.ended_at !== null && row.ended_at !== undefined
@@ -145,13 +149,14 @@ export const SqliteContextTreeStoreLive = Layer.effect(
             sql`
               INSERT INTO context_nodes (
                 id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+                seed, status, return_summary, files_changed, usage, workspace_ref,
+                seed_message_count, created_at, ended_at
               )
               VALUES (
                 ${id}, ${input.parentId ?? null}, ${input.rootConversationId ?? null},
                 ${input.edgeKind}, ${input.folder}, ${input.displayRoot},
                 ${JSON.stringify(input.seed)}, 'running', ${null}, '[]', ${null}, ${null},
-                ${createdAt}, ${null}
+                ${input.seedMessages.length}, ${createdAt}, ${null}
               )
             `,
             "Failed to spawn context node",
@@ -213,7 +218,8 @@ export const SqliteContextTreeStoreLive = Layer.effect(
           const rows = yield* wrapSql(
             sql<NodeRow>`
               SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                     seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+                     seed, status, return_summary, files_changed, usage, workspace_ref,
+                     seed_message_count, created_at, ended_at
               FROM context_nodes WHERE id = ${id}
             `,
             "Failed to get context node",
@@ -230,12 +236,14 @@ export const SqliteContextTreeStoreLive = Layer.effect(
             rootConversationId === null
               ? sql<NodeRow>`
                   SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                         seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+                         seed, status, return_summary, files_changed, usage, workspace_ref,
+                         seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id IS NULL ORDER BY created_at ASC
                 `
               : sql<NodeRow>`
                   SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root,
-                         seed, status, return_summary, files_changed, usage, workspace_ref, created_at, ended_at
+                         seed, status, return_summary, files_changed, usage, workspace_ref,
+                         seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id = ${rootConversationId} ORDER BY created_at ASC
                 `,
             "Failed to list context tree",
