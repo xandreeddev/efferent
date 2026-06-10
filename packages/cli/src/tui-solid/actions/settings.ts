@@ -115,7 +115,7 @@ export const applySearchModel = (store: TuiStore, chosen: string | undefined) =>
       return { ...curr, searchModel: chosen }
     })
     yield* Effect.sync(() =>
-      store.pushBlock({ kind: "info", text: `searchModel → ${chosen ?? "default"}` }),
+      store.toast(`searchModel → ${chosen ?? "default"}`),
     )
   })
 
@@ -230,13 +230,13 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       const num = Number(value)
       if (!Number.isFinite(num) || num < 1) return yield* err("Setting 'maxSteps' must be a number ≥ 1")
       yield* settings.update((curr) => ({ ...curr, maxSteps: Math.floor(num) }))
-      yield* Effect.sync(() => store.pushBlock({ kind: "info", text: `Updated maxSteps → ${Math.floor(num)}` }))
+      yield* Effect.sync(() => store.toast(`Updated maxSteps → ${Math.floor(num)}`))
       return
     }
     if (key === "allowBash") {
       if (value !== "true" && value !== "false") return yield* err("Setting 'allowBash' must be 'true' or 'false'")
       yield* settings.update((curr) => ({ ...curr, allowBash: value === "true" }))
-      yield* Effect.sync(() => store.pushBlock({ kind: "info", text: `Updated allowBash → ${value}` }))
+      yield* Effect.sync(() => store.toast(`Updated allowBash → ${value}`))
       return
     }
     if (key === "subAgentTokenBudget") {
@@ -258,7 +258,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       if (!allowed.includes(value)) return yield* err(`Setting '${key}' must be one of: ${allowed.join(", ")}`)
       const next = value === "default" ? undefined : value
       yield* settings.update((curr) => ({ ...curr, [key]: next }))
-      yield* Effect.sync(() => store.pushBlock({ kind: "info", text: `Updated ${key} → ${next ?? "default"}` }))
+      yield* Effect.sync(() => store.toast(`Updated ${key} → ${next ?? "default"}`))
       return
     }
     if (key === "searchModel") {
@@ -273,7 +273,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
         }
         return { ...curr, searchModel: parsed }
       })
-      yield* Effect.sync(() => store.pushBlock({ kind: "info", text: `Updated searchModel → ${parsed ?? "default"}` }))
+      yield* Effect.sync(() => store.toast(`Updated searchModel → ${parsed ?? "default"}`))
       return
     }
     yield* err(

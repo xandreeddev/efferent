@@ -15,6 +15,8 @@ export const glyph = {
   connector: "⎿",
   /** Fold carets — open shows children, closed collapses them. */
   fold: { open: "▾", closed: "▸" },
+  /** Turn-head anchor bar — the strongest visual landmark in the rail. */
+  turnBar: "┃",
   /** Multi-select markers (context viewer pick). */
   select: { on: "◉", off: "○" },
   /** Handoff flag + its summary star (context viewer / checkpoints). */

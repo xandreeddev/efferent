@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import { tokens } from "../../state/theme.js"
 
 /** Default modal width (cols). Inner content rules span {@link MODAL_RULE}. */
@@ -13,17 +14,25 @@ export const MODAL_RULE = MODAL_WIDTH - 4
  * and body (filter line, rows, footer). Used by the select list, prompt box, and
  * settings overlays so they can't drift.
  */
-export const Modal = (props: { title: string; width?: number; children: JSX.Element }) => (
-  <box
-    flexDirection="column"
-    border
-    title={` ${props.title} `}
-    borderColor={tokens.overlay.border}
-    backgroundColor={tokens.overlay.bg}
-    width={props.width ?? MODAL_WIDTH}
-    paddingLeft={1}
-    paddingRight={1}
-  >
-    {props.children}
-  </box>
-)
+export const Modal = (props: { title: string; width?: number; children: JSX.Element }) => {
+  const dims = useTerminalDimensions()
+  return (
+    <box
+      flexDirection="column"
+      border
+      title={` ${props.title} `}
+      borderColor={tokens.overlay.border}
+      backgroundColor={tokens.overlay.bg}
+      width={props.width ?? MODAL_WIDTH}
+      // Never taller than the screen leaves room for: an overflowing modal
+      // paints over the input/status chrome on short terminals with its own
+      // key-hint footer pushed off-screen — exactly the row a stuck user needs.
+      maxHeight={Math.max(6, dims().height - 4)}
+      overflow="hidden"
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      {props.children}
+    </box>
+  )
+}

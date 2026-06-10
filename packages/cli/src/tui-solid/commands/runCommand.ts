@@ -65,7 +65,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
 
   const cmd = resolve(rawName)
   if (cmd === undefined) {
-    store.pushBlock({ kind: "info", text: `unknown command: ${rawName} (try :help)` })
+    store.toast(`unknown command: ${rawName} (try :help)`)
     return
   }
 
@@ -79,6 +79,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       return
     case ":help":
       for (const l of HELP) store.pushBlock({ kind: "info", text: l })
+      store.pushBlock({ kind: "info", text: store.footer() })
       return
     case ":cwd":
       store.pushBlock({ kind: "info", text: store.status().cwd })

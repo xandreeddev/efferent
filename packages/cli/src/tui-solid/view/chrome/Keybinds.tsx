@@ -1,32 +1,56 @@
+import { Show } from "solid-js"
 import { tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
- * The bordered keybind box. Its border + title take the focused pane's accent,
- * and the title carries `<pane> · <MODE>` — the only place the mode shows (the
- * status bar stays `model · tokens · storage · cwd`). Two rows: a dim global
- * `nav` row (identical everywhere) over a row of the focused pane's own keys,
- * reflecting the real bindings (vim modal editing is deferred).
+ * Keybind help, two densities:
+ *
+ *  - **Strip** (default): ONE dim row — the focused context's essential keys.
+ *    Chrome must not out-weigh content; on a 24-row terminal the old 4-row box
+ *    ate a sixth of the screen to repeat itself.
+ *  - **Box** (`?` in NORMAL, or `keysExpanded`): the bordered two-row version
+ *    with the full vocabulary — border + title take the focused pane's accent,
+ *    title carries `<pane> · <MODE>`.
+ *
+ * The hints lead with keys that work in EVERY terminal (Esc, w, :, /) — the
+ * Ctrl encodings die in legacy/tmux input modes, so they're the alternative,
+ * not the headline. Both audiences read the same row: vi hands see Esc/w,
+ * non-vi users see a visible, modifier-free path to every pane.
  */
-const NAV_ROW = "nav   ^h/j/k/l move pane · : cmd · / search · z zoom · ^C quit"
+const NAV_FULL = "nav   esc panes · w next pane · ^k/^l conv/side · : cmd · / search · z zoom · ^C quit"
 
 const paneRow = (ctx: TuiContext): string => {
   const { store } = ctx
   switch (store.focus()) {
     case "conversation":
-      return "conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · / search · Z fold all"
+      return "conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · Z fold all · w side · i type"
     case "side":
       switch (store.sidePane().view) {
         case "context":
-          return "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · / search"
+          return "ctx   j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · v views · i type"
         case "tree":
-          return "tree  j/k·{} move · [] root · ⇥/↵ fold · d drop · / search · i insert"
+          return "tree  j/k·{} move · [] root · ⇥/↵ fold · d drop · v views · i type"
         default:
-          return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · / search · i insert"
+          return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type"
       }
     case "input":
-      return "input type to compose · ⇧↵ send · ↵ newline · : cmd · / search"
+      return "input ⇧↵ send · ↵ newline · esc panes · : cmd · / search"
   }
+}
+
+/** The one-row strip: the focused context's essentials + how to get more. */
+const strip = (ctx: TuiContext): string => {
+  const { store } = ctx
+  if (store.focus() === "input") return "esc panes · : cmd · / search · ⇧↵ send"
+  const pane =
+    store.focus() === "side"
+      ? store.sidePane().view === "context"
+        ? "Space pick · b build"
+        : store.sidePane().view === "tree"
+          ? "↵ fold · d drop"
+          : "↵ fold"
+      : "j/k scroll · ↵ fold"
+  return `${pane} · w next pane · v views · i type · ? keys`
 }
 
 const paneLabel = (ctx: TuiContext): string => {
@@ -45,15 +69,24 @@ export const Keybinds = (props: { ctx: TuiContext }) => {
   const title = () => ` ${paneLabel(props.ctx)} · ${store.mode().toUpperCase()} `
 
   return (
-    <box
-      border
-      title={title()}
-      borderColor={accent()}
-      flexShrink={0}
-      flexDirection="column"
+    <Show
+      when={store.keysExpanded()}
+      fallback={
+        <text fg={tokens.text.dim} flexShrink={0}>
+          {` ${strip(props.ctx)}`}
+        </text>
+      }
     >
-      <text fg={tokens.text.dim}>{NAV_ROW}</text>
-      <text fg={tokens.text.muted}>{paneRow(props.ctx)}</text>
-    </box>
+      <box
+        border
+        title={title()}
+        borderColor={accent()}
+        flexShrink={0}
+        flexDirection="column"
+      >
+        <text fg={tokens.text.dim}>{NAV_FULL}</text>
+        <text fg={tokens.text.muted}>{paneRow(props.ctx)}</text>
+      </box>
+    </Show>
   )
 }

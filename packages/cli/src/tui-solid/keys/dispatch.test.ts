@@ -130,7 +130,9 @@ test("Ctrl-C arms first, quits on the second press", () => {
   const h = harness()
   dispatch(h.ctx, key("c", { ctrl: true }))
   expect(h.exited).toBe(false)
-  expect(h.store.blocks().at(-1)).toMatchObject({ kind: "info" })
+  // the arm hint is a toast (status note), never a rail block
+  expect(h.store.note()).toContain("again to quit")
+  expect(h.store.blocks().some((b) => b.kind === "info")).toBe(false)
   dispatch(h.ctx, key("c", { ctrl: true }))
   expect(h.exited).toBe(true)
 })
@@ -256,5 +258,5 @@ test("plain Ctrl-C still arms quit (shift excluded)", () => {
   const h = harness()
   dispatch(h.ctx, key("c", { ctrl: true }))
   expect(h.copied).toBe(0)
-  expect(h.store.blocks().at(-1)).toMatchObject({ kind: "info" })
+  expect(h.store.note()).toContain("again to quit")
 })

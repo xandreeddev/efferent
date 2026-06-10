@@ -19,24 +19,24 @@ For *what's shipped at a glance*, see `README.md`. For *what's deferred*, see `d
 Top to bottom, the TUI is five stacked regions:
 
 ```
-┌─ conversation ─────────────────────────┐ ┌─ activity ─────┐   ← the two read-only panes,
-│ the event rail: your prompts, the       │ │ context  18k/1M│     one empty column between
-│ agent's prose, tool calls, diffs        │ │ tok out    1.2k│
-└─────────────────────────────────────────┘ └────────────────┘
-┌─ conversation · NORMAL ──────────────────────────────────────┐  ← keybind box
-│ nav   ^h/j/k/l move pane · : cmd · / search · z zoom · ^C quit│     (focused pane's accent;
-│ conv  j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G · / · Z   │      title = pane · MODE)
-└───────────────────────────────────────────────────────────────┘
- :model  …                                                          ← `:` palette OR `/` status
+┌─ conversation ─────────────────────────┐ ┌─ activity ─────────┐ ← the two read-only panes,
+│ the event rail: your prompts, the       │ │activity·context·tree│   one empty column between;
+│ agent's prose, tool calls, diffs        │ │ ctx  18k/1M        │   the side pane's tab row
+└─────────────────────────────────────────┘ └────────────────────┘   shows its three views
+ j/k scroll · ↵ fold · w next pane · v views · i type · ? keys     ← keybind strip (1 row;
+ :model  …                                                            `?` expands the full box)
 ┌─ input · INSERT ─────────────────────────────────────────────┐   ← the composer (1→8 rows)
 │ run the tests                                                 │
 └───────────────────────────────────────────────────────────────┘
- gemini-3.5-flash · 18k (12k cached) / 1M · sqlite · ~/proj        ← status bar
- logs: ~/.efferent/efferent.log · ⇧↵ send · esc interrupt · ^C     ← dim footer
+ gemini-3.5-flash · 18k (12k cached) / 1M · sqlite · ~/proj · …    ← status bar (+ toasts)
 ```
 
 Modal overlays (`:model`, `:login`, `:settings`, …) float over everything on an
-absolutely-positioned layer.
+absolutely-positioned layer, capped to the screen height. **Below ~110 columns** only the
+focused pane renders, full-width — the side pane stays a keystroke away (`w`, `:tree`,
+`:context`). Transient feedback (theme switched, copied, queued, unknown command) appears as
+a **toast** in the status bar and clears itself — the conversation rail is the permanent
+record, never a notification feed.
 
 ---
 
@@ -48,18 +48,29 @@ cyan, side = magenta, input = green** (unfocused = gray).
 
 | Action | Keys |
 |---|---|
-| Move focus between panes | `Ctrl-h` / `Ctrl-j` / `Ctrl-k` / `Ctrl-l` (or `Ctrl-←/↓/↑/→`) |
+| Leave the composer (input → conversation, NORMAL) | `Esc` (on a `:`/`/` line it cancels the line first) |
+| Cycle panes (conversation → side → input) | `w` (in NORMAL) |
+| Jump straight to a pane | `Ctrl-k` (conversation) / `Ctrl-l` (side) / `Ctrl-j` (input) — also `Ctrl-arrows` and `Ctrl-h` where the terminal supports them |
+| Cycle the side pane's views | `v` (activity → context → tree) |
+| Back to the composer | `i` |
+| Toggle the full keybind box | `?` (in NORMAL) |
 | Zoom the focused pane | `z` |
 | Quit | `Ctrl-C` (press twice — the first press arms it) |
 
-Each pane has a **mode**, shown in the keybind box title as `<pane> · <MODE>`:
+**Esc and `w` work in every terminal** — including tmux and SSH sessions, where the
+`Ctrl-h/j/k/l` encodings may never reach the app (legacy input modes send them as other
+bytes; `Ctrl-j`/`Ctrl-k`/`Ctrl-l` are recovered, `Ctrl-h` is indistinguishable from
+backspace). vi hands get the modal flow (`Esc` out, `i` in, `hjkl` motions); everyone else
+gets arrows, `w`, and the visible strip — same vocabulary, no memorization required.
+
+Each pane has a **mode**, shown in the expanded keybind box title as `<pane> · <MODE>`:
 
 - **Input is `INSERT`** — you're typing a message.
 - **The two read-only panes are `NORMAL`** — a vim-style **fold cursor** moves over the
   pane's logical rows. `i` from the side pane drops back into the input.
 
-> The keybind box always shows two rows: a dim global **`nav`** row (identical everywhere)
-> over a row of the **focused pane's real keys**.
+> The keybind **strip** is one dim row — the focused context's essentials. `?` expands the
+> full two-row box (global nav row + the focused pane's complete keys).
 
 ---
 

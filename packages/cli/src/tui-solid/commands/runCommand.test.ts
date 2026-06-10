@@ -76,8 +76,9 @@ test(":reset starts a fresh conversation and clears tree + scrollback", () => {
 test("an unrecognised command reports back instead of failing silently", () => {
   const store = newStore()
   runCommand(ctxOf(store), ":nope")
-  expect(store.blocks().at(-1)).toMatchObject({ kind: "info" })
-  expect((store.blocks().at(-1) as { text: string }).text).toContain("unknown command")
+  // feedback is a toast (status note), not a permanent rail block
+  expect(store.note()).toContain("unknown command")
+  expect(store.blocks().some((b) => b.kind === "info")).toBe(false)
 })
 
 test("a unique prefix resolves (`:cl` → :clear)", () => {

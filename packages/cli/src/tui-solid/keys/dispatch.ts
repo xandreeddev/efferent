@@ -23,8 +23,8 @@ import { buildConversation, buildConversationRows, foldIdsByKind } from "../pres
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
-import { buildFromSelection } from "../actions/session.js"
-import { dropNode } from "../actions/contextTree.js"
+import { buildFromSelection, toggleContext } from "../actions/session.js"
+import { dropNode, toggleTree } from "../actions/contextTree.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
@@ -538,7 +538,19 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
  * side/conversation nav → zoom. Vim modal editing is deferred; the read-only
  * panes route only scroll / fold / search / context-viewer keys.
  */
-export const dispatch = (ctx: TuiContext, key: Key): void => {
+export const dispatch = (ctx: TuiContext, raw: Key): void => {
+  // Terminal-input normalization, learned the hard way:
+  //  - two Escapes in one input chunk parse as ONE meta+escape (Alt-Esc) —
+  //    treat it as Escape, or a fast double-Esc silently swallows the second;
+  //  - legacy (non-Kitty) terminals — tmux above all — send Ctrl-J as a bare
+  //    linefeed (0x0a). Ctrl-H is unrecoverable there (0x08 IS backspace), so
+  //    the hints lead with Esc/w, which need no modifier protocol at all.
+  const key: Key =
+    raw.meta && raw.name === "escape"
+      ? { ...raw, meta: false }
+      : raw.name === "linefeed"
+        ? { ...raw, name: "j", ctrl: true }
+        : raw
   const { store } = ctx
 
   // A modal overlay owns all input while open (Esc/Ctrl-C close it there).
@@ -563,7 +575,7 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
       ctx.exit()
     } else {
       store.run.setCtrlCArmedAt(now)
-      store.pushBlock({ kind: "info", text: "press Ctrl-C again to quit" })
+      store.toast("press Ctrl-C again to quit")
     }
     return
   }
@@ -571,6 +583,23 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
   // Esc → interrupt a running turn.
   if (key.name === "escape" && store.busy()) {
     ctx.interrupt()
+    return
+  }
+
+  // Esc in the idle input — the modifier-free way OUT of the composer, for
+  // vi hands and tmux users alike (Ctrl-H never arrives in legacy terminals).
+  // On a `:`/`/` line it cancels the command first (vim cmdline behavior);
+  // on a message it leaves the draft intact and drops to NORMAL.
+  if (key.name === "escape" && store.focus() === "input") {
+    const text = store.input()
+    if (text.startsWith(":") || text.startsWith("/")) {
+      store.inputControl.current?.seed("")
+      store.setPaletteIndex(0)
+      return
+    }
+    store.setFocus("conversation")
+    store.setMode("normal")
+    store.setConvCursor(rowToEnd(convNav(store).rows))
     return
   }
 
@@ -613,6 +642,42 @@ export const dispatch = (ctx: TuiContext, key: Key): void => {
     store.setFocus("input")
     store.setMode("insert")
     store.inputControl.current?.seed(":")
+    return
+  }
+
+  // `w` in NORMAL cycles panes (conversation → side → input) — the
+  // modifier-free counterpart to Ctrl-hjkl for terminals that eat the ctrl
+  // encodings, and the visible path for non-vi users (it's in the nav row).
+  if (
+    key.name === "w" &&
+    !key.ctrl &&
+    !key.meta &&
+    !key.shift &&
+    store.focus() !== "input"
+  ) {
+    if (store.focus() === "conversation") {
+      store.setFocus("side")
+      store.setMode("normal")
+    } else {
+      store.setFocus("input")
+      store.setMode("insert")
+    }
+    return
+  }
+
+  // `?` in NORMAL toggles the full keybind box (default is the one-row strip).
+  if (key.name === "?" && !key.ctrl && !key.meta && store.focus() !== "input") {
+    store.setKeysExpanded(!store.keysExpanded())
+    return
+  }
+
+  // `v` on the side pane cycles its views: activity → context → tree → activity.
+  // The three views are siblings of one surface; cycling beats remembering
+  // three commands (the title tabs show where you are).
+  if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() === "side") {
+    const cid = store.run.getConversationId()
+    const view = store.sidePane().view
+    void ctx.run(view === "stack" ? toggleContext(store, cid) : toggleTree(store, cid))
     return
   }
 

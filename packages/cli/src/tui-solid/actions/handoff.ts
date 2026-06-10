@@ -20,7 +20,7 @@ export const runHandoff = (store: TuiStore, cid: ConversationId) =>
     yield* Effect.sync(() => {
       store.setBusy(true)
       store.setNote("generating handoff…")
-      store.pushBlock({ kind: "info", text: "⟳ generating handoff…" })
+      store.toast("generating handoff…")
     })
 
     const result = yield* createHandoff(cid).pipe(Effect.either)
@@ -48,7 +48,7 @@ export const runHandoff = (store: TuiStore, cid: ConversationId) =>
       batch(() => {
         applyContextRebuild(store, buildContextView(history, checkpoints))
         if (cp !== undefined) store.pushBlock({ kind: "checkpoint", text: cp.summary })
-        else store.pushBlock({ kind: "info", text: "nothing new to hand off" })
+        else store.toast("nothing new to hand off")
         store.setBusy(false)
         store.setNote(undefined)
       }),

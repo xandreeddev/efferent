@@ -19,6 +19,9 @@ export interface UiSlice {
   /** The focused read-only pane is maximized (fills the middle region). */
   readonly zoomed: Accessor<boolean>
   readonly setZoomed: (b: boolean) => void
+  /** The keybind help is expanded to the full box (`?` toggles; default strip). */
+  readonly keysExpanded: Accessor<boolean>
+  readonly setKeysExpanded: (b: boolean) => void
   /** A `g` was pressed and is awaiting a second stroke (`gg` → top). */
   readonly gPending: Accessor<boolean>
   readonly setGPending: (b: boolean) => void
@@ -35,6 +38,7 @@ export const createUiSlice = (): UiSlice => {
   const [mode, setModeSig] = createSignal<UiMode>("insert")
   const [input, setInputSig] = createSignal("")
   const [zoomed, setZoomedSig] = createSignal(false)
+  const [keysExpanded, setKeysExpandedSig] = createSignal(false)
   const [gPending, setGPendingSig] = createSignal(false)
   const [paletteIndex, setPaletteIndexSig] = createSignal(0)
   const [history, setHistorySig] = createSignal<PromptHistory>(emptyHistory)
@@ -48,6 +52,8 @@ export const createUiSlice = (): UiSlice => {
     setInput: (t) => setInputSig(t),
     zoomed,
     setZoomed: (b) => setZoomedSig(b),
+    keysExpanded,
+    setKeysExpanded: (b) => setKeysExpandedSig(b),
     gPending,
     setGPending: (b) => setGPendingSig(b),
     paletteIndex,

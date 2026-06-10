@@ -32,7 +32,7 @@ export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
       batch(() => {
         store.setStatus({ modelId: sel.modelId, effort: newEffort })
         store.setStats((s) => ({ ...s, contextWindow: sel.contextWindow }))
-        store.pushBlock({ kind: "info", text: `switched to ${sel.provider}:${sel.modelId}` })
+        store.toast(`switched to ${sel.provider}:${sel.modelId}`)
         if (prev.provider !== sel.provider && store.blocks().some((b) => b.kind === "user")) {
           store.pushBlock({
             kind: "info",
@@ -51,7 +51,7 @@ export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
 export const openModelPicker = (store: TuiStore) =>
   Effect.gen(function* () {
     const registry = yield* ModelRegistry
-    yield* Effect.sync(() => store.pushBlock({ kind: "info", text: "fetching models…" }))
+    yield* Effect.sync(() => store.toast("fetching models…"))
     const models = yield* registry.list.pipe(
       Effect.catchAll((e) =>
         Effect.sync(() => {

@@ -110,7 +110,7 @@ export const InputBox = (props: { ctx: TuiContext }) => {
         ref={ref}
         height={rows()}
         keyBindings={KEY_BINDINGS}
-        placeholder="Message…  (Shift-Enter send · Enter newline · Ctrl-C quit)"
+        placeholder="Message…  (⇧↵ to send)"
         textColor={tokens.text.default}
         wrapMode="word"
         onContentChange={() => {

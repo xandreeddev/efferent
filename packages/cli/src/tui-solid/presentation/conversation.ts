@@ -300,3 +300,47 @@ export const buildConversationRows = (
   }
   return rows
 }
+
+/**
+ * Whether a unified diff is strict enough for the native `<diff>` renderer,
+ * which validates hunk-header line counts and — on ANY mismatch — paints its
+ * own "Error parsing diff: …" into the rail. A model-emitted diff is untrusted
+ * input; when it doesn't hold up we render it as a plain dim block instead,
+ * so a sloppy hunk header degrades to "less pretty", never to a parser error
+ * leaking into the conversation.
+ */
+export const isRenderableDiff = (diff: string): boolean => {
+  const lines = diff.split("\n")
+  let i = 0
+  let sawHunk = false
+  while (i < lines.length && !lines[i]!.startsWith("@@")) i++
+  while (i < lines.length) {
+    const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(lines[i]!)
+    if (m === null) return false
+    sawHunk = true
+    let removed = 0
+    let added = 0
+    i++
+    while (i < lines.length && !lines[i]!.startsWith("@@")) {
+      const c = lines[i]![0]
+      if (c === "-") removed++
+      else if (c === "+") added++
+      else if (c === " " || lines[i] === "") {
+        removed++
+        added++
+      } else if (c === "\\") {
+        // "\ No newline at end of file" — counts toward neither side.
+      } else return false
+      i++
+    }
+    // trailing blank line from a final "\n" split shouldn't count
+    if (lines[i - 1] === "" && i === lines.length) {
+      removed--
+      added--
+    }
+    const wantRemoved = m[1] === undefined ? 1 : Number(m[1])
+    const wantAdded = m[2] === undefined ? 1 : Number(m[2])
+    if (removed !== wantRemoved || added !== wantAdded) return false
+  }
+  return sawHunk
+}

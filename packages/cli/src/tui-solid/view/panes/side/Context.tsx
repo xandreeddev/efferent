@@ -79,7 +79,7 @@ const renderSegments = (d: () => ContextRowDisplay) => {
           <text fg={v.archived ? tokens.text.dim : tokens.text.default} wrapMode="none">
             {v.subject}
           </text>
-          <text fg={tokens.text.dim}>{` ·${v.steps}`}</text>
+          <text fg={tokens.text.dim}>{`  · ${v.steps}`}</text>
         </>
       )
     case "message":
