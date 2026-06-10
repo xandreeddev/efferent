@@ -1,7 +1,7 @@
 import { For, Match, Switch } from "solid-js"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Pane } from "../../ui/index.js"
-import { tokens } from "../../../state/theme.js"
+import { glyph, tokens } from "../../../state/theme.js"
 import type { TuiContext } from "../../../state/store.js"
 import { Activity } from "./Activity.js"
 import { ContextView } from "./Context.js"
@@ -14,14 +14,13 @@ const VIEWS = [
 ] as const
 
 /**
- * The side pane: a bordered box whose contents switch between the **Activity**
- * dashboard (live execution tree + stats), the **Context** viewer (the
- * foldable/selectable turn + handoff tree), and the **Tree** viewer (the
- * persistent branching agent-context tree). `sidePane.view` drives the switch;
- * the title follows it, and a tab row makes the sibling views *visible* —
- * without it nothing tells a user the other two exist (`v` cycles them;
- * `:context`/`:tree` jump directly). Width: a fixed 38% column, or the full
- * middle region when this pane is focused + zoomed.
+ * The side pane: a bordered box. **Activity and the agents tree render
+ * together, stacked half-and-half** — `sidePane.view` decides which of the two
+ * owns the keyboard (cursor/folds; `v` cycles, `:tree` jumps) and the tab row
+ * + each half's header show where the keys are. The **context viewer** is a
+ * different tool (curation) and still takes the whole pane when active.
+ * Width: a fixed 38% column, or the full middle region when this pane is
+ * focused + zoomed.
  */
 export const Side = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
@@ -33,6 +32,12 @@ export const Side = (props: { ctx: TuiContext }) => {
   // Full region when zoomed OR when the narrow breakpoint hid the other pane
   // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
   const full = () => focused() && (store.zoomed() || dims().width < 110)
+
+  const half = (label: string, keyed: boolean) => (
+    <text fg={keyed && focused() ? tokens.accent.side : tokens.text.dim} flexShrink={0}>
+      {`${glyph.tree.corner} ${label}`}
+    </text>
+  )
 
   return (
     <Pane
@@ -53,12 +58,22 @@ export const Side = (props: { ctx: TuiContext }) => {
           )}
         </For>
       </box>
-      <Switch fallback={<Activity ctx={props.ctx} />}>
+      <Switch
+        fallback={
+          <>
+            <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+              {half("activity", view() === "stack")}
+              <Activity ctx={props.ctx} />
+            </box>
+            <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+              {half("agents", view() === "tree")}
+              <ContextTreeView ctx={props.ctx} />
+            </box>
+          </>
+        }
+      >
         <Match when={view() === "context"}>
           <ContextView ctx={props.ctx} />
-        </Match>
-        <Match when={view() === "tree"}>
-          <ContextTreeView ctx={props.ctx} />
         </Match>
       </Switch>
     </Pane>
