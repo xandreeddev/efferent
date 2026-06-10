@@ -63,7 +63,7 @@ export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<import("../entities/Skill.js").Skill>
   /** Step budget for each (nested) sub-agent loop. Default 12. */
   readonly maxSteps?: number
-  /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 6. */
+  /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
   readonly maxDepth?: number
   /** Allow the `bash` tool. Default true. */
   readonly allowBash?: boolean
@@ -355,7 +355,7 @@ const makeRunAgentHandler =
   }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
-      const maxDepth = opts.maxDepth ?? 6
+      const maxDepth = opts.maxDepth ?? 2
       if (rc.depth >= maxDepth) {
         return yield* Effect.fail({
           error: "MaxDepthReached",
