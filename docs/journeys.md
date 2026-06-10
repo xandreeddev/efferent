@@ -101,9 +101,10 @@ credential to exercise end-to-end · ⚠ known rough edge (listed at the bottom)
 
 ## Known rough edges (open, ranked)
 
-1. **Live credentialed smoke not yet run** for: a full turn, a populated `:tree`, approval
-   mid-turn, OAuth round-trip. Everything below the LLM call is test-covered; the top leg
-   needs a human with a key.
+1. **Live credentialed smoke** — PARTIALLY done (2026-06-10, real model): a full normal turn,
+   a populated navigator, and a node-resume follow-up (preview → `i` → send → live streaming →
+   persisted) all verified live. Still unexercised: bash approval mid-turn, OAuth round-trip,
+   and a live `run_agent` spawn with tool use.
 2. **Fast input bursts** (paste-speed): an Enter inside the same terminal chunk as text can
    land as a newline instead of running a `:` command. Typing-speed input is fine, and the
    double-Esc case is FIXED (two Escapes in one chunk parse as meta+Esc — now normalized to
