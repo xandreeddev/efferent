@@ -51,7 +51,7 @@ cyan, side = magenta, input = green** (unfocused = gray).
 | Leave the composer (input → conversation, NORMAL) | `Esc` (on a `:`/`/` line it cancels the line first) |
 | Cycle panes (conversation → side → input) | `w` (in NORMAL) |
 | Jump straight to a pane | `Ctrl-k` (conversation) / `Ctrl-l` (side) / `Ctrl-j` (input) — also `Ctrl-arrows` and `Ctrl-h` where the terminal supports them |
-| Cycle the side pane's views | `v` (activity → context → agents; never moves focus) |
+| Cycle the side pane's views | `v` from any pane (activity → context → agents → sessions) — focuses the side pane so the next keys drive the view you swapped to |
 | Back to the composer | `i` |
 | Toggle the full keybind box | `?` (in NORMAL) |
 | Zoom the focused pane | `z` |
@@ -125,11 +125,13 @@ NORMAL; the tab row shows where you are):
 
 - **activity** — the live run dashboard (full pane).
 - **context** — the loaded-context viewer/curator (full pane).
-- **agents** (`:tree`) — **the active session's execution tree only**, split into two
-  reactive sections: the tree in the lower half holds the cursor, and the upper **detail
-  section follows it** — full (unclipped) return summary, seed, files changed, billed
-  tokens, and a running node's **live tool feed**. `↵` opens/talks to a node, `c` forks,
-  `d` drops.
+- **agents** (`:tree`) — **the active session's execution tree only**, anchored by a
+  depth-0 **root agent row** (the active session, `◀ active`) with its sub-agents railed
+  beneath, split into two reactive sections: the tree in the lower half holds the cursor,
+  and the upper **detail section follows it** — full (unclipped) return summary, seed,
+  files changed, billed tokens, and a running node's **live tool feed**. `↵` opens/talks
+  to a node; `↵` on the root closes any open preview — **back to the root agent**; `c`
+  forks, `d` drops.
 - **sessions** (`:sessions`) — every conversation sharing this workspace path, the live one
   tagged `◀ active`; `↵` swaps the active session (the composer and the agents view follow).
 

@@ -443,9 +443,20 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       return true
     case "return": {
       // Enter opens the node's session as a conversation-pane preview (Enter
-      // again on the same node closes it). Folding stays on Tab/h/l/←/→.
+      // again on the same node closes it). Enter on the ROOT row (the active
+      // session anchoring the tree) is "back to the root agent": close any
+      // open preview so the live rail shows and the composer feeds the root
+      // again. Folding stays on Tab/h/l/←/→.
       const row = treeCurrentRow(store.nav(), store.projection())
-      if (row === undefined || row.display.kind !== "node") return true
+      if (row === undefined) return true
+      if (row.display.kind === "conversation") {
+        if (store.nodePreview() !== undefined) closeNodePreview(store)
+        else {
+          store.setFocus("conversation")
+          store.setMode("normal")
+        }
+        return true
+      }
       if (store.nodePreview()?.nodeId === row.display.nodeId) {
         closeNodePreview(store)
       } else {
@@ -794,13 +805,15 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
   }
 
   // `v` cycles the side views (activity → context → agents → sessions) from
-  // ANY pane in NORMAL — the side pane is ambient state, so swapping what it
-  // shows shouldn't require focusing it first. `cycleSideView` never moves
-  // focus, and `preventDefault` insures against the sync-fallthrough class:
-  // an Effect that refocuses the input can complete before OpenTUI delivers
-  // this same keypress to the focused renderable, typing a literal v.
+  // ANY pane in NORMAL — and FOCUSES the side pane, so the next j/k/↵ drive
+  // the view you just swapped to instead of leaking into the conversation.
+  // (Focus moves to a read-only pane, never the input — so the original
+  // v-into-the-textarea bug class can't recur; `preventDefault` insures
+  // against sync fallthrough regardless.)
   if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() !== "input") {
     key.preventDefault?.()
+    store.setFocus("side")
+    store.setMode("normal")
     void ctx.run(cycleSideView(store, store.run.getConversationId()))
     return
   }

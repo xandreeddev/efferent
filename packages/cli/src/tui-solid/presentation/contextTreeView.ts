@@ -130,6 +130,12 @@ export const buildNavRows = (
   nodes: ReadonlyArray<AgentContextNode>,
   collapsed: ReadonlySet<string>,
   currentRef?: string,
+  opts: {
+    /** Nest EVERY parentless node under the (single) conversation row, ignoring
+     *  `rootConversationId` — for a pre-scoped node list whose synthetic root
+     *  may not know the real conversation id yet. */
+    readonly adoptAll?: boolean
+  } = {},
 ): ReadonlyArray<TreeRowData> => {
   const byParent = childrenByParent(nodes)
   const rows: TreeRowData[] = []
@@ -196,9 +202,10 @@ export const buildNavRows = (
   }
 
   for (const conv of conversations) {
-    const agentRoots = (byParent.get(null) ?? []).filter(
-      (r) => r.rootConversationId === conv.id,
-    )
+    const agentRoots =
+      opts.adoptAll === true
+        ? (byParent.get(null) ?? [])
+        : (byParent.get(null) ?? []).filter((r) => r.rootConversationId === conv.id)
     const hasChildren = agentRoots.length > 0
     const foldId = hasChildren ? `tree:conv:${conv.id}` : undefined
     const folded = foldId !== undefined && collapsed.has(foldId)
