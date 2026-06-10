@@ -64,7 +64,7 @@ const Stats = (props: { ctx: TuiContext }) => {
  *  the pure row. */
 const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) => {
   const n = props.node
-  const isContainer = n.kind === "turn" || n.kind === "subagent"
+  const isContainer = n.kind === "run" || n.kind === "turn" || n.kind === "subagent"
   const nodeGlyph = () => {
     if (isContainer) return foldCaret(props.folded)
     if (n.status === "running") return glyph.spinner[props.spinner % glyph.spinner.length]
@@ -79,9 +79,10 @@ const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) =>
           : tokens.text.muted
       : statusColor(n.status)
   const suffix = () => {
+    const unit = n.kind === "run" ? "turn" : "tool"
     const count =
       props.folded && n.children.length > 0
-        ? ` · ${n.children.length} tool${n.children.length === 1 ? "" : "s"}`
+        ? ` · ${n.children.length} ${unit}${n.children.length === 1 ? "" : "s"}`
         : ""
     const detail = n.detail !== undefined ? ` ${n.detail}` : ""
     const dur = isContainer ? ` ${fmtDur((n.endedAt ?? Date.now()) - n.startedAt)}` : ""
@@ -90,8 +91,15 @@ const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) =>
   return (
     <>
       <text fg={glyphColor()}>{`${nodeGlyph()} `}</text>
-      <text fg={tokens.text.default}>{n.label}</text>
-      <text fg={tokens.text.dim}>{suffix()}</text>
+      {/* A run root IS the user's message — same quiet prompt styling as the
+          conversation rail, so the two panes read as one vocabulary. */}
+      <Show when={n.kind === "run"}>
+        <text fg={tokens.text.dim}>{`${glyph.msg.user} `}</text>
+      </Show>
+      <text fg={n.kind === "run" ? tokens.text.user : tokens.text.default} wrapMode="none">
+        {n.label}
+      </text>
+      <text fg={tokens.text.dim} wrapMode="none">{suffix()}</text>
     </>
   )
 }
@@ -150,19 +158,41 @@ export const Activity = (props: { ctx: TuiContext }) => {
   const focused = () => store.focus() === "side" && store.sidePane().view === "stack"
   const rows = () => buildStackRowsData(store.projection(), store.nav().stackCollapsed)
   const cursor = () => clampCursor(rows().length, store.nav().stackCursor)
+  // The row list is ordered tree-then-sections; the tree scrolls, the
+  // workspace sections (files/skills/instructions) pin at the pane bottom.
+  // Both halves keep their GLOBAL row index so the cursor maps 1:1.
+  const splitAt = () => {
+    const r = rows()
+    const i = r.findIndex((row) => row.display.kind !== "node")
+    return i === -1 ? r.length : i
+  }
+  const treeRowsPart = () => rows().slice(0, splitAt())
+  const sectionRowsPart = () => rows().slice(splitAt())
 
   let sb!: ScrollBoxRenderable
   // Scroll the cursor into view ONLY when it actually moves (not on every tree
   // append) — otherwise a streaming run would yank the view back to a stale
   // cursor and strand the freshly-added bottom nodes. Sticky-bottom owns "follow
-  // new content"; the cursor owns "jump on keypress".
+  // new content"; the cursor owns "jump on keypress". Section rows live outside
+  // the scrollbox (always visible), so only tree rows scroll in.
   createEffect(
     on(
       () => store.nav().stackCursor,
       () => {
-        if (focused() && sb) sb.scrollChildIntoView(`stk-row-${cursor()}`)
+        if (focused() && sb && cursor() < splitAt()) sb.scrollChildIntoView(`stk-row-${cursor()}`)
       },
     ),
+  )
+
+  const rowBox = (row: StackRowData, i: number) => (
+    <box
+      id={`stk-row-${i}`}
+      flexDirection="row"
+      marginLeft={indentOf(row)}
+      {...(focused() && i === cursor() ? { backgroundColor: tokens.cursorLine } : {})}
+    >
+      <StackRowView display={row.display} spinner={store.spinner()} />
+    </box>
   )
 
   return (
@@ -182,19 +212,14 @@ export const Activity = (props: { ctx: TuiContext }) => {
         <Show when={store.projection().tree.roots.length === 0}>
           <text fg={tokens.text.dim}>(idle)</text>
         </Show>
-        <For each={rows()}>
-          {(row, i) => (
-            <box
-              id={`stk-row-${i()}`}
-              flexDirection="row"
-              marginLeft={indentOf(row)}
-              {...(focused() && i() === cursor() ? { backgroundColor: tokens.cursorLine } : {})}
-            >
-              <StackRowView display={row.display} spinner={store.spinner()} />
-            </box>
-          )}
-        </For>
+        <For each={treeRowsPart()}>{(row, i) => rowBox(row, i())}</For>
       </scrollbox>
+      {/* Workspace sections pinned under the run tree, behind a rule — capped
+          so an expanded file list can't squeeze the live tree out. */}
+      <box flexDirection="column" flexShrink={0} maxHeight="45%" overflow="hidden" marginTop={1}>
+        <text fg={tokens.text.dim} flexShrink={0}>{`${glyph.seedRule} workspace ${glyph.seedRule}`}</text>
+        <For each={sectionRowsPart()}>{(row, i) => rowBox(row, splitAt() + i())}</For>
+      </box>
     </>
   )
 }

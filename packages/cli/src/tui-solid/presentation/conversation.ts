@@ -136,8 +136,8 @@ const isBoundary = (block: ScrollbackBlock): boolean =>
 const isBigUser = (text: string): boolean =>
   text.length > 160 || text.split("\n").length >= 3
 
-/** First line of a user message, truncated, for use as a turn-header subject. */
-const subjectLine = (text: string): string => {
+/** First line of a user message, truncated — the turn-header / Activity-run subject. */
+export const subjectLine = (text: string): string => {
   const line = (text.split("\n", 1)[0] ?? text).trimEnd()
   return line.length > 80 ? `${line.slice(0, 79)}…` : line
 }

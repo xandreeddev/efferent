@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import {
   emptyTree,
   onSubAgentEndKeyed,
+  onRunEnd,
+  onRunStart,
   onSubAgentStartKeyed,
   onToolStartUnder,
   onTurnStart,
@@ -61,5 +63,47 @@ describe("keyed sub-agent attribution (parallel fan-out)", () => {
     const { tree } = onSubAgentStartKeyed(emptyTree, "run_agent → auth", undefined, 1)
     expect(tree.roots.map((r) => r.label)).toEqual(["run_agent → auth"])
     expect(tree.openPath).toEqual([]) // never becomes the open container
+  })
+})
+
+describe("run containers (per-user-message grouping)", () => {
+  test("turns nest under the open run; a new run closes the previous one", () => {
+    const r1 = onRunStart(emptyTree, "fix the bug", 1)
+    let tree = onTurnStart(r1.tree, 0, 2)
+    tree = onTurnStart(tree, 1, 3)
+    const r2 = onRunStart(tree, "now add tests", 4)
+    tree = onTurnStart(r2.tree, 0, 5)
+
+    expect(tree.roots.map((r) => r.label)).toEqual(["fix the bug", "now add tests"])
+    const run1 = find(tree.roots, "fix the bug")!
+    expect(run1.kind).toBe("run")
+    expect(run1.status).toBe("ok") // closed by the second run's start
+    expect(run1.children.map((c) => c.label)).toEqual(["turn 1", "turn 2"])
+    const run2 = find(tree.roots, "now add tests")!
+    expect(run2.status).toBe("running")
+    expect(run2.children.map((c) => c.label)).toEqual(["turn 1"])
+  })
+
+  test("onRunEnd seals the run and any still-open descendants (interrupt path)", () => {
+    const r = onRunStart(emptyTree, "long task", 1)
+    let tree = onTurnStart(r.tree, 0, 2)
+    tree = onRunEnd(tree, true, 3)
+    const run = find(tree.roots, "long task")!
+    expect(run.status).toBe("ok")
+    expect(run.children[0]!.status).toBe("ok")
+    expect(tree.openPath).toEqual([])
+  })
+
+  test("onRunEnd is a no-op when no run is open (preview-driven turns)", () => {
+    const tree = onTurnStart(emptyTree, 0, 1)
+    expect(onRunEnd(tree, true, 2)).toBe(tree)
+  })
+
+  test("a keyed spawn anchors under the open run's turn", () => {
+    const r = onRunStart(emptyTree, "spawn stuff", 1)
+    const tree = onTurnStart(r.tree, 0, 2)
+    const spawned = onSubAgentStartKeyed(tree, "run_agent → auth", undefined, 3)
+    const turn = find(spawned.tree.roots, "turn 1")!
+    expect(turn.children.map((c) => c.label)).toEqual(["run_agent → auth"])
   })
 })

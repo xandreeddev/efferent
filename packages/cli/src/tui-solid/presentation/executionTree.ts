@@ -5,7 +5,7 @@
  */
 
 export type NodeStatus = "running" | "ok" | "error"
-export type NodeKind = "turn" | "tool" | "subagent" | "skill"
+export type NodeKind = "run" | "turn" | "tool" | "subagent" | "skill"
 
 export interface TreeNode {
   readonly id: number
@@ -115,6 +115,52 @@ const closeNode = (
 })
 
 // ---- reducers (one per event) ----
+
+/**
+ * Start a RUN — the per-user-message root container the turns group under
+ * (labelled with the prompt). Anything still open from the previous run is
+ * closed first (`openPath` reset), so a run is always a depth-0 root and the
+ * Activity pane reads `❯ prompt → its turns → their tools` instead of a flat
+ * wall of `turn N` lines.
+ */
+export const onRunStart = (
+  tree: ExecutionTree,
+  subject: string,
+  now: number,
+): { tree: ExecutionTree; id: number } => {
+  // Close whatever the previous run left open (its run node + any open turn).
+  let base = tree
+  for (let i = base.openPath.length - 1; i >= 0; i--) {
+    const id = base.openPath[i]!
+    const node = findNode(base.roots, id)
+    if (node !== undefined && node.status === "running") {
+      base = closeNode(base, id, "ok", undefined, now)
+    }
+  }
+  base = { ...base, openPath: [] }
+  const { tree: t, id } = addNode(base, {
+    kind: "run",
+    label: subject,
+    status: "running",
+    startedAt: now,
+  })
+  return { tree: { ...t, openPath: [id] }, id }
+}
+
+/** Close the run root (the turn inside was already closed by the loop's end). */
+export const onRunEnd = (tree: ExecutionTree, ok: boolean, now: number): ExecutionTree => {
+  const runId = tree.openPath[0]
+  if (runId === undefined || findNode(tree.roots, runId)?.kind !== "run") return tree
+  // Close any still-open descendants too (an interrupt skips their end events).
+  let base = tree
+  for (let i = base.openPath.length - 1; i >= 0; i--) {
+    const id = base.openPath[i]!
+    if (findNode(base.roots, id)?.status === "running") {
+      base = closeNode(base, id, ok ? "ok" : "error", undefined, now)
+    }
+  }
+  return { ...base, openPath: [] }
+}
 
 /** Start a turn under the deepest open sub-agent (or root). */
 export const onTurnStart = (
