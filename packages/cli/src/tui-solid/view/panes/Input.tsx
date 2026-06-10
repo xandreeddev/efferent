@@ -104,8 +104,15 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     }
   }
 
+  // While a node-session preview is open, messages route to THAT sub-agent
+  // (submit's preview branch) — the title must say so or the redirect is silent.
+  const title = () => {
+    const p = store.nodePreview()
+    return p === undefined ? "input" : `input → ${p.title}`
+  }
+
   return (
-    <Pane kind="input" focused={focused()} title="input">
+    <Pane kind="input" focused={focused()} title={title()}>
       <textarea
         ref={ref}
         height={rows()}
