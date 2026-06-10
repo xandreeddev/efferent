@@ -1,7 +1,7 @@
 import { basename } from "node:path"
 import { createMemo, For, Show } from "solid-js"
 import type { AgentContextNode } from "@efferent/core"
-import { findByNodeId } from "../../../presentation/executionTree.js"
+import { findByNodeId, type TreeNode } from "../../../presentation/executionTree.js"
 import { treeCurrentRow } from "../../../presentation/sidePane.js"
 import { formatTokens } from "../../../presentation/statusBar.js"
 import { glyph, tokens } from "../../../state/theme.js"
@@ -93,6 +93,56 @@ const NodeView = (props: { ctx: TuiContext; node: AgentContextNode }) => {
   )
 }
 
+/** The newest still-running tool anywhere in the live execution tree. */
+const runningToolLabel = (roots: ReadonlyArray<TreeNode>): string | undefined => {
+  let found: string | undefined
+  const walk = (n: TreeNode): void => {
+    if (n.kind === "tool" && n.status === "running") found = n.label
+    for (const c of n.children) walk(c)
+  }
+  for (const r of roots) walk(r)
+  return found
+}
+
+/**
+ * Root-agent detail: the live state of the conversation itself — context
+ * gauge, turns, files touched, and what it's executing right now. The root is
+ * where the cursor starts; this half must say something worth half a pane.
+ */
+const RootView = (props: { ctx: TuiContext; label: string }) => {
+  const { store } = props.ctx
+  const sp = () => store.sidePane()
+  const stats = () => sp().stats
+  const current = () => runningToolLabel(sp().tree.roots)
+  return (
+    <box flexDirection="column" overflow="hidden">
+      <box flexDirection="row" flexShrink={0}>
+        <text fg={store.busy() ? tokens.state.running : tokens.state.ok} flexShrink={0}>
+          {`${glyph.railDot} `}
+        </text>
+        <text fg={tokens.text.default} wrapMode="none">
+          {props.label}
+        </text>
+      </box>
+      <text fg={tokens.text.dim} wrapMode="none">
+        {`  ctx ${formatTokens(stats().inputTokens)}/${formatTokens(stats().contextWindow)} · ${stats().turns} turn${stats().turns === 1 ? "" : "s"} · ${sp().filesChanged.length} file${sp().filesChanged.length === 1 ? "" : "s"}`}
+      </text>
+      <Show
+        when={store.busy()}
+        fallback={
+          <text fg={tokens.text.dim} wrapMode="none">
+            {"  idle · ↵ shows its rail · i to talk to it"}
+          </text>
+        }
+      >
+        <text fg={tokens.state.running} wrapMode="none">
+          {`  ${glyph.connector} ${current() ?? "thinking…"}`}
+        </text>
+      </Show>
+    </box>
+  )
+}
+
 export const NodeDetail = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const row = createMemo(() => treeCurrentRow(store.nav(), store.projection()))
@@ -110,16 +160,7 @@ export const NodeDetail = (props: { ctx: TuiContext }) => {
           when={row()?.display.kind === "conversation"}
           fallback={<text fg={tokens.text.dim}>(nothing selected)</text>}
         >
-          <box flexDirection="column">
-            <text fg={tokens.text.default} wrapMode="word">
-              {(row()!.display as { label: string }).label}
-            </text>
-            <text fg={tokens.text.dim} wrapMode="none">
-              {(row()!.display as { active: boolean }).active
-                ? "the live session — the composer feeds it"
-                : "↵ make this the active session"}
-            </text>
-          </box>
+          <RootView ctx={props.ctx} label={(row()!.display as { label: string }).label} />
         </Show>
       }
     >
