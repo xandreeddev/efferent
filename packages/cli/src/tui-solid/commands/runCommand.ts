@@ -29,7 +29,7 @@ const newConversationId = (): ConversationId =>
 
 const HELP: ReadonlyArray<string> = [
   "Panes: Ctrl-h/j/k/l move focus (conversation · side · input) · z zoom",
-  "Input: type a message, Shift-Enter sends (Alt-Enter too) · Enter newline · Esc interrupts a run",
+  "Input: type a message, Enter sends · Shift-Enter / Ctrl-J newline · Esc interrupts a run",
   "Session: :clear :reset :handoff · :browse / :resume <#|id> switch conversations",
   "Context: :context opens the viewer (j/k move · Space pick · b build) · :build",
   "Model: :model picks a model · :effort thinking level · :search web-search config",

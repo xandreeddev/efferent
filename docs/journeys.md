@@ -26,7 +26,7 @@ credential to exercise end-to-end · ⚠ known rough edge (listed at the bottom)
 
 **Type → send → watch the agent work → read the result.**
 
-- Compose (multi-line textarea, Shift-Enter sends) → user block renders → activity gauge
+- Compose (multi-line textarea, Enter sends · Shift-Enter/Ctrl-J newline) → user block renders → activity gauge
   starts → assistant prose as markdown, tool pills with `⎿` results, edit diffs highlighted →
   turn folds when done. Esc interrupts the fiber (structured — sub-agents die with it).
 - Tool failures come back as data the model reads (`failureMode: "return"`,

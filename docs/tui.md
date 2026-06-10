@@ -246,7 +246,8 @@ A multi-line `<textarea>` that grows from 1 to 8 rows.
 | Action | Keys |
 |---|---|
 | Insert a newline | `Enter` |
-| **Send** the message | `Shift-Enter` (also `Alt-Enter`) |
+| **Send** the message | `Enter` (also `Alt-Enter`) |
+| Insert a **newline** | `Shift-Enter` (Kitty-protocol terminals) · `Ctrl-J` (everywhere) · pasted newlines are kept |
 | Interrupt a running turn | `Esc` |
 | Recall sent-message history | `↑` / `↓` (on an empty single-line buffer) |
 | Open the command palette | type `:` |

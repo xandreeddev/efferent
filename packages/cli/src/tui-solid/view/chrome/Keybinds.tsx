@@ -36,14 +36,14 @@ const paneRow = (ctx: TuiContext): string => {
           return "act   j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type"
       }
     case "input":
-      return "input ⇧↵ send · ↵ newline · esc panes · : cmd · / search"
+      return "input ↵ send · ⇧↵/^J newline · esc panes · : cmd · / search"
   }
 }
 
 /** The one-row strip: the focused context's essentials + how to get more. */
 const strip = (ctx: TuiContext): string => {
   const { store } = ctx
-  if (store.focus() === "input") return "esc panes · : cmd · / search · ⇧↵ send"
+  if (store.focus() === "input") return "esc panes · : cmd · / search · ↵ send"
   const pane =
     store.focus() === "side"
       ? store.sidePane().view === "context"
