@@ -558,7 +558,7 @@ const sideSessionsKey = (ctx: TuiContext, key: Key): boolean => {
  * textarea would otherwise handle (see `Key.preventDefault`):
  *
  *  - command palette open (buffer is a bare `:token`): `↑`/`↓` move the highlight,
- *    `⇥`/`→` complete the buffer to it, `↵` runs it (no Shift-Enter needed);
+ *    `⇥`/`→` complete the buffer to it, `↵` runs it;
  *  - any `:command` / `/search` line: `↵` runs it;
  *  - a single-line ordinary message: `↑`/`↓` recall sent-message history.
  *

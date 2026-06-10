@@ -8,19 +8,24 @@ import { Pane } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
- * Textarea keymap: **Enter inserts a newline, Shift+Enter submits.** Enter→newline
- * and Meta/Alt+Enter→submit are OpenTUI's defaults; we only add Shift+Enter→submit
- * on top (the rest — arrows, word motions, backspace, Ctrl-U/W kills, undo/redo —
- * is inherited unchanged).
+ * Textarea keymap: **Enter submits, Shift+Enter inserts a newline** (chat
+ * convention). We override OpenTUI's Enter→newline default; Meta/Alt+Enter→
+ * submit stays, and the rest — arrows, word motions, backspace, Ctrl-U/W
+ * kills, undo/redo — is inherited unchanged.
  *
  * Shift+Enter needs a terminal that disambiguates it from Enter via the Kitty
  * keyboard protocol (OpenTUI negotiates it by default — kitty / ghostty / foot /
  * wezterm / recent alacritty, or tmux with `extended-keys on`). Where the
- * terminal can't, Shift+Enter is indistinguishable from Enter (so it inserts a
- * newline) — but **Alt+Enter always submits** (the ESC-prefixed default works
- * without the protocol), so there is always a keyboard path to send.
+ * terminal can't, Shift+Enter is indistinguishable from Enter (so it submits) —
+ * but **Ctrl-J always inserts a newline** (a bare linefeed maps to the
+ * `newline` action without any protocol), so multi-line input always has a
+ * keyboard path. Pasted newlines are preserved regardless.
  */
-const KEY_BINDINGS = [{ name: "return", shift: true, action: "submit" as const }]
+const KEY_BINDINGS = [
+  { name: "return", action: "submit" as const },
+  { name: "kpenter", action: "submit" as const },
+  { name: "return", shift: true, action: "newline" as const },
+]
 
 const MAX_ROWS = 8
 
@@ -117,7 +122,7 @@ export const InputBox = (props: { ctx: TuiContext }) => {
         ref={ref}
         height={rows()}
         keyBindings={KEY_BINDINGS}
-        placeholder="Message…  (⇧↵ to send)"
+        placeholder="Message…  (↵ to send)"
         textColor={tokens.text.default}
         wrapMode="word"
         onContentChange={() => {

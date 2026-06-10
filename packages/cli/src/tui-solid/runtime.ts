@@ -138,7 +138,7 @@ export const runTuiModeSolid = (
         // speaks for itself.
         store.pushBlock({
           kind: "info",
-          text: "type to chat (⇧↵ sends) · : for commands (:help) · ? for keys",
+          text: "type to chat (↵ sends) · : for commands (:help) · ? for keys",
         })
         yield* openConversationPicker(store, input.cwd)
       }
