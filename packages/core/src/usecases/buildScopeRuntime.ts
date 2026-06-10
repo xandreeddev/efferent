@@ -112,8 +112,12 @@ const RunAgentTool = Tool.make("run_agent", {
     "writes/runs bash only inside that folder, runs in its own persisted context, and " +
     "returns { summary, filesChanged, nodeId }. Prefer it when a change is localized to one " +
     "area; it keeps your own context focused. Be explicit in 'task' — the sub-agent starts " +
-    "fresh unless you resume/branch a node. To continue prior work, pass seedFromNode with " +
-    "seedMode: 'resume' (keep working in that node) or 'branch' (a new node from its context).",
+    "fresh unless you resume/branch a node. DEFAULT TO A FRESH SPAWN: one agent = one piece " +
+    "of work; a new task gets a new agent even in the same folder (fresh context is cheaper " +
+    "and more focused — a resume re-feeds the node's entire history every turn). Reuse a node " +
+    "only when the new task is a direct follow-up on that node's OWN work: seedMode 'resume' " +
+    "to continue/fix/extend what it just did (its accumulated file knowledge pays for itself), " +
+    "'branch' to retry or take an alternative direction from its context without growing it.",
   parameters: {
     folder: Schema.String.annotations({
       description:
@@ -124,7 +128,10 @@ const RunAgentTool = Tool.make("run_agent", {
         "The focused task: what to change and any constraints. The sub-agent has no prior context unless seeded — be explicit.",
     }),
     seedFromNode: Schema.optional(Schema.String).annotations({
-      description: "An existing context-node id to resume or branch from (from a prior run_agent result).",
+      description:
+        "An existing context-node id (from a prior run_agent result) — ONLY when the task is a " +
+        "direct follow-up on that node's own work (continue/fix/extend it). An unrelated task, " +
+        "even in the same folder, gets a fresh spawn instead.",
     }),
     seedMode: Schema.optional(Schema.Literal("resume", "branch")).annotations({
       description: "With seedFromNode: 'resume' continues that node; 'branch' starts a new node seeded from it. Defaults to 'branch'.",
