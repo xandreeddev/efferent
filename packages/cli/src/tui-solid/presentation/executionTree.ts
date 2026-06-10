@@ -15,6 +15,9 @@ export interface TreeNode {
   readonly status: NodeStatus
   readonly startedAt: number
   readonly endedAt?: number
+  /** For `subagent` containers: the persistent context-tree node id — lets the
+   *  navigator's detail panel find a selected node's LIVE activity. */
+  readonly nodeId?: string
   readonly children: ReadonlyArray<TreeNode>
 }
 
@@ -207,6 +210,7 @@ export const onSubAgentStartKeyed = (
   label: string,
   parentId: number | undefined,
   now: number,
+  nodeId?: string,
 ): { tree: ExecutionTree; id: number } => {
   const id = tree.nextId
   const full: TreeNode = {
@@ -215,6 +219,7 @@ export const onSubAgentStartKeyed = (
     label,
     status: "running",
     startedAt: now,
+    ...(nodeId !== undefined ? { nodeId } : {}),
     children: [],
   }
   const anchor = parentId ?? openTurnId(tree)
@@ -240,6 +245,19 @@ export const onToolStartUnder = (
     children: [],
   }
   return { tree: { ...tree, roots: appendChild(tree.roots, parentId, full), nextId: id + 1 }, id }
+}
+
+/** Find a sub-agent container by its persistent context-node id, anywhere. */
+export const findByNodeId = (
+  roots: ReadonlyArray<TreeNode>,
+  nodeId: string,
+): TreeNode | undefined => {
+  for (const r of roots) {
+    if (r.kind === "subagent" && r.nodeId === nodeId) return r
+    const inner = findByNodeId(r.children, nodeId)
+    if (inner !== undefined) return inner
+  }
+  return undefined
 }
 
 /** Close a keyed sub-agent container by its tree id (parallel-safe). */
