@@ -18,8 +18,8 @@ import type { ContextUsage } from "../entities/AgentContext.js"
  * stop reason in the node's summary so the parent knows the result is partial.
  */
 
-/** Default pool: 500k tokens per top-level turn across all sub-agents. */
-export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 500_000
+/** Default pool: 1M tokens per top-level turn across all sub-agents. */
+export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 1_000_000
 
 /** A live pool, or `null` when the budget is disabled (`<= 0`). */
 export type TokenPool = Ref.Ref<number> | null
