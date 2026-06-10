@@ -10,7 +10,7 @@ import { ContextTreeView } from "./ContextTree.js"
 const VIEWS = [
   { id: "stack", label: "activity" },
   { id: "context", label: "context" },
-  { id: "tree", label: "tree" },
+  { id: "tree", label: "agents" },
 ] as const
 
 /**
@@ -29,7 +29,7 @@ export const Side = (props: { ctx: TuiContext }) => {
   const focused = () => store.focus() === "side"
   const view = () => store.sidePane().view
   const title = () =>
-    view() === "context" ? "context" : view() === "tree" ? "tree" : "activity"
+    view() === "context" ? "context" : view() === "tree" ? "agents" : "activity"
   // Full region when zoomed OR when the narrow breakpoint hid the other pane
   // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
   const full = () => focused() && (store.zoomed() || dims().width < 110)

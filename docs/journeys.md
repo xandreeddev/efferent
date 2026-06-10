@@ -45,10 +45,16 @@ credential to exercise end-to-end · ⚠ known rough edge (listed at the bottom)
 - `run_agent({folder, task})` spawns folder-sandboxed sub-agents; independent folders run in
   parallel (same-folder spawns queue on a per-folder lock); all spawns share one token budget
   per turn, refusals/partial-stops are model-readable. ✅
-- `:tree` browses the persisted tree: status glyphs, provenance, seed kind, billed tokens,
-  `stale` badges (workspace moved since the node ran), `d` drops a subtree, live refresh
-  while a run spawns. ✅ (pure model + store) · 🖥 (empty state, nav) · 🔑 (populated, live)
-- Resume/branch a node (`seedFromNode`/`seedMode`) — staleness brief injected when HEAD
+- `:tree` is the **agent navigation pane**: workspace conversations as git-graph roots (the
+  live one tagged `◀ active`), each with its persisted agent subtree railed beneath — status
+  glyphs, provenance, seed kind, billed tokens, `stale` badges, `d` drops a subtree, refresh
+  at turn end. ✅ (pure model + store) · 🖥 (populated, seeded store)
+- **Swap sessions from the tree**: `↵` on a conversation makes it the active session; `↵` on
+  an agent node opens a read-only **session preview** in the conversation pane (seed/run
+  boundary marked from the persisted `seedMessageCount`; `q`/`↵`/idle-Esc closes); `c` forks
+  a node's context into a new conversation and makes it active. Swaps/forks refused
+  mid-turn. ✅ 🖥 (seeded store, wide + narrow)
+- Agent-driven resume/branch (`seedFromNode`/`seedMode`) — staleness brief injected when HEAD
   moved. ✅
 - **The populated live journey (spawn → running nodes → resume) is the one remaining
   unverified leg — it needs a credentialed smoke.** 🔑
