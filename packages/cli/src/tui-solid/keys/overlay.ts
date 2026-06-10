@@ -24,6 +24,8 @@ import {
 } from "../presentation/settingsView.js"
 import { applyModelSelection } from "../actions/model.js"
 import { applyTheme } from "../actions/theme.js"
+import { Effect } from "effect"
+import { refreshNav } from "../actions/contextTree.js"
 import { resumeConversation } from "../actions/session.js"
 import {
   applyEffort,
@@ -72,8 +74,14 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
       return
     case "conversation": {
       // A ConversationId resumes it; `null` (start new) or no pick → stay fresh.
+      // The nav refresh keeps the agents/sessions root row on the NEW session.
       const id = value as ConversationId | null | undefined
-      if (id != null) void ctx.run(resumeConversation(store, id))
+      if (id != null)
+        void ctx.run(
+          resumeConversation(store, id).pipe(
+            Effect.zipRight(refreshNav(store, id).pipe(Effect.catchAll(() => Effect.void))),
+          ),
+        )
       return
     }
   }
