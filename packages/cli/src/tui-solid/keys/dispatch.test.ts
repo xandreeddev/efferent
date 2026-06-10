@@ -284,6 +284,59 @@ test("v on the side pane cycles tree→activity: preventDefault'd, focus never m
   expect(h.store.input()).toBe("") // no stray character reached the buffer
 })
 
+// --- node-session preview (the :tree Enter overlay) --------------------------
+
+const openPreview = (h: Harness): void => {
+  h.store.setCollapsed(new Set(["turn:0"]))
+  h.store.setNodePreview({
+    nodeId: "node-1",
+    title: "agent: adapters",
+    blocks: [{ kind: "info", text: "agent adapters · spawned · seed: task" }],
+    savedCollapsed: h.store.collapsed(),
+  })
+  h.store.setCollapsed(new Set())
+  h.store.setFocus("conversation")
+  h.store.setMode("normal")
+}
+
+test("q closes the preview: overlay dropped, folds restored, focus back to side", () => {
+  const h = harness()
+  h.store.setBlocks([{ kind: "user", text: "live rail" }])
+  openPreview(h)
+  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["info"]) // overlay shows
+  dispatch(h.ctx, key("q"))
+  expect(h.store.nodePreview()).toBeUndefined()
+  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["user"]) // live rail back
+  expect([...h.store.collapsed()]).toEqual(["turn:0"]) // folds restored
+  expect(h.store.focus()).toBe("side")
+  expect(h.scroll.at(-1)).toBe("bottom")
+})
+
+test("Esc (idle, no search) closes the preview; Esc while busy interrupts and keeps it", () => {
+  const h = harness()
+  let interrupted = 0
+  const ctx: TuiContext = { ...h.ctx, interrupt: () => void (interrupted += 1) }
+  openPreview(h)
+  h.store.setBusy(true)
+  dispatch(ctx, key("escape"))
+  expect(interrupted).toBe(1)
+  expect(h.store.nodePreview()).toBeDefined() // busy Esc = interrupt only
+  h.store.setBusy(false)
+  dispatch(ctx, key("escape"))
+  expect(h.store.nodePreview()).toBeUndefined()
+})
+
+test("an active conversation search makes Esc clear the search before the preview", () => {
+  const h = harness()
+  openPreview(h)
+  h.store.setSearch({ query: "x", pane: "conversation", matchIds: [], index: 0 })
+  dispatch(h.ctx, key("escape"))
+  expect(h.store.search()).toBeUndefined() // search cleared…
+  expect(h.store.nodePreview()).toBeDefined() // …preview still open
+  dispatch(h.ctx, key("escape"))
+  expect(h.store.nodePreview()).toBeUndefined()
+})
+
 test("plain Ctrl-C still arms quit (shift excluded)", () => {
   const h = harness()
   dispatch(h.ctx, key("c", { ctrl: true }))
