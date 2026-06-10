@@ -32,7 +32,7 @@ const Row = (props: { row: TreeRowData; active: boolean }) => {
   return (
     <box
       flexDirection="row"
-      {...(props.active ? { backgroundColor: tokens.cursorLine } : {})}
+      backgroundColor={props.active ? tokens.cursorLine : tokens.bgNone}
     >
       <Show when={props.row.rail.prefix.length > 0}>
         <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{props.row.rail.prefix}</text>

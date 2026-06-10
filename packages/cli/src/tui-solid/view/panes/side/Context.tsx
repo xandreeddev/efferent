@@ -25,7 +25,7 @@ const Row = (props: { row: ContextRowData; active: boolean }) => {
     <box
       flexDirection="row"
       marginLeft={indent()}
-      {...(props.active ? { backgroundColor: tokens.cursorLine } : {})}
+      backgroundColor={props.active ? tokens.cursorLine : tokens.bgNone}
     >
       {renderSegments(d)}
     </box>
