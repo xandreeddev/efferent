@@ -143,10 +143,14 @@ A live dashboard of the run:
 
 - **Context gauge** — tokens used vs the model's window (cached tokens shown dim).
 - **Cumulative** output tokens, turns, elapsed time; **per-LLM-call** usage + duration.
-- **Files changed** — a `+/-` diffstat per file.
-- Foldable **skills** and **instructions** sections.
+- **Run tree** — every user message opens a **run container** (`❯ <prompt>`, the same quiet
+  prompt styling as the conversation rail) with its turns → tools → sub-agents nested under
+  it. The current run stays expanded while it streams; **sending the next message folds the
+  previous runs** to one line each (`▸ ❯ <prompt> · N turns`).
+- **Workspace sections** pinned at the pane bottom behind a `── workspace ──` rule:
+  **files changed** (`+/-` diffstat per file), foldable **skills** and **instructions**.
 
-It has its own block cursor; **a new user message collapses the previous run's tree**.
+It has its own block cursor over all of it (tree + sections).
 
 | Action | Keys |
 |---|---|
