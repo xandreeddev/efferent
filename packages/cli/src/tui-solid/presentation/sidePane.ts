@@ -359,7 +359,7 @@ export const buildStackRowsData = (
   const rows: StackRowData[] = []
 
   const walk = (node: TreeNode, depth: number): void => {
-    const container = node.kind === "turn" || node.kind === "subagent"
+    const container = node.kind === "run" || node.kind === "turn" || node.kind === "subagent"
     const foldId = container ? `node:${node.id}` : undefined
     const folded = foldId !== undefined && collapsed.has(foldId)
     rows.push({

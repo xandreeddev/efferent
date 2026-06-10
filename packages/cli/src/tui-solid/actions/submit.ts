@@ -12,6 +12,8 @@ import {
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
+import { subjectLine } from "../presentation/conversation.js"
+import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
@@ -156,6 +158,25 @@ export const makeSubmit = (
       // to read (which disengages sticky-follow): your own message — and the
       // reply about to stream under it — is always brought into view.
       store.convScroller.current?.scrollToBottom()
+      // Activity: fold the previous runs' roots (this message starts a new
+      // story — the old ones compress to one line each) and open a fresh run
+      // container labelled with the prompt; the loop's turns nest under it.
+      const prevRoots = store
+        .projection()
+        .tree.roots.filter((r) => r.kind === "run" || r.kind === "turn")
+      if (prevRoots.length > 0) {
+        store.setNav((n) => ({
+          ...n,
+          stackCollapsed: new Set([
+            ...n.stackCollapsed,
+            ...prevRoots.map((r) => `node:${r.id}`),
+          ]),
+        }))
+      }
+      store.setProjection((p) => ({
+        ...p,
+        tree: onRunStart(p.tree, subjectLine(text), Date.now()).tree,
+      }))
       store.setBusy(true)
       store.setNote("working…")
 
@@ -168,6 +189,9 @@ export const makeSubmit = (
         store.setBusy(false)
         store.setNote(undefined)
         store.run.setFiber(undefined)
+        // Seal the Activity run container (closes any still-open descendants
+        // too — an interrupt skips their end events).
+        store.setProjection((p) => ({ ...p, tree: onRunEnd(p.tree, true, Date.now()) }))
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
         yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
