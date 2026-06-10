@@ -95,6 +95,9 @@ const renderNode = (d: () => TreeNodeDisplay) => {
       <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
         {v.folder}
       </text>
+      <Show when={v.active}>
+        <text fg={tokens.accent.side} wrapMode="none" flexShrink={0}>{`  ${glyph.activeTag} active`}</text>
+      </Show>
       <Show when={meta.length > 0}>
         <text fg={tokens.text.dim} wrapMode="none">{`  ${meta}`}</text>
       </Show>
@@ -122,8 +125,9 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
   // holds the keys (in the split layout activity may hold them).
   const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
   // The SHARED flatten (root-agent anchor + this session's nodes) — must match
-  // the keymap's `treeRows` exactly or the cursor and the pixels disagree.
-  const rows = () => treeRows(sp(), sp())
+  // the keymap's `treeRows` exactly or the cursor and the pixels disagree
+  // (the active-node id is display-only, so the keymap omitting it is fine).
+  const rows = () => treeRows(sp(), sp(), store.nodePreview()?.nodeId)
   const cursor = () => sp().treeCursor
 
   let sb!: ScrollBoxRenderable
