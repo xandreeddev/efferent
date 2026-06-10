@@ -189,7 +189,7 @@ export const Activity = (props: { ctx: TuiContext }) => {
       id={`stk-row-${i}`}
       flexDirection="row"
       marginLeft={indentOf(row)}
-      {...(focused() && i === cursor() ? { backgroundColor: tokens.cursorLine } : {})}
+      backgroundColor={focused() && i === cursor() ? tokens.cursorLine : tokens.bgNone}
     >
       <StackRowView display={row.display} spinner={store.spinner()} />
     </box>

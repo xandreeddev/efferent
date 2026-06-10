@@ -39,7 +39,7 @@ export const SessionsView = (props: { ctx: TuiContext }) => {
             <box
               id={`sess-row-${i()}`}
               flexDirection="row"
-              {...(focused() && i() === cursor() ? { backgroundColor: tokens.cursorLine } : {})}
+              backgroundColor={focused() && i() === cursor() ? tokens.cursorLine : tokens.bgNone}
             >
               <text
                 fg={row.active ? tokens.text.default : tokens.text.muted}
