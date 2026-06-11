@@ -276,8 +276,23 @@ const formatReadOutput = (
   return numbered
 }
 
-const truncateOutput = (s: string, max: number): string =>
-  s.length <= max ? s : `${s.slice(0, max)}\n... (truncated, ${s.length - max} more bytes)`
+/**
+ * Tool-level output cap: keep head + tail, drop the middle. The tail matters
+ * — long runs END in their conclusion (exit summaries, "N pass / M fail"),
+ * and a head-only cut erased exactly the lines headroom's log compression
+ * most wants to keep. This cap bounds what a single call can return at all;
+ * headroom (usecases/headroom.ts) is the context-budget backstop downstream.
+ */
+export const truncateOutput = (s: string, max: number): string => {
+  if (s.length <= max) return s
+  const head = Math.floor(max * 0.7)
+  const tail = max - head
+  return (
+    `${s.slice(0, head)}\n` +
+    `... (truncated: ${s.length - max} bytes omitted from the middle of this output) ...\n` +
+    `${s.slice(s.length - tail)}`
+  )
+}
 
 /** Reduce HTML to readable text — drop script/style/tags, decode common entities. */
 const htmlToText = (html: string): string =>
