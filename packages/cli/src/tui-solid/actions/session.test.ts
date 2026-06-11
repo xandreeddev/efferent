@@ -5,6 +5,7 @@ import { buildContextView } from "../presentation/contextView.js"
 import { createTuiStore, type TuiStore } from "../state/store.js"
 import {
   applyBuilt,
+  applyContext,
   applyContextRebuild,
   applyResume,
   conversationPickerOptions,
@@ -178,6 +179,27 @@ test("applyBuilt rebuilds the Activity tree for the picked messages", () => {
   const store = newStore()
   applyBuilt(store, cid("dddddddd-dddd-dddd-dddd-dddddddddddd"), [user("seed"), assistant("ok")], 1, 0)
   expect(store.projection().tree.roots.map((r) => r.kind)).toEqual(["run"])
+})
+
+test("applyContext: silent + unfocused by default, opts drive announce/focus/context folds", () => {
+  const store = newStore()
+  const history = [user("hi"), assistant("yo")]
+
+  applyContext(store, cid("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), history, [])
+  // no announce → no info block; focus untouched (store default is input/insert
+  // but applyContext must not have forced it — assert no info first)
+  expect(store.blocks().some((b) => b.kind === "info")).toBe(false)
+  expect(store.sidePane().contextCollapsed.has("turn:0")).toBe(true) // collapse default
+
+  applyContext(store, cid("ffffffff-ffff-ffff-ffff-ffffffffffff"), history, [], {
+    announce: "switched",
+    focusInput: true,
+    collapseContext: false,
+  })
+  expect(store.blocks().at(-1)).toMatchObject({ kind: "info", text: "switched" })
+  expect(store.focus()).toBe("input")
+  expect(store.mode()).toBe("insert")
+  expect(store.sidePane().contextCollapsed.size).toBe(0)
 })
 
 test("applyBuilt switches to the new session and focuses the input", () => {
