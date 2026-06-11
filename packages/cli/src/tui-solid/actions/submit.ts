@@ -16,6 +16,7 @@ import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
 import { buildConversation, subjectLine } from "../presentation/conversation.js"
 import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
+import { accumulateRoleSpend } from "../presentation/sidePane.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
@@ -217,9 +218,16 @@ export const makeSubmit = (
             Effect.gen(function* () {
               const cs = yield* ConversationStore
               const history = yield* cs.list(cid)
-              const title = yield* generateSessionTitle(history)
-              if (title.length === 0) return
-              yield* cs.setTitle(cid, title)
+              const res = yield* generateSessionTitle(history)
+              // The cheap tier's spend is real spend — count it.
+              if (res.usage !== undefined) {
+                const u = res.usage
+                store.setStats((s) =>
+                  accumulateRoleSpend(s, "cheap", u.inputTokens + u.outputTokens),
+                )
+              }
+              if (res.title.length === 0) return
+              yield* cs.setTitle(cid, res.title)
               yield* refreshNav(store, cid)
             }).pipe(Effect.ignore),
           )

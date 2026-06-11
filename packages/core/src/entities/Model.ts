@@ -62,6 +62,63 @@ export const parseModel = (raw: string): { provider: Provider; modelId: string }
 /** The provider used when nothing is configured (ultimate fallback). */
 export const DefaultModel = "google:gemini-3.5-flash"
 
+/**
+ * The three model **roles** the agent runs on. One mental model, three knobs:
+ *
+ * - `main`  — the root conversation's model: your reasoning partner.
+ * - `fast`  — what spawned sub-agents run on: orchestration fan-out wants
+ *             throughput over depth. Unset → main.
+ * - `cheap` — background utility work (session titles, summaries): never worth
+ *             main-tier tokens. Unset → main.
+ *
+ * Roles, not model names, are the stable vocabulary: the UI labels token spend
+ * by role, `:model fast`/`:model cheap` configure them, and swapping a
+ * provider never changes what the roles mean.
+ */
+export type ModelRole = "main" | "fast" | "cheap"
+
+export const MODEL_ROLES: ReadonlyArray<ModelRole> = ["main", "fast", "cheap"]
+
+/** The settings keys backing each role (structural — avoids a Settings import cycle). */
+export interface RoleModelSettings {
+  readonly model: string
+  readonly fastModel?: string | undefined
+  readonly cheapModel?: string | undefined
+  /** Legacy key for `cheap` (pre-roles); still honored when `cheapModel` is unset. */
+  readonly utilityModel?: string | undefined
+}
+
+/**
+ * Resolve a role to its `"<provider>:<modelId>"` string with the fallback
+ * chain: fast → main; cheap → legacy utilityModel → main. Pure — the single
+ * place the chain lives (router override, utility tier, settings UI all call
+ * this instead of re-deriving it).
+ */
+export const modelForRole = (settings: RoleModelSettings, role: ModelRole): string => {
+  switch (role) {
+    case "main":
+      return settings.model
+    case "fast":
+      return settings.fastModel ?? settings.model
+    case "cheap":
+      return settings.cheapModel ?? settings.utilityModel ?? settings.model
+  }
+}
+
+/** Whether the role is explicitly configured (vs falling back to main). */
+export const roleIsConfigured = (settings: RoleModelSettings, role: ModelRole): boolean =>
+  role === "main"
+    ? true
+    : role === "fast"
+      ? settings.fastModel !== undefined
+      : settings.cheapModel !== undefined || settings.utilityModel !== undefined
+
+/** Parse a persisted `"<provider>:<modelId>"` into a full {@link ModelSelection}. */
+export const selectionFromString = (raw: string): ModelSelection => {
+  const { provider, modelId } = parseModel(raw)
+  return { provider, modelId, contextWindow: contextWindowFor(provider, modelId) }
+}
+
 /** Default `"<provider>:<modelId>"` for a single provider (used when a key for it is set). */
 export const defaultModelForProvider = (p: Provider): string =>
   p === "openai"

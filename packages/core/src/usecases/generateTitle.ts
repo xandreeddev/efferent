@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import type { AgentMessage } from "../entities/Conversation.js"
+import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm, type UtilityLlmError } from "../ports/UtilityLlm.js"
 import { TITLE_PROMPT } from "../prompts/title.js"
 
@@ -32,14 +33,18 @@ export const sanitizeTitle = (raw: string, maxLen = 60): string => {
  * Name a session from its first exchange, on the cheap `UtilityLlm` tier.
  * Only the first user message + the first assistant prose feed the prompt
  * (clipped) — enough to name the task, cheap enough to run after every new
- * session's first turn. Returns "" when the history has nothing nameable.
+ * session's first turn. Returns `title: ""` when the history has nothing
+ * nameable; `usage` (when the provider reported it) lets the caller count
+ * the cheap tier's spend.
  */
 export const generateSessionTitle = (
   history: ReadonlyArray<AgentMessage>,
-): Effect.Effect<string, UtilityLlmError, UtilityLlm> =>
+): Effect.Effect<{ title: string; usage?: TokenUsage }, UtilityLlmError, UtilityLlm> =>
   Effect.gen(function* () {
     const firstUser = history.find((m) => m.role === "user")
-    if (firstUser === undefined || firstUser.content.trim().length === 0) return ""
+    if (firstUser === undefined || firstUser.content.trim().length === 0) {
+      return { title: "" }
+    }
     const firstAssistantText = history
       .filter((m) => m.role === "assistant")
       .flatMap((m) =>
@@ -55,8 +60,11 @@ export const generateSessionTitle = (
         : []),
     ].join("\n\n")
     const utility = yield* UtilityLlm
-    const raw = yield* utility.complete(
+    const res = yield* utility.complete(
       `${TITLE_PROMPT}\n\n<exchange>\n${excerpt}\n</exchange>`,
     )
-    return sanitizeTitle(raw)
+    return {
+      title: sanitizeTitle(res.text),
+      ...(res.usage !== undefined ? { usage: res.usage } : {}),
+    }
   })

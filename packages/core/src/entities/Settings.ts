@@ -53,10 +53,22 @@ export const Settings = Schema.Struct({
         "Dedicated web search model as '<provider>:<modelId>' (google/openai only); used by search_web independently of the chat model.",
     }),
   ),
+  fastModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "The FAST role: model spawned sub-agents run on, as '<provider>:<modelId>'. Orchestration fan-out wants throughput; point this at a faster/cheaper tier. Unset → the main model.",
+    }),
+  ),
+  cheapModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "The CHEAP role: model for background utility work (session titles, summaries), as '<provider>:<modelId>'. Unset → legacy utilityModel, else the main model.",
+    }),
+  ),
   utilityModel: Schema.optional(
     Schema.String.annotations({
       description:
-        "Cheap utility model as '<provider>:<modelId>' for background tasks (session titles). Unset → the current chat model.",
+        "LEGACY alias for cheapModel (pre-roles name) — still read when cheapModel is unset. Prefer :set cheapModel.",
     }),
   ),
   theme: Schema.optional(

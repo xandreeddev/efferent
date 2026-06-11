@@ -62,6 +62,18 @@ export const mergeFileChange = (
   )
 }
 
+/** Billed tokens (input + output) accumulated per model role this session.
+ *  `main` = the root loop's turns; `fast` = every sub-agent's spend; `cheap` =
+ *  background utility calls (titles, summaries). The economics of a session,
+ *  by who spent what. */
+export interface RoleSpend {
+  readonly main: number
+  readonly fast: number
+  readonly cheap: number
+}
+
+export const emptyRoleSpend: RoleSpend = { main: 0, fast: 0, cheap: 0 }
+
 /** At-a-glance session counters surfaced in the Activity header. */
 export interface SessionStats {
   /** Current context size (last turn's input tokens). */
@@ -74,6 +86,8 @@ export interface SessionStats {
   readonly turns: number
   /** Session start (ms) for the elapsed readout; 0 = not started. */
   readonly startedAt: number
+  /** Billed tokens per model role (main / fast / cheap). */
+  readonly byRole: RoleSpend
   /** `inputTokens` is a chars/4 resume estimate (no persisted usage) — shown `~`. */
   readonly estimated?: boolean
 }
@@ -86,6 +100,7 @@ export const emptyStats: SessionStats = {
   contextWindow: 0,
   turns: 0,
   startedAt: 0,
+  byRole: emptyRoleSpend,
 }
 
 /** One turn's token usage, as carried by the agent's `assistant_message`. */
@@ -110,8 +125,21 @@ export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats =>
   outputTokens: s.outputTokens + u.outputTokens,
   totalTokens: s.totalTokens + u.totalTokens,
   turns: s.turns + 1,
+  // Root-loop usage is the MAIN role's spend (sub-agent usage arrives with a
+  // nodeId and lands on `fast` via `accumulateRoleSpend`).
+  byRole: { ...s.byRole, main: s.byRole.main + u.inputTokens + u.outputTokens },
   // A real provider count replaces any resume estimate.
   estimated: false,
+})
+
+/** Add billed tokens to one role's running spend (fast = sub-agents, cheap = utility). */
+export const accumulateRoleSpend = (
+  s: SessionStats,
+  role: keyof RoleSpend,
+  billed: number,
+): SessionStats => ({
+  ...s,
+  byRole: { ...s.byRole, [role]: s.byRole[role] + billed },
 })
 
 /**

@@ -18,7 +18,12 @@ import {
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../presentation/executionTree.js"
-import { accumulateUsage, mergeFileChange, parsePlanSteps } from "../presentation/sidePane.js"
+import {
+  accumulateRoleSpend,
+  accumulateUsage,
+  mergeFileChange,
+  parsePlanSteps,
+} from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /**
@@ -367,6 +372,12 @@ export const makeEventReducer = (
               ...r,
               tokens: r.tokens + u.inputTokens + u.outputTokens,
             }))
+            // Sub-agent spend is the FAST role's ledger (node-local usage
+            // stays off the conversation gauge, but the session's economics
+            // count every tier).
+            store.setStats((s) =>
+              accumulateRoleSpend(s, "fast", u.inputTokens + u.outputTokens),
+            )
           }
           if (watchedNode(event.nodeId)) {
             if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {

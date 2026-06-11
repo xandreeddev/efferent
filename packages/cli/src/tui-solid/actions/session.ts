@@ -15,6 +15,7 @@ import {
 } from "../presentation/contextView.js"
 import {
   emptyNav,
+  emptyRoleSpend,
   emptyStats,
   type SidePaneNav,
   type SidePaneProjection,
@@ -122,6 +123,9 @@ const statsFrom = (
     outputTokens: cumulativeOutput,
     totalTokens: cumulativeTotal,
     turns,
+    // Persisted usage covers only the root loop — a rebuilt ledger is all
+    // MAIN (sub-agent/utility spend lives on nodes, not these messages).
+    byRole: { ...emptyRoleSpend, main: cumulativeTotal },
     ...(estimate !== undefined ? { estimated: true } : {}),
   }
 }
