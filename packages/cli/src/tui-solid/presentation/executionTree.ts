@@ -306,6 +306,18 @@ export const findByNodeId = (
   return undefined
 }
 
+/** Stamp a sub-agent container's persistent context-node id after the fact —
+ *  a history rebuild learns it from the run_agent RESULT, after the container
+ *  was created from the call. */
+export const onSubAgentNodeId = (
+  tree: ExecutionTree,
+  id: number,
+  nodeId: string,
+): ExecutionTree => ({
+  ...tree,
+  roots: mapRoots(tree.roots, id, (n) => ({ ...n, nodeId })),
+})
+
 /** Close a keyed sub-agent container by its tree id (parallel-safe). */
 export const onSubAgentEndKeyed = (
   tree: ExecutionTree,

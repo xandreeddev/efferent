@@ -153,6 +153,33 @@ test("applyResume swaps the conversation, replays it, and seeds the context view
   expect(store.sidePane().view).toBe("stack")
 })
 
+test("applyResume rebuilds the Activity tree from the loaded messages (folded runs)", () => {
+  const store = newStore()
+  const target = cid("cccccccc-cccc-cccc-cccc-cccccccccccc")
+  const history = [
+    user("first task"),
+    toolCall("t1", "read_file"),
+    toolResult("t1", "read_file"),
+    user("second task"),
+    assistant("done"),
+  ]
+
+  applyResume(store, target, history, [])
+
+  const roots = store.projection().tree.roots
+  expect(roots.map((r) => r.kind)).toEqual(["run", "run"])
+  expect(roots.map((r) => r.label)).toEqual(["first task", "second task"])
+  // every rebuilt run lands folded; the workspace section folds survive the union
+  for (const r of roots) expect(store.nav().stackCollapsed.has(`node:${r.id}`)).toBe(true)
+  expect(store.nav().stackCollapsed.has("files")).toBe(true)
+})
+
+test("applyBuilt rebuilds the Activity tree for the picked messages", () => {
+  const store = newStore()
+  applyBuilt(store, cid("dddddddd-dddd-dddd-dddd-dddddddddddd"), [user("seed"), assistant("ok")], 1, 0)
+  expect(store.projection().tree.roots.map((r) => r.kind)).toEqual(["run"])
+})
+
 test("applyBuilt switches to the new session and focuses the input", () => {
   const store = newStore()
   const newId = cid("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")

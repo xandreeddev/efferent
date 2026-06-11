@@ -272,6 +272,13 @@ export const attachUsageToAssistant = (
   }
 }
 
+/** The turn usage embedded on a persisted assistant message, if any. */
+export const assistantUsage = (msg: AgentMessage): TokenUsage | undefined => {
+  if (msg.role !== "assistant") return undefined
+  const opts = msg.providerOptions as Record<string, unknown> | undefined
+  return opts?.[EFFERENT_USAGE_KEY] as TokenUsage | undefined
+}
+
 /**
  * Scan a persisted conversation for embedded turn usage and return:
  * - `lastUsage`: the most recent turn's input/cache (for the status bar)
@@ -291,15 +298,12 @@ export const recoverConversationStats = (
   let lastUsage: TokenUsage | undefined
 
   for (const msg of messages) {
-    if (msg.role === "assistant") {
-      const opts = msg.providerOptions as Record<string, unknown> | undefined
-      const usage = opts?.[EFFERENT_USAGE_KEY] as TokenUsage | undefined
-      if (usage !== undefined) {
-        cumulativeOutput += usage.outputTokens
-        cumulativeTotal += usage.totalTokens
-        turns++
-        lastUsage = usage
-      }
+    const usage = assistantUsage(msg)
+    if (usage !== undefined) {
+      cumulativeOutput += usage.outputTokens
+      cumulativeTotal += usage.totalTokens
+      turns++
+      lastUsage = usage
     }
   }
 
