@@ -78,6 +78,21 @@ describe("compressToolResults", () => {
     expect(report.helperUsage).toBeUndefined() // no UtilityLlm in context
   })
 
+  it("grep-shaped output gets structural per-file grouping, not a blind clip", async () => {
+    const flood = Array.from({ length: 60 }, (_, f) =>
+      Array.from({ length: 50 }, (_, m) => `src/pkg${f}/mod.ts:${m + 1}:export const v${m} = ${f}`).join("\n"),
+    ).join("\n")
+    const report = await Effect.runPromise(
+      compressToolResults([toolMsg({ output: flood, exitCode: 0 })], 8000),
+    )
+    const out = outputOf(report.messages[0]!).output as string
+    expect(out.length).toBeLessThan(10_000)
+    expect(out).toContain("src/pkg0/mod.ts (50 matches, showing 5)")
+    expect(out).toContain("…headroom:") // reversible marker present
+    expect(out).toContain("matched lines omitted")
+    expect(out).toContain("re-run the search narrower")
+  })
+
   it("non-tool messages and string-content messages pass through unchanged", async () => {
     const user: AgentMessage = { role: "user", content: BIG }
     const report = await Effect.runPromise(compressToolResults([user], 8000))
