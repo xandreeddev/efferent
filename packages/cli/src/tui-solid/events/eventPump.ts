@@ -18,7 +18,7 @@ import {
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
 } from "../presentation/executionTree.js"
-import { accumulateUsage, mergeFileChange } from "../presentation/sidePane.js"
+import { accumulateUsage, mergeFileChange, parsePlanSteps } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 
 /**
@@ -115,6 +115,17 @@ export const makeEventReducer = (
         return
 
       case "tool_call_start": {
+        // The plan tool's arguments ARE the session plan — mirror them into
+        // the store when the top-level agent calls it (a sub-agent's plan
+        // stays node-local; its session preview shows the calls).
+        if (
+          event.toolName === "update_plan" &&
+          event.nodeId === undefined &&
+          subAgentDepth === 0
+        ) {
+          const steps = parsePlanSteps(event.args)
+          if (steps !== undefined) store.setProjection((p) => ({ ...p, plan: steps }))
+        }
         // The spawn tool is the sub-agent container, not a tool node.
         if (isSpawn(event.toolName)) return
         const label = describeToolCall(event.toolName, event.args)

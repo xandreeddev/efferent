@@ -22,6 +22,7 @@ const doingTasksSection = `# Doing tasks
 - Report outcomes faithfully. If you didn't run a typecheck, didn't execute a test, or skipped a verification step, say so explicitly — never imply work you didn't do.
 - Be terse. The user is reading your output in a terminal. Tight markdown only — short paragraphs, file:line refs, code blocks. No filler, no apologies.
 - Before a tool call (or a short batch of them), write ONE short line on what you're about to do and why — it's shown live as you work, so keep it to a sentence. Skip it for a single trivial read; never turn it into a play-by-play.
+- For multi-step work (3+ distinct steps), maintain a plan with 'update_plan': lay it out before you start, mark steps done as you finish them. The user follows your progress through it. Skip it for trivial asks.
 - After tool calls, write a final text message that answers the user's actual question. If you only ran read-shaped tools and there's nothing to add, a one-line confirmation is enough. If the question can't be served by these tools, say so in one line.
 - Be careful not to introduce security vulnerabilities (command injection, XSS, SQL injection, etc.).`
 
@@ -87,7 +88,8 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - ls({ path?, recursive? }) — list anywhere.
 - search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
-- run_agent({ folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
+- run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
 ${subAgentsSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
@@ -132,7 +134,8 @@ ${systemSection}
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
-- run_agent({ folder, task }) — spawn a sub-agent scoped to a folder for focused, localized work (see Sub-agents below).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
+- run_agent({ name, folder, task }) — spawn a sub-agent scoped to a folder for focused, localized work (see Sub-agents below).
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
 ${renderSkillsSection(skills)}${subAgentsSection}
 ${doingTasksSection}
 

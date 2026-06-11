@@ -145,6 +145,8 @@ folded, so the pane always describes the session you're looking at, not the prev
 (Timings only exist for live runs; rebuilt rows show no duration.)
 
 - **Context gauge** — tokens used vs the model's window (cached tokens shown dim).
+- **Plan** — the agent's working checklist (`update_plan`): ✓ done · ● active · ○ pending.
+  Appears once the agent plans a multi-step task; follows the loaded session.
 - **Cumulative** output tokens, turns, elapsed time; **per-LLM-call** usage + duration.
 - **Run tree** — every user message opens a **run container** (`❯ <prompt>`, the same quiet
   prompt styling as the conversation rail) with its turns → tools → sub-agents nested under

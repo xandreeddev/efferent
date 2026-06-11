@@ -193,6 +193,34 @@ describe("projectHistory — the activity tree derived from messages", () => {
     expect(filesChanged[0]).toMatchObject({ path: "a.ts", added: 3, removed: 2 })
   })
 
+  test("the loaded plan is the LAST update_plan call's checklist", () => {
+    const { plan } = projectHistory(
+      [
+        user("go"),
+        assistant([
+          {
+            type: "tool-call",
+            toolCallId: "p1",
+            toolName: "update_plan",
+            input: { steps: [{ step: "a", status: "active" }] },
+          },
+        ]),
+        toolResult("p1", "update_plan", { total: 1, done: 0 }),
+        assistant([
+          {
+            type: "tool-call",
+            toolCallId: "p2",
+            toolName: "update_plan",
+            input: { steps: [{ step: "a", status: "done" }, { step: "b", status: "active" }] },
+          },
+        ]),
+        toolResult("p2", "update_plan", { total: 2, done: 1 }),
+      ],
+      [],
+    )
+    expect(plan.map((s) => `${s.step}:${s.status}`)).toEqual(["a:done", "b:active"])
+  })
+
   test("an assistant-first history (built/forked sets) yields foldable turn roots", () => {
     const { tree, foldIds } = projectHistory(
       [

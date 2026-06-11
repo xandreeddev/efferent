@@ -32,6 +32,7 @@ describe("buildScopeRuntime", () => {
     expect(names).toContain("write_file")
     expect(names).toContain("edit_file")
     expect(names).toContain("Bash")
+    expect(names).toContain("update_plan")
     expect(names.some((n) => n.startsWith("delegate_to_"))).toBe(false)
   })
 

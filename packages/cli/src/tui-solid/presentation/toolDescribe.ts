@@ -51,6 +51,10 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       return `Skill(${str(a.name) ?? "?"})`
     case "web_fetch":
       return `Fetch(${truncate(str(a.url) ?? "", 50)})`
+    case "update_plan": {
+      const n = Array.isArray(a.steps) ? a.steps.length : 0
+      return `Plan(${n} step${n === 1 ? "" : "s"})`
+    }
     default:
       return toolName
   }
@@ -155,6 +159,11 @@ export const describeToolResult = (
     }
     case "read_skill":
       return "loaded"
+    case "update_plan": {
+      const total = num(r.total)
+      const done = num(r.done)
+      return total !== undefined && done !== undefined ? `${done}/${total} done` : "updated"
+    }
     case "web_fetch": {
       const status = num(r.status)
       const bytes = str(r.content)?.length
