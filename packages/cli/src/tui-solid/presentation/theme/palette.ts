@@ -34,7 +34,36 @@ export interface Palette {
   readonly cursorLine: string
 }
 
-/** The default (and currently only) palette — the One-Dark-ish set. */
+/**
+ * **efferent** — the flagship identity. Warm near-black base with an
+ * ember / verdigris / chartreuse accent triad: signals travelling outward
+ * (ember = the conversation, verdigris = the orchestration pane, chartreuse =
+ * your input). Deliberately not another blue-on-slate coding theme — the
+ * brand should be recognizable in a 240px screenshot.
+ */
+export const efferentPalette: Palette = {
+  cyan: "#ffa657", // ember — conversation accent / links / assistant voice
+  magenta: "#2dd4bf", // verdigris — side accent / handoff / overlay border
+  green: "#a3e635", // chartreuse — input accent / select marker / cursor
+  greenMuted: "#8ec07c", // sage — tool ok / strings / loaded ●
+  yellow: "#e3b341", // amber — running state / types
+  red: "#f47067", // coral — errors / variables
+  blue: "#6cb6ff", // sky — turn headers / functions
+  purple: "#dcbdfb", // lilac — keywords
+  orange: "#f69d50", // tangerine — numbers / parameters
+  teal: "#39c5cf", // lagoon — escapes / operators
+  text: "#e6e1d9", // warm white — primary prose
+  textUser: "#cfc9c0", // warm gray — user messages
+  gray: "#9e9a93", // secondary / muted text
+  dim: "#6e6a63", // unfocused borders / faint hints
+  comment: "#857f76", // code comments
+  punctuation: "#b3aea6", // code punctuation/brackets
+  bgOverlay: "#26221d", // warm dark — modal background
+  bgStatus: "#1c1916", // warm darker — status-bar background
+  cursorLine: "#322d26", // focused-row tint
+} as const
+
+/** The One-Dark-ish palette (the previous default, kept as a theme). */
 export const defaultPalette: Palette = {
   cyan: "#5fd7ff", // bright cyan — conversation accent / links
   magenta: "#ff5fff", // bright magenta — side accent / handoff
