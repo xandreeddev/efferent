@@ -41,6 +41,10 @@ export const glyph = {
   tree: { vert: "│ ", skip: "  ", tee: "├─", corner: "└─" },
   /** The seed/run boundary rule in a node-session preview (`── seed … ──`). */
   seedRule: "──",
+  /** Header chrome: the wordmark block, the idle dot, the fleet (sub-agents) mark. */
+  wordmark: "▌",
+  idleDot: "○",
+  fleet: "◆",
   /** Animated spinner frames for running tree nodes. */
   spinner: SPINNER_FRAMES,
 } as const

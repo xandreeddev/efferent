@@ -1,6 +1,7 @@
 import { Effect, Queue } from "effect"
 import { batch } from "solid-js"
 import type { AgentEvent } from "../../events.js"
+import { reduceAgentState } from "../presentation/agentState.js"
 import type { AgentRunRow } from "../presentation/conversation.js"
 import {
   describeToolCall,
@@ -110,6 +111,18 @@ export const makeEventReducer = (
 
   return (event: AgentEvent): void => {
     const now = Date.now()
+    // The live state machine reads EVERY event first — phases derive purely
+    // (presentation/agentState.ts); the header + loading indicators follow.
+    store.setAgentState((s) =>
+      reduceAgentState(
+        s,
+        event,
+        now,
+        event.type === "tool_call_start"
+          ? describeToolCall(event.toolName, event.args)
+          : undefined,
+      ),
+    )
     switch (event.type) {
       case "turn_start":
         // The parent moved on — the fan-out burst (if any) is over; the next

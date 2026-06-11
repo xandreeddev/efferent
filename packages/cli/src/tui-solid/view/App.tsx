@@ -1,6 +1,7 @@
 import { Show } from "solid-js"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { dispatch } from "../keys/dispatch.js"
+import { Header } from "./chrome/Header.js"
 import { Conversation } from "./panes/Conversation.js"
 import { Side } from "./panes/side/Side.js"
 import { InputBox } from "./panes/Input.js"
@@ -31,6 +32,7 @@ export const App = (props: { ctx: TuiContext }) => {
 
   return (
     <box flexDirection="column" flexGrow={1}>
+      <Header ctx={props.ctx} />
       <box flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
         <Show when={showConv()}>
           <Conversation ctx={props.ctx} />

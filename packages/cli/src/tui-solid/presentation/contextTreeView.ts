@@ -55,6 +55,8 @@ export interface NavConversation {
   readonly id: string
   readonly label: string
   readonly active: boolean
+  /** The session's display name alone (no date) — the header chrome reads it. */
+  readonly title?: string
 }
 
 /**
