@@ -34,7 +34,8 @@ const prettyPath = (p: string): string =>
 const statusColor = (status: NodeStatus): string =>
   status === "running" ? tokens.state.running : status === "error" ? tokens.state.error : tokens.state.ok
 
-/** The Activity stats header: a context gauge + a cumulative one-liner. */
+/** The Activity stats header: a context gauge + a cumulative one-liner + the
+ *  per-role spend ledger (shown once any non-main role has spent). */
 const Stats = (props: { ctx: TuiContext }) => {
   const s = () => props.ctx.store.sidePane().stats
   const win = () => (s().contextWindow > 0 ? formatTokens(s().contextWindow) : "?")
@@ -44,6 +45,14 @@ const Stats = (props: { ctx: TuiContext }) => {
   // first real provider count replaces it — a precise-looking wrong number
   // is worse than an approximate honest one.
   const approx = () => (s().estimated === true ? "~" : "")
+  // The session's economics, by role. main alone is already the gauge's
+  // story; the ledger earns its line when agents or utility calls spend too.
+  const fleetSpent = () => s().byRole.fast > 0 || s().byRole.cheap > 0
+  const roleLine = () =>
+    (["main", "fast", "cheap"] as const)
+      .filter((r) => s().byRole[r] > 0)
+      .map((r) => `${r} ${formatTokens(s().byRole[r])}`)
+      .join(" · ")
   return (
     <box flexDirection="column" flexShrink={0}>
       <text fg={tokens.text.muted}>
@@ -55,6 +64,9 @@ const Stats = (props: { ctx: TuiContext }) => {
           ? `${formatTokens(s().outputTokens)} tok out · ${s().turns} turn${s().turns === 1 ? "" : "s"} · ${elapsed()}`
           : "no run yet — send a message to start"}
       </text>
+      <Show when={fleetSpent()}>
+        <text fg={tokens.text.dim}>{`Σ ${roleLine()}`}</text>
+      </Show>
     </box>
   )
 }
