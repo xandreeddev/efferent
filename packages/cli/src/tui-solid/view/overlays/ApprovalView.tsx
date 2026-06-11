@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { describeRule, type ApprovalState } from "../../presentation/approvalView.js"
+import { describeGrant, type ApprovalState } from "../../presentation/approvalView.js"
 import { tokens } from "../../state/theme.js"
 import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
@@ -7,14 +7,16 @@ const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0
 
 /**
  * The bash-approval modal: what will run, where, and four answers — three of
- * which are *rules* that stop future prompts for the same command family.
+ * which are *grants* that stop future prompts (the out-of-bounds folder when
+ * the judge named one, else the command-family rule). A judge escalation
+ * shows its reason so the human reads WHY this one wasn't waved through.
  * `d` switches to the deny-reason line; the reason flows back to the model as
  * the tool failure, so a denial steers instead of stonewalling. Keys live in
  * `keys/overlay.ts`; this just renders the pure `ApprovalState`.
  */
 export const ApprovalView = (props: { state: ApprovalState }) => {
   const s = () => props.state
-  const rule = () => describeRule(s().request.ruleKey)
+  const rule = () => describeGrant(s())
 
   return (
     <Modal title={` ${s().request.tool} wants to run `} width={MODAL_WIDTH}>
@@ -24,6 +26,11 @@ export const ApprovalView = (props: { state: ApprovalState }) => {
       <text fg={tokens.text.dim} wrapMode="none">
         {`in ${s().request.cwd}`}
       </text>
+      <Show when={s().hint?.reason !== undefined}>
+        <text fg={tokens.text.muted} wrapMode="none">
+          {clip(`judge: ${s().hint?.reason ?? ""}`, MODAL_WIDTH - 4)}
+        </text>
+      </Show>
       <Rule width={MODAL_RULE} />
       <Show
         when={s().mode === "deny"}

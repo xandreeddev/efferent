@@ -13,6 +13,7 @@ import {
   type AgentHooks,
   type Approval,
   type Scope,
+  type UtilityLlm,
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
@@ -34,7 +35,7 @@ export interface SubmitDeps {
   readonly rootScope: Scope
   readonly cwd: string
   /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
-  readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore>
+  readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
 }
 
 /**
