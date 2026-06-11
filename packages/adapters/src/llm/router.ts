@@ -3,7 +3,11 @@ import { FetchHttpClient, HttpClient } from "@effect/platform"
 import { AuthStore, LlmInfo, ModelRegistry, SettingsStore, type ModelSelection } from "@efferent/core"
 import { Effect, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
-import { makeProviderLanguageModel, prependClaudeCode } from "./providers.js"
+import {
+  makeProviderLanguageModel,
+  prependClaudeCode,
+  withAnthropicCacheBreakpoints,
+} from "./providers.js"
 
 /**
  * The single `LanguageModel` the agent loop talks to. It is provider-agnostic:
@@ -46,15 +50,22 @@ export const RouterLanguageModelLive = Layer.effect(
         return yield* makeProviderLanguageModel(sel, key, cred, settings)
       })
 
+    // Per-call prompt shaping: the Claude-Code system block (OAuth), then
+    // Anthropic cache breakpoints — Anthropic caches nothing without them.
+    const shapeOptions = <O>(sel: ModelSelection, shouldPrepend: boolean, options: O): O => {
+      let shaped: unknown = options
+      if (shouldPrepend) shaped = prependClaudeCode(shaped)
+      if (sel.provider === "anthropic") shaped = withAnthropicCacheBreakpoints(shaped)
+      return shaped as O
+    }
+
     const service: LanguageModel.Service = {
       generateText: (options) =>
         registry.current.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc.generateText(
-                  shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
-                ),
+                svc.generateText(shapeOptions(sel, shouldPrepend, options)),
               ),
             ),
           ),
@@ -67,9 +78,7 @@ export const RouterLanguageModelLive = Layer.effect(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc.generateObject(
-                  shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
-                ),
+                svc.generateObject(shapeOptions(sel, shouldPrepend, options)),
               ),
             ),
           ),
@@ -83,9 +92,7 @@ export const RouterLanguageModelLive = Layer.effect(
             Effect.flatMap((sel) =>
               resolveAndBuild(sel).pipe(
                 Effect.map(({ svc, prependClaudeCode: shouldPrepend }) =>
-                  svc.streamText(
-                    shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
-                  ),
+                  svc.streamText(shapeOptions(sel, shouldPrepend, options)),
                 ),
               ),
             ),

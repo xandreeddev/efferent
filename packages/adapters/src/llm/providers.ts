@@ -49,6 +49,63 @@ export const prependClaudeCode = (options: unknown): unknown => ({
   ),
 })
 
+/**
+ * Anthropic prompt caching is OPT-IN per request: with no `cache_control`
+ * breakpoints the API caches NOTHING — every turn re-reads the whole
+ * conversation at full input price. (OpenAI caches prefixes automatically;
+ * Gemini caches implicitly; Anthropic alone requires explicit markers.)
+ *
+ * We stamp ephemeral breakpoints (the documented conversational pattern) on:
+ * - the **last system message** — one breakpoint covering tools + system,
+ *   the static prefix; and
+ * - the **last two non-system messages** — the moving boundary: last turn's
+ *   marker is this turn's read hit, the newest message writes the next entry.
+ *
+ * `cache_control` placement is not part of Anthropic's content hash, so the
+ * markers moving forward each turn never invalidates earlier prefixes. A
+ * message that already carries an explicit `cacheControl` (e.g. round-tripped
+ * via providerOptions) is left alone; other anthropic options are merged, not
+ * replaced. Applied by the router only for `provider === "anthropic"` — the
+ * one-shot helper tiers (UtilityLlm, web search) never pay the +25% cache
+ * write premium for prompts that are never reused.
+ */
+export const withAnthropicCacheBreakpoints = (options: unknown): unknown => {
+  const prompt = Prompt.make((options as { prompt: Prompt.RawInput }).prompt)
+  const messages = prompt.content
+  if (messages.length === 0) return options
+
+  const stampIdx = new Set<number>()
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "system") {
+      stampIdx.add(i)
+      break
+    }
+  }
+  let tail = 0
+  for (let i = messages.length - 1; i >= 0 && tail < 2; i--) {
+    if (messages[i]!.role === "system") continue
+    stampIdx.add(i)
+    tail++
+  }
+
+  const stamped = messages.map((msg, i) => {
+    if (!stampIdx.has(i)) return msg
+    const anthropic = (msg.options["anthropic"] ?? {}) as Record<string, unknown>
+    if (anthropic["cacheControl"] !== undefined) return msg
+    return Prompt.makeMessage(msg.role, {
+      ...msg,
+      options: {
+        ...msg.options,
+        anthropic: { ...anthropic, cacheControl: { type: "ephemeral" } },
+      },
+    } as never)
+  })
+  return {
+    ...(options as Record<string, unknown>),
+    prompt: Prompt.fromMessages(stamped),
+  }
+}
+
 export interface ProviderLanguageModel {
   readonly svc: LanguageModel.Service
   readonly prependClaudeCode: boolean

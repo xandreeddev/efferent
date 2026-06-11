@@ -240,12 +240,30 @@ export const extractUsage = (
     totalTokens?: number
     cachedInputTokens?: number
   } | undefined
-  return {
-    inputTokens: u.inputTokens ?? fu?.inputTokens ?? um?.promptTokenCount ?? 0,
-    outputTokens: u.outputTokens ?? fu?.outputTokens ?? um?.candidatesTokenCount ?? 0,
-    totalTokens: u.totalTokens ?? fu?.totalTokens ?? um?.totalTokenCount ?? 0,
-    cacheReadTokens: u.cachedInputTokens ?? fu?.cachedInputTokens ?? um?.cachedContentTokenCount ?? 0,
+  const inputTokens = u.inputTokens ?? fu?.inputTokens ?? um?.promptTokenCount ?? 0
+  const outputTokens = u.outputTokens ?? fu?.outputTokens ?? um?.candidatesTokenCount ?? 0
+  const totalTokens = u.totalTokens ?? fu?.totalTokens ?? um?.totalTokenCount ?? 0
+  const cacheReadTokens =
+    u.cachedInputTokens ?? fu?.cachedInputTokens ?? um?.cachedContentTokenCount ?? 0
+  // Anthropic semantics differ from Gemini/OpenAI: `input_tokens` EXCLUDES
+  // cache reads and cache writes (both ride only in the raw usage on the
+  // finish part's anthropic metadata). Without this fold the context gauge
+  // reads ~0 on a fully-cached Anthropic turn. Gemini/OpenAI already include
+  // cached tokens in their prompt counts, so only the anthropic branch adds.
+  const au = (finish?.metadata as { anthropic?: { usage?: Record<string, number> } })
+    ?.anthropic?.usage
+  if (au !== undefined) {
+    const cacheRead = au["cache_read_input_tokens"] ?? 0
+    const cacheWrite = au["cache_creation_input_tokens"] ?? 0
+    const fullInput = inputTokens + cacheRead + cacheWrite
+    return {
+      inputTokens: fullInput,
+      outputTokens,
+      totalTokens: fullInput + outputTokens,
+      cacheReadTokens: cacheRead,
+    }
   }
+  return { inputTokens, outputTokens, totalTokens, cacheReadTokens }
 }
 
 const EFFERENT_USAGE_KEY = "efferent"
