@@ -2,6 +2,7 @@ import { Effect, Option } from "effect"
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
+import { planContentCompression, type ContentPlan } from "./headroomContent.js"
 
 /**
  * **Headroom** — cache-safe context compression, inspired by the tactics in
@@ -15,6 +16,9 @@ import { UtilityLlm } from "../ports/UtilityLlm.js"
  *    ever sees them. The buffer stays append-only; every earlier byte is
  *    untouched; caches keep hitting. (The TUI still shows the full output —
  *    hooks fire from the raw response before the tail is compressed.)
+ *    Compression is **structure-aware first** (`headroomContent.ts`):
+ *    grep-shaped output is grouped per file, Bash logs keep errors + traces
+ *    + summaries; only shapeless text gets the blind head+tail clip.
  * 2. **Reversible markers** — the clip marker tells the model exactly how to
  *    retrieve what was dropped (`read_file` with offset/limit, a narrower
  *    grep, `| head`): compression the model can undo on demand, not a hole.
@@ -78,6 +82,17 @@ export const renderClip = (plan: ClipPlan, toolName: string, summary?: string): 
     ` To retrieve it, re-run the tool narrower — read_file with offset/limit,` +
     ` a more specific grep, or bash piped through head/tail.]\n` +
     `${plan.tail}`
+  )
+}
+
+/** Assemble a structural compression: selection + a reversible marker. */
+export const renderContent = (plan: ContentPlan, summary?: string): string => {
+  const digest = summary !== undefined && summary.trim().length > 0
+    ? ` Summary of the omitted part: ${summary.trim()}`
+    : ""
+  return (
+    `${plan.kept}\n` +
+    `[…headroom: ${plan.summary}.${digest} To retrieve, ${plan.hint}.]`
   )
 }
 
@@ -157,24 +172,38 @@ export const compressToolResults = (
               Effect.catchAll(() => Effect.succeed(undefined)),
             )
 
+    // One string path: try a structure-aware plan first (grep shape from
+    // any tool, log shape from Bash — see headroomContent.ts), fall back to
+    // the blind head+tail clip. Both end in the same reversible marker; the
+    // fast digest runs only where the dropped text carries something a
+    // digest can say (logs and blind middles — not omitted grep matches).
+    const compressString = (text: string, toolName: string): Effect.Effect<string> =>
+      Effect.gen(function* () {
+        if (text.length <= maxChars) return text
+        const content = planContentCompression(text, toolName, maxChars)
+        if (content !== undefined) {
+          const summary = content.omitted.length > 0
+            ? yield* summarize(content.omitted)
+            : undefined
+          return renderContent(content, summary)
+        }
+        const plan = planClip(text, maxChars)
+        if (plan === undefined) return text
+        const summary = yield* summarize(plan.dropped)
+        return renderClip(plan, toolName, summary)
+      })
+
     const compressValue = (value: unknown, toolName: string): Effect.Effect<unknown> =>
       Effect.gen(function* () {
         if (typeof value === "string") {
-          const plan = planClip(value, maxChars)
-          if (plan === undefined) return value
-          const summary = yield* summarize(plan.dropped)
-          return renderClip(plan, toolName, summary)
+          return yield* compressString(value, toolName)
         }
         if (typeof value === "object" && value !== null && !Array.isArray(value)) {
           const obj = value as Record<string, unknown>
           const out: Record<string, unknown> = { ...obj }
           for (const [k, v] of Object.entries(obj)) {
             if (typeof v === "string" && v.length > maxChars) {
-              const plan = planClip(v, maxChars)
-              if (plan !== undefined) {
-                const summary = yield* summarize(plan.dropped)
-                out[k] = renderClip(plan, toolName, summary)
-              }
+              out[k] = yield* compressString(v, toolName)
             }
           }
           return out
