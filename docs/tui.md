@@ -19,16 +19,18 @@ For *what's shipped at a glance*, see `README.md`. For *what's deferred*, see `d
 Top to bottom, the TUI is five stacked regions:
 
 ```
-┌─ conversation ─────────────────────────┐ ┌─ activity ─────────┐ ← the two read-only panes,
+▌efferent  ⠹ Read(main.ts) 4s  ◆ 2 agents · audit, fix scroll      ← header: the live agent state
+┌─ <session title> ──────────────────────┐ ┌─ activity ─────────┐ ← the two read-only panes,
 │ the event rail: your prompts, the       │ │activity·context·agents│ one empty column between;
-│ agent's prose, tool calls, diffs        │ │ ctx  18k/1M        │   the side pane's tab row
-└─────────────────────────────────────────┘ └────────────────────┘   shows its three views
+│ agent's prose, tool calls, diffs        │ │ ctx ▓░ 1% 6k/1M     │   the side pane's tab row
+│                                         │ │ Σ main·fast·cheap   │   shows its views; Σ = the
+└─────────────────────────────────────────┘ └────────────────────┘   per-role spend ledger
  j/k scroll · ↵ fold · w next pane · v views · i type · ? keys     ← keybind strip (1 row;
  :model  …                                                            `?` expands the full box)
 ┌─ input · INSERT ─────────────────────────────────────────────┐   ← the composer (1→8 rows)
 │ run the tests                                                 │
 └───────────────────────────────────────────────────────────────┘
- gemini-3.5-flash · 18k (12k cached) / 1M · sqlite · ~/proj · …    ← status bar (+ toasts)
+ gemini-3.5-flash +fast · ▓░ 1% 6k/1M · 66% cached · sqlite · ~/p  ← status bar (+ toasts)
 ```
 
 Modal overlays (`:model`, `:login`, `:settings`, …) float over everything on an
@@ -295,7 +297,7 @@ A unique prefix resolves (`:mod` → `:model`).
 
 | Command | What it does |
 |---|---|
-| `:model [id]` | Open the model picker (↑↓ / filter / ↵), or `:model <id>` to switch |
+| `:model [fast\|cheap]` | Open the model picker for **main** — or for the **fast**/**cheap** role (leading *default (follow main)* row clears it) |
 | `:effort [level]` | Pick the thinking/reasoning effort |
 | `:search [target]` | Web-search model picker, or `:search openai:gpt-4o` / `default` |
 | `:login` | Add a provider — subscription (OAuth) or API key |
@@ -305,9 +307,9 @@ A unique prefix resolves (`:mod` → `:model`).
 
 | Command | What it does |
 |---|---|
-| `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `one-dark` + `tokyo-night` |
+| `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `efferent` (default) + `one-dark` + `tokyo-night` |
 | `:settings` | Open the settings modal (arrow + ↵ to edit) |
-| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set utilityModel google:gemini-3.5-flash` (the cheap tier that names sessions; unset → chat model) |
+| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (the tier sub-agents run on) / `:set cheapModel …` (titles + summaries); unset roles follow main |
 | `:db [pg <url>\|sqlite [path]]` | Show or set the conversation store (trailing `global` writes `~/.efferent/config.json`) |
 
 **Meta**
@@ -337,7 +339,7 @@ A unique prefix resolves (`:mod` → `:model`).
 The colours come from a two-tier design system: a `palette` of raw values feeds a set of
 **semantic tokens** every view paints against. A **theme is one complete set of token values**;
 `:theme` swaps the whole UI live (code highlighting included) with no restart, and the choice
-persists to `config.json`. Ships **`one-dark`** and **`tokyo-night`**.
+persists to `config.json`. Ships **`efferent`** (the default — warm near-black with an ember/verdigris/chartreuse accent triad), **`one-dark`**, and **`tokyo-night`**.
 
 ---
 
