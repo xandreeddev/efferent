@@ -1,3 +1,5 @@
+import { parseModel } from "@efferent/core"
+
 /**
  * Status-bar **display config** — model + workspace chrome only. Token/usage
  * numbers (input/cacheRead/contextWindow) deliberately live in `SessionStats`
@@ -12,27 +14,29 @@ export interface StatusState {
   readonly storage: string
   /** Optional thinking/reasoning effort level shown next to the model. */
   readonly effort?: string | undefined
-  /** Configured non-main roles chip, e.g. "+fast +cheap" — dim next to the model. */
+  /** Configured non-main roles with their ids, e.g. "fast gemini-3.1-flash-lite" — dim next to the model. */
   readonly roles?: string | undefined
 }
 
 /**
- * The status bar's roles chip: which non-main roles are explicitly configured
- * (`"+fast +cheap"`), undefined when everything rides on main. The ids live in
- * `:model`/`:settings`; the bar only says the tiers exist.
+ * The status bar's roles readout: each explicitly configured non-main role
+ * with its model id (`"fast gemini-3.1-flash-lite · cheap gpt-5.4-nano"`),
+ * undefined when everything rides on main. Ids only (no provider prefix) for
+ * width — the full selection lives in `:settings`.
  */
 export const rolesChip = (settings: {
   readonly fastModel?: string | undefined
   readonly cheapModel?: string | undefined
   readonly utilityModel?: string | undefined
 }): string | undefined => {
-  const chips = [
-    ...(settings.fastModel !== undefined ? ["+fast"] : []),
-    ...(settings.cheapModel !== undefined || settings.utilityModel !== undefined
-      ? ["+cheap"]
+  const cheap = settings.cheapModel ?? settings.utilityModel
+  const parts = [
+    ...(settings.fastModel !== undefined
+      ? [`fast ${parseModel(settings.fastModel).modelId}`]
       : []),
+    ...(cheap !== undefined ? [`cheap ${parseModel(cheap).modelId}`] : []),
   ]
-  return chips.length > 0 ? chips.join(" ") : undefined
+  return parts.length > 0 ? parts.join(" · ") : undefined
 }
 
 export const formatTokens = (n: number): string => {

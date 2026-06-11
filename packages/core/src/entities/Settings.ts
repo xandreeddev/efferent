@@ -56,7 +56,7 @@ export const Settings = Schema.Struct({
   fastModel: Schema.optional(
     Schema.String.annotations({
       description:
-        "The FAST role: model spawned sub-agents run on, as '<provider>:<modelId>'. Orchestration fan-out wants throughput; point this at a faster/cheaper tier. Unset → the main model.",
+        "The FAST role: model for latency-sensitive helper calls (tool-output summaries, auto-approval judgments), as '<provider>:<modelId>'. Sub-agents are real work and run on main. Unset → the main model.",
     }),
   ),
   cheapModel: Schema.optional(

@@ -30,7 +30,7 @@ Top to bottom, the TUI is five stacked regions:
 ┌─ input · INSERT ─────────────────────────────────────────────┐   ← the composer (1→8 rows)
 │ run the tests                                                 │
 └───────────────────────────────────────────────────────────────┘
- gemini-3.5-flash +fast · ▓░ 1% 6k/1M · 66% cached · sqlite · ~/p  ← status bar (+ toasts)
+ gemini-3.5-flash · fast flash-lite · ▓░ 1% 6k/1M · 66% cached …   ← status bar (+ toasts)
 ```
 
 Modal overlays (`:model`, `:login`, `:settings`, …) float over everything on an
@@ -309,7 +309,7 @@ A unique prefix resolves (`:mod` → `:model`).
 |---|---|
 | `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `efferent` (default) + `one-dark` + `tokyo-night` |
 | `:settings` | Open the settings modal (arrow + ↵ to edit) |
-| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (the tier sub-agents run on) / `:set cheapModel …` (titles + summaries); unset roles follow main |
+| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (latency-sensitive helper calls: tool summaries, approval judgments) / `:set cheapModel …` (background: session titles); unset roles follow main |
 | `:db [pg <url>\|sqlite [path]]` | Show or set the conversation store (trailing `global` writes `~/.efferent/config.json`) |
 
 **Meta**

@@ -72,7 +72,6 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         ...(settings.subAgentMaxSteps !== undefined
           ? { subAgentMaxSteps: settings.subAgentMaxSteps }
           : {}),
-        ...(settings.fastModel !== undefined ? { fastModel: settings.fastModel } : {}),
       }),
     )
 

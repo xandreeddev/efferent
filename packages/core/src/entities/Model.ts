@@ -65,15 +65,18 @@ export const DefaultModel = "google:gemini-3.5-flash"
 /**
  * The three model **roles** the agent runs on. One mental model, three knobs:
  *
- * - `main`  — the root conversation's model: your reasoning partner.
- * - `fast`  — what spawned sub-agents run on: orchestration fan-out wants
- *             throughput over depth. Unset → main.
- * - `cheap` — background utility work (session titles, summaries): never worth
- *             main-tier tokens. Unset → main.
+ * - `main`  — all real agentic work: the root conversation AND spawned
+ *             sub-agents (delegation changes the context, not the brain).
+ * - `fast`  — latency-sensitive helper calls in the loop: tool-output
+ *             summaries, auto-approval judgments — quick verdicts where a
+ *             round-trip on main would drag the run. Unset → main.
+ * - `cheap` — background utility work (session titles): never worth main-tier
+ *             tokens or urgency. Unset → main.
  *
  * Roles, not model names, are the stable vocabulary: the UI labels token spend
  * by role, `:model fast`/`:model cheap` configure them, and swapping a
- * provider never changes what the roles mean.
+ * provider never changes what the roles mean. One-shot helper calls reach
+ * their tier through `UtilityLlm.complete(prompt, { role })`.
  */
 export type ModelRole = "main" | "fast" | "cheap"
 

@@ -29,12 +29,14 @@ describe("context + cache clarity helpers", () => {
     expect(cachePercent(500, 0)).toBeUndefined()
   })
 
-  test("rolesChip says which non-main tiers exist (legacy utilityModel = cheap)", () => {
+  test("rolesChip shows each configured role's model id (legacy utilityModel = cheap)", () => {
     expect(rolesChip({})).toBeUndefined()
-    expect(rolesChip({ fastModel: "google:gemini-3.5-flash" })).toBe("+fast")
-    expect(rolesChip({ cheapModel: "x:y" })).toBe("+cheap")
-    expect(rolesChip({ utilityModel: "x:y" })).toBe("+cheap")
-    expect(rolesChip({ fastModel: "a:b", cheapModel: "x:y" })).toBe("+fast +cheap")
+    expect(rolesChip({ fastModel: "google:gemini-3.5-flash" })).toBe("fast gemini-3.5-flash")
+    expect(rolesChip({ cheapModel: "openai:gpt-5.4-nano" })).toBe("cheap gpt-5.4-nano")
+    expect(rolesChip({ utilityModel: "openai:gpt-5.4-nano" })).toBe("cheap gpt-5.4-nano")
+    expect(rolesChip({ fastModel: "google:gemini-3.1-flash-lite", cheapModel: "openai:gpt-5.4-nano" })).toBe(
+      "fast gemini-3.1-flash-lite · cheap gpt-5.4-nano",
+    )
   })
 
   test("formatTokens stays stable (the gauges depend on it)", () => {

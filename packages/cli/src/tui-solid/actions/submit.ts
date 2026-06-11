@@ -104,8 +104,6 @@ export const makeSubmit = (
           ...(settings.subAgentMaxSteps !== undefined
             ? { maxSteps: settings.subAgentMaxSteps }
             : {}),
-          // A human-resumed node is still a sub-agent — FAST tier applies.
-          ...(settings.fastModel !== undefined ? { fastModel: settings.fastModel } : {}),
         })
         .pipe(
           Effect.provide(approvalLayer),
