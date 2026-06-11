@@ -113,7 +113,7 @@ export const runTuiModeSolid = (
           effort,
         },
         conversationId: cid,
-        // No longer a permanent footer row — surfaced by `:help` instead.
+        // Not a permanent footer row — log path on demand.
         footer: `logs: tail -f ${logFilePath()}`,
         sidePane,
       })
@@ -139,7 +139,7 @@ export const runTuiModeSolid = (
         // speaks for itself.
         store.pushBlock({
           kind: "info",
-          text: "type to chat (↵ sends) · : for commands (:help) · ? for keys",
+          text: "type to chat (↵ sends) · : for commands · ? for keys",
         })
         yield* openConversationPicker(store, input.cwd)
       }

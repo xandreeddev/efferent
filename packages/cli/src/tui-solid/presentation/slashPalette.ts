@@ -12,7 +12,6 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":exit", description: "Quit the agent" },
   { name: ":quit", description: "Quit the agent" },
   { name: ":clear", description: "Clear the scrollback" },
-  { name: ":help", description: "Show keybindings and commands" },
   { name: ":cwd", description: "Print the current workspace directory" },
   { name: ":reset", description: "Start a new conversation (forgets history)" },
   { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },

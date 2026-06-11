@@ -27,18 +27,6 @@ const decodeCid = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
   Effect.runSync(decodeCid(crypto.randomUUID()).pipe(Effect.orDie))
 
-const HELP: ReadonlyArray<string> = [
-  "Panes: Ctrl-h/j/k/l move focus (conversation · side · input) · z zoom",
-  "Input: type a message, Enter sends · Shift-Enter / Ctrl-J newline · Esc interrupts a run",
-  "Session: :clear :reset :handoff · :browse / :resume <#|id> switch conversations",
-  "Context: :context opens the viewer (j/k move · Space pick · b build) · :build",
-  "Model: :model picks a model · :effort thinking level · :search web-search config",
-  "Providers: :login (subscription/OAuth or API key) · :logout <provider>",
-  "Settings: :settings (table) · :set <key> <value> · :db [pg <url>|sqlite [path]]",
-  "Commands (type ':'): :help :cwd :exit",
-  "Quit: Ctrl-C",
-]
-
 /** Resolve a typed command name to a command by exact match or unique prefix. */
 const resolve = (rawName: string) => {
   const exact = SLASH_COMMANDS.find((c) => c.name === rawName)
@@ -65,7 +53,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
 
   const cmd = resolve(rawName)
   if (cmd === undefined) {
-    store.toast(`unknown command: ${rawName} (try :help)`)
+    store.toast(`unknown command: ${rawName} (type : for the palette, ? for keys)`)
     return
   }
 
@@ -76,10 +64,6 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       return
     case ":clear":
       store.clear()
-      return
-    case ":help":
-      for (const l of HELP) store.pushBlock({ kind: "info", text: l })
-      store.pushBlock({ kind: "info", text: store.footer() })
       return
     case ":cwd":
       store.pushBlock({ kind: "info", text: store.status().cwd })

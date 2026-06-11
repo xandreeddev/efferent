@@ -139,7 +139,10 @@ Navigator data loads at boot and refreshes at every turn end.
 
 ### Activity (default)
 
-A live dashboard of the run:
+A live dashboard of the run — and a faithful one after a switch: the tree is **rebuilt from
+the loaded session's messages** whenever the context changes (resume, build, fork, boot), runs
+folded, so the pane always describes the session you're looking at, not the previous one.
+(Timings only exist for live runs; rebuilt rows show no duration.)
 
 - **Context gauge** — tokens used vs the model's window (cached tokens shown dim).
 - **Cumulative** output tokens, turns, elapsed time; **per-LLM-call** usage + duration.
@@ -302,14 +305,13 @@ A unique prefix resolves (`:mod` → `:model`).
 |---|---|
 | `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `one-dark` + `tokyo-night` |
 | `:settings` | Open the settings modal (arrow + ↵ to edit) |
-| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` |
+| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set utilityModel google:gemini-3.5-flash` (the cheap tier that names sessions; unset → chat model) |
 | `:db [pg <url>\|sqlite [path]]` | Show or set the conversation store (trailing `global` writes `~/.efferent/config.json`) |
 
 **Meta**
 
 | Command | What it does |
 |---|---|
-| `:help` | Show keybindings and commands |
 | `:cwd` | Print the workspace directory |
 | `:exit` / `:quit` | Quit |
 
@@ -353,7 +355,7 @@ Several commands float a modal picker over the UI — all share the same select/
 ## Startup
 
 With no `--resume`, if the workspace has prior conversations the TUI floats a **startup
-picker** — a leading "＋ Start a new conversation" row, then `<date> · <first-prompt>` per
+picker** — a leading "＋ Start a new conversation" row, then `<date> · <title|first-prompt>` per
 conversation. `Enter` resumes; `Esc` (or "start new") leaves you in a fresh session. No prior
 conversations → straight to an empty rail.
 
