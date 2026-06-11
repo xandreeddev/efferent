@@ -24,8 +24,7 @@ module may call a provider SDK.
 | 6 | `evals/src/framework/scorers.ts` (`llmJudge`) | **eval scoring** (LLM-as-judge) | the eval env's model layer; keys from `EnvAuthStoreLive` (the only env-var key reading in the tree) | the eval report only (out-of-app by design) |
 | 7 | eval suites running the real loop (`runCoder`, the handoff suite) | **eval tasks** | same as #1 under the eval env | eval report only |
 | 8 | `core/usecases/headroom.ts` (`compressToolResults`, called per loop step) | **headroom middle digests** — a ≤120-word summary of an oversized tool result's dropped middle, woven into the clip marker | `UtilityLlm` → **fast** (`fastModel` ?? main) — the fast role's first consumer | `byRole.fast` (via the `onHelperUsage` hook → `helper_usage` event; sub-agent loops forward to the parent ledger) |
-
-**Still unconsumed on fast:** **auto-approval judgments** for tool use (named next consumer).
+| 9 | `core/usecases/autoApproval.ts` (`judgeApproval`), consulted by the TUI `Approval` impl (`tui-solid/approval.ts`) | **auto-approval judgments** — classify an unmatched bash command against the permitted folders: allow silently or escalate to the modal (never bypasses a prompt; `:set autoApprove off` disables) | `UtilityLlm` → **fast** (`fastModel` ?? main) | `byRole.fast` (counted directly by the approval impl, like the title daemon) |
 
 ## How a selection becomes a client
 

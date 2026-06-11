@@ -32,7 +32,7 @@ import {
   applySearchModel,
   commitMaxSteps,
   cycleEnumSetting,
-  toggleAllowBash,
+  toggleBooleanSetting,
 } from "../actions/settings.js"
 import { advanceLogin, stopOAuthSession } from "../actions/login.js"
 import {
@@ -104,7 +104,7 @@ const settingsActivate = (ctx: TuiContext, state: SettingsState): void => {
       store.setOverlay({ kind: "settings", state: beginEdit(state) })
       return
     case "boolean":
-      void ctx.run(toggleAllowBash(store, row.value))
+      void ctx.run(toggleBooleanSetting(store, row.key, row.value))
       return
     case "enum": {
       if (row.options === undefined) return

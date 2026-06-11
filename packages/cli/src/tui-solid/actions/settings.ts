@@ -206,6 +206,13 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "readonly",
         hint: "auto-fold threshold (0 = off)",
       },
+      {
+        key: "autoApprove",
+        label: "autoApprove",
+        value: String(current.autoApprove ?? true),
+        kind: "boolean",
+        hint: "fast judge waves through in-folder work",
+      },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
@@ -217,12 +224,12 @@ const reflectRow = (store: TuiStore, key: string, value: string): void => {
   if (o.kind === "settings") store.setOverlay({ kind: "settings", state: setRowValue(o.state, key, value) })
 }
 
-/** Toggle the boolean `allowBash` row + persist. */
-export const toggleAllowBash = (store: TuiStore, currentValue: string) =>
+/** Toggle a boolean settings row (`allowBash`, `autoApprove`) + persist. */
+export const toggleBooleanSetting = (store: TuiStore, key: string, currentValue: string) =>
   Effect.gen(function* () {
     const next = currentValue !== "true"
-    yield* (yield* SettingsStore).update((curr) => ({ ...curr, allowBash: next }))
-    yield* Effect.sync(() => reflectRow(store, "allowBash", String(next)))
+    yield* (yield* SettingsStore).update((curr) => ({ ...curr, [key]: next }))
+    yield* Effect.sync(() => reflectRow(store, key, String(next)))
   })
 
 /** Cycle an enum row to `next` (empty → provider default) + persist. */
@@ -275,6 +282,17 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       if (value !== "true" && value !== "false") return yield* err("Setting 'allowBash' must be 'true' or 'false'")
       yield* settings.update((curr) => ({ ...curr, allowBash: value === "true" }))
       yield* Effect.sync(() => store.toast(`Updated allowBash → ${value}`))
+      return
+    }
+    if (key === "autoApprove") {
+      const on = value === "true" || value === "on"
+      const off = value === "false" || value === "off"
+      if (!on && !off) return yield* err("Setting 'autoApprove' must be 'on' or 'off'")
+      yield* settings.update((curr) => ({ ...curr, autoApprove: on }))
+      yield* Effect.sync(() => {
+        store.toast(`Updated autoApprove → ${on ? "on" : "off (every unmatched command prompts)"}`)
+        reflectRow(store, "autoApprove", String(on))
+      })
       return
     }
     if (key === "subAgentTokenBudget") {
@@ -383,7 +401,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct, autoApprove`,
     )
   })
 

@@ -41,6 +41,18 @@ export const Settings = Schema.Struct({
         "Bash approval rules allowed for this project ('cmd:bun test', 'exact:…') — written by the TUI approval modal's 'always allow in this project' answer.",
     }),
   ),
+  approvedFolders: Schema.optional(
+    Schema.Array(Schema.String).annotations({
+      description:
+        "Folders (absolute paths) the auto-approval judge treats as permitted in this project, beyond the workspace root — written by the approval modal's 'always allow in this project' answer when a command reached outside.",
+    }),
+  ),
+  autoApprove: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "Auto-approval mode: a FAST-tier judge classifies unmatched bash commands, silently allowing ordinary work inside permitted folders (workspace root + granted folders); everything else still prompts. Unset → on; false → every unmatched command prompts.",
+    }),
+  ),
   editorMode: EditorMode.annotations({
     description: "TUI input editor mode: 'insert' (default emacs-style) or 'vi' (modal vi-lite).",
   }),
