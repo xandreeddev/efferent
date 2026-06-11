@@ -13,7 +13,6 @@ import {
   turnIdsOf,
   type ContextSegment,
 } from "../presentation/contextView.js"
-import { emptyTree } from "../presentation/executionTree.js"
 import {
   emptyNav,
   emptyStats,
@@ -21,9 +20,12 @@ import {
   type SidePaneProjection,
   type SidePaneState,
 } from "../presentation/sidePane.js"
+import {
+  projectHistory,
+  type HistoryProjection,
+} from "../presentation/historyProjection.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import type { TuiStore } from "../state/store.js"
-import { replayBlocks } from "./replay.js"
 
 /** A conversation row as `listByWorkspace` returns it. */
 export type ConversationSummary = {
@@ -62,19 +64,27 @@ export const conversationPickerOptions = (
 ]
 
 /**
- * The fresh side-pane halves for a conversation switch (resume / build): a reset
- * projection (preserving the prev skills/instructions, fresh tree/files + the new
- * context + stats) and a fresh nav folded to `collapsed`. Returns the two halves
- * so the caller writes each through its own segregated setter.
+ * The fresh side-pane halves for a conversation switch (resume / build): the
+ * projection rebuilt from the loaded message set (activity tree + diffstat from
+ * `projectHistory`, preserving the prev skills/instructions) and a fresh nav —
+ * context viewer folded to `collapsed`, every rebuilt run folded to one line
+ * (`activity.foldIds` UNIONED with `emptyNav`'s section folds, which must
+ * survive the switch). Returns the two halves so the caller writes each
+ * through its own segregated setter.
  */
 const switchedSidePane = (
   prev: SidePaneProjection,
   context: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
   stats: SidePaneState["stats"],
+  activity: Pick<HistoryProjection, "tree" | "filesChanged" | "foldIds">,
 ): { projection: SidePaneProjection; nav: SidePaneNav } => ({
-  projection: { ...prev, tree: emptyTree, context, stats, filesChanged: [] },
-  nav: { ...emptyNav, contextCollapsed: collapsed },
+  projection: { ...prev, tree: activity.tree, context, stats, filesChanged: activity.filesChanged },
+  nav: {
+    ...emptyNav,
+    contextCollapsed: collapsed,
+    stackCollapsed: new Set([...emptyNav.stackCollapsed, ...activity.foldIds]),
+  },
 })
 
 const statsFrom = (
@@ -135,10 +145,11 @@ export const applyResume = (
 ): void => {
   const segments = buildContextView(history, checkpoints)
   const stats = statsFrom(store.sidePane(), history)
+  const proj = projectHistory(history, checkpoints)
   store.run.newConversation(target)
-  store.setBlocks(replayBlocks(history, checkpoints))
+  store.setBlocks(proj.blocks)
   // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
-  const switched = switchedSidePane(store.projection(), segments, new Set(turnIdsOf(segments)), stats)
+  const switched = switchedSidePane(store.projection(), segments, new Set(turnIdsOf(segments)), stats, proj)
   store.setProjection(() => switched.projection)
   store.setNav(() => switched.nav)
   if (announce) {
@@ -166,9 +177,10 @@ export const applyBuilt = (
   handoffCount: number,
 ): void => {
   const stats = statsFrom(store.sidePane(), picked)
+  const proj = projectHistory(picked, [])
   store.run.newConversation(newId)
-  store.setBlocks(replayBlocks(picked, []))
-  const switched = switchedSidePane(store.projection(), buildContextView(picked, []), new Set(), stats)
+  store.setBlocks(proj.blocks)
+  const switched = switchedSidePane(store.projection(), buildContextView(picked, []), new Set(), stats, proj)
   store.setProjection(() => switched.projection)
   store.setNav(() => switched.nav)
   store.setFocus("input")

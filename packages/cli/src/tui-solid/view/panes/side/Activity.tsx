@@ -85,7 +85,12 @@ const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) =>
         ? ` · ${n.children.length} ${unit}${n.children.length === 1 ? "" : "s"}`
         : ""
     const detail = n.detail !== undefined ? ` ${n.detail}` : ""
-    const dur = isContainer ? ` ${fmtDur((n.endedAt ?? Date.now()) - n.startedAt)}` : ""
+    // A tree rebuilt from persisted messages has no timestamps (all 0) —
+    // endedAt === startedAt means "duration unknown", not "0ms".
+    const dur =
+      isContainer && n.endedAt !== n.startedAt
+        ? ` ${fmtDur((n.endedAt ?? Date.now()) - n.startedAt)}`
+        : ""
     return `${count}${detail}${dur}`
   }
   return (
