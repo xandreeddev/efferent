@@ -71,6 +71,12 @@ export class ConversationStore extends Context.Tag(
     readonly listActive: (
       id: ConversationId,
     ) => Effect.Effect<ReadonlyArray<AgentMessage>, ConversationStoreError>
+    /** Name the conversation (generated after its first exchange; shown in
+     *  session lists instead of the raw first-prompt preview). */
+    readonly setTitle: (
+      id: ConversationId,
+      title: string,
+    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
     readonly listByWorkspace: (
       workspaceDir: string,
     ) => Effect.Effect<
@@ -78,6 +84,7 @@ export class ConversationStore extends Context.Tag(
         readonly id: ConversationId
         readonly createdAt: number
         readonly firstPrompt?: string
+        readonly title?: string
       }>,
       ConversationStoreError
     >

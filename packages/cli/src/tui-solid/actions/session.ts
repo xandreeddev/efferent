@@ -32,9 +32,11 @@ export type ConversationSummary = {
   readonly id: ConversationId
   readonly createdAt: number
   readonly firstPrompt?: string
+  readonly title?: string
 }
 
-/** Compact one-line label for a conversation: `<date> · <first-prompt preview>`. */
+/** Compact one-line label for a conversation: `<date> · <title>` when the
+ *  session has a generated title, else the first-prompt preview. */
 export const conversationLabel = (c: ConversationSummary): string => {
   const date = new Date(c.createdAt).toLocaleString(undefined, {
     month: "short",
@@ -42,10 +44,13 @@ export const conversationLabel = (c: ConversationSummary): string => {
     hour: "numeric",
     minute: "2-digit",
   })
+  const title = c.title?.trim()
   const preview =
-    c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
-      ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80)
-      : "(empty)"
+    title !== undefined && title.length > 0
+      ? title
+      : c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+        ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80)
+        : "(empty)"
   return `${date} · ${preview}`
 }
 
@@ -379,10 +384,13 @@ export const browseConversations = (store: TuiStore, cwd: string) =>
         }
         list.forEach((c, i) => {
           const date = new Date(c.createdAt).toLocaleString()
+          const title = c.title?.trim()
           const preview =
-            c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
-              ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 50)
-              : "(empty)"
+            title !== undefined && title.length > 0
+              ? title
+              : c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+                ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 50)
+                : "(empty)"
           const here = c.id === store.run.getConversationId() ? " ← current" : ""
           store.pushBlock({ kind: "info", text: `  [${i + 1}] ${date} · ${preview}${here}` })
         })

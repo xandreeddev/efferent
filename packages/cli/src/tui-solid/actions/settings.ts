@@ -176,6 +176,13 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "readonly",
         hint: "use :search",
       },
+      {
+        key: "utilityModel",
+        label: "utilityModel",
+        value: current.utilityModel ?? "default (chat model)",
+        kind: "readonly",
+        hint: "use :set utilityModel <provider>:<modelId>",
+      },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
@@ -293,8 +300,34 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => store.toast(`Updated searchModel → ${parsed ?? "default"}`))
       return
     }
+    if (key === "utilityModel") {
+      // Any logged-in provider works; require the explicit '<provider>:<modelId>'
+      // form so a bare id can't silently land on the wrong provider.
+      const provider = value.includes(":") ? value.slice(0, value.indexOf(":")) : undefined
+      const valid =
+        value === "default" ||
+        (provider !== undefined &&
+          ["google", "openai", "anthropic", "opencode", "ollama"].includes(provider) &&
+          value.length > provider.length + 1)
+      if (!valid) {
+        return yield* err(
+          "Setting 'utilityModel' must be 'default' or '<provider>:<modelId>' (google/openai/anthropic/opencode/ollama)",
+        )
+      }
+      yield* settings.update((curr) => {
+        if (value === "default") {
+          const { utilityModel: _drop, ...rest } = curr
+          return rest
+        }
+        return { ...curr, utilityModel: value }
+      })
+      yield* Effect.sync(() =>
+        store.toast(`Updated utilityModel → ${value === "default" ? "default (chat model)" : value}`),
+      )
+      return
+    }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, utilityModel`,
     )
   })
 

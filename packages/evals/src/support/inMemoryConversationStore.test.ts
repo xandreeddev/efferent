@@ -65,6 +65,18 @@ describe("InMemoryConversationStore", () => {
     expect(result.list.map((c) => c.summary)).toEqual(["S1", "S2"])
   })
 
+  test("setTitle round-trips through listByWorkspace (production-store parity)", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const id = yield* store.create("/tmp/ws-t")
+        yield* store.setTitle(id, "Parser Fix")
+        return yield* store.listByWorkspace("/tmp/ws-t")
+      }),
+    )
+    expect(result[0]?.title).toBe("Parser Fix")
+  })
+
   test("append to a missing conversation fails with ConversationNotFound", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {

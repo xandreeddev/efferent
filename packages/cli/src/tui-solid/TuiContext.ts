@@ -11,6 +11,7 @@ import type {
   ModelRegistry,
   SettingsStore,
   Shell,
+  UtilityLlm,
   WebSearch,
 } from "@efferent/core"
 import type { LanguageModel } from "@effect/ai"
@@ -32,6 +33,7 @@ export type AppServices =
   | LanguageModel.LanguageModel
   | SettingsStore
   | ModelRegistry
+  | UtilityLlm
   | WebSearch
   | AuthStore
   | AuthFlow

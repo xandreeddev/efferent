@@ -27,6 +27,7 @@ interface Stored {
 interface Conv {
   readonly createdAt: number
   readonly workspaceDir?: string
+  readonly title?: string
   readonly messages: ReadonlyArray<Stored>
   readonly checkpoints: ReadonlyArray<Checkpoint>
 }
@@ -145,6 +146,19 @@ export const InMemoryConversationStoreLive = Layer.effect(
           }),
         ),
 
+      setTitle: (id, title) =>
+        Effect.gen(function* () {
+          const conv = yield* getConv(id)
+          if (conv === undefined) {
+            return yield* Effect.fail(new ConversationNotFound({ id }))
+          }
+          yield* Ref.update(ref, (m) => {
+            const next = new Map(m)
+            next.set(id, { ...conv, title })
+            return next
+          })
+        }),
+
       listByWorkspace: (workspaceDir) =>
         Ref.get(ref).pipe(
           Effect.map((m) =>
@@ -159,6 +173,7 @@ export const InMemoryConversationStoreLive = Layer.effect(
                   id: id as ConversationId,
                   createdAt: conv.createdAt,
                   ...(firstPrompt !== undefined ? { firstPrompt } : {}),
+                  ...(conv.title !== undefined ? { title: conv.title } : {}),
                 }
               }),
           ),

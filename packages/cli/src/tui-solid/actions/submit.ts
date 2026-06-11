@@ -4,6 +4,8 @@ import {
   buildScopeRuntime,
   coderAgentConfig,
   ContextNodeId,
+  ConversationStore,
+  generateSessionTitle,
   runAgent,
   SettingsStore,
   type AgentHooks,
@@ -162,6 +164,8 @@ export const makeSubmit = (
       const prevTurns = buildConversation(store.blocks())
         .filter((i) => i.kind === "turn")
         .map((i) => i.id)
+      // No prior turns ⇒ this message opens the session — worth naming.
+      const firstExchange = prevTurns.length === 0
       if (prevTurns.length > 0) {
         store.setCollapsed(new Set([...store.collapsed(), ...prevTurns]))
       }
@@ -205,6 +209,21 @@ export const makeSubmit = (
         // Seal the Activity run container (closes any still-open descendants
         // too — an interrupt skips their end events).
         store.setProjection((p) => ({ ...p, tree: onRunEnd(p.tree, true, Date.now()) }))
+        // The session's first exchange just landed: name it on the cheap
+        // utility tier, off the critical path. Best-effort daemon — a missing
+        // credential / provider hiccup must never surface here.
+        if (firstExchange) {
+          yield* Effect.forkDaemon(
+            Effect.gen(function* () {
+              const cs = yield* ConversationStore
+              const history = yield* cs.list(cid)
+              const title = yield* generateSessionTitle(history)
+              if (title.length === 0) return
+              yield* cs.setTitle(cid, title)
+              yield* refreshNav(store, cid)
+            }).pipe(Effect.ignore),
+          )
+        }
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
         yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))

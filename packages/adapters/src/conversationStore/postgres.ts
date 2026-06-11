@@ -205,16 +205,34 @@ export const PostgresConversationStoreLive = Layer.effect(
           return yield* Effect.forEach(rows, decodeMessage)
         }),
 
+      setTitle: (conversationId, title) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ readonly id: string }>`SELECT id::text FROM conversations WHERE id = ${conversationId}::uuid`,
+            "Failed to look up conversation",
+          )
+          if (rows.length === 0) {
+            return yield* Effect.fail(
+              new ConversationNotFound({ id: conversationId }),
+            )
+          }
+          yield* wrapSql(
+            sql`UPDATE conversations SET title = ${title} WHERE id = ${conversationId}::uuid`,
+            "Failed to set conversation title",
+          )
+        }),
+
       listByWorkspace: (workspaceDir) =>
         Effect.gen(function* () {
           const rows = yield* wrapSql(
-            sql<{ readonly id: string; readonly created_at: string; readonly first_prompt: string | null }>`
-              SELECT 
-                c.id::text, 
+            sql<{ readonly id: string; readonly created_at: string; readonly title: string | null; readonly first_prompt: string | null }>`
+              SELECT
+                c.id::text,
                 c.created_at,
-                (SELECT content->>'content' 
-                 FROM messages 
-                 WHERE conversation_id = c.id AND role = 'user' 
+                c.title,
+                (SELECT content->>'content'
+                 FROM messages
+                 WHERE conversation_id = c.id AND role = 'user'
                  ORDER BY position ASC LIMIT 1) as first_prompt
               FROM conversations c
               WHERE c.workspace_dir = ${workspaceDir}
@@ -222,7 +240,7 @@ export const PostgresConversationStoreLive = Layer.effect(
             `,
             "Failed to list conversations by workspace",
           )
-          const results: { id: ConversationId; createdAt: number; firstPrompt?: string }[] = []
+          const results: { id: ConversationId; createdAt: number; firstPrompt?: string; title?: string }[] = []
           for (const r of rows) {
             const id = yield* Schema.decodeUnknown(ConversationId)(r.id).pipe(
               Effect.mapError(
@@ -237,6 +255,7 @@ export const PostgresConversationStoreLive = Layer.effect(
               id,
               createdAt: Number(r.created_at),
               ...(r.first_prompt !== null ? { firstPrompt: r.first_prompt } : {}),
+              ...(r.title !== null ? { title: r.title } : {}),
             })
           }
           return results
