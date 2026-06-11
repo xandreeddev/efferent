@@ -181,7 +181,7 @@ export const openSettingsView = (store: TuiStore) =>
         label: "utilityModel",
         value: current.utilityModel ?? "default (chat model)",
         kind: "readonly",
-        hint: "use :set utilityModel <provider>:<modelId>",
+        hint: "use :set utilityModel",
       },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]

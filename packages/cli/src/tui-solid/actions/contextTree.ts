@@ -290,14 +290,20 @@ export const continueFromNode = (store: TuiStore, cwd: string, nodeId: string) =
     yield* Effect.forEach(messages, (m) =>
       cs.append(newId, m).pipe(Effect.catchAll(() => Effect.void)),
     )
-    const folder = basename(node.folder) || node.folder
+    const name = node.title ?? (basename(node.folder) || node.folder)
+    // Carry the node's name onto the fork so the sessions pane doesn't fall
+    // back to a first-prompt preview (the title daemon only fires on a first
+    // exchange, which a seeded fork never has).
+    if (node.title !== undefined) {
+      yield* cs.setTitle(newId, node.title).pipe(Effect.catchAll(() => Effect.void))
+    }
     yield* Effect.sync(() =>
       batch(() => {
         closeNodePreview(store)
         applyResume(store, newId, messages, [], false)
         store.pushBlock({
           kind: "info",
-          text: `continued agent ${folder} as new session ${newId.slice(0, 8)} · ${messages.length} msgs — type to take over`,
+          text: `continued agent ${name} as new session ${newId.slice(0, 8)} · ${messages.length} msgs — type to take over`,
         })
       }),
     )
