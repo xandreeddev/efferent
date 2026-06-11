@@ -22,8 +22,8 @@ const newStore = (): TuiStore =>
 const HEX = /^#[0-9a-f]{6}$/i
 
 describe("theme registry", () => {
-  test("ships one-dark and tokyo-night, each with a complete token set", () => {
-    expect(themeNames()).toEqual(["one-dark", "tokyo-night"])
+  test("ships efferent (the default), one-dark, and tokyo-night, each with a complete token set", () => {
+    expect(themeNames()).toEqual(["efferent", "one-dark", "tokyo-night"])
     for (const name of themeNames()) {
       const t = themes[name]!.tokens
       // representative leaves across the token groups — all real hex values
@@ -82,7 +82,7 @@ describe("openThemePicker", () => {
     expect(o.kind).toBe("select")
     if (o.kind !== "select") throw new Error("expected a select overlay")
     expect(o.purpose).toEqual({ tag: "theme" })
-    expect(o.sel.all.map((opt) => opt.label)).toEqual(["one-dark", "tokyo-night"])
+    expect(o.sel.all.map((opt) => opt.label)).toEqual(["efferent", "one-dark", "tokyo-night"])
     // the active theme is pre-highlighted
     const active = o.sel.all.find((opt) => opt.active === true)
     expect(active?.value).toBe("tokyo-night")

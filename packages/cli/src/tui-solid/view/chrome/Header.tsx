@@ -30,31 +30,24 @@ export const Header = (props: { ctx: TuiContext }) => {
     return st().since > 0 ? fmtElapsed(Date.now() - st().since) : ""
   }
   const fleet = () => fleetLabel(st())
-  const title = () =>
-    store.projection().sessions?.find((c) => c.active)?.title ?? ""
 
   return (
-    <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
-      <box flexDirection="row">
-        <text fg={tokens.accent.conversation} flexShrink={0}>
-          {`${glyph.wordmark}efferent`}
+    <box flexDirection="row" flexShrink={0}>
+      <text fg={tokens.accent.conversation} flexShrink={0}>
+        {`${glyph.wordmark}efferent`}
+      </text>
+      <Show
+        when={running()}
+        fallback={<text fg={tokens.text.dim} flexShrink={0}>{`  ${glyph.idleDot} idle`}</text>}
+      >
+        <text fg={tokens.state.running} flexShrink={0}>{`  ${spin()} `}</text>
+        <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
+          {agentStateLabel(st())}
         </text>
-        <Show
-          when={running()}
-          fallback={<text fg={tokens.text.dim} flexShrink={0}>{`  ${glyph.idleDot} idle`}</text>}
-        >
-          <text fg={tokens.state.running} flexShrink={0}>{`  ${spin()} `}</text>
-          <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
-            {agentStateLabel(st())}
-          </text>
-          <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{` ${elapsed()}`}</text>
-        </Show>
-        <Show when={fleet()}>
-          <text fg={tokens.accent.side} wrapMode="none">{`  ${glyph.fleet} ${fleet()}`}</text>
-        </Show>
-      </box>
-      <Show when={title().length > 0}>
-        <text fg={tokens.text.muted} wrapMode="none">{title()}</text>
+        <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{` ${elapsed()}`}</text>
+      </Show>
+      <Show when={fleet()}>
+        <text fg={tokens.accent.side} wrapMode="none">{`  ${glyph.fleet} ${fleet()}`}</text>
       </Show>
     </box>
   )

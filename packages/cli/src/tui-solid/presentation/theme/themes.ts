@@ -1,4 +1,4 @@
-import { defaultPalette, tokyoNightPalette } from "./palette.js"
+import { defaultPalette, efferentPalette, tokyoNightPalette } from "./palette.js"
 import { makeTokens, type PaneKind, type Tokens } from "./tokens.js"
 
 /**
@@ -24,17 +24,18 @@ export interface Theme {
 
 /** The theme registry, keyed by name. The runtime `:theme` picker lists these. */
 export const themes: Record<string, Theme> = {
+  efferent: { name: "efferent", tokens: makeTokens(efferentPalette) },
   "one-dark": { name: "one-dark", tokens: makeTokens(defaultPalette) },
   "tokyo-night": { name: "tokyo-night", tokens: makeTokens(tokyoNightPalette) },
 }
 
 /** The default theme's name — the static fallback. At runtime, `state/theme.ts`
  *  wraps this in a Solid signal so `:theme` can switch it live. */
-export const activeThemeName = "one-dark"
+export const activeThemeName = "efferent"
 
 /** The resolved active theme. */
 export const activeTheme: Theme =
-  themes[activeThemeName] ?? { name: "one-dark", tokens: makeTokens(defaultPalette) }
+  themes[activeThemeName] ?? { name: "efferent", tokens: makeTokens(efferentPalette) }
 
 /** The active semantic tokens — what every view imports. Same names across
  *  themes; values from {@link activeTheme}. */
