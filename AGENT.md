@@ -1,6 +1,6 @@
 # efferent — coding agent on Effect.ts + Bun
 
-Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent tree) for the broader project rules — alias identity, OPSEC, weekly cadence, locked stack. See `docs/roadmap.md` for what's deferred, `docs/models.md` for the exhaustive model-usage map (every LLM call site, its selection, where the spend lands), and `docs/comparison.md` for how we stack up against Claude Code + pi.
+Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent tree) for the broader project rules — alias identity, OPSEC, weekly cadence, locked stack. See `docs/roadmap.md` for what's deferred and `docs/models.md` for the exhaustive model-usage map (every LLM call site, its selection, where the spend lands).
 
 ## Architecture (ports & adapters)
 

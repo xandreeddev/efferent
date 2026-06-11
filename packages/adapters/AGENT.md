@@ -4,12 +4,18 @@ Concrete implementations of `@efferent/core` ports. Side effects live here and n
 
 ## Layout
 
-One subfolder per port name: `src/llm/` for the `Llm` port, future `src/storage/` for a `Storage` port, etc. Each adapter exports a `Layer` named `<Provider>Live` (e.g., `LlmLive`, future `geminiLive`/`openaiLive` if multiple providers coexist). `src/index.ts` re-exports them.
+One subfolder per concern:
+
+- `llm/` — the multi-provider model tier: `router.ts` (`RouterLanguageModelLive` — resolves provider + key **per request**), `providers.ts` (`makeProviderLanguageModel` for Google / OpenAI / Anthropic incl. OAuth + cache breakpoints; `openAiCodex.ts`, `openCode.ts`, `ollama.ts` variants), `modelRegistry.ts` (live catalogue), `utilityLlm.ts` (fast/cheap helper tier), `webSearch.ts` (provider-server-side grounding).
+- `auth/` — `local.ts` (`LocalAuthStoreLive`: `~/.efferent/auth.json`, atomic `0600` writes, OAuth refresh), `env.ts` (`EnvAuthStoreLive` — evals/CI only; the *only* place provider key env vars are read), `oauth/anthropic.ts` (PKCE protocol).
+- `database/` — `migrator.ts` (store selection: SQLite default, Postgres via `EFFERENT_DB_URL`), `conversationStore/` + `contextTreeStore/` (SQLite + Postgres impls), `migrations/`.
+- `settings/` — `local.ts` (project + global `config.json`).
+- `fs/`, `shell/`, `http/` — local FileSystem / Shell / Http port impls.
 
 ## Rules
 
-- Each adapter is a `Layer.effect(Port, Effect.gen(function* () { ... return { method: ... } }))`.
-- All external promises go through `Effect.tryPromise`, with the `catch` callback mapping the thrown value into the port's tagged error type. Never let an untyped error escape.
-- Read configuration via `Config.string` / `Config.number` / etc., not `process.env`. Provide sensible defaults with `Config.withDefault` when reasonable.
-- Two adapters for the same port (e.g., `geminiLive` and `openaiLive`) is expected. Picking which one to use is the driver's job, not the adapter's.
-- Adapters may depend on `@efferent/core` and external SDKs only. Never import from `@efferent/application`, `@efferent/cli`, `@efferent/web`, or other adapters.
+- Each adapter is a `Layer` named `<Thing>Live` providing exactly one port (or a bundle like `ModelLive` that merges a tier).
+- External promises go through `Effect.tryPromise`, mapped into the port's tagged error. Never let an untyped error escape.
+- Keys are never captured at layer build — resolve from `AuthStore` per call so `:login` / `:model` apply on the next request without a rebuild.
+- Adapters may depend on `@efferent/core` and external SDKs only. Never import from `@efferent/cli` or other adapters' internals.
+- Migrations are registered in `migrator.ts` via `Migrator.fromRecord` (bundle-safe) — one record per store flavor.
