@@ -135,18 +135,25 @@ const NodeRow = (props: { node: TreeNode; folded: boolean; spinner: number }) =>
         : ""
     return `${count}${detail}${dur}`
   }
+  // flexShrink=0 everywhere: an overflowing row must CLIP at the pane edge,
+  // not let Yoga shrink each text (which eats the glyph's space and the
+  // label's tail before the detail — `✗Write(poem.txtpoem.txt is outside…`).
   return (
     <>
-      <text fg={glyphColor()}>{`${nodeGlyph()} `}</text>
+      <text fg={glyphColor()} flexShrink={0}>{`${nodeGlyph()} `}</text>
       {/* A run root IS the user's message — same quiet prompt styling as the
           conversation rail, so the two panes read as one vocabulary. */}
       <Show when={n.kind === "run"}>
-        <text fg={tokens.text.dim}>{`${glyph.msg.user} `}</text>
+        <text fg={tokens.text.dim} flexShrink={0}>{`${glyph.msg.user} `}</text>
       </Show>
-      <text fg={n.kind === "run" ? tokens.text.user : tokens.text.default} wrapMode="none">
+      <text
+        fg={n.kind === "run" ? tokens.text.user : tokens.text.default}
+        wrapMode="none"
+        flexShrink={0}
+      >
         {n.label}
       </text>
-      <text fg={tokens.text.dim} wrapMode="none">{suffix()}</text>
+      <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{suffix()}</text>
     </>
   )
 }
