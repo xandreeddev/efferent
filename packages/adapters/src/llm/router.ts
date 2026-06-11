@@ -1,7 +1,14 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { AuthStore, LlmInfo, ModelRegistry, SettingsStore, type ModelSelection } from "@efferent/core"
-import { Effect, Layer, Stream } from "effect"
+import {
+  AuthStore,
+  LlmInfo,
+  ModelOverrideRef,
+  ModelRegistry,
+  SettingsStore,
+  type ModelSelection,
+} from "@efferent/core"
+import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import { makeProviderLanguageModel, prependClaudeCode } from "./providers.js"
 
@@ -46,9 +53,18 @@ export const RouterLanguageModelLive = Layer.effect(
         return yield* makeProviderLanguageModel(sel, key, cred, settings)
       })
 
+    // The selection for THIS call: a fiber-local override (a sub-agent running
+    // on the FAST tier) wins; otherwise the live main selection. Read per call
+    // so `:model` and `run_agent` tiering both apply with no rebuild.
+    const currentSelection = FiberRef.get(ModelOverrideRef).pipe(
+      Effect.flatMap((override) =>
+        override !== undefined ? Effect.succeed(override) : registry.current,
+      ),
+    )
+
     const service: LanguageModel.Service = {
       generateText: (options) =>
-        registry.current.pipe(
+        currentSelection.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
@@ -63,7 +79,7 @@ export const RouterLanguageModelLive = Layer.effect(
         ),
 
       generateObject: (options) =>
-        registry.current.pipe(
+        currentSelection.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
@@ -79,7 +95,7 @@ export const RouterLanguageModelLive = Layer.effect(
 
       streamText: (options) =>
         Stream.unwrapScoped(
-          registry.current.pipe(
+          currentSelection.pipe(
             Effect.flatMap((sel) =>
               resolveAndBuild(sel).pipe(
                 Effect.map(({ svc, prependClaudeCode: shouldPrepend }) =>

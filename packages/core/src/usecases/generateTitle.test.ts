@@ -20,11 +20,12 @@ describe("sanitizeTitle", () => {
 })
 
 describe("generateSessionTitle", () => {
+  const usage = { inputTokens: 120, outputTokens: 8, totalTokens: 128, cacheReadTokens: 0 }
   const stub = (reply: string, seen?: { prompt?: string }) =>
     Layer.succeed(UtilityLlm, {
       complete: (prompt: string) => {
         if (seen !== undefined) seen.prompt = prompt
-        return Effect.succeed(reply)
+        return Effect.succeed({ text: reply, usage })
       },
     })
 
@@ -34,22 +35,24 @@ describe("generateSessionTitle", () => {
     content: [{ type: "text", text }],
   })
 
-  test("names the first exchange and sanitizes the reply", async () => {
+  test("names the first exchange, sanitizes the reply, reports the spend", async () => {
     const seen: { prompt?: string } = {}
-    const title = await Effect.runPromise(
+    const res = await Effect.runPromise(
       generateSessionTitle([user("fix the tui scroll bug"), assistant("On it.")]).pipe(
         Effect.provide(stub('"Fix TUI Scroll Bug"\n', seen)),
       ),
     )
-    expect(title).toBe("Fix TUI Scroll Bug")
+    expect(res.title).toBe("Fix TUI Scroll Bug")
+    expect(res.usage).toEqual(usage)
     expect(seen.prompt).toContain("USER: fix the tui scroll bug")
     expect(seen.prompt).toContain("ASSISTANT: On it.")
   })
 
-  test("returns '' when the history has no nameable user message", async () => {
-    const title = await Effect.runPromise(
+  test("returns an empty title (and no spend) when nothing is nameable", async () => {
+    const res = await Effect.runPromise(
       generateSessionTitle([]).pipe(Effect.provide(stub("anything"))),
     )
-    expect(title).toBe("")
+    expect(res.title).toBe("")
+    expect(res.usage).toBeUndefined()
   })
 })
