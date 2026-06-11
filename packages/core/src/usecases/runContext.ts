@@ -25,6 +25,10 @@ export interface RunContext {
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
   readonly subAgentMaxSteps?: number
+  /** Headroom budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
+   *  × 4), threaded so sub-agent loops compress like the root. Absent → the
+   *  built-in default; 0 disables. */
+  readonly toolResultMaxChars?: number
 }
 
 export const initialRunContext: RunContext = {

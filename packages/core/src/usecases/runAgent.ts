@@ -54,11 +54,15 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
     )
 
+    const toolResultMaxChars =
+      settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
+
     const result = yield* runAgentLoop({
       system: config.systemPrompt,
       messages: [...prefix, ...active, userMsg],
       toolkit: config.toolkit,
       maxSteps: settings.maxSteps,
+      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
     }).pipe(
       // Seed the run context so the generic `run_agent` tool tags spawned
@@ -72,6 +76,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         ...(settings.subAgentMaxSteps !== undefined
           ? { subAgentMaxSteps: settings.subAgentMaxSteps }
           : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       }),
     )
 

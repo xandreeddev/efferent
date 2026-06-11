@@ -23,11 +23,9 @@ module may call a provider SDK.
 | 5 | `adapters/src/llm/webSearch.ts` (`WebSearchLive`, grounding-only `generateText`) | the **`search_web` tool** — a dedicated request carrying only the provider's server-side search tool | own per-call client (NOT the router): `Settings.searchModel` → `EFFERENT_SEARCH_MODEL` env → logged-in Google (preferred) / OpenAI | **nowhere — known gap** |
 | 6 | `evals/src/framework/scorers.ts` (`llmJudge`) | **eval scoring** (LLM-as-judge) | the eval env's model layer; keys from `EnvAuthStoreLive` (the only env-var key reading in the tree) | the eval report only (out-of-app by design) |
 | 7 | eval suites running the real loop (`runCoder`, the handoff suite) | **eval tasks** | same as #1 under the eval env | eval report only |
+| 8 | `core/usecases/headroom.ts` (`compressToolResults`, called per loop step) | **headroom middle digests** — a ≤120-word summary of an oversized tool result's dropped middle, woven into the clip marker | `UtilityLlm` → **fast** (`fastModel` ?? main) — the fast role's first consumer | `byRole.fast` (via the `onHelperUsage` hook → `helper_usage` event; sub-agent loops forward to the parent ledger) |
 
-**Wired but unconsumed:** the **fast** role (`UtilityLlm.complete(prompt, { role: "fast" })`,
-`Settings.fastModel`). Named next consumers: **tool-output summaries** and **auto-approval
-judgments** for tool use. The tier, picker (`:model fast`), settings key, status-bar
-readout, and `byRole.fast` accounting are all live — a consumer is one call away.
+**Still unconsumed on fast:** **auto-approval judgments** for tool use (named next consumer).
 
 ## How a selection becomes a client
 

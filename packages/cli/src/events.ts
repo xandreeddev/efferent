@@ -66,6 +66,12 @@ export type AgentEvent =
     }
   | { readonly type: "skill_load"; readonly name: string }
   | {
+      /** A helper-tier call ran inside the loop (e.g. a headroom middle-summary). */
+      readonly type: "helper_usage"
+      readonly role: "fast" | "cheap"
+      readonly usage: TokenUsage
+    }
+  | {
       readonly type: "agent_end"
       readonly finalText: string
       readonly messages: ReadonlyArray<AgentMessage>
@@ -151,6 +157,12 @@ export const makeEventHooks = <R = never>(
     Queue.offer(queue, {
       type: "skill_load",
       name: event.name,
+    }).pipe(Effect.asVoid),
+  onHelperUsage: (event) =>
+    Queue.offer(queue, {
+      type: "helper_usage",
+      role: event.role,
+      usage: event.usage,
     }).pipe(Effect.asVoid),
   onAgentEnd: (event) =>
     Queue.offer(queue, {

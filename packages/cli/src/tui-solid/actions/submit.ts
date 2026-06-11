@@ -5,9 +5,11 @@ import {
   coderAgentConfig,
   ContextNodeId,
   ConversationStore,
+  DEFAULT_AUTO_HANDOFF_PCT,
   generateSessionTitle,
   runAgent,
   SettingsStore,
+  shouldAutoHandoff,
   type AgentHooks,
   type Approval,
   type Scope,
@@ -18,6 +20,8 @@ import { idleAgentState, submittedAgentState } from "../presentation/agentState.
 import { buildConversation, subjectLine } from "../presentation/conversation.js"
 import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
 import { accumulateRoleSpend } from "../presentation/sidePane.js"
+import { contextPercent } from "../presentation/statusBar.js"
+import { runHandoff } from "./handoff.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
@@ -243,6 +247,26 @@ export const makeSubmit = (
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
         yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        // Headroom: fold at the boundary. When the last turn's context crossed
+        // the threshold, run the handoff fold NOW — one deliberate prefix
+        // rebuild (the only cache-safe way to shrink history), then the cache
+        // is warm again. Skipped while messages are queued (fold once the
+        // queue drains) and on resume estimates (a chars/4 guess must not
+        // trigger a surprise fold — the first real turn decides).
+        const settings = yield* (yield* SettingsStore).get()
+        const st = store.stats()
+        const pct = settings.autoHandoffPct ?? DEFAULT_AUTO_HANDOFF_PCT
+        if (
+          next === undefined &&
+          st.estimated !== true &&
+          shouldAutoHandoff(st.inputTokens, st.contextWindow, pct)
+        ) {
+          store.pushBlock({
+            kind: "info",
+            text: `context at ${contextPercent(st.inputTokens, st.contextWindow)}% of the window — auto-folding via handoff (:set autoHandoffPct 0 to disable)`,
+          })
+          yield* runHandoff(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        }
         if (next !== undefined) yield* submit(next)
       })
 

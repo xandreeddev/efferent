@@ -373,6 +373,13 @@ export const makeEventReducer = (
         )
         return
 
+      case "helper_usage":
+        // A fast/cheap call inside the loop (headroom summaries) — ledger only.
+        store.setStats((s) =>
+          accumulateRoleSpend(s, event.role, event.usage.inputTokens + event.usage.outputTokens),
+        )
+        return
+
       case "assistant_message": {
         // Sub-agent narration (depth > 0, forwarded by the inner hooks) never
         // lands on the parent rail and never counts toward the conversation

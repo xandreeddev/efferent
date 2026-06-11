@@ -74,6 +74,8 @@ export interface ScopeRuntime {
     readonly task: string
     readonly budget?: number
     readonly maxSteps?: number
+    /** Headroom budget (chars) per tool-result string for the resumed run. */
+    readonly toolResultMaxChars?: number
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },
     Failure,
@@ -256,6 +258,11 @@ const makeInnerHooks = <R>(
     ...(parent?.onSkillLoad !== undefined
       ? { onSkillLoad: parent.onSkillLoad }
       : {}),
+    // Helper-tier spend inside a sub-agent's loop (headroom summaries) still
+    // belongs on the session ledger — forward it.
+    ...(parent?.onHelperUsage !== undefined
+      ? { onHelperUsage: parent.onHelperUsage }
+      : {}),
   }
 }
 
@@ -279,6 +286,8 @@ interface RunSpawnedArgs<R> {
   readonly tokenPool: TokenPool
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
   readonly maxSteps?: number
+  /** Headroom budget (chars) per tool-result string, via `RunContext`. */
+  readonly toolResultMaxChars?: number
 }
 
 /**
@@ -341,6 +350,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       depth: args.parentDepth + 1,
       tokenPool: args.tokenPool,
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
+      ...(args.toolResultMaxChars !== undefined
+        ? { toolResultMaxChars: args.toolResultMaxChars }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
@@ -348,6 +360,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       messages: seedMessages,
       toolkit: genericToolkit,
       maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
+      ...(args.toolResultMaxChars !== undefined
+        ? { toolResultMaxChars: args.toolResultMaxChars }
+        : {}),
       hooks: innerHooks,
     }).pipe(
       Effect.provide(childLayer),
@@ -493,6 +508,7 @@ const makeRunAgentHandler =
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
             ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
+            ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
           })
         }
         const sourceMsgs = yield* store.listMessages(nodeId)
@@ -526,6 +542,7 @@ const makeRunAgentHandler =
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
           ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
+          ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
         })
       }
 
@@ -549,6 +566,7 @@ const makeRunAgentHandler =
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
         ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
+        ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
@@ -601,7 +619,7 @@ export const buildScopeRuntime = <R = never>(
   // The human-driven mirror of the handler's resume branch: same staleness
   // brief, same append-then-rerun, same persistence — minus the FiberRef (the
   // driver IS the root, so the resumed node runs at depth 0 with a fresh pool).
-  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget, maxSteps }) =>
+  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget, maxSteps, toolResultMaxChars }) =>
     Effect.gen(function* () {
       const store = yield* ContextTreeStore
       const shell = yield* Shell
@@ -632,6 +650,7 @@ export const buildScopeRuntime = <R = never>(
         rootConversationId: node.rootConversationId,
         tokenPool,
         ...(maxSteps !== undefined ? { maxSteps } : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
       ScopeRuntime["resumeNode"]

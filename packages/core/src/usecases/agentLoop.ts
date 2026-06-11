@@ -2,6 +2,7 @@ import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
 import { Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
+import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
 import {
   attachUsageToAssistant,
   extractUsage,
@@ -44,6 +45,14 @@ export interface RunAgentLoopInput<
    * provider's rate limit. Default {@link DEFAULT_TOOL_CONCURRENCY}.
    */
   readonly toolConcurrency?: number
+  /**
+   * Headroom: per-string budget (chars) for a tool result entering the
+   * buffer — over it, the string is clipped head+tail with a reversible
+   * marker (+ a FAST-tier digest of the dropped middle when `UtilityLlm` is
+   * around). Append-time, so the prompt-cache prefix is never rewritten.
+   * Default {@link DEFAULT_TOOL_RESULT_MAX_CHARS}; 0 disables.
+   */
+  readonly toolResultMaxChars?: number
 }
 
 /** Tool calls resolved concurrently per step (interruption-safe via Effect). */
@@ -186,7 +195,20 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       const res = outcome.res
 
       const content = res.content as ReadonlyArray<unknown>
-      const tail = responseToAgentMessages(content)
+      const rawTail = responseToAgentMessages(content)
+      // Headroom: oversized tool results are compressed HERE — the only
+      // moment they enter the buffer — so the persisted history and every
+      // future prompt prefix carry the clipped form from byte one (caches
+      // stay warm; nothing is ever rewritten). Hooks below still emit the
+      // RAW results, so the human-facing rail shows the full output.
+      const compressed = yield* compressToolResults(
+        rawTail,
+        input.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+      )
+      const tail = [...compressed.messages]
+      if (compressed.helperUsage !== undefined && hooks?.onHelperUsage) {
+        yield* hooks.onHelperUsage({ role: "fast", usage: compressed.helperUsage })
+      }
       const usage = extractUsage(res.usage, content)
       attachUsageToAssistant(tail, usage)
       messages = [...messages, ...tail]

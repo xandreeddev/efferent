@@ -89,6 +89,13 @@ export interface AgentSkillLoadEvent {
   readonly name: string
 }
 
+/** A helper-tier (fast/cheap) call ran inside the loop — e.g. a headroom
+ *  middle-summary. Reported so the driver's ledger can count every tier. */
+export interface AgentHelperUsageEvent {
+  readonly role: "fast" | "cheap"
+  readonly usage: TokenUsage
+}
+
 /**
  * Hook surface that lets the application (and the route layer above it)
  * observe and influence the agent loop without owning the loop itself.
@@ -125,5 +132,8 @@ export interface AgentHooks<R = never> {
   ) => Effect.Effect<void, never, R>
   readonly onSkillLoad?: (
     event: AgentSkillLoadEvent,
+  ) => Effect.Effect<void, never, R>
+  readonly onHelperUsage?: (
+    event: AgentHelperUsageEvent,
   ) => Effect.Effect<void, never, R>
 }
