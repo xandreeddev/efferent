@@ -1,93 +1,93 @@
 # efferent
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS), zero-config local history, multi-provider (Claude / Gemini / OpenAI), colocated evals. No Electron, no React, no Ink — a native-rendered terminal UI on an Effect runtime.
+> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree.
 
 ```bash
 npm i -g efferent          # requires Bun (https://bun.sh)
 efferent                   # opens the TUI in the current project
-                           # → press `:` then `login` to add a provider
+                           # → type :login to add a provider
 ```
 
-That's it. No `init`, no wizard, no env-var dance. **`:login`** picks an OAuth subscription (Claude Pro/Max) or pastes an API key, persists to `~/.efferent/auth.json`, and the next message goes out — same turn, no restart.
+That's it. No `init`, no wizard, no env vars. **`:login`** picks a subscription (OAuth — Claude Pro/Max, OpenAI) or an API key (Anthropic / Google / OpenAI / OpenCode / Ollama), persists to `~/.efferent/auth.json`, and the next message goes out — same turn, no restart.
 
 ```
-  ┌─ conversation ─────────────────────────┐ ┌─ activity ─────┐
-  │ ❯ fix the failing test in src/foo.ts    │ context  18k/1M │
-  │                                         │ tok out    1.2k │
-  │ ● I'll read the test first.             │ turns         3 │
-  │   ● read_file src/foo.test.ts L1-80     │ ──── files ──── │
-  │     ⎿  80 lines                         │ src/foo.ts +6/-2│
-  │   ● edit_file src/foo.ts                │ ──── skills ─── │
-  │     ⎿  +6/-2                            │ ▸ commit-style  │
-  │   ● Bash `bun test src/foo.test.ts`     │ ─ instructions ─│
-  │     ⎿  exit 0 · 1.2s                    │ ▸ AGENT.md (3)  │
-  │ ● Fixed — the regex was anchored too…   │                 │
-  └─────────────────────────────────────────┘ └────────────────┘
-  ┌─ nav ─ Ctrl-hjkl panes · : cmd · / search · z zoom · ^C quit ─┐
-  │ conv ─ j/k scroll · ^D/^U · gg/G ends · / search · Z fold · y yank │
-  └───────────────────────────────────────────────────────────────┘
-  ┌─ input · INSERT ───────────────────────────────────────────────────────┐
-  │ run the tests                                                          │
-  └────────────────────────────────────────────────────────────────────────┘
-   gemini-3.5-flash · 18k (12k cached) / 1M · sqlite · ~/proj
-   logs: ~/.efferent/efferent.log · ⇧↵ send · esc interrupt · ^C quit
+ ▌efferent  ⠹ Bash(bun test) 4s   ◆ 2 agents · fix parser, audit cli
+ ┌─ Fix the failing foo test ──────────────┐  ┌─ activity ───────────┐
+ │ ❯ fix the failing test in src/foo.ts    │  │ ctx ░░ 2% 18k/1M     │
+ │                                         │  │ 1.2k out · 3 turns   │
+ │ ● I'll read the test first.             │  │ Σ main 17k · fast 1k │
+ │                                         │  │ ▾ ❯ fix the failing… │
+ │ ▸ read · grep · edit  (3 tools, +6 -2)  │  │   ▾ turn 1  42 tok   │
+ │                                         │  │     ✓ read_file(foo… │
+ │ ● Bash(bun test src/foo.test.ts)        │  │     ✓ edit_file(foo… │
+ │   ⎿ exit 0                              │  │ ── workspace ──      │
+ │                                         │  │ src/foo.ts +6 -2     │
+ │ ● Fixed — the regex was anchored too…   │  │ ▸ skills (2)         │
+ └─────────────────────────────────────────┘  └──────────────────────┘
+ ┌─ input · INSERT ───────────────────────────────────────────────────┐
+ │ run the full suite                                                 │
+ └────────────────────────────────────────────────────────────────────┘
+  gemini-3.5-flash · fast gemini-3.1-flash-lite ░░ 2% 18k/1M · 86% cached · sqlite · ~/proj
 ```
 
 ## Why efferent
 
-- **Effect substrate, all the way down.** Ports and adapters are Layers, tools are an `@effect/ai` `Toolkit`, conversations live in `ConversationStore`. Every error is tagged. Every IO goes through a port. Swap a provider by swapping a Layer.
-- **Modal multi-pane TUI (OpenTUI + SolidJS).** Three panes (conversation / activity / input) with per-pane accent colours, foldable turns + tool groups, a multi-line composer (Shift-Enter sends · Enter newline), `/` search with match highlighting, keyboard scrolling, and mouse drag-select with OSC 52 yank. Assistant prose renders as **markdown** (bold/italic/inline-code/lists/links), fenced code blocks and file-edit **diffs** are **syntax-highlighted** (tree-sitter; JS/TS/markdown/zig) — all via OpenTUI's native components, not a hand-rolled ANSI pass. Rendered by OpenTUI's native core; the UI graph is SolidJS signals — **no React**.
-- **Multi-provider router.** One `LanguageModel` port; the active provider/model is resolved **per request** from `~/.efferent/auth.json` + your `:model` choice. Anthropic OAuth (Claude Pro/Max subscription) is wire-complete (live round-trip still being verified). Gemini's `thought_signature` round-trips correctly across turns.
-- **Zero-config storage.** SQLite at `~/.efferent/efferent.db` by default. Postgres optional via `:db pg <url>` (or `EFFERENT_DB_URL`). Migrations bundle into the binary.
-- **Skills + instruction files.** Drop `.md` files in `.efferent/skills/` — names + one-liners auto-inject into the system prompt; bodies lazy-load via `read_skill({name})`. `AGENT.md` (and `AGENT.local.md`) discovered from cwd up to home.
-- **Web tools, no extra key.** `web_fetch` (HTTP + HTML→text) and `search_web` (Google or OpenAI **server-side** grounding — uses whichever provider you've logged in).
-- **Sub-agents over a persistent context tree.** One generic `run_agent` tool spawns a folder-scoped sub-agent on demand — writes confined to its folder, that folder's `SCOPE.md` injected as ambient context. Every sub-agent's context is **persisted**: the agent can `resume` it (keep going in the same context) or `branch` it (fork a new context from its messages), and `:tree` browses the whole branching execution history. Independent folders **fan out in parallel** (same-folder spawns queue on a per-folder lock; Esc interrupts the whole subtree). Every node is stamped with the git HEAD it last saw — resuming after the repo moved injects a **staleness brief** and `:tree` shows a `stale` badge.
-- **Spend control for fan-out.** All sub-agents in a turn share one **token budget** (default 500k billed tokens, `:set subAgentTokenBudget`). A drained pool refuses new spawns with a failure the model reads ("do the remaining work yourself") and stops running sub-agents at their next turn boundary, marking partial results as partial. Per-node spend shows in `:tree`.
-- **Bash approval with rules, not dialogs.** Every command asks: **allow once / allow `bun test …` this session / always in this project / deny with a reason**. Three of the four answers are rules, so the prompt rate decays toward commands you've never blessed — and a denial (with your reason) goes back to the model as a tool failure it course-corrects on, not a dead end. Headless modes keep the static `--allow-bash` gate; CI never prompts.
-- **Handoff + context curation.** `:handoff` summarises the loaded view, writes a checkpoint, keeps originals untouched. `:context` opens a tree of turns + handoffs you can select and `:build` into a fresh session.
-- **Headless modes too.** `--print` for one-shots, `--mode json` for JSONL events, `--mode rpc` for bidirectional JSON-RPC over stdio — same loop, different renderer.
+- **Effect substrate, all the way down.** Ports and adapters are Layers, tools are an `@effect/ai` `Toolkit`, every error is tagged, every IO goes through a port. Swap a provider by swapping a Layer.
+- **Multi-provider router, per-request.** One `LanguageModel` port; the active provider/model resolves on every call from `auth.json` + your `:model` choice — a login or model switch applies on the next turn, no rebuild. Anthropic (API key or Claude Pro/Max OAuth), Google, OpenAI (API key or Codex OAuth), OpenCode (Kimi), Ollama.
+- **Prompt caching on all three majors.** OpenAI automatic + `prompt_cache_key`; Gemini implicit; Anthropic via auto-placed `cache_control` breakpoints (caching there is opt-in per request — most clients silently get none). The status bar shows the live `% cached`.
+- **Model roles, not model ids.** All agentic work runs on **main**; latency-sensitive helper calls (compression digests, approval judgments) run on **fast**; background work (session titles) on **cheap** (`:model fast` / `:model cheap`). The activity pane carries a per-role spend ledger: `Σ main 64k · fast 1k · cheap 160`.
+- **Context compression that respects the cache.** Provider caches key on a byte-stable prefix, so history is never rewritten. Oversized tool results are compressed **once, at append time** — grep floods grouped per file with exact counts, build logs keep errors + stack traces + summaries, everything else gets a head/tail clip — always behind a **reversible marker** that tells the model how to retrieve what was dropped, plus a fast-tier digest of the omitted middle. At 85% of the window the session auto-folds via handoff: one deliberate prefix rebuild, then the cache is warm again.
+- **Sub-agents over a persistent context tree.** One generic `run_agent` tool spawns a folder-scoped sub-agent — writes and bash confined to its folder, that folder's `SCOPE.md` injected as ambient context. Every spawn persists as a node: **resume** it, **branch** it, or **handoff** (seed a fresh context with a generated brief — continuity at a fraction of the tokens). `:tree` browses the whole branching history — switch sessions, preview any node, fork it into a new conversation, or type into it to resume in place. Independent folders fan out in parallel; all sub-agents in a turn share one token budget; nodes are stamped with the git HEAD they saw and get a staleness brief when the repo moved.
+- **Approval without prompt fatigue.** An unmatched bash command is first classified by a fast-tier judge against the **permitted folders** (workspace root + whatever you've granted): ordinary work inside is allowed silently; anything reaching outside escalates to a modal that grants *the folder*, once. Denials (with your typed reason) return to the model as data it course-corrects on. `:set autoApprove off` for always-ask; headless modes keep the static `--allow-bash` gate.
+- **Handoff + context curation.** `:handoff` folds the loaded history into a summary checkpoint (originals untouched, cumulative across folds). `:context` shows turns + checkpoints as a selectable tree — pick units, `:build` a fresh session from exactly them.
+- **A real TUI.** Foldable turns and tool groups, markdown prose, syntax-highlighted code + diffs (tree-sitter), vim-style fold cursor + `/` search in every pane, mouse drag-select with OSC 52 yank, live agent state in the header, themes (`:theme`), session titles, resumable conversations with a startup picker.
+- **Headless modes.** `efferent "<prompt>"` for one-shots, `--mode json` for JSONL events, `--mode rpc` for bidirectional JSON-RPC over stdio — same loop, different renderer.
+- **Skills + instruction files.** Drop `.md` files in `.efferent/skills/` — names auto-inject into the system prompt, bodies lazy-load on demand. `AGENT.md` discovered from cwd up to home.
+- **Web tools, no extra key.** `search_web` uses your logged-in provider's server-side grounding; `web_fetch` reads the source.
+- **Zero-config storage.** SQLite at `~/.efferent/efferent.db` by default; Postgres optional (`:db pg <url>`).
 
 ## Install
 
-Requires [Bun](https://bun.sh) at runtime (≥ 1.2). The npm package is a Bun bundle (core + adapters inlined) with **two** runtime dependencies: `@opentui/core` (its native terminal renderer can't be inlined — it loads via FFI per platform; it also ships the tree-sitter grammars + worker for code highlighting) and `web-tree-sitter` (the highlighter the worker loads). Everything else is inlined.
+Requires [Bun](https://bun.sh) ≥ 1.2. The npm package is a Bun bundle with two runtime dependencies (`@opentui/core` — the native terminal renderer loads via FFI — and `web-tree-sitter`); everything else is inlined.
 
 ```bash
-npm i -g efferent
-# or
-bun add -g efferent
+npm i -g efferent     # or: bun add -g efferent
 ```
-
-Then:
 
 ```bash
 efferent                                 # full TUI (default in a TTY)
 efferent "summarise packages/core"       # one-shot print mode
 efferent --mode json "ls"                # stream JSONL events
 efferent --mode rpc                      # JSON-RPC over stdio
-efferent --resume <conversationId>       # continue an existing session
+efferent --resume <conversationId>       # continue a session headlessly
 efferent --allow-bash                    # allow bash in non-interactive modes
 efferent --cwd <path>                    # override the workspace
 ```
 
 ## Add a provider
 
-From the TUI:
-
 ```
-:login                  # pick subscription (OAuth) or API key
-                        # → pick a provider (Claude / Gemini / OpenAI)
-                        # → browser flow OR paste a masked key
-:model                  # list the live catalogue, switch
+:login                  # subscription (OAuth) or API key → pick a provider
+:model                  # live model catalogue; :model fast / :model cheap for the helper roles
 :logout <provider>      # remove a credential
 ```
 
-Or seed from the env at first launch: `EFFERENT_MODEL=openai:gpt-4o efferent` (anything explicit set via `:model` wins thereafter).
+Credentials live **only** in `~/.efferent/auth.json` (atomic `0600` writes). Non-interactive modes require a credential already on disk.
 
-Credentials live **only** in `~/.efferent/auth.json` (atomic `0600` writes). Non-interactive modes can't run `:login`, so they require a credential already on disk.
+## Everyday commands
+
+| | |
+|---|---|
+| `:handoff` | fold history into a summary checkpoint |
+| `:context` | browse + select turns/checkpoints, `b` builds a new session |
+| `:tree` | the agent tree — sessions, sub-agent nodes, preview/fork/resume |
+| `:sessions` | every conversation in this workspace, `↵` switches |
+| `:settings` / `:set` | live-tunable knobs (budgets, compression, auto-approval…) |
+| `:theme` | efferent · one-dark · tokyo-night |
+| `Esc` | interrupt the running turn (sub-agents included) |
+| `Ctrl-h/j/k/l` | move between panes · `v` cycles the side views |
 
 ## Skills
-
-Drop a `.md` file under `.efferent/skills/` (per-project) or `~/.efferent/skills/` (global):
 
 ```markdown
 ---
@@ -98,34 +98,26 @@ description: How to write a commit message for this repo.
 (detailed procedure)
 ```
 
-Names + one-liners inject into the system prompt at startup. Bodies are lazy-loaded by the model via `read_skill({name})` when relevant. Closer-to-cwd shadows farther on name collisions.
+Drop it in `.efferent/skills/` (per-project) or `~/.efferent/skills/` (global). Names + one-liners inject at startup; bodies lazy-load via `read_skill({name})`. Closer-to-cwd shadows farther on name collisions.
 
-## Sub-agents & the context tree
-
-The agent spawns sub-agents with a single generic tool:
+## Sub-agents
 
 ```
-run_agent({ folder, task, seedFromNode?, seedMode? })
+run_agent({ name, folder, task, seedFromNode?, seedMode? })
 ```
 
-The sub-agent gets the full coding toolkit but can only **write** inside `folder` (bash is cwd-bound there too), runs in a fresh context window, and returns a summary + `filesChanged` + a `nodeId`. Token usage rolls up into the parent's activity tree.
-
-Every spawn is **persisted as a node in a branching context tree** (same SQLite/Postgres store as conversations). With `seedFromNode`, the parent can come back to an earlier sub-agent: `seedMode: "resume"` continues in that node's context; `seedMode: "branch"` forks a new node seeded from its messages. `:tree` in the TUI browses the whole tree — status, provenance (spawned / branched / resumed), seed kind, files changed, return summary — and `d` prunes a node and its descendants.
-
-A `SCOPE.md` in any subdirectory is **ambient context**: its body is injected into any sub-agent that runs scoped to that folder (directory rules, layering, naming conventions — things every agent working there should know). It's plain markdown with optional frontmatter; it no longer defines an agent.
+The sub-agent gets the full toolkit but only **writes** inside `folder` (bash is cwd-bound there too), runs in its own persisted context, and returns a summary + files changed + a node id. `seedMode: "resume" | "branch" | "handoff"` continues, forks, or briefs from an earlier node. A `SCOPE.md` in any folder is standing context for whoever works there.
 
 ## Develop
 
 ```bash
 git clone https://github.com/xandreeddev/agent && cd agent
 bun install
-bun run typecheck && bun test         # the only correctness gates (no build step for dev)
+bun run typecheck && bun test         # the correctness gates (no build step for dev)
 bun packages/cli/src/main.ts          # run from source — Bun runs .ts directly
-bun run build                         # bundle the CLI → packages/cli/dist/efferent.js
-bun run eval [name …]                 # run eval suites (key-gated, no Docker)
+bun run build                         # bundle → packages/cli/dist/efferent.js
+bun run eval [name …]                 # eval suites (key-gated)
 ```
-
-Layout:
 
 ```
 packages/
@@ -135,19 +127,20 @@ packages/
 └── evals/      Effect-native eval framework + the agent's suites
 ```
 
-The dependency direction is strictly inward: `cli` → `adapters` → `core`. `core` imports nothing from siblings; `adapters` wraps one SDK per port; the driver composes the Layers at the edge and hands off to `BunRuntime.runMain`.
+Dependency direction is strictly inward: `cli` → `adapters` → `core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
 
 ## Docs
 
-- **[`AGENT.md`](./AGENT.md)** — architecture reference + conventions (the authoritative project doc).
-- **[`docs/roadmap.md`](./docs/roadmap.md)** — what's deferred, what's in scope, what we're consciously skipping.
-- **[`docs/comparison.md`](./docs/comparison.md)** — up-to-date feature comparison against Claude Code + pi.
-- Per-package `SCOPE.md` (in `packages/*/`) — internal contracts for each scope.
+- **[`AGENT.md`](./AGENT.md)** — the authoritative architecture reference.
+- **[`docs/roadmap.md`](./docs/roadmap.md)** — what's deferred and what we're consciously skipping.
+- **[`docs/models.md`](./docs/models.md)** — every LLM call site, its model selection, where the spend lands.
+- **[`docs/tui.md`](./docs/tui.md)** — the full TUI manual.
+- **[`docs/journeys.md`](./docs/journeys.md)** — user journeys + their verification status.
 
 ## Tech
 
-`effect@3.21` · `@effect/ai@0.35` (provider-agnostic) · `@effect/ai-google@0.14` · `@effect/ai-openai@0.39` · `@effect/cli@0.75` · `@effect/platform-bun@0.89` · `@opentui/core@0.3` + `@opentui/solid` + `solid-js` (TUI) · `bun ≥ 1.2`. SQLite via `bun:sqlite`; Postgres via the bundled Effect adapter; OpenTUI's native renderer + SolidJS signals for the TUI.
+`effect` · `@effect/ai` (+ `-anthropic`, `-google`, `-openai`) · `@effect/cli` · `@effect/platform-bun` · `@opentui/core` + `@opentui/solid` + `solid-js` · `bun:sqlite` / Postgres · tree-sitter for highlighting. **Bun ≥ 1.2.**
 
 ## License
 
-MIT.
+[MIT](./LICENSE)

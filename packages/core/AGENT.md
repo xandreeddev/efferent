@@ -1,25 +1,25 @@
 # @efferent/core
 
-Pure domain. Only runtime dependency: `effect`.
+Pure domain. Runtime dependencies: `effect` + `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`) and nothing else.
 
 ## Contents
 
-- `entities/` — Schema-backed types and the building blocks the loop manipulates: `Conversation`, `Capture`, `AgentTool`, `AgentHooks`. Pure values; no IO.
-- `ports/` — `Context.Tag` services describing capabilities the application needs from the outside world: `AuthStore` (provider credentials, `~/.efferent/auth.json`), `ConversationStore`, `FileSystem`, `Http`, `LlmInfo`, `ModelRegistry`, `SettingsStore`, `Shell`, `WebSearch`. Each port file pairs its tagged errors with the Tag declaration.
-- `usecases/` — Functions returning `Effect.Effect<A, E, Port1 | Port2>`. The agent loop (`agentLoop.ts`, `runAgent.ts`), tool definitions (`captureTools.ts`, `codingTools.ts`), agent configs (`notesAgentConfig.ts`, `coderAgentConfig.ts`), and the notes-domain workflows (`capture`, `saveCapture`, `getCapture`, `listCaptures`, `deleteCapture`, `renderUi`).
-- `prompts/` — System-prompt strings/functions: `notes.ts` (notes assistant), `coder.ts` (coding assistant), `capture.ts` (notes extraction), `renderUi.ts` (HTML rendering).
-- `src/index.ts` — Public surface; everything other packages import comes through here.
+- `entities/` — Schema-backed types the loop manipulates: `Conversation` (`AgentMessage` union, `Checkpoint`), `AgentContext` (context-tree nodes), `Model` (selections, roles, the generated context-window catalogue), `Settings`, `Scope`, `Skill`, `AgentHooks`. Pure values; no IO.
+- `ports/` — `Context.Tag` services for everything the domain needs from outside: `ConversationStore`, `ContextTreeStore`, `FileSystem`, `Shell`, `Http`, `WebSearch`, `AuthStore`, `SettingsStore`, `ModelRegistry`, `LlmInfo`, `UtilityLlm`, `Approval`, `AuthFlow`. Each port file pairs its tagged errors with the Tag.
+- `usecases/` — Effects over the ports: the agent loop (`runAgent.ts`, `agentLoop.ts`), the coding toolkit (`codingToolkit.ts`), prompt⇄message mapping (`promptMapping.ts`), sub-agent spawning over the context tree (`buildScopeRuntime.ts`, `runContext.ts`, `tokenBudget.ts`, `folderLock.ts`, `staleness.ts`), context management (`handoff.ts`, `headroom.ts`, `headroomContent.ts`), approval (`autoApproval.ts`), discovery (`loadSkills.ts`, `discoverScopeTree.ts`, `discoverInstructionFiles.ts`), and helpers (`generateTitle.ts`).
+- `prompts/` — system-prompt strings/functions: `coder.ts`, `handoff.ts`, `title.ts`.
+- `src/index.ts` — the public surface; everything other packages import comes through here.
 
 ## Rules
 
-- Never import from `@efferent/adapters`, `@efferent/cli`, or `@efferent/web`.
-- No SDK / IO libraries — no `ai`, no `@ai-sdk/*`, no `fs`, no Bun-only globals. If a use case needs a capability, declare a port; do not reach for an SDK directly.
-- Pure standard-lib helpers from `node:path` are allowed (string-only — no filesystem access). Anything that performs IO must go through a port.
+- Never import from `@efferent/adapters` or `@efferent/cli`.
+- No provider SDKs, no IO libraries — the only SDK allowed is `@effect/ai` (provider-agnostic). Provider packages (`@effect/ai-google`, `@effect/ai-openai`, `@effect/ai-anthropic`) live in `adapters`. If a use case needs a capability, declare a port.
+- Pure standard-lib helpers from `node:path` are allowed (string-only — no filesystem access).
 - Schema imports use `import { Schema } from "effect"`.
-- Tags carry a fully-qualified string ID so Effect's diagnostics stay useful: `Context.Tag("@efferent/core/Llm")`.
+- Tags carry a fully-qualified string ID: `Context.Tag("@efferent/core/FileSystem")`.
 
 ## Conventions
 
-- camelCase for files that export functions (`runAgent.ts`, `codingTools.ts`).
-- PascalCase for files that export types or `Context.Tag` classes (`Llm.ts`, `FileSystem.ts`).
-- An `AgentConfig<R> = { key; systemPrompt; tools }` bundles a system prompt with its tool set. `runAgent` takes one — the driver decides which.
+- camelCase for files that export functions (`runAgent.ts`); PascalCase for files that export types or `Context.Tag` classes (`FileSystem.ts`).
+- An `AgentConfig<Tools>` bundles a system prompt with an `@effect/ai` `Toolkit`; `runAgent` takes one — the driver decides which.
+- Tests are colocated (`*.test.ts`, bun:test). Property-based tests use effect's built-in fast-check integration: `import { Arbitrary, FastCheck } from "effect"`, `Arbitrary.make(schema)` for Schema-derived generators.
