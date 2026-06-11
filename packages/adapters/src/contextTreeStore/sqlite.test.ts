@@ -11,6 +11,7 @@ import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0002 from "../database/migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "../database/migrations-sqlite/0003_workspace_ref.js"
 import sqlite0004 from "../database/migrations-sqlite/0004_seed_count.js"
+import sqlite0006 from "../database/migrations-sqlite/0006_node_title.js"
 
 // Exercises the REAL SQLite context-tree store (the unit suites elsewhere use
 // the in-memory store, which never touches SQL). A fresh in-memory db per run;
@@ -29,6 +30,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ContextTreeStore>): Promise<A> =>
       yield* sqlite0002 // context_nodes + context_messages
       yield* sqlite0003 // + workspace_ref staleness stamp
       yield* sqlite0004 // + seed_message_count boundary stamp
+      yield* sqlite0006 // + the spawner-given display title
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -61,6 +63,28 @@ describe("SqliteContextTreeStore", () => {
     expect(result.node.seed.kind).toBe("task")
     expect(result.node.seedMessageCount).toBe(1)
     expect(result.messages.map((m) => (m.role === "user" ? m.content : ""))).toEqual(["add the store"])
+  })
+
+  test("spawn persists the display title; untitled rows omit it", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ContextTreeStore
+        const titled = yield* store.spawn({
+          parentId: null,
+          rootConversationId: null,
+          edgeKind: "spawned",
+          folder: "/tmp/ws/tui",
+          displayRoot: "/tmp/ws",
+          title: "audit state layer",
+          seed: { kind: "task" },
+          seedMessages: [user("t")],
+        })
+        const untitled = yield* spawnRoot("/tmp/ws/tui", [user("t")])
+        return { titled: yield* store.get(titled), untitled: yield* store.get(untitled) }
+      }),
+    )
+    expect(result.titled.title).toBe("audit state layer")
+    expect(result.untitled.title).toBeUndefined()
   })
 
   test("append grows the node's history in order", async () => {

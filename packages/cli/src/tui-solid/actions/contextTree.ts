@@ -177,10 +177,11 @@ export const openNodePreview = (
     const node = yield* cts.get(decoded.value)
     const messages = yield* cts.listMessages(decoded.value)
     const folder = basename(node.folder) || node.folder
+    const name = node.title ?? folder
     const header: ScrollbackBlock = {
       kind: "info",
       text: [
-        `agent ${folder} · ${node.edgeKind} · seed: ${node.seed.kind}`,
+        `agent ${name}${node.title !== undefined ? ` (${folder})` : ""} · ${node.edgeKind} · seed: ${node.seed.kind}`,
         node.seed.preview !== undefined ? ` — ${node.seed.preview}` : "",
         node.status === "running" ? " · running (live)" : "",
       ].join(""),
@@ -198,7 +199,7 @@ export const openNodePreview = (
         const prior = store.nodePreview()
         store.setNodePreview({
           nodeId,
-          title: `agent: ${folder}`,
+          title: `agent: ${name}`,
           blocks,
           // Swapping preview→preview must keep the ORIGINAL live fold set.
           savedCollapsed: prior?.savedCollapsed ?? store.collapsed(),

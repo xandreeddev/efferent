@@ -70,6 +70,13 @@ export const AgentContextNode = Schema.Struct({
   folder: Schema.String,
   /** Workspace anchor used to rebuild the `ScopeBinding` (relative-path display). */
   displayRoot: Schema.String,
+  /**
+   * Short display name the spawner gave this agent ("audit state layer") —
+   * what every UI surface shows instead of the folder basename, which reads
+   * as triplicate noise the moment two agents share a folder. Absent on rows
+   * created before the column existed.
+   */
+  title: Schema.optional(Schema.String),
   seed: ContextSeed,
   /**
    * How many of this node's messages were materialized at spawn (positions

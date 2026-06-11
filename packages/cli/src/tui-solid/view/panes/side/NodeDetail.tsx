@@ -39,10 +39,10 @@ const NodeView = (props: { ctx: TuiContext; node: AgentContextNode }) => {
           {`${statusGlyph(n().status)} `}
         </text>
         <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
-          {basename(n().folder) || n().folder}
+          {n().title ?? (basename(n().folder) || n().folder)}
         </text>
         <text fg={tokens.text.dim} wrapMode="none">
-          {`  ${n().edgeKind} · seed:${n().seed.kind}${billed() !== undefined ? ` · ${billed()}` : ""}`}
+          {`  ${basename(n().folder) || n().folder} · ${n().edgeKind} · seed:${n().seed.kind}${billed() !== undefined ? ` · ${billed()}` : ""}`}
         </text>
       </box>
       <Show when={n().seed.preview !== undefined}>

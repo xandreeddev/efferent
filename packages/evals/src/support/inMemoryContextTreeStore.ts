@@ -48,6 +48,7 @@ export const InMemoryContextTreeStoreLive = Layer.effect(
             edgeKind: input.edgeKind,
             folder: input.folder,
             displayRoot: input.displayRoot,
+            ...(input.title !== undefined ? { title: input.title } : {}),
             seed: input.seed,
             seedMessageCount: input.seedMessages.length,
             status: "running",

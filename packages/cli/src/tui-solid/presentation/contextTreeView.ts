@@ -15,7 +15,9 @@ import { formatTokens } from "./statusBar.js"
 
 export interface TreeNodeDisplay {
   readonly kind: "node"
-  /** Scope dir basename, for a compact label. */
+  /** Row label: the spawner-given title, else the scope dir basename. */
+  readonly label: string
+  /** Scope dir basename — shown dim after a title so the scope stays visible. */
   readonly folder: string
   readonly status: "running" | "ok" | "error"
   readonly edgeKind: "spawned" | "branched" | "resumed"
@@ -165,6 +167,7 @@ export const buildNavRows = (
       head: depth === 0,
       display: {
         kind: "node",
+        label: node.title ?? (basename(node.folder) || node.folder),
         folder: basename(node.folder) || node.folder,
         status: node.status,
         edgeKind: node.edgeKind,
@@ -252,4 +255,4 @@ export const buildTreeRowsData = (
 export const treeRowText = (row: TreeRowData): string =>
   row.display.kind === "conversation"
     ? row.display.label
-    : `${row.display.folder} ${row.display.summary ?? ""}`.trim()
+    : `${row.display.label} ${row.display.folder} ${row.display.summary ?? ""}`.trim()

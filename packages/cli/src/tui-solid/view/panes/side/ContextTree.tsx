@@ -93,8 +93,12 @@ const renderNode = (d: () => TreeNodeDisplay) => {
       <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
       <text fg={statusColor(v.status)} wrapMode="none" flexShrink={0}>{`${statusGlyph(v.status)} `}</text>
       <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
-        {v.folder}
+        {v.label}
       </text>
+      {/* A titled row keeps its scope visible, dim: `audit state layer (tui-solid)`. */}
+      <Show when={v.label !== v.folder}>
+        <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{` (${v.folder})`}</text>
+      </Show>
       <Show when={v.active}>
         <text fg={tokens.accent.side} wrapMode="none" flexShrink={0}>{`  ${glyph.activeTag} active`}</text>
       </Show>
