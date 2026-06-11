@@ -45,14 +45,18 @@ export const conversationLabel = (c: ConversationSummary): string => {
     hour: "numeric",
     minute: "2-digit",
   })
+  return `${date} · ${conversationTitle(c)}`
+}
+
+/** The session's display name alone (no date): its generated title, else a
+ *  first-prompt preview — what the header and sessions rows lead with. */
+export const conversationTitle = (c: ConversationSummary): string => {
   const title = c.title?.trim()
-  const preview =
-    title !== undefined && title.length > 0
-      ? title
-      : c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
-        ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80)
-        : "(empty)"
-  return `${date} · ${preview}`
+  return title !== undefined && title.length > 0
+    ? title
+    : c.firstPrompt !== undefined && c.firstPrompt.trim().length > 0
+      ? c.firstPrompt.trim().replace(/\s+/g, " ").slice(0, 80)
+      : "(empty)"
 }
 
 /**

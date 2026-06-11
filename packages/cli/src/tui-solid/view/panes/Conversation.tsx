@@ -412,6 +412,24 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             )
           }}
         </For>
+        {/* The model-latency gap is the one moment nothing on the rail moves —
+            say the agent is thinking instead of going silent. Tool pills own
+            their own spinners, so this only shows between calls. Hidden while
+            a node preview overlays the rail (its run isn't this view's). */}
+        <Show
+          when={
+            store.busy() &&
+            store.nodePreview() === undefined &&
+            store.agentState().phase === "thinking"
+          }
+        >
+          <box marginTop={1} flexDirection="row">
+            <text fg={tokens.state.running} flexShrink={0}>
+              {`${glyph.spinner[store.spinner() % glyph.spinner.length]} `}
+            </text>
+            <text fg={tokens.text.dim}>thinking…</text>
+          </box>
+        </Show>
         <text flexShrink={0}> </text>
       </scrollbox>
     </Pane>

@@ -14,6 +14,7 @@ import {
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError } from "../util/errorFormat.js"
+import { idleAgentState, submittedAgentState } from "../presentation/agentState.js"
 import { buildConversation, subjectLine } from "../presentation/conversation.js"
 import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
 import { accumulateRoleSpend } from "../presentation/sidePane.js"
@@ -67,6 +68,7 @@ export const makeSubmit = (
       store.setInput("")
       store.setBusy(true)
       store.setNote(`working in agent ${folder}…`)
+      store.setAgentState(submittedAgentState(Date.now()))
       store.convScroller.current?.scrollToBottom()
 
       const settings = yield* (yield* SettingsStore).get()
@@ -75,6 +77,8 @@ export const makeSubmit = (
         const next = store.run.dequeue()
         store.setBusy(false)
         store.setNote(undefined)
+        // Esc interrupts skip agent_end — settle the state machine here too.
+        store.setAgentState({ ...idleAgentState, since: Date.now() })
         store.run.setFiber(undefined)
         // Re-fetch the node's session (it grew) if its preview is still open,
         // and land on the fresh tail; refresh the always-visible navigator.
@@ -100,6 +104,8 @@ export const makeSubmit = (
           ...(settings.subAgentMaxSteps !== undefined
             ? { maxSteps: settings.subAgentMaxSteps }
             : {}),
+          // A human-resumed node is still a sub-agent — FAST tier applies.
+          ...(settings.fastModel !== undefined ? { fastModel: settings.fastModel } : {}),
         })
         .pipe(
           Effect.provide(approvalLayer),
@@ -196,7 +202,9 @@ export const makeSubmit = (
         tree: onRunStart(p.tree, subjectLine(text), Date.now()).tree,
       }))
       store.setBusy(true)
-      store.setNote("working…")
+      // The header owns "what is the agent doing" from here — thinking until
+      // the loop's first event says otherwise.
+      store.setAgentState(submittedAgentState(Date.now()))
 
       const cid = store.run.getConversationId()
 
@@ -206,6 +214,8 @@ export const makeSubmit = (
         const next = store.run.dequeue()
         store.setBusy(false)
         store.setNote(undefined)
+        // Esc interrupts skip agent_end — settle the state machine here too.
+        store.setAgentState({ ...idleAgentState, since: Date.now() })
         store.run.setFiber(undefined)
         // Seal the Activity run container (closes any still-open descendants
         // too — an interrupt skips their end events).

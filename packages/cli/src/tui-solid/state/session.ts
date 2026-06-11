@@ -1,6 +1,7 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { Fiber } from "effect"
 import type { ConversationId } from "@efferent/core"
+import { idleAgentState, type AgentState } from "../presentation/agentState.js"
 import type { StatusState } from "../presentation/statusBar.js"
 
 /** In-flight `:login` OAuth handle: PKCE verifier + callback-server stop + waiter. */
@@ -91,6 +92,9 @@ export interface SessionSlice {
   readonly setStatus: (patch: Partial<StatusState>) => void
   readonly busy: Accessor<boolean>
   readonly setBusy: (b: boolean) => void
+  /** The live agent state machine (header chrome + loading indicators). */
+  readonly agentState: Accessor<AgentState>
+  readonly setAgentState: (f: AgentState | ((s: AgentState) => AgentState)) => void
   readonly note: Accessor<string | undefined>
   readonly setNote: (n: string | undefined) => void
   /**
@@ -115,6 +119,7 @@ export interface SessionInit {
 export const createSessionSlice = (init: SessionInit): SessionSlice => {
   const [status, setStatusSig] = createSignal<StatusState>(init.status)
   const [busy, setBusySig] = createSignal(false)
+  const [agentState, setAgentStateSig] = createSignal<AgentState>(idleAgentState)
   const [note, setNoteSig] = createSignal<string | undefined>(undefined)
   const [footer] = createSignal(init.footer)
 
@@ -123,6 +128,8 @@ export const createSessionSlice = (init: SessionInit): SessionSlice => {
     setStatus: (patch) => setStatusSig((s) => ({ ...s, ...patch })),
     busy,
     setBusy: (b) => setBusySig(b),
+    agentState,
+    setAgentState: (f) => setAgentStateSig(typeof f === "function" ? f : () => f),
     note,
     setNote: (n) => setNoteSig(n),
     toast: (text) => {

@@ -14,7 +14,7 @@ import { withSeedMarkers } from "../presentation/nodePreview.js"
 import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
-import { applyResume, conversationLabel, openContextView, resumeConversation } from "./session.js"
+import { applyResume, conversationLabel, conversationTitle, openContextView, resumeConversation } from "./session.js"
 
 /**
  * Load the ACTIVE session's agent-context nodes (the `agents` view shows only
@@ -51,6 +51,7 @@ export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
     const sessions: NavConversation[] = list.map((c) => ({
       id: c.id,
       label: conversationLabel(c),
+      title: conversationTitle(c),
       active: c.id === activeCid,
     }))
     if (!sessions.some((c) => c.active)) {
