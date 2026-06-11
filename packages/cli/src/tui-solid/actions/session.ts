@@ -131,17 +131,29 @@ export const applyContextRebuild = (
   }))
 }
 
+export interface ApplyContextOpts {
+  /** Info line pushed after the swap (omit for the silent boot-resume). */
+  readonly announce?: string
+  /** Land in the composer (the build flow). Default: stay where you are. */
+  readonly focusInput?: boolean
+  /** Fold all context-viewer turns (resume). Build passes false. */
+  readonly collapseContext?: boolean
+}
+
 /**
- * Swap the loaded conversation to `target` (resume — full replay for browsing).
- * `announce` pushes the "resumed …" rail line; boot-resume passes `false` so the
- * history simply appears (matching the old TUI's silent startup replay).
+ * THE context switch: make `history` (+ its checkpoints) the current message
+ * set. A context is just a set of messages — loading a session, building one
+ * from picked turns, forking an agent node and the boot resume are all this
+ * one operation with different sources. Everything the UI shows is derived
+ * from the set right here, in one pass (`projectHistory`): rail blocks,
+ * Activity tree (runs folded), diffstat, context-viewer segments, stats.
  */
-export const applyResume = (
+export const applyContext = (
   store: TuiStore,
   target: ConversationId,
   history: ReadonlyArray<AgentMessage>,
   checkpoints: ReadonlyArray<Checkpoint>,
-  announce = true,
+  opts: ApplyContextOpts = {},
 ): void => {
   const segments = buildContextView(history, checkpoints)
   const stats = statsFrom(store.sidePane(), history)
@@ -149,14 +161,16 @@ export const applyResume = (
   store.run.newConversation(target)
   store.setBlocks(proj.blocks)
   // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
-  const switched = switchedSidePane(store.projection(), segments, new Set(turnIdsOf(segments)), stats, proj)
+  const collapsed = (opts.collapseContext ?? true) ? new Set(turnIdsOf(segments)) : new Set<string>()
+  const switched = switchedSidePane(store.projection(), segments, collapsed, stats, proj)
   store.setProjection(() => switched.projection)
   store.setNav(() => switched.nav)
-  if (announce) {
-    store.pushBlock({
-      kind: "info",
-      text: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing`,
-    })
+  if (opts.focusInput === true) {
+    store.setFocus("input")
+    store.setMode("insert")
+  }
+  if (opts.announce !== undefined) {
+    store.pushBlock({ kind: "info", text: opts.announce })
   }
   // The swapped-in content is a DIFFERENT document: the old fold cursor index
   // and search match ids are positional, so left alone they tint arbitrary rows
@@ -168,6 +182,24 @@ export const applyResume = (
   store.convScroller.current?.scrollToBottom()
 }
 
+/**
+ * Swap the loaded conversation to `target` (resume — full replay for browsing).
+ * `announce` pushes the "resumed …" rail line; boot-resume passes `false` so the
+ * history simply appears (matching the old TUI's silent startup replay).
+ */
+export const applyResume = (
+  store: TuiStore,
+  target: ConversationId,
+  history: ReadonlyArray<AgentMessage>,
+  checkpoints: ReadonlyArray<Checkpoint>,
+  announce = true,
+): void =>
+  applyContext(store, target, history, checkpoints, {
+    ...(announce
+      ? { announce: `resumed ${target.slice(0, 8)} · ${history.length} msgs loaded for browsing` }
+      : {}),
+  })
+
 /** Switch to a freshly-built conversation seeded with the picked units. */
 export const applyBuilt = (
   store: TuiStore,
@@ -176,29 +208,16 @@ export const applyBuilt = (
   turnCount: number,
   handoffCount: number,
 ): void => {
-  const stats = statsFrom(store.sidePane(), picked)
-  const proj = projectHistory(picked, [])
-  store.run.newConversation(newId)
-  store.setBlocks(proj.blocks)
-  const switched = switchedSidePane(store.projection(), buildContextView(picked, []), new Set(), stats, proj)
-  store.setProjection(() => switched.projection)
-  store.setNav(() => switched.nav)
-  store.setFocus("input")
-  store.setMode("insert")
-  // Same content-swap hygiene as applyResume: stale positional cursor/search
-  // would tint random rows of the freshly-built session.
-  store.setConvCursor(0)
-  if (store.search()?.pane === "conversation") store.setSearch(undefined)
-  store.convScroller.current?.scrollToBottom()
   const units = [
     turnCount > 0 ? `${turnCount} turn${turnCount === 1 ? "" : "s"}` : "",
     handoffCount > 0 ? `${handoffCount} handoff${handoffCount === 1 ? "" : "s"}` : "",
   ]
     .filter((x) => x !== "")
     .join(" + ")
-  store.pushBlock({
-    kind: "info",
-    text: `built new session ${newId.slice(0, 8)} · ${units} · ${picked.length} msgs`,
+  applyContext(store, newId, picked, [], {
+    announce: `built new session ${newId.slice(0, 8)} · ${units} · ${picked.length} msgs`,
+    focusInput: true,
+    collapseContext: false,
   })
 }
 
