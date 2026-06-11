@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { normalizeEdits, parseGrepFlags, unifiedDiff } from "./codingToolkit.js"
+import { normalizeEdits, parseGrepFlags, truncateOutput, unifiedDiff } from "./codingToolkit.js"
 
 describe("normalizeEdits", () => {
   it("passes the canonical edits array through unchanged", () => {
@@ -78,5 +78,21 @@ describe("unifiedDiff", () => {
     expect(diff).toContain("+++ f.ts")
     expect(diff).toContain("-b")
     expect(diff).toContain("+B")
+  })
+})
+
+describe("truncateOutput", () => {
+  it("fitting output is untouched", () => {
+    expect(truncateOutput("short", 100)).toBe("short")
+  })
+
+  it("oversized output keeps head AND tail — the conclusion survives", () => {
+    const lines = Array.from({ length: 1000 }, (_, i) => `line ${i}`)
+    lines.push(" 199 pass", " 1 fail")
+    const out = truncateOutput(lines.join("\n"), 2000)
+    expect(out.length).toBeLessThan(2200)
+    expect(out.startsWith("line 0")).toBe(true) // head
+    expect(out).toContain(" 1 fail") // the tail summary that head-only cuts erased
+    expect(out).toContain("bytes omitted from the middle")
   })
 })
