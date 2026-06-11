@@ -38,11 +38,10 @@ test(":clear empties the conversation", () => {
   expect(store.blocks()).toHaveLength(0)
 })
 
-test(":help pushes info lines", () => {
+test(":help is gone — it toasts as unknown instead of dumping info lines", () => {
   const store = newStore()
   runCommand(ctxOf(store), ":help")
-  expect(store.blocks().length).toBeGreaterThan(0)
-  expect(store.blocks().every((b) => b.kind === "info")).toBe(true)
+  expect(store.blocks()).toHaveLength(0) // no HELP dump; the keybind box owns keys
 })
 
 test(":cwd echoes the workspace path", () => {
