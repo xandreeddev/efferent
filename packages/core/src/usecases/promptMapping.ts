@@ -252,7 +252,7 @@ export const extractUsage = (
   // cached tokens in their prompt counts, so only the anthropic branch adds.
   const au = (finish?.metadata as { anthropic?: { usage?: Record<string, number> } })
     ?.anthropic?.usage
-  if (au !== undefined) {
+  if (au !== null && typeof au === "object") {
     const cacheRead = au["cache_read_input_tokens"] ?? 0
     const cacheWrite = au["cache_creation_input_tokens"] ?? 0
     const fullInput = inputTokens + cacheRead + cacheWrite

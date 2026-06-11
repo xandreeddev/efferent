@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, FastCheck as fc, Layer } from "effect"
 import { LanguageModel, type Toolkit } from "@effect/ai"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
@@ -200,5 +200,52 @@ describe("runAgentLoop — headroom at append time", () => {
 
   it("the default budget applies when none is configured", () => {
     expect(DEFAULT_TOOL_RESULT_MAX_CHARS).toBe(16_000)
+  })
+})
+
+describe("properties — planClip / renderClip", () => {
+  it("planClip fires iff oversized; the split is lossless; head/tail sizes exact", () => {
+    fc.assert(
+      fc.property(
+        // fullUnicodeString included deliberately: slices can land mid-surrogate
+        // and the code-unit concat identity must still hold.
+        fc.oneof(fc.string({ maxLength: 400 }), fc.fullUnicodeString({ maxLength: 400 })),
+        fc.integer({ min: -10, max: 300 }),
+        (text, maxChars) => {
+          const plan = planClip(text, maxChars)
+          if (maxChars <= 0 || text.length <= maxChars) {
+            expect(plan).toBeUndefined()
+          } else {
+            expect(plan).toBeDefined()
+            expect(plan!.head + plan!.dropped + plan!.tail).toBe(text)
+            expect(plan!.head.length).toBe(Math.floor(maxChars * 0.75))
+            expect(plan!.tail.length).toBe(Math.floor(maxChars * 0.125))
+          }
+        },
+      ),
+      { numRuns: 300 },
+    )
+  })
+
+  it("renderClip shrinks oversized text and stays near budget (realistic budgets)", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1000, max: 50_000 }),
+        fc.string({ minLength: 1, maxLength: 40 }),
+        fc.integer({ min: 512, max: 4096 }),
+        (maxChars, unit, extra) => {
+          const text = unit.repeat(Math.ceil((maxChars + extra) / unit.length))
+          const plan = planClip(text, maxChars)!
+          const rendered = renderClip(plan, "Bash")
+          expect(rendered.length).toBeLessThan(text.length)
+          // head 75% + tail 12.5% + marker (≤ ~220 chars) — 256 is the honest slack.
+          expect(rendered.length).toBeLessThanOrEqual(maxChars + 256)
+          expect(rendered.startsWith(plan.head)).toBe(true)
+          expect(rendered.endsWith(plan.tail)).toBe(true)
+          expect(rendered).toContain("…headroom:")
+        },
+      ),
+      { numRuns: 100 },
+    )
   })
 })
