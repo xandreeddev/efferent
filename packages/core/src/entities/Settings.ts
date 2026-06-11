@@ -71,6 +71,18 @@ export const Settings = Schema.Struct({
         "LEGACY alias for cheapModel (pre-roles name) — still read when cheapModel is unset. Prefer :set cheapModel.",
     }),
   ),
+  toolResultMaxTokens: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Headroom: per-string token budget for a tool result entering the context (≈chars/4). Oversized results are clipped head+tail with a reversible marker (+ a fast-tier digest of the dropped middle). Unset → 4000; 0 disables.",
+    }),
+  ),
+  autoHandoffPct: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Auto-fold threshold: when a turn's context reaches this percent of the window, the TUI runs :handoff automatically at the next turn boundary. Unset → 85; 0 disables.",
+    }),
+  ),
   theme: Schema.optional(
     Schema.String.annotations({
       description:

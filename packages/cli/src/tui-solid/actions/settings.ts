@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import {
+  DEFAULT_AUTO_HANDOFF_PCT,
   AuthStore,
   DEFAULT_SUB_AGENT_MAX_STEPS,
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
@@ -191,6 +192,20 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "readonly",
         hint: "use :model cheap",
       },
+      {
+        key: "toolResultMaxTokens",
+        label: "toolResultMax",
+        value: String(current.toolResultMaxTokens ?? 4000),
+        kind: "readonly",
+        hint: "headroom clip budget (0 = off)",
+      },
+      {
+        key: "autoHandoffPct",
+        label: "autoHandoff",
+        value: `${current.autoHandoffPct ?? DEFAULT_AUTO_HANDOFF_PCT}%`,
+        kind: "readonly",
+        hint: "auto-fold threshold (0 = off)",
+      },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
@@ -308,6 +323,30 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => store.toast(`Updated searchModel → ${parsed ?? "default"}`))
       return
     }
+    if (key === "toolResultMaxTokens") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 0) {
+        return yield* err("Setting 'toolResultMaxTokens' must be a number ≥ 0 (0 disables headroom clipping)")
+      }
+      yield* settings.update((curr) => ({ ...curr, toolResultMaxTokens: Math.floor(num) }))
+      yield* Effect.sync(() => {
+        store.toast(`Updated toolResultMaxTokens → ${Math.floor(num)}${num === 0 ? " (clipping off)" : ""}`)
+        reflectRow(store, "toolResultMaxTokens", String(Math.floor(num)))
+      })
+      return
+    }
+    if (key === "autoHandoffPct") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 0 || num > 99) {
+        return yield* err("Setting 'autoHandoffPct' must be 0–99 (0 disables the auto-fold)")
+      }
+      yield* settings.update((curr) => ({ ...curr, autoHandoffPct: Math.floor(num) }))
+      yield* Effect.sync(() => {
+        store.toast(`Updated autoHandoffPct → ${Math.floor(num)}${num === 0 ? " (auto-fold off)" : "%"}`)
+        reflectRow(store, "autoHandoffPct", String(Math.floor(num)))
+      })
+      return
+    }
     if (key === "fastModel" || key === "cheapModel" || key === "utilityModel") {
       // The non-main roles. 'utilityModel' is the legacy alias for cheap —
       // accepted, but it writes (and clears) cheapModel so config converges
@@ -344,7 +383,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct`,
     )
   })
 
