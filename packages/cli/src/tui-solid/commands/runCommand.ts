@@ -109,9 +109,15 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       }
       void ctx.run(runHandoff(store, store.run.getConversationId()))
       return
-    case ":model":
-      void ctx.run(openModelPicker(store))
+    case ":model": {
+      // `:model` configures main; `:model fast` / `:model cheap` open the same
+      // picker for that role (leading "default (follow main)" row clears it).
+      const role = arg?.trim().toLowerCase()
+      void ctx.run(
+        openModelPicker(store, role === "fast" || role === "cheap" ? role : undefined),
+      )
       return
+    }
     case ":effort":
       void ctx.run(openEffortPicker(store))
       return

@@ -22,7 +22,7 @@ import {
   moveSettings,
   type SettingsState,
 } from "../presentation/settingsView.js"
-import { applyModelSelection } from "../actions/model.js"
+import { applyModelSelection, applyRoleModelSelection } from "../actions/model.js"
 import { applyTheme } from "../actions/theme.js"
 import { Effect } from "effect"
 import { refreshNav } from "../actions/contextTree.js"
@@ -60,6 +60,13 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
   store.closeOverlay()
   switch (purpose.tag) {
     case "model":
+      // A role picker configures that tier (null = follow main); the plain
+      // picker switches main itself.
+      if (purpose.role !== undefined) {
+        if (value !== undefined)
+          void ctx.run(applyRoleModelSelection(store, purpose.role, value as ModelInfo | null))
+        return
+      }
       if (value !== undefined) void ctx.run(applyModelSelection(store, value as ModelInfo))
       return
     case "effort":
