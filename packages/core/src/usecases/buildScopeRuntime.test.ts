@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, FiberRef, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { LanguageModel } from "@effect/ai"
-import { ModelOverrideRef } from "./modelOverride.js"
 import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { Scope } from "../entities/Scope.js"
@@ -118,24 +117,16 @@ const stubTreeStore = () => {
   return { entries, layer }
 }
 
-/** A model that answers every call with plain text — the loop ends on turn 1.
- *  The reply embeds the fiber's `ModelOverrideRef` (like the real router reads
- *  it), so a test can assert which TIER the loop actually ran on. */
+/** A model that answers every call with plain text — the loop ends on turn 1. */
 const doneModel = Layer.succeed(
   LanguageModel.LanguageModel,
   LanguageModel.LanguageModel.of({
     generateText: () =>
-      Effect.gen(function* () {
-        const override = yield* FiberRef.get(ModelOverrideRef)
-        return {
-          content: [],
-          text:
-            override !== undefined
-              ? `resumed and done on ${override.provider}:${override.modelId}`
-              : "resumed and done",
-          finishReason: "stop",
-          usage: undefined,
-        }
+      Effect.succeed({
+        content: [],
+        text: "resumed and done",
+        finishReason: "stop",
+        usage: undefined,
       }),
     generateObject: () => Effect.die("unused"),
     streamText: () => {
@@ -205,42 +196,5 @@ describe("ScopeRuntime.resumeNode", () => {
     expect(entry.node.returnSummary).toBe("resumed and done")
     // the follow-up was appended to the SAME node (original + follow-up)
     expect(entry.messages.filter((m) => m.role === "user").length).toBe(2)
-  })
-
-  test("a fastModel runs the sub-agent loop on the FAST tier (ModelOverrideRef set)", async () => {
-    const { layer } = stubTreeStore()
-    const rt = buildScopeRuntime(rootScope, { skills: [] })
-
-    const program = Effect.gen(function* () {
-      const store = yield* ContextTreeStore
-      const nodeId = yield* store.spawn({
-        parentId: null,
-        rootConversationId: null,
-        edgeKind: "spawned",
-        folder: "/tmp/ws/pkg",
-        displayRoot: "/tmp/ws",
-        seed: { kind: "task", preview: "t" },
-        seedMessages: [{ role: "user", content: "original task" }],
-      })
-      const onFast = yield* rt.resumeNode({
-        nodeId,
-        task: "follow-up",
-        fastModel: "google:gemini-3.5-flash",
-      })
-      // And WITHOUT fastModel the override stays unset (main selection).
-      const onMain = yield* rt.resumeNode({ nodeId, task: "another follow-up" })
-      return { onFast, onMain }
-    }).pipe(Effect.provide(Layer.mergeAll(layer, stubPorts)))
-
-    const { onFast, onMain } = await Effect.runPromise(
-      program.pipe(
-        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "resumeNode HUNG" }),
-      ) as unknown as Effect.Effect<{
-        onFast: { summary: string }
-        onMain: { summary: string }
-      }>,
-    )
-    expect(onFast.summary).toBe("resumed and done on google:gemini-3.5-flash")
-    expect(onMain.summary).toBe("resumed and done")
   })
 })

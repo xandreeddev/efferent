@@ -385,11 +385,11 @@ export const makeEventReducer = (
               ...r,
               tokens: r.tokens + u.inputTokens + u.outputTokens,
             }))
-            // Sub-agent spend is the FAST role's ledger (node-local usage
-            // stays off the conversation gauge, but the session's economics
-            // count every tier).
+            // Sub-agents run on MAIN (delegation changes the context, not the
+            // brain) — their spend lands on main's ledger. Node-local usage
+            // still stays off the conversation gauge.
             store.setStats((s) =>
-              accumulateRoleSpend(s, "fast", u.inputTokens + u.outputTokens),
+              accumulateRoleSpend(s, "main", u.inputTokens + u.outputTokens),
             )
           }
           if (watchedNode(event.nodeId)) {

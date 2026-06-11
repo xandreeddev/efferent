@@ -63,9 +63,10 @@ export const mergeFileChange = (
 }
 
 /** Billed tokens (input + output) accumulated per model role this session.
- *  `main` = the root loop's turns; `fast` = every sub-agent's spend; `cheap` =
- *  background utility calls (titles, summaries). The economics of a session,
- *  by who spent what. */
+ *  `main` = all agentic work (the root loop AND sub-agents — delegation isn't
+ *  a tier change); `fast` = latency-sensitive helper calls (tool summaries,
+ *  approval judgments); `cheap` = background utility calls (titles). The
+ *  economics of a session, by which model role billed it. */
 export interface RoleSpend {
   readonly main: number
   readonly fast: number
@@ -126,13 +127,13 @@ export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats =>
   totalTokens: s.totalTokens + u.totalTokens,
   turns: s.turns + 1,
   // Root-loop usage is the MAIN role's spend (sub-agent usage arrives with a
-  // nodeId and lands on `fast` via `accumulateRoleSpend`).
+  // nodeId and is added to main by the pump via `accumulateRoleSpend`).
   byRole: { ...s.byRole, main: s.byRole.main + u.inputTokens + u.outputTokens },
   // A real provider count replaces any resume estimate.
   estimated: false,
 })
 
-/** Add billed tokens to one role's running spend (fast = sub-agents, cheap = utility). */
+/** Add billed tokens to one role's running spend. */
 export const accumulateRoleSpend = (
   s: SessionStats,
   role: keyof RoleSpend,

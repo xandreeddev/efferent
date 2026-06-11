@@ -28,14 +28,15 @@ const errorMessage = (e: unknown): string => {
 
 /**
  * `UtilityLlm` over the same per-call provider build as the router: resolve
- * the **cheap** role's selection — `Settings.cheapModel` (legacy
- * `utilityModel` honored) when configured, else the CURRENT main selection
- * (`ModelRegistry.current`) so the capability works with zero configuration —
- * resolve the key from the `AuthStore` (refreshing OAuth like any other call),
- * and build the provider's `LanguageModel` scoped to exactly this one
- * `generateText`. A `:set cheapModel …` or `:login` mid-session takes effect
- * on the next call, no rebuild — the same liveness contract as the chat
- * router. Usage comes back with the text so the cheap tier is countable.
+ * the requested helper role's selection — `Settings.fastModel` /
+ * `Settings.cheapModel` (legacy `utilityModel` honored for cheap) when
+ * configured, else the CURRENT main selection (`ModelRegistry.current`) so
+ * the capability works with zero configuration — resolve the key from the
+ * `AuthStore` (refreshing OAuth like any other call), and build the
+ * provider's `LanguageModel` scoped to exactly this one `generateText`. A
+ * `:set fastModel|cheapModel …` or `:login` mid-session takes effect on the
+ * next call, no rebuild — the same liveness contract as the chat router.
+ * Usage comes back with the text so each tier is countable.
  */
 export const UtilityLlmLive = Layer.effect(
   UtilityLlm,
@@ -45,21 +46,25 @@ export const UtilityLlmLive = Layer.effect(
     const registry = yield* ModelRegistry
     const http = yield* HttpClient.HttpClient
 
-    const complete = (prompt: string): Effect.Effect<UtilityCompletion, UtilityLlmError> =>
+    const complete = (
+      prompt: string,
+      options?: { readonly role?: "fast" | "cheap" },
+    ): Effect.Effect<UtilityCompletion, UtilityLlmError> =>
       Effect.gen(function* () {
+        const role = options?.role ?? "cheap"
         const settings = yield* settingsStore.get()
-        const sel: ModelSelection = roleIsConfigured(settings, "cheap")
-          ? selectionFromString(modelForRole(settings, "cheap"))
+        const sel: ModelSelection = roleIsConfigured(settings, role)
+          ? selectionFromString(modelForRole(settings, role))
           : yield* registry.current
         const cred = yield* auth.get(sel.provider)
         const key = yield* auth.resolveKey(sel.provider)
         const { svc, prependClaudeCode: shouldPrepend } =
           yield* makeProviderLanguageModel(sel, key, cred, settings)
-        const options = {
+        const request = {
           prompt: Prompt.make([{ role: "user", content: prompt }] as never),
         }
         const res = yield* svc.generateText(
-          shouldPrepend ? (prependClaudeCode(options) as typeof options) : options,
+          shouldPrepend ? (prependClaudeCode(request) as typeof request) : request,
         )
         const usage = extractUsage(res.usage, res.content)
         return {

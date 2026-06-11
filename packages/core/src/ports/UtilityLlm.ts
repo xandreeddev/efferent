@@ -12,19 +12,30 @@ export interface UtilityCompletion {
   readonly usage?: TokenUsage
 }
 
+/** Which helper tier a one-shot completion runs on. */
+export interface UtilityOptions {
+  /**
+   * `cheap` (default) — background work that's never urgent: session titles.
+   * `fast` — latency-sensitive helper calls inside a running turn: tool-output
+   * summaries, auto-approval judgments. Each resolves through its settings key
+   * (`cheapModel` / `fastModel`), unset → the current main selection.
+   */
+  readonly role?: "fast" | "cheap"
+}
+
 /**
- * One-shot text completion on the **cheap** model role — the background tier
- * for work that shouldn't burn main-tier tokens or latency: session titles
- * today, tool/result summaries later. Selection: `Settings.cheapModel`
- * (legacy `utilityModel` honored), unset → the current main selection, so the
- * capability works out of the box and gets cheaper the moment one
- * `:set cheapModel …` lands. Deliberately tiny (a prompt in, a completion
- * out): callers own their prompts and parsing. Usage is reported so the
- * cheap tier's spend is countable like every other role's.
+ * One-shot text completion on a helper model role — the doorway every
+ * non-agentic LLM call goes through (the agent loop itself always runs on
+ * main; sub-agents too — delegation changes the context, not the brain).
+ * Deliberately tiny (a prompt in, a completion out): callers own their
+ * prompts and parsing. Usage is reported so each tier's spend is countable.
  */
 export class UtilityLlm extends Context.Tag("@efferent/core/UtilityLlm")<
   UtilityLlm,
   {
-    readonly complete: (prompt: string) => Effect.Effect<UtilityCompletion, UtilityLlmError>
+    readonly complete: (
+      prompt: string,
+      options?: UtilityOptions,
+    ) => Effect.Effect<UtilityCompletion, UtilityLlmError>
   }
 >() {}

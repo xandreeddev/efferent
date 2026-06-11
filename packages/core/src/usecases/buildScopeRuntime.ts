@@ -1,6 +1,6 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, FiberRef, identity, Layer, Ref, Schema } from "effect"
+import { Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import {
   ContextNodeId,
   type ContextUsage,
@@ -29,10 +29,8 @@ import {
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { generateHandoffBrief } from "./handoff.js"
-import { ModelOverrideRef } from "./modelOverride.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
-import { selectionFromString } from "../entities/Model.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import {
   BUDGET_STOP_NOTE,
@@ -76,8 +74,6 @@ export interface ScopeRuntime {
     readonly task: string
     readonly budget?: number
     readonly maxSteps?: number
-    /** FAST-role selection for the resumed run (it's still a sub-agent). */
-    readonly fastModel?: string
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },
     Failure,
@@ -283,9 +279,6 @@ interface RunSpawnedArgs<R> {
   readonly tokenPool: TokenPool
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
   readonly maxSteps?: number
-  /** The FAST role's selection string — this run's loop (and its children)
-   *  execute on it via `ModelOverrideRef`. Absent → the main selection. */
-  readonly fastModel?: string
 }
 
 /**
@@ -348,7 +341,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       depth: args.parentDepth + 1,
       tokenPool: args.tokenPool,
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
-      ...(args.fastModel !== undefined ? { fastModel: args.fastModel } : {}),
     }
 
     const outcome = yield* runAgentLoop({
@@ -360,12 +352,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     }).pipe(
       Effect.provide(childLayer),
       Effect.locally(RunContextRef, childRc),
-      // Sub-agents run on the FAST tier when one is configured: the override
-      // scopes to this loop's fiber (children inherit), so the root stays on
-      // main while the whole fan-out runs on the throughput model.
-      args.fastModel !== undefined
-        ? Effect.locally(ModelOverrideRef, selectionFromString(args.fastModel))
-        : identity,
       Effect.map((r) => ({ ok: true as const, r })),
       Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
     )
@@ -507,7 +493,6 @@ const makeRunAgentHandler =
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
             ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
-            ...(rc.fastModel !== undefined ? { fastModel: rc.fastModel } : {}),
           })
         }
         const sourceMsgs = yield* store.listMessages(nodeId)
@@ -541,7 +526,6 @@ const makeRunAgentHandler =
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
           ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
-          ...(rc.fastModel !== undefined ? { fastModel: rc.fastModel } : {}),
         })
       }
 
@@ -565,7 +549,6 @@ const makeRunAgentHandler =
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
         ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
-        ...(rc.fastModel !== undefined ? { fastModel: rc.fastModel } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
@@ -618,7 +601,7 @@ export const buildScopeRuntime = <R = never>(
   // The human-driven mirror of the handler's resume branch: same staleness
   // brief, same append-then-rerun, same persistence — minus the FiberRef (the
   // driver IS the root, so the resumed node runs at depth 0 with a fresh pool).
-  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget, maxSteps, fastModel }) =>
+  const resumeNode: ScopeRuntime["resumeNode"] = ({ nodeId, task, budget, maxSteps }) =>
     Effect.gen(function* () {
       const store = yield* ContextTreeStore
       const shell = yield* Shell
@@ -649,7 +632,6 @@ export const buildScopeRuntime = <R = never>(
         rootConversationId: node.rootConversationId,
         tokenPool,
         ...(maxSteps !== undefined ? { maxSteps } : {}),
-        ...(fastModel !== undefined ? { fastModel } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
       ScopeRuntime["resumeNode"]

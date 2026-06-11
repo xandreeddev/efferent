@@ -41,7 +41,7 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
           <text fg={tokens.accent.side}>{s().effort}</text>
         </Show>
         <Show when={s().roles}>
-          <text fg={tokens.text.dim}>{` ${s().roles}`}</text>
+          <text fg={tokens.text.dim}>{` · ${s().roles}`}</text>
         </Show>
         <text fg={gaugeColor()}>
           {`  ${gaugeBar(st().inputTokens, st().contextWindow, 8)}${pct() !== undefined ? ` ${pct()}%` : ""}`}

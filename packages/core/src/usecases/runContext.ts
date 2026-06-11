@@ -25,10 +25,6 @@ export interface RunContext {
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
   readonly subAgentMaxSteps?: number
-  /** The FAST role's `"<provider>:<modelId>"` (`Settings.fastModel`): spawned
-   *  sub-agents run on it via the router's `ModelOverrideRef`. Absent → spawns
-   *  inherit the main selection. Threaded live per run like the step cap. */
-  readonly fastModel?: string
 }
 
 export const initialRunContext: RunContext = {

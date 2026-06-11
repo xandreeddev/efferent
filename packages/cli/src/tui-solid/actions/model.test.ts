@@ -51,7 +51,7 @@ describe("role model configuration", () => {
     await run(applySetting(store, "fastModel", "google:gemini-3.5-flash"), layer)
     const s = await Effect.runPromise(Ref.get(ref))
     expect(s.fastModel).toBe("google:gemini-3.5-flash")
-    expect(store.status().roles).toBe("+fast")
+    expect(store.status().roles).toBe("fast gemini-3.5-flash")
   })
 
   test(":set utilityModel is a legacy alias — it writes cheapModel and retires itself", async () => {
@@ -61,7 +61,7 @@ describe("role model configuration", () => {
     const s = await Effect.runPromise(Ref.get(ref))
     expect(s.cheapModel).toBe("openai:gpt-5.4-nano")
     expect(s.utilityModel).toBeUndefined()
-    expect(store.status().roles).toBe("+cheap")
+    expect(store.status().roles).toBe("cheap gpt-5.4-nano")
   })
 
   test(":set cheapModel default clears the role AND the legacy alias", async () => {
@@ -92,7 +92,7 @@ describe("role model configuration", () => {
     const { ref, layer } = stubSettings()
     await run(applyRoleModelSelection(store, "fast", flash), layer)
     expect((await Effect.runPromise(Ref.get(ref))).fastModel).toBe("google:gemini-3.5-flash")
-    expect(store.status().roles).toBe("+fast")
+    expect(store.status().roles).toBe("fast gemini-3.5-flash")
     await run(applyRoleModelSelection(store, "fast", null), layer)
     expect((await Effect.runPromise(Ref.get(ref))).fastModel).toBeUndefined()
     expect(store.status().roles).toBeUndefined()
