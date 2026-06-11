@@ -115,6 +115,29 @@ describe("projectHistory — the activity tree derived from messages", () => {
     expect(sub.nodeId).toBe("node-9")
   })
 
+  test("a run_agent call's `name` labels its container and row (folder is the fallback)", () => {
+    const { tree, blocks } = projectHistory(
+      [
+        user("audit"),
+        assistant([
+          {
+            type: "tool-call",
+            toolCallId: "c1",
+            toolName: "run_agent",
+            input: { name: "audit state layer", folder: "/w/pkg/tui", task: "t" },
+          },
+        ]),
+        toolResult("c1", "run_agent", { summary: "ok", filesChanged: [], nodeId: "n1" }),
+      ],
+      [],
+    )
+    const sub = flat(tree.roots).find((n) => n.kind === "subagent")!
+    expect(sub.label).toBe("run_agent → audit state layer")
+    const ag = blocks.find((b) => b.kind === "agents")
+    if (ag?.kind !== "agents") throw new Error("expected agents block")
+    expect(ag.agents[0]!.name).toBe("audit state layer")
+  })
+
   test("a failed run_agent closes its container as error", () => {
     const { tree } = projectHistory(
       [

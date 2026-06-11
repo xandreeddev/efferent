@@ -38,6 +38,7 @@ interface NodeRow {
   readonly edge_kind: string
   readonly folder: string
   readonly display_root: string
+  readonly title: string | null
   readonly seed: unknown
   readonly status: string
   readonly return_summary: string | null
@@ -70,6 +71,7 @@ const decodeNode = (row: NodeRow) => {
     edgeKind: row.edge_kind,
     folder: row.folder,
     displayRoot: row.display_root,
+    ...(row.title !== null && row.title !== undefined ? { title: row.title } : {}),
     seed: parseJsonColumn(row.seed),
     status: row.status,
     filesChanged: parseJsonColumn(row.files_changed),
@@ -101,7 +103,7 @@ const decodeNode = (row: NodeRow) => {
 
 const SELECT_NODE = (sql: SqlClient.SqlClient) => sql`
   SELECT id::text, parent_id::text, root_conversation_id::text, edge_kind, folder,
-         display_root, seed, status, return_summary, files_changed, usage, workspace_ref,
+         display_root, title, seed, status, return_summary, files_changed, usage, workspace_ref,
          seed_message_count, created_at, ended_at
 `
 
@@ -153,13 +155,13 @@ export const PostgresContextTreeStoreLive = Layer.effect(
           yield* wrapSql(
             sql`
               INSERT INTO context_nodes (
-                id, parent_id, root_conversation_id, edge_kind, folder, display_root,
+                id, parent_id, root_conversation_id, edge_kind, folder, display_root, title,
                 seed, status, return_summary, files_changed, usage, workspace_ref,
                 seed_message_count, created_at, ended_at
               )
               VALUES (
                 ${id}::uuid, ${input.parentId ?? null}::uuid, ${input.rootConversationId ?? null}::uuid,
-                ${input.edgeKind}, ${input.folder}, ${input.displayRoot},
+                ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
                 ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, '[]'::jsonb, ${null}::jsonb, ${null},
                 ${input.seedMessages.length}, ${createdAt}, ${null}
               )

@@ -50,6 +50,21 @@ describe("buildTreeRowsData", () => {
     expect(rows[1]!.foldId).toBeUndefined() // leaf
   })
 
+  test("a node's spawner-given title is the row label; folder basename is the fallback", () => {
+    const rows = buildTreeRowsData(
+      [
+        node("a", null, "/ws/tui", 1, { title: "audit state layer" }),
+        node("b", null, "/ws/tui", 2),
+      ],
+      new Set(),
+    )
+    expect(rows.map((r) => (disp(r).kind === "node" ? (disp(r) as { label: string }).label : ""))).toEqual([
+      "audit state layer",
+      "tui",
+    ])
+    expect(disp(rows[0]!).folder).toBe("tui") // scope stays available for display
+  })
+
   test("folding a node hides its descendants", () => {
     const nodes = [node("a", null, "/ws/a", 1), node("b", "a", "/ws/a/b", 2)]
     const rows = buildTreeRowsData(nodes, new Set(["tree:a"]))

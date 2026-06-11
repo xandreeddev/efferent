@@ -53,7 +53,8 @@ export interface HistoryProjection {
   readonly foldIds: ReadonlySet<string>
 }
 
-/** One spawned-agent row from a `run_agent` tool-call's input. */
+/** One spawned-agent row from a `run_agent` tool-call's input. The model-given
+ *  `name` is the label; folder basename is the legacy fallback. */
 const spawnRow = (callId: string, input: unknown): AgentRunRow => {
   const a = (typeof input === "object" && input !== null ? input : {}) as Record<
     string,
@@ -61,10 +62,12 @@ const spawnRow = (callId: string, input: unknown): AgentRunRow => {
   >
   const folder = typeof a.folder === "string" ? a.folder : "?"
   const tail = folder.split("/").filter(Boolean).pop() ?? folder
+  const given = typeof a.name === "string" && a.name.trim().length > 0 ? a.name.trim() : undefined
   const seedMode = typeof a.seedMode === "string" ? a.seedMode : undefined
+  const base = given ?? tail
   return {
     nodeId: callId,
-    name: seedMode !== undefined ? `${tail} · ${seedMode}` : tail,
+    name: seedMode !== undefined ? `${base} · ${seedMode}` : base,
     status: "ok",
     toolUses: 0,
     tokens: 0,

@@ -132,6 +132,12 @@ const RunAgentTool = Tool.make("run_agent", {
     "to continue/fix/extend what it just did (its accumulated file knowledge pays for itself), " +
     "'branch' to retry or take an alternative direction from its context without growing it.",
   parameters: {
+    name: Schema.String.annotations({
+      description:
+        "Short display name for THIS agent (2-5 words, task-specific — e.g. 'audit state layer', " +
+        "'fix scroll bug'). Shown wherever the agent appears in the UI; never reuse a name across " +
+        "parallel agents.",
+    }),
     folder: Schema.String.annotations({
       description:
         "Folder to scope the sub-agent to, relative to the workspace root (e.g. 'packages/adapters').",
@@ -263,6 +269,8 @@ interface RunSpawnedArgs<R> {
   readonly nodeId: ContextNodeId
   readonly folder: string
   readonly task: string
+  /** Display name from the spawner — the label every event/UI surface uses. */
+  readonly title?: string
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -290,7 +298,7 @@ interface RunSpawnedArgs<R> {
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
   withFolderLock(args.locks, args.folder)(Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
-    const label = basename(folder) || folder
+    const label = args.title ?? (basename(folder) || folder)
     const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
     const usageRef = yield* Ref.make<ContextUsage>({
       inputTokens: 0,
@@ -429,6 +437,7 @@ const makeRunAgentHandler =
     hooks: AgentHooks<R> | undefined,
   ) =>
   (params: {
+    readonly name: string
     readonly folder: string
     readonly task: string
     readonly seedFromNode?: string
@@ -449,7 +458,11 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
-      const { folder, task, seedFromNode, seedMode } = params
+      const { name, folder, task, seedFromNode, seedMode } = params
+      // The model-given display name; blank/absent (a stale provider replaying
+      // an old-schema call) degrades to the folder basename.
+      const title =
+        typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -474,6 +487,8 @@ const makeRunAgentHandler =
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
             store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            // The fresh name describes the follow-up; the node keeps its own.
+            ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -497,6 +512,7 @@ const makeRunAgentHandler =
           edgeKind: "branched",
           folder: node.folder,
           displayRoot,
+          ...(title !== undefined ? { title } : {}),
           seed:
             seedMode === "handoff"
               ? { kind: "handoff", sourceNodeId: nodeId, preview: clip(task, 80) }
@@ -505,6 +521,7 @@ const makeRunAgentHandler =
         })
         return yield* runSpawnedAgent({
           store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          ...(title !== undefined ? { title } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -521,11 +538,13 @@ const makeRunAgentHandler =
         edgeKind: "spawned",
         folder: folderAbs,
         displayRoot,
+        ...(title !== undefined ? { title } : {}),
         seed: { kind: "task", preview: clip(task, 80) },
         seedMessages,
       })
       return yield* runSpawnedAgent({
         store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        ...(title !== undefined ? { title } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
@@ -607,6 +626,7 @@ export const buildScopeRuntime = <R = never>(
         folder: node.folder,
         task,
         seedMessages,
+        ...(node.title !== undefined ? { title: node.title } : {}),
         parentDepth: 0,
         parentNodeId: node.parentId,
         rootConversationId: node.rootConversationId,

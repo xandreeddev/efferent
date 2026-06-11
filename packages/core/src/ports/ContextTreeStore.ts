@@ -28,6 +28,8 @@ export interface SpawnInput {
   readonly edgeKind: EdgeKind
   readonly folder: string
   readonly displayRoot: string
+  /** Short display name from the spawner (see `AgentContextNode.title`). */
+  readonly title?: string
   readonly seed: ContextSeed
   /** The materialized seed messages (selection verbatim / [handoffToMessage] / [task]). */
   readonly seedMessages: ReadonlyArray<AgentMessage>
