@@ -1,7 +1,13 @@
 import { homedir } from "node:os"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { createEffect, For, on, Show } from "solid-js"
-import { formatTokens, gaugeBar } from "../../../presentation/statusBar.js"
+import {
+  cachePercent,
+  contextPercent,
+  formatTokens,
+  gaugeBar,
+  gaugeSeverity,
+} from "../../../presentation/statusBar.js"
 import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
 import {
   buildStackRowsData,
@@ -53,11 +59,31 @@ const Stats = (props: { ctx: TuiContext }) => {
       .filter((r) => s().byRole[r] > 0)
       .map((r) => `${r} ${formatTokens(s().byRole[r])}`)
       .join(" · ")
+  const severity = () => gaugeSeverity(s().inputTokens, s().contextWindow)
+  const gaugeColor = () =>
+    severity() === "critical"
+      ? tokens.state.error
+      : severity() === "warn"
+        ? tokens.state.running
+        : tokens.text.muted
+  const pct = () => contextPercent(s().inputTokens, s().contextWindow)
+  const cache = () => cachePercent(s().cacheReadTokens, s().inputTokens)
   return (
     <box flexDirection="column" flexShrink={0}>
-      <text fg={tokens.text.muted}>
-        {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)} ${approx()}${formatTokens(s().inputTokens)}/${win()} (${formatTokens(s().cacheReadTokens)} cached)`}
-      </text>
+      <box flexDirection="row">
+        <text fg={gaugeColor()} flexShrink={0}>
+          {`ctx ${gaugeBar(s().inputTokens, s().contextWindow, 8)}${pct() !== undefined ? ` ${pct()}%` : ""}`}
+        </text>
+        <text fg={tokens.text.muted} wrapMode="none">
+          {` ${approx()}${formatTokens(s().inputTokens)}/${win()}`}
+        </text>
+        <Show when={cache() !== undefined && cache()! > 0}>
+          <text fg={tokens.text.dim} wrapMode="none">{` · ${cache()}% cached`}</text>
+        </Show>
+      </box>
+      <Show when={severity() === "critical"}>
+        <text fg={tokens.state.error}>{`context nearly full — :handoff folds it`}</text>
+      </Show>
       {/* A wall of zeros tells a new user nothing — say what WILL be here. */}
       <text fg={tokens.text.dim}>
         {ran()

@@ -16,6 +16,7 @@ import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
 import { storageLabel } from "./presentation/dbStatus.js"
+import { rolesChip } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
@@ -111,6 +112,7 @@ export const runTuiModeSolid = (
           cwd: input.cwd,
           storage: storageLabel(process.env.EFFERENT_DB_URL),
           effort,
+          roles: rolesChip(settings),
         },
         conversationId: cid,
         // Not a permanent footer row — log path on demand.

@@ -12,6 +12,27 @@ export interface StatusState {
   readonly storage: string
   /** Optional thinking/reasoning effort level shown next to the model. */
   readonly effort?: string | undefined
+  /** Configured non-main roles chip, e.g. "+fast +cheap" — dim next to the model. */
+  readonly roles?: string | undefined
+}
+
+/**
+ * The status bar's roles chip: which non-main roles are explicitly configured
+ * (`"+fast +cheap"`), undefined when everything rides on main. The ids live in
+ * `:model`/`:settings`; the bar only says the tiers exist.
+ */
+export const rolesChip = (settings: {
+  readonly fastModel?: string | undefined
+  readonly cheapModel?: string | undefined
+  readonly utilityModel?: string | undefined
+}): string | undefined => {
+  const chips = [
+    ...(settings.fastModel !== undefined ? ["+fast"] : []),
+    ...(settings.cheapModel !== undefined || settings.utilityModel !== undefined
+      ? ["+cheap"]
+      : []),
+  ]
+  return chips.length > 0 ? chips.join(" ") : undefined
 }
 
 export const formatTokens = (n: number): string => {
@@ -30,6 +51,31 @@ export const gaugeBar = (used: number, total: number, width: number): string => 
   const filled = Math.max(0, Math.min(width, Math.round((used / total) * width)))
   return "▓".repeat(filled) + "░".repeat(width - filled)
 }
+
+/** Context usage as a whole percent (`12`), or undefined when the window is unknown. */
+export const contextPercent = (used: number, total: number): number | undefined =>
+  total > 0 ? Math.min(999, Math.round((used / total) * 100)) : undefined
+
+/**
+ * How loudly the context gauge should speak. One scale for every surface:
+ * under 70% it's bookkeeping; from 70% a fold is worth planning; from 90%
+ * the next turns may degrade — `:handoff` now.
+ */
+export type GaugeSeverity = "ok" | "warn" | "critical"
+
+export const gaugeSeverity = (used: number, total: number): GaugeSeverity => {
+  const pct = contextPercent(used, total)
+  if (pct === undefined) return "ok"
+  return pct >= 90 ? "critical" : pct >= 70 ? "warn" : "ok"
+}
+
+/**
+ * The share of the last turn's context that was served from the provider's
+ * cache (`42` = 42%) — the caching story in one number. Undefined until a
+ * turn has reported real usage.
+ */
+export const cachePercent = (cacheRead: number, input: number): number | undefined =>
+  input > 0 ? Math.round((Math.min(cacheRead, input) / input) * 100) : undefined
 
 const homeDir = (() => {
   try {
