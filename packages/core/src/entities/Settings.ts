@@ -53,6 +53,12 @@ export const Settings = Schema.Struct({
         "Dedicated web search model as '<provider>:<modelId>' (google/openai only); used by search_web independently of the chat model.",
     }),
   ),
+  utilityModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Cheap utility model as '<provider>:<modelId>' for background tasks (session titles). Unset → the current chat model.",
+    }),
+  ),
   theme: Schema.optional(
     Schema.String.annotations({
       description:

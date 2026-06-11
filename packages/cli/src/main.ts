@@ -23,7 +23,9 @@ import {
   LocalSettingsStoreLive,
   LocalShellLive,
   ModelLive,
+  ModelRegistryLive,
   StoresLive,
+  UtilityLlmLive,
   WebSearchLive,
 } from "@efferent/adapters"
 
@@ -57,6 +59,13 @@ const AppLive = Layer.mergeAll(
   // configured independently of the chat model — it resolves its key from the
   // AuthStore (below) and carries its own HTTP client.
   WebSearchLive.pipe(Layer.provide(FetchHttpClient.layer)),
+  // The cheap utility tier (session titles): Settings.utilityModel, falling
+  // back to the chat selection — needs its own ModelRegistry read for that
+  // fallback, hence the local registry + HTTP client.
+  UtilityLlmLive.pipe(
+    Layer.provide(ModelRegistryLive),
+    Layer.provide(FetchHttpClient.layer),
+  ),
 ).pipe(Layer.provideMerge(CredentialsLive))
 
 /* ------------------------------------------------------------------ */

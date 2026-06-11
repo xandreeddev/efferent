@@ -19,6 +19,7 @@ export * from "./ports/LlmInfo.js"
 export * from "./ports/ModelRegistry.js"
 export * from "./ports/Shell.js"
 export * from "./ports/SettingsStore.js"
+export * from "./ports/UtilityLlm.js"
 export * from "./ports/WebSearch.js"
 
 // Prompts
@@ -39,3 +40,4 @@ export * from "./usecases/runContext.js"
 export * from "./usecases/staleness.js"
 export * from "./usecases/tokenBudget.js"
 export * from "./usecases/handoff.js"
+export * from "./usecases/generateTitle.js"

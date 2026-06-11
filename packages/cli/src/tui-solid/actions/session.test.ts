@@ -8,6 +8,7 @@ import {
   applyContext,
   applyContextRebuild,
   applyResume,
+  conversationLabel,
   conversationPickerOptions,
 } from "./session.js"
 import { replayBlocks } from "./replay.js"
@@ -217,6 +218,21 @@ test("applyBuilt switches to the new session and focuses the input", () => {
   expect(info).toMatchObject({ kind: "info" })
   expect((info as { text: string }).text).toContain("built new session")
   expect((info as { text: string }).text).toContain("1 turn")
+})
+
+test("conversationLabel prefers the generated title over the first-prompt preview", () => {
+  const base = { id: cid("11111111-1111-1111-1111-111111111111"), createdAt: 0 }
+  expect(conversationLabel({ ...base, firstPrompt: "fix the thing", title: "Parser Fix" })).toContain(
+    "Parser Fix",
+  )
+  expect(
+    conversationLabel({ ...base, firstPrompt: "fix the thing", title: "Parser Fix" }),
+  ).not.toContain("fix the thing")
+  // blank/absent title falls back to the preview
+  expect(conversationLabel({ ...base, firstPrompt: "fix the thing", title: "  " })).toContain(
+    "fix the thing",
+  )
+  expect(conversationLabel({ ...base, firstPrompt: "fix the thing" })).toContain("fix the thing")
 })
 
 test("conversationPickerOptions leads with 'start new', then a row per conversation", () => {

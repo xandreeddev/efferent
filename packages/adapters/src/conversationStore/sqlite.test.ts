@@ -4,6 +4,7 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { type AgentMessage, ConversationStore } from "@efferent/core"
 import { SqliteConversationStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
+import sqlite0005 from "../database/migrations-sqlite/0005_conversation_title.js"
 
 // Exercises the real SQLite store + the position/checkpoint fold contract on a
 // fresh in-memory db (no Postgres, no Docker). `provideMerge` exposes the
@@ -20,6 +21,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ConversationStore>): Promise<A> =
   Effect.runPromise(
     Effect.gen(function* () {
       yield* sqlite0001 // create the schema on this connection
+      yield* sqlite0005 // + the conversations.title column
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -89,6 +91,34 @@ describe("SqliteConversationStore", () => {
     )
     expect(result).toHaveLength(1)
     expect(result[0]!.firstPrompt).toBe("hello world")
+  })
+
+  test("setTitle round-trips through listByWorkspace; untitled rows omit the field", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const untitled = yield* store.create("/tmp/ws-t")
+        const titled = yield* store.create("/tmp/ws-t")
+        yield* store.append(titled, user("name me"))
+        yield* store.setTitle(titled, "Fix the parser")
+        return { rows: yield* store.listByWorkspace("/tmp/ws-t"), titled, untitled }
+      }),
+    )
+    const byId = new Map(result.rows.map((r) => [r.id, r]))
+    expect(byId.get(result.titled)?.title).toBe("Fix the parser")
+    expect(byId.get(result.untitled)?.title).toBeUndefined()
+  })
+
+  test("setTitle on a missing conversation fails with ConversationNotFound", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        yield* sqlite0001
+        yield* sqlite0005
+        const store = yield* ConversationStore
+        yield* store.setTitle("00000000-0000-0000-0000-000000000000" as never, "x")
+      }).pipe(Effect.provide(Live)),
+    )
+    expect(exit._tag).toBe("Failure")
   })
 
   test("append to a missing conversation fails with ConversationNotFound", async () => {
