@@ -13,6 +13,7 @@ import {
   maskDbUrl,
 } from "@efferent/core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
+import { rolesChip } from "../presentation/statusBar.js"
 import { describeActiveDatabase } from "../presentation/dbStatus.js"
 import { openSettings, setRowValue, type SettingsRow } from "../presentation/settingsView.js"
 import type { EffortSettingKey } from "../state/overlay.js"
@@ -177,11 +178,18 @@ export const openSettingsView = (store: TuiStore) =>
         hint: "use :search",
       },
       {
-        key: "utilityModel",
-        label: "utilityModel",
-        value: current.utilityModel ?? "default (chat model)",
+        key: "fastModel",
+        label: "fastModel",
+        value: current.fastModel ?? "default (main)",
         kind: "readonly",
-        hint: "use :set utilityModel",
+        hint: "use :model fast",
+      },
+      {
+        key: "cheapModel",
+        label: "cheapModel",
+        value: current.cheapModel ?? current.utilityModel ?? "default (main)",
+        kind: "readonly",
+        hint: "use :model cheap",
       },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
@@ -300,9 +308,13 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => store.toast(`Updated searchModel → ${parsed ?? "default"}`))
       return
     }
-    if (key === "utilityModel") {
-      // Any logged-in provider works; require the explicit '<provider>:<modelId>'
-      // form so a bare id can't silently land on the wrong provider.
+    if (key === "fastModel" || key === "cheapModel" || key === "utilityModel") {
+      // The non-main roles. 'utilityModel' is the legacy alias for cheap —
+      // accepted, but it writes (and clears) cheapModel so config converges
+      // on the role names. Any logged-in provider works; require the explicit
+      // '<provider>:<modelId>' form so a bare id can't silently land on the
+      // wrong provider.
+      const target = key === "utilityModel" ? "cheapModel" : key
       const provider = value.includes(":") ? value.slice(0, value.indexOf(":")) : undefined
       const valid =
         value === "default" ||
@@ -311,23 +323,28 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
           value.length > provider.length + 1)
       if (!valid) {
         return yield* err(
-          "Setting 'utilityModel' must be 'default' or '<provider>:<modelId>' (google/openai/anthropic/opencode/ollama)",
+          `Setting '${key}' must be 'default' or '<provider>:<modelId>' (google/openai/anthropic/opencode/ollama)`,
         )
       }
       yield* settings.update((curr) => {
-        if (value === "default") {
-          const { utilityModel: _drop, ...rest } = curr
-          return rest
-        }
-        return { ...curr, utilityModel: value }
+        const next = { ...curr } as Record<string, unknown>
+        if (value === "default") delete next[target]
+        else next[target] = value
+        // Touching cheap retires the legacy alias either way — otherwise an
+        // old utilityModel would silently resurrect after a 'default'.
+        if (target === "cheapModel") delete next["utilityModel"]
+        return next as typeof curr
       })
-      yield* Effect.sync(() =>
-        store.toast(`Updated utilityModel → ${value === "default" ? "default (chat model)" : value}`),
-      )
+      const updated = yield* settings.get()
+      yield* Effect.sync(() => {
+        store.setStatus({ roles: rolesChip(updated) })
+        store.toast(`Updated ${target} → ${value === "default" ? "default (main model)" : value}`)
+        reflectRow(store, target, value === "default" ? "default (main)" : value)
+      })
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, utilityModel`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel`,
     )
   })
 
