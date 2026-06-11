@@ -70,6 +70,26 @@ describe("eventPump — preview streaming is read live, not captured at spawn", 
     expect(pill.state).toBe("ok")
   })
 
+  test("an ok end lands the returned summary on the agents-block row", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    reduce({ type: "subagent_start", name: "tui", task: "audit", nodeId: "n1" })
+    reduce({
+      type: "subagent_end",
+      name: "tui",
+      ok: true,
+      summary: "Layers respected; two leaks found.",
+      filesChanged: [],
+      nodeId: "n1",
+    })
+    const agents = store.blocks().find((b) => b.kind === "agents") as {
+      agents: ReadonlyArray<{ status: string; summary?: string }>
+    }
+    expect(agents.agents[0]!.status).toBe("ok")
+    expect(agents.agents[0]!.summary).toBe("Layers respected; two leaks found.")
+  })
+
   test("a watched node that ALSO has a grouped-block row gets both closed on end", () => {
     const store = newStore()
     const reduce = makeEventReducer(store)

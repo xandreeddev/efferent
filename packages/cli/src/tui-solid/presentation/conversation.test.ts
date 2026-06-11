@@ -172,10 +172,10 @@ describe("buildConversationRows — the fold-cursor row list", () => {
   })
 })
 
-describe("big / multi-line user messages become foldable", () => {
+describe("the turn head owns the user message (shown exactly once)", () => {
   const summary = "[System note: earlier history handed off]\n\n" + "x".repeat(200)
 
-  test("first line is the subject; full text is the first (foldable) body item", () => {
+  test("a long message: full text on the turn, first line as the folded subject — never copied into the body", () => {
     const items = buildConversation([
       { kind: "user", text: summary },
       { kind: "assistant", text: "ok" },
@@ -183,18 +183,18 @@ describe("big / multi-line user messages become foldable", () => {
     const turn = items[0]!
     if (turn.kind !== "turn") throw new Error("expected turn")
     expect(turn.subject).toBe("[System note: earlier history handed off]")
-    expect(turn.steps).toBe(2) // the user block + the assistant block
+    expect(turn.text).toBe(summary) // expanded head renders this verbatim
+    expect(turn.steps).toBe(1) // the assistant block only
+    expect(turn.body).toHaveLength(1)
     const first = turn.body[0]!
-    expect(first.kind).toBe("block")
     if (first.kind !== "block") throw new Error("expected block")
-    expect(first.block.kind).toBe("user")
-    expect((first.block as { text: string }).text).toBe(summary) // full text kept
-    // foldId = the turn; folding it hides the (now-body) full text
+    expect(first.block.kind).toBe("assistant") // no duplicated user block
+    // foldId = the turn; folding hides the body, the head shows the subject
     const rows = buildConversationRows(items, new Set(["turn:0"]))
-    expect(rows.map((r) => r.key)).toEqual(["turn:0"]) // body hidden when folded
+    expect(rows.map((r) => r.key)).toEqual(["turn:0"])
   })
 
-  test("a short single-line prompt stays the full subject (no body duplication)", () => {
+  test("a short single-line prompt: subject === text, body undisturbed", () => {
     const items = buildConversation([
       { kind: "user", text: "do the thing" },
       { kind: "assistant", text: "ok" },
@@ -202,6 +202,7 @@ describe("big / multi-line user messages become foldable", () => {
     const turn = items[0]!
     if (turn.kind !== "turn") throw new Error("expected turn")
     expect(turn.subject).toBe("do the thing")
+    expect(turn.text).toBe("do the thing")
     expect(turn.body).toHaveLength(1) // assistant only — no duplicated user block
   })
 })

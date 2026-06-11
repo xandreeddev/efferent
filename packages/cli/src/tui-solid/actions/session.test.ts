@@ -56,6 +56,76 @@ test("replayBlocks marks an errored tool result", () => {
   expect(blocks.find((b) => b.kind === "tool")).toMatchObject({ state: "error" })
 })
 
+test("replayBlocks rebuilds run_agent bursts as an agents block carrying the returned summary", () => {
+  const spawn = (id: string, folder: string, seedMode?: string): AgentMessage => ({
+    role: "assistant",
+    content: [
+      {
+        type: "tool-call",
+        toolCallId: id,
+        toolName: "run_agent",
+        input: { folder, task: "audit it", ...(seedMode !== undefined ? { seedMode } : {}) },
+      },
+    ],
+  })
+  const spawnResult = (id: string, summary: string): AgentMessage => ({
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: id,
+        toolName: "run_agent",
+        output: { summary, filesChanged: [], nodeId: "node-1" },
+        isError: false,
+      },
+    ],
+  })
+  const blocks = replayBlocks(
+    [user("go"), spawn("c1", "/w/pkg/tui", "handoff"), spawnResult("c1", "All layers respected.")],
+    [],
+  )
+  // No bare `run_agent ⎿ done` pill — the spawn renders as the agents container.
+  expect(blocks.some((b) => b.kind === "tool")).toBe(false)
+  const ag = blocks.find((b) => b.kind === "agents")
+  expect(ag).toBeDefined()
+  if (ag?.kind !== "agents") throw new Error("expected agents block")
+  const row = ag.agents[0]!
+  expect(row.name).toBe("tui · handoff")
+  expect(row.status).toBe("ok")
+  expect(row.summary).toBe("All layers respected.")
+  expect(row.nodeId).toBe("node-1") // re-keyed from the call id by the result
+})
+
+test("replayBlocks marks a failed run_agent row and surfaces the failure", () => {
+  const blocks = replayBlocks(
+    [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "c1", toolName: "run_agent", input: { folder: "/w/x", task: "t" } },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "run_agent",
+            output: { error: "MaxDepthReached", message: "too deep" },
+            isError: true,
+          },
+        ],
+      },
+    ],
+    [],
+  )
+  const ag = blocks.find((b) => b.kind === "agents")
+  if (ag?.kind !== "agents") throw new Error("expected agents block")
+  expect(ag.agents[0]!.status).toBe("error")
+  expect(blocks.some((b) => b.kind === "error" && b.text === "too deep")).toBe(true)
+})
+
 test("replayBlocks inserts a checkpoint block at the folded position", () => {
   const blocks = replayBlocks(
     [user("a"), assistant("b")],

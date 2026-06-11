@@ -1,6 +1,7 @@
 import { pathToFiletype, type ScrollBoxRenderable } from "@opentui/core"
 import { createMemo, For, onMount, Show } from "solid-js"
 import {
+  agentSummaryPreview,
   buildConversation,
   buildConversationRows,
   conversationItemId,
@@ -146,28 +147,36 @@ const AgentsBlock = (props: { block: Extract<ScrollbackBlock, { kind: "agents" }
                 {a.name}
               </text>
               <text fg={tokens.text.dim} wrapMode="none">
-                {`  · ${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}${a.tokens > 0 ? ` · ${formatTokens(a.tokens)} tok` : ""}`}
+                {`${a.toolUses > 0 ? `  · ${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}` : ""}${a.tokens > 0 ? ` · ${formatTokens(a.tokens)} tok` : ""}`}
               </text>
             </box>
             <box flexDirection="row">
               <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
                 {`  ${i() === agents().length - 1 ? "  " : glyph.tree.vert} ${glyph.connector}  `}
               </text>
+              {/* Done → the run's returned summary (what the parent received),
+                  truncated; the full text lives on the node (agents pane → ↵).
+                  Bare "Done" hid the deliverable entirely. */}
               <text
                 fg={
                   a.status === "running"
                     ? tokens.text.dim
-                    : a.status === "ok"
-                      ? tokens.state.ok
-                      : tokens.state.error
+                    : a.status === "error"
+                      ? tokens.state.error
+                      : a.summary !== undefined
+                        ? tokens.text.muted
+                        : tokens.state.ok
                 }
-                wrapMode="none"
+                wrapMode="word"
+                flexShrink={1}
               >
                 {a.status === "running"
                   ? (a.currentTool ?? "thinking…")
-                  : a.status === "ok"
-                    ? "Done"
-                    : "Failed"}
+                  : a.status === "error"
+                    ? "Failed"
+                    : a.summary !== undefined
+                      ? agentSummaryPreview(a.summary)
+                      : "Done"}
               </text>
             </box>
           </box>
@@ -376,8 +385,11 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                     only when collapsed, so the common (expanded) case is clean. */}
                 <box flexDirection="row" backgroundColor={rowBg(item.id)}>
                   <text fg={tokens.text.dim} flexShrink={0}>{`${glyph.msg.user} `}</text>
+                  {/* Expanded → the message verbatim; folded → first line only.
+                      The head owns the user text in both states, so it shows
+                      exactly once (no truncated-subject + full-copy dup). */}
                   <text fg={headerColor(id)} wrapMode="word" flexShrink={1}>
-                    {item.subject}
+                    {folded() ? item.subject : item.text}
                   </text>
                   <Show when={folded()}>
                     <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>

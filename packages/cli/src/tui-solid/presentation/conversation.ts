@@ -62,7 +62,16 @@ export interface AgentRunRow {
   readonly tokens: number
   /** The tool currently executing, for the running row's live sub-line. */
   readonly currentTool?: string
+  /** The run's returned summary — what the sub-agent handed back to the
+   *  parent. Shown (truncated) on the finished row's sub-line; without it the
+   *  rail says only "Done" and the deliverable is invisible. */
+  readonly summary?: string
 }
+
+/** Truncate a sub-agent summary for its rail row — long briefs would wall the
+ *  conversation; the full text lives on the node (`:tree` → ↵). */
+export const agentSummaryPreview = (s: string, max = 400): string =>
+  s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`
 
 export type ToolBlock = Extract<ScrollbackBlock, { kind: "tool" }>
 
@@ -76,7 +85,12 @@ export type ConversationItem =
   | {
       readonly kind: "turn"
       readonly id: string
+      /** First line, truncated — what the FOLDED head shows. */
       readonly subject: string
+      /** The user message verbatim — what the EXPANDED head shows. The head
+       *  owns the message in both states (never copied into the body), so it
+       *  renders exactly once. */
+      readonly text: string
       /** Raw block count after the user message — the folded `· N steps`. */
       readonly steps: number
       readonly body: ReadonlyArray<BodyItem>
@@ -126,15 +140,9 @@ const buildBody = (run: ReadonlyArray<Indexed>): BodyItem[] => {
 const isBoundary = (block: ScrollbackBlock): boolean =>
   block.kind === "user" || block.kind === "checkpoint"
 
-/**
- * A "big" user message (a pasted blob, or a resumed handoff summary seeded as a
- * `user` message) shouldn't be the turn's whole SUBJECT — folding a turn hides
- * its body, not its header, so a giant subject is un-collapsible and dominates
- * the rail. Such a message instead shows just its first line as the subject and
- * moves its full text into the (foldable) body. Short prompts are untouched.
- */
-const isBigUser = (text: string): boolean =>
-  text.length > 160 || text.split("\n").length >= 3
+// (A turn's head shows `text` expanded / `subject` folded — the old scheme of
+// copying a big user message into the body so it could fold rendered the
+// message TWICE when expanded: truncated subject + full body copy.)
 
 /** First line of a user message, truncated — the turn-header / Activity-run subject. */
 export const subjectLine = (text: string): string => {
@@ -159,16 +167,13 @@ export const buildConversation = (
       while (j < blocks.length && !isBoundary(blocks[j]!)) j++
       const body: Indexed[] = []
       for (let k = i + 1; k < j; k++) body.push({ block: blocks[k]!, index: k })
-      // A big/multi-line user message → first line as the subject, full text as
-      // the first body item so the turn fold can collapse it.
-      const big = isBigUser(block.text)
-      const turnBody: Indexed[] = big ? [{ block, index: i }, ...body] : body
       items.push({
         kind: "turn",
         id: `turn:${i}`,
-        subject: big ? subjectLine(block.text) : block.text,
-        steps: turnBody.length,
-        body: buildBody(turnBody),
+        subject: subjectLine(block.text),
+        text: block.text,
+        steps: body.length,
+        body: buildBody(body),
       })
       i = j
     } else if (block.kind === "checkpoint") {
@@ -201,7 +206,7 @@ const blockText = (block: ScrollbackBlock): string => {
     case "tool":
       return [block.toolName, block.detail, block.output].filter(Boolean).join(" ")
     case "agents":
-      return block.agents.map((a) => a.name).join(" ")
+      return block.agents.flatMap((a) => [a.name, a.summary ?? ""]).join(" ")
     default:
       return block.text
   }
@@ -210,7 +215,7 @@ const blockText = (block: ScrollbackBlock): string => {
 /** All searchable text of a top-level item (subject + every body block). */
 export const itemText = (item: ConversationItem): string => {
   if (item.kind === "checkpoint") return item.text
-  const parts: string[] = item.kind === "turn" ? [item.subject] : []
+  const parts: string[] = item.kind === "turn" ? [item.text] : []
   const body = item.kind === "turn" || item.kind === "loose" ? item.body : []
   for (const b of body) {
     if (b.kind === "toolGroup") for (const t of b.tools) parts.push(blockText(t))

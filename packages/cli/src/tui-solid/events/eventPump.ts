@@ -277,12 +277,16 @@ export const makeEventReducer = (
           return
         }
         if (event.nodeId !== undefined && agentRows.has(event.nodeId)) {
-          // Close the row in the grouped block. An ok summary stays off the
-          // rail (the parent's prose relays results; ↵ on the node shows the
-          // full session) — a failure is always loud.
+          // Close the row in the grouped block. The ok summary — the run's
+          // actual return value, what the parent model received — lands on the
+          // row's sub-line (truncated; ↵ on the node shows the full session).
+          // A failure is always loud (error block below).
           touchAgentRow(event.nodeId, ({ currentTool: _t, ...r }) => ({
             ...r,
             status: event.ok ? "ok" : "error",
+            ...(event.ok && event.summary.trim().length > 0
+              ? { summary: event.summary.trim() }
+              : {}),
             ...(event.usage !== undefined && r.tokens === 0
               ? { tokens: event.usage.inputTokens + event.usage.outputTokens }
               : {}),
