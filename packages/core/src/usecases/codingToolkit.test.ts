@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
-import { normalizeEdits, parseGrepFlags, truncateOutput, unifiedDiff } from "./codingToolkit.js"
+import { Arbitrary, FastCheck as fc, Schema } from "effect"
+import { Failure, normalizeEdits, parseGrepFlags, PlanStep, truncateOutput, unifiedDiff } from "./codingToolkit.js"
 
 describe("normalizeEdits", () => {
   it("passes the canonical edits array through unchanged", () => {
@@ -94,5 +95,41 @@ describe("truncateOutput", () => {
     expect(out.startsWith("line 0")).toBe(true) // head
     expect(out).toContain(" 1 fail") // the tail summary that head-only cuts erased
     expect(out).toContain("bytes omitted from the middle")
+  })
+})
+
+describe("properties — tool schemas + truncateOutput", () => {
+  const roundTrip = <A, I>(schema: Schema.Schema<A, I>) => {
+    const encode = Schema.encodeSync(schema)
+    const decode = Schema.decodeUnknownSync(schema)
+    return (value: A) => expect(decode(encode(value))).toEqual(value)
+  }
+
+  it("PlanStep and Failure survive encode→decode", () => {
+    fc.assert(fc.property(Arbitrary.make(PlanStep), roundTrip(PlanStep)), { numRuns: 100 })
+    fc.assert(fc.property(Arbitrary.make(Failure), roundTrip(Failure)), { numRuns: 100 })
+  })
+
+  it("truncateOutput: identity when fitting; else head+marker+tail with a bounded size", () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(fc.string({ maxLength: 600 }), fc.fullUnicodeString({ maxLength: 600 })),
+        fc.integer({ min: 0, max: 400 }),
+        (s, max) => {
+          const out = truncateOutput(s, max)
+          if (s.length <= max) {
+            expect(out).toBe(s)
+          } else {
+            const head = Math.floor(max * 0.7)
+            expect(out.startsWith(s.slice(0, head))).toBe(true)
+            expect(out.endsWith(s.slice(s.length - (max - head)))).toBe(true)
+            expect(out).toContain("truncated:")
+            // The marker means output may EXCEED max — that is the contract.
+            expect(out.length).toBeLessThanOrEqual(max + 96)
+          }
+        },
+      ),
+      { numRuns: 300 },
+    )
   })
 })

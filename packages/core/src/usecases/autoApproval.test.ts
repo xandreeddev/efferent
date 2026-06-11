@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, FastCheck as fc, Layer } from "effect"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
 import {
   buildJudgePrompt,
@@ -126,5 +126,55 @@ describe("judgeApproval", () => {
       judgeApproval(REQ, ["/work/repo"]).pipe(Effect.provide(failing)),
     )
     expect(outcome).toEqual({ verdict: "prompt" })
+  })
+})
+
+describe("properties — parseJudgeVerdict", () => {
+  it("is total on arbitrary strings; verdict is always allow|prompt; fields trimmed non-empty", () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.string({ maxLength: 300 }), fc.fullUnicodeString({ maxLength: 300 })), (text) => {
+        const v = parseJudgeVerdict(text)
+        expect(v.verdict === "allow" || v.verdict === "prompt").toBe(true)
+        if (v.folder !== undefined) expect(v.folder).toBe(v.folder.trim())
+        if (v.folder !== undefined) expect(v.folder.length).toBeGreaterThan(0)
+        if (v.reason !== undefined) expect(v.reason.length).toBeGreaterThan(0)
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it("no opening brace ⇒ prompt", () => {
+    fc.assert(
+      fc.property(
+        fc.string({ maxLength: 200 }).filter((s) => !s.includes("{")),
+        (text) => {
+          expect(parseJudgeVerdict(text).verdict).toBe("prompt")
+        },
+      ),
+      { numRuns: 200 },
+    )
+  })
+
+  it("constructed JSON: verdict is allow iff the verdict field is exactly 'allow'", () => {
+    // JSON.stringify escapes control chars, so the constructed text always
+    // parses; substring formulations would be unsound via \uXXXX escapes.
+    fc.assert(
+      fc.property(fc.string({ maxLength: 60 }), (v) => {
+        const out = parseJudgeVerdict(JSON.stringify({ verdict: v }))
+        expect(out.verdict === "allow").toBe(v === "allow")
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it("folder field comes back trimmed, or is dropped when blank", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 60 }), (f) => {
+        const out = parseJudgeVerdict(JSON.stringify({ verdict: "allow", folder: f }))
+        if (f.trim().length === 0) expect(out.folder).toBeUndefined()
+        else expect(out.folder).toBe(f.trim())
+      }),
+      { numRuns: 200 },
+    )
   })
 })

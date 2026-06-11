@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { Schema } from "effect"
+import { Arbitrary, FastCheck as fc, Schema } from "effect"
 import { maskDbUrl, Settings } from "./Settings.js"
 
 const decodePartial = Schema.decodeUnknownSync(Schema.partial(Settings))
@@ -42,5 +42,19 @@ describe("maskDbUrl", () => {
 
   it("passes a passwordless / odd value through unchanged", () => {
     expect(maskDbUrl("sqlite:/tmp/x.db")).toBe("sqlite:/tmp/x.db")
+  })
+})
+
+describe("properties — encode/decode round-trip", () => {
+  it("Settings survives encode→decode for any generated value", () => {
+    // Covers all 22 fields incl. every optional and the five Literal enums.
+    const encode = Schema.encodeSync(Settings)
+    const decode = Schema.decodeUnknownSync(Settings)
+    fc.assert(
+      fc.property(Arbitrary.make(Settings), (value) => {
+        expect(decode(encode(value))).toEqual(value)
+      }),
+      { numRuns: 100 },
+    )
   })
 })

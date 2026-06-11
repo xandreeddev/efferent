@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test"
+import { Arbitrary, FastCheck as fc } from "effect"
 import {
   contextWindowFor,
   defaultModelForProvider,
   defaultModelForProviders,
+  formatModel,
   parseModel,
+  Provider,
   modelForRole,
   roleIsConfigured,
   selectionFromString,
@@ -94,5 +97,27 @@ describe("model roles (main / fast / cheap)", () => {
     expect(sel.provider).toBe("openai")
     expect(sel.modelId).toBe("gpt-4o")
     expect(sel.contextWindow).toBeGreaterThan(0)
+  })
+})
+
+describe("properties — parseModel / formatModel", () => {
+  it("parse∘format is the identity for any provider and any model id", () => {
+    // Even ids containing ':' round-trip — parseModel splits on the FIRST colon.
+    fc.assert(
+      fc.property(Arbitrary.make(Provider), fc.string(), (provider, modelId) => {
+        expect(parseModel(formatModel(provider, modelId))).toEqual({ provider, modelId })
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it("format∘parse is stable on arbitrary raw strings (inference is idempotent)", () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.string(), fc.fullUnicodeString()), (raw) => {
+        const a = parseModel(raw)
+        expect(parseModel(formatModel(a.provider, a.modelId))).toEqual(a)
+      }),
+      { numRuns: 200 },
+    )
   })
 })

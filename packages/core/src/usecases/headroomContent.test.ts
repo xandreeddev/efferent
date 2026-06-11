@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { FastCheck as fc } from "effect"
 import {
   planContentCompression,
   planLogCompression,
@@ -124,5 +125,124 @@ describe("planContentCompression", () => {
     expect(planContentCompression(buildLog(), "Bash", 16_000)?.kind).toBe("log")
     // A web page mentioning "error" must NOT get log treatment.
     expect(planContentCompression(buildLog(), "web_fetch", 16_000)).toBeUndefined()
+  })
+})
+
+// ─── properties ──────────────────────────────────────────────────────────────
+
+const joinedLinesArb = fc
+  .array(fc.oneof(fc.string({ maxLength: 80 }), fc.fullUnicodeString({ maxLength: 80 })), {
+    maxLength: 120,
+  })
+  .map((ls) => ls.join("\n"))
+
+describe("properties — planSearchCompression", () => {
+  it("is total: never throws on arbitrary text; result is undefined or a search plan", () => {
+    fc.assert(
+      fc.property(joinedLinesArb, fc.integer({ min: 0, max: 30_000 }), (text, maxChars) => {
+        const plan = planSearchCompression(text, maxChars)
+        if (plan !== undefined) expect(plan.kind).toBe("search")
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it("constructed corpora: kept lines come from the input, budget holds, counts add up", () => {
+    const matchArb = fc.record({
+      file: fc.stringMatching(/^[a-z]{1,8}$/).map((w) => `src/${w}.ts`),
+      lineNo: fc.integer({ min: 1, max: 9999 }),
+      text: fc.string({ maxLength: 200 }).map((t) => t.replace(/[\r\n]/g, " ")),
+    })
+    fc.assert(
+      fc.property(
+        fc.array(matchArb, { minLength: 20, maxLength: 150 }),
+        fc.integer({ min: 2000, max: 20_000 }),
+        (matches, maxChars) => {
+          const text = matches.map((m) => `${m.file}:${m.lineNo}:${m.text}`).join("\n")
+          const plan = planSearchCompression(text, maxChars)
+          expect(plan).toBeDefined()
+          const kept = plan!.kept
+          // The loop always admits the FIRST file block even over budget —
+          // one block here is ≤ ~1600 chars (header + 5 × ~250-char lines).
+          expect(kept.length).toBeLessThanOrEqual(Math.floor(maxChars * 0.9) + 1600)
+          const bodyLines = kept.split("\n").filter((l) => /^  \d+: /.test(l))
+          for (const line of bodyLines) {
+            expect(text).toContain(line.replace(/^  (\d+): /, ""))
+          }
+          const m = /^(\d+) of (\d+) matched lines omitted \((\d+) files, (\d+) shown/.exec(
+            plan!.summary,
+          )!
+          expect(m).not.toBeNull()
+          const [, omitted, total, files, shown] = m.map(Number)
+          expect(total).toBe(matches.length)
+          expect(omitted).toBe(total! - bodyLines.length)
+          expect(files).toBe(new Set(matches.map((x) => x.file)).size)
+          const headerLines = kept.split("\n").filter((l) => / match(es)?\b|matches,/.test(l) && !l.startsWith("  "))
+          expect(shown).toBe(headerLines.length)
+        },
+      ),
+      { numRuns: 100 },
+    )
+  })
+
+  it("fewer than 20 matched lines never fires", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 1, max: 99 }).map((n) => `src/a.ts:${n}:hit`), { maxLength: 19 }),
+        (lines) => {
+          expect(planSearchCompression(lines.join("\n"), 10)).toBeUndefined()
+        },
+      ),
+      { numRuns: 100 },
+    )
+  })
+})
+
+describe("properties — planLogCompression", () => {
+  it("is total: never throws on arbitrary text", () => {
+    fc.assert(
+      fc.property(joinedLinesArb, fc.integer({ min: 0, max: 30_000 }), (text, maxChars) => {
+        const plan = planLogCompression(text, maxChars)
+        if (plan !== undefined) expect(plan.kind).toBe("log")
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it("kept lines are gap markers or input lines; gap arithmetic accounts for every line", () => {
+    // Filler from a constant word pool that cannot match ERROR/WARN/SUMMARY/TRACE.
+    const fillerArb = fc.array(
+      fc.tuple(fc.constantFrom("alpha", "bravo", "delta", "lorem"), fc.integer({ min: 0, max: 999 }))
+        .map(([w, n]) => `${w} item ${n}`),
+      { minLength: 40, maxLength: 200 },
+    )
+    fc.assert(
+      fc.property(fillerArb, fc.integer({ min: 0, max: 30 }), (filler, errPos) => {
+        const lines = [...filler]
+        const at = Math.min(errPos, lines.length - 2)
+        lines.splice(at, 0, "Error: token-xyz boom", "    at fn (x.ts:1:1)")
+        const text = lines.join("\n")
+        const plan = planLogCompression(text, 2 * text.length + 100)
+        expect(plan).toBeDefined()
+        const inputLines = new Set(lines)
+        let gapSum = 0
+        let keptCount = 0
+        for (const line of plan!.kept.split("\n")) {
+          const gap = /^  \[…(\d+) lines omitted…\]$/u.exec(line)
+          if (gap !== null) {
+            gapSum += Number(gap[1])
+            continue
+          }
+          keptCount++
+          const stripped = line.replace(/  \(×\d+\)$/u, "")
+          expect(inputLines.has(line) || inputLines.has(stripped)).toBe(true)
+        }
+        expect(gapSum + keptCount).toBe(lines.length)
+        // The error block survives intact under a generous budget.
+        expect(plan!.kept).toContain("Error: token-xyz boom")
+        expect(plan!.kept).toContain("    at fn (x.ts:1:1)")
+      }),
+      { numRuns: 100 },
+    )
   })
 })
