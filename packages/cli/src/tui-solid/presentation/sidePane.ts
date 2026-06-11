@@ -8,11 +8,34 @@ import {
 } from "./contextView.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
 import { buildNavRows, type NavConversation, type TreeRowData } from "./contextTreeView.js"
-import type { AgentContextNode } from "@efferent/core"
+import type { AgentContextNode, PlanStep } from "@efferent/core"
 
 export interface SidePaneInstruction {
   readonly path: string
   readonly scope: string
+}
+
+/**
+ * Read an `update_plan` tool call's arguments into the plan checklist —
+ * defensively, since the args come off the wire (live event) or persisted
+ * history. Undefined when the shape doesn't hold (the pill still shows the
+ * call; the checklist just doesn't update).
+ */
+export const parsePlanSteps = (args: unknown): ReadonlyArray<PlanStep> | undefined => {
+  const a = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>
+  if (!Array.isArray(a.steps)) return undefined
+  const steps: PlanStep[] = []
+  for (const raw of a.steps) {
+    const s = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>
+    if (typeof s.step !== "string") return undefined
+    const status =
+      s.status === "pending" || s.status === "active" || s.status === "done"
+        ? s.status
+        : undefined
+    if (status === undefined) return undefined
+    steps.push({ step: s.step, status })
+  }
+  return steps
 }
 
 /** One file touched this session, with its running diffstat. */
@@ -105,6 +128,9 @@ export interface SidePaneProjection {
   readonly instructions: ReadonlyArray<SidePaneInstruction>
   /** At-a-glance session counters (Activity header). */
   readonly stats: SessionStats
+  /** The agent's working plan — the latest `update_plan` call's checklist,
+   *  rendered under the Activity header (rebuilt from history on switch). */
+  readonly plan: ReadonlyArray<PlanStep>
   /** Files touched this session, with running diffstat (Activity "files" section). */
   readonly filesChanged: ReadonlyArray<FileChange>
   /** Context-viewer segments (built from list + checkpoints); shown when view==="context". */
@@ -157,6 +183,7 @@ export const emptyProjection: SidePaneProjection = {
   skillsLoaded: [],
   instructions: [],
   stats: emptyStats,
+  plan: [],
   filesChanged: [],
 }
 
@@ -185,6 +212,7 @@ export const splitSidePane = (
     skillsLoaded: s.skillsLoaded,
     instructions: s.instructions,
     stats: s.stats,
+    plan: s.plan,
     filesChanged: s.filesChanged,
     ...(s.context !== undefined ? { context: s.context } : {}),
     ...(s.treeNodes !== undefined ? { treeNodes: s.treeNodes } : {}),

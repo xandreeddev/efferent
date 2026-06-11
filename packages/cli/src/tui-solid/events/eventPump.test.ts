@@ -47,6 +47,38 @@ describe("eventPump — tool start/end matching (FIFO per call id)", () => {
   })
 })
 
+describe("eventPump — the plan mirrors the top-level agent's update_plan calls", () => {
+  const steps = [
+    { step: "read the code", status: "done" },
+    { step: "fix the bug", status: "active" },
+    { step: "run tests", status: "pending" },
+  ]
+
+  test("a top-level update_plan call replaces the session plan", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    reduce({ type: "tool_call_start", turnIndex: 0, id: "p1", toolName: "update_plan", args: { steps } })
+    expect(store.projection().plan.map((s) => s.status)).toEqual(["done", "active", "pending"])
+  })
+
+  test("a sub-agent's plan stays node-local (never the session plan)", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    reduce({ type: "subagent_start", name: "x", task: "t", nodeId: "n1" })
+    reduce({ type: "tool_call_start", turnIndex: 0, id: "p1", toolName: "update_plan", args: { steps }, nodeId: "n1" })
+    expect(store.projection().plan).toEqual([])
+  })
+
+  test("malformed args leave the plan untouched", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "tool_call_start", turnIndex: 0, id: "p1", toolName: "update_plan", args: { steps: [{ nope: 1 }] } })
+    expect(store.projection().plan).toEqual([])
+  })
+})
+
 describe("eventPump — preview streaming is read live, not captured at spawn", () => {
   const previewBlocks = (store: TuiStore): string[] =>
     (store.nodePreview()?.blocks ?? []).map((b) => b.kind)

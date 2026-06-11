@@ -59,6 +59,48 @@ const Stats = (props: { ctx: TuiContext }) => {
   )
 }
 
+/**
+ * The agent's working plan — the latest `update_plan` checklist, pinned under
+ * the stats header (not part of the navigable rows, like the gauge). Statuses
+ * reuse the terminal glyph vocabulary: ✓ done · ● active (running colour) ·
+ * ○ pending (dim). Hidden until the agent first plans.
+ */
+const Plan = (props: { ctx: TuiContext }) => {
+  const plan = () => props.ctx.store.projection().plan
+  return (
+    <Show when={plan().length > 0}>
+      <box flexDirection="column" flexShrink={0} marginTop={1}>
+        <For each={plan()}>
+          {(s) => (
+            <box flexDirection="row">
+              <text
+                fg={
+                  s.status === "done"
+                    ? tokens.state.ok
+                    : s.status === "active"
+                      ? tokens.state.running
+                      : tokens.text.dim
+                }
+                wrapMode="none"
+                flexShrink={0}
+              >
+                {`${s.status === "done" ? glyph.ok : s.status === "active" ? glyph.railDot : glyph.select.off} `}
+              </text>
+              <text
+                fg={s.status === "active" ? tokens.text.default : tokens.text.muted}
+                wrapMode="word"
+                flexShrink={1}
+              >
+                {s.step}
+              </text>
+            </box>
+          )}
+        </For>
+      </box>
+    </Show>
+  )
+}
+
 /** One execution-tree node's own line (its children are sibling rows). The glyph
  *  + duration are live (spinner frame, elapsed), so they're computed here, not in
  *  the pure row. */
@@ -204,6 +246,7 @@ export const Activity = (props: { ctx: TuiContext }) => {
     <>
       {/* Stats header is pinned above the scroll region so it stays visible. */}
       <Stats ctx={props.ctx} />
+      <Plan ctx={props.ctx} />
       <text flexShrink={0}> </text>
       <scrollbox
         ref={sb}

@@ -626,6 +626,44 @@ export const WebSearchTool = Tool.make("search_web", {
   failureMode: "return",
 })
 
+export const PlanStepStatus = Schema.Literal("pending", "active", "done")
+export type PlanStepStatus = typeof PlanStepStatus.Type
+
+export const PlanStep = Schema.Struct({
+  step: Schema.String.annotations({
+    description: "One short step (≤ 10 words), imperative — e.g. 'add the title column'.",
+  }),
+  status: PlanStepStatus,
+})
+export type PlanStep = typeof PlanStep.Type
+
+/**
+ * The working-plan tool: a short, user-visible checklist the model maintains
+ * while it works. Pure data — each call REPLACES the plan wholesale (no ids,
+ * no diffing), the UI renders the latest call's steps, and a session switch
+ * rebuilds the plan from the last call in the loaded history.
+ */
+export const UpdatePlan = Tool.make("update_plan", {
+  description:
+    "Maintain your working plan for the current task — a short checklist the user sees live. " +
+    "For any multi-step task (3+ distinct steps), call this FIRST with the full plan, then " +
+    "again after finishing each step. Every call REPLACES the whole plan, so always send the " +
+    "complete list. Keep steps short and concrete, statuses honest (mark 'done' only when " +
+    "actually done), and exactly one step 'active' while you work. Skip it for trivial " +
+    "single-step asks.",
+  parameters: {
+    steps: Schema.Array(PlanStep).annotations({
+      description: "The COMPLETE plan, in order — this replaces any previous plan.",
+    }),
+  },
+  success: Schema.Struct({
+    total: Schema.Number,
+    done: Schema.Number,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const codingToolkit = Toolkit.make(
   ReadFile,
   WriteFile,
@@ -637,6 +675,7 @@ export const codingToolkit = Toolkit.make(
   ReadSkill,
   WebFetch,
   WebSearchTool,
+  UpdatePlan,
 )
 
 /**
@@ -911,6 +950,19 @@ export const makeCodingHandlers = (
             body: stripFrontmatter(read.content),
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      // Pure echo: the plan IS the call's arguments — the UI reads them off
+      // the event stream / persisted history; nothing to store here.
+      update_plan: ({ steps }) =>
+        steps.length === 0
+          ? Effect.fail({
+              error: "EmptyPlan",
+              message: "Send the complete plan — at least one step.",
+            })
+          : Effect.succeed({
+              total: steps.length,
+              done: steps.filter((s) => s.status === "done").length,
+            }),
     })
   })
 

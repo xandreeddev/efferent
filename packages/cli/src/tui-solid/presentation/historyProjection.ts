@@ -41,13 +41,16 @@ import {
   onTurnStart,
   type ExecutionTree,
 } from "./executionTree.js"
-import { mergeFileChange, type FileChange } from "./sidePane.js"
+import { mergeFileChange, parsePlanSteps, type FileChange } from "./sidePane.js"
 import { formatTokens } from "./statusBar.js"
+import type { PlanStep } from "@efferent/core"
 
 export interface HistoryProjection {
   readonly blocks: ScrollbackBlock[]
   readonly tree: ExecutionTree
   readonly filesChanged: ReadonlyArray<FileChange>
+  /** The agent's working plan as of the LAST `update_plan` call in the set. */
+  readonly plan: ReadonlyArray<PlanStep>
   /** `node:<id>` fold keys for every tree root — seed `stackCollapsed` so a
    *  freshly-loaded session lands compact (one folded line per run). */
   readonly foldIds: ReadonlySet<string>
@@ -110,6 +113,7 @@ export const projectHistory = (
   // ---- activity half ----
   let tree = emptyTree
   let filesChanged: ReadonlyArray<FileChange> = []
+  let plan: ReadonlyArray<PlanStep> = []
   let turnIdx = 0
   // FIFO per tool-call key (id, else name) → tree node id; same matching
   // discipline as the live event pump, so duplicate same-named calls pair in
@@ -173,6 +177,11 @@ export const projectHistory = (
                 isSpawn: true,
               })
             } else {
+              // The last plan call in the set IS the loaded plan.
+              if (part.toolName === "update_plan") {
+                const steps = parsePlanSteps(part.input)
+                if (steps !== undefined) plan = steps
+              }
               blocks.push({
                 kind: "tool",
                 id: part.toolCallId,
@@ -257,5 +266,5 @@ export const projectHistory = (
       .filter((r) => r.kind === "run" || r.kind === "turn" || r.kind === "subagent")
       .map((r) => `node:${r.id}`),
   )
-  return { blocks, tree, filesChanged, foldIds }
+  return { blocks, tree, filesChanged, plan, foldIds }
 }

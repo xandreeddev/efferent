@@ -75,6 +75,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
         ...p,
         tree: emptyTree,
         filesChanged: [],
+        plan: [],
         stats: { ...emptyStats, startedAt: Date.now(), contextWindow: p.stats.contextWindow },
       }))
       store.pushBlock({

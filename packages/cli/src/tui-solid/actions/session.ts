@@ -82,9 +82,16 @@ const switchedSidePane = (
   context: ReadonlyArray<ContextSegment>,
   collapsed: ReadonlySet<string>,
   stats: SidePaneState["stats"],
-  activity: Pick<HistoryProjection, "tree" | "filesChanged" | "foldIds">,
+  activity: Pick<HistoryProjection, "tree" | "filesChanged" | "plan" | "foldIds">,
 ): { projection: SidePaneProjection; nav: SidePaneNav } => ({
-  projection: { ...prev, tree: activity.tree, context, stats, filesChanged: activity.filesChanged },
+  projection: {
+    ...prev,
+    tree: activity.tree,
+    context,
+    stats,
+    plan: activity.plan,
+    filesChanged: activity.filesChanged,
+  },
   nav: {
     ...emptyNav,
     contextCollapsed: collapsed,
