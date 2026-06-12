@@ -2,4 +2,4 @@
  *  borders, surfaces, glyphs, and markers. Everything else composes these. */
 export { Pane } from "./Pane.js"
 export { Modal, MODAL_WIDTH, MODAL_RULE } from "./Modal.js"
-export { Rule, Cursor, Marker, RailLine, SectionHead, foldCaret } from "./atoms.js"
+export { HlText, Rule, Cursor, Marker, RailLine, SectionHead, foldCaret, type Hl } from "./atoms.js"

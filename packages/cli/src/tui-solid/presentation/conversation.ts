@@ -238,6 +238,47 @@ export interface SearchHit {
   readonly groupId?: string
 }
 
+/** One segment of a text split by search matches — `match` segments render as
+ *  highlighted word chips, the rest as plain text. */
+export interface MatchSegment {
+  readonly text: string
+  readonly match: boolean
+}
+
+/**
+ * Split `text` on every case-insensitive occurrence of `query` — the model
+ * behind the WORD-level search highlight (vim hlsearch: the matched substring
+ * itself gets a chip, not just the row). Blank query or no hit → one unmatched
+ * segment. Segments always concatenate back to `text` verbatim.
+ *
+ * Case-folding caveat: positions are found in `text.toLowerCase()`, which is
+ * only index-aligned with `text` when lowering doesn't change length (it can:
+ * 'İ' lowers to two code units). When either side lowers to a different
+ * length, fall back to exact-case matching rather than chip a skewed region.
+ */
+export const splitByMatch = (text: string, query: string): ReadonlyArray<MatchSegment> => {
+  const trimmed = query.trim()
+  if (trimmed.length === 0 || text.length === 0) return [{ text, match: false }]
+  const lowerText = text.toLowerCase()
+  const lowerQuery = trimmed.toLowerCase()
+  const stable = lowerText.length === text.length && lowerQuery.length === trimmed.length
+  const hay = stable ? lowerText : text
+  const q = stable ? lowerQuery : trimmed
+  const out: MatchSegment[] = []
+  let i = 0
+  while (i < text.length) {
+    const at = hay.indexOf(q, i)
+    if (at === -1) {
+      out.push({ text: text.slice(i), match: false })
+      break
+    }
+    if (at > i) out.push({ text: text.slice(i, at), match: false })
+    out.push({ text: text.slice(at, at + q.length), match: true })
+    i = at + q.length
+  }
+  return out
+}
+
 /**
  * Find every row matching `query` (case-insensitive substring), in render
  * order. Matches FOLDED content too — that's the point: the hit records how to
