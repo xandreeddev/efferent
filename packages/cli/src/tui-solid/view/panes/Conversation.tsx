@@ -6,6 +6,7 @@ import {
   buildConversationRows,
   conversationItemId,
   isRenderableDiff,
+  splitByMatch,
   toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
@@ -55,30 +56,49 @@ const ftProp = (filetype: string | undefined): { filetype?: string } =>
  * indent, and float the `●` over the top-left with `position:absolute` (out of
  * flow, so the markdown still starts at the top). No width math needed.
  */
-const Prose = (props: { text: string }) => (
-  <box flexDirection="column">
-    <text fg={tokens.text.assistant} position="absolute" left={0} top={0}>
-      {glyph.railDot}
-    </text>
-    <markdown
-      content={props.text}
-      syntaxStyle={syntaxStyle()}
-      fg={tokens.text.default}
-      paddingLeft={2}
-      // Right padding keeps wide content (tables fill the content width) clear of
-      // the pane border + the scrollbar column — without it a table's right edge
-      // collides with the border (`┐│`).
-      paddingRight={2}
-      // OpenTUI's default table widthMode is "full" — every table balloons to the
-      // pane width (huge empty cells) and overflows/crops when the pane is narrow.
-      // "content" sizes tables to their content; "word" wraps cells so a wide
-      // table shrinks to fit instead of cropping; cellPaddingX gives the cell text
-      // breathing room from the borders (`│ Command │` not `│Command│`).
-      tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1 }}
-      {...tsProp()}
-    />
-  </box>
-)
+const Prose = (props: { text: string; hl?: Hl | undefined }) => {
+  // Word chips can't be spliced into the native <markdown> renderable, so
+  // while a search is active AND this prose contains the query, render it as
+  // chip-capable plain text instead — raw markdown markers may show, which is
+  // the right trade while hunting for text; Esc (clearing the search) restores
+  // the styled markdown. Prose without an occurrence keeps markdown rendering.
+  const searchMatched = createMemo(
+    () => props.hl !== undefined && splitByMatch(props.text, props.hl.query).some((s) => s.match),
+  )
+  return (
+    <box flexDirection="column">
+      <text fg={tokens.text.assistant} position="absolute" left={0} top={0}>
+        {glyph.railDot}
+      </text>
+      <Show
+        when={searchMatched()}
+        fallback={
+          <markdown
+            content={props.text}
+            syntaxStyle={syntaxStyle()}
+            fg={tokens.text.default}
+            paddingLeft={2}
+            // Right padding keeps wide content (tables fill the content width) clear of
+            // the pane border + the scrollbar column — without it a table's right edge
+            // collides with the border (`┐│`).
+            paddingRight={2}
+            // OpenTUI's default table widthMode is "full" — every table balloons to the
+            // pane width (huge empty cells) and overflows/crops when the pane is narrow.
+            // "content" sizes tables to their content; "word" wraps cells so a wide
+            // table shrinks to fit instead of cropping; cellPaddingX gives the cell text
+            // breathing room from the borders (`│ Command │` not `│Command│`).
+            tableOptions={{ widthMode: "content", wrapMode: "word", cellPaddingX: 1 }}
+            {...tsProp()}
+          />
+        }
+      >
+        <box paddingLeft={2} paddingRight={2}>
+          <HlText text={props.text} fg={tokens.text.default} hl={props.hl} />
+        </box>
+      </Show>
+    </box>
+  )
+}
 
 const ToolPill = (props: { tool: ToolBlock; hl?: Hl | undefined }) => (
   <box flexDirection="column">
@@ -204,7 +224,7 @@ const Block = (props: { block: ScrollbackBlock; hl?: Hl | undefined }) => {
   switch (b.kind) {
     case "assistant":
     case "reasoning":
-      return <Prose text={b.text} />
+      return <Prose text={b.text} hl={props.hl} />
     case "tool":
       return <ToolPill tool={b} hl={props.hl} />
     case "agents":
