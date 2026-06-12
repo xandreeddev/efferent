@@ -37,3 +37,4 @@ test.db-wal
 
 # Scratch handoff notes — session-local, never committed
 HANDOFF.md
+*.tgz
