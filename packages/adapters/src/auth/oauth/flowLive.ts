@@ -20,7 +20,7 @@ import { OPENAI_CALLBACK_PORT, exchangeOpenAiCode, openaiAuthorizeUrl } from "./
 export const AuthFlowLive = Layer.succeed(
   AuthFlow,
   AuthFlow.of({
-    supportsOAuth: (provider) => provider === "anthropic" || provider === "openai",
+    supportsOAuth: (provider) => Effect.succeed(provider === "anthropic" || provider === "openai"),
     begin: (provider) =>
       generatePkce().pipe(
         Effect.map((pkce) =>
@@ -43,6 +43,6 @@ export const AuthFlowLive = Layer.succeed(
       provider === "openai"
         ? exchangeOpenAiCode(code, verifier)
         : exchangeAnthropicCode(code, verifier),
-    parseRedirect: parseAuthorizationInput,
+    parseRedirect: (input) => Effect.sync(() => parseAuthorizationInput(input)),
   }),
 )

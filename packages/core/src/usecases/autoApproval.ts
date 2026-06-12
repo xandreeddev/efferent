@@ -1,5 +1,5 @@
 import { resolve } from "node:path"
-import { Effect } from "effect"
+import { Effect, Either, Schema } from "effect"
 import type { ApprovalRequest } from "../ports/Approval.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
@@ -70,32 +70,40 @@ export const buildJudgePrompt = (input: {
 }
 
 /**
+ * The judge's wire reply, decoded — never parsed by hand. `Schema.parseJson`
+ * subsumes `JSON.parse`: malformed JSON, a third verdict value, and a
+ * wrong-typed field all surface as the same decode failure, as a value —
+ * no exception machinery in the domain.
+ */
+const JudgeReply = Schema.parseJson(
+  Schema.Struct({
+    verdict: Schema.Literal("allow", "prompt"),
+    folder: Schema.optional(Schema.String),
+    reason: Schema.optional(Schema.String),
+  }),
+)
+
+/**
  * Parse the judge's reply. Strict by construction: anything that isn't a
- * clean `"allow"` — malformed JSON, a third verdict value, prose — collapses
- * to `prompt`, so a confused model can only ever cause a prompt the human
- * would have seen anyway.
+ * clean verdict — malformed JSON, a third verdict value, a wrong-typed
+ * field, prose — collapses to `prompt`, so a confused model can only ever
+ * cause a prompt the human would have seen anyway.
  */
 export const parseJudgeVerdict = (text: string): JudgeVerdict => {
   const match = text.match(/\{[\s\S]*\}/)
   if (match === null) return { verdict: "prompt" }
-  try {
-    const parsed = JSON.parse(match[0]) as Record<string, unknown>
-    const folder =
-      typeof parsed["folder"] === "string" && parsed["folder"].trim().length > 0
-        ? parsed["folder"].trim()
-        : undefined
-    const reason =
-      typeof parsed["reason"] === "string" && parsed["reason"].trim().length > 0
-        ? parsed["reason"].trim()
-        : undefined
-    return {
-      verdict: parsed["verdict"] === "allow" ? "allow" : "prompt",
-      ...(folder !== undefined ? { folder } : {}),
-      ...(reason !== undefined ? { reason } : {}),
-    }
-  } catch {
-    return { verdict: "prompt" }
-  }
+  return Either.match(Schema.decodeUnknownEither(JudgeReply)(match[0]), {
+    onLeft: (): JudgeVerdict => ({ verdict: "prompt" }),
+    onRight: ({ verdict, folder, reason }): JudgeVerdict => {
+      const f = folder?.trim()
+      const r = reason?.trim()
+      return {
+        verdict,
+        ...(f !== undefined && f.length > 0 ? { folder: f } : {}),
+        ...(r !== undefined && r.length > 0 ? { reason: r } : {}),
+      }
+    },
+  })
 }
 
 /**

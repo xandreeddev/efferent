@@ -69,14 +69,13 @@ export const parseAuthorizationInput = (
 ): { code?: string | undefined; state?: string | undefined } => {
   const value = input.trim()
   if (!value) return {}
-  try {
+  // Total by construction: canParse instead of catching a thrown URL.
+  if (URL.canParse(value)) {
     const url = new URL(value)
     return {
       code: url.searchParams.get("code") ?? undefined,
       state: url.searchParams.get("state") ?? undefined,
     }
-  } catch {
-    /* not a URL */
   }
   if (value.includes("#")) {
     const [code, state] = value.split("#", 2)
