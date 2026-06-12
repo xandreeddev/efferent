@@ -1,5 +1,5 @@
 import { LanguageModel, Prompt } from "@effect/ai"
-import { Effect } from "effect"
+import { Effect, Either, Schema } from "effect"
 import type { Scorer, ScorerArgs, ScoreResult } from "./Eval.js"
 
 /** Pass/fail predicate — 1 if true, 0 if false. */
@@ -45,18 +45,25 @@ const JUDGE_SYSTEM =
   "grade it. Be conservative: only award a high score when the output clearly " +
   "satisfies the rubric."
 
+/** The judge's wire reply, decoded as a value — no JSON.parse, no try/catch. */
+const JudgeReply = Schema.parseJson(
+  Schema.Struct({
+    score: Schema.optional(Schema.Unknown),
+    reason: Schema.optional(Schema.String),
+  }),
+)
+
 const parseJudge = (text: string): ScoreResult => {
   const m = text.match(/\{[\s\S]*\}/)
   if (m === null) return { score: 0, detail: "judge: no JSON in output" }
-  try {
-    const obj = JSON.parse(m[0]) as { readonly score?: unknown; readonly reason?: unknown }
-    const raw = typeof obj.score === "number" ? obj.score : Number(obj.score)
-    const score = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0
-    const reason = typeof obj.reason === "string" ? obj.reason : undefined
-    return reason !== undefined ? { score, detail: reason } : { score }
-  } catch {
-    return { score: 0, detail: "judge: unparseable JSON" }
-  }
+  return Either.match(Schema.decodeUnknownEither(JudgeReply)(m[0]), {
+    onLeft: (): ScoreResult => ({ score: 0, detail: "judge: unparseable JSON" }),
+    onRight: ({ score, reason }): ScoreResult => {
+      const raw = typeof score === "number" ? score : Number(score)
+      const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0
+      return reason !== undefined ? { score: clamped, detail: reason } : { score: clamped }
+    },
+  })
 }
 
 /**

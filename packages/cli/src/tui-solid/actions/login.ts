@@ -127,7 +127,7 @@ const finishOAuth = (
 export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider) =>
   Effect.gen(function* () {
     const authFlow = yield* AuthFlow
-    if (!authFlow.supportsOAuth(provider)) {
+    if (!(yield* authFlow.supportsOAuth(provider))) {
       yield* Effect.sync(() => {
         store.closeOverlay()
         store.pushBlock({
@@ -177,7 +177,7 @@ export const startOAuthLogin = (store: TuiStore, cwd: string, provider: Provider
 export const completeOAuthManual = (store: TuiStore, provider: Provider, redirect: string) =>
   Effect.gen(function* () {
     const session = store.run.getOAuth()
-    const parsed = (yield* AuthFlow).parseRedirect(redirect)
+    const parsed = yield* (yield* AuthFlow).parseRedirect(redirect)
     if (parsed.code === undefined) {
       yield* Effect.sync(() =>
         store.pushBlock({ kind: "error", text: "couldn't find an authorization code in that input" }),
