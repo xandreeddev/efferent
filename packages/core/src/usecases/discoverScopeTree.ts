@@ -2,7 +2,21 @@ import { basename, dirname, isAbsolute, resolve, sep } from "node:path"
 import { Effect } from "effect"
 import type { Scope } from "../entities/Scope.js"
 import { renderScopeSystemPrompt } from "../prompts/coder.js"
-import { FileSystem } from "../ports/FileSystem.js"
+import { FileSystem, type DirEntry } from "../ports/FileSystem.js"
+
+/**
+ * Walk bounds. SCOPE.md discovery runs at every boot, so the walk must stay
+ * cheap even in a degenerate workspace — efferent launched at `/` (a
+ * container's default workdir) otherwise scans the entire filesystem and is
+ * OOM-killed before printing anything. Hidden directories and dependency
+ * trees can't meaningfully carry scopes; the caps turn the worst case into a
+ * bounded partial discovery instead of a hang.
+ */
+const WALK_MAX_DEPTH = 8
+const WALK_MAX_DIRS = 10_000
+
+/** Directories never descended into: hidden trees + dependency trees. */
+const prunedDir = (name: string): boolean => name.startsWith(".") || name === "node_modules"
 
 /**
  * Discover the workspace's **scope tree** from `SCOPE.md` files.
@@ -33,24 +47,38 @@ export const discoverScopeTree = (
     body: string | undefined,
   ) => string,
   now: Date = new Date(),
+  bounds?: { readonly maxDepth?: number; readonly maxDirs?: number },
 ): Effect.Effect<Scope, never, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
-    // Recursive list with EACCES-safe walk (chose `list` over `glob`
-    // because Bun.Glob's iterator can't recover from EACCES on a single
-    // root-owned subdirectory like docker's `pg-data/`).
-    const entries = yield* fs
-      .list(workspaceRoot, { recursive: true })
-      .pipe(
-        Effect.catchAll(() =>
-          Effect.succeed(
-            [] as ReadonlyArray<{ path: string; type: "file" | "dir" }>,
-          ),
-        ),
-      )
-    const files = entries
-      .filter((e) => e.type === "file" && basename(e.path) === "SCOPE.md")
-      .map((e) => e.path)
+    const maxDepth = bounds?.maxDepth ?? WALK_MAX_DEPTH
+    const maxDirs = bounds?.maxDirs ?? WALK_MAX_DIRS
+
+    // Bounded BFS, one non-recursive listing per directory. A listing
+    // failure (EACCES, vanished dir) just prunes that branch — same
+    // resilience the old recursive `list` walk had, but with depth/size
+    // caps so a huge workspace can't stall the boot. BFS order also means
+    // shallow scopes win the first-name-seen dedupe below.
+    const files: string[] = []
+    const queue: Array<{ readonly dir: string; readonly depth: number }> = [
+      { dir: workspaceRoot, depth: 0 },
+    ]
+    let scanned = 0
+    while (queue.length > 0 && scanned < maxDirs) {
+      const { dir, depth } = queue.shift()!
+      scanned++
+      const entries = yield* fs
+        .list(dir)
+        .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<DirEntry>)))
+      for (const e of entries) {
+        const abs = isAbsolute(e.path) ? e.path : resolve(dir, e.path)
+        if (e.type === "file") {
+          if (basename(abs) === "SCOPE.md") files.push(abs)
+        } else if (depth < maxDepth && !prunedDir(basename(abs))) {
+          queue.push({ dir: abs, depth: depth + 1 })
+        }
+      }
+    }
 
     const seen = new Set<string>()
     const raws: RawScope[] = []
