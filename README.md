@@ -111,7 +111,7 @@ The sub-agent gets the full toolkit but only **writes** inside `folder` (bash is
 ## Develop
 
 ```bash
-git clone https://github.com/xandreeddev/agent && cd agent
+git clone https://github.com/xandreeddev/efferent && cd efferent
 bun install
 bun run typecheck && bun test         # the correctness gates (no build step for dev)
 bun packages/cli/src/main.ts          # run from source — Bun runs .ts directly
