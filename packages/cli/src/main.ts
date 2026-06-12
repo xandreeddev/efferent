@@ -361,9 +361,13 @@ seedDbUrlFromConfig()
 // session via the in-app `:login` flow — credentials live only in
 // ~/.efferent/auth.json, never the env. Non-interactive modes (print/json/rpc)
 // gate on that file via `ensureBatchCredential` instead.
+// Single source of truth for the version: the package manifest. Bun inlines
+// the JSON at bundle time, so the published artifact reports its real version.
+import packageJson from "../package.json" with { type: "json" }
+
 const cli = Command.run(root, {
   name: "efferent",
-  version: "0.0.0",
+  version: packageJson.version,
 })
 
 cli(process.argv).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain)
