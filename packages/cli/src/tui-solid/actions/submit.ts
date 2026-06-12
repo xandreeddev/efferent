@@ -167,16 +167,18 @@ export const makeSubmit = (
         }
       }
 
-      // Rail rhythm: every turn existing BEFORE this message folds to
-      // `❯ subject ▸ N steps`, so the new one — expanded, its running tool
-      // group showing live pills — is the only expanded story on screen.
+      // Rail rhythm (opt-in, `:set autoCollapse on`): every turn existing
+      // BEFORE this message folds to `❯ subject ▸ N steps`, so the new one —
+      // expanded, its running tool group showing live pills — is the only
+      // expanded story on screen. Off by default: turns stay as you left them.
       // (Computed before the push so the fresh turn itself stays open.)
+      const autoCollapse = (yield* (yield* SettingsStore).get()).autoCollapse === true
       const prevTurns = buildConversation(store.blocks())
         .filter((i) => i.kind === "turn")
         .map((i) => i.id)
       // No prior turns ⇒ this message opens the session — worth naming.
       const firstExchange = prevTurns.length === 0
-      if (prevTurns.length > 0) {
+      if (autoCollapse && prevTurns.length > 0) {
         store.setCollapsed(new Set([...store.collapsed(), ...prevTurns]))
       }
       store.pushBlock({ kind: "user", text })

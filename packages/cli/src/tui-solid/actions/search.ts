@@ -1,4 +1,4 @@
-import { buildConversation, buildConversationRows, conversationItemId, itemText } from "../presentation/conversation.js"
+import { buildConversation, buildConversationRows, searchConversation } from "../presentation/conversation.js"
 import {
   buildStackRowsData,
   sessionsRows,
@@ -11,47 +11,73 @@ import type { TuiStore } from "../state/store.js"
 
 /**
  * `/` search, routed to the focused pane (`store.searchPane()`). Pure store
- * manipulation (no Effect). The **conversation** matches top-level item ids and
- * the scroller brings the current match into view; the **side** pane matches its
- * current rows' text and stores the matching *row indices* (the stack/context
- * cursors are index-based, so jumping to a match is just moving that cursor —
- * the pane's own scroll-into-view effect follows). n/N cycle; the render
- * highlights the conversation matches and the side cursor marks the current one.
+ * manipulation (no Effect). The **conversation** matches at ROW granularity
+ * (turn heads, body items, checkpoints — `searchConversation`); jumping to a
+ * match REVEALS it first — the containing turn unfolds, a containing tool group
+ * expands — then the scroller brings it into view and the fold cursor parks on
+ * it. The **side** pane matches its current rows' text and stores the matching
+ * *row indices* (the stack/context cursors are index-based, so jumping to a
+ * match is just moving that cursor — the pane's own scroll-into-view effect
+ * follows). n/N cycle; the render tints every conversation match row and the
+ * side cursor marks the current one.
  *
  * Matching is a snapshot at search time — re-run `/<query>` after new turns or
  * folds to refresh. A miss keeps an (empty) search so the status line can report
  * it.
  */
-const scrollToCurrent = (store: TuiStore): void => {
+const revealAndScroll = (store: TuiStore): void => {
   const s = store.search()
   if (s === undefined) return
   const id = s.matchIds[s.index]
   if (id === undefined) return
+  // Reveal: unfold the turn hiding the match (remove from `collapsed`) and/or
+  // expand its tool group (ADD to `collapsed` — inverse polarity). Folds opened
+  // by visiting matches stay open, like vim's zv.
+  const hit = s.hits?.[s.index]
+  if (hit !== undefined) {
+    const collapsed = new Set(store.collapsed())
+    let changed = false
+    if (hit.turnId !== undefined && collapsed.has(hit.turnId)) {
+      collapsed.delete(hit.turnId)
+      changed = true
+    }
+    if (hit.groupId !== undefined && !collapsed.has(hit.groupId)) {
+      collapsed.add(hit.groupId)
+      changed = true
+    }
+    if (changed) store.setCollapsed(collapsed)
+  }
+  // A row revealed this tick mounts now (Solid is synchronous) but OpenTUI lays
+  // it out on a later frame — re-scroll once after layout settles (same pattern
+  // as the scroller's own scrollToBottom).
   store.convScroller.current?.scrollIntoView(id)
-  // Park the fold cursor on the current match so it gets the row highlight (and
-  // the tint moves with n/N). A top-level item id is also a nav-row key for turns
-  // / checkpoints; a `loose:` run has no own row, so the cursor just stays put.
+  setTimeout(() => store.convScroller.current?.scrollIntoView(id), 50)
+  // Park the fold cursor on the current match so it gets the cursor highlight
+  // (and the tint moves with n/N). Rows are rebuilt AFTER the reveal, so a
+  // freshly-unfolded body row is present and findable.
   const rows = buildConversationRows(buildConversation(store.viewBlocks()), store.collapsed())
   const idx = rows.findIndex((r) => r.key === id)
   if (idx !== -1) store.setConvCursor(idx)
 }
 
 const runConversationSearch = (store: TuiStore, query: string, q: string): void => {
-  const items = buildConversation(store.viewBlocks())
-  const matchIds = items
-    .map((it, i) => ({ it, id: conversationItemId(it, i) }))
-    .filter(({ it }) => itemText(it).toLowerCase().includes(q))
-    .map(({ id }) => id)
-  if (matchIds.length === 0) {
-    store.setSearch({ query, pane: "conversation", matchIds: [], index: 0 })
+  const hits = searchConversation(buildConversation(store.viewBlocks()), q)
+  if (hits.length === 0) {
+    store.setSearch({ query, pane: "conversation", matchIds: [], index: 0, hits: [] })
     return
   }
   // Land on the most recent (bottom-most) match, like the old `/` jump, and move
   // focus to the conversation so n/N work immediately.
-  store.setSearch({ query, pane: "conversation", matchIds, index: matchIds.length - 1 })
+  store.setSearch({
+    query,
+    pane: "conversation",
+    matchIds: hits.map((h) => h.id),
+    index: hits.length - 1,
+    hits,
+  })
   store.setFocus("conversation")
   store.setMode("normal")
-  scrollToCurrent(store)
+  revealAndScroll(store)
 }
 
 /** The focused side view's row texts + a setter for its (index-based) cursor. */
@@ -127,7 +153,7 @@ export const cycleSearch = (store: TuiStore, dir: 1 | -1): void => {
     const id = s.matchIds[index]
     if (id !== undefined) sideView(store).setCursor(Number(id))
   } else {
-    scrollToCurrent(store)
+    revealAndScroll(store)
   }
 }
 

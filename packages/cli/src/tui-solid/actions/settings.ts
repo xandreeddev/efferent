@@ -213,6 +213,13 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "boolean",
         hint: "fast judge waves through in-folder work",
       },
+      {
+        key: "autoCollapse",
+        label: "autoCollapse",
+        value: String(current.autoCollapse ?? false),
+        kind: "boolean",
+        hint: "sending folds the previous turns",
+      },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
@@ -224,7 +231,7 @@ const reflectRow = (store: TuiStore, key: string, value: string): void => {
   if (o.kind === "settings") store.setOverlay({ kind: "settings", state: setRowValue(o.state, key, value) })
 }
 
-/** Toggle a boolean settings row (`allowBash`, `autoApprove`) + persist. */
+/** Toggle a boolean settings row (`allowBash`, `autoApprove`, `autoCollapse`) + persist. */
 export const toggleBooleanSetting = (store: TuiStore, key: string, currentValue: string) =>
   Effect.gen(function* () {
     const next = currentValue !== "true"
@@ -292,6 +299,17 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => {
         store.toast(`Updated autoApprove → ${on ? "on" : "off (every unmatched command prompts)"}`)
         reflectRow(store, "autoApprove", String(on))
+      })
+      return
+    }
+    if (key === "autoCollapse") {
+      const on = value === "true" || value === "on"
+      const off = value === "false" || value === "off"
+      if (!on && !off) return yield* err("Setting 'autoCollapse' must be 'on' or 'off'")
+      yield* settings.update((curr) => ({ ...curr, autoCollapse: on }))
+      yield* Effect.sync(() => {
+        store.toast(`Updated autoCollapse → ${on ? "on (sending folds previous turns)" : "off"}`)
+        reflectRow(store, "autoCollapse", String(on))
       })
       return
     }
@@ -401,7 +419,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct, autoApprove`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse`,
     )
   })
 

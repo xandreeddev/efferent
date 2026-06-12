@@ -53,6 +53,12 @@ export const Settings = Schema.Struct({
         "Auto-approval mode: a FAST-tier judge classifies unmatched bash commands, silently allowing ordinary work inside permitted folders (workspace root + granted folders); everything else still prompts. Unset → on; false → every unmatched command prompts.",
     }),
   ),
+  autoCollapse: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "TUI conversation pane: fold every previous turn to one line when a new message is sent, keeping only the live turn expanded. Unset → off (turns stay as you left them).",
+    }),
+  ),
   editorMode: EditorMode.annotations({
     description: "TUI input editor mode: 'insert' (default emacs-style) or 'vi' (modal vi-lite).",
   }),

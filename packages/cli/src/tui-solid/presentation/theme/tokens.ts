@@ -55,8 +55,16 @@ export interface Tokens {
     readonly handoff: string
     readonly loaded: string
   }
-  /** Conversation `/`-search highlight buckets (current match · other match · header). */
-  readonly match: { readonly current: string; readonly other: string; readonly header: string }
+  /** Conversation `/`-search highlights: fg buckets (current · other · header)
+   *  plus the row-background tints (`line` every match, `currentLine` the one
+   *  under the [i/N] position). */
+  readonly match: {
+    readonly current: string
+    readonly other: string
+    readonly header: string
+    readonly line: string
+    readonly currentLine: string
+  }
   /** Modal overlay surface + its border. */
   readonly overlay: { readonly bg: string; readonly border: string }
   /** Status-bar surface. */
@@ -90,7 +98,13 @@ export const makeTokens = (p: Palette): Tokens => ({
   },
   state: { running: p.yellow, ok: p.greenMuted, error: p.red },
   marker: { select: p.green, cursor: p.green, handoff: p.magenta, loaded: p.greenMuted },
-  match: { current: p.green, other: p.cyan, header: p.blue },
+  match: {
+    current: p.green,
+    other: p.cyan,
+    header: p.blue,
+    line: p.matchLine,
+    currentLine: p.matchLineCurrent,
+  },
   overlay: { bg: p.bgOverlay, border: p.magenta },
   status: { bg: p.bgStatus },
   cursorLine: p.cursorLine,

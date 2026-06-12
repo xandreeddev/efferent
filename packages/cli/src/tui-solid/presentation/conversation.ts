@@ -225,6 +225,60 @@ export const itemText = (item: ConversationItem): string => {
 }
 
 /**
+ * One `/`-search match, at ROW granularity (a turn head, a body item, a
+ * checkpoint) — `id` is the rendered box id, so highlight + scroll line up with
+ * what's on screen. A hit inside a folded unit carries what must change to make
+ * it visible: `turnId` (remove from `collapsed` — a turn folds when its id is a
+ * member) and/or `groupId` (ADD to `collapsed` — tool groups have the inverse
+ * polarity, membership ⇒ expanded).
+ */
+export interface SearchHit {
+  readonly id: string
+  readonly turnId?: string
+  readonly groupId?: string
+}
+
+/**
+ * Find every row matching `query` (case-insensitive substring), in render
+ * order. Matches FOLDED content too — that's the point: the hit records how to
+ * reveal itself, so jumping to it can auto-expand instead of silently parking
+ * on a fold that hides the match.
+ */
+export const searchConversation = (
+  items: ReadonlyArray<ConversationItem>,
+  query: string,
+): SearchHit[] => {
+  const q = query.trim().toLowerCase()
+  if (q.length === 0) return []
+  const has = (text: string): boolean => text.toLowerCase().includes(q)
+  const hits: SearchHit[] = []
+  const bodyHits = (body: ReadonlyArray<BodyItem>, turnId?: string): void => {
+    const inTurn = turnId !== undefined ? { turnId } : {}
+    for (const b of body) {
+      if (b.kind === "toolGroup") {
+        // The group is one rendered row; a match in any member (or the summary
+        // line itself) hits the group and expands it to show the pills.
+        if (has(toolGroupSummary(b.tools)) || b.tools.some((t) => has(blockText(t))))
+          hits.push({ id: b.id, ...inTurn, groupId: b.id })
+      } else if (has(blockText(b.block))) {
+        hits.push({ id: b.id, ...inTurn })
+      }
+    }
+  }
+  for (const item of items) {
+    if (item.kind === "checkpoint") {
+      if (has(item.text)) hits.push({ id: item.id })
+    } else if (item.kind === "turn") {
+      if (has(item.text)) hits.push({ id: item.id })
+      bodyHits(item.body, item.id)
+    } else {
+      bodyHits(item.body)
+    }
+  }
+  return hits
+}
+
+/**
  * Foldable ids split by kind — drives fold-all / unfold-all (`Z`). The two kinds
  * have **opposite defaults**: a turn defaults expanded (its id ∈ `collapsed` ⇒
  * folded), a tool group defaults collapsed to its one-line summary (its id ∈

@@ -1,13 +1,15 @@
 import { createSignal, type Accessor } from "solid-js"
-import type { ScrollbackBlock } from "../presentation/conversation.js"
+import type { ScrollbackBlock, SearchHit } from "../presentation/conversation.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 
 /**
- * A live search over one pane. For the **conversation** the matches are the
- * top-level item ids (resolved via `conversationItemId`); for the **side** pane
- * they are the matching row indices (as strings — the stack/context cursors are
- * index-based, so the cursor jumps straight to `Number(matchIds[index])`). The
- * query + `[i/N]` position drive the status line; `undefined` ⇒ no active search.
+ * A live search over one pane. For the **conversation** the matches are
+ * rendered row ids — turn heads, body items, checkpoints (`searchConversation`)
+ * — with `hits` carrying each match's reveal info so jumping auto-expands the
+ * fold hiding it; for the **side** pane they are the matching row indices (as
+ * strings — the stack/context cursors are index-based, so the cursor jumps
+ * straight to `Number(matchIds[index])`). The query + `[i/N]` position drive
+ * the status line; `undefined` ⇒ no active search.
  */
 export interface SearchState {
   readonly query: string
@@ -15,6 +17,8 @@ export interface SearchState {
   readonly pane: "conversation" | "side"
   readonly matchIds: ReadonlyArray<string>
   readonly index: number
+  /** Conversation-pane reveal info, aligned with `matchIds` (absent for side). */
+  readonly hits?: ReadonlyArray<SearchHit>
 }
 
 /** A minimal handle onto the input `<textarea>`, registered by the pane, so a
