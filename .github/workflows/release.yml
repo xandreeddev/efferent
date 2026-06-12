@@ -1,0 +1,67 @@
+# Publish `efferent` to npm when a GitHub release is published.
+#
+# Auth is npm **trusted publishing** (OIDC) — no token secret to store or
+# rotate. One-time setup on npmjs.com: package `efferent` → Settings →
+# Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `agent`,
+# workflow `release.yml`. Publishing this way also generates a provenance
+# attestation (the npm page shows the source repo + the exact build run).
+#
+# Release flow: bump `packages/cli/package.json` version → push → create a
+# GitHub release tagged `vX.Y.Z` (matching the package version — guarded
+# below) → this workflow gates on typecheck + tests + a leak audit, then
+# publishes.
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # OIDC — npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # npm ≥ 11.5.1 is required for trusted publishing; node 24 ships it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      # Eval suites are key-gated and skip cleanly in CI; unit tests run.
+      - run: bun test
+
+      - name: Check release tag matches the package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "release tag v$TAG does not match packages/cli version $PKG" >&2
+            exit 1
+          fi
+
+      - name: Build + audit the bundle
+        run: |
+          bun run build
+          # The artifact must never embed a build-machine path (bundlers bake
+          # __dirname into CommonJS shims — see scripts/build.ts's tokenizer
+          # stub for the incident this guards against).
+          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/cli/dist/efferent.js; then
+            echo "build-machine path found in the bundle — aborting publish" >&2
+            exit 1
+          fi
+
+      - run: npm publish --provenance
+        working-directory: packages/cli
