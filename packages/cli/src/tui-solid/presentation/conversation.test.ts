@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { FastCheck as fc } from "effect"
 import {
   buildConversation,
   buildConversationRows,
   foldIdsByKind,
   searchConversation,
+  splitByMatch,
   toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
@@ -252,5 +254,65 @@ describe("searchConversation — row-granular hits with reveal info", () => {
   test("matching is case-insensitive", () => {
     const hits = searchConversation(buildConversation(blocks), "PARSER")
     expect(hits.map((h) => h.id)).toEqual(["turn:0", "b:3"])
+  })
+})
+
+describe("splitByMatch — the word-level highlight segments", () => {
+  test("marks every case-insensitive occurrence, plain text between", () => {
+    expect(splitByMatch("the Parser parses parsers", "parser")).toEqual([
+      { text: "the ", match: false },
+      { text: "Parser", match: true }, // original casing preserved
+      { text: " parses ", match: false },
+      { text: "parser", match: true },
+      { text: "s", match: false },
+    ])
+  })
+
+  test("blank query / no hit / empty text → one unmatched segment", () => {
+    expect(splitByMatch("hello", "")).toEqual([{ text: "hello", match: false }])
+    expect(splitByMatch("hello", "  ")).toEqual([{ text: "hello", match: false }])
+    expect(splitByMatch("hello", "zzz")).toEqual([{ text: "hello", match: false }])
+    expect(splitByMatch("", "x")).toEqual([{ text: "", match: false }])
+  })
+
+  test("match at the very start / end produces no empty edge segments", () => {
+    expect(splitByMatch("apple pie", "apple")).toEqual([
+      { text: "apple", match: true },
+      { text: " pie", match: false },
+    ])
+    expect(splitByMatch("eat apple", "apple")).toEqual([
+      { text: "eat ", match: false },
+      { text: "apple", match: true },
+    ])
+  })
+
+  test("property: segments always concatenate back to the input verbatim", () => {
+    // Full unicode — concatenation identity holds by construction even where
+    // case-folding is degenerate ('İ' lowers to 2 units, final-sigma rules…).
+    fc.assert(
+      fc.property(fc.fullUnicodeString(), fc.fullUnicodeString({ maxLength: 6 }), (text, query) => {
+        expect(
+          splitByMatch(text, query)
+            .map((s) => s.text)
+            .join(""),
+        ).toBe(text)
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  test("property: on ascii, every matched segment IS the query (case-insensitively)", () => {
+    // Matched-segment identity is only sound where lowering is positionally
+    // stable — ascii by construction (unicode corners fall back to exact-case).
+    const ascii = fc.stringOf(fc.constantFrom(..."abcDEF "), { maxLength: 40 })
+    const asciiQ = fc.stringOf(fc.constantFrom(..."abcDEF"), { minLength: 1, maxLength: 4 })
+    fc.assert(
+      fc.property(ascii, asciiQ, (text, query) => {
+        for (const s of splitByMatch(text, query)) {
+          if (s.match) expect(s.text.toLowerCase()).toBe(query.toLowerCase())
+        }
+      }),
+      { numRuns: 200 },
+    )
   })
 })

@@ -16,7 +16,7 @@ import {
 import { clampCursor } from "../../presentation/paneNav.js"
 import { formatTokens } from "../../presentation/statusBar.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { Pane, RailLine } from "../ui/index.js"
+import { HlText, Pane, RailLine, type Hl } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
 import type { ConvScroller, TuiContext } from "../../state/store.js"
 
@@ -80,11 +80,21 @@ const Prose = (props: { text: string }) => (
   </box>
 )
 
-const ToolPill = (props: { tool: ToolBlock }) => (
+const ToolPill = (props: { tool: ToolBlock; hl?: Hl | undefined }) => (
   <box flexDirection="column">
-    <RailLine dot={tokens.state[props.tool.state]} fg={tokens.text.default} text={props.tool.toolName} />
+    <RailLine
+      dot={tokens.state[props.tool.state]}
+      fg={tokens.text.default}
+      text={props.tool.toolName}
+      hl={props.hl}
+    />
     <Show when={props.tool.detail}>
-      <text fg={tokens.text.muted}>{`  ${glyph.connector} ${props.tool.detail}`}</text>
+      {(detail) => (
+        <box flexDirection="row">
+          <text fg={tokens.text.muted} flexShrink={0}>{`  ${glyph.connector} `}</text>
+          <HlText text={detail()} fg={tokens.text.muted} hl={props.hl} />
+        </box>
+      )}
     </Show>
     {/* edit_file emits a canonical unified diff (--- / +++ / @@) → native <diff>
         gives +/- line colouring; the treeSitterClient + filetype add per-token
@@ -186,15 +196,17 @@ const AgentsBlock = (props: { block: Extract<ScrollbackBlock, { kind: "agents" }
   )
 }
 
-/** Render one non-tool block of the rail. */
-const Block = (props: { block: ScrollbackBlock }) => {
+/** Render one non-tool block of the rail. Plain-text kinds route through
+ *  {@link HlText} so an active search highlights matched words; markdown prose
+ *  can't splice spans, so it keeps the row tint only. */
+const Block = (props: { block: ScrollbackBlock; hl?: Hl | undefined }) => {
   const b = props.block
   switch (b.kind) {
     case "assistant":
     case "reasoning":
       return <Prose text={b.text} />
     case "tool":
-      return <ToolPill tool={b} />
+      return <ToolPill tool={b} hl={props.hl} />
     case "agents":
       return <AgentsBlock block={b} />
     case "info":
@@ -204,19 +216,21 @@ const Block = (props: { block: ScrollbackBlock }) => {
       // so it isn't glued to the message above.
       return (
         <box flexDirection="row">
-          <text fg={tokens.info}>{`${glyph.railDot} ${b.text}`}</text>
+          <text fg={tokens.info} flexShrink={0}>{`${glyph.railDot} `}</text>
+          <HlText text={b.text} fg={tokens.info} hl={props.hl} />
         </box>
       )
     case "error":
-      return (
-        <text fg={tokens.error} wrapMode="word">
-          {`  ${b.text}`}
-        </text>
-      )
+      return <HlText text={`  ${b.text}`} fg={tokens.error} hl={props.hl} />
     case "user":
-      return <text fg={tokens.text.user}>{b.text}</text>
+      return <HlText text={b.text} fg={tokens.text.user} hl={props.hl} />
     case "checkpoint":
-      return <text fg={tokens.text.muted}>{`${glyph.handoff} ${b.text}`}</text>
+      return (
+        <box flexDirection="row">
+          <text fg={tokens.text.muted} flexShrink={0}>{`${glyph.handoff} `}</text>
+          <HlText text={b.text} fg={tokens.text.muted} hl={props.hl} />
+        </box>
+      )
   }
 }
 
@@ -227,7 +241,11 @@ const Block = (props: { block: ScrollbackBlock }) => {
  * (membership in `collapsed` ⇒ expanded, the inverse polarity of a turn) opens it
  * to the individual pills, each spaced by a blank line.
  */
-const ToolGroupView = (props: { item: Extract<BodyItem, { kind: "toolGroup" }>; collapsed: Set<string> }) => {
+const ToolGroupView = (props: {
+  item: Extract<BodyItem, { kind: "toolGroup" }>
+  collapsed: Set<string>
+  hl?: Hl | undefined
+}) => {
   const item = props.item
   // A group still running shows its live pills (feedback while processing);
   // it settles to the one-line summary when the last call lands.
@@ -238,16 +256,14 @@ const ToolGroupView = (props: { item: Extract<BodyItem, { kind: "toolGroup" }>; 
         <text fg={tokens.state[toolGroupState(item.tools)]}>
           {`${expanded() ? glyph.fold.open : glyph.fold.closed} `}
         </text>
-        <text fg={tokens.text.muted} flexGrow={1} wrapMode="word">
-          {toolGroupSummary(item.tools)}
-        </text>
+        <HlText text={toolGroupSummary(item.tools)} fg={tokens.text.muted} hl={props.hl} grow />
       </box>
       <Show when={expanded()}>
         <box flexDirection="column" marginLeft={2}>
           <For each={item.tools}>
             {(t) => (
               <box marginTop={1}>
-                <ToolPill tool={t} />
+                <ToolPill tool={t} hl={props.hl} />
               </box>
             )}
           </For>
@@ -257,12 +273,12 @@ const ToolGroupView = (props: { item: Extract<BodyItem, { kind: "toolGroup" }>; 
   )
 }
 
-const BodyItemView = (props: { item: BodyItem; collapsed: Set<string> }) => {
+const BodyItemView = (props: { item: BodyItem; collapsed: Set<string>; hl?: Hl | undefined }) => {
   const item = props.item
   if (item.kind === "toolGroup") {
-    return <ToolGroupView item={item} collapsed={props.collapsed} />
+    return <ToolGroupView item={item} collapsed={props.collapsed} hl={props.hl} />
   }
-  return <Block block={item.block} />
+  return <Block block={item.block} hl={props.hl} />
 }
 
 export const Conversation = (props: { ctx: TuiContext }) => {
@@ -344,6 +360,14 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     if (folded && matchTurns().has(id)) return tokens.match.other
     return tokens.text.user
   }
+  // The word-level highlight input for a row: the active conversation query
+  // (hlsearch — chips wherever it occurs, snapshot or not) + whether this row
+  // is the current [i/N] match (brighter chip).
+  const hlOf = (id: string): Hl | undefined => {
+    const s = store.search()
+    if (s === undefined || s.pane !== "conversation" || s.query.trim().length === 0) return undefined
+    return { query: s.query, current: s.matchIds[s.index] === id }
+  }
 
   // The pane IS the session — title it by the session's generated name (the
   // title daemon refreshes the nav list, so this follows live). An open node
@@ -382,8 +406,9 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             const id = conversationItemId(item, i())
             if (item.kind === "checkpoint") {
               return (
-                <box id={id} marginTop={1} backgroundColor={rowBg(id)}>
-                  <text fg={tokens.text.muted}>{`${glyph.handoff} ${item.text}`}</text>
+                <box id={id} marginTop={1} backgroundColor={rowBg(id)} flexDirection="row">
+                  <text fg={tokens.text.muted} flexShrink={0}>{`${glyph.handoff} `}</text>
+                  <HlText text={item.text} fg={tokens.text.muted} hl={hlOf(id)} />
                 </box>
               )
             }
@@ -393,7 +418,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                   <For each={item.body}>
                     {(b) => (
                       <box id={b.id} marginTop={1} backgroundColor={rowBg(b.id)}>
-                        <BodyItemView item={b} collapsed={store.collapsed()} />
+                        <BodyItemView item={b} collapsed={store.collapsed()} hl={hlOf(b.id)} />
                       </box>
                     )}
                   </For>
@@ -413,9 +438,11 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                   {/* Expanded → the message verbatim; folded → first line only.
                       The head owns the user text in both states, so it shows
                       exactly once (no truncated-subject + full-copy dup). */}
-                  <text fg={headerColor(id, folded())} wrapMode="word" flexShrink={1}>
-                    {folded() ? item.subject : item.text}
-                  </text>
+                  <HlText
+                    text={folded() ? item.subject : item.text}
+                    fg={headerColor(id, folded())}
+                    hl={hlOf(id)}
+                  />
                   <Show when={folded()}>
                     <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
                       {`  ${glyph.fold.closed} ${item.steps} step${item.steps === 1 ? "" : "s"}`}
@@ -427,7 +454,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                     <For each={item.body}>
                       {(b) => (
                         <box id={b.id} marginTop={1} backgroundColor={rowBg(b.id)}>
-                          <BodyItemView item={b} collapsed={store.collapsed()} />
+                          <BodyItemView item={b} collapsed={store.collapsed()} hl={hlOf(b.id)} />
                         </box>
                       )}
                     </For>
