@@ -2,7 +2,7 @@
 #
 # Auth is npm **trusted publishing** (OIDC) — no token secret to store or
 # rotate. One-time setup on npmjs.com: package `efferent` → Settings →
-# Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `agent`,
+# Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `efferent`,
 # workflow `release.yml`. Publishing this way also generates a provenance
 # attestation (the npm page shows the source repo + the exact build run).
 #

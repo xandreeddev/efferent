@@ -1,6 +1,6 @@
 {
   "name": "efferent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A coding agent CLI on Effect.ts + Bun — modal TUI, multi-provider (Anthropic/OpenAI/Gemini), persistent sub-agent context tree, cache-safe context compression, zero-config SQLite history. No React.",
   "license": "MIT",
   "author": "Xand Reed <xandreed@proton.me>",
@@ -15,11 +15,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xandreeddev/agent.git"
+    "url": "git+https://github.com/xandreeddev/efferent.git"
   },
-  "homepage": "https://github.com/xandreeddev/agent#readme",
+  "homepage": "https://github.com/xandreeddev/efferent#readme",
   "bugs": {
-    "url": "https://github.com/xandreeddev/agent/issues"
+    "url": "https://github.com/xandreeddev/efferent/issues"
   },
   "keywords": [
     "coding-agent",
