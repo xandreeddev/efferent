@@ -308,18 +308,21 @@ export const Conversation = (props: { ctx: TuiContext }) => {
   const activeKey = createMemo(() =>
     focused() ? rows()[clampCursor(rows().length, store.convCursor())]?.key : undefined,
   )
-  // One background per row, ALWAYS set (never a removed prop): the cursor wins,
-  // else the current search match, else an explicit transparent. Returning `{}`
-  // for inactive rows (a removed `backgroundColor`) didn't repaint — old tints
-  // lingered as the cursor moved, so every visited row stayed highlighted.
-  const rowBg = (key: string): string =>
-    activeKey() === key
-      ? tokens.cursorLine
-      : matchOf(key) === "current"
-        ? tokens.cursorLine
-        : tokens.bgNone
+  // One background per row, ALWAYS set (never a removed prop): the current
+  // match wins (brightest), then any other match, then the fold cursor, else an
+  // explicit transparent. Returning `{}` for inactive rows (a removed
+  // `backgroundColor`) didn't repaint — old tints lingered as the cursor moved,
+  // so every visited row stayed highlighted.
+  const rowBg = (key: string): string => {
+    const m = matchOf(key)
+    if (m === "current") return tokens.match.currentLine
+    if (m === "match") return tokens.match.line
+    return activeKey() === key ? tokens.cursorLine : tokens.bgNone
+  }
 
-  // Which search bucket a top-level item id falls in — drives match highlight.
+  // Which search bucket a rendered row id falls in — drives match highlight.
+  // Match ids ARE row ids (turn heads, body items, checkpoints), so body rows
+  // get their own tint via `rowBg`.
   const matchOf = (id: string): "current" | "match" | "none" => {
     const s = store.search()
     if (s === undefined) return "none"
@@ -327,9 +330,19 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     if (at === -1) return "none"
     return at === s.index ? "current" : "match"
   }
-  const headerColor = (id: string): string => {
+  // Turns whose BODY holds a match — a folded one tints its header so a hit
+  // hidden behind the fold is still signposted (n/N will unfold it on arrival).
+  const matchTurns = createMemo((): ReadonlySet<string> => {
+    const hits = store.search()?.hits
+    if (hits === undefined) return new Set<string>()
+    return new Set(hits.flatMap((h) => (h.turnId !== undefined ? [h.turnId] : [])))
+  })
+  const headerColor = (id: string, folded: boolean): string => {
     const m = matchOf(id)
-    return m === "current" ? tokens.match.current : m === "match" ? tokens.match.other : tokens.text.user
+    if (m === "current") return tokens.match.current
+    if (m === "match") return tokens.match.other
+    if (folded && matchTurns().has(id)) return tokens.match.other
+    return tokens.text.user
   }
 
   // The pane IS the session — title it by the session's generated name (the
@@ -400,7 +413,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
                   {/* Expanded → the message verbatim; folded → first line only.
                       The head owns the user text in both states, so it shows
                       exactly once (no truncated-subject + full-copy dup). */}
-                  <text fg={headerColor(id)} wrapMode="word" flexShrink={1}>
+                  <text fg={headerColor(id, folded())} wrapMode="word" flexShrink={1}>
                     {folded() ? item.subject : item.text}
                   </text>
                   <Show when={folded()}>

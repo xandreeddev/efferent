@@ -3,6 +3,7 @@ import {
   buildConversation,
   buildConversationRows,
   foldIdsByKind,
+  searchConversation,
   toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
@@ -204,5 +205,52 @@ describe("the turn head owns the user message (shown exactly once)", () => {
     expect(turn.subject).toBe("do the thing")
     expect(turn.text).toBe("do the thing")
     expect(turn.body).toHaveLength(1) // assistant only — no duplicated user block
+  })
+})
+
+describe("searchConversation — row-granular hits with reveal info", () => {
+  const blocks: ScrollbackBlock[] = [
+    { kind: "user", text: "fix the parser" }, // turn:0, head matches "parser"
+    { kind: "assistant", text: "done" }, // b:1
+    { kind: "user", text: "now the lexer" }, // turn:2
+    { kind: "assistant", text: "the parser is fine" }, // b:3, inside turn:2
+  ]
+
+  test("matches the turn head AND body rows independently, in render order", () => {
+    const hits = searchConversation(buildConversation(blocks), "parser")
+    expect(hits).toEqual([
+      { id: "turn:0" }, // head match — no reveal needed beyond the turn itself
+      { id: "b:3", turnId: "turn:2" }, // body match knows its containing turn
+    ])
+  })
+
+  test("a match inside a tool group hits the group row and carries groupId", () => {
+    const items = buildConversation([
+      { kind: "user", text: "run checks" },
+      { kind: "tool", id: "t1", toolName: "Bash(bun test)", state: "ok", output: "445 pass" },
+      { kind: "tool", id: "t2", toolName: "Read(main.ts)", state: "ok", output: "the needle is here" },
+    ])
+    expect(searchConversation(items, "needle")).toEqual([
+      { id: "grp:t1", turnId: "turn:0", groupId: "grp:t1" },
+    ])
+    // One hit per rendered row: both members match "a", still one group hit.
+    expect(searchConversation(items, "a")).toEqual([
+      { id: "grp:t1", turnId: "turn:0", groupId: "grp:t1" },
+    ])
+  })
+
+  test("loose runs and checkpoints match without a turnId; blank query → no hits", () => {
+    const items = buildConversation([
+      { kind: "info", text: "resumed session" }, // loose, b:0
+      { kind: "checkpoint", text: "handoff: parser work" }, // b:1
+    ])
+    expect(searchConversation(items, "parser")).toEqual([{ id: "b:1" }])
+    expect(searchConversation(items, "resumed")).toEqual([{ id: "b:0" }])
+    expect(searchConversation(items, "  ")).toEqual([])
+  })
+
+  test("matching is case-insensitive", () => {
+    const hits = searchConversation(buildConversation(blocks), "PARSER")
+    expect(hits.map((h) => h.id)).toEqual(["turn:0", "b:3"])
   })
 })

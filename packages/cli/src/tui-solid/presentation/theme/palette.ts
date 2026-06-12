@@ -32,6 +32,10 @@ export interface Palette {
   readonly bgOverlay: string
   readonly bgStatus: string
   readonly cursorLine: string
+  /** `/`-search row tints: every match gets `matchLine`, the current one the
+   *  brighter `matchLineCurrent` (must read distinctly from `cursorLine`). */
+  readonly matchLine: string
+  readonly matchLineCurrent: string
 }
 
 /**
@@ -61,6 +65,8 @@ export const efferentPalette: Palette = {
   bgOverlay: "#26221d", // warm dark — modal background
   bgStatus: "#1c1916", // warm darker — status-bar background
   cursorLine: "#322d26", // focused-row tint
+  matchLine: "#3a321d", // dark amber — `/`-search match row
+  matchLineCurrent: "#5a4a1f", // brighter amber — the current match
 } as const
 
 /** The One-Dark-ish palette (the previous default, kept as a theme). */
@@ -84,6 +90,8 @@ export const defaultPalette: Palette = {
   bgOverlay: "#23232e", // modal background (opaque, floats over panes)
   bgStatus: "#1f2430", // status-bar background
   cursorLine: "#2d2d3d", // focused-row background tint
+  matchLine: "#314365", // dim blue — `/`-search match row (One Dark find)
+  matchLineCurrent: "#42557b", // stronger blue — the current match
 } as const
 
 /**
@@ -113,4 +121,6 @@ export const tokyoNightPalette: Palette = {
   bgOverlay: "#1f2335", // TN bg-dark — modal background
   bgStatus: "#16161e", // TN bg-darker — status-bar background
   cursorLine: "#2f334d", // TN bg-highlight — focused-row tint
+  matchLine: "#283457", // TN bg-visual — `/`-search match row
+  matchLineCurrent: "#3d59a1", // TN bg-search — the current match
 } as const
