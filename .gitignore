@@ -38,3 +38,7 @@ test.db-wal
 # Scratch handoff notes — session-local, never committed
 HANDOFF.md
 *.tgz
+
+# Working-note prompts (reference material, never committed)
+PROMPT.md
+prompt.md
