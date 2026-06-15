@@ -18,7 +18,7 @@ export class ContextTreeStoreError extends Data.TaggedError(
 export class ContextNodeNotFound extends Data.TaggedError(
   "ContextNodeNotFound",
 )<{
-  readonly id: string
+  readonly id: ContextNodeId
 }> {}
 
 /** Inputs to {@link ContextTreeStore.spawn} — a new node plus its seed messages. */

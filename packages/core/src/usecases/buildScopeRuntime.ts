@@ -77,7 +77,7 @@ export interface ScopeRuntime {
     /** Headroom budget (chars) per tool-result string for the resumed run. */
     readonly toolResultMaxChars?: number
   }) => Effect.Effect<
-    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: string },
+    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
     Failure,
     | FileSystem
     | Shell
@@ -165,7 +165,10 @@ const RunAgentTool = Tool.make("run_agent", {
   success: Schema.Struct({
     summary: Schema.String,
     filesChanged: Schema.Array(Schema.String),
-    nodeId: Schema.String,
+    // The spawned node's id — a real `ContextNodeId`, so the tool's output
+    // schema encodes/validates it as a branded UUID (the model later feeds it
+    // back as `seedFromNode`, which is decoded at that boundary).
+    nodeId: ContextNodeId,
   }),
   failure: Failure,
   failureMode: "return",
@@ -191,7 +194,7 @@ const genericToolkit = Toolkit.make(
  */
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
-  nodeId: string,
+  nodeId: ContextNodeId,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
   usageRef: Ref.Ref<ContextUsage>,
   pool: TokenPool,
@@ -281,7 +284,7 @@ interface RunSpawnedArgs<R> {
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
-  readonly parentNodeId: string | null
+  readonly parentNodeId: ContextNodeId | null
   readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
   readonly tokenPool: TokenPool
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
