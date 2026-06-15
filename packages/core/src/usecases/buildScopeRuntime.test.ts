@@ -129,9 +129,7 @@ const doneModel = Layer.succeed(
         usage: undefined,
       }),
     generateObject: () => Effect.die("unused"),
-    streamText: () => {
-      throw new Error("unused")
-    },
+    streamText: () => Effect.die("unused"),
   } as never),
 )
 

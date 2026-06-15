@@ -32,9 +32,7 @@ const scriptedModel = (script: ReadonlyArray<"malformed" | "done">) => {
       })
     },
     generateObject: () => Effect.die("unused"),
-    streamText: () => {
-      throw new Error("unused")
-    },
+    streamText: () => Effect.die("unused"),
   }
   return { layer: LanguageModel.LanguageModel.of(service as never), calls: () => calls }
 }

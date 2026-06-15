@@ -157,9 +157,7 @@ describe("runAgentLoop — headroom at append time", () => {
         return Effect.succeed({ content: [], text: "done", finishReason: "stop", usage: undefined })
       },
       generateObject: () => Effect.die("unused"),
-      streamText: () => {
-        throw new Error("unused")
-      },
+      streamText: () => Effect.die("unused"),
     }
     return LanguageModel.LanguageModel.of(service as never)
   }
