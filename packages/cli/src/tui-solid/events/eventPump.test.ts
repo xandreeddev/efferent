@@ -60,7 +60,6 @@ describe("eventPump — per-role spend attribution", () => {
     const s = store.stats()
     expect(s.byRole.main).toBe(2400)
     expect(s.byRole.fast).toBe(0)
-    expect(s.byRole.cheap).toBe(0)
     // The context gauge reflects the ROOT conversation only.
     expect(s.inputTokens).toBe(1000)
     expect(s.turns).toBe(1)

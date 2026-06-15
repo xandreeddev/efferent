@@ -90,10 +90,11 @@ export interface AgentSkillLoadEvent {
   readonly name: string
 }
 
-/** A helper-tier (fast/cheap) call ran inside the loop — e.g. a headroom
- *  middle-summary. Reported so the driver's ledger can count every tier. */
+/** A fast-tier helper call ran inside the loop — e.g. a headroom
+ *  middle-summary or session title. Reported so the driver's ledger can
+ *  count helper spend separately from main. */
 export interface AgentHelperUsageEvent {
-  readonly role: "fast" | "cheap"
+  readonly role: "fast"
   readonly usage: TokenUsage
 }
 

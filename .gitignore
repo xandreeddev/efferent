@@ -24,6 +24,9 @@ pg-data/
 # Playwright MCP scratch dir (snapshots, console logs)
 .playwright-mcp/
 
+# Serena MCP project cache (onboarding cache, memories, local config)
+.serena/
+
 # Local debug screenshots
 *.png
 

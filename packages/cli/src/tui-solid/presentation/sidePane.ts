@@ -64,16 +64,14 @@ export const mergeFileChange = (
 
 /** Billed tokens (input + output) accumulated per model role this session.
  *  `main` = all agentic work (the root loop AND sub-agents — delegation isn't
- *  a tier change); `fast` = latency-sensitive helper calls (tool summaries,
- *  approval judgments); `cheap` = background utility calls (titles). The
- *  economics of a session, by which model role billed it. */
+ *  a tier change); `fast` = helper calls (tool summaries, approval judgments,
+ *  session titles). The economics of a session, by which model role billed it. */
 export interface RoleSpend {
   readonly main: number
   readonly fast: number
-  readonly cheap: number
 }
 
-export const emptyRoleSpend: RoleSpend = { main: 0, fast: 0, cheap: 0 }
+export const emptyRoleSpend: RoleSpend = { main: 0, fast: 0 }
 
 /** At-a-glance session counters surfaced in the Activity header. */
 export interface SessionStats {
@@ -87,7 +85,7 @@ export interface SessionStats {
   readonly turns: number
   /** Session start (ms) for the elapsed readout; 0 = not started. */
   readonly startedAt: number
-  /** Billed tokens per model role (main / fast / cheap). */
+  /** Billed tokens per model role (main / fast). */
   readonly byRole: RoleSpend
   /** `inputTokens` is a chars/4 resume estimate (no persisted usage) — shown `~`. */
   readonly estimated?: boolean

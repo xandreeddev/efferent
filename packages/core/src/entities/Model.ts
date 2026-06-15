@@ -63,39 +63,33 @@ export const parseModel = (raw: string): { provider: Provider; modelId: string }
 export const DefaultModel = "google:gemini-3.5-flash"
 
 /**
- * The three model **roles** the agent runs on. One mental model, three knobs:
+ * The two model **roles** the agent runs on. One mental model, two knobs:
  *
- * - `main`  — all real agentic work: the root conversation AND spawned
- *             sub-agents (delegation changes the context, not the brain).
- * - `fast`  — latency-sensitive helper calls in the loop: tool-output
- *             summaries, auto-approval judgments — quick verdicts where a
- *             round-trip on main would drag the run. Unset → main.
- * - `cheap` — background utility work (session titles): never worth main-tier
- *             tokens or urgency. Unset → main.
+ * - `main` — all real agentic work: the root conversation AND spawned
+ *            sub-agents (delegation changes the context, not the brain).
+ * - `fast` — helper calls in the loop: tool-output summaries, auto-approval
+ *            judgments, session titles — anything where a round-trip on main
+ *            would drag the run. Unset → main.
  *
  * Roles, not model names, are the stable vocabulary: the UI labels token spend
- * by role, `:model fast`/`:model cheap` configure them, and swapping a
- * provider never changes what the roles mean. One-shot helper calls reach
- * their tier through `UtilityLlm.complete(prompt, { role })`.
+ * by role, `:model fast` configures it, and swapping a provider never changes
+ * what the roles mean. One-shot helper calls reach the fast tier through
+ * `UtilityLlm.complete(prompt, { role: "fast" })`.
  */
-export type ModelRole = "main" | "fast" | "cheap"
+export type ModelRole = "main" | "fast"
 
-export const MODEL_ROLES: ReadonlyArray<ModelRole> = ["main", "fast", "cheap"]
+export const MODEL_ROLES: ReadonlyArray<ModelRole> = ["main", "fast"]
 
 /** The settings keys backing each role (structural — avoids a Settings import cycle). */
 export interface RoleModelSettings {
   readonly model: string
   readonly fastModel?: string | undefined
-  readonly cheapModel?: string | undefined
-  /** Legacy key for `cheap` (pre-roles); still honored when `cheapModel` is unset. */
-  readonly utilityModel?: string | undefined
 }
 
 /**
- * Resolve a role to its `"<provider>:<modelId>"` string with the fallback
- * chain: fast → main; cheap → legacy utilityModel → main. Pure — the single
- * place the chain lives (router override, utility tier, settings UI all call
- * this instead of re-deriving it).
+ * Resolve a role to its `"<provider>:<modelId>"` string. Fast falls back to
+ * main when unset. Pure — the single place the chain lives (router override,
+ * utility tier, settings UI all call this instead of re-deriving it).
  */
 export const modelForRole = (settings: RoleModelSettings, role: ModelRole): string => {
   switch (role) {
@@ -103,18 +97,12 @@ export const modelForRole = (settings: RoleModelSettings, role: ModelRole): stri
       return settings.model
     case "fast":
       return settings.fastModel ?? settings.model
-    case "cheap":
-      return settings.cheapModel ?? settings.utilityModel ?? settings.model
   }
 }
 
 /** Whether the role is explicitly configured (vs falling back to main). */
 export const roleIsConfigured = (settings: RoleModelSettings, role: ModelRole): boolean =>
-  role === "main"
-    ? true
-    : role === "fast"
-      ? settings.fastModel !== undefined
-      : settings.cheapModel !== undefined || settings.utilityModel !== undefined
+  role === "main" ? true : settings.fastModel !== undefined
 
 /** Parse a persisted `"<provider>:<modelId>"` into a full {@link ModelSelection}. */
 export const selectionFromString = (raw: string): ModelSelection => {

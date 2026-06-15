@@ -70,7 +70,7 @@ describe("defaultModelForProviders", () => {
   })
 })
 
-describe("model roles (main / fast / cheap)", () => {
+describe("model roles (main / fast)", () => {
   const base = { model: "google:gemini-3.5-pro" }
   it("main is always the chat selection", () => {
     expect(modelForRole(base, "main")).toBe("google:gemini-3.5-pro")
@@ -82,15 +82,6 @@ describe("model roles (main / fast / cheap)", () => {
     const set = { ...base, fastModel: "google:gemini-3.5-flash" }
     expect(modelForRole(set, "fast")).toBe("google:gemini-3.5-flash")
     expect(roleIsConfigured(set, "fast")).toBe(true)
-  })
-  it("cheap falls back legacy utilityModel → main; cheapModel wins over the alias", () => {
-    expect(modelForRole(base, "cheap")).toBe("google:gemini-3.5-pro")
-    expect(roleIsConfigured(base, "cheap")).toBe(false)
-    const legacy = { ...base, utilityModel: "google:gemini-3.5-flash-lite" }
-    expect(modelForRole(legacy, "cheap")).toBe("google:gemini-3.5-flash-lite")
-    expect(roleIsConfigured(legacy, "cheap")).toBe(true)
-    const both = { ...legacy, cheapModel: "openai:gpt-5.4-nano" }
-    expect(modelForRole(both, "cheap")).toBe("openai:gpt-5.4-nano")
   })
   it("selectionFromString parses + resolves the context window", () => {
     const sel = selectionFromString("openai:gpt-4o")

@@ -15,12 +15,11 @@ export interface UtilityCompletion {
 /** Which helper tier a one-shot completion runs on. */
 export interface UtilityOptions {
   /**
-   * `cheap` (default) — background work that's never urgent: session titles.
-   * `fast` — latency-sensitive helper calls inside a running turn: tool-output
-   * summaries, auto-approval judgments. Each resolves through its settings key
-   * (`cheapModel` / `fastModel`), unset → the current main selection.
+   * `fast` — helper calls inside a running turn: tool-output summaries,
+   * auto-approval judgments, session titles. Resolves through `fastModel`,
+   * unset → the current main selection.
    */
-  readonly role?: "fast" | "cheap"
+  readonly role?: "fast"
 }
 
 /**

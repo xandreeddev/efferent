@@ -54,35 +54,22 @@ describe("role model configuration", () => {
     expect(store.status().roles).toBe("fast gemini-3.5-flash")
   })
 
-  test(":set utilityModel is a legacy alias — it writes cheapModel and retires itself", async () => {
-    const store = newStore()
-    const { ref, layer } = stubSettings({ utilityModel: "google:old-cheap" })
-    await run(applySetting(store, "utilityModel", "openai:gpt-5.4-nano"), layer)
-    const s = await Effect.runPromise(Ref.get(ref))
-    expect(s.cheapModel).toBe("openai:gpt-5.4-nano")
-    expect(s.utilityModel).toBeUndefined()
-    expect(store.status().roles).toBe("cheap gpt-5.4-nano")
-  })
-
-  test(":set cheapModel default clears the role AND the legacy alias", async () => {
-    const store = newStore()
-    const { ref, layer } = stubSettings({
-      cheapModel: "openai:gpt-5.4-nano",
-      utilityModel: "google:old-cheap",
-    })
-    await run(applySetting(store, "cheapModel", "default"), layer)
-    const s = await Effect.runPromise(Ref.get(ref))
-    expect(s.cheapModel).toBeUndefined()
-    expect(s.utilityModel).toBeUndefined()
-    expect(store.status().roles).toBeUndefined()
-  })
-
   test("a bad role value is rejected with the usage hint", async () => {
     const store = newStore()
     const { ref, layer } = stubSettings()
     await run(applySetting(store, "fastModel", "not-a-selection"), layer)
     const s = await Effect.runPromise(Ref.get(ref))
     expect(s.fastModel).toBeUndefined()
+    const err = store.blocks().find((b) => b.kind === "error")
+    expect(err).toBeDefined()
+  })
+
+  test(":set unknown role key is rejected", async () => {
+    const store = newStore()
+    const { ref, layer } = stubSettings()
+    await run(applySetting(store, "cheapModel", "openai:gpt-5.4-nano"), layer)
+    const s = await Effect.runPromise(Ref.get(ref))
+    expect((s as Record<string, unknown>).cheapModel).toBeUndefined()
     const err = store.blocks().find((b) => b.kind === "error")
     expect(err).toBeDefined()
   })
