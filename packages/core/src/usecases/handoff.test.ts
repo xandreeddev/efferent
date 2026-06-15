@@ -66,9 +66,7 @@ const capturingModel = (replies: ReadonlyArray<string>) => {
       return Effect.succeed({ content: [], text, finishReason: "stop", usage: undefined })
     },
     generateObject: () => Effect.die("unused"),
-    streamText: () => {
-      throw new Error("unused")
-    },
+    streamText: () => Effect.die("unused"),
   }
   return {
     model: LanguageModel.LanguageModel.of(service as never),

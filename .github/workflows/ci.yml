@@ -1,0 +1,33 @@
+# Gate every push to main and every PR: typecheck (which folds in the
+# core-purity ban, scripts/banTryCatch.ts) + the test suite.
+#
+# This is the lock that makes the "no try/catch/throw/.catch() in core" rule
+# un-ignorable: enable branch protection on `main` requiring the `ci` check
+# (Settings → Branches → Require status checks → ci; no admin bypass), and a
+# violation can neither be merged nor pushed to main.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck # tsc + the core-purity ban (scripts/banTryCatch.ts)
+
+      # Eval suites are key-gated and skip cleanly in CI; unit tests run.
+      - run: bun test

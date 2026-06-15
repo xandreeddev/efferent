@@ -10,7 +10,8 @@
     "build": "bun run scripts/build.ts",
     "eval": "bun packages/evals/src/run.ts",
     "generate-models": "bun packages/core/scripts/generateModelCatalog.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && bun scripts/banTryCatch.ts",
+    "prepare": "bun scripts/installHooks.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

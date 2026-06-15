@@ -21,6 +21,9 @@ packages/
 - **Agent configs** (`@efferent/core/usecases/{agentConfig,coderAgentConfig}.ts`) bundle a system prompt + an `@effect/ai` `Toolkit` into an `AgentConfig<Tools>`. `runAgent` is parameterized by config; the CLI picks `coderAgentConfig(cwd)`. The toolkit's handler `Layer` (`codingToolkitLayer(cwd, skills, { allowBash })`) is provided at the driver's composition root — it carries the runtime deps (`cwd`, `FileSystem`, `Shell`).
 - **Schema** lives in `effect` itself: `import { Schema } from "effect"`.
 - Bun runs `.ts` directly. No build step, no emit. `tsc --noEmit` is purely a typecheck gate.
+- **No `try/catch`, `throw`, or `.catch()` in `@efferent/core/src/`.** Error handling uses Effect's typed errors (`Effect.fail`, `Effect.die`, `Effect.catchAll`, `Effect.catchTag`). Enforced by `scripts/banTryCatch.ts` — a zero-dep TypeScript-AST scan (so `Effect.try`/`Effect.tryPromise`/strings/comments never false-positive), folded into `bun run typecheck`.
+  - **After the task is complete, run `bun run typecheck` to validate the ban.** It runs tsc + the AST scan; a banned construct fails the command and the change is rejected.
+  - Enforced at three layers: a local `pre-commit` hook (installed by `bun install` via the `prepare` script → `scripts/installHooks.ts`; `--no-verify` bypass discouraged), the `ci` workflow on every push/PR (`.github/workflows/ci.yml`), and the release gate. Branch protection on `main` requires `ci`, so a violation can't be merged or pushed.
 - File naming: camelCase for files that export functions; PascalCase for files that export types / `Context.Tag` classes.
 
 ## Dev commands
