@@ -284,8 +284,7 @@ A unique prefix resolves (`:mod` → `:model`).
 
 | Command | What it does |
 |---|---|
-| `:clear` | Clear the scrollback |
-| `:reset` | Start a fresh conversation (forgets history) |
+| `:clear` | Start a fresh conversation — new id, empty scrollback, reset tree/stats |
 | `:handoff` | Summarize & hand off — replace the loaded history with a brief, keep the originals |
 | `:context` | Toggle the context viewer (turn tree — `Space` select, `b` build) |
 | `:tree` | Toggle the agent navigation pane (sessions + sub-agents — `↵` switch/preview, `c` fork, `d` drop) |
