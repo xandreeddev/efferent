@@ -72,7 +72,7 @@ credential to exercise end-to-end · ⚠ known rough edge (listed at the bottom)
 
 **Models, settings, themes — without leaving the session.**
 
-- `:model` live catalogue picker · `:effort` · `:search` (web-search model) — apply next turn,
+- `:model` live catalogue picker · `:model fast` for the helper model · `:effort` · `:search` (web-search model) — apply next turn,
   no restart. 🔑 (catalogue needs a key) · ✅ (selection persistence)
 - `:settings` table (allowBash toggle, maxSteps edit, budget hint…), `:set <key> <value>`,
   `:theme` live-switches the whole UI. 🖥 ✅

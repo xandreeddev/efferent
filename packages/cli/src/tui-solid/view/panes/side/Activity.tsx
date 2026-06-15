@@ -53,9 +53,9 @@ const Stats = (props: { ctx: TuiContext }) => {
   const approx = () => (s().estimated === true ? "~" : "")
   // The session's economics, by role. main alone is already the gauge's
   // story; the ledger earns its line when agents or utility calls spend too.
-  const fleetSpent = () => s().byRole.fast > 0 || s().byRole.cheap > 0
+  const fleetSpent = () => s().byRole.fast > 0
   const roleLine = () =>
-    (["main", "fast", "cheap"] as const)
+    (["main", "fast"] as const)
       .filter((r) => s().byRole[r] > 0)
       .map((r) => `${r} ${formatTokens(s().byRole[r])}`)
       .join(" · ")

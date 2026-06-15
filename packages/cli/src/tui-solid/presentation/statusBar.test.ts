@@ -29,14 +29,10 @@ describe("context + cache clarity helpers", () => {
     expect(cachePercent(500, 0)).toBeUndefined()
   })
 
-  test("rolesChip shows each configured role's model id (legacy utilityModel = cheap)", () => {
+  test("rolesChip shows the configured fast role's model id", () => {
     expect(rolesChip({})).toBeUndefined()
     expect(rolesChip({ fastModel: "google:gemini-3.5-flash" })).toBe("fast gemini-3.5-flash")
-    expect(rolesChip({ cheapModel: "openai:gpt-5.4-nano" })).toBe("cheap gpt-5.4-nano")
-    expect(rolesChip({ utilityModel: "openai:gpt-5.4-nano" })).toBe("cheap gpt-5.4-nano")
-    expect(rolesChip({ fastModel: "google:gemini-3.1-flash-lite", cheapModel: "openai:gpt-5.4-nano" })).toBe(
-      "fast gemini-3.1-flash-lite · cheap gpt-5.4-nano",
-    )
+    expect(rolesChip({ fastModel: "google:gemini-3.1-flash-lite" })).toBe("fast gemini-3.1-flash-lite")
   })
 
   test("formatTokens stays stable (the gauges depend on it)", () => {

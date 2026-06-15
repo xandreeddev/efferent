@@ -186,13 +186,6 @@ export const openSettingsView = (store: TuiStore) =>
         hint: "use :model fast",
       },
       {
-        key: "cheapModel",
-        label: "cheapModel",
-        value: current.cheapModel ?? current.utilityModel ?? "default (main)",
-        kind: "readonly",
-        hint: "use :model cheap",
-      },
-      {
         key: "toolResultMaxTokens",
         label: "toolResultMax",
         value: String(current.toolResultMaxTokens ?? 4000),
@@ -383,13 +376,10 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       })
       return
     }
-    if (key === "fastModel" || key === "cheapModel" || key === "utilityModel") {
-      // The non-main roles. 'utilityModel' is the legacy alias for cheap —
-      // accepted, but it writes (and clears) cheapModel so config converges
-      // on the role names. Any logged-in provider works; require the explicit
+    if (key === "fastModel") {
+      // The non-main role. Any logged-in provider works; require the explicit
       // '<provider>:<modelId>' form so a bare id can't silently land on the
       // wrong provider.
-      const target = key === "utilityModel" ? "cheapModel" : key
       const provider = value.includes(":") ? value.slice(0, value.indexOf(":")) : undefined
       const valid =
         value === "default" ||
@@ -403,23 +393,20 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       }
       yield* settings.update((curr) => {
         const next = { ...curr } as Record<string, unknown>
-        if (value === "default") delete next[target]
-        else next[target] = value
-        // Touching cheap retires the legacy alias either way — otherwise an
-        // old utilityModel would silently resurrect after a 'default'.
-        if (target === "cheapModel") delete next["utilityModel"]
+        if (value === "default") delete next["fastModel"]
+        else next["fastModel"] = value
         return next as typeof curr
       })
       const updated = yield* settings.get()
       yield* Effect.sync(() => {
         store.setStatus({ roles: rolesChip(updated) })
-        store.toast(`Updated ${target} → ${value === "default" ? "default (main model)" : value}`)
-        reflectRow(store, target, value === "default" ? "default (main)" : value)
+        store.toast(`Updated fastModel → ${value === "default" ? "default (main model)" : value}`)
+        reflectRow(store, "fastModel", value === "default" ? "default (main)" : value)
       })
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, cheapModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse`,
     )
   })
 
