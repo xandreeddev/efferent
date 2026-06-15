@@ -11,9 +11,8 @@ export const PALETTE_VISIBLE = 6
 export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":exit", description: "Quit the agent" },
   { name: ":quit", description: "Quit the agent" },
-  { name: ":clear", description: "Clear the scrollback" },
+  { name: ":clear", description: "Start a new conversation (new id, empty scrollback)" },
   { name: ":cwd", description: "Print the current workspace directory" },
-  { name: ":reset", description: "Start a new conversation (forgets history)" },
   { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
   { name: ":model", description: "Open the model picker (↑↓/filter/↵), or :model <id> to switch" },
