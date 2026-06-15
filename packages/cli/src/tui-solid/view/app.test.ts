@@ -133,7 +133,7 @@ test("typing a `:` command shows the palette autocomplete", async () => {
     await mockInput.pressKeys([":", "c", "l"])
     const frame = await waitForFrame((f) => f.includes(":clear"))
     expect(frame).toContain(":clear") // matched command surfaced
-    expect(frame).toContain("Clear the scrollback") // its description
+    expect(frame).toContain("Start a new conversation (new id, empty scrollback)") // its description
   } finally {
     renderer.destroy()
   }

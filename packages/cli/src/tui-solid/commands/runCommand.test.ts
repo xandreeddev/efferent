@@ -29,13 +29,16 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   resolveApproval: () => {},
 })
 
-test(":clear empties the conversation", () => {
+test(":clear starts a new conversation and clears scrollback", () => {
   const store = newStore()
   store.pushBlock({ kind: "user", text: "hi" })
   store.pushBlock({ kind: "assistant", text: "yo" })
   expect(store.blocks()).toHaveLength(2)
+  const before = store.run.getConversationId()
   runCommand(ctxOf(store), ":clear")
-  expect(store.blocks()).toHaveLength(0)
+  expect(store.run.getConversationId()).not.toBe(before)
+  expect(store.blocks()).toHaveLength(1)
+  expect(store.blocks()[0]).toMatchObject({ kind: "info", text: expect.stringMatching(/^new conversation: /) })
 })
 
 test(":help is gone — it toasts as unknown instead of dumping info lines", () => {
@@ -59,17 +62,16 @@ test(":exit / :quit invoke ctx.exit", () => {
   expect(exited).toBe(2)
 })
 
-test(":reset starts a fresh conversation and clears tree + scrollback", () => {
+test(":clear also resets the side pane tree and stats", () => {
   const store = newStore()
   store.pushBlock({ kind: "user", text: "old" })
   store.setProjection((p) => ({ ...p, tree: onToolStart(p.tree, "read x", 0).tree }))
   const before = store.run.getConversationId()
-  runCommand(ctxOf(store), ":reset")
+  runCommand(ctxOf(store), ":clear")
   expect(store.run.getConversationId()).not.toBe(before)
   expect(store.sidePane().tree.roots).toHaveLength(0)
-  // scrollback was cleared, then the "new conversation" info line pushed
   expect(store.blocks()).toHaveLength(1)
-  expect(store.blocks()[0]).toMatchObject({ kind: "info" })
+  expect(store.blocks()[0]).toMatchObject({ kind: "info", text: expect.stringMatching(/^new conversation: /) })
 })
 
 test("an unrecognised command reports back instead of failing silently", () => {
@@ -84,5 +86,5 @@ test("a unique prefix resolves (`:cl` → :clear)", () => {
   const store = newStore()
   store.pushBlock({ kind: "user", text: "x" })
   runCommand(ctxOf(store), ":cl")
-  expect(store.blocks()).toHaveLength(0) // :clear ran
+  expect(store.blocks()).toHaveLength(1) // :clear ran and pushed the info line
 })
