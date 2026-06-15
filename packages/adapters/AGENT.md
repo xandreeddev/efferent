@@ -6,7 +6,7 @@ Concrete implementations of `@efferent/core` ports. Side effects live here and n
 
 One subfolder per concern:
 
-- `llm/` — the multi-provider model tier: `router.ts` (`RouterLanguageModelLive` — resolves provider + key **per request**), `providers.ts` (`makeProviderLanguageModel` for Google / OpenAI / Anthropic incl. OAuth + cache breakpoints; `openAiCodex.ts`, `openCode.ts`, `ollama.ts` variants), `modelRegistry.ts` (live catalogue), `utilityLlm.ts` (fast/cheap helper tier), `webSearch.ts` (provider-server-side grounding).
+- `llm/` — the multi-provider model tier: `router.ts` (`RouterLanguageModelLive` — resolves provider + key **per request**), `providers.ts` (`makeProviderLanguageModel` for Google / OpenAI / Anthropic incl. OAuth + cache breakpoints; `openAiCodex.ts`, `openCode.ts`, `ollama.ts` variants), `modelRegistry.ts` (live catalogue), `utilityLlm.ts` (fast helper tier), `webSearch.ts` (provider-server-side grounding).
 - `auth/` — `local.ts` (`LocalAuthStoreLive`: `~/.efferent/auth.json`, atomic `0600` writes, OAuth refresh), `env.ts` (`EnvAuthStoreLive` — evals/CI only; the *only* place provider key env vars are read), `oauth/anthropic.ts` (PKCE protocol).
 - `database/` — `migrator.ts` (store selection: SQLite default, Postgres via `EFFERENT_DB_URL`), `conversationStore/` + `contextTreeStore/` (SQLite + Postgres impls), `migrations/`.
 - `settings/` — `local.ts` (project + global `config.json`).

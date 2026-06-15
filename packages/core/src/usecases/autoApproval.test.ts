@@ -84,7 +84,7 @@ describe("judgeApproval", () => {
     seen?: { prompt: string | undefined; role: string | undefined },
   ) =>
     Layer.succeed(UtilityLlm, {
-      complete: (prompt: string, options?: { role?: "fast" | "cheap" }) => {
+      complete: (prompt: string, options?: { role?: "fast" }) => {
         if (seen !== undefined) {
           seen.prompt = prompt
           seen.role = options?.role

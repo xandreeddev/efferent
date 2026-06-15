@@ -106,7 +106,7 @@ describe("compressToolResults", () => {
       role: undefined,
     }
     const utility = Layer.succeed(UtilityLlm, {
-      complete: (prompt: string, options?: { role?: "fast" | "cheap" }) => {
+      complete: (prompt: string, options?: { role?: "fast" }) => {
         seen.prompt = prompt
         seen.role = options?.role
         return Effect.succeed({ text: "repeated log lines, no errors", usage })

@@ -5,8 +5,8 @@ import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import type { TuiStore } from "../state/store.js"
 
-/** The pickable non-main roles (`main` is the plain `:model` path). */
-export type PickerRole = "fast" | "cheap"
+/** The pickable non-main role (`main` is the plain `:model` path). */
+export type PickerRole = "fast"
 
 /**
  * Switch the active model and reflect it in the status bar + side-pane gauge.
@@ -48,9 +48,8 @@ export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
   })
 
 /**
- * Persist a non-main role's model. `null` = follow main again (clears the
- * key; for cheap, the legacy `utilityModel` alias is retired with it). The
- * status bar's roles chip follows immediately.
+ * Persist the fast helper role's model. `null` = follow main again (clears
+ * fastModel). The status bar's roles chip follows immediately.
  */
 export const applyRoleModelSelection = (
   store: TuiStore,
@@ -59,12 +58,11 @@ export const applyRoleModelSelection = (
 ) =>
   Effect.gen(function* () {
     const settingsStore = yield* SettingsStore
-    const key = role === "fast" ? "fastModel" : "cheapModel"
+    const key = "fastModel"
     yield* settingsStore.update((curr) => {
       const next = { ...curr } as Record<string, unknown>
       if (chosen === null) delete next[key]
       else next[key] = `${chosen.provider}:${chosen.modelId}`
-      if (key === "cheapModel") delete next["utilityModel"]
       return next as typeof curr
     })
     const updated = yield* settingsStore.get()
@@ -111,7 +109,7 @@ export const openModelPicker = (store: TuiStore, role?: PickerRole) =>
     }
     if (role !== undefined) {
       const settings = yield* (yield* SettingsStore).get()
-      const configured = role === "fast" ? settings.fastModel : (settings.cheapModel ?? settings.utilityModel)
+      const configured = settings.fastModel
       const resolved = modelForRole(settings, role)
       const options: ReadonlyArray<SelectOption<ModelInfo | null>> = [
         { value: null, label: "default (follow main)", active: configured === undefined },
@@ -121,10 +119,11 @@ export const openModelPicker = (store: TuiStore, role?: PickerRole) =>
           active: configured !== undefined && `${m.provider}:${m.modelId}` === resolved,
         })),
       ]
+      const title = `Select the FAST model (summaries, approvals, titles)`
       yield* Effect.sync(() =>
         store.setOverlay({
           kind: "select",
-          sel: openSelect(`Select the ${role.toUpperCase()} model`, options),
+          sel: openSelect(title, options),
           purpose: { tag: "model", role },
         }),
       )

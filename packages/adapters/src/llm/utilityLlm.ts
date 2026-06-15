@@ -28,15 +28,14 @@ const errorMessage = (e: unknown): string => {
 
 /**
  * `UtilityLlm` over the same per-call provider build as the router: resolve
- * the requested helper role's selection — `Settings.fastModel` /
- * `Settings.cheapModel` (legacy `utilityModel` honored for cheap) when
+ * the requested helper role's selection — `Settings.fastModel` when
  * configured, else the CURRENT main selection (`ModelRegistry.current`) so
  * the capability works with zero configuration — resolve the key from the
  * `AuthStore` (refreshing OAuth like any other call), and build the
  * provider's `LanguageModel` scoped to exactly this one `generateText`. A
- * `:set fastModel|cheapModel …` or `:login` mid-session takes effect on the
- * next call, no rebuild — the same liveness contract as the chat router.
- * Usage comes back with the text so each tier is countable.
+ * `:set fastModel …` or `:login` mid-session takes effect on the next call,
+ * no rebuild — the same liveness contract as the chat router. Usage comes
+ * back with the text so helper spend is countable.
  */
 export const UtilityLlmLive = Layer.effect(
   UtilityLlm,
@@ -48,10 +47,10 @@ export const UtilityLlmLive = Layer.effect(
 
     const complete = (
       prompt: string,
-      options?: { readonly role?: "fast" | "cheap" },
+      options?: { readonly role?: "fast" },
     ): Effect.Effect<UtilityCompletion, UtilityLlmError> =>
       Effect.gen(function* () {
-        const role = options?.role ?? "cheap"
+        const role = options?.role ?? "fast"
         const settings = yield* settingsStore.get()
         const sel: ModelSelection = roleIsConfigured(settings, role)
           ? selectionFromString(modelForRole(settings, role))

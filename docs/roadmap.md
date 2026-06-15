@@ -17,14 +17,13 @@ The loop uses `LanguageModel.generateText` per turn (one round-trip → one appe
 The rule-keyed `Approval` port + TUI modal ship for bash (allow once / session / project rules, deny-with-reason fed back to the model). Next: extend the same consent shape to out-of-cwd writes and network egress, and add a `:approvals` view to list/revoke the project rules persisted in `Settings.approvedBashRules`.
 
 ### Compaction
-`onTransformContext` is wired (`agentLoop.ts:48`) but no mode provides an implementation. Implement `core/usecases/compaction.ts`: when input tokens exceed a budget fraction of `LlmInfo.contextWindow`, summarise the older window via a cheap model call and replace those turns with a single synthetic message — the same shape `handoffToMessage` already produces for `:handoff`. `@effect/ai`'s `Tokenizer` gives us counts. Trigger off the status-bar gauge that's already shown. Requires the three-tier model selection below (or a fixed cheap model).
+`onTransformContext` is wired (`agentLoop.ts:48`) but no mode provides an implementation. Implement `core/usecases/compaction.ts`: when input tokens exceed a budget fraction of `LlmInfo.contextWindow`, summarise the older window via a fast-tier model call and replace those turns with a single synthetic message — the same shape `handoffToMessage` already produces for `:handoff`. `@effect/ai`'s `Tokenizer` gives us counts. Trigger off the status-bar gauge that's already shown. Reuses the `fast` role below (or a fixed model).
 
-### Three-tier model selection (`main` / `fast` / `cheap`)
-Today `Settings.model` is a single `"<provider>:<modelId>"`. Two more tiers would let:
-- **fast** — sub-agent loops, single-file edits, syntax checkups (e.g. `gemini-2.5-flash`, `claude-haiku`)
-- **cheap** — background compaction, turn-summarisation, token math (e.g. `gemini-2.5-flash-lite`, `gpt-4o-mini`)
+### Two-tier model selection (`main` / `fast`)
+Today `Settings.model` is a single `"<provider>:<modelId>"`. A second tier lets helper calls (tool-output summaries, approval judgments, session titles) run on a cheaper/faster model:
+- **fast** — helper calls (e.g. `gemini-3.5-flash`, `claude-haiku`)
 
-Touch points: extend `Settings` schema with `fastModel?` / `cheapModel?`; teach `ModelRegistry` to expose `current(tier)`; have `runAgent` accept a tier hint (sub-agents default to `fast`); compaction always uses `cheap`. `:model` keeps switching `main`; add `:set fastModel <…>` / `:set cheapModel <…>`.
+Touch points: extend `Settings` schema with `fastModel?`; teach `ModelRegistry` to expose `current(tier)`; helper calls default to `fast`. `:model` keeps switching `main`; add `:model fast` / `:set fastModel <…>`.
 
 ---
 

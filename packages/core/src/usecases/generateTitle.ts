@@ -30,12 +30,12 @@ export const sanitizeTitle = (raw: string, maxLen = 60): string => {
 }
 
 /**
- * Name a session from its first exchange, on the cheap `UtilityLlm` tier.
+ * Name a session from its first exchange, on the fast `UtilityLlm` tier.
  * Only the first user message + the first assistant prose feed the prompt
- * (clipped) — enough to name the task, cheap enough to run after every new
+ * (clipped) — enough to name the task, fast enough to run after every new
  * session's first turn. Returns `title: ""` when the history has nothing
  * nameable; `usage` (when the provider reported it) lets the caller count
- * the cheap tier's spend.
+ * the fast tier's spend.
  */
 export const generateSessionTitle = (
   history: ReadonlyArray<AgentMessage>,
@@ -62,6 +62,7 @@ export const generateSessionTitle = (
     const utility = yield* UtilityLlm
     const res = yield* utility.complete(
       `${TITLE_PROMPT}\n\n<exchange>\n${excerpt}\n</exchange>`,
+      { role: "fast" },
     )
     return {
       title: sanitizeTitle(res.text),

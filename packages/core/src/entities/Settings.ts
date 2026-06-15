@@ -74,19 +74,7 @@ export const Settings = Schema.Struct({
   fastModel: Schema.optional(
     Schema.String.annotations({
       description:
-        "The FAST role: model for latency-sensitive helper calls (tool-output summaries, auto-approval judgments), as '<provider>:<modelId>'. Sub-agents are real work and run on main. Unset → the main model.",
-    }),
-  ),
-  cheapModel: Schema.optional(
-    Schema.String.annotations({
-      description:
-        "The CHEAP role: model for background utility work (session titles, summaries), as '<provider>:<modelId>'. Unset → legacy utilityModel, else the main model.",
-    }),
-  ),
-  utilityModel: Schema.optional(
-    Schema.String.annotations({
-      description:
-        "LEGACY alias for cheapModel (pre-roles name) — still read when cheapModel is unset. Prefer :set cheapModel.",
+        "The FAST role: model for helper calls (tool-output summaries, auto-approval judgments, session titles), as '<provider>:<modelId>'. Sub-agents are real work and run on main. Unset → the main model.",
     }),
   ),
   toolResultMaxTokens: Schema.optional(

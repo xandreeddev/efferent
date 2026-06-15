@@ -225,8 +225,8 @@ export const makeSubmit = (
         // Seal the Activity run container (closes any still-open descendants
         // too — an interrupt skips their end events).
         store.setProjection((p) => ({ ...p, tree: onRunEnd(p.tree, true, Date.now()) }))
-        // The session's first exchange just landed: name it on the cheap
-        // utility tier, off the critical path. Best-effort daemon — a missing
+        // The session's first exchange just landed: name it on the fast
+        // helper tier, off the critical path. Best-effort daemon — a missing
         // credential / provider hiccup must never surface here.
         if (firstExchange) {
           yield* Effect.forkDaemon(
@@ -234,11 +234,11 @@ export const makeSubmit = (
               const cs = yield* ConversationStore
               const history = yield* cs.list(cid)
               const res = yield* generateSessionTitle(history)
-              // The cheap tier's spend is real spend — count it.
+              // The fast tier's spend is real spend — count it.
               if (res.usage !== undefined) {
                 const u = res.usage
                 store.setStats((s) =>
-                  accumulateRoleSpend(s, "cheap", u.inputTokens + u.outputTokens),
+                  accumulateRoleSpend(s, "fast", u.inputTokens + u.outputTokens),
                 )
               }
               if (res.title.length === 0) return

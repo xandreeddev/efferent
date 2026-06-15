@@ -23,7 +23,7 @@ Top to bottom, the TUI is five stacked regions:
 ┌─ <session title> ──────────────────────┐ ┌─ activity ─────────┐ ← the two read-only panes,
 │ the event rail: your prompts, the       │ │activity·context·agents│ one empty column between;
 │ agent's prose, tool calls, diffs        │ │ ctx ▓░ 1% 6k/1M     │   the side pane's tab row
-│                                         │ │ Σ main·fast·cheap   │   shows its views; Σ = the
+│                                         │ │ Σ main·fast         │   shows its views; Σ = the
 └─────────────────────────────────────────┘ └────────────────────┘   per-role spend ledger
  j/k scroll · ↵ fold · w next pane · v views · i type · ? keys     ← keybind strip (1 row;
  :model  …                                                            `?` expands the full box)
@@ -296,7 +296,7 @@ A unique prefix resolves (`:mod` → `:model`).
 
 | Command | What it does |
 |---|---|
-| `:model [fast\|cheap]` | Open the model picker for **main** — or for the **fast**/**cheap** role (leading *default (follow main)* row clears it) |
+| `:model [fast]` | Open the model picker for **main** — or for the **fast** helper role (leading *default (follow main)* row clears it) |
 | `:effort [level]` | Pick the thinking/reasoning effort |
 | `:search [target]` | Web-search model picker, or `:search openai:gpt-4o` / `default` |
 | `:login` | Add a provider — subscription (OAuth) or API key |
@@ -308,7 +308,7 @@ A unique prefix resolves (`:mod` → `:model`).
 |---|---|
 | `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `efferent` (default) + `one-dark` + `tokyo-night` |
 | `:settings` | Open the settings modal (arrow + ↵ to edit) |
-| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (latency-sensitive helper calls: tool summaries, approval judgments) / `:set cheapModel …` (background: session titles); unset roles follow main. Headroom: `:set toolResultMaxTokens 4000` (tool-result clip budget, 0 = off) · `:set autoHandoffPct 85` (auto-fold threshold, 0 = off) |
+| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (helper calls: tool summaries, approval judgments, session titles); unset → follows main. Headroom: `:set toolResultMaxTokens 4000` (tool-result clip budget, 0 = off) · `:set autoHandoffPct 85` (auto-fold threshold, 0 = off) |
 | `:db [pg <url>\|sqlite [path]]` | Show or set the conversation store (trailing `global` writes `~/.efferent/config.json`) |
 
 **Meta**
