@@ -23,7 +23,10 @@ export type AgentEvent =
       readonly text: string
       readonly reasoning?: string
       readonly usage?: TokenUsage
-      /** Set for sub-agent narration: the run's context-tree node id. */
+      /** Set for sub-agent narration: the run's context-tree node id. Carries a
+       *  core `ContextNodeId` deliberately widened to `string` — `AgentEvent` is
+       *  the cross-mode WIRE vocabulary (serialized to JSONL in json mode), so the
+       *  brand stays in the domain and the transport stays a plain string. */
       readonly nodeId?: string
     }
   | {
