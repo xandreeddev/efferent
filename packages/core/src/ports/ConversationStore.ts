@@ -15,7 +15,7 @@ export class ConversationStoreError extends Data.TaggedError(
 export class ConversationNotFound extends Data.TaggedError(
   "ConversationNotFound",
 )<{
-  readonly id: string
+  readonly id: ConversationId
 }> {}
 
 export class ConversationStore extends Context.Tag(
