@@ -176,9 +176,12 @@ test("command mode: Enter runs the highlighted command (no Shift needed)", () =>
   const h = harness()
   wireInput(h)
   h.store.pushBlock({ kind: "user", text: "scrollback" })
+  const before = h.store.run.getConversationId()
   h.store.setInput(":clear")
   dispatch(h.ctx, key("return")) // plain Enter
-  expect(h.store.blocks()).toEqual([]) // :clear ran (store.clear)
+  expect(h.store.run.getConversationId()).not.toBe(before) // :clear starts a new conversation
+  expect(h.store.blocks()).toHaveLength(1) // info line for the new conversation
+  expect(h.store.blocks()[0]).toMatchObject({ kind: "info", text: expect.stringMatching(/^new conversation: /) })
   expect(h.store.input()).toBe("") // buffer cleared
 })
 

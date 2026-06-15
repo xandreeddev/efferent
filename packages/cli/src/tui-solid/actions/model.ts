@@ -40,7 +40,7 @@ export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
         if (prev.provider !== sel.provider && store.blocks().some((b) => b.kind === "user")) {
           store.pushBlock({
             kind: "info",
-            text: "note: switched provider mid-conversation; if the next turn errors, :reset (Gemini needs its own tool-call history).",
+            text: "note: switched provider mid-conversation; if the next turn errors, :clear (Gemini needs its own tool-call history).",
           })
         }
       }),

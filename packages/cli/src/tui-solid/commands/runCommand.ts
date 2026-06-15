@@ -62,13 +62,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":quit":
       ctx.exit()
       return
-    case ":clear":
-      store.clear()
-      return
-    case ":cwd":
-      store.pushBlock({ kind: "info", text: store.status().cwd })
-      return
-    case ":reset": {
+    case ":clear": {
       store.run.newConversation(newConversationId())
       store.clear()
       store.setProjection((p) => ({
@@ -84,6 +78,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       })
       return
     }
+    case ":cwd":
+      store.pushBlock({ kind: "info", text: store.status().cwd })
+      return
     case ":context":
       void ctx.run(toggleContext(store, store.run.getConversationId()))
       return
