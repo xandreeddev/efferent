@@ -1,5 +1,6 @@
 import type { Effect } from "effect"
 import type { TokenUsage } from "../ports/LlmInfo.js"
+import type { ContextNodeId } from "./AgentContext.js"
 import type { AgentMessage, ToolCall } from "./Conversation.js"
 
 /**
@@ -25,7 +26,7 @@ export interface AgentAssistantMessageEvent {
   readonly usage?: TokenUsage
   /** Set when this message belongs to a sub-agent run: its context-tree node
    *  id — lets a consumer attribute interleaved parallel runs correctly. */
-  readonly subAgentNodeId?: string
+  readonly subAgentNodeId?: ContextNodeId
 }
 
 export interface AgentBeforeToolCallEvent {
@@ -36,7 +37,7 @@ export interface AgentBeforeToolCallEvent {
   readonly toolName: string
   readonly args: unknown
   /** The sub-agent (context-tree node id) this call runs inside, if any. */
-  readonly subAgentNodeId?: string
+  readonly subAgentNodeId?: ContextNodeId
 }
 
 export interface AgentAfterToolCallEvent {
@@ -48,7 +49,7 @@ export interface AgentAfterToolCallEvent {
   readonly ok: boolean
   readonly result: unknown
   /** The sub-agent (context-tree node id) this call ran inside, if any. */
-  readonly subAgentNodeId?: string
+  readonly subAgentNodeId?: ContextNodeId
 }
 
 export interface AgentShouldStopEvent {
@@ -65,15 +66,15 @@ export interface AgentSubAgentStartEvent {
   readonly name: string
   readonly task: string
   /** The persisted context-tree node id for this sub-agent run, when one exists. */
-  readonly nodeId?: string
+  readonly nodeId?: ContextNodeId
   /** The parent node's id, for nesting under an enclosing sub-agent's container. */
-  readonly parentNodeId?: string
+  readonly parentNodeId?: ContextNodeId
 }
 
 export interface AgentSubAgentEndEvent {
   readonly name: string
   /** The persisted context-tree node id for this sub-agent run, when one exists. */
-  readonly nodeId?: string
+  readonly nodeId?: ContextNodeId
   readonly ok: boolean
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
