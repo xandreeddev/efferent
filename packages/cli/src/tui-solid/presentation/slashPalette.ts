@@ -15,7 +15,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":cwd", description: "Print the current workspace directory" },
   { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
-  { name: ":model", description: "Open the model picker (↑↓/filter/↵), or :model <id> to switch" },
+  { name: ":model", description: "Pick main model; :model fast sets helper; :model <provider>:<id> switches" },
   { name: ":search", description: "Open the web search model picker, or :search openai:gpt-4o / default" },
   { name: ":effort", description: "Open the thinking/reasoning effort picker, or :effort <level>" },
   { name: ":theme", description: "Switch the colour theme (↑↓/↵), or :theme <name>" },

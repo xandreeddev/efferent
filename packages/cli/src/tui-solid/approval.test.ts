@@ -22,7 +22,7 @@ const REQ = {
 const makeFakeStore = () => {
   let ov: { kind: string; state?: unknown } = { kind: "none" }
   const blocks: Array<{ kind: string; text: string }> = []
-  let stats = { byRole: { main: 0, fast: 0, cheap: 0 } }
+  let stats = { byRole: { main: 0, fast: 0 } }
   const store = {
     setOverlay: (o: { kind: string; state?: unknown }) => {
       ov = o

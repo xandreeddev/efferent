@@ -91,7 +91,7 @@ The two highest-reach domain types.
 - **`ModelRef`** — the `"<provider>:<modelId>"` string. Refined `Schema.brand`
   (validates the `p:m` shape). Mint in `entities/Model.ts`: `formatModel` returns
   `ModelRef`, `parseModel` consumes it. Threads through `Settings.model` /
-  `fastModel` / `cheapModel` / `searchModel` / `utilityModel`, the router, and
+  `fastModel` / `searchModel`, the router, and
   `ModelRegistry.select`.
 - **`ScopeDir`** — the sandbox roots: `folder` / `displayRoot` / `rootDir` in
   `entities/Scope.ts`, `ScopeBinding`, `SpawnInput`, `AgentContextNode`. Nominal

@@ -2,15 +2,15 @@
 
 Every place efferent calls an LLM, which selection backs it, how the key resolves, and
 where the spend lands. The companion concept doc is the **roles** section in `AGENT.md`
-(main / fast / cheap); this is the exhaustive call-site inventory.
+(main / fast); this is the exhaustive call-site inventory.
 
 ## The one rule
 
 All *agentic* work — anything that drives the tool loop — runs on **main**, through the
 router `LanguageModel`. Everything else is a **one-shot helper call** and goes through
-`UtilityLlm.complete(prompt, { role })`, picking `fast` or `cheap`. Web search is the
-deliberate exception (a provider-server-side tool, not a chat completion). No other
-module may call a provider SDK.
+`UtilityLlm.complete(prompt, { role: "fast" })`. Web search is the deliberate exception
+(a provider-server-side tool, not a chat completion). No other module may call a
+provider SDK.
 
 ## Inference call sites
 
@@ -19,7 +19,7 @@ module may call a provider SDK.
 | 1 | `core/usecases/agentLoop.ts` (`LanguageModel.generateText`, one per turn) | the **root conversation** — every turn of every mode (TUI / print / json / rpc) | router → **main** (`ModelRegistry.current`, per call) | gauge (`inputTokens` = last turn) · `byRole.main` · persisted on the assistant message (`providerOptions.efferent`) · per-turn `N tok` tree detail |
 | 2 | same loop, run by `runSpawnedAgent` (`buildScopeRuntime.ts`) | **sub-agents** — every `run_agent` spawn/branch/handoff/resume + the human node-resume | router → **main** (delegation changes the context, not the brain) | node `usage` (`ContextTreeStore`) · shared per-turn **token pool** drain · agents-block row tokens · `byRole.main` — never the gauge |
 | 3 | `core/usecases/handoff.ts` (`generateHandoffBrief`) | **handoff briefs** — `:handoff` (fold-in-place) and `run_agent seedMode:"handoff"` seeds | `LanguageModel` direct → router → **main** (quality-critical: the brief *is* the continuity) | **nowhere — known gap** (not evented, not in `byRole`) |
-| 4 | `core/usecases/generateTitle.ts` (`generateSessionTitle`) | **session titles** after a session's first exchange | `UtilityLlm` → **cheap** (`cheapModel` ?? legacy `utilityModel` ?? main) | `byRole.cheap` (fed by the title daemon in `actions/submit.ts`) |
+| 4 | `core/usecases/generateTitle.ts` (`generateSessionTitle`) | **session titles** after a session's first exchange | `UtilityLlm` → **fast** (`fastModel` ?? main) | `byRole.fast` (fed by the title daemon in `actions/submit.ts`) |
 | 5 | `adapters/src/llm/webSearch.ts` (`WebSearchLive`, grounding-only `generateText`) | the **`search_web` tool** — a dedicated request carrying only the provider's server-side search tool | own per-call client (NOT the router): `Settings.searchModel` → `EFFERENT_SEARCH_MODEL` env → logged-in Google (preferred) / OpenAI | **nowhere — known gap** |
 | 6 | `evals/src/framework/scorers.ts` (`llmJudge`) | **eval scoring** (LLM-as-judge) | the eval env's model layer; keys from `EnvAuthStoreLive` (the only env-var key reading in the tree) | the eval report only (out-of-app by design) |
 | 7 | eval suites running the real loop (`runCoder`, the handoff suite) | **eval tasks** | same as #1 under the eval env | eval report only |
@@ -43,7 +43,7 @@ refresh. Neither bills tokens.
 
 ## Accounting summary
 
-`SessionStats.byRole {main, fast, cheap}` is the session ledger (`Σ` line in Activity):
+`SessionStats.byRole {main, fast}` is the session ledger (`Σ` line in Activity):
 root + sub-agent loop usage → **main**; helper calls → **their tier**, reported by
 `UtilityLlm`'s `{ text, usage }` return. Rebuilt (resumed) sessions recover main only —
 node spend stays on nodes (`:tree` shows it per agent).

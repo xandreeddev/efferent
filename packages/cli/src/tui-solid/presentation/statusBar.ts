@@ -19,24 +19,16 @@ export interface StatusState {
 }
 
 /**
- * The status bar's roles readout: each explicitly configured non-main role
- * with its model id (`"fast gemini-3.1-flash-lite · cheap gpt-5.4-nano"`),
- * undefined when everything rides on main. Ids only (no provider prefix) for
- * width — the full selection lives in `:settings`.
+ * The status bar's roles readout: the explicitly configured fast helper role
+ * with its model id (e.g. `"fast gemini-3.1-flash-lite"`), undefined when
+ * everything rides on main. Ids only (no provider prefix) for width — the
+ * full selection lives in `:settings`.
  */
 export const rolesChip = (settings: {
   readonly fastModel?: string | undefined
-  readonly cheapModel?: string | undefined
-  readonly utilityModel?: string | undefined
 }): string | undefined => {
-  const cheap = settings.cheapModel ?? settings.utilityModel
-  const parts = [
-    ...(settings.fastModel !== undefined
-      ? [`fast ${parseModel(settings.fastModel).modelId}`]
-      : []),
-    ...(cheap !== undefined ? [`cheap ${parseModel(cheap).modelId}`] : []),
-  ]
-  return parts.length > 0 ? parts.join(" · ") : undefined
+  if (settings.fastModel === undefined) return undefined
+  return `fast ${parseModel(settings.fastModel).modelId}`
 }
 
 export const formatTokens = (n: number): string => {
