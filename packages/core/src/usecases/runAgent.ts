@@ -4,6 +4,7 @@ import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
+import { recordError } from "../telemetry/metrics.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
@@ -78,8 +79,22 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
           : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       }),
+      // A failed run marks its span errored (the conversation drill-down lists
+      // failed messages; RED reads `agent_errors_total{kind="run"}`), then
+      // re-raises — observe-only, the caller's failure path is unchanged.
+      Effect.tapErrorCause(() =>
+        Effect.annotateCurrentSpan({ error: true }).pipe(
+          Effect.zipRight(recordError("run", "failed")),
+        ),
+      ),
       Effect.withSpan("agent.run", {
-        attributes: { "agent.conversation_id": conversationId, "agent.model": settings.model },
+        attributes: {
+          "agent.conversation_id": conversationId,
+          "agent.model": settings.model,
+          // A short, readable anchor so the per-conversation trace list is
+          // scannable in Grafana (full prompt lives in the persisted message).
+          "agent.prompt": userPrompt.slice(0, 120),
+        },
       }),
       Effect.annotateLogs({ conversationId }),
     )

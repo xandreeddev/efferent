@@ -42,6 +42,13 @@ steps from `agent.turn` spans, config from the enclosing `eval.run` span. There 
 metrics/persistence store** — the trace is the data. Set `OTEL_EXPORTER_OTLP_ENDPOINT` and the same
 run also streams to Grafana (`grafana/otel-lgtm`); see `../../observability/`.
 
+Eval telemetry stays **disjoint from real sessions**: the collector tags every span with
+`service.name=efferent-evals` (→ Prometheus `job`) + `deployment.environment=eval` + a per-invocation
+**`resource.eval.run_id`** (so the eval dashboard can filter the `eval.case` trace list to one run).
+`run.ts` mints that id once and — when an OTLP endpoint is set — prints a Grafana deep link
+(`…/d/efferent-evals/…?var-run=<id>`, base from `EFFERENT_GRAFANA_URL`). The eval dashboards live in
+their own Grafana folder (`efferent — evals`); prod dashboards filter `{job="efferent"}`.
+
 ## Rules
 
 - **A spec is pure data.** `defineEval({ name, data, task, scorers, threshold?, concurrency? })`.

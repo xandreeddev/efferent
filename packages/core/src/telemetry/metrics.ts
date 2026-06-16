@@ -1,4 +1,5 @@
 import { Effect, Metric, MetricBoundaries } from "effect"
+import { costUsd } from "../entities/Model.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 
 /**
@@ -17,6 +18,17 @@ const tokensTotal = Metric.counter("gen_ai_tokens_total", {
 
 const callsTotal = Metric.counter("gen_ai_calls_total", {
   description: "LLM generate calls (tags: role, provider, model).",
+  incremental: true,
+})
+
+const costUsdTotal = Metric.counter("gen_ai_cost_usd_total", {
+  description: "Estimated LLM spend in USD (tags: role, provider, model).",
+  incremental: true,
+  bigint: false,
+})
+
+const errorsTotal = Metric.counter("agent_errors_total", {
+  description: "Agent failures (tags: kind=turn|tool|llm, error).",
   incremental: true,
 })
 
@@ -49,14 +61,40 @@ export const usageAttributes = (usage: TokenUsage): Record<string, number> => ({
   "gen_ai.usage.total_tokens": usage.totalTokens,
 })
 
-/** Record one LLM call's spend: a call + its three token buckets, all tagged. */
+/**
+ * Span attributes a human reads at a glance on `llm.generate`: the priced cost
+ * (when the model is in the catalogue) and the share of input served from the
+ * provider cache. Both are derived from the same usage that feeds the metrics —
+ * `cost` is absent when the model carries no pricing (never a wrong number).
+ */
+export const costAttribute = (
+  provider: string,
+  model: string,
+  usage: TokenUsage,
+): Record<string, number> => {
+  const cost = costUsd(`${provider}:${model}`, usage)
+  const cacheHitRatio =
+    usage.inputTokens > 0 ? Math.min(usage.cacheReadTokens, usage.inputTokens) / usage.inputTokens : 0
+  return {
+    "gen_ai.cache_hit_ratio": cacheHitRatio,
+    ...(cost !== undefined ? { "gen_ai.cost_usd": cost } : {}),
+  }
+}
+
+/**
+ * Record one LLM call's spend: a call + its three token buckets + the priced
+ * USD cost (when the model is in the pricing catalogue), all tagged by
+ * role/provider/model. Cost reuses the same `costUsd` the evals trace-report
+ * uses, so a session and an eval price identically.
+ */
 export const recordLlmCall = (
   role: string,
   provider: string,
   model: string,
   usage: TokenUsage,
-): Effect.Effect<void> =>
-  Effect.all(
+): Effect.Effect<void> => {
+  const cost = costUsd(`${provider}:${model}`, usage)
+  return Effect.all(
     [
       Metric.update(
         callsTotal.pipe(
@@ -90,9 +128,22 @@ export const recordLlmCall = (
         ),
         usage.cacheReadTokens,
       ),
+      ...(cost !== undefined
+        ? [
+            Metric.update(
+              costUsdTotal.pipe(
+                Metric.tagged("role", role),
+                Metric.tagged("provider", provider),
+                Metric.tagged("model", model),
+              ),
+              cost,
+            ),
+          ]
+        : []),
     ],
     { discard: true },
   )
+}
 
 /** Record one agent-loop turn: a tick + its latency. */
 export const recordTurn = (latencyMs: number): Effect.Effect<void> =>
@@ -110,3 +161,24 @@ export const recordToolCall = (tool: string, ok: boolean): Effect.Effect<void> =
 /** Record one auto-approval verdict. */
 export const recordApprovalVerdict = (verdict: string): Effect.Effect<void> =>
   Metric.update(approvalVerdictsTotal.pipe(Metric.tagged("verdict", verdict)), 1)
+
+/**
+ * A small bounded set of error labels — the typed-error `_tag` or a short slug,
+ * never a raw provider message — so the `error` tag stays low-cardinality. An
+ * over-long or unknown value collapses to `"unknown"`.
+ */
+const clipErr = (error: string): string => {
+  const e = error.trim()
+  if (e.length === 0) return "unknown"
+  // A `_tag` / slug is a short identifier; anything wordy is a free-text
+  // message we must NOT use as a metric label (cardinality bomb).
+  if (e.length > 48 || /\s/.test(e)) return "unknown"
+  return e
+}
+
+/** Record one agent failure, tagged by where it happened + a bounded label. */
+export const recordError = (kind: string, error: string): Effect.Effect<void> =>
+  Metric.update(
+    errorsTotal.pipe(Metric.tagged("kind", kind), Metric.tagged("error", clipErr(error))),
+    1,
+  )

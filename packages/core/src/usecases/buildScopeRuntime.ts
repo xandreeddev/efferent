@@ -372,6 +372,18 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       Effect.locally(RunContextRef, childRc),
       Effect.map((r) => ({ ok: true as const, r })),
       Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
+      // Name the sub-agent subtree in the trace waterfall. Its turns /
+      // llm.generate / tool spans already nest beneath via Effect span
+      // propagation; this labels the whole branch with its node + folder so
+      // parallel fan-outs are distinguishable.
+      Effect.withSpan("agent.subagent", {
+        attributes: {
+          "agent.subagent.node_id": nodeId,
+          "agent.subagent.depth": args.parentDepth + 1,
+          "agent.subagent.folder": folder,
+          "agent.subagent.title": label,
+        },
+      }),
     )
 
     const files = yield* Ref.get(filesRef)

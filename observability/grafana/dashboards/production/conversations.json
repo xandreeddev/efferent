@@ -1,0 +1,63 @@
+{
+  "uid": "efferent-conversations",
+  "title": "efferent — conversations",
+  "tags": ["efferent", "production"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "links": [
+    { "title": "Fleet health", "type": "link", "url": "/d/efferent-fleet/efferent-fleet", "icon": "external link" },
+    { "title": "Conversation drill-down", "type": "link", "url": "/d/efferent-conversation/efferent-conversation", "icon": "external link" }
+  ],
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Each row below is **one `agent.run` trace = one user message** sent to efferent. Click a row's **Trace ID** to open the full execution waterfall (`agent.run → agent.turn → llm.generate / agent.tool / agent.subagent`). Click a **conversation id** to drill into just that conversation's messages, or open the **Conversation drill-down** link (top-right) and paste an id. Filtered to `service.name = efferent` (real sessions; evals live in their own folder)."
+      }
+    },
+    {
+      "type": "table",
+      "title": "Recent messages (newest first) — click a conversation id to drill in",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model, span.agent.turns, span.agent.total_input_tokens, span.agent.total_output_tokens)",
+          "tableType": "spans",
+          "limit": 200,
+          "spss": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "span.agent.conversation_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Drill into this conversation",
+                    "url": "/d/efferent-conversation/efferent-conversation?var-conversation=${__value.raw}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    }
+  ]
+}
