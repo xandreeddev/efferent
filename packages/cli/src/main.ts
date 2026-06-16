@@ -183,6 +183,11 @@ const root = Command.make(
             : process.cwd()
           : process.cwd()
 
+      // Seed DB config from the resolved workspace dir (not process.cwd(),
+      // which may differ when --cwd is in effect). This must happen before
+      // any service layer is built, since the store selector reads the env var.
+      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
+
       const resumeId = resume._tag === "Some" ? resume.value : undefined
       const promptArgValue = prompt._tag === "Some" ? prompt.value : undefined
 
@@ -354,26 +359,30 @@ const root = Command.make(
  * `~/.efferent/config.json`, matching SettingsStore layering. A real env var
  * always wins — this only fills the gap.
  */
-const seedDbUrlFromConfig = (): void => {
-  if (process.env.EFFERENT_DB_URL) return
-  const readDbUrl = (p: string): string | undefined => {
-    try {
-      if (!existsSync(p)) return undefined
-      const cfg = JSON.parse(readFileSync(p, "utf8")) as { dbUrl?: unknown }
-      return typeof cfg.dbUrl === "string" && cfg.dbUrl.length > 0
-        ? cfg.dbUrl
-        : undefined
-    } catch {
-      return undefined
-    }
+const readDbUrl = (p: string): string | undefined => {
+  try {
+    if (!existsSync(p)) return undefined
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as { dbUrl?: unknown }
+    return typeof cfg.dbUrl === "string" && cfg.dbUrl.length > 0
+      ? cfg.dbUrl
+      : undefined
+  } catch {
+    return undefined
   }
+}
+
+/**
+ * Seed `EFFERENT_DB_URL` from config.json (`dbUrl`) when it's not already set
+ * in the env. The caller passes the resolved workspace dir so the lookup
+ * matches `--cwd`, not `process.cwd()`. A real env var always wins.
+ */
+const seedDbUrlFromConfig = (workspaceDir: string): void => {
+  if (process.env.EFFERENT_DB_URL) return
   const dbUrl =
-    readDbUrl(join(process.cwd(), ".efferent", "config.json")) ??
+    readDbUrl(join(workspaceDir, ".efferent", "config.json")) ??
     readDbUrl(join(homedir(), ".efferent", "config.json"))
   if (dbUrl !== undefined) process.env.EFFERENT_DB_URL = dbUrl
 }
-
-seedDbUrlFromConfig()
 
 // No boot gate: efferent always launches into the TUI. With no credential it
 // shows a "run :login" warning (see runTuiMode) and configures providers in
