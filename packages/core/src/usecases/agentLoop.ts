@@ -1,9 +1,10 @@
 import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
-import { Clock, Effect } from "effect"
+import { Clock, Effect, FiberRef } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
-import { toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
+import { agentSpanAttributes, toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
+import { RunContextRef } from "./runContext.js"
 import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
 import {
   attachUsageToAssistant,
@@ -164,25 +165,32 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
       // the tools under each turn (a graceful `failureMode:"return"` failure is
       // a *result* with `isFailure:true`, marked on the span so TraceQL
       // `{ status = error }` and the RED panels see it).
-      Effect.tap((r) => {
-        const failed = (r as { readonly isFailure?: boolean } | null)?.isFailure === true
-        return Effect.annotateCurrentSpan(
-          failed ? { "agent.tool.ok": false, error: true } : { "agent.tool.ok": true },
-        ).pipe(
+      Effect.tap((r) =>
+        Effect.gen(function* () {
+          const failed = (r as { readonly isFailure?: boolean } | null)?.isFailure === true
+          // Scope this tool span to its root conversation so dashboards can
+          // filter it WITHOUT name-matching or the `>>` descendant operator —
+          // the conversation id is ambient on `RunContextRef`.
+          const rc = yield* FiberRef.get(RunContextRef)
+          yield* Effect.annotateCurrentSpan({
+            ...(failed ? { "agent.tool.ok": false, error: true } : { "agent.tool.ok": true }),
+            ...(rc.rootConversationId !== null
+              ? { "agent.conversation_id": rc.rootConversationId }
+              : {}),
+          })
           // Tool I/O as a trace+span-correlated log, emitted INSIDE the
           // `agent.tool` span so Grafana's "Logs for this span" on a tool call
           // shows its args + result (the same idea as the llm.generate I/O
           // logs). Clipped — the full result still lives in the buffer/span.
-          Effect.zipRight(
-            Effect.logInfo(
-              `tool ${String(name)}(${safeArgsSummary(params)}) ${failed ? "✗ failed" : "▸ ok"}\n` +
-                safeResultSummary(r, 1500),
-            ),
-          ),
-        )
-      }),
+          yield* Effect.logInfo(
+            `tool ${String(name)}(${safeArgsSummary(params)}) ${failed ? "✗ failed" : "▸ ok"}\n` +
+              safeResultSummary(r, 1500),
+          )
+        }),
+      ),
       Effect.withSpan(toolSpanName(String(name)), {
         attributes: {
+          "agent.kind": "tool",
           "agent.tool.name": String(name),
           "agent.tool.args_summary": safeArgsSummary(params),
         },
@@ -212,6 +220,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // resolved a single time, not per request.
     const toolkit = recoverMalformedToolCalls(yield* input.toolkit)
     const toolNames = Object.keys(toolkit.tools)
+
+    // The root conversation id is ambient on `RunContextRef` (seeded by
+    // `runAgent`, re-seeded per sub-agent). Stamp it on every turn span so
+    // dashboards scope turns to a conversation by a stable attribute, not by
+    // the (renamable) span name.
+    const runContext = yield* FiberRef.get(RunContextRef)
 
     // A response whose parts don't decode — most often a hallucinated tool
     // *name* (not in the toolkit's name union), which fails INSIDE
@@ -266,7 +280,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
             ? Effect.succeed({ _tag: "malformed" as const, err })
             : Effect.fail(err),
         ),
-        Effect.withSpan(turnSpanName(turnIndex), { attributes: { "agent.turn": turnIndex } }),
+        Effect.withSpan(turnSpanName(turnIndex), {
+          attributes: {
+            ...agentSpanAttributes("turn", runContext.rootConversationId),
+            "agent.turn": turnIndex,
+          },
+        }),
       )
       yield* recordTurn((yield* Clock.currentTimeMillis) - turnStart)
 

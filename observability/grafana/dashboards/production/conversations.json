@@ -31,7 +31,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name =~ \"agent\\.run.*\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.kind = \"run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
