@@ -43,3 +43,6 @@ export * from "./usecases/handoff.js"
 export * from "./usecases/headroom.js"
 export * from "./usecases/autoApproval.js"
 export * from "./usecases/generateTitle.js"
+
+// Telemetry
+export * from "./telemetry/metrics.js"

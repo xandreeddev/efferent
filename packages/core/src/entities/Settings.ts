@@ -59,6 +59,12 @@ export const Settings = Schema.Struct({
         "TUI conversation pane: fold every previous turn to one line when a new message is sent, keeping only the live turn expanded. Unset → off (turns stay as you left them).",
     }),
   ),
+  telemetry: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "Export OpenTelemetry traces + metrics for every session to the OTLP endpoint (OTEL_EXPORTER_OTLP_ENDPOINT, default http://localhost:4318 — a local grafana/otel-lgtm). Unset/false → no export (zero overhead). Also enabled by EFFERENT_OTLP.",
+    }),
+  ),
   editorMode: EditorMode.annotations({
     description: "TUI input editor mode: 'insert' (default emacs-style) or 'vi' (modal vi-lite).",
   }),

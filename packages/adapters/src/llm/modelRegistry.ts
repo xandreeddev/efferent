@@ -1,6 +1,7 @@
 import {
   AuthStore,
   catalogModelIdsForProvider,
+  catalogModelsForProvider,
   contextWindowFor,
   formatModel,
   ModelRegistry,
@@ -79,6 +80,13 @@ export const ModelRegistryLive = Layer.effect(
         ),
       )
 
+    // A logged-in provider whose live `/models` call failed or returned nothing
+    // falls back to the bundled models.dev snapshot, so a single API outage
+    // never empties the picker. Unconfigured providers stay empty (they
+    // early-return [] before this) so the picker only shows providers in use.
+    const orCatalog = (p: Provider, live: ReadonlyArray<ModelInfo>): ModelInfo[] =>
+      live.length > 0 ? [...live] : [...catalogModelsForProvider(p)]
+
     const listGoogle = Effect.gen(function* () {
       const c = yield* creds("google")
       if (c === undefined) return [] as ModelInfo[]
@@ -89,7 +97,7 @@ export const ModelRegistryLive = Layer.effect(
       ).pipe(
         Effect.catchAll((e) =>
           Effect.as(
-            Effect.logWarning(`google model list failed: ${String(e)}`),
+            Effect.logWarning(`google model list failed (${String(e)}); using bundled catalogue`),
             { models: [] as ReadonlyArray<GoogleModel> },
           ),
         ),
@@ -109,7 +117,7 @@ export const ModelRegistryLive = Layer.effect(
           contextWindow: m.inputTokenLimit ?? contextWindowFor("google", modelId),
         })
       }
-      return out
+      return orCatalog("google", out)
     })
 
     const listOpenAi = Effect.gen(function* () {
@@ -130,7 +138,7 @@ export const ModelRegistryLive = Layer.effect(
       ).pipe(
         Effect.catchAll((e) =>
           Effect.as(
-            Effect.logWarning(`openai model list failed: ${String(e)}`),
+            Effect.logWarning(`openai model list failed (${String(e)}); using bundled catalogue`),
             { data: [] as ReadonlyArray<OpenAiModel> },
           ),
         ),
@@ -148,7 +156,7 @@ export const ModelRegistryLive = Layer.effect(
           contextWindow: contextWindowFor("openai", m.id),
         })
       }
-      return out
+      return orCatalog("openai", out)
     })
 
     const listAnthropic = Effect.gen(function* () {
@@ -171,7 +179,7 @@ export const ModelRegistryLive = Layer.effect(
       ).pipe(
         Effect.catchAll((e) =>
           Effect.as(
-            Effect.logWarning(`anthropic model list failed: ${String(e)}`),
+            Effect.logWarning(`anthropic model list failed (${String(e)}); using bundled catalogue`),
             { data: [] as ReadonlyArray<AnthropicModel> },
           ),
         ),
@@ -187,7 +195,7 @@ export const ModelRegistryLive = Layer.effect(
           contextWindow: contextWindowFor("anthropic", m.id),
         })
       }
-      return out
+      return orCatalog("anthropic", out)
     })
 
     const listOpenCode = Effect.gen(function* () {
@@ -200,7 +208,7 @@ export const ModelRegistryLive = Layer.effect(
       ).pipe(
         Effect.catchAll((e) =>
           Effect.as(
-            Effect.logWarning(`opencode model list failed: ${String(e)}`),
+            Effect.logWarning(`opencode model list failed (${String(e)}); using bundled catalogue`),
             { data: [] as ReadonlyArray<OpenCodeModel> },
           ),
         ),
@@ -216,7 +224,7 @@ export const ModelRegistryLive = Layer.effect(
           contextWindow: contextWindowFor("opencode", m.id),
         })
       }
-      return out
+      return orCatalog("opencode", out)
     })
 
     type OllamaTagModel = { readonly name?: string }
@@ -265,7 +273,15 @@ export const ModelRegistryLive = Layer.effect(
             }),
           ),
 
-      list: Effect.all([listGoogle, listOpenAi, listAnthropic, listOpenCode, listOllama]).pipe(
+      // Each provider list is independently guarded: any unexpected failure
+      // degrades that one provider to [] instead of breaking the whole picker.
+      // Combined with the per-provider catalogue fallback above, the picker
+      // opens with whatever resolved as long as one provider is logged in.
+      list: Effect.all(
+        [listGoogle, listOpenAi, listAnthropic, listOpenCode, listOllama].map((l) =>
+          l.pipe(Effect.orElseSucceed(() => [] as ModelInfo[])),
+        ),
+      ).pipe(
         Effect.map((lists) =>
           lists.flat().sort((a, b) =>
             a.provider === b.provider

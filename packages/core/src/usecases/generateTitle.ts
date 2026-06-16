@@ -68,4 +68,4 @@ export const generateSessionTitle = (
       title: sanitizeTitle(res.text),
       ...(res.usage !== undefined ? { usage: res.usage } : {}),
     }
-  })
+  }).pipe(Effect.withSpan("agent.title"))

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Arbitrary, FastCheck as fc } from "effect"
 import {
+  catalogModelsForProvider,
   contextWindowFor,
   defaultModelForProvider,
   defaultModelForProviders,
@@ -67,6 +68,29 @@ describe("defaultModelForProviders", () => {
   })
   it("empty → the ultimate default", () => {
     expect(defaultModelForProviders([])).toBe("google:gemini-3.5-flash")
+  })
+})
+
+describe("catalogModelsForProvider — offline picker fallback", () => {
+  it("yields complete ModelInfo rows from the bundled snapshot", () => {
+    const rows = catalogModelsForProvider("anthropic")
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) {
+      expect(r.provider).toBe("anthropic")
+      expect(r.modelId.length).toBeGreaterThan(0)
+      expect(r.displayName.length).toBeGreaterThan(0)
+      expect(r.contextWindow).toBeGreaterThan(0)
+    }
+    // a known snapshot id with its real (catalogue) window, not the heuristic
+    expect(rows.some((r) => r.modelId === "claude-opus-4-8" && r.contextWindow === 1_000_000)).toBe(true)
+  })
+  it("covers every first-class provider so a single outage never empties the picker", () => {
+    for (const p of ["google", "openai", "anthropic", "opencode"] as const) {
+      expect(catalogModelsForProvider(p).length).toBeGreaterThan(0)
+    }
+  })
+  it("is empty for providers absent from the snapshot (ollama is local-only)", () => {
+    expect(catalogModelsForProvider("ollama")).toEqual([])
   })
 })
 

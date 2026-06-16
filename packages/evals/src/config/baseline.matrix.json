@@ -1,0 +1,14 @@
+[
+  {
+    "name": "baseline",
+    "main": "google:gemini-3.5-flash",
+    "fast": "google:gemini-3.5-flash",
+    "judge": "google:gemini-3.5-flash"
+  },
+  {
+    "name": "sonnet",
+    "main": "anthropic:claude-sonnet-4-6",
+    "fast": "google:gemini-3.5-flash",
+    "judge": "google:gemini-3.5-flash"
+  }
+]

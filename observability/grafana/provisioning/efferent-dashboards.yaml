@@ -1,0 +1,12 @@
+# Grafana dashboard provider for efferent. Mounted into otel-lgtm's provisioning
+# dir; points at the dashboards mounted under /var/lib/grafana/dashboards/efferent.
+apiVersion: 1
+providers:
+  - name: efferent
+    type: file
+    orgId: 1
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/efferent
+      foldersFromFilesStructure: false

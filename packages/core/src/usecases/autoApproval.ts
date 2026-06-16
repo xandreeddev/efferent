@@ -3,6 +3,7 @@ import { Effect, Either, Schema } from "effect"
 import type { ApprovalRequest } from "../ports/Approval.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
+import { recordApprovalVerdict } from "../telemetry/metrics.js"
 
 /**
  * **Auto-approval** — a FAST-tier classifier in front of the human approval
@@ -133,4 +134,15 @@ export const judgeApproval = (
       ...(verdict.folder !== undefined ? { folder: normalizeFolder(verdict.folder, req.cwd) } : {}),
       ...(res.usage !== undefined ? { usage: res.usage } : {}),
     }
-  }).pipe(Effect.catchAll(() => Effect.succeed({ verdict: "prompt" } as JudgeOutcome)))
+  }).pipe(
+    Effect.tap((o) =>
+      Effect.annotateCurrentSpan({
+        "approval.verdict": o.verdict,
+        ...(o.folder !== undefined ? { "approval.folder": o.folder } : {}),
+      }).pipe(Effect.zipRight(recordApprovalVerdict(o.verdict))),
+    ),
+    Effect.catchAll(() =>
+      recordApprovalVerdict("prompt").pipe(Effect.as({ verdict: "prompt" } as JudgeOutcome)),
+    ),
+    Effect.withSpan("agent.approval.judge", { attributes: { "approval.tool": req.tool } }),
+  )
