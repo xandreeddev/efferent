@@ -1,6 +1,7 @@
 import { Prompt } from "@effect/ai"
 import { HttpClient } from "@effect/platform"
 import {
+  agentSpanAttributes,
   AuthStore,
   costAttribute,
   extractUsage,
@@ -84,6 +85,7 @@ export const UtilityLlmLive = Layer.effect(
           const content =
             settings.telemetry === true ? genAiContentAttributes(prompt, res.text) : {}
           yield* Effect.annotateCurrentSpan({
+            ...agentSpanAttributes("llm", rc.rootConversationId),
             "gen_ai.request.model": sel.modelId,
             "gen_ai.system": sel.provider,
             "gen_ai.operation.name": "generate",

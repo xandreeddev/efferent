@@ -19,7 +19,7 @@ import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
 import { WebSearch } from "../ports/WebSearch.js"
-import { subagentSpanName } from "../telemetry/spanNames.js"
+import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import {
   codingToolkit,
@@ -391,6 +391,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       // parallel fan-outs are distinguishable.
       Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
         attributes: {
+          ...agentSpanAttributes("subagent", args.rootConversationId),
           "agent.subagent.node_id": nodeId,
           "agent.subagent.depth": args.parentDepth + 1,
           "agent.subagent.folder": folder,

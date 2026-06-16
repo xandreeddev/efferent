@@ -134,8 +134,11 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     let cost: number | undefined = undefined
     let steps = 0
     for (const d of subtree) {
-      if (d.name.startsWith("agent.turn")) steps++
-      if (d.name.startsWith("llm.generate")) {
+      // Match on the stable `agent.kind` attribute, not the (renamable) span
+      // name — the same identity the Grafana dashboards filter on.
+      const kind = strAttr(d.attributes, "agent.kind")
+      if (kind === "turn") steps++
+      if (kind === "llm") {
         const c = llmContribution(d)
         input += c.input
         output += c.output
