@@ -1,6 +1,7 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
 import {
+  agentSpanAttributes,
   AuthStore,
   costAttribute,
   extractUsage,
@@ -155,6 +156,7 @@ export const RouterLanguageModelLive = Layer.effect(
             : {}
         const rc = yield* FiberRef.get(RunContextRef)
         yield* Effect.annotateCurrentSpan({
+          ...agentSpanAttributes("llm", rc.rootConversationId),
           "gen_ai.request.model": sel.modelId,
           "gen_ai.system": sel.provider,
           "gen_ai.role": "main",

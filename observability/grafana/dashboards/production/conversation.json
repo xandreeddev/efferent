@@ -41,7 +41,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name =~ \"agent\\.run.*\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.kind = \"run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -98,7 +98,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name =~ \"agent\\.tool.*\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && span.agent.kind = \"tool\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
           "tableType": "spans",
           "limit": 200,
           "spss": 5
@@ -117,7 +117,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name =~ \"agent\\.turn.*\" } | quantile_over_time(duration, .95)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && span.agent.kind = \"turn\" } | quantile_over_time(duration, .95)",
           "tableType": "spans",
           "limit": 200
         }

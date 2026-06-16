@@ -5,7 +5,7 @@ import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { recordError } from "../telemetry/metrics.js"
-import { runSpanName } from "../telemetry/spanNames.js"
+import { agentSpanAttributes, runSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
@@ -91,7 +91,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       ),
       Effect.withSpan(runSpanName(), {
         attributes: {
-          "agent.conversation_id": conversationId,
+          ...agentSpanAttributes("run", conversationId),
           "agent.model": settings.model,
           // A short, readable anchor so the per-conversation trace list is
           // scannable in Grafana (full prompt lives in the persisted message).
