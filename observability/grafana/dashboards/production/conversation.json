@@ -41,7 +41,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model, span.agent.turns, span.agent.total_input_tokens, span.agent.total_output_tokens, span.agent.total_cache_read_tokens)",
+          "query": "{ resource.service.name = \"efferent\" && name = \"agent.message\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -63,20 +63,12 @@
             "indexByName": {
               "agent.prompt": 0,
               "time": 1,
-              "agent.turns": 2,
-              "agent.model": 3,
-              "agent.total_input_tokens": 4,
-              "agent.total_output_tokens": 5,
-              "agent.total_cache_read_tokens": 6
+              "agent.model": 2
             },
             "renameByName": {
               "agent.prompt": "user message",
               "time": "when",
-              "agent.turns": "turns",
-              "agent.model": "model",
-              "agent.total_input_tokens": "in tok",
-              "agent.total_output_tokens": "out tok",
-              "agent.total_cache_read_tokens": "cache tok"
+              "agent.model": "model"
             }
           }
         }
