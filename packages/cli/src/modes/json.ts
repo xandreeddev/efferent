@@ -12,6 +12,7 @@ import {
   WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
+  coderPrompt,
   runAgent,
   type Scope,
   type Skill,
@@ -74,8 +75,9 @@ export const runJsonMode = (
       hooks,
     )
 
+    const prompt = coderPrompt(input.cwd, new Date(), input.skills)
     yield* runAgent(
-      coderAgentConfig(input.rootScope, runtime),
+      coderAgentConfig(input.rootScope, runtime, prompt),
       cid,
       input.prompt,
       hooks,

@@ -5,6 +5,7 @@ import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { recordError } from "../telemetry/metrics.js"
+import { runSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
@@ -59,7 +60,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
 
     const result = yield* runAgentLoop({
-      system: config.systemPrompt,
+      system: config.prompt.text,
       messages: [...prefix, ...active, userMsg],
       toolkit: config.toolkit,
       maxSteps: settings.maxSteps,
@@ -74,6 +75,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         parentNodeId: null,
         depth: 0,
         tokenPool,
+        prompt: config.prompt,
         ...(settings.subAgentMaxSteps !== undefined
           ? { subAgentMaxSteps: settings.subAgentMaxSteps }
           : {}),
@@ -87,7 +89,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
           Effect.zipRight(recordError("run", "failed")),
         ),
       ),
-      Effect.withSpan("agent.run", {
+      Effect.withSpan(runSpanName(), {
         attributes: {
           "agent.conversation_id": conversationId,
           "agent.model": settings.model,

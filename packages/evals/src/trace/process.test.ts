@@ -38,9 +38,9 @@ describe("processSpans", () => {
         },
         1500,
       ),
-      mkSpan("agent.turn", "t1", "case", {}),
-      mkSpan("agent.turn", "t2", "t1", {}),
-      mkSpan("llm.generate", "l1", "t1", {
+      mkSpan("agent.turn 0", "t1", "case", {}),
+      mkSpan("agent.turn 1", "t2", "t1", {}),
+      mkSpan("llm.generate coder@1.0.0 · google/gemini-3.5-flash", "l1", "t1", {
         "gen_ai.system": "google",
         "gen_ai.request.model": "gemini-3.5-flash",
         "gen_ai.usage.input_tokens": 100,

@@ -12,6 +12,7 @@ import {
   WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
+  coderPrompt,
   runAgent,
   type Scope,
   type Skill,
@@ -107,8 +108,9 @@ export const runPrintMode = (
       hooks,
     )
 
+    const prompt = coderPrompt(input.cwd, new Date(), input.skills)
     const result = yield* runAgent(
-      coderAgentConfig(input.rootScope, runtime),
+      coderAgentConfig(input.rootScope, runtime, prompt),
       cid,
       input.prompt,
       hooks,

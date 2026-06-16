@@ -161,6 +161,8 @@ export const runTuiModeSolid = (
         eventQueue,
         rootScope: input.rootScope,
         cwd: input.cwd,
+        skills: input.skills,
+        instructionFiles: input.instructionFiles,
         approvalLayer: approval.layer,
       })
       const reduce = makeEventReducer(store, {

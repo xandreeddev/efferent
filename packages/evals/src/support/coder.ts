@@ -5,7 +5,7 @@ import {
   type AgentHooks,
   buildScopeRuntime,
   coderAgentConfig,
-  coderSystemPrompt,
+  coderPrompt,
   ConversationStore,
   discoverInstructionFiles,
   discoverScopeTree,
@@ -32,21 +32,28 @@ export interface RunCoderOptions {
   readonly readback?: ReadonlyArray<string>
   /** Pure transform of the default coder system prompt (A/B a prompt variant). */
   readonly systemPromptOverride?: (base: string) => string
+  /** Optional prompt variant name — surfaced on spans/metrics for A/B tracking. */
+  readonly promptVariant?: string
 }
 
 /** Build the root coder config for `dir` exactly as `main.ts` does. */
-export const buildCoderConfig = (dir: string, transform: (base: string) => string = (s) => s) =>
+export const buildCoderConfig = (
+  dir: string,
+  transform: (base: string) => string = (s) => s,
+  variant?: string,
+) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
+    const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, variant)
     const rootScope = yield* discoverScopeTree(dir, (_children, body) => {
-      const base = transform(coderSystemPrompt(dir, new Date(), skills, instructionFiles))
+      const base = transform(prompt.text)
       return body !== undefined && body.trim().length > 0
         ? `${base}\n\n# Project scope\n\n${body}`
         : base
     })
     const runtime = buildScopeRuntime(rootScope, { skills, allowBash: true })
-    return { config: coderAgentConfig(rootScope, runtime), runtime }
+    return { config: coderAgentConfig(rootScope, runtime, prompt), runtime }
   })
 
 /**
@@ -64,7 +71,7 @@ export const runCoder = (
   withTempWorkspace(files, (dir) =>
     Effect.gen(function* () {
       const transform = opts.systemPromptOverride ?? ((s: string) => s)
-      const { config, runtime } = yield* buildCoderConfig(dir, transform)
+      const { config, runtime } = yield* buildCoderConfig(dir, transform, opts.promptVariant)
       const store = yield* ConversationStore
       const id = yield* store.create(dir)
       const toolsRef = yield* Ref.make<ReadonlyArray<string>>([])

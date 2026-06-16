@@ -1,3 +1,4 @@
+import type { Prompt } from "../entities/Prompt.js"
 import type { Skill } from "../entities/Skill.js"
 import {
   type InstructionFile,
@@ -119,6 +120,22 @@ Your final assistant message is a **one-line summary** of what you changed (or w
 ## Scope-specific instructions
 
 ${args.body}`
+
+const CODER_PROMPT_VERSION = "1.0.0"
+
+/** Build the root coder prompt as a versioned {@link Prompt}. */
+export const coderPrompt = (
+  cwd: string,
+  now: Date = new Date(),
+  skills: ReadonlyArray<Skill> = [],
+  instructionFiles: ReadonlyArray<InstructionFile> = [],
+  variant?: string,
+): Prompt => ({
+  name: "coder",
+  version: CODER_PROMPT_VERSION,
+  variant,
+  text: coderSystemPrompt(cwd, now, skills, instructionFiles),
+})
 
 export const coderSystemPrompt = (
   cwd: string,

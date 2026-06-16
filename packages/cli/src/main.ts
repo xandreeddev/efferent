@@ -8,7 +8,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import {
   AuthStore,
-  coderSystemPrompt,
+  coderPrompt,
   discoverInstructionFiles,
   discoverScopeTree,
   loadSkills,
@@ -232,15 +232,11 @@ const root = Command.make(
       // child SCOPE.md becomes a nested, write-confined sub-scope. With no
       // SCOPE.md anywhere, the root has no children and behaves exactly
       // like a plain workspace-wide agent.
+      const coder = coderPrompt(workspace, new Date(), skills, instructionFiles)
       const rootScope: Scope = yield* discoverScopeTree(
         workspace,
         (_children, body) => {
-          const base = coderSystemPrompt(
-            workspace,
-            new Date(),
-            skills,
-            instructionFiles,
-          )
+          const base = coder.text
           return body !== undefined && body.trim().length > 0
             ? `${base}\n\n# Project scope\n\n${body}`
             : base

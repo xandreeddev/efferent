@@ -134,8 +134,8 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     let cost: number | undefined = undefined
     let steps = 0
     for (const d of subtree) {
-      if (d.name === "agent.turn") steps++
-      if (d.name === "llm.generate") {
+      if (d.name.startsWith("agent.turn")) steps++
+      if (d.name.startsWith("llm.generate")) {
         const c = llmContribution(d)
         input += c.input
         output += c.output

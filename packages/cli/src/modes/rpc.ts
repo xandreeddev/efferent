@@ -12,7 +12,7 @@ import {
   WebSearch,
   buildScopeRuntime,
   coderAgentConfig,
-  coderSystemPrompt,
+  coderPrompt,
   discoverScopeTree,
   runAgent,
   type Scope,
@@ -139,12 +139,7 @@ const handleSend = (
       cwd === defaults.cwd
         ? defaults.rootScope
         : yield* discoverScopeTree(cwd, (_children, body) => {
-            const base = coderSystemPrompt(
-              cwd,
-              new Date(),
-              defaults.skills,
-              [],
-            )
+            const base = coderPrompt(cwd, new Date(), defaults.skills, []).text
             return body !== undefined && body.trim().length > 0
               ? `${base}\n\n# Project scope\n\n${body}`
               : base
@@ -154,9 +149,10 @@ const handleSend = (
       { skills: defaults.skills, allowBash },
       hooks,
     )
+    const coderPromptObj = coderPrompt(cwd, new Date(), defaults.skills, [])
 
     const ran = yield* runAgent(
-      coderAgentConfig(rootScope, runtime),
+      coderAgentConfig(rootScope, runtime, coderPromptObj),
       cid,
       prompt,
       hooks,

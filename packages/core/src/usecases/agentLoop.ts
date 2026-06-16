@@ -3,6 +3,7 @@ import { Clock, Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
+import { toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
 import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
 import {
   attachUsageToAssistant,
@@ -180,7 +181,7 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
           ),
         )
       }),
-      Effect.withSpan("agent.tool", {
+      Effect.withSpan(toolSpanName(String(name)), {
         attributes: {
           "agent.tool.name": String(name),
           "agent.tool.args_summary": safeArgsSummary(params),
@@ -265,7 +266,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
             ? Effect.succeed({ _tag: "malformed" as const, err })
             : Effect.fail(err),
         ),
-        Effect.withSpan("agent.turn", { attributes: { "agent.turn": turnIndex } }),
+        Effect.withSpan(turnSpanName(turnIndex), { attributes: { "agent.turn": turnIndex } }),
       )
       yield* recordTurn((yield* Clock.currentTimeMillis) - turnStart)
 
