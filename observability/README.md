@@ -35,15 +35,14 @@ Evals stay **in-memory only by default**; they reach the stack only when
 # 1. start the all-in-one stack (Grafana :3000, OTLP :4318 HTTP / :4317 gRPC)
 docker compose -f docker-compose.observability.yml up -d
 
-# 2. point the app at the collector
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# 3a. evals — opt in by pointing them at the collector (evals have no persisted
+#     setting; the endpoint env var is their switch), then run a matrix
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+  bun run eval --config packages/evals/src/config/baseline.matrix.json
 
-# 3a. evals — pushes traces+metrics AND builds the in-memory report
-bun run eval --config packages/evals/src/config/baseline.matrix.json
-
-# 3b. a real session — turn export on once, then just use efferent
-#     (persisted setting; or set EFFERENT_OTLP=1 for a one-off)
-EFFERENT_OTLP=1 efferent "fix the failing test in src/sum.ts"
+# 3b. a real session — telemetry export is driven SOLELY by the setting. Turn it
+#     on once in the TUI (:set telemetry on), then just use efferent normally:
+efferent "fix the failing test in src/sum.ts"
 
 # 4. open Grafana → http://localhost:3000 (anonymous admin)
 
@@ -51,8 +50,10 @@ EFFERENT_OTLP=1 efferent "fix the failing test in src/sum.ts"
 docker compose -f docker-compose.observability.yml down
 ```
 
-To keep export on for every local session without env ceremony: `:set telemetry on`
-in the TUI (persists `telemetry: true` to `.efferent/config.json`).
+A real session exports **iff** `telemetry` is on (`:set telemetry on`, persisted to
+`.efferent/config.json`; schema default off) — no env var enables it. The endpoint
+defaults to `http://localhost:4318`; set `OTEL_EXPORTER_OTLP_ENDPOINT` only to send
+somewhere else.
 
 ## The dashboards (auto-provisioned from `observability/grafana/dashboards/`)
 

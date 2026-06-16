@@ -13,14 +13,13 @@ import type { TuiStore } from "../state/store.js"
 const DEFAULT_GRAFANA = "http://localhost:3000"
 
 /**
- * Whether telemetry is exporting this session. Mirrors `main.ts`'s boot check:
- * an env opt-in or the persisted `telemetry` setting. (A mid-session
- * `:set telemetry on` only takes effect on the next launch — the tracer layer
- * binds at boot — so the env vars are the authoritative live signal.)
+ * Whether telemetry is exporting this session — the persisted `telemetry`
+ * setting is the sole switch (same as `main.ts`'s boot check). A mid-session
+ * `:set telemetry on` only takes effect next launch (the tracer binds at boot),
+ * so a freshly-flipped setting still warrants the "enable telemetry" hint until
+ * relaunch — but the steady-state signal is the setting.
  */
 const telemetryActive = (settingsTelemetry: boolean | undefined): boolean =>
-  process.env["EFFERENT_OTLP"] !== undefined ||
-  process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] !== undefined ||
   settingsTelemetry === true
 
 const openUrl = (store: TuiStore, url: string) =>
@@ -38,7 +37,7 @@ export const openConversationTraces = (store: TuiStore, conversationId: string) 
     const settings = yield* (yield* SettingsStore).get()
     if (!telemetryActive(settings.telemetry)) {
       yield* Effect.sync(() =>
-        store.toast("traces unavailable — enable telemetry: :set telemetry on (or EFFERENT_OTLP=1)"),
+        store.toast("traces unavailable — :set telemetry on, then relaunch"),
       )
       return
     }
