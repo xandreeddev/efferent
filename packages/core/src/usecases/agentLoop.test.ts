@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Exit } from "effect"
 import { LanguageModel, type Toolkit } from "@effect/ai"
-import { recoverMalformedToolCalls, runAgentLoop } from "./agentLoop.js"
+import { recoverMalformedToolCalls, runAgentLoop, safeArgsSummary } from "./agentLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 
@@ -178,5 +178,27 @@ describe("generateHandoffBrief", () => {
     )
     expect(brief).toBe("done")
     expect(model.calls()).toBe(1)
+  })
+})
+
+describe("safeArgsSummary", () => {
+  it("projects short scalar fields as a k=v label (tool-agnostic, no schema)", () => {
+    expect(safeArgsSummary({ command: "bun test", timeout: 60 })).toBe("command=bun test timeout=60")
+    expect(safeArgsSummary({ pattern: "TODO", dir: "." })).toBe("pattern=TODO dir=.")
+    expect(safeArgsSummary({ flag: true })).toBe("flag=true")
+  })
+
+  it("drops arrays/objects and long strings — a file's contents never leak", () => {
+    // `content` is a whole file; `edits` is a nested array — both omitted, only
+    // the short scalar `path` survives.
+    const out = safeArgsSummary({ path: "src/a.ts", content: "a".repeat(500), edits: [{ a: 1 }] })
+    expect(out).toBe("path=src/a.ts")
+  })
+
+  it("is total over non-objects and clips the whole label", () => {
+    expect(safeArgsSummary(undefined)).toBe("")
+    expect(safeArgsSummary("nope")).toBe("")
+    const out = safeArgsSummary({ a: "x".repeat(100), b: "y".repeat(100) })
+    expect(out.length).toBeLessThanOrEqual(201)
   })
 })

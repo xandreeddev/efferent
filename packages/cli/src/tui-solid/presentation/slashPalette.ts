@@ -29,6 +29,8 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":build", description: "Build a new session from the turns selected in :context" },
   { name: ":browse", description: "List conversations in this workspace" },
   { name: ":resume", description: "Resume a conversation, e.g. :resume 2" },
+  { name: ":traces", description: "Open this conversation's traces in Grafana (needs telemetry)" },
+  { name: ":dashboard", description: "Open the fleet-health dashboard in Grafana" },
 ]
 
 export interface PaletteState {

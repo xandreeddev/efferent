@@ -1,0 +1,88 @@
+{
+  "uid": "efferent-conversation",
+  "title": "efferent — conversation",
+  "tags": ["efferent", "production"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "links": [
+    { "title": "All conversations", "type": "link", "url": "/d/efferent-conversations/efferent-conversations", "icon": "external link" },
+    { "title": "Fleet health", "type": "link", "url": "/d/efferent-fleet/efferent-fleet", "icon": "external link" }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "conversation",
+        "label": "conversation id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "Conversation",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Messages for conversation **`$conversation`** — one row per user message (`agent.run`). Click a **Trace ID** to open its full execution waterfall. Set the `conversation id` variable (top-left) or arrive here from the **conversations** dashboard."
+      }
+    },
+    {
+      "type": "table",
+      "title": "Messages in this conversation (newest first)",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 3 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model, span.agent.turns, span.agent.total_input_tokens, span.agent.total_output_tokens, span.agent.total_cache_read_tokens)",
+          "tableType": "spans",
+          "limit": 200,
+          "spss": 1
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "Tool calls in this conversation",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name = \"agent.tool\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
+          "tableType": "spans",
+          "limit": 200,
+          "spss": 5
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "timeseries",
+      "title": "Turn latency p95 in this conversation (ms) — enhancement, needs TraceQL metrics",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name = \"agent.turn\" } | quantile_over_time(duration, .95)",
+          "tableType": "spans",
+          "limit": 200
+        }
+      ]
+    }
+  ]
+}

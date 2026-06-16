@@ -1,12 +1,28 @@
-# Grafana dashboard provider for efferent. Mounted into otel-lgtm's provisioning
-# dir; points at the dashboards mounted under /var/lib/grafana/dashboards/efferent.
+# Grafana dashboard providers for efferent. Mounted into otel-lgtm's
+# provisioning dir; the dashboards tree is mounted at
+# /var/lib/grafana/dashboards/efferent (see docker-compose.observability.yml).
+#
+# TWO providers keep production and eval data in separate Grafana FOLDERS, so a
+# real session's dashboards and the eval dashboards never mix — the logical half
+# of the prod/eval split (the data half is `service.name`/`job`: efferent vs
+# efferent-evals).
 apiVersion: 1
 providers:
-  - name: efferent
+  - name: efferent-production
     type: file
     orgId: 1
+    folder: "efferent — production"
     disableDeletion: false
     allowUiUpdates: true
     options:
-      path: /var/lib/grafana/dashboards/efferent
+      path: /var/lib/grafana/dashboards/efferent/production
+      foldersFromFilesStructure: false
+  - name: efferent-evals
+    type: file
+    orgId: 1
+    folder: "efferent — evals"
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/efferent/evals
       foldersFromFilesStructure: false
