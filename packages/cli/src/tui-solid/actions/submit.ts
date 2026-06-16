@@ -3,6 +3,7 @@ import {
   AuthStore,
   buildScopeRuntime,
   coderAgentConfig,
+  coderPrompt,
   ContextNodeId,
   ConversationStore,
   DEFAULT_AUTO_HANDOFF_PCT,
@@ -12,7 +13,9 @@ import {
   shouldAutoHandoff,
   type AgentHooks,
   type Approval,
+  type InstructionFile,
   type Scope,
+  type Skill,
   type UtilityLlm,
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
@@ -34,6 +37,8 @@ export interface SubmitDeps {
   readonly eventQueue: Queue.Queue<AgentEvent>
   readonly rootScope: Scope
   readonly cwd: string
+  readonly skills: ReadonlyArray<Skill>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
   readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
 }
@@ -50,7 +55,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, approvalLayer } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, instructionFiles, approvalLayer } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -273,8 +278,9 @@ export const makeSubmit = (
         if (next !== undefined) yield* submit(next)
       })
 
+      const prompt = coderPrompt(cwd, new Date(), skills, instructionFiles)
       const runEffect = runAgent(
-        coderAgentConfig(rootScope, scopeRuntime),
+        coderAgentConfig(rootScope, scopeRuntime, prompt),
         cid,
         text,
         baseHooks,

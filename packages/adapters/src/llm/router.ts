@@ -6,15 +6,17 @@ import {
   extractUsage,
   genAiContentAttributes,
   LlmInfo,
+  llmSpanName,
   ModelRegistry,
   recordError,
   recordLlmCall,
   responseText,
+  RunContextRef,
   SettingsStore,
   usageAttributes,
   type ModelSelection,
 } from "@efferent/core"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import {
   makeProviderLanguageModel,
@@ -109,6 +111,30 @@ export const RouterLanguageModelLive = Layer.effect(
     // response. Pure observation — the response passes through untouched. When
     // `telemetryCaptureContent` is on, the prompt + completion text are attached
     // too (clipped) so the call's I/O reads right in the trace.
+    /**
+     * Build a human-readable span name for an LLM call: `llm.generate` plus the
+     * prompt label (name:variant@version) and provider/model. Falls back to the
+     * role when no prompt identity is in context (e.g. stray utility calls).
+     */
+    const spanName = (sel: ModelSelection, role: string) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        return llmSpanName(rc.prompt, role, sel.provider, sel.modelId)
+      })
+
+    /**
+     * Wrap an LLM Effect in a span whose name includes the prompt identity and
+     * selected model. The name is computed from `RunContextRef` at wrap time so
+     * `observe` annotates the same span.
+     */
+    const withLlmSpan =
+      <A, E, R>(sel: ModelSelection, role: string) =>
+      (eff: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+        Effect.gen(function* () {
+          const name = yield* spanName(sel, role)
+          return yield* eff.pipe(Effect.withSpan(name))
+        })
+
     const observe = (
       sel: ModelSelection,
       options: unknown,
@@ -127,16 +153,38 @@ export const RouterLanguageModelLive = Layer.effect(
                 responseText(res.content ?? []),
               )
             : {}
+        const rc = yield* FiberRef.get(RunContextRef)
         yield* Effect.annotateCurrentSpan({
           "gen_ai.request.model": sel.modelId,
           "gen_ai.system": sel.provider,
           "gen_ai.role": "main",
           "gen_ai.operation.name": "generate",
+          ...(rc.prompt !== undefined
+            ? {
+                "agent.prompt.name": rc.prompt.name,
+                "agent.prompt.version": rc.prompt.version,
+                ...(rc.prompt.variant !== undefined
+                  ? { "agent.prompt.variant": rc.prompt.variant }
+                  : {}),
+              }
+            : {}),
           ...usageAttributes(usage),
           ...costAttribute(sel.provider, sel.modelId, usage),
           ...content,
         })
         yield* recordLlmCall("main", sel.provider, sel.modelId, usage)
+        // Emit the same prompt/completion as trace+span-correlated logs so
+        // Grafana's "Logs for this span" on the `llm.generate` span shows the
+        // call's input & output. Span attributes are easy to miss; the logs
+        // pane is where people look. Reuses the already-clipped attribute
+        // values, gated on telemetry like them, and runs inside the span scope
+        // so the lines carry this span's id and fall within its time window
+        // (the per-turn heartbeat is logged later, outside this span, which is
+        // why it never showed here).
+        const output = content["gen_ai.completion"]
+        if (output !== undefined) yield* Effect.logInfo(`llm output ▸ ${output}`)
+        const input = content["gen_ai.prompt"]
+        if (input !== undefined) yield* Effect.logInfo(`llm input ▸ ${input}`)
       })
 
     // A failed `llm.generate` (bad/expired key, provider 4xx/5xx, rate limit)
@@ -155,14 +203,16 @@ export const RouterLanguageModelLive = Layer.effect(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
                 svc
                   .generateText(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(Effect.tap((res) => observe(sel, options, res))),
+                  .pipe(
+                    Effect.tap((res) => observe(sel, options, res)),
+                    Effect.tapError(observeError),
+                  )
+                  .pipe(withLlmSpan(sel, "main")),
               ),
             ),
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
-          Effect.tapError(observeError),
-          Effect.withSpan("llm.generate"),
         ),
 
       generateObject: (options) =>
@@ -172,14 +222,16 @@ export const RouterLanguageModelLive = Layer.effect(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
                 svc
                   .generateObject(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(Effect.tap((res) => observe(sel, options, res))),
+                  .pipe(
+                    Effect.tap((res) => observe(sel, options, res)),
+                    Effect.tapError(observeError),
+                  )
+                  .pipe(withLlmSpan(sel, "main")),
               ),
             ),
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
-          Effect.tapError(observeError),
-          Effect.withSpan("llm.generate"),
         ),
 
       streamText: (options) =>

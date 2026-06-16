@@ -18,7 +18,7 @@
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "Each row is **one user message** (its `agent.run` trace) — it appears once the run **completes** (the root span exports on finish; child spans show mid-run in the waterfall). Click a row's **Trace ID** to open the full execution (`agent.run → agent.turn → llm.generate / agent.tool / agent.subagent`). Click a **conversation id** to drill into just that conversation, or use the **Conversation drill-down** link (top-right). Filtered to `service.name = efferent` (real sessions; evals live in their own folder)."
+        "content": "Each row is **one user message** (its `agent.run` trace) — it appears once the run **completes** (the root span exports on finish; child spans show mid-run in the waterfall). Click a row's **span** to open the full execution focused on that message's `agent.run` span (`agent.run → agent.turn → llm.generate / agent.tool / agent.subagent`). Click a **conversation id** to drill into just that conversation, or use the **Conversation drill-down** link (top-right). Filtered to `service.name = efferent` (real sessions; evals live in their own folder)."
       }
     },
     {
@@ -31,7 +31,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name = \"efferent\" && name =~ \"agent\\.run.*\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -42,10 +42,8 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "traceIdHidden": true,
               "traceService": true,
               "traceName": true,
-              "spanID": true,
               "name": true,
               "service.name": true,
               "duration": true
@@ -54,13 +52,15 @@
               "agent.prompt": 0,
               "time": 1,
               "agent.model": 2,
-              "agent.conversation_id": 3
+              "agent.conversation_id": 3,
+              "spanID": 4
             },
             "renameByName": {
               "agent.prompt": "user message",
               "time": "when",
               "agent.model": "model",
-              "agent.conversation_id": "conversation"
+              "agent.conversation_id": "conversation",
+              "spanID": "span"
             }
           }
         }
@@ -86,6 +86,10 @@
                 ]
               }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "spanID" },
+            "properties": [{ "id": "custom.width", "value": 150 }]
           }
         ]
       },

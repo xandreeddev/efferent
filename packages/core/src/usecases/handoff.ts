@@ -1,9 +1,10 @@
 import { LanguageModel, Prompt } from "@effect/ai"
-import { Effect } from "effect"
+import { Effect, FiberRef } from "effect"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
-import { HANDOFF_PROMPT } from "../prompts/handoff.js"
+import { handoffPrompt } from "../prompts/handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
+import { RunContextRef } from "./runContext.js"
 
 /**
  * Render the loaded view as a single, labelled transcript string. Tool turns
@@ -51,8 +52,9 @@ const renderTranscript = (messages: ReadonlyArray<AgentMessage>): string =>
  */
 export const generateHandoffBrief = (view: ReadonlyArray<AgentMessage>) =>
   Effect.gen(function* () {
+    const handoff = handoffPrompt()
     const prompt = Prompt.make([
-      { role: "system", content: HANDOFF_PROMPT },
+      { role: "system", content: handoff.text },
       {
         role: "user",
         content:
@@ -63,7 +65,10 @@ export const generateHandoffBrief = (view: ReadonlyArray<AgentMessage>) =>
           "\n</transcript>",
       },
     ] as never)
-    const res = yield* LanguageModel.generateText({ prompt })
+    const rc = yield* FiberRef.get(RunContextRef)
+    const res = yield* LanguageModel.generateText({ prompt }).pipe(
+      Effect.locally(RunContextRef, { ...rc, prompt: handoff }),
+    )
     return res.text.trim()
   })
 

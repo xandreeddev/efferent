@@ -1,8 +1,10 @@
-import { Effect, Option } from "effect"
+import { Effect, FiberRef, Option } from "effect"
 import type { AgentMessage } from "../entities/Conversation.js"
+import type { Prompt } from "../entities/Prompt.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { planContentCompression, type ContentPlan } from "./headroomContent.js"
+import { RunContextRef } from "./runContext.js"
 
 /**
  * **Headroom** — cache-safe context compression, inspired by the tactics in
@@ -107,10 +109,18 @@ export const shouldAutoHandoff = (
 ): boolean =>
   pct > 0 && contextWindow > 0 && inputTokens / contextWindow >= pct / 100
 
+const HEADROOM_DIGEST_PROMPT_VERSION = "1.0.0"
+
 const SUMMARIZE_PROMPT =
   "Condense the following omitted middle section of a tool output into at most 120 words. " +
   "Dense and factual: preserve identifiers, file paths, numbers, error messages. " +
   "No preamble — output only the summary."
+
+const headroomDigestPrompt = (): Prompt => ({
+  name: "headroom-digest",
+  version: HEADROOM_DIGEST_PROMPT_VERSION,
+  text: SUMMARIZE_PROMPT,
+})
 
 /** What one compression pass did — surfaced so callers can report spend. */
 export interface CompressionReport {
@@ -157,21 +167,27 @@ export const compressToolResults = (
     let helperUsage: TokenUsage | undefined
 
     const summarize = (dropped: string): Effect.Effect<string | undefined> =>
-      Option.isNone(utility) || dropped.length < SUMMARY_MIN_DROPPED_CHARS
-        ? Effect.succeed(undefined)
-        : utility.value
-            .complete(
-              `${SUMMARIZE_PROMPT}\n\n<omitted>\n${dropped.slice(0, SUMMARY_INPUT_MAX_CHARS)}\n</omitted>`,
-              { role: "fast" },
-            )
-            .pipe(
-              Effect.map((res) => {
-                helperUsage = sumUsage(helperUsage, res.usage)
-                return res.text
-              }),
-              Effect.catchAll(() => Effect.succeed(undefined)),
-              Effect.withSpan("agent.headroom.digest"),
-            )
+      Effect.gen(function* () {
+        if (Option.isNone(utility) || dropped.length < SUMMARY_MIN_DROPPED_CHARS) {
+          return undefined
+        }
+        const prompt = headroomDigestPrompt()
+        const rc = yield* FiberRef.get(RunContextRef)
+        return yield* utility.value
+          .complete(
+            `${prompt.text}\n\n<omitted>\n${dropped.slice(0, SUMMARY_INPUT_MAX_CHARS)}\n</omitted>`,
+            { role: "fast" },
+          )
+          .pipe(
+            Effect.locally(RunContextRef, { ...rc, prompt }),
+            Effect.map((res) => {
+              helperUsage = sumUsage(helperUsage, res.usage)
+              return res.text
+            }),
+            Effect.catchAll(() => Effect.succeed(undefined)),
+            Effect.withSpan("agent.headroom.digest"),
+          )
+      })
 
     // One string path: try a structure-aware plan first (grep shape from
     // any tool, log shape from Bash — see headroomContent.ts), fall back to
