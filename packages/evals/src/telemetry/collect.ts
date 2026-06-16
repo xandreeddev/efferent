@@ -22,7 +22,7 @@ export interface Collector {
   readonly getSpans: () => ReadonlyArray<ReadableSpan>
 }
 
-export const makeCollector = (otlpEndpoint?: string): Collector => {
+export const makeCollector = (otlpEndpoint?: string, runId?: string): Collector => {
   const exporter = new InMemorySpanExporter()
   const processors: Array<SpanProcessor> = [new SimpleSpanProcessor(exporter)]
   const metricReaders: Array<MetricReader> = []
@@ -38,7 +38,18 @@ export const makeCollector = (otlpEndpoint?: string): Collector => {
     )
   }
   const layer = NodeSdk.layer(() => ({
-    resource: { serviceName: "efferent-evals" },
+    // serviceName `efferent-evals` (→ Prometheus `job` label) keeps eval data
+    // disjoint from a real session's `efferent`; the env attr mirrors the split.
+    // `eval.run_id` is a RESOURCE attr (not just on the eval.run span) so it is
+    // queryable on every span of the run — the eval dashboard filters the
+    // eval.case trace list by `resource.eval.run_id`.
+    resource: {
+      serviceName: "efferent-evals",
+      attributes: {
+        "deployment.environment": "eval",
+        ...(runId !== undefined ? { "eval.run_id": runId } : {}),
+      },
+    },
     spanProcessor: processors,
     ...(metricReaders.length > 0 ? { metricReader: metricReaders } : {}),
   })) as Layer.Layer<never>

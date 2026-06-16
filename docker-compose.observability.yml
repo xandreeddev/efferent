@@ -19,7 +19,8 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     volumes:
-      # A dashboard PROVIDER (otel-lgtm's built-in providers only load named
-      # files, so we add our own) + the dashboards it scans.
+      # Dashboard PROVIDERS (two — one per Grafana folder: production / evals;
+      # otel-lgtm's built-in providers only load named files, so we add ours) +
+      # the dashboards tree they scan (subfolders production/ and evals/).
       - ./observability/grafana/provisioning/efferent-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/efferent-dashboards.yaml:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards/efferent:ro

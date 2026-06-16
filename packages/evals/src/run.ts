@@ -80,7 +80,13 @@ const buildConfigs = (): ReadonlyArray<RunConfig | undefined> => {
 }
 
 const otlpEndpoint = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"]
-const collector = makeCollector(otlpEndpoint)
+
+// One id for this whole invocation — a RESOURCE attribute on every eval span
+// (so the dashboard can scope the case-trace list to a single run) and printed
+// as a Grafana deep link when the data reached the stack. A driver script, so
+// Date.now() is fine.
+const runId = `run-${Date.now().toString(36)}-${Math.round(performance.now()).toString(36)}`
+const collector = makeCollector(otlpEndpoint, runId)
 
 const runConfigGroup = (config: RunConfig | undefined) =>
   Effect.gen(function* () {
@@ -134,6 +140,15 @@ const program = Effect.gen(function* () {
   } else {
     console.log(renderRuns(runs))
     console.log("")
+    // The data only reached Grafana if an OTLP endpoint was set; otherwise the
+    // report above is the whole story (in-memory only).
+    if (otlpEndpoint !== undefined && otlpEndpoint.length > 0) {
+      const grafana = process.env["EFFERENT_GRAFANA_URL"] ?? "http://localhost:3000"
+      console.log(
+        `   traces → ${grafana}/d/efferent-evals/efferent-evals?var-run=${encodeURIComponent(runId)}`,
+      )
+      console.log("")
+    }
   }
 
   const anyFail = runs.some((r) => r.suites.some((s) => s.mean < 0.6))

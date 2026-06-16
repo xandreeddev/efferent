@@ -107,6 +107,12 @@ export const Settings = Schema.Struct({
         "Conversation store location. A 'postgres://…' connection string selects Postgres; anything else (a filesystem path, optionally 'sqlite:'-prefixed) selects SQLite at that path. Unset → SQLite at ~/.efferent/efferent.db. The EFFERENT_DB_URL env var overrides this.",
     }),
   ),
+  grafanaUrl: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Base URL of the Grafana instance for the :traces / :dashboard deep links (the local grafana/otel-lgtm UI). Unset → http://localhost:3000.",
+    }),
+  ),
   anthropicThinkingEffort: Schema.optional(
     AnthropicThinkingEffort.annotations({
       description:
