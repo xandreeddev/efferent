@@ -116,6 +116,14 @@ drill-down → click a trace → native Tempo waterfall
 
 ## Notes
 
+- **Picking up dashboard/provisioning changes:** the dashboard *files* hot-reload
+  on an interval, but the provider config (`efferent-dashboards.yaml`) is read
+  only at Grafana startup, and editing it replaces the file inode — which a
+  single-file bind mount won't follow. So after changing the provisioning yaml or
+  the dashboard folder layout, **recreate** the container, don't just restart it:
+  `docker compose -f docker-compose.observability.yml down && … up -d` (a plain
+  `restart` keeps the stale mount). Verify with
+  `curl -s localhost:3000/api/search?type=dash-db`.
 - otel-lgtm is **ephemeral** local-dev infra (no volumes) — data resets on `down`.
 - Metric names follow the OTel→Prometheus normalization (`gen_ai_tokens_total`,
   `agent_turn_latency_ms_bucket`, …). If a panel shows *No data*, confirm the name
