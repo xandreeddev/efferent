@@ -170,6 +170,7 @@ export const compressToolResults = (
                 return res.text
               }),
               Effect.catchAll(() => Effect.succeed(undefined)),
+              Effect.withSpan("agent.headroom.digest"),
             )
 
     // One string path: try a structure-aware plan first (grep shape from

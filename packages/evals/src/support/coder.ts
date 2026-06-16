@@ -23,13 +23,24 @@ export interface CoderRun {
   readonly files: Record<string, string>
 }
 
+export interface RunCoderOptions {
+  /** If set, tools NOT in this list are blocked (returned to the model as an error). */
+  readonly allowTools?: ReadonlyArray<string>
+  /** Stop the loop after the first turn that issues tool calls (bounds cost). */
+  readonly stopAfterFirstToolTurn?: boolean
+  /** Files to read back from the workspace before it's torn down. */
+  readonly readback?: ReadonlyArray<string>
+  /** Pure transform of the default coder system prompt (A/B a prompt variant). */
+  readonly systemPromptOverride?: (base: string) => string
+}
+
 /** Build the root coder config for `dir` exactly as `main.ts` does. */
-const buildConfig = (dir: string) =>
+export const buildCoderConfig = (dir: string, transform: (base: string) => string = (s) => s) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
     const rootScope = yield* discoverScopeTree(dir, (_children, body) => {
-      const base = coderSystemPrompt(dir, new Date(), skills, instructionFiles)
+      const base = transform(coderSystemPrompt(dir, new Date(), skills, instructionFiles))
       return body !== undefined && body.trim().length > 0
         ? `${base}\n\n# Project scope\n\n${body}`
         : base
@@ -38,19 +49,12 @@ const buildConfig = (dir: string) =>
     return { config: coderAgentConfig(rootScope, runtime), runtime }
   })
 
-export interface RunCoderOptions {
-  /** If set, tools NOT in this list are blocked (returned to the model as an error). */
-  readonly allowTools?: ReadonlyArray<string>
-  /** Stop the loop after the first turn that issues tool calls (bounds cost). */
-  readonly stopAfterFirstToolTurn?: boolean
-  /** Files to read back from the workspace before it's torn down. */
-  readonly readback?: ReadonlyArray<string>
-}
-
 /**
  * Stand up a real coder agent over `files`, run `prompt`, and report which
  * tools it called, its final text, and the post-run contents of `readback`
- * files. The temp workspace is created and removed around the run.
+ * files. The temp workspace is created and removed around the run. Token / step
+ * / latency data is NOT collected here — the instrumented agent loop annotates
+ * its own spans, which the eval runner reads back from the in-memory exporter.
  */
 export const runCoder = (
   files: Record<string, string>,
@@ -59,7 +63,8 @@ export const runCoder = (
 ): Effect.Effect<CoderRun, unknown, EvalEnv> =>
   withTempWorkspace(files, (dir) =>
     Effect.gen(function* () {
-      const { config, runtime } = yield* buildConfig(dir)
+      const transform = opts.systemPromptOverride ?? ((s: string) => s)
+      const { config, runtime } = yield* buildCoderConfig(dir, transform)
       const store = yield* ConversationStore
       const id = yield* store.create(dir)
       const toolsRef = yield* Ref.make<ReadonlyArray<string>>([])

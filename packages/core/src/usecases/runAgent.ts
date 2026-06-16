@@ -78,6 +78,10 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
           : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       }),
+      Effect.withSpan("agent.run", {
+        attributes: { "agent.conversation_id": conversationId, "agent.model": settings.model },
+      }),
+      Effect.annotateLogs({ conversationId }),
     )
 
     // Persist exactly what the loop appended (model responses + any synthetic

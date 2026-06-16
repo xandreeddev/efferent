@@ -1,7 +1,8 @@
 import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
-import { Effect } from "effect"
+import { Clock, Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
+import { recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
 import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
 import {
   attachUsageToAssistant,
@@ -139,6 +140,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // this distinguishes "finished" from "cut off by the step cap".
     let stillWantedMore = false
 
+    // Cumulative token usage across the whole run — annotated onto the enclosing
+    // `agent.run` span at the end so the run total reads at a glance.
+    let totalIn = 0
+    let totalOut = 0
+    let totalCache = 0
+
     while (turnIndex < maxSteps) {
       if (hooks?.onTransformContext) {
         messages = yield* hooks.onTransformContext(messages)
@@ -152,18 +159,31 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         ...toPromptMessages(messages),
       ] as never)
 
+      const turnStart = yield* Clock.currentTimeMillis
       const outcome = yield* LanguageModel.generateText({
         prompt,
         toolkit,
         concurrency: input.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
       }).pipe(
+        Effect.tap((res) =>
+          Effect.annotateCurrentSpan({
+            "agent.turn": turnIndex,
+            "agent.finish_reason": String(res.finishReason),
+            "agent.tool_calls": responseToolCalls(res.content as ReadonlyArray<unknown>).length,
+            // Per-turn token usage on the turn span itself, so the waterfall is
+            // readable without expanding the child llm.generate span.
+            ...usageAttributes(extractUsage(res.usage, res.content as ReadonlyArray<unknown>)),
+          }),
+        ),
         Effect.map((res) => ({ _tag: "ok" as const, res })),
         Effect.catchAll((err) =>
           (err as { readonly _tag?: string } | null)?._tag === "MalformedOutput"
             ? Effect.succeed({ _tag: "malformed" as const, err })
             : Effect.fail(err),
         ),
+        Effect.withSpan("agent.turn", { attributes: { "agent.turn": turnIndex } }),
       )
+      yield* recordTurn((yield* Clock.currentTimeMillis) - turnStart)
 
       // Response didn't decode (e.g. an unknown tool name): feed the decode
       // error back as a corrective turn and retry, instead of aborting.
@@ -211,6 +231,9 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       }
       const usage = extractUsage(res.usage, content)
       attachUsageToAssistant(tail, usage)
+      totalIn += usage.inputTokens
+      totalOut += usage.outputTokens
+      totalCache += usage.cacheReadTokens
       messages = [...messages, ...tail]
       newTail.push(...tail)
 
@@ -242,8 +265,9 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           })
         }
       }
-      if (hooks?.onAfterToolCall) {
-        for (const tr of responseToolResults(content)) {
+      for (const tr of responseToolResults(content)) {
+        yield* recordToolCall(tr.toolName, tr.ok)
+        if (hooks?.onAfterToolCall) {
           yield* hooks.onAfterToolCall({
             turnIndex,
             toolCallId: tr.id,
@@ -271,6 +295,15 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         if (stop) break
       }
     }
+
+    // Run-level rollup on the enclosing `agent.run` span (the turn spans have
+    // closed, so the current span is the run). Distinct `agent.total_*` keys.
+    yield* Effect.annotateCurrentSpan({
+      "agent.turns": turnIndex,
+      "agent.total_input_tokens": totalIn,
+      "agent.total_output_tokens": totalOut,
+      "agent.total_cache_read_tokens": totalCache,
+    })
 
     if (hooks?.onAgentEnd) {
       yield* hooks.onAgentEnd({ messages, finalText })
