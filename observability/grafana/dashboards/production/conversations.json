@@ -37,11 +37,49 @@
           "spss": 1
         }
       ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "traceIdHidden": true,
+              "traceService": true,
+              "traceName": true,
+              "spanID": true,
+              "name": true,
+              "service.name": true,
+              "duration": true
+            },
+            "indexByName": {
+              "agent.prompt": 0,
+              "time": 1,
+              "agent.turns": 2,
+              "agent.model": 3,
+              "agent.total_input_tokens": 4,
+              "agent.total_output_tokens": 5,
+              "agent.conversation_id": 6
+            },
+            "renameByName": {
+              "agent.prompt": "user message",
+              "time": "when",
+              "agent.turns": "turns",
+              "agent.model": "model",
+              "agent.total_input_tokens": "in tok",
+              "agent.total_output_tokens": "out tok",
+              "agent.conversation_id": "conversation"
+            }
+          }
+        }
+      ],
       "fieldConfig": {
         "defaults": {},
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "span.agent.conversation_id" },
+            "matcher": { "id": "byName", "options": "agent.prompt" },
+            "properties": [{ "id": "custom.width", "value": 560 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "agent.conversation_id" },
             "properties": [
               {
                 "id": "links",
