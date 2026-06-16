@@ -4,10 +4,12 @@ import {
   AuthStore,
   costAttribute,
   extractUsage,
+  genAiContentAttributes,
   LlmInfo,
   ModelRegistry,
   recordError,
   recordLlmCall,
+  responseText,
   SettingsStore,
   usageAttributes,
   type ModelSelection,
@@ -24,6 +26,33 @@ import {
 const llmErrorTag = (e: unknown): string => {
   const t = (e as { readonly _tag?: unknown } | null)?._tag
   return typeof t === "string" ? t : "unknown"
+}
+
+/**
+ * Flatten an `@effect/ai` Prompt (array of messages, or `{ content: [...] }`)
+ * to readable `### role\n<text>` blocks for the opt-in `gen_ai.prompt` span
+ * attribute. Defensive over the runtime shape; non-text parts show as `[type]`.
+ */
+const promptToText = (prompt: unknown): string => {
+  const msgs = Array.isArray(prompt) ? prompt : (prompt as { content?: unknown } | null)?.content
+  if (!Array.isArray(msgs)) return ""
+  const blocks: Array<string> = []
+  for (const m of msgs as Array<{ role?: unknown; content?: unknown }>) {
+    const role = typeof m.role === "string" ? m.role : "?"
+    const c = m.content
+    const text =
+      typeof c === "string"
+        ? c
+        : Array.isArray(c)
+          ? (c as Array<{ text?: unknown; type?: unknown }>)
+              .map((p) =>
+                typeof p.text === "string" ? p.text : typeof p.type === "string" ? `[${p.type}]` : "",
+              )
+              .join("")
+          : ""
+    blocks.push(`### ${role}\n${text}`)
+  }
+  return blocks.join("\n\n")
 }
 
 /**
@@ -77,18 +106,37 @@ export const RouterLanguageModelLive = Layer.effect(
     }
 
     // Annotate the active `llm.generate` span + record metrics for one main-tier
-    // response. Pure observation — the response passes through untouched.
-    const observe = (sel: ModelSelection, res: { usage?: unknown; content?: ReadonlyArray<unknown> }) =>
-      Effect.suspend(() => {
+    // response. Pure observation — the response passes through untouched. When
+    // `telemetryCaptureContent` is on, the prompt + completion text are attached
+    // too (clipped) so the call's I/O reads right in the trace.
+    const observe = (
+      sel: ModelSelection,
+      options: unknown,
+      res: { usage?: unknown; content?: ReadonlyArray<unknown> },
+    ) =>
+      Effect.gen(function* () {
         const usage = extractUsage(res.usage, res.content ?? [])
-        return Effect.annotateCurrentSpan({
+        const settings = yield* settingsStore.get()
+        // Capturing prompt/completion goes hand in hand with telemetry being on
+        // — no separate knob. (Serialize only when on; when off the span is a
+        // no-op anyway.)
+        const content =
+          settings.telemetry === true
+            ? genAiContentAttributes(
+                promptToText((options as { prompt?: unknown }).prompt),
+                responseText(res.content ?? []),
+              )
+            : {}
+        yield* Effect.annotateCurrentSpan({
           "gen_ai.request.model": sel.modelId,
           "gen_ai.system": sel.provider,
           "gen_ai.role": "main",
           "gen_ai.operation.name": "generate",
           ...usageAttributes(usage),
           ...costAttribute(sel.provider, sel.modelId, usage),
-        }).pipe(Effect.zipRight(recordLlmCall("main", sel.provider, sel.modelId, usage)))
+          ...content,
+        })
+        yield* recordLlmCall("main", sel.provider, sel.modelId, usage)
       })
 
     // A failed `llm.generate` (bad/expired key, provider 4xx/5xx, rate limit)
@@ -107,7 +155,7 @@ export const RouterLanguageModelLive = Layer.effect(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
                 svc
                   .generateText(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(Effect.tap((res) => observe(sel, res))),
+                  .pipe(Effect.tap((res) => observe(sel, options, res))),
               ),
             ),
           ),
@@ -124,7 +172,7 @@ export const RouterLanguageModelLive = Layer.effect(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
                 svc
                   .generateObject(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(Effect.tap((res) => observe(sel, res))),
+                  .pipe(Effect.tap((res) => observe(sel, options, res))),
               ),
             ),
           ),
