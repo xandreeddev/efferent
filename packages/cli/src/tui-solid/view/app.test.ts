@@ -155,6 +155,40 @@ test("errors surface on the rail", async () => {
   }
 })
 
+test("a provider 401 renders as a compact, actionable rail block (no token, no flood)", async () => {
+  const store = newStore()
+  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
+    width: 90,
+    height: 20,
+  })
+  try {
+    // What `submit` now offers to the rail for a revoked-token 401 — the
+    // compact `formatFullError` output, NOT the old 75-line inspect dump that
+    // flooded the pane and leaked the bearer token.
+    const reduce = makeEventReducer(store)
+    store.pushBlock({ kind: "user", text: "do the thing" })
+    reduce({
+      type: "error",
+      message:
+        "openai request failed (401 token_revoked): Unauthorized - Verify API key.\n" +
+        "→ openai credential rejected — run :login to refresh it, or :model to switch provider",
+    })
+
+    const frame = await waitForFrame((f) => f.includes(":login"))
+    // The actionable hint is visible…
+    expect(frame).toContain("401 token_revoked")
+    expect(frame).toContain(":login")
+    expect(frame).toContain(":model")
+    // …the credential never leaks into the UI…
+    expect(frame).not.toContain("Bearer")
+    expect(frame.toLowerCase()).not.toContain("authorization")
+    // …and the error stayed small enough that the prior message is still on screen.
+    expect(frame).toContain("do the thing")
+  } finally {
+    renderer.destroy()
+  }
+})
+
 test("the side pane switches to the context viewer and renders the turn tree", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
