@@ -218,7 +218,7 @@ export const openSettingsView = (store: TuiStore) =>
         label: "telemetry",
         value: String(current.telemetry ?? false),
         kind: "boolean",
-        hint: "OTLP traces+metrics → Grafana (applies next launch; run obs:up)",
+        hint: "OTLP traces+metrics (+ LLM prompt/completion) → Grafana (next launch; run obs:up)",
       },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]

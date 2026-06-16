@@ -62,7 +62,7 @@ export const Settings = Schema.Struct({
   telemetry: Schema.optional(
     Schema.Boolean.annotations({
       description:
-        "Export OpenTelemetry traces + metrics for every session. This is the SOLE switch (`:set telemetry on`); unset/false → no export (zero overhead). The OTLP endpoint defaults to http://localhost:4318 (a local grafana/otel-lgtm), override with OTEL_EXPORTER_OTLP_ENDPOINT — that controls WHERE, not WHETHER.",
+        "Export OpenTelemetry traces + metrics for every session. This is the SOLE switch (`:set telemetry on`); unset/false → no export (zero overhead). When on, each LLM call's prompt + completion text is captured as `gen_ai.prompt`/`gen_ai.completion` span attributes (clipped) so traces show the I/O. The OTLP endpoint defaults to http://localhost:4318 (a local grafana/otel-lgtm), override with OTEL_EXPORTER_OTLP_ENDPOINT — that controls WHERE, not WHETHER.",
     }),
   ),
   editorMode: EditorMode.annotations({
