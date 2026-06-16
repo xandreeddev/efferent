@@ -137,6 +137,18 @@ export const RouterLanguageModelLive = Layer.effect(
           ...content,
         })
         yield* recordLlmCall("main", sel.provider, sel.modelId, usage)
+        // Emit the same prompt/completion as trace+span-correlated logs so
+        // Grafana's "Logs for this span" on the `llm.generate` span shows the
+        // call's input & output. Span attributes are easy to miss; the logs
+        // pane is where people look. Reuses the already-clipped attribute
+        // values, gated on telemetry like them, and runs inside the span scope
+        // so the lines carry this span's id and fall within its time window
+        // (the per-turn heartbeat is logged later, outside this span, which is
+        // why it never showed here).
+        const output = content["gen_ai.completion"]
+        if (output !== undefined) yield* Effect.logInfo(`llm output ▸ ${output}`)
+        const input = content["gen_ai.prompt"]
+        if (input !== undefined) yield* Effect.logInfo(`llm input ▸ ${input}`)
       })
 
     // A failed `llm.generate` (bad/expired key, provider 4xx/5xx, rate limit)
