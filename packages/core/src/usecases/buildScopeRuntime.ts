@@ -10,6 +10,7 @@ import type {
   AgentHooks,
 } from "../entities/AgentHooks.js"
 import type { AgentMessage } from "../entities/Conversation.js"
+import type { Prompt } from "../entities/Prompt.js"
 import type { Scope } from "../entities/Scope.js"
 import { renderScopeSystemPrompt } from "../prompts/coder.js"
 import type { Approval } from "../ports/Approval.js"
@@ -18,6 +19,7 @@ import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
 import { WebSearch } from "../ports/WebSearch.js"
+import { subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import {
   codingToolkit,
@@ -287,6 +289,8 @@ interface RunSpawnedArgs<R> {
   readonly parentNodeId: ContextNodeId | null
   readonly rootConversationId: import("../entities/Conversation.js").ConversationId | null
   readonly tokenPool: TokenPool
+  /** The parent run's context so we can propagate prompt identity, step cap, etc. */
+  readonly runContext: import("./runContext.js").RunContext
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
   readonly maxSteps?: number
   /** Headroom budget (chars) per tool-result string, via `RunContext`. */
@@ -343,6 +347,14 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       body: body ?? "",
       now: new Date(),
     })
+    const parentPrompt = args.runContext.prompt
+    const childPrompt: Prompt | undefined =
+      parentPrompt !== undefined
+        ? {
+            ...parentPrompt,
+            name: `${parentPrompt.name}:${label}`,
+          }
+        : undefined
 
     const childLayer = genericToolkit.toLayer(
       buildGenericHandlers(binding, opts, hooks, args.locks),
@@ -352,6 +364,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       parentNodeId: nodeId,
       depth: args.parentDepth + 1,
       tokenPool: args.tokenPool,
+      ...(childPrompt !== undefined ? { prompt: childPrompt } : {}),
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
@@ -376,7 +389,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       // llm.generate / tool spans already nest beneath via Effect span
       // propagation; this labels the whole branch with its node + folder so
       // parallel fan-outs are distinguishable.
-      Effect.withSpan("agent.subagent", {
+      Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
         attributes: {
           "agent.subagent.node_id": nodeId,
           "agent.subagent.depth": args.parentDepth + 1,
@@ -522,6 +535,7 @@ const makeRunAgentHandler =
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
+            runContext: rc,
             ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
             ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
           })
@@ -556,6 +570,7 @@ const makeRunAgentHandler =
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
+          runContext: rc,
           ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
           ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
         })
@@ -580,6 +595,7 @@ const makeRunAgentHandler =
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
+        runContext: rc,
         ...(rc.subAgentMaxSteps !== undefined ? { maxSteps: rc.subAgentMaxSteps } : {}),
         ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
       })
@@ -648,6 +664,7 @@ export const buildScopeRuntime = <R = never>(
       const taskMsg = brief !== undefined ? `${brief}\n\n${task}` : task
       yield* store.append(nodeId, { role: "user", content: taskMsg })
       const seedMessages = yield* store.listMessages(nodeId)
+      const rc = yield* FiberRef.get(RunContextRef)
       return yield* runSpawnedAgent({
         store,
         shell,
@@ -664,6 +681,7 @@ export const buildScopeRuntime = <R = never>(
         parentNodeId: node.parentId,
         rootConversationId: node.rootConversationId,
         tokenPool,
+        runContext: rc,
         ...(maxSteps !== undefined ? { maxSteps } : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       })

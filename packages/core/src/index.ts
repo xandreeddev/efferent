@@ -6,6 +6,7 @@ export * from "./entities/Model.js"
 export * from "./entities/Scope.js"
 export * from "./entities/Skill.js"
 export * from "./entities/Settings.js"
+export * from "./entities/Prompt.js"
 
 // Ports
 export * from "./ports/Approval.js"
@@ -24,6 +25,8 @@ export * from "./ports/WebSearch.js"
 
 // Prompts
 export * from "./prompts/coder.js"
+export * from "./prompts/title.js"
+export * from "./prompts/handoff.js"
 
 // Use cases
 export * from "./usecases/agentConfig.js"
@@ -46,3 +49,4 @@ export * from "./usecases/generateTitle.js"
 
 // Telemetry
 export * from "./telemetry/metrics.js"
+export * from "./telemetry/spanNames.js"

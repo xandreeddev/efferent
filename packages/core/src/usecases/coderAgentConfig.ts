@@ -1,4 +1,5 @@
 import type { Tool } from "@effect/ai"
+import type { Prompt } from "../entities/Prompt.js"
 import type { Scope } from "../entities/Scope.js"
 import type { AgentConfig } from "./agentConfig.js"
 import type { ScopeRuntime } from "./buildScopeRuntime.js"
@@ -14,8 +15,16 @@ import type { ScopeRuntime } from "./buildScopeRuntime.js"
 export const coderAgentConfig = (
   rootScope: Scope,
   runtime: ScopeRuntime,
+  prompt?: Prompt,
 ): AgentConfig<Record<string, Tool.Any>> => ({
   key: `coder:${rootScope.rootDir}`,
-  systemPrompt: rootScope.systemPrompt,
+  prompt:
+    prompt !== undefined
+      ? { ...prompt, text: rootScope.systemPrompt }
+      : {
+          name: "coder",
+          version: "1.0.0",
+          text: rootScope.systemPrompt,
+        },
   toolkit: runtime.toolkit,
 })

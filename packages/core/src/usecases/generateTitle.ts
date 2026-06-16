@@ -1,8 +1,9 @@
-import { Effect } from "effect"
+import { Effect, FiberRef } from "effect"
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm, type UtilityLlmError } from "../ports/UtilityLlm.js"
-import { TITLE_PROMPT } from "../prompts/title.js"
+import { titlePrompt } from "../prompts/title.js"
+import { RunContextRef } from "./runContext.js"
 
 const clip = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n - 1)}…`
@@ -60,10 +61,12 @@ export const generateSessionTitle = (
         : []),
     ].join("\n\n")
     const utility = yield* UtilityLlm
+    const prompt = titlePrompt()
+    const rc = yield* FiberRef.get(RunContextRef)
     const res = yield* utility.complete(
-      `${TITLE_PROMPT}\n\n<exchange>\n${excerpt}\n</exchange>`,
+      `${prompt.text}\n\n<exchange>\n${excerpt}\n</exchange>`,
       { role: "fast" },
-    )
+    ).pipe(Effect.locally(RunContextRef, { ...rc, prompt }))
     return {
       title: sanitizeTitle(res.text),
       ...(res.usage !== undefined ? { usage: res.usage } : {}),

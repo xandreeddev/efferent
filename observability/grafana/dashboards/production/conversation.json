@@ -28,7 +28,7 @@
       "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "Messages for conversation **`$conversation`** — one row per user message (`agent.run`). Click a **Trace ID** to open its full execution waterfall. Set the `conversation id` variable (top-left) or arrive here from the **conversations** dashboard."
+        "content": "Messages for conversation **`$conversation`** — one row per user message (`agent.run`). Click a row's **span** to open its full execution waterfall focused on that `agent.run` span. Set the `conversation id` variable (top-left) or arrive here from the **conversations** dashboard."
       }
     },
     {
@@ -41,7 +41,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name = \"efferent\" && name =~ \"agent\\.run.*\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -52,10 +52,8 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "traceIdHidden": true,
               "traceService": true,
               "traceName": true,
-              "spanID": true,
               "name": true,
               "service.name": true,
               "duration": true
@@ -63,12 +61,14 @@
             "indexByName": {
               "agent.prompt": 0,
               "time": 1,
-              "agent.model": 2
+              "agent.model": 2,
+              "spanID": 3
             },
             "renameByName": {
               "agent.prompt": "user message",
               "time": "when",
-              "agent.model": "model"
+              "agent.model": "model",
+              "spanID": "span"
             }
           }
         }
@@ -79,6 +79,10 @@
           {
             "matcher": { "id": "byName", "options": "agent.prompt" },
             "properties": [{ "id": "custom.width", "value": 620 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "spanID" },
+            "properties": [{ "id": "custom.width", "value": 150 }]
           }
         ]
       },
@@ -94,7 +98,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name = \"agent.tool\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name =~ \"agent\\.tool.*\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
           "tableType": "spans",
           "limit": 200,
           "spss": 5
@@ -113,7 +117,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name = \"agent.turn\" } | quantile_over_time(duration, .95)",
+          "query": "{ resource.service.name = \"efferent\" && span.agent.conversation_id = \"$conversation\" && name =~ \"agent\\.turn.*\" } | quantile_over_time(duration, .95)",
           "tableType": "spans",
           "limit": 200
         }
