@@ -4,6 +4,7 @@ import {
   AuthStore,
   costAttribute,
   extractUsage,
+  genAiContentAttributes,
   ModelRegistry,
   modelForRole,
   recordError,
@@ -70,6 +71,9 @@ export const UtilityLlmLive = Layer.effect(
           shouldPrepend ? (prependClaudeCode(request) as typeof request) : request,
         )
         const usage = extractUsage(res.usage, res.content)
+        // Hand in hand with telemetry being on — same gate as the main tier.
+        const content =
+          settings.telemetry === true ? genAiContentAttributes(prompt, res.text) : {}
         yield* Effect.annotateCurrentSpan({
           "gen_ai.request.model": sel.modelId,
           "gen_ai.system": sel.provider,
@@ -77,6 +81,7 @@ export const UtilityLlmLive = Layer.effect(
           "gen_ai.role": role,
           ...usageAttributes(usage),
           ...costAttribute(sel.provider, sel.modelId, usage),
+          ...content,
         })
         yield* recordLlmCall(role, sel.provider, sel.modelId, usage)
         return {
