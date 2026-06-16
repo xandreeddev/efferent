@@ -1,9 +1,11 @@
 import { resolve } from "node:path"
-import { Effect, Either, Schema } from "effect"
+import { Effect, Either, FiberRef, Schema } from "effect"
+import type { Prompt } from "../entities/Prompt.js"
 import type { ApprovalRequest } from "../ports/Approval.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { recordApprovalVerdict } from "../telemetry/metrics.js"
+import { RunContextRef } from "./runContext.js"
 
 /**
  * **Auto-approval** — a FAST-tier classifier in front of the human approval
@@ -43,6 +45,14 @@ export const normalizeFolder = (folder: string, cwd: string): string => {
   const abs = resolve(cwd, folder.trim())
   return abs.length > 1 && abs.endsWith("/") ? abs.slice(0, -1) : abs
 }
+
+const APPROVAL_JUDGE_PROMPT_VERSION = "1.0.0"
+
+const approvalJudgePrompt = (text: string): Prompt => ({
+  name: "approval-judge",
+  version: APPROVAL_JUDGE_PROMPT_VERSION,
+  text,
+})
 
 export const buildJudgePrompt = (input: {
   readonly tool: string
@@ -119,14 +129,16 @@ export const judgeApproval = (
 ): Effect.Effect<JudgeOutcome, never, UtilityLlm> =>
   Effect.gen(function* () {
     const utility = yield* UtilityLlm
-    const res = yield* utility.complete(
-      buildJudgePrompt({
-        tool: req.tool,
-        summary: req.summary,
-        cwd: req.cwd,
-        permittedFolders,
-      }),
-      { role: "fast" },
+    const promptText = buildJudgePrompt({
+      tool: req.tool,
+      summary: req.summary,
+      cwd: req.cwd,
+      permittedFolders,
+    })
+    const prompt = approvalJudgePrompt(promptText)
+    const rc = yield* FiberRef.get(RunContextRef)
+    const res = yield* utility.complete(promptText, { role: "fast" }).pipe(
+      Effect.locally(RunContextRef, { ...rc, prompt }),
     )
     const verdict = parseJudgeVerdict(res.text)
     return {
@@ -144,5 +156,5 @@ export const judgeApproval = (
     Effect.catchAll(() =>
       recordApprovalVerdict("prompt").pipe(Effect.as({ verdict: "prompt" } as JudgeOutcome)),
     ),
-    Effect.withSpan("agent.approval.judge", { attributes: { "approval.tool": req.tool } }),
+    Effect.withSpan(`agent.approval.judge: ${req.tool}`, { attributes: { "approval.tool": req.tool } }),
   )

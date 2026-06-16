@@ -1,6 +1,7 @@
 import { FiberRef } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { ConversationId } from "../entities/Conversation.js"
+import type { Prompt } from "../entities/Prompt.js"
 import type { TokenPool } from "./tokenBudget.js"
 
 /**
@@ -21,6 +22,9 @@ export interface RunContext {
   readonly parentNodeId: ContextNodeId | null
   readonly depth: number
   readonly tokenPool: TokenPool
+  /** The prompt identity (name/version/variant) this run uses, surfaced on
+   *  every `llm.generate` span so Grafana shows which prompt produced the call. */
+  readonly prompt?: Prompt
   /** Per-sub-agent step cap (`Settings.subAgentMaxSteps`), threaded live per
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */

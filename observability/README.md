@@ -80,7 +80,7 @@ Folder **efferent — evals**:
 
 **Navigation flow:** conversations → click a conversation id → conversation
 drill-down → click a trace → native Tempo waterfall
-(`agent.run → agent.turn → {llm.generate, agent.tool, agent.subagent → …}`).
+(`agent.run → agent.turn <n> → {llm.generate <prompt>@<version> · <provider>/<model>, agent.tool.<name>, agent.subagent <label> → …}`).
 
 ## From the CLI
 
@@ -95,11 +95,11 @@ drill-down → click a trace → native Tempo waterfall
 ## Spans & metrics
 
 - Spans: `agent.run` (per user message — `agent.conversation_id`, `agent.prompt`,
-  `agent.model`, run-total tokens) → `agent.turn` → `llm.generate`
-  (`gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.cost_usd`,
-  `gen_ai.cache_hit_ratio`), plus **`agent.tool`** (name, ok, `args_summary`),
-  **`agent.subagent`** (node/depth/folder), and the helper spans
-  `agent.approval.judge` / `agent.headroom.digest` / `agent.title`. Eval runs add
+  `agent.model`, run-total tokens) → `agent.turn <n>` → `llm.generate <prompt>@<version> · <provider>/<model>`
+  (`agent.prompt.*`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.cost_usd`,
+  `gen_ai.cache_hit_ratio`), plus **`agent.tool.<name>`** (name, ok, `args_summary`),
+  **`agent.subagent <label>`** (node/depth/folder), and the helper spans
+  `agent.approval.judge:<tool>` / `agent.headroom.digest` / `agent.title`. Eval runs add
   `eval.run → eval.suite → eval.case → eval.task` + `eval.scorer:*`
   (`resource.eval.run_id` on every eval span).
 - Metrics: `gen_ai_tokens_total`, `gen_ai_calls_total`, **`gen_ai_cost_usd_total`**,
