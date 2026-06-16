@@ -81,6 +81,34 @@ export const costAttribute = (
   }
 }
 
+/** Max chars kept per captured prompt/completion span attribute. */
+export const GEN_AI_CONTENT_CAP = 12_000
+
+/** Clip keeping the head and the tail — a prompt's system block + latest message
+ *  are the useful ends; the grown middle is what's elided. */
+const clipEnds = (s: string, max: number): string => {
+  if (s.length <= max) return s
+  const head = Math.floor(max * 0.7)
+  const tail = max - head - 32
+  return `${s.slice(0, head)}\n…[${s.length - head - tail} chars elided]…\n${s.slice(s.length - tail)}`
+}
+
+/**
+ * Opt-in span attributes carrying an LLM call's prompt + completion text
+ * (`Settings.telemetryCaptureContent`). Each is clipped to {@link
+ * GEN_AI_CONTENT_CAP}; an empty side is omitted. Names follow the GenAI
+ * convention so the trace viewer shows them inline.
+ */
+export const genAiContentAttributes = (
+  prompt: string,
+  completion: string,
+): Record<string, string> => ({
+  ...(prompt.length > 0 ? { "gen_ai.prompt": clipEnds(prompt, GEN_AI_CONTENT_CAP) } : {}),
+  ...(completion.length > 0
+    ? { "gen_ai.completion": clipEnds(completion, GEN_AI_CONTENT_CAP) }
+    : {}),
+})
+
 /**
  * Record one LLM call's spend: a call + its three token buckets + the priced
  * USD cost (when the model is in the pricing catalogue), all tagged by
