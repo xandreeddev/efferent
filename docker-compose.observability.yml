@@ -1,0 +1,25 @@
+# Local observability for efferent — one all-in-one image (OTLP collector +
+# Tempo + Prometheus + Loki + Grafana). Bring it up, point the app at it with
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, open Grafana on :3000.
+#
+#   docker compose -f docker-compose.observability.yml up -d
+#   docker compose -f docker-compose.observability.yml down
+#
+# See observability/README.md for the full runbook.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: efferent-lgtm
+    ports:
+      - "3000:3000" # Grafana UI (anonymous admin)
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    environment:
+      # Keep the demo dashboards out of the way; ours are mounted below.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      # A dashboard PROVIDER (otel-lgtm's built-in providers only load named
+      # files, so we add our own) + the dashboards it scans.
+      - ./observability/grafana/provisioning/efferent-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/efferent-dashboards.yaml:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards/efferent:ro

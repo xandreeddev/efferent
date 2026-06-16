@@ -5,11 +5,13 @@ import {
   extractUsage,
   ModelRegistry,
   modelForRole,
+  recordLlmCall,
   roleIsConfigured,
   selectionFromString,
   SettingsStore,
   UtilityLlm,
   UtilityLlmError,
+  usageAttributes,
   type ModelSelection,
   type UtilityCompletion,
 } from "@efferent/core"
@@ -66,6 +68,14 @@ export const UtilityLlmLive = Layer.effect(
           shouldPrepend ? (prependClaudeCode(request) as typeof request) : request,
         )
         const usage = extractUsage(res.usage, res.content)
+        yield* Effect.annotateCurrentSpan({
+          "gen_ai.request.model": sel.modelId,
+          "gen_ai.system": sel.provider,
+          "gen_ai.operation.name": "generate",
+          "gen_ai.role": role,
+          ...usageAttributes(usage),
+        })
+        yield* recordLlmCall(role, sel.provider, sel.modelId, usage)
         return {
           text: res.text,
           ...(usage.totalTokens > 0 || usage.outputTokens > 0 ? { usage } : {}),
@@ -73,6 +83,7 @@ export const UtilityLlmLive = Layer.effect(
       }).pipe(
         Effect.scoped,
         Effect.provideService(HttpClient.HttpClient, http),
+        Effect.withSpan("llm.generate"),
         Effect.mapError((e) => new UtilityLlmError({ message: errorMessage(e) })),
       )
 
