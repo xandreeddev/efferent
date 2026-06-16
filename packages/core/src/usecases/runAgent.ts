@@ -58,31 +58,14 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
     const toolResultMaxChars =
       settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
 
-    // A near-instant child span at run START: it ends immediately and exports on
-    // the next batch, so a sent message shows on the conversations dashboard right
-    // away — even while a long run keeps going. The full execution stays under the
-    // enclosing `agent.run` (same trace; click through for the waterfall + totals).
-    const messageMarker = Effect.void.pipe(
-      Effect.withSpan("agent.message", {
-        attributes: {
-          "agent.conversation_id": conversationId,
-          "agent.model": settings.model,
-          "agent.prompt": userPrompt.slice(0, 120),
-        },
-      }),
-    )
-
-    const result = yield* messageMarker.pipe(
-      Effect.zipRight(
-        runAgentLoop({
-          system: config.systemPrompt,
-          messages: [...prefix, ...active, userMsg],
-          toolkit: config.toolkit,
-          maxSteps: settings.maxSteps,
-          ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
-          ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
-        }),
-      ),
+    const result = yield* runAgentLoop({
+      system: config.systemPrompt,
+      messages: [...prefix, ...active, userMsg],
+      toolkit: config.toolkit,
+      maxSteps: settings.maxSteps,
+      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+      ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
+    }).pipe(
       // Seed the run context so the generic `run_agent` tool tags spawned
       // context-tree nodes with this conversation (and a null parent — top-level
       // spawns are tree roots; each spawn re-seeds for its own children).

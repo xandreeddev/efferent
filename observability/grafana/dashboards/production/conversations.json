@@ -18,7 +18,7 @@
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "Each row is **one user message** (the `agent.message` span, emitted the instant the message is sent — so it appears immediately, even while a long run is still going). Click a row's **Trace ID** to open the full execution waterfall (`agent.run → agent.turn → llm.generate / agent.tool / agent.subagent`), which fills in as the run progresses. Click a **conversation id** to drill into just that conversation's messages, or open the **Conversation drill-down** link (top-right). Filtered to `service.name = efferent` (real sessions; evals live in their own folder)."
+        "content": "Each row is **one user message** (its `agent.run` trace) — it appears once the run **completes** (the root span exports on finish; child spans show mid-run in the waterfall). Click a row's **Trace ID** to open the full execution (`agent.run → agent.turn → llm.generate / agent.tool / agent.subagent`). Click a **conversation id** to drill into just that conversation, or use the **Conversation drill-down** link (top-right). Filtered to `service.name = efferent` (real sessions; evals live in their own folder)."
       }
     },
     {
@@ -31,7 +31,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name = \"agent.message\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
