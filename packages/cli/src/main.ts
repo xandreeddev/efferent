@@ -33,6 +33,7 @@ import {
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
+import { stderrLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
 /* Composition root                                                    */
@@ -274,7 +275,7 @@ const root = Command.make(
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
-          })
+          }).pipe(Effect.provide(stderrLoggerLayer))
           return
         case "json":
           if (effectivePrompt === undefined) {
@@ -294,7 +295,7 @@ const root = Command.make(
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
-          })
+          }).pipe(Effect.provide(stderrLoggerLayer))
           return
         case "rpc":
           yield* ensureBatchCredential
@@ -303,7 +304,7 @@ const root = Command.make(
             skills,
             rootScope,
             allowBash: effectiveAllowBash,
-          })
+          }).pipe(Effect.provide(stderrLoggerLayer))
           return
         case "tui": {
           // The startup conversation picker now lives *inside* the TUI (it's an
