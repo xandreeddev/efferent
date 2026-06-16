@@ -41,12 +41,47 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model, span.agent.turns, span.agent.total_input_tokens, span.agent.total_output_tokens, span.agent.total_cache_read_tokens)",
+          "query": "{ resource.service.name = \"efferent\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
         }
       ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "traceIdHidden": true,
+              "traceService": true,
+              "traceName": true,
+              "spanID": true,
+              "name": true,
+              "service.name": true,
+              "duration": true
+            },
+            "indexByName": {
+              "agent.prompt": 0,
+              "time": 1,
+              "agent.model": 2
+            },
+            "renameByName": {
+              "agent.prompt": "user message",
+              "time": "when",
+              "agent.model": "model"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "agent.prompt" },
+            "properties": [{ "id": "custom.width", "value": 620 }]
+          }
+        ]
+      },
       "options": { "showHeader": true }
     },
     {
