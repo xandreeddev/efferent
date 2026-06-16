@@ -312,7 +312,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       }
       for (const tr of responseToolResults(content)) {
         yield* recordToolCall(tr.toolName, tr.ok)
-        if (!tr.ok) yield* recordError("tool", tr.toolName)
+        if (!tr.ok) {
+          yield* recordError("tool", tr.toolName)
+          // A trace-correlated log of the failure (visible in "Logs for this
+          // trace" via the OTLP→Loki pipeline when telemetry is on).
+          yield* Effect.logWarning(`tool ${tr.toolName} failed`)
+        }
         if (hooks?.onAfterToolCall) {
           yield* hooks.onAfterToolCall({
             turnIndex,
@@ -324,6 +329,17 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           })
         }
       }
+
+      // Per-turn heartbeat → the trace's log narrative (OTLP→Loki, correlated
+      // by trace_id; inherits the run's `conversationId` annotation). One line
+      // per turn, so "Logs for this trace" reads the execution at a glance.
+      yield* Effect.logInfo(
+        `turn ${turnIndex}: ${res.finishReason}` +
+          (toolCalls.length > 0
+            ? ` · ${toolCalls.length} tool call${toolCalls.length === 1 ? "" : "s"}`
+            : "") +
+          ` · ${usage.totalTokens} tok`,
+      )
 
       turnIndex++
 
