@@ -44,9 +44,13 @@ export const createFileLogger = (path: string) => {
 }
 
 /**
- * Layer that ADDS our logger to the current set. (`Logger.replace`
- * empirically still fires the default logger alongside it in Effect
- * 3.21; we `Logger.add` and silence console.* in the TUI driver.)
+ * Layer that REPLACES the console logger with our file logger, so `Effect.log*`
+ * never writes to stdout and corrupts the OpenTUI alt-buffer. We target
+ * `Logger.prettyLoggerDefault` — the instance `@effect/platform`'s runMain puts
+ * in the live set (it removes `Logger.defaultLogger` first) — so the stdout sink
+ * is genuinely gone. The OTLP logger the telemetry layer adds
+ * (`Logger.addScoped`) is a separate entry, so logs still ship to Loki with
+ * their trace context; this only swaps the console sink.
  */
 export const fileLoggerLayer = (path: string) =>
-  Logger.add(createFileLogger(path))
+  Logger.replace(Logger.prettyLoggerDefault, createFileLogger(path))
