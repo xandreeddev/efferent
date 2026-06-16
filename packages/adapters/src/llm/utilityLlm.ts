@@ -2,9 +2,11 @@ import { Prompt } from "@effect/ai"
 import { HttpClient } from "@effect/platform"
 import {
   AuthStore,
+  costAttribute,
   extractUsage,
   ModelRegistry,
   modelForRole,
+  recordError,
   recordLlmCall,
   roleIsConfigured,
   selectionFromString,
@@ -74,6 +76,7 @@ export const UtilityLlmLive = Layer.effect(
           "gen_ai.operation.name": "generate",
           "gen_ai.role": role,
           ...usageAttributes(usage),
+          ...costAttribute(sel.provider, sel.modelId, usage),
         })
         yield* recordLlmCall(role, sel.provider, sel.modelId, usage)
         return {
@@ -83,6 +86,15 @@ export const UtilityLlmLive = Layer.effect(
       }).pipe(
         Effect.scoped,
         Effect.provideService(HttpClient.HttpClient, http),
+        Effect.tapError((e) =>
+          Effect.annotateCurrentSpan({ error: true }).pipe(
+            Effect.zipRight(
+              recordError("llm", typeof (e as { _tag?: unknown })?._tag === "string"
+                ? String((e as { _tag?: unknown })._tag)
+                : "unknown"),
+            ),
+          ),
+        ),
         Effect.withSpan("llm.generate"),
         Effect.mapError((e) => new UtilityLlmError({ message: errorMessage(e) })),
       )

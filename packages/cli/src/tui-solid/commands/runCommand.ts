@@ -22,6 +22,7 @@ import {
   openSettingsView,
 } from "../actions/settings.js"
 import { logout, openLoginFlow } from "../actions/login.js"
+import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
@@ -153,6 +154,12 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     }
     case ":db":
       void ctx.run(applyDb(store, store.status().cwd, arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)))
+      return
+    case ":traces":
+      void ctx.run(openConversationTraces(store, store.run.getConversationId()))
+      return
+    case ":dashboard":
+      void ctx.run(openFleetDashboard(store))
       return
     default:
       store.pushBlock({

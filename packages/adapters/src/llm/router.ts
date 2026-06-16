@@ -2,9 +2,11 @@ import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
 import {
   AuthStore,
+  costAttribute,
   extractUsage,
   LlmInfo,
   ModelRegistry,
+  recordError,
   recordLlmCall,
   SettingsStore,
   usageAttributes,
@@ -17,6 +19,12 @@ import {
   prependClaudeCode,
   withAnthropicCacheBreakpoints,
 } from "./providers.js"
+
+/** The typed error's `_tag` (a bounded label) for the `llm` error metric. */
+const llmErrorTag = (e: unknown): string => {
+  const t = (e as { readonly _tag?: unknown } | null)?._tag
+  return typeof t === "string" ? t : "unknown"
+}
 
 /**
  * The single `LanguageModel` the agent loop talks to. It is provider-agnostic:
@@ -79,8 +87,17 @@ export const RouterLanguageModelLive = Layer.effect(
           "gen_ai.role": "main",
           "gen_ai.operation.name": "generate",
           ...usageAttributes(usage),
+          ...costAttribute(sel.provider, sel.modelId, usage),
         }).pipe(Effect.zipRight(recordLlmCall("main", sel.provider, sel.modelId, usage)))
       })
+
+    // A failed `llm.generate` (bad/expired key, provider 4xx/5xx, rate limit)
+    // marks the span errored + records the bounded `_tag`, then re-raises — RED
+    // panels read `agent_errors_total{kind="llm"}`. Observe-only.
+    const observeError = (e: unknown) =>
+      Effect.annotateCurrentSpan({ error: true }).pipe(
+        Effect.zipRight(recordError("llm", llmErrorTag(e))),
+      )
 
     const service: LanguageModel.Service = {
       generateText: (options) =>
@@ -96,6 +113,7 @@ export const RouterLanguageModelLive = Layer.effect(
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
+          Effect.tapError(observeError),
           Effect.withSpan("llm.generate"),
         ),
 
@@ -112,6 +130,7 @@ export const RouterLanguageModelLive = Layer.effect(
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
+          Effect.tapError(observeError),
           Effect.withSpan("llm.generate"),
         ),
 

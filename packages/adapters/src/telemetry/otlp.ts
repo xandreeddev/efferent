@@ -21,6 +21,14 @@ export const OtlpTelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
     const serviceName = yield* Config.string("OTEL_SERVICE_NAME").pipe(
       Config.withDefault("efferent"),
     )
-    return Otlp.layerJson({ baseUrl, resource: { serviceName } })
+    // `service.name` is the prod/eval split (it surfaces as the Prometheus
+    // `job` label and is queryable in Tempo); `deployment.environment` mirrors
+    // it for dashboards that prefer a stable env tag. A real session is
+    // "production"; eval runs set their own resource (`efferent-evals` / "eval").
+    const env = yield* Config.string("EFFERENT_OTEL_ENV").pipe(Config.withDefault("production"))
+    return Otlp.layerJson({
+      baseUrl,
+      resource: { serviceName, attributes: { "deployment.environment": env } },
+    })
   }).pipe(Effect.orDie),
 ).pipe(Layer.provide(FetchHttpClientLive))

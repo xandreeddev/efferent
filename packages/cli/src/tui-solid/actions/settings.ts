@@ -213,6 +213,13 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "boolean",
         hint: "sending folds the previous turns",
       },
+      {
+        key: "telemetry",
+        label: "telemetry",
+        value: String(current.telemetry ?? false),
+        kind: "boolean",
+        hint: "OTLP traces+metrics → Grafana (applies next launch; run obs:up)",
+      },
       { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
@@ -224,7 +231,7 @@ const reflectRow = (store: TuiStore, key: string, value: string): void => {
   if (o.kind === "settings") store.setOverlay({ kind: "settings", state: setRowValue(o.state, key, value) })
 }
 
-/** Toggle a boolean settings row (`allowBash`, `autoApprove`, `autoCollapse`) + persist. */
+/** Toggle a boolean settings row (`allowBash`, `autoApprove`, `autoCollapse`, `telemetry`) + persist. */
 export const toggleBooleanSetting = (store: TuiStore, key: string, currentValue: string) =>
   Effect.gen(function* () {
     const next = currentValue !== "true"
@@ -303,6 +310,23 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => {
         store.toast(`Updated autoCollapse → ${on ? "on (sending folds previous turns)" : "off"}`)
         reflectRow(store, "autoCollapse", String(on))
+      })
+      return
+    }
+    if (key === "telemetry") {
+      const on = value === "true" || value === "on"
+      const off = value === "false" || value === "off"
+      if (!on && !off) return yield* err("Setting 'telemetry' must be 'on' or 'off'")
+      yield* settings.update((curr) => ({ ...curr, telemetry: on }))
+      yield* Effect.sync(() => {
+        // The OTLP tracer is composed at boot (like the db store), so the export
+        // toggle takes effect on the next launch — say so rather than imply live.
+        store.toast(
+          on
+            ? "Updated telemetry → on · OTLP export starts next launch (run obs:up; traces in Grafana)"
+            : "Updated telemetry → off · applies next launch",
+        )
+        reflectRow(store, "telemetry", String(on))
       })
       return
     }
@@ -405,8 +429,26 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       })
       return
     }
+    if (key === "grafanaUrl") {
+      // Base URL for the :traces / :dashboard deep links. 'default' clears it
+      // (→ http://localhost:3000). Trailing slash trimmed so the URL builders
+      // can append `/d/…` cleanly.
+      const isUrl = /^https?:\/\/\S+$/.test(value)
+      if (value !== "default" && !isUrl) {
+        return yield* err("Setting 'grafanaUrl' must be a http(s):// URL, or 'default'")
+      }
+      yield* settings.update((curr) => {
+        if (value === "default") {
+          const { grafanaUrl: _drop, ...rest } = curr
+          return rest
+        }
+        return { ...curr, grafanaUrl: value.replace(/\/+$/, "") }
+      })
+      yield* Effect.sync(() => store.toast(`Updated grafanaUrl → ${value === "default" ? "default (http://localhost:3000)" : value.replace(/\/+$/, "")}`))
+      return
+    }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, telemetry, grafanaUrl`,
     )
   })
 

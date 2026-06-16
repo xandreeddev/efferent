@@ -2,7 +2,7 @@ import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
 import { Clock, Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
-import { recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
+import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
 import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
 import {
   attachUsageToAssistant,
@@ -62,6 +62,33 @@ export const DEFAULT_TOOL_CONCURRENCY = 4
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
 
 /**
+ * A short, safe one-line label for a tool call on its `agent.tool` span. NOT a
+ * parse or a validation — by the time this runs `@effect/ai` has already
+ * schema-decoded the args (a bad shape never reaches the handler), and here the
+ * toolkit is generic so `params` is type-erased (`unknown`). This only PROJECTS
+ * the args for display, so it stays a *total, schema-free, tool-agnostic* read
+ * over arbitrary (and future) tool shapes: keep short scalar fields, and drop
+ * arrays/objects and any long string — a file's contents or a big diff is noise
+ * (and unwanted) in a trace label. A label, not a contract — best-effort by
+ * design; clipped as a final backstop.
+ */
+export const safeArgsSummary = (params: unknown): string => {
+  if (params === null || typeof params !== "object") return ""
+  const parts: string[] = []
+  for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+    // Long strings are a file's contents / a big diff — never surfaced. Short
+    // scalars (path, command, query, pattern, timeout, …) are the useful label;
+    // arrays/objects (edit lists, nested params) are dropped as noise.
+    if (typeof v === "string") {
+      if (v.length > 0 && v.length <= 120) parts.push(`${k}=${v}`)
+    } else if (typeof v === "number" || typeof v === "boolean") {
+      parts.push(`${k}=${v}`)
+    }
+  }
+  return clip(parts.join(" "), 200)
+}
+
+/**
  * `@effect/ai` decodes a *known* tool call's parameters inside `Toolkit.handle`,
  * before our handler runs — so a wrong-shaped call (right name, bad args) fails
  * with `AiError.MalformedOutput`, which `failureMode: "return"` never sees (it
@@ -101,6 +128,23 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
           )} — the arguments did not match the tool's schema; re-call the tool with parameters that match its documented shape.`,
         }
         return Effect.succeed({ isFailure: true, result: failure, encodedResult: failure })
+      }),
+      // One span per tool execution — the seam every tool call funnels through
+      // (base tools, run_agent, sub-agent tools), so the trace waterfall shows
+      // the tools under each turn (a graceful `failureMode:"return"` failure is
+      // a *result* with `isFailure:true`, marked on the span so TraceQL
+      // `{ status = error }` and the RED panels see it).
+      Effect.tap((r) => {
+        const failed = (r as { readonly isFailure?: boolean } | null)?.isFailure === true
+        return Effect.annotateCurrentSpan(
+          failed ? { "agent.tool.ok": false, error: true } : { "agent.tool.ok": true },
+        )
+      }),
+      Effect.withSpan("agent.tool", {
+        attributes: {
+          "agent.tool.name": String(name),
+          "agent.tool.args_summary": safeArgsSummary(params),
+        },
       }),
     )
   return { tools: base.tools, handle } as unknown as Toolkit.WithHandler<Tools>
@@ -189,6 +233,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       // error back as a corrective turn and retry, instead of aborting.
       if (outcome._tag === "malformed") {
         consecutiveMalformed++
+        yield* recordError("turn", "malformed")
         if (consecutiveMalformed > MAX_MALFORMED) return yield* Effect.fail(outcome.err)
         const desc = clip(
           String(
@@ -267,6 +312,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       }
       for (const tr of responseToolResults(content)) {
         yield* recordToolCall(tr.toolName, tr.ok)
+        if (!tr.ok) yield* recordError("tool", tr.toolName)
         if (hooks?.onAfterToolCall) {
           yield* hooks.onAfterToolCall({
             turnIndex,
