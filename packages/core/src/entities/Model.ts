@@ -159,6 +159,23 @@ export const catalogModelIdsForProvider = (provider: Provider): ReadonlyArray<st
 }
 
 /**
+ * Full {@link ModelInfo} rows for a provider straight from the bundled
+ * models.dev snapshot. This is the **offline fallback** the model picker and
+ * router use when a provider's live `/models` call is unreachable (transport
+ * error, API down, rate-limited): a logged-in provider always contributes its
+ * known models so a single outage never empties the picker. Empty for
+ * providers absent from the snapshot (e.g. `ollama`, whose models are whatever
+ * is pulled locally) — those legitimately have no static fallback.
+ */
+export const catalogModelsForProvider = (provider: Provider): ReadonlyArray<ModelInfo> =>
+  catalogModelIdsForProvider(provider).map((modelId) => ({
+    provider,
+    modelId,
+    displayName: modelId,
+    contextWindow: contextWindowFor(provider, modelId),
+  }))
+
+/**
  * Context-window size for the status-bar gauge. Prefers the generated
  * catalogue (the real per-model limit from models.dev — neither Anthropic's nor
  * OpenAI's `/models` API reports it); falls back to a per-provider substring
@@ -208,6 +225,33 @@ export const effortSettingKeyFor = (
     case "ollama":
       return undefined
   }
+}
+
+/**
+ * Estimated USD cost of one turn's token usage for `model`, from the generated
+ * pricing snapshot (models.dev — prices are per 1M tokens). `cacheReadTokens`
+ * is a subset of `inputTokens` billed at the cheaper cache-read rate; the rest
+ * of the input is billed at the input rate. Returns `undefined` when the model
+ * carries no pricing in the catalogue, so a caller shows "n/a" rather than a
+ * wrong number. Pure — structural `usage` avoids a `LlmInfo` import cycle.
+ */
+export const costUsd = (
+  model: string,
+  usage: {
+    readonly inputTokens: number
+    readonly outputTokens: number
+    readonly cacheReadTokens: number
+  },
+): number | undefined => {
+  const { provider, modelId } = parseModel(model)
+  const cost = catalogLookup(provider, modelId)?.cost
+  if (cost === undefined) return undefined
+  const cachedIn = Math.min(usage.cacheReadTokens, usage.inputTokens)
+  const freshIn = usage.inputTokens - cachedIn
+  return (
+    (freshIn * cost.input + cachedIn * cost.cacheRead + usage.outputTokens * cost.output) /
+    1_000_000
+  )
 }
 
 export const contextWindowFor = (provider: Provider, modelId: string): number => {

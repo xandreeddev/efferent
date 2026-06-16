@@ -9,6 +9,8 @@
     "start": "bun packages/cli/src/main.ts",
     "build": "bun run scripts/build.ts",
     "eval": "bun packages/evals/src/run.ts",
+    "obs:up": "docker compose -f docker-compose.observability.yml up -d",
+    "obs:down": "docker compose -f docker-compose.observability.yml down",
     "generate-models": "bun packages/core/scripts/generateModelCatalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && bun scripts/banTryCatch.ts",
     "prepare": "bun scripts/installHooks.ts"

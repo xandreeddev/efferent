@@ -39,11 +39,37 @@ interface ModelsDevModel {
   readonly name?: string
   readonly tool_call?: boolean
   readonly limit?: { readonly context?: number; readonly output?: number }
+  /** USD per 1M tokens. `cache_read` ≈ cached-input rate (falls back to input). */
+  readonly cost?: {
+    readonly input?: number
+    readonly output?: number
+    readonly cache_read?: number
+  }
+}
+
+interface CatalogCost {
+  readonly input: number
+  readonly output: number
+  readonly cacheRead: number
 }
 
 interface CatalogEntry {
   readonly contextWindow: number
   readonly maxTokens: number
+  readonly cost?: CatalogCost
+}
+
+/** Pull per-1M-token pricing when models.dev reports both input + output. */
+const parseCost = (m: ModelsDevModel): CatalogCost | undefined => {
+  const c = m.cost
+  if (c === undefined || typeof c.input !== "number" || typeof c.output !== "number") {
+    return undefined
+  }
+  return {
+    input: c.input,
+    output: c.output,
+    cacheRead: typeof c.cache_read === "number" ? c.cache_read : c.input,
+  }
 }
 
 const main = async (): Promise<void> => {
@@ -63,9 +89,11 @@ const main = async (): Promise<void> => {
       if (m.tool_call !== true) continue
       const context = m.limit?.context
       if (typeof context !== "number" || context <= 0) continue
+      const cost = parseCost(m)
       catalog[`${provider}:${modelId}`] = {
         contextWindow: context,
         maxTokens: m.limit?.output ?? 0,
+        ...(cost !== undefined ? { cost } : {}),
       }
     }
   }
@@ -79,7 +107,11 @@ const main = async (): Promise<void> => {
   const body = keys
     .map((k) => {
       const e = catalog[k]!
-      return `  ${JSON.stringify(k)}: { contextWindow: ${e.contextWindow}, maxTokens: ${e.maxTokens} },`
+      const cost =
+        e.cost !== undefined
+          ? `, cost: { input: ${e.cost.input}, output: ${e.cost.output}, cacheRead: ${e.cost.cacheRead} }`
+          : ""
+      return `  ${JSON.stringify(k)}: { contextWindow: ${e.contextWindow}, maxTokens: ${e.maxTokens}${cost} },`
     })
     .join("\n")
 
@@ -87,13 +119,20 @@ const main = async (): Promise<void> => {
 // Source: https://models.dev/api.json (snapshot ${date})
 // Regenerate: \`bun run generate-models\` (packages/core/scripts/generateModelCatalog.ts).
 //
-// Keyed by "<provider>:<modelId>". Carries each model's real context window and
-// max output tokens for the three providers efferent talks to. Consumed by
-// \`contextWindowFor\` in ./Model.ts (falls back to a heuristic for unknown ids).
+// Keyed by "<provider>:<modelId>". Carries each model's real context window,
+// max output tokens, and (when models.dev reports it) USD-per-1M-token pricing
+// for the three providers efferent talks to. Consumed by \`contextWindowFor\`
+// and \`costUsd\` in ./Model.ts (both fall back gracefully for unknown ids).
 
 export interface CatalogEntry {
   readonly contextWindow: number
   readonly maxTokens: number
+  /** USD per 1M tokens (models.dev). Absent when the source omits pricing. */
+  readonly cost?: {
+    readonly input: number
+    readonly output: number
+    readonly cacheRead: number
+  }
 }
 
 export const MODEL_CATALOG: Record<string, CatalogEntry> = {

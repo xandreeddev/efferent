@@ -1,6 +1,15 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { AuthStore, LlmInfo, ModelRegistry, SettingsStore, type ModelSelection } from "@efferent/core"
+import {
+  AuthStore,
+  extractUsage,
+  LlmInfo,
+  ModelRegistry,
+  recordLlmCall,
+  SettingsStore,
+  usageAttributes,
+  type ModelSelection,
+} from "@efferent/core"
 import { Effect, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import {
@@ -59,18 +68,35 @@ export const RouterLanguageModelLive = Layer.effect(
       return shaped as O
     }
 
+    // Annotate the active `llm.generate` span + record metrics for one main-tier
+    // response. Pure observation — the response passes through untouched.
+    const observe = (sel: ModelSelection, res: { usage?: unknown; content?: ReadonlyArray<unknown> }) =>
+      Effect.suspend(() => {
+        const usage = extractUsage(res.usage, res.content ?? [])
+        return Effect.annotateCurrentSpan({
+          "gen_ai.request.model": sel.modelId,
+          "gen_ai.system": sel.provider,
+          "gen_ai.role": "main",
+          "gen_ai.operation.name": "generate",
+          ...usageAttributes(usage),
+        }).pipe(Effect.zipRight(recordLlmCall("main", sel.provider, sel.modelId, usage)))
+      })
+
     const service: LanguageModel.Service = {
       generateText: (options) =>
         registry.current.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc.generateText(shapeOptions(sel, shouldPrepend, options)),
+                svc
+                  .generateText(shapeOptions(sel, shouldPrepend, options))
+                  .pipe(Effect.tap((res) => observe(sel, res))),
               ),
             ),
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
+          Effect.withSpan("llm.generate"),
         ),
 
       generateObject: (options) =>
@@ -78,12 +104,15 @@ export const RouterLanguageModelLive = Layer.effect(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc.generateObject(shapeOptions(sel, shouldPrepend, options)),
+                svc
+                  .generateObject(shapeOptions(sel, shouldPrepend, options))
+                  .pipe(Effect.tap((res) => observe(sel, res))),
               ),
             ),
           ),
           Effect.scoped,
           Effect.provideService(HttpClient.HttpClient, http),
+          Effect.withSpan("llm.generate"),
         ),
 
       streamText: (options) =>
