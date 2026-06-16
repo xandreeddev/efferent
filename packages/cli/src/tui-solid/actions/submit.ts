@@ -16,7 +16,7 @@ import {
   type UtilityLlm,
 } from "@efferent/core"
 import type { AgentEvent } from "../../events.js"
-import { formatFullError } from "../util/errorFormat.js"
+import { formatFullError, inspectError } from "../util/errorFormat.js"
 import { idleAgentState, submittedAgentState } from "../presentation/agentState.js"
 import { buildConversation, subjectLine } from "../presentation/conversation.js"
 import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
@@ -285,12 +285,16 @@ export const makeSubmit = (
         // root build above and the nested child-handler builds that resolve
         // it from the running fiber's context during run_agent spawns.
         Effect.provide(approvalLayer),
-        Effect.catchAll((err) => {
-          const msg = formatFullError(err)
-          return Effect.logError(msg).pipe(
-            Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
-          )
-        }),
+        Effect.catchAll((err) =>
+          // Full nested detail to the log file; a compact, secret-free,
+          // actionable line to the rail (an inspect-dump here once flooded the
+          // conversation pane and leaked the bearer token).
+          Effect.logError(inspectError(err)).pipe(
+            Effect.zipRight(
+              Queue.offer(eventQueue, { type: "error", message: formatFullError(err) }),
+            ),
+          ),
+        ),
         Effect.catchAllDefect((d) => {
           const msg = `agent run crashed: ${String(d)}`
           return Effect.logError(msg).pipe(
