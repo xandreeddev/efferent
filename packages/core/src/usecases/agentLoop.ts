@@ -89,6 +89,35 @@ export const safeArgsSummary = (params: unknown): string => {
 }
 
 /**
+ * A best-effort, throw-free projection of a tool *result* for the trace log
+ * narrative — every string/scalar leaf as `key: value`, bounded depth,
+ * ref-cycle-safe (the malformed-call wrapper points `result`/`encodedResult`
+ * at the *same* object, so the seen-set drops the duplicate). Clipped as a
+ * backstop. A log breadcrumb, not a contract — no JSON.stringify (it can throw,
+ * banned in core), no schema knowledge, total over arbitrary tool shapes.
+ */
+export const safeResultSummary = (value: unknown, max: number): string => {
+  const seen = new Set<object>()
+  const walk = (v: unknown, depth: number): string => {
+    if (typeof v === "string") return v
+    if (typeof v === "number" || typeof v === "boolean") return String(v)
+    if (v === null || v === undefined || depth >= 4 || typeof v !== "object") return ""
+    if (seen.has(v)) return ""
+    seen.add(v)
+    if (Array.isArray(v)) {
+      return v.map((x) => walk(x, depth + 1)).filter((s) => s.length > 0).join(", ")
+    }
+    const parts: string[] = []
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      const s = walk(val, depth + 1)
+      if (s.length > 0) parts.push(`${k}: ${s}`)
+    }
+    return parts.join("\n")
+  }
+  return clip(walk(value, 0), max)
+}
+
+/**
  * `@effect/ai` decodes a *known* tool call's parameters inside `Toolkit.handle`,
  * before our handler runs — so a wrong-shaped call (right name, bad args) fails
  * with `AiError.MalformedOutput`, which `failureMode: "return"` never sees (it
@@ -138,6 +167,17 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
         const failed = (r as { readonly isFailure?: boolean } | null)?.isFailure === true
         return Effect.annotateCurrentSpan(
           failed ? { "agent.tool.ok": false, error: true } : { "agent.tool.ok": true },
+        ).pipe(
+          // Tool I/O as a trace+span-correlated log, emitted INSIDE the
+          // `agent.tool` span so Grafana's "Logs for this span" on a tool call
+          // shows its args + result (the same idea as the llm.generate I/O
+          // logs). Clipped — the full result still lives in the buffer/span.
+          Effect.zipRight(
+            Effect.logInfo(
+              `tool ${String(name)}(${safeArgsSummary(params)}) ${failed ? "✗ failed" : "▸ ok"}\n` +
+                safeResultSummary(r, 1500),
+            ),
+          ),
         )
       }),
       Effect.withSpan("agent.tool", {
