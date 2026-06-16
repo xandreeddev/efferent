@@ -70,31 +70,21 @@ const AppLive = Layer.mergeAll(
 ).pipe(Layer.provideMerge(CredentialsLive))
 
 /**
- * Whether to export OpenTelemetry for this session — enabled by `EFFERENT_OTLP`,
- * an explicit `OTEL_EXPORTER_OTLP_ENDPOINT`, or `telemetry: true` in config.json.
- * Read at boot (synchronously, like `seedDbUrlFromConfig`) so the tracer layer
- * is installed before the agent runs. Off ⇒ no tracer, so the instrumented
- * spans/metrics are no-ops with zero overhead.
+ * Whether to export OpenTelemetry for this session is driven SOLELY by the
+ * persisted `telemetry` setting (`:set telemetry on`, or `telemetry: true` in
+ * config.json) — read through the `SettingsStore` whose schema defaults it off,
+ * not from any env var. The tracer layer is chosen from that one read at
+ * composition time; off ⇒ no tracer, so the instrumented spans/metrics are
+ * no-ops with zero overhead. (The OTLP endpoint still defaults to
+ * `http://localhost:4318`, `OTEL_EXPORTER_OTLP_ENDPOINT` to override — that's
+ * WHERE to send, not WHETHER.)
  */
-const telemetryEnabled = (): boolean => {
-  if (process.env.EFFERENT_OTLP || process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return true
-  const read = (p: string): boolean | undefined => {
-    try {
-      if (!existsSync(p)) return undefined
-      const cfg = JSON.parse(readFileSync(p, "utf8")) as { telemetry?: unknown }
-      return typeof cfg.telemetry === "boolean" ? cfg.telemetry : undefined
-    } catch {
-      return undefined
-    }
-  }
-  return (
-    read(join(process.cwd(), ".efferent", "config.json")) ??
-    read(join(homedir(), ".efferent", "config.json")) ??
-    false
-  )
-}
-
-const TelemetryLayer: Layer.Layer<never> = telemetryEnabled() ? OtlpTelemetryLive : Layer.empty
+const TelemetryLive: Layer.Layer<never> = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const settings = yield* (yield* SettingsStore).load(process.cwd(), homedir())
+    return settings.telemetry === true ? OtlpTelemetryLive : Layer.empty
+  }).pipe(Effect.orElseSucceed(() => Layer.empty)),
+).pipe(Layer.provide(LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive))))
 
 /* ------------------------------------------------------------------ */
 /* CLI                                                                  */
@@ -348,7 +338,7 @@ const root = Command.make(
           return
         }
       }
-    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLayer)),
+    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
 )
 
 /* ------------------------------------------------------------------ */
