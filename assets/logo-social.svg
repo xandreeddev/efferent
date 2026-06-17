@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="100" viewBox="0 0 700 100" role="img" aria-label="efferent social">
+<title>efferent social</title><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ffa657"/><stop offset="50%" stop-color="#a3e635"/><stop offset="100%" stop-color="#2dd4bf"/></linearGradient></defs>
+<text x="12" y="54" font-family="'DejaVu Sans Mono', 'Liberation Mono', monospace" font-size="42" font-weight="600" textLength="676" lengthAdjust="spacingAndGlyphs" xml:space="preserve"><tspan fill="#e6e1d9">E F F E R E N T</tspan><tspan fill="#6e6a63"> ( </tspan><tspan fill="#a3e635" font-weight="600">social</tspan><tspan fill="#6e6a63"> )</tspan></text>
+<rect x="12" y="62" width="676" height="7" rx="1.5" fill="url(#g)"/>
+<text x="12" y="92" font-family="'DejaVu Sans Mono', 'Liberation Mono', monospace" font-size="14" fill="#9e9a93">built-in-public content engine</text>
+</svg>
