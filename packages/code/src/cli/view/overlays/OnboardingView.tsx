@@ -179,7 +179,7 @@ const OnboardingLoginView = (props: { flow: LoginFlow }) => {
     </Switch>
   )
 }
-export const OnboardingView = (props: { state: OnboardingState }) => {
+export const OnboardingView = (props: { state: OnboardingState; note?: string | undefined }) => {
   const s = () => props.state
   const loginFlowState = () => (s() as Extract<OnboardingState, { step: "login" }>).flow
 
@@ -190,20 +190,16 @@ export const OnboardingView = (props: { state: OnboardingState }) => {
       left={0}
       width="100%"
       height="100%"
-      // Opaque base surface — the onboarding is full-screen and the live rail
-      // keeps writing underneath, so a transparent fill lets that text bleed
-      // through and collide. We mask with `status.bg` (the app's own darkest
-      // base, shared with the status bar) rather than the lighter modal
-      // `overlay.bg`, so opening onboarding doesn't visibly *recolour* the
-      // screen — it reads as the same near-black surface the chrome already uses.
-      backgroundColor={tokens.status.bg}
+      // Transparent — App renders ONLY the onboarding while it's open (no panes
+      // behind it), so this shows the terminal background like the rest of the
+      // app, with nothing to bleed through. No recoloured surface.
+      backgroundColor={tokens.bgNone}
       flexDirection="column"
-      paddingLeft={4}
-      paddingRight={4}
-      paddingTop={2}
+      paddingLeft={2}
+      paddingRight={2}
+      paddingTop={1}
     >
       <Logo variant="master" />
-      <box height={1} />
 
       <box width={MODAL_RULE} flexDirection="column">
         <Show when={s().step === "login"}>
@@ -254,6 +250,14 @@ export const OnboardingView = (props: { state: OnboardingState }) => {
           </box>
         </Show>
       </box>
+
+      {/* Transient hint line (e.g. the Ctrl-C-again-to-exit arming toast) —
+          rendered here because onboarding hides the status bar that normally
+          shows it. Dim + subtle, agy-style. */}
+      <Show when={props.note !== undefined}>
+        <box flexGrow={1} />
+        <text fg={tokens.text.dim}>{props.note}</text>
+      </Show>
     </box>
   )
 }

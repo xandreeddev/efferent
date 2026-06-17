@@ -42,7 +42,10 @@ export const Overlay = (props: { ctx: TuiContext }) => {
           <ApprovalView state={(o() as Extract<OverlayState, { kind: "approval" }>).state} />
         </Show>
         <Show when={o().kind === "onboarding"}>
-          <OnboardingView state={(o() as Extract<OverlayState, { kind: "onboarding" }>).state} />
+          <OnboardingView
+            state={(o() as Extract<OverlayState, { kind: "onboarding" }>).state}
+            note={props.ctx.store.note()}
+          />
         </Show>
       </box>
     </Show>

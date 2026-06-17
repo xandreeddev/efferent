@@ -318,16 +318,22 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
     }
 
     if (key.ctrl && key.name === "c") {
+      const hasCreds = state.statuses.some((s) => s.configured !== undefined)
+      if (hasCreds) {
+        // Already signed in → Ctrl-C just dismisses the onboarding overlay.
+        if (state.step === "login" && state.flow.step === "oauth") {
+          void ctx.run(stopOAuthSession(store))
+        }
+        store.closeOverlay()
+        return true
+      }
+      // No creds → Ctrl-C would QUIT the app. Don't handle it here: fall through
+      // to the main dispatch's proven 2×-to-quit (arms with a hint, second press
+      // within 2s exits). Cancel any in-flight OAuth first.
       if (state.step === "login" && state.flow.step === "oauth") {
         void ctx.run(stopOAuthSession(store))
       }
-      const hasCreds = state.statuses.some((s) => s.configured !== undefined)
-      if (hasCreds) {
-        store.closeOverlay()
-      } else {
-        ctx.exit()
-      }
-      return true
+      return false
     }
 
     if (state.step === "login") {
