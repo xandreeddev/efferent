@@ -3,6 +3,7 @@ import { ConversationId } from "@efferent/core"
 import { emptyTree } from "../presentation/executionTree.js"
 import { emptyStats } from "../presentation/sidePane.js"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
+import { openHelp } from "../presentation/helpView.js"
 import type { TuiContext } from "../state/store.js"
 import {
   browseConversations,
@@ -81,6 +82,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     }
     case ":cwd":
       store.pushBlock({ kind: "info", text: store.status().cwd })
+      return
+    case ":help":
+      store.setOverlay({ kind: "help", state: openHelp() })
       return
     case ":context":
       void ctx.run(toggleContext(store, store.run.getConversationId()))

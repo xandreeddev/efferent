@@ -11,9 +11,12 @@ import {
   ModelRegistry,
   recordError,
   recordLlmCall,
+  responseReasoning,
   responseText,
+  responseToolCalls,
   RunContextRef,
   SettingsStore,
+  traceJson,
   usageAttributes,
   type ModelSelection,
 } from "@efferent/core"
@@ -36,9 +39,14 @@ const llmErrorTag = (e: unknown): string => {
  * to readable `### role\n<text>` blocks for the opt-in `gen_ai.prompt` span
  * attribute. Defensive over the runtime shape; non-text parts show as `[type]`.
  */
-const promptToText = (prompt: unknown): string => {
+const promptMessages = (prompt: unknown): ReadonlyArray<unknown> => {
   const msgs = Array.isArray(prompt) ? prompt : (prompt as { content?: unknown } | null)?.content
-  if (!Array.isArray(msgs)) return ""
+  return Array.isArray(msgs) ? msgs : []
+}
+
+const promptToText = (prompt: unknown): string => {
+  const msgs = promptMessages(prompt)
+  if (msgs.length === 0) return ""
   const blocks: Array<string> = []
   for (const m of msgs as Array<{ role?: unknown; content?: unknown }>) {
     const role = typeof m.role === "string" ? m.role : "?"
@@ -139,7 +147,7 @@ export const RouterLanguageModelLive = Layer.effect(
     const observe = (
       sel: ModelSelection,
       options: unknown,
-      res: { usage?: unknown; content?: ReadonlyArray<unknown> },
+      res: { usage?: unknown; content?: ReadonlyArray<unknown>; finishReason?: unknown },
     ) =>
       Effect.gen(function* () {
         const usage = extractUsage(res.usage, res.content ?? [])
@@ -147,12 +155,11 @@ export const RouterLanguageModelLive = Layer.effect(
         // Capturing prompt/completion goes hand in hand with telemetry being on
         // — no separate knob. (Serialize only when on; when off the span is a
         // no-op anyway.)
+        const prompt = (options as { prompt?: unknown }).prompt
+        const responseContent = res.content ?? []
         const content =
           settings.telemetry === true
-            ? genAiContentAttributes(
-                promptToText((options as { prompt?: unknown }).prompt),
-                responseText(res.content ?? []),
-              )
+            ? genAiContentAttributes(promptToText(prompt), responseText(responseContent))
             : {}
         const rc = yield* FiberRef.get(RunContextRef)
         yield* Effect.annotateCurrentSpan({
@@ -161,6 +168,8 @@ export const RouterLanguageModelLive = Layer.effect(
           "gen_ai.system": sel.provider,
           "gen_ai.role": "main",
           "gen_ai.operation.name": "generate",
+          ...(rc.currentTurn !== undefined ? { "agent.turn": rc.currentTurn } : {}),
+          ...(res.finishReason !== undefined ? { "gen_ai.finish_reason": String(res.finishReason) } : {}),
           ...(rc.prompt !== undefined
             ? {
                 "agent.prompt.name": rc.prompt.name,
@@ -187,6 +196,33 @@ export const RouterLanguageModelLive = Layer.effect(
         if (output !== undefined) yield* Effect.logInfo(`llm output ▸ ${output}`)
         const input = content["gen_ai.prompt"]
         if (input !== undefined) yield* Effect.logInfo(`llm input ▸ ${input}`)
+        if (settings.telemetry === true) {
+          yield* Effect.logInfo(
+            `efferent.trace ${traceJson({
+              kind: "llm_input",
+              conversationId: rc.rootConversationId,
+              turn: rc.currentTurn ?? null,
+              provider: sel.provider,
+              model: sel.modelId,
+              messages: promptMessages(prompt),
+            })}`,
+          )
+          yield* Effect.logInfo(
+            `efferent.trace ${traceJson({
+              kind: "llm_output",
+              conversationId: rc.rootConversationId,
+              turn: rc.currentTurn ?? null,
+              provider: sel.provider,
+              model: sel.modelId,
+              finishReason: res.finishReason ?? null,
+              text: responseText(responseContent),
+              reasoning: responseReasoning(responseContent),
+              toolCalls: responseToolCalls(responseContent),
+              usage,
+              parts: responseContent,
+            })}`,
+          )
+        }
       })
 
     // A failed `llm.generate` (bad/expired key, provider 4xx/5xx, rate limit)

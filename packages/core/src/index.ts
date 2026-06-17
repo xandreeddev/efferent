@@ -49,4 +49,5 @@ export * from "./usecases/generateTitle.js"
 
 // Telemetry
 export * from "./telemetry/metrics.js"
+export * from "./telemetry/payload.js"
 export * from "./telemetry/spanNames.js"

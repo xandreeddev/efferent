@@ -320,12 +320,11 @@ export const searchConversation = (
 }
 
 /**
- * Foldable ids split by kind — drives fold-all / unfold-all (`Z`). The two kinds
- * have **opposite defaults**: a turn defaults expanded (its id ∈ `collapsed` ⇒
- * folded), a tool group defaults collapsed to its one-line summary (its id ∈
- * `collapsed` ⇒ expanded). So `Z` can't treat them uniformly — it folds every
- * turn + collapses every group ("compact"), then expands both, by setting the
- * right membership per kind.
+ * Foldable ids split by kind — drives fold-all / unfold-all (`Z`). Both kinds now
+ * fold the **same way**: a unit (turn or tool group) defaults *expanded*, and its
+ * id ∈ `collapsed` ⇒ folded. So "compact" = every id ∈ `collapsed`, "expanded" =
+ * none. (`Z` reads both lists and sets/clears membership uniformly.) The split is
+ * still handy for callers that fold one kind at a time.
  */
 export const foldIdsByKind = (
   items: ReadonlyArray<ConversationItem>,
@@ -360,16 +359,16 @@ export const toolGroupState = (tools: ReadonlyArray<ToolBlock>): ToolPillState =
       : "ok"
 
 /**
- * Whether a tool group renders expanded: the user opened it (inverse-polarity
- * membership in `collapsed`), or it's STILL RUNNING — live work always shows
- * its individual pills so the rail gives feedback while processing; once the
- * last call lands it settles back to the one-line summary.
+ * Whether a tool group renders expanded. Default **expanded** (every pill
+ * visible) — same polarity as a turn: a group is folded to its one-line summary
+ * only when the user explicitly folds it (id ∈ `collapsed`). A running group is
+ * always expanded regardless, so live work shows its pills.
  */
 export const toolGroupExpanded = (
   id: string,
   tools: ReadonlyArray<ToolBlock>,
   collapsed: ReadonlySet<string>,
-): boolean => collapsed.has(id) || tools.some((t) => t.state === "running")
+): boolean => !collapsed.has(id) || tools.some((t) => t.state === "running")
 
 /**
  * The one-line summary a collapsed tool group shows, e.g.

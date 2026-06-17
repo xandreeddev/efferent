@@ -30,14 +30,6 @@ export const Side = (props: { ctx: TuiContext }) => {
   const dims = useTerminalDimensions()
   const focused = () => store.focus() === "side"
   const view = () => store.sidePane().view
-  const title = () =>
-    view() === "context"
-      ? "context"
-      : view() === "tree"
-        ? "agents"
-        : view() === "sessions"
-          ? "sessions"
-          : "activity"
   // Full region when zoomed OR when the narrow breakpoint hid the other pane
   // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
   const full = () => focused() && (store.zoomed() || dims().width < 110)
@@ -53,16 +45,18 @@ export const Side = (props: { ctx: TuiContext }) => {
     <Pane
       kind="side"
       focused={focused()}
-      title={title()}
+      title=""
       width={full() ? "100%" : "38%"}
     >
-      {/* The view switcher: the active tab leads with a pointer in the side
-          accent; a blank line below separates the chrome from the content. */}
+      {/* The view switcher doubles as the pane header (no box title): the active
+          tab leads with a pointer and carries the side accent ONLY when the pane
+          is focused (dim otherwise) — so it's also the focus cue now that the
+          border is gone. A blank line below separates the chrome from content. */}
       <box flexDirection="row" flexShrink={0} marginBottom={1}>
         <For each={VIEWS}>
           {(v, i) => (
             <>
-              <text fg={view() === v.id ? tokens.accent.side : tokens.text.dim}>
+              <text fg={view() === v.id ? (focused() ? tokens.accent.side : tokens.text.muted) : tokens.text.dim}>
                 {view() === v.id ? `${glyph.pointer} ${v.label}` : v.label}
               </text>
               {i() < VIEWS.length - 1 && <text fg={tokens.text.dim}>{"  ·  "}</text>}

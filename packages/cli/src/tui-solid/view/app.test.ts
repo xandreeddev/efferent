@@ -260,7 +260,7 @@ test("an open select overlay floats over the panes with its options + hints", as
     expect(frame).toContain("google:gemini-3.5-flash")
     expect(frame).toContain("openai:gpt-5.5")
     expect(frame).toContain("◀ active") // the current model tag
-    expect(frame).toContain("↑↓ move") // the footer hint
+    expect(frame).toContain("↑/↓ Navigate") // the agy footer hint
     expect(frame).toContain("1/2") // the counter
   } finally {
     renderer.destroy()
@@ -313,8 +313,8 @@ test("the :settings overlay floats the settings table with values + hints", asyn
     const frame = await waitForFrame((f) => f.includes("Settings") && f.includes("allowBash"))
     expect(frame).toContain("allowBash")
     expect(frame).toContain("maxSteps")
-    expect(frame).toContain("use :model") // a readonly row's hint
-    expect(frame).toContain("toggle / cycle / edit") // the footer hint
+    expect(frame).toContain("ollama:gemma4") // a readonly row's value (inline hints moved to the focused-row description)
+    expect(frame).toContain("toggle/cycle/edit") // the agy footer hint
   } finally {
     renderer.destroy()
   }

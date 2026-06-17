@@ -29,6 +29,9 @@ export const glyph = {
   more: { above: "↑", below: "↓" },
   /** Row pointer (select list / slash palette / settings cursor). */
   pointer: "▸",
+  /** The agy-style prompt / selected-row cursor (`>`): the input prompt and the
+   *  inline-menu row cursor both lead with it. */
+  prompt: ">",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
   /** Context-viewer message-line icons, by role. */

@@ -70,7 +70,12 @@ Folder **efferent — production**:
   table, one row per `agent.run` = **one user message**. Click a **Trace ID** to
   open the full waterfall; click a **conversation id** (data link) to drill in.
 - **conversation** (`/d/efferent-conversation?var-conversation=…`) — one
-  conversation's messages + its tool calls, each trace opening the waterfall.
+  conversation's messages + its tool calls. Click a message span to open the
+  LangSmith-style run inspector.
+- **run inspector** (`/d/efferent-run?var-conversation=…&var-trace=…`) — one
+  `agent.run` with run summary, ordered LLM calls, the full captured LLM message
+  stack, assistant output/reasoning/tool calls, tool I/O payload logs, and a path
+  back to the native Tempo waterfall.
 
 Folder **efferent — evals**:
 
@@ -79,13 +84,13 @@ Folder **efferent — evals**:
   `$run` id (the `bun run eval` link sets it).
 
 **Navigation flow:** conversations → click a conversation id → conversation
-drill-down → click a trace → native Tempo waterfall
-(`agent.run → agent.turn <n> → {llm.generate <prompt>@<version> · <provider>/<model>, agent.tool.<name>, agent.subagent <label> → …}`).
+drill-down → click a message span → run inspector → native Tempo waterfall when
+needed (`agent.run → agent.turn <n> → {llm.generate <prompt>@<version> · <provider>/<model>, agent.tool.<name>, agent.subagent <label> → …}`).
 
 ## From the CLI
 
-- `:traces` — open the **conversation** dashboard filtered to the active session
-  (hints if telemetry export is off).
+- `:traces` — open the **conversation** dashboard filtered to the active session;
+  click a message span to open the run inspector (hints if telemetry export is off).
 - `:dashboard` — open **fleet health**.
 - Grafana base URL defaults to `http://localhost:3000`; override with
   `:set grafanaUrl <url>` (or `EFFERENT_GRAFANA_URL` for the eval link).
@@ -96,8 +101,9 @@ drill-down → click a trace → native Tempo waterfall
 
 - Spans: `agent.run` (per user message — `agent.conversation_id`, `agent.prompt`,
   `agent.model`, run-total tokens) → `agent.turn <n>` → `llm.generate <prompt>@<version> · <provider>/<model>`
-  (`agent.prompt.*`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.cost_usd`,
-  `gen_ai.cache_hit_ratio`), plus **`agent.tool.<name>`** (name, ok, `args_summary`),
+  (`agent.prompt.*`, `agent.turn`, `gen_ai.request.model`, `gen_ai.finish_reason`,
+  `gen_ai.usage.*`, `gen_ai.cost_usd`, `gen_ai.cache_hit_ratio`), plus **`agent.tool.<name>`**
+  (name, ok, `agent.turn`, `args_summary`),
   **`agent.subagent <label>`** (node/depth/folder), and the helper spans
   `agent.approval.judge:<tool>` / `agent.headroom.digest` / `agent.title`. Eval runs add
   `eval.run → eval.suite → eval.case → eval.task` + `eval.scorer:*`
@@ -107,6 +113,11 @@ drill-down → click a trace → native Tempo waterfall
   **`agent_errors_total{kind,error}`**, `approval_verdicts_total`, and the eval
   metrics `eval_score` / `eval_cases_total`. High-cardinality identity
   (conversation/node/run id, prompt) lives **only on spans**, never on metrics.
+- Logs: when telemetry is on, `llm.generate` spans emit `efferent.trace` JSON log
+  events for `llm_input` (the message stack sent to the model) and `llm_output`
+  (text, reasoning, tool calls, usage, raw response parts). Tool spans emit
+  `tool_io` events with redacted/clipped args and result payloads. The run
+  inspector reads these from Loki by `trace_id`.
 
 > **Note — TraceQL-metrics panels are an enhancement.** The conversation/eval
 > trace tables and all Prometheus panels are the reliable backbone; a couple of

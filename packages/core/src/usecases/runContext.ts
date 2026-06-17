@@ -25,6 +25,10 @@ export interface RunContext {
   /** The prompt identity (name/version/variant) this run uses, surfaced on
    *  every `llm.generate` span so Grafana shows which prompt produced the call. */
   readonly prompt?: Prompt
+  /** The agent-loop turn currently invoking the model/tools, for trace/log correlation. */
+  readonly currentTurn?: number
+  /** Whether this run is exporting telemetry payload logs. */
+  readonly telemetry?: boolean
   /** Per-sub-agent step cap (`Settings.subAgentMaxSteps`), threaded live per
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */

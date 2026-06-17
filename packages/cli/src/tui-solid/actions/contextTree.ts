@@ -53,9 +53,11 @@ export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
       label: conversationLabel(c),
       title: conversationTitle(c),
       active: c.id === activeCid,
+      messageCount: c.messageCount,
+      updatedAt: c.updatedAt,
     }))
     if (!sessions.some((c) => c.active)) {
-      sessions.unshift({ id: activeCid, label: "(current session)", active: true })
+      sessions.unshift({ id: activeCid, label: "(current session)", active: true, messageCount: 0 })
     }
     yield* Effect.sync(() => store.setProjection((p) => ({ ...p, sessions })))
   })
@@ -63,6 +65,19 @@ export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
 /** Refresh both navigator data sets (boot + every turn end). */
 export const refreshNav = (store: TuiStore, activeCid: ConversationId) =>
   Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid))
+
+/**
+ * `F2`/`r` in the sessions pane — rename a conversation. Persists via
+ * `ConversationStore.setTitle` (best-effort) and reloads the sessions list so the
+ * new name shows immediately. A blank title is the caller's job to reject.
+ */
+export const renameSession = (store: TuiStore, id: ConversationId, title: string) =>
+  Effect.gen(function* () {
+    const cs = yield* ConversationStore
+    yield* cs.setTitle(id, title).pipe(Effect.catchAll(() => Effect.void))
+    yield* loadSessions(store, store.run.getConversationId())
+    yield* Effect.sync(() => store.toast(`renamed → ${title}`))
+  })
 
 /**
  * Switch the side pane to the context-tree viewer, loading the persisted

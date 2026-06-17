@@ -8,6 +8,7 @@ import {
   gaugeBar,
   gaugeSeverity,
 } from "../../../presentation/statusBar.js"
+import { breakdownUsed, categorizeTokens } from "../../../presentation/contextBreakdown.js"
 import type { NodeStatus, TreeNode } from "../../../presentation/executionTree.js"
 import {
   buildStackRowsData,
@@ -68,6 +69,9 @@ const Stats = (props: { ctx: TuiContext }) => {
         : tokens.text.muted
   const pct = () => contextPercent(s().inputTokens, s().contextWindow)
   const cache = () => cachePercent(s().cacheReadTokens, s().inputTokens)
+  // A rough where-does-context-go split (estimate, chars/4 over the rail) — the
+  // authoritative billed spend stays the `Σ` ledger below.
+  const breakdown = () => categorizeTokens(props.ctx.store.blocks(), s().contextWindow)
   return (
     <box flexDirection="column" flexShrink={0}>
       <box flexDirection="row">
@@ -83,6 +87,20 @@ const Stats = (props: { ctx: TuiContext }) => {
       </box>
       <Show when={severity() === "critical"}>
         <text fg={tokens.state.error}>{`context nearly full — :handoff folds it`}</text>
+      </Show>
+      {/* Estimated split of where context goes (chars/4 over the rail). */}
+      <Show when={breakdownUsed(breakdown()) > 0}>
+        <box flexDirection="row">
+          <text fg={tokens.text.user}>{`${glyph.select.on} `}</text>
+          <text fg={tokens.text.muted}>{`user ${formatTokens(breakdown().user)} `}</text>
+          <text fg={tokens.text.assistant}>{`${glyph.select.on} `}</text>
+          <text fg={tokens.text.muted}>{`agent ${formatTokens(breakdown().assistant)} `}</text>
+          <text fg={tokens.state.ok}>{`${glyph.select.on} `}</text>
+          <text fg={tokens.text.muted}>{`tools ${formatTokens(breakdown().tools)} `}</text>
+          <Show when={s().contextWindow > 0}>
+            <text fg={tokens.text.dim}>{`${glyph.select.off} free ${formatTokens(breakdown().free)}`}</text>
+          </Show>
+        </box>
       </Show>
       {/* A wall of zeros tells a new user nothing — say what WILL be here. */}
       <text fg={tokens.text.dim}>

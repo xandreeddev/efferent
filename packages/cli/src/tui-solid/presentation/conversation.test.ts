@@ -133,12 +133,12 @@ describe("toolGroupSummary / toolGroupState — the collapsed one-line aggregate
     expect(toolGroupState([t("Read(a)", "ok"), t("Read(b)", "running")])).toBe("running")
   })
 
-  test("a group renders expanded while ANY call runs, settles collapsed when done", () => {
-    const live = [t("Read(a)", "ok"), t("Read(b)", "running")]
-    expect(toolGroupExpanded("grp:x", live, new Set())).toBe(true) // live feedback
+  test("a group defaults expanded; folds only when explicitly collapsed; always expanded while running", () => {
     const done = [t("Read(a)", "ok"), t("Read(b)", "ok")]
-    expect(toolGroupExpanded("grp:x", done, new Set())).toBe(false) // settles
-    expect(toolGroupExpanded("grp:x", done, new Set(["grp:x"]))).toBe(true) // user-opened
+    expect(toolGroupExpanded("grp:x", done, new Set())).toBe(true) // default expanded
+    expect(toolGroupExpanded("grp:x", done, new Set(["grp:x"]))).toBe(false) // user-folded
+    const live = [t("Read(a)", "ok"), t("Read(b)", "running")]
+    expect(toolGroupExpanded("grp:x", live, new Set(["grp:x"]))).toBe(true) // running overrides a fold
   })
 })
 

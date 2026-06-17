@@ -57,6 +57,10 @@ export interface NavConversation {
   readonly active: boolean
   /** The session's display name alone (no date) — the header chrome reads it. */
   readonly title?: string
+  /** Persisted message count — the sessions list shows it as `N msgs`. */
+  readonly messageCount?: number
+  /** Last-activity timestamp — the sessions list shows it as a relative time. */
+  readonly updatedAt?: number
 }
 
 /**

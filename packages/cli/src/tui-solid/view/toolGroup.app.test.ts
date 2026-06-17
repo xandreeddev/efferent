@@ -78,7 +78,7 @@ const seedTwoToolTurn = (store: TuiStore): void => {
   })
 }
 
-test("a turn's tool run collapses to one summary line (verbs · count · diffstat)", async () => {
+test("a turn's tool run shows every pill by default (expanded), under a summary header", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 90,
@@ -86,20 +86,22 @@ test("a turn's tool run collapses to one summary line (verbs · count · diffsta
   })
   try {
     seedTwoToolTurn(store)
-    const conv = convRegion(await waitForFrame((f) => f.includes("read · edit")))
-    // the aggregate summary line, default-collapsed
+    // Default polarity is EXPANDED — wait until the RAIL paints the pills.
+    const conv = convRegion(
+      await waitForFrame((f) => convRegion(f).includes("Read(a.ts)") && convRegion(f).includes("Edit(a.ts)")),
+    )
+    // the individual pills are visible by default
+    expect(conv).toContain("Read(a.ts)")
+    expect(conv).toContain("Edit(a.ts)")
+    // the aggregate summary header (verbs · count · diffstat) sits above them
     expect(conv).toContain("read · edit")
     expect(conv).toContain("(2 tools, +5 -2)")
-    // collapsed ⇒ the individual pill labels are NOT painted in the rail
-    // (they still show in the activity tree, which `convRegion` strips out)
-    expect(conv).not.toContain("Read(a.ts)")
-    expect(conv).not.toContain("Edit(a.ts)")
   } finally {
     renderer.destroy()
   }
 })
 
-test("expanding the group (group id ∈ collapsed) reveals the individual pills", async () => {
+test("folding the group (group id ∈ collapsed) hides the pills, leaving the summary", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 90,
@@ -107,18 +109,19 @@ test("expanding the group (group id ∈ collapsed) reveals the individual pills"
   })
   try {
     seedTwoToolTurn(store)
-    await waitForFrame((f) => f.includes("read · edit"))
-    // Inverse polarity: a group's id in `collapsed` means EXPANDED. The first
-    // top-level pill id is `t1`, so the group id is `grp:t1`.
+    // Default expanded ⇒ pills are shown; then fold the group. The first
+    // top-level pill id is `t1`, so the group id is `grp:t1`. Unified polarity:
+    // a group's id in `collapsed` means FOLDED (to the one-line summary).
+    await waitForFrame((f) => convRegion(f).includes("Read(a.ts)"))
     store.setCollapsed(new Set(["grp:t1"]))
-    // Wait until the RAIL (not the activity tree) paints the pills.
+    // Wait until the RAIL (not the activity tree) drops the pills.
     const conv = convRegion(
-      await waitForFrame((f) => convRegion(f).includes("Read(a.ts)") && convRegion(f).includes("Edit(a.ts)")),
+      await waitForFrame((f) => f.includes("read · edit") && !convRegion(f).includes("Read(a.ts)")),
     )
-    expect(conv).toContain("Read(a.ts)")
-    expect(conv).toContain("Edit(a.ts)")
-    // the summary header still sits above the expanded pills
     expect(conv).toContain("read · edit")
+    expect(conv).toContain("(2 tools, +5 -2)")
+    expect(conv).not.toContain("Read(a.ts)")
+    expect(conv).not.toContain("Edit(a.ts)")
   } finally {
     renderer.destroy()
   }

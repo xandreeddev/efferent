@@ -1,7 +1,9 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { ApprovalState } from "../presentation/approvalView.js"
 import type { SelectState } from "../presentation/selectBox.js"
+import type { HelpState } from "../presentation/helpView.js"
 import type { LoginFlow } from "../presentation/loginFlow.js"
+import type { PromptState } from "../presentation/promptBox.js"
 import type { SettingsState } from "../presentation/settingsView.js"
 
 /** The mutable settings key an effort picker writes (mirrors `effortSettingKeyFor`). */
@@ -23,6 +25,9 @@ export type SelectPurpose =
   | { readonly tag: "theme" }
   | { readonly tag: "conversation" }
 
+/** What a single-line prompt overlay does on Enter (mirrors `SelectPurpose`). */
+export type PromptPurpose = { readonly tag: "rename"; readonly conversationId: string }
+
 /**
  * The single active overlay (a modal floats above the panes and owns all input
  * while open). One discriminated signal replaces the old TUI's seven optional
@@ -41,6 +46,8 @@ export type Overlay =
   | { readonly kind: "login"; readonly flow: LoginFlow }
   | { readonly kind: "settings"; readonly state: SettingsState }
   | { readonly kind: "approval"; readonly state: ApprovalState }
+  | { readonly kind: "help"; readonly state: HelpState }
+  | { readonly kind: "prompt"; readonly state: PromptState; readonly purpose: PromptPurpose }
 
 export interface OverlaySlice {
   readonly overlay: Accessor<Overlay>
