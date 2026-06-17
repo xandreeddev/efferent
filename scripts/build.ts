@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Bundle the CLI → packages/cli/dist/efferent.js.
+ * Bundle @xandreed/code → packages/code/dist/efferent.js.
  *
  * Uses the Bun.build API (not the `bun build` CLI) because the TUI's Solid JSX
- * (`packages/cli/src/tui-solid/*.tsx`) needs the OpenTUI Solid babel transform,
+ * (`packages/code/src/cli/*.tsx`) needs the OpenTUI Solid babel transform,
  * and the CLI `bun build` does NOT honor bunfig `preload` plugins — only the
  * programmatic `plugins` array applies at build time. `createSolidTransformPlugin`
  * also performs solid-js's server→client entry swap so the bundled reactive
@@ -17,7 +17,7 @@
  * that one native dependency.
  *
  * Path-independent (resolves from the script location), so it runs identically
- * from the repo root (`bun run build`) or from packages/cli (`prepublishOnly`).
+ * from the repo root (`bun run build`) or from packages/code (`prepublishOnly`).
  */
 import { join } from "node:path"
 
@@ -54,8 +54,8 @@ export default { getTokenizer: unavailable, countTokens: unavailable, encode: un
 }
 
 const result = await Bun.build({
-  entrypoints: [join(root, "packages/cli/src/main.ts")],
-  outdir: join(root, "packages/cli/dist"),
+  entrypoints: [join(root, "packages/code/src/main.ts")],
+  outdir: join(root, "packages/code/dist"),
   naming: "efferent.js",
   target: "bun",
   external: ["@opentui/core"],
@@ -71,4 +71,4 @@ if (!result.success) {
   process.exit(1)
 }
 
-console.error(`efferent: bundled ${result.outputs.length} output → packages/cli/dist/efferent.js`)
+console.error(`efferent: bundled ${result.outputs.length} output → packages/code/dist/efferent.js`)

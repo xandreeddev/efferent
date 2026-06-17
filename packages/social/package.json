@@ -1,5 +1,5 @@
 {
-  "name": "@efferent/social",
+  "name": "@xandreed/social",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "playwright": "^1.49.0"
   },
   "devDependencies": {
-    "@efferent/sdk-adapters": "workspace:*",
-    "@efferent/sdk-core": "workspace:*",
+    "@xandreed/sdk-adapters": "workspace:*",
+    "@xandreed/sdk-core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/cli": "^0.75.1",
     "@effect/platform": "^0.96.1",

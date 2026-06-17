@@ -4,7 +4,7 @@ import {
   FileSystem,
   Settings,
   SettingsStore,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { join } from "node:path"
 
 export const LocalSettingsStoreLive = Layer.effect(

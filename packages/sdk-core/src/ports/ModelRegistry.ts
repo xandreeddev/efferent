@@ -18,7 +18,7 @@ export class ModelListError extends Data.TaggedError("ModelListError")<{
  * reflects the latest `/model` switch without a separate cache to keep in
  * sync.
  */
-export class ModelRegistry extends Context.Tag("@efferent/core/ModelRegistry")<
+export class ModelRegistry extends Context.Tag("@xandreed/sdk-core/ModelRegistry")<
   ModelRegistry,
   {
     /** The model the loop should use right now. */

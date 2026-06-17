@@ -9,7 +9,7 @@ import {
   HttpLive,
   ModelLive,
   ModelRegistryLive,
-} from "@efferent/sdk-adapters"
+} from "@xandreed/sdk-adapters"
 
 import { PlaywrightXPlatformLive } from "./adapters/PlaywrightXPlatform.js"
 import { AstroBlogReaderLive } from "./adapters/AstroBlogReader.js"

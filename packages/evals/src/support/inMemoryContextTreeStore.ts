@@ -6,7 +6,7 @@ import {
   ContextNodeNotFound,
   ContextTreeStore,
   ContextTreeStoreError,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 
 /**
  * In-memory `ContextTreeStore` for evals/unit tests — no SQL, no Docker. Mirrors

@@ -5,13 +5,13 @@ import {
   type AgentHooks,
   ConversationStore,
   runAgent,
-} from "@efferent/sdk-core"
-import { buildScopeRuntime } from "../../../cli/src/usecases/buildScopeRuntime.js"
-import { coderAgentConfig } from "../../../cli/src/usecases/coderAgentConfig.js"
-import { coderPrompt } from "../../../cli/src/prompts/coder.js"
-import { discoverInstructionFiles } from "../../../cli/src/usecases/discoverInstructionFiles.js"
-import { discoverScopeTree } from "../../../cli/src/usecases/discoverScopeTree.js"
-import { loadSkills } from "../../../cli/src/usecases/loadSkills.js"
+} from "@xandreed/sdk-core"
+import { buildScopeRuntime } from "@xandreed/code/usecases/buildScopeRuntime.js"
+import { coderAgentConfig } from "@xandreed/code/usecases/coderAgentConfig.js"
+import { coderPrompt } from "@xandreed/code/prompts/coder.js"
+import { discoverInstructionFiles } from "@xandreed/code/usecases/discoverInstructionFiles.js"
+import { discoverScopeTree } from "@xandreed/code/usecases/discoverScopeTree.js"
+import { loadSkills } from "@xandreed/code/usecases/loadSkills.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

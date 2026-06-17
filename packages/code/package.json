@@ -1,0 +1,58 @@
+{
+  "name": "@xandreed/code",
+  "version": "0.1.2",
+  "description": "The efferent coding agent on Effect.ts + Bun — bundles the TUI frontend; runs headless too (print/json/rpc). Multi-provider (Anthropic/OpenAI/Gemini), persistent sub-agent context tree, cache-safe context compression, zero-config SQLite history. No React.",
+  "license": "MIT",
+  "author": "Xand Reed <xandreed@proton.me>",
+  "type": "module",
+  "bin": {
+    "efferent": "dist/efferent.js",
+    "eff": "dist/efferent.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xandreeddev/efferent.git"
+  },
+  "homepage": "https://github.com/xandreeddev/efferent#readme",
+  "bugs": {
+    "url": "https://github.com/xandreeddev/efferent/issues"
+  },
+  "keywords": [
+    "coding-agent",
+    "agent",
+    "cli",
+    "tui",
+    "effect",
+    "bun",
+    "llm",
+    "anthropic",
+    "openai",
+    "gemini"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun run ../../scripts/build.ts",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "@opentui/core": "0.3.1",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {
+    "@xandreed/sdk-adapters": "workspace:*",
+    "@xandreed/sdk-core": "workspace:*",
+    "@effect/ai": "^0.35.0",
+    "@effect/cli": "^0.75.1",
+    "@effect/platform": "^0.96.1",
+    "@effect/platform-bun": "^0.89.0",
+    "@opentui/solid": "0.3.1",
+    "effect": "^3.21.2",
+    "solid-js": "^1.9.13"
+  }
+}

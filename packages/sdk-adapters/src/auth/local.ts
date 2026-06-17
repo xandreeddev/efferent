@@ -9,7 +9,7 @@ import {
   type Credential,
   type OAuthTokens,
   type Provider,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Effect, Layer, Redacted, Ref } from "effect"
 import { refreshAnthropicToken } from "./oauth/anthropic.js"
 import { refreshOpenAiToken } from "./oauth/openai.js"

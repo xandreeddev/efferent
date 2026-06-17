@@ -1,6 +1,6 @@
-# @efferent/adapters
+# @xandreed/sdk-adapters
 
-Concrete implementations of `@efferent/core` ports. Side effects live here and nowhere else.
+Concrete implementations of `@xandreed/sdk-core` ports. Side effects live here and nowhere else.
 
 ## Layout
 
@@ -17,5 +17,5 @@ One subfolder per concern:
 - Each adapter is a `Layer` named `<Thing>Live` providing exactly one port (or a bundle like `ModelLive` that merges a tier).
 - External promises go through `Effect.tryPromise`, mapped into the port's tagged error. Never let an untyped error escape.
 - Keys are never captured at layer build — resolve from `AuthStore` per call so `:login` / `:model` apply on the next request without a rebuild.
-- Adapters may depend on `@efferent/core` and external SDKs only. Never import from `@efferent/cli` or other adapters' internals.
+- Adapters may depend on `@xandreed/sdk-core` and external SDKs only. Never import from `@xandreed/code` or other adapters' internals.
 - Migrations are registered in `migrator.ts` via `Migrator.fromRecord` (bundle-safe) — one record per store flavor.

@@ -23,13 +23,13 @@ export interface OAuthRedirect {
 /**
  * The OAuth-subscription **protocol** as a port — PKCE + authorize URL, the
  * code↔token exchange, and redirect parsing — so the CLI's `:login` driver
- * depends only on `@efferent/core`, never on adapter internals (the per-provider
+ * depends only on `@xandreed/sdk-core`, never on adapter internals (the per-provider
  * `anthropic.ts`/`openai.ts` helpers). The loopback callback server + the
  * browser-open stay in the driver: those are terminal edge, not protocol. This
  * port is the protocol; `AuthFlowLive` (adapters) dispatches to the existing
  * provider helpers.
  */
-export class AuthFlow extends Context.Tag("@efferent/core/AuthFlow")<
+export class AuthFlow extends Context.Tag("@xandreed/sdk-core/AuthFlow")<
   AuthFlow,
   {
     /** Whether `provider` offers OAuth subscription login (else: API key only). */

@@ -2,7 +2,7 @@ import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Schema } from "effect"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { Failure } from "@efferent/sdk-core"
+import { Failure } from "@xandreed/sdk-core"
 import { XPlatform } from "../ports/XPlatform.js"
 import { BlogReader } from "../ports/BlogReader.js"
 

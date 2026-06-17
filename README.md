@@ -2,10 +2,24 @@
   <img src="assets/logo.svg" alt="efferent" width="440">
 </p>
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree.
+> An **agent framework on Effect.ts** — and the apps built on it. A pure-domain SDK (entities, ports, and use cases as `Layer`s; tools as an `@effect/ai` `Toolkit`; every error tagged; provider selection a runtime concern), with a coding agent, a content engine, and a colocated eval harness on top.
+
+The framework is the wedge: the agent loop, the context tree, headroom compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each agent is a thin driver that composes those Layers; the coding agent (`@xandreed/code`) **bundles a terminal UI** and also runs headless.
+
+```
+@xandreed/sdk-core       the framework — agent loop, ports, use cases (effect + @effect/ai only)
+@xandreed/sdk-adapters   Layer impls — provider SDKs, stores, IO
+@xandreed/code           the coding agent — bundles the TUI; also runs headless  ← published to npm
+@xandreed/social         built-in-public content engine
+@xandreed/evals          Effect-native eval framework + suites
+```
+
+## The coding agent (`@xandreed/code`)
+
+The flagship app: a coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree. The TUI is the frontend; the agent also runs headless (print / json / rpc) with no UI.
 
 ```bash
-npm i -g efferent          # requires Bun (https://bun.sh)
+npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
 efferent                   # opens the TUI in the current project
                            # → type :login to add a provider
 ```
@@ -35,12 +49,12 @@ That's it. No `init`, no wizard, no env vars. **`:login`** picks a subscription 
 Requires [Bun](https://bun.sh) ≥ 1.2. The npm package is a Bun bundle with two runtime dependencies (`@opentui/core` — the native terminal renderer loads via FFI — and `web-tree-sitter`); everything else is inlined.
 
 ```bash
-npm i -g efferent     # or: bun add -g efferent
+npm i -g @xandreed/code     # or: bun add -g @xandreed/code  (bin: efferent / eff)
 ```
 
 ```bash
 efferent                                 # full TUI (default in a TTY)
-efferent "summarise packages/core"       # one-shot print mode
+efferent "summarise packages/sdk-core"   # one-shot print mode
 efferent --mode json "ls"                # stream JSONL events
 efferent --mode rpc                      # JSON-RPC over stdio
 efferent --resume <conversationId>       # continue a session headlessly
@@ -98,20 +112,21 @@ The sub-agent gets the full toolkit but only **writes** inside `folder` (bash is
 git clone https://github.com/xandreeddev/efferent && cd efferent
 bun install
 bun run typecheck && bun test         # the correctness gates (no build step for dev)
-bun packages/cli/src/main.ts          # run from source — Bun runs .ts directly
-bun run build                         # bundle → packages/cli/dist/efferent.js
+bun packages/code/src/main.ts         # run from source — Bun runs .ts directly
+bun run build                         # bundle → packages/code/dist/efferent.js
 bun run eval [name …]                 # eval suites (key-gated)
 ```
 
 ```
 packages/
-├── core/       pure domain — entities, ports, use cases, prompts (effect + @effect/ai only)
-├── adapters/   Layer impls of core ports — provider SDKs + IO live here
-├── cli/        composition root + four modes + the OpenTUI/SolidJS TUI
-└── evals/      Effect-native eval framework + the agent's suites
+├── sdk-core/      pure domain — entities, ports, use cases, prompts (effect + @effect/ai only)
+├── sdk-adapters/  Layer impls of core ports — provider SDKs + IO live here
+├── code/          the coding agent — composition root + four modes + the OpenTUI/SolidJS TUI (bin)
+├── social/        built-in-public content engine
+└── evals/         Effect-native eval framework + the agent's suites
 ```
 
-Dependency direction is strictly inward: `cli` → `adapters` → `core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
+Dependency direction is strictly inward: every app (`code` / `social` / `evals`) → `sdk-adapters` → `sdk-core`; the apps compose Layers at the edge and never import each other. Tests are colocated (`bun test`, 480+, incl. property-based tests via effect's fast-check integration). Each package has its own README.
 
 ## Docs
 
