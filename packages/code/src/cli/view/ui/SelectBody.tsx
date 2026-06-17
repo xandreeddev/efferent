@@ -71,14 +71,20 @@ export const SelectBody = (props: {
             const sel = () => row.idx === s().selected
             return (
               <box flexDirection="row" {...(sel() ? { backgroundColor: tokens.cursorLine } : {})}>
-                <text fg={sel() ? tokens.accent.conversation : tokens.text.muted}>
+                {/* Selection accent is `marker.select` — the dedicated selection
+                    token, the SAME hue as the filter `Cursor` block — so one
+                    overlay never mixes two accents (agy uses a single accent for
+                    cursor + selection). */}
+                <text fg={sel() ? tokens.marker.select : tokens.text.muted}>
                   {`${marker(row.idx, row.pos)} `}
                 </text>
                 <text fg={sel() ? tokens.text.default : tokens.text.muted} wrapMode="none" flexGrow={1}>
                   {truncate(row.opt.label, row.opt.active === true ? props.labelBudget - 9 : props.labelBudget)}
                 </text>
+                {/* The "◀ active" tag rides the row's own colour: accent on the
+                    selected row, dim otherwise (agy keeps `(current)` in-row). */}
                 <Show when={row.opt.active === true}>
-                  <text fg={tokens.text.muted}>{` ${glyph.activeTag} active`}</text>
+                  <text fg={sel() ? tokens.marker.select : tokens.text.dim}>{` ${glyph.activeTag} active`}</text>
                 </Show>
               </box>
             )
