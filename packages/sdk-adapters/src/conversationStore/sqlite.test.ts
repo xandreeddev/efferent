@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { type AgentMessage, ConversationStore } from "@efferent/sdk-core"
+import { type AgentMessage, ConversationStore } from "@xandreed/sdk-core"
 import { SqliteConversationStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0005 from "../database/migrations-sqlite/0005_conversation_title.js"

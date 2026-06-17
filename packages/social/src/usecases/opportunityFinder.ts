@@ -1,11 +1,11 @@
 import { Effect } from "effect"
 import { LanguageModel, Toolkit } from "@effect/ai"
-import { runAgentLoop, type AgentMessage } from "@efferent/sdk-core"
+import { runAgentLoop, type AgentMessage } from "@xandreed/sdk-core"
 import { readdir } from "node:fs/promises"
 import { BlogReader } from "../ports/BlogReader.js"
 import { XPlatform, type XSearchResult } from "../ports/XPlatform.js"
 import { socialToolkit, SocialToolkitLive } from "./socialToolkit.js"
-import type { Failure } from "@efferent/sdk-core"
+import type { Failure } from "@xandreed/sdk-core"
 
 const DRAFTS_DIR = "/home/user/Workspace/xandreed/posts/drafts/pending"
 

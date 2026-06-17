@@ -16,7 +16,7 @@ import {
   SettingsStore,
   usageAttributes,
   type ModelSelection,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import {

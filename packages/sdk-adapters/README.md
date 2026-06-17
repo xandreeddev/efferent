@@ -2,9 +2,9 @@
   <img src="../../assets/logo-sdk.svg" alt="efferent { sdk }" width="520">
 </p>
 
-# @efferent/sdk-adapters
+# @xandreed/sdk-adapters
 
-> Concrete `Layer` implementations of the [`@efferent/sdk-core`](../sdk-core) ports. **Every side effect lives here and nowhere else.**
+> Concrete `Layer` implementations of the [`@xandreed/sdk-core`](../sdk-core) ports. **Every side effect lives here and nowhere else.**
 
 The middle ring of the architecture: `adapters` depends on `core` + the external SDK each adapter wraps, and never on the CLI. Each adapter is a `Layer` named `<Thing>Live` providing exactly one port (or a bundle like `ModelLive` that merges a tier).
 
@@ -19,7 +19,7 @@ The middle ring of the architecture: `adapters` depends on `core` + the external
 
 - External promises go through `Effect.tryPromise`, mapped into the port's tagged error — never let an untyped error escape.
 - **Keys are never captured at layer build** — resolve from `AuthStore` per call, so `:login` / `:model` apply on the next request without a rebuild.
-- Depend on `@efferent/sdk-core` + external SDKs only. Never import from the CLI or another adapter's internals.
+- Depend on `@xandreed/sdk-core` + external SDKs only. Never import from the CLI or another adapter's internals.
 - Migrations register in `migrator.ts` via `Migrator.fromRecord` (bundle-safe) — one record per store flavor.
 
 Part of [**efferent**](../../README.md) — a coding agent on Effect.ts + Bun.

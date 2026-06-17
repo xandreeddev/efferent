@@ -3,7 +3,7 @@ import { MODEL_CATALOG } from "./modelCatalog.generated.js"
 
 /**
  * Which LLM vendor backs a selection. Each maps to one `@effect/ai`
- * provider package in `@efferent/adapters` (`@effect/ai-google` /
+ * provider package in `@xandreed/sdk-adapters` (`@effect/ai-google` /
  * `@effect/ai-openai`); the router picks the implementation at call time.
  */
 export const Provider = Schema.Literal("google", "openai", "anthropic", "opencode", "ollama")

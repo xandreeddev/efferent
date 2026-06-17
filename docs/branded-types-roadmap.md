@@ -1,7 +1,7 @@
 # Branded Types — Phased Roadmap
 
 Execution roadmap for extending Effect `Schema` branded types across
-`@efferent/core`, so domain primitives (ids, model refs, paths, tokens, secrets)
+`@xandreed/sdk-core`, so domain primitives (ids, model refs, paths, tokens, secrets)
 stop being interchangeable bare `string`/`number`.
 
 **Status:** Phase 1 shipped (branch `brand/contextnodeid-reclaim`, commit

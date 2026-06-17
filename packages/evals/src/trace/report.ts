@@ -1,6 +1,6 @@
 import type { CaseAgg, RunAgg, SuiteAgg } from "./process.js"
 
-/* Inline ANSI — evals must not depend on @efferent/cli. */
+/* Inline ANSI — evals must not depend on @xandreed/code. */
 const ESC = "\x1b["
 const wrap = (code: number) => (s: string): string => `${ESC}${code}m${s}${ESC}0m`
 const dim = wrap(2)

@@ -1,4 +1,4 @@
-import { AuthFlow } from "@efferent/sdk-core"
+import { AuthFlow } from "@xandreed/sdk-core"
 import { Effect, Layer } from "effect"
 import {
   ANTHROPIC_CALLBACK_PORT,

@@ -1,5 +1,5 @@
 {
-  "name": "@efferent/evals",
+  "name": "@xandreed/evals",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@efferent/sdk-adapters": "workspace:*",
-    "@efferent/sdk-core": "workspace:*",
+    "@xandreed/sdk-adapters": "workspace:*",
+    "@xandreed/sdk-core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/opentelemetry": "^0.63.0",
     "@effect/platform-bun": "^0.89.0",

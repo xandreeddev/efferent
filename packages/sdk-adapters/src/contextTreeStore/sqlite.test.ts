@@ -5,7 +5,7 @@ import {
   type AgentMessage,
   type ContextNodeId,
   ContextTreeStore,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { SqliteContextTreeStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0002 from "../database/migrations-sqlite/0002_context_tree.js"

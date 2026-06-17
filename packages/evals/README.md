@@ -2,11 +2,11 @@
   <img src="../../assets/logo-evals.svg" alt="efferent [ evals ]" width="520">
 </p>
 
-# @efferent/evals
+# @xandreed/evals
 
 > A minimal, **Effect-native** eval library + the agent's own eval suites. Trace-first: production code only annotates spans; evals **build their data from the collected traces**.
 
-A driver-level package (depends on `@efferent/sdk-core` + `@efferent/sdk-adapters`, composes them at the edge like the CLI, never imports the CLI). Built when Evalite hit three hard incompatibilities at once — `data → task → scorers` re-expressed as Effects, so a `task` can be the real agent loop and a `Scorer` can itself call an LLM. No sqlite, no UI; runs under Bun directly.
+A driver-level package (depends on `@xandreed/sdk-core` + `@xandreed/sdk-adapters`, composes them at the edge like the CLI, never imports the CLI). Built when Evalite hit three hard incompatibilities at once — `data → task → scorers` re-expressed as Effects, so a `task` can be the real agent loop and a `Scorer` can itself call an LLM. No sqlite, no UI; runs under Bun directly.
 
 ## Layout
 

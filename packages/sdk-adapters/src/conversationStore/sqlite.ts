@@ -8,7 +8,7 @@ import {
   ConversationStore,
   ConversationStoreError,
   Checkpoint,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import {
   encodeMessageContent,
   reassembleMessageRow,

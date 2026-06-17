@@ -1,4 +1,4 @@
-import { Http, HttpError } from "@efferent/sdk-core"
+import { Http, HttpError } from "@xandreed/sdk-core"
 import { Effect, Layer } from "effect"
 
 /**
