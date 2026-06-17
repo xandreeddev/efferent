@@ -41,6 +41,8 @@ export const glyph = {
   tree: { vert: "│ ", skip: "  ", tee: "├─", corner: "└─" },
   /** The seed/run boundary rule in a node-session preview (`── seed … ──`). */
   seedRule: "──",
+  /** The logo's gradient underline cell (one `▔` per column) — see `view/ui/Logo.tsx`. */
+  logoBar: "▔",
   /** Header chrome: the wordmark block, the idle dot, the fleet (sub-agents) mark. */
   wordmark: "▌",
   idleDot: "○",
