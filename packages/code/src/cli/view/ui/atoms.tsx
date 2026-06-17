@@ -47,6 +47,30 @@ export const Rule = (props: { width: number }) => (
   <text fg={tokens.text.dim}>{"─".repeat(props.width)}</text>
 )
 
+/** One key→label pair for {@link KeyHints} (e.g. `{ key: "↑/↓", label: "navigate" }`). */
+export interface KeyHint {
+  readonly key: string
+  readonly label: string
+}
+
+/**
+ * A footer hint row, agy-style: each binding renders as an **accent key chip**
+ * followed by a **dim label**, pairs separated by a dim `·`. One source of truth
+ * for the key/label colour pairing so every overlay footer reads identically.
+ * `grow` lets it fill the row (pushing a trailing counter to the right edge).
+ */
+export const KeyHints = (props: { hints: ReadonlyArray<KeyHint>; grow?: boolean }) => (
+  <box flexDirection="row" flexGrow={props.grow === true ? 1 : 0} flexShrink={1}>
+    {props.hints.map((h, i) => (
+      <>
+        {i > 0 ? <text fg={tokens.text.dim}>{" · "}</text> : null}
+        <text fg={tokens.marker.select} wrapMode="none">{h.key}</text>
+        <text fg={tokens.text.dim} wrapMode="none">{` ${h.label}`}</text>
+      </>
+    ))}
+  </box>
+)
+
 /** The block text cursor (`█`) shown in text-entry overlays/filters. */
 export const Cursor = () => <text fg={tokens.marker.cursor}>{glyph.cursorBlock}</text>
 

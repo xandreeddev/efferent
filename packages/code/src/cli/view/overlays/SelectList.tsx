@@ -15,7 +15,12 @@ export const SelectList = (props: { state: SelectState<unknown> }) => {
       <SelectBody
         state={s()}
         labelBudget={MODAL_RULE - 2}
-        footer="↑↓ move · type filter · ↵ select · esc cancel"
+        footer={[
+          { key: "↑/↓", label: "move" },
+          { key: "type", label: "filter" },
+          { key: "↵", label: "select" },
+          { key: "esc", label: "cancel" },
+        ]}
       />
     </Modal>
   )

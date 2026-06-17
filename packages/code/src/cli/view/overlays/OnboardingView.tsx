@@ -3,15 +3,21 @@ import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
 import type { SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { Logo, MODAL_RULE, PromptBody, Rule, SelectBody } from "../ui/index.js"
+import { KeyHints, Logo, MODAL_RULE, PromptBody, Rule, SelectBody, type KeyHint } from "../ui/index.js"
 
-/** Footer hints, agy-style, shared by every onboarding step. `canBack` is false
- *  only on the very first screen (the auth-method picker) where Esc exits. */
-const selectFooter = (canBack: boolean): string =>
-  canBack
-    ? "↑/↓ navigate · type to filter · ↵ select · esc back"
-    : "↑/↓ navigate · type to filter · ↵ select · esc quit"
-const promptFooter = "↵ submit · esc back"
+/** Footer hints, agy-style (accent key chips + dim labels via `KeyHints`),
+ *  shared by every onboarding step. `canBack` is false only on the very first
+ *  screen (the auth-method picker) where Esc exits instead of going back. */
+const selectFooter = (canBack: boolean): ReadonlyArray<KeyHint> => [
+  { key: "↑/↓", label: "navigate" },
+  { key: "type", label: "filter" },
+  { key: "↵", label: "select" },
+  { key: "esc", label: canBack ? "back" : "quit" },
+]
+const promptFooter: ReadonlyArray<KeyHint> = [
+  { key: "↵", label: "submit" },
+  { key: "esc", label: "back" },
+]
 
 type StepView =
   | { readonly tag: "select"; readonly sel: SelectState<unknown>; readonly canBack: boolean }
@@ -181,7 +187,12 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
               Your credentials, model preferences, and theme are saved. Change them anytime
               via :settings, :model, :login, or :theme.
             </text>
-            <text fg={tokens.text.muted}>↵ start using Efferent · esc back</text>
+            <KeyHints
+              hints={[
+                { key: "↵", label: "start using Efferent" },
+                { key: "esc", label: "back" },
+              ]}
+            />
           </box>
         </Show>
       </box>

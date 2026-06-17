@@ -20,7 +20,10 @@ export const PromptBox = (props: {
       prompt={props.prompt}
       value={props.value}
       mask={props.mask}
-      footer="↵ submit · esc back / cancel"
+      footer={[
+        { key: "↵", label: "submit" },
+        { key: "esc", label: "back / cancel" },
+      ]}
     />
   </Modal>
 )
