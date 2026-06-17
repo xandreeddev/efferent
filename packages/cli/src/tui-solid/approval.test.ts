@@ -7,7 +7,7 @@ import {
   UtilityLlm,
   type ApprovalDecision,
   type Settings,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import { makeTuiApproval } from "./approval.js"
 import type { TuiStore } from "./state/store.js"
 

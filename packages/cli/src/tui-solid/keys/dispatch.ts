@@ -23,7 +23,7 @@ import { buildConversation, buildConversationRows, foldIdsByKind } from "../pres
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { buildFromSelection } from "../actions/session.js"
 import {
   closeNodePreview,

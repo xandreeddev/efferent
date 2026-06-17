@@ -1,6 +1,6 @@
 import { basename } from "node:path"
 import { createMemo, For, Show } from "solid-js"
-import type { AgentContextNode } from "@efferent/core"
+import type { AgentContextNode } from "@efferent/sdk-core"
 import { findByNodeId, type TreeNode } from "../../../presentation/executionTree.js"
 import { treeCurrentRow } from "../../../presentation/sidePane.js"
 import { formatTokens } from "../../../presentation/statusBar.js"

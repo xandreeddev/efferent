@@ -8,7 +8,7 @@ import {
   parseModel,
   type AuthData,
   type Provider,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import { browserCommand, startCallbackServer } from "../../login/oauthServer.js"
 import {
   openLogin,

@@ -6,7 +6,7 @@ import {
   type AgentMessage,
   type Checkpoint,
   type ConversationId,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import {
   buildContextView,
   messagesForSelectedTurns,
@@ -21,6 +21,7 @@ import {
   type SidePaneProjection,
   type SidePaneState,
 } from "../presentation/sidePane.js"
+import { type AppServices } from "../TuiContext.js"
 import {
   projectHistory,
   type HistoryProjection,
@@ -296,7 +297,7 @@ export const toggleContext = (store: TuiStore, cid: ConversationId) =>
   })
 
 /** Load a conversation's records and swap it into view (browsing). */
-export const resumeConversation = (store: TuiStore, target: ConversationId) =>
+export const resumeConversation = (store: TuiStore, target: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cs = yield* ConversationStore
     const { history, checkpoints } = yield* listAll(cs, target)
@@ -308,7 +309,7 @@ export const resumeConversation = (store: TuiStore, target: ConversationId) =>
  * silently (no "resumed …" line), matching the old TUI's startup replay. A
  * no-op when the conversation has no messages.
  */
-export const loadInitialConversation = (store: TuiStore, target: ConversationId) =>
+export const loadInitialConversation = (store: TuiStore, target: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cs = yield* ConversationStore
     const { history, checkpoints } = yield* listAll(cs, target)

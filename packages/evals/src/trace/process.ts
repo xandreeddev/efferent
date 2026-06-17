@@ -1,5 +1,5 @@
 import type { ReadableSpan } from "@opentelemetry/sdk-trace-base"
-import { costUsd } from "@efferent/core"
+import { costUsd } from "@efferent/sdk-core"
 
 /**
  * Build eval data by reading the collected spans — NOT a parallel metrics

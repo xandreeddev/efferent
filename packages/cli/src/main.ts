@@ -8,13 +8,9 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import {
   AuthStore,
-  coderPrompt,
-  discoverInstructionFiles,
-  discoverScopeTree,
-  loadSkills,
   SettingsStore,
   type Scope,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import {
   AuthFlowLive,
   HttpLive,
@@ -28,7 +24,12 @@ import {
   StoresLive,
   UtilityLlmLive,
   WebSearchLive,
-} from "@efferent/adapters"
+} from "@efferent/sdk-adapters"
+
+import { coderPrompt } from "./prompts/coder.js"
+import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
+import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
+import { loadSkills } from "./usecases/loadSkills.js"
 
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"

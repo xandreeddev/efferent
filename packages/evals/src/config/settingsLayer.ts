@@ -1,5 +1,5 @@
 import { Effect, Layer, Ref } from "effect"
-import { DefaultSettings, type Settings, SettingsStore } from "@efferent/core"
+import { DefaultSettings, type Settings, SettingsStore } from "@efferent/sdk-core"
 import type { RunConfig } from "./RunConfig.js"
 
 /** Apply a `RunConfig`'s knobs onto a base `Settings` (start from defaults). */

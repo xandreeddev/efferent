@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { ConversationId } from "@efferent/core"
+import { ConversationId } from "@efferent/sdk-core"
 import { emptyTree } from "../presentation/executionTree.js"
 import { emptyStats } from "../presentation/sidePane.js"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"

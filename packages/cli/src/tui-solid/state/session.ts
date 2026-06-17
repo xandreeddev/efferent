@@ -1,6 +1,6 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { Fiber } from "effect"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { idleAgentState, type AgentState } from "../presentation/agentState.js"
 import type { StatusState } from "../presentation/statusBar.js"
 

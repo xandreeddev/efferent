@@ -1,6 +1,6 @@
 import { batch } from "solid-js"
 import { Effect } from "effect"
-import { modelForRole, ModelRegistry, SettingsStore, type ModelInfo } from "@efferent/core"
+import { modelForRole, ModelRegistry, SettingsStore, type ModelInfo } from "@efferent/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import type { TuiStore } from "../state/store.js"

@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SettingsStore, Shell } from "@efferent/core"
+import { SettingsStore, Shell } from "@efferent/sdk-core"
 import { browserCommand } from "../../login/oauthServer.js"
 import type { TuiStore } from "../state/store.js"
 

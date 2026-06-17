@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from "@efferent/core"
+import type { ApprovalRequest } from "@efferent/sdk-core"
 
 /**
  * What the auto-approval judge knew when it escalated: its one-line reason,
