@@ -1,6 +1,6 @@
 ---
 name: adapters
-description: Owns packages/adapters/. Concrete implementations of @efferent/core ports — IO and provider SDKs live here and nowhere else.
+description: Owns packages/adapters/. Concrete implementations of @xandreed/sdk-core ports — IO and provider SDKs live here and nowhere else.
 ---
 
 ## Layout
@@ -12,10 +12,10 @@ Key Layers: `ModelLive` (bundles the router `LanguageModel` + `ModelRegistry` + 
 - Each adapter is a `Layer.effect(Port, Effect.gen(function* () { ... return { method: ... } }))`.
 - All external promises go through `Effect.tryPromise`, with the `catch` mapping the thrown value into the port's tagged error type. Never let an untyped error escape.
 - Read configuration via `Config.string` / `Config.redacted` / `Config.number`, not `process.env`. Provider API keys are **key-optional** (`Config.option`) so a missing `OPENAI_API_KEY` never blocks a Google-only user — an absent key only 401s if that provider is actually selected.
-- Adapters may depend on `@efferent/core` + `@effect/ai` provider packages (`@effect/ai-google`, `@effect/ai-openai`) and other SDKs only. Never import from `@efferent/cli`/`@efferent/web`/other adapters.
+- Adapters may depend on `@xandreed/sdk-core` + `@effect/ai` provider packages (`@effect/ai-google`, `@effect/ai-openai`) and other SDKs only. Never import from `@xandreed/code`/`@xandreed/web`/other adapters.
 
 ## Multi-provider router (src/llm/)
 - The agent loop talks to one provider-agnostic `LanguageModel`; provider/model is a **runtime selection**, not a compile-time layer. `RouterLanguageModelLive` reads `ModelRegistry.current` on every call and delegates to the chosen provider's `@effect/ai` service, built on the fly from the captured `GoogleClient`/`OpenAiClient`.
-- Selection lives in `SettingsStore` as `settings.model = "<provider>:<modelId>"` (persisted to `.efferent/config.json`). `parseModel`/`formatModel`/`contextWindowFor` are pure helpers in `@efferent/core` `Model.ts`.
+- Selection lives in `SettingsStore` as `settings.model = "<provider>:<modelId>"` (persisted to `.efferent/config.json`). `parseModel`/`formatModel`/`contextWindowFor` are pure helpers in `@xandreed/sdk-core` `Model.ts`.
 - `ModelRegistryLive` fetches the live catalogue over **raw HTTP** (Google `…/v1beta/models`, OpenAI `…/v1/models`) and parses defensively — the generated `@effect/ai-*` list schemas are stricter than the live APIs and fail to decode. Only providers whose key is set are queried.
 - Caching is provider-native: OpenAI automatic prefix caching + stable `prompt_cache_key`; Gemini implicit context caching (stable prefix → `cachedContentTokenCount`). Explicit Gemini `cachedContent` isn't expressible through `@effect/ai-google` today.

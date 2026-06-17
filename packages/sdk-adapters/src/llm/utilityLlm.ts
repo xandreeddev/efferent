@@ -20,7 +20,7 @@ import {
   usageAttributes,
   type ModelSelection,
   type UtilityCompletion,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Effect, FiberRef, Layer } from "effect"
 import { makeProviderLanguageModel, prependClaudeCode } from "./providers.js"
 

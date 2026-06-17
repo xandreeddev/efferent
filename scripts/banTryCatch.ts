@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Ban try/catch, throw, and .catch() from @efferent/core/src/.
+ * Ban try/catch, throw, and .catch() from @xandreed/sdk-core/src/.
  *
  * Effect's typed errors mean all error handling goes through
  * Effect.catchAll/Effect.catchTag, and errors are created with
@@ -82,7 +82,7 @@ for (const file of files) {
 }
 
 if (allViolations.length > 0) {
-  console.error(`\n❌ Banned constructs found in @efferent/sdk-core/src/:\n`)
+  console.error(`\n❌ Banned constructs found in @xandreed/sdk-core/src/:\n`)
   for (const v of allViolations) console.error(`  ${v}`)
   console.error(
     `\nUse Effect.fail / Effect.die to create errors and` +
@@ -91,4 +91,4 @@ if (allViolations.length > 0) {
   process.exit(1)
 }
 
-console.error("✅ No try/catch, throw, or .catch() in @efferent/sdk-core/src/")
+console.error("✅ No try/catch, throw, or .catch() in @xandreed/sdk-core/src/")

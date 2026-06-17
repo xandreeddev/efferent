@@ -1,4 +1,4 @@
-import { AuthError, type OAuthTokens } from "@efferent/sdk-core"
+import { AuthError, type OAuthTokens } from "@xandreed/sdk-core"
 import { Effect } from "effect"
 
 /**

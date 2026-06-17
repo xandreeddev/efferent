@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { Shell, ShellAborted, ShellError, ShellTimeout } from "@efferent/sdk-core"
+import { Shell, ShellAborted, ShellError, ShellTimeout } from "@xandreed/sdk-core"
 
 interface SpawnLike {
   spawn: (cmd: string[], opts: {

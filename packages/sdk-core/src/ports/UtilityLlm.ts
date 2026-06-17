@@ -29,7 +29,7 @@ export interface UtilityOptions {
  * Deliberately tiny (a prompt in, a completion out): callers own their
  * prompts and parsing. Usage is reported so each tier's spend is countable.
  */
-export class UtilityLlm extends Context.Tag("@efferent/core/UtilityLlm")<
+export class UtilityLlm extends Context.Tag("@xandreed/sdk-core/UtilityLlm")<
   UtilityLlm,
   {
     readonly complete: (

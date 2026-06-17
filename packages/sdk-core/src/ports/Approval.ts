@@ -33,7 +33,7 @@ export type ApprovalDecision =
   | { readonly kind: "allow"; readonly scope: "once" | "session" | "project" }
   | { readonly kind: "deny"; readonly reason?: string }
 
-export class Approval extends Context.Tag("@efferent/core/Approval")<
+export class Approval extends Context.Tag("@xandreed/sdk-core/Approval")<
   Approval,
   {
     readonly request: (

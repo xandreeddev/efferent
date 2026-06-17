@@ -1,4 +1,4 @@
-import { type AgentMessage, compressToolResults } from "@efferent/sdk-core"
+import { type AgentMessage, compressToolResults } from "@xandreed/sdk-core"
 import { Effect } from "effect"
 import { defineEval } from "../framework/Eval.js"
 import { includesAll, llmJudge, predicate } from "../framework/scorers.js"

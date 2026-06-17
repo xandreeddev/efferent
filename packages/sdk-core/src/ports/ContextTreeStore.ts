@@ -52,7 +52,7 @@ export interface ContextReturn {
  * agent (or human) spawns / resumes / branches over it.
  */
 export class ContextTreeStore extends Context.Tag(
-  "@efferent/core/ContextTreeStore",
+  "@xandreed/sdk-core/ContextTreeStore",
 )<
   ContextTreeStore,
   {

@@ -15,8 +15,8 @@
         "typescript": "^5.9.3",
       },
     },
-    "packages/cli": {
-      "name": "efferent",
+    "packages/code": {
+      "name": "@xandreed/code",
       "version": "0.1.2",
       "bin": {
         "efferent": "dist/efferent.js",
@@ -31,33 +31,33 @@
         "@effect/cli": "^0.75.1",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@efferent/sdk-adapters": "workspace:*",
-        "@efferent/sdk-core": "workspace:*",
         "@opentui/solid": "0.3.1",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.2",
         "solid-js": "^1.9.13",
       },
     },
     "packages/evals": {
-      "name": "@efferent/evals",
+      "name": "@xandreed/evals",
       "version": "0.0.0",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/opentelemetry": "^0.63.0",
         "@effect/platform-bun": "^0.89.0",
-        "@efferent/sdk-adapters": "workspace:*",
-        "@efferent/sdk-core": "workspace:*",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
         "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
         "@opentelemetry/sdk-metrics": "^2.8.0",
         "@opentelemetry/sdk-trace-base": "^2.8.0",
         "@opentelemetry/sdk-trace-node": "^2.8.0",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
     "packages/sdk-adapters": {
-      "name": "@efferent/sdk-adapters",
+      "name": "@xandreed/sdk-adapters",
       "version": "0.0.0",
       "dependencies": {
         "@effect/ai": "^0.35.0",
@@ -70,13 +70,13 @@
         "@effect/sql": "^0.51.1",
         "@effect/sql-pg": "^0.52.1",
         "@effect/sql-sqlite-bun": "^0.52.0",
-        "@efferent/sdk-core": "workspace:*",
         "@opentelemetry/api": "^1.9.1",
+        "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
     "packages/sdk-core": {
-      "name": "@efferent/sdk-core",
+      "name": "@xandreed/sdk-core",
       "version": "0.0.0",
       "dependencies": {
         "@effect/ai": "^0.35.0",
@@ -84,7 +84,7 @@
       },
     },
     "packages/social": {
-      "name": "@efferent/social",
+      "name": "@xandreed/social",
       "version": "0.0.0",
       "dependencies": {
         "playwright": "^1.49.0",
@@ -94,8 +94,8 @@
         "@effect/cli": "^0.75.1",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@efferent/sdk-adapters": "workspace:*",
-        "@efferent/sdk-core": "workspace:*",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
@@ -199,14 +199,6 @@
 
     "@effect/workflow": ["@effect/workflow@0.18.1", "", { "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.1", "@effect/rpc": "^0.75.1", "effect": "^3.21.2" } }, "sha512-FxsUxkyvd7CyN7tw4bQgmAJv8tf8hUwy72bwGYzKGpeuiEObiUKgO1pg8xM49gB6EtwOdVRJhytwcFc8eM/6ow=="],
 
-    "@efferent/evals": ["@efferent/evals@workspace:packages/evals"],
-
-    "@efferent/sdk-adapters": ["@efferent/sdk-adapters@workspace:packages/sdk-adapters"],
-
-    "@efferent/sdk-core": ["@efferent/sdk-core@workspace:packages/sdk-core"],
-
-    "@efferent/social": ["@efferent/social@workspace:packages/social"],
-
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
     "@jridgewell/resolve-uri": ["@jridgewell/resolve-uri@3.1.2", "", {}, "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw=="],
@@ -307,6 +299,16 @@
 
     "@types/node": ["@types/node@25.9.1", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg=="],
 
+    "@xandreed/code": ["@xandreed/code@workspace:packages/code"],
+
+    "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
+
+    "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
+
+    "@xandreed/sdk-core": ["@xandreed/sdk-core@workspace:packages/sdk-core"],
+
+    "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
+
     "ansi-regex": ["ansi-regex@6.2.2", "", {}, "sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg=="],
 
     "babel-plugin-jsx-dom-expressions": ["babel-plugin-jsx-dom-expressions@0.40.7", "", { "dependencies": { "@babel/helper-module-imports": "7.18.6", "@babel/plugin-syntax-jsx": "^7.18.6", "@babel/types": "^7.20.7", "html-entities": "2.3.3", "parse5": "^7.1.2" }, "peerDependencies": { "@babel/core": "^7.20.12" } }, "sha512-/O6JWUmjv03OI9lL2ry9bUjpD5S3PclM55RRJEyCdcFZ5W2SEA/59d+l2hNsk3gI6kiWRdRPdOtqZmsQzFN1pQ=="],
@@ -340,8 +342,6 @@
     "diff": ["diff@9.0.0", "", {}, "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="],
 
     "effect": ["effect@3.21.2", "", { "dependencies": { "@standard-schema/spec": "^1.0.0", "fast-check": "^3.23.1" } }, "sha512-rXd2FGDM8KdjSIrc+mqEELo7ScW7xTVxEf1iInmPSpIde9/nyGuFM710cjTo7/EreGXiUX2MOonPpprbz2XHCg=="],
-
-    "efferent": ["efferent@workspace:packages/cli"],
 
     "electron-to-chromium": ["electron-to-chromium@1.5.366", "", {}, "sha512-OlRuhb688YTCzzU3gXPLn6nGyd+F+53INE1qaKKlu6kETErE8FYsyDh0XqXEU+uBRn0MpCzz2vfNwORhkap8qg=="],
 

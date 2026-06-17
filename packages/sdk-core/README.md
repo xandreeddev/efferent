@@ -2,7 +2,7 @@
   <img src="../../assets/logo-sdk.svg" alt="efferent { sdk }" width="520">
 </p>
 
-# @efferent/sdk-core
+# @xandreed/sdk-core
 
 > The pure domain of the efferent agent — entities, ports, and use cases. Runtime dependencies are **`effect`** and **`@effect/ai`** (provider-agnostic) and nothing else.
 
@@ -17,8 +17,8 @@ This is the inward end of the [ports & adapters](../../README.md) architecture: 
 
 ## Rules
 
-- Never import from `@efferent/sdk-adapters` or the CLI. If a use case needs a capability, **declare a port** — the only SDK allowed here is `@effect/ai` (provider packages live in adapters).
+- Never import from `@xandreed/sdk-adapters` or the CLI. If a use case needs a capability, **declare a port** — the only SDK allowed here is `@effect/ai` (provider packages live in adapters).
 - **No `try`/`catch`/`throw`/`.catch()`** in `src/` — error handling is Effect's typed errors (`Effect.fail`, `Effect.catchTag`, …), enforced by `scripts/banTryCatch.ts` in `bun run typecheck`.
-- camelCase files export functions; PascalCase files export types / `Context.Tag` classes. Tags carry a fully-qualified id: `Context.Tag("@efferent/core/FileSystem")`.
+- camelCase files export functions; PascalCase files export types / `Context.Tag` classes. Tags carry a fully-qualified id: `Context.Tag("@xandreed/sdk-core/FileSystem")`.
 
 Part of [**efferent**](../../README.md) — a coding agent on Effect.ts + Bun.

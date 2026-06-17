@@ -3,7 +3,7 @@ import {
   bashRuleKey,
   type JudgeOutcome,
   judgeApproval,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { defineEval } from "../framework/Eval.js"
 import { predicate } from "../framework/scorers.js"
 import type { EvalEnv } from "../env.js"

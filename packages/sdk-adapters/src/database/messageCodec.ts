@@ -1,5 +1,5 @@
 import { Either, Schema } from "effect"
-import type { AgentMessage } from "@efferent/sdk-core"
+import type { AgentMessage } from "@xandreed/sdk-core"
 
 /**
  * Shared message (de)serialization for the SQL stores. Both `ConversationStore`

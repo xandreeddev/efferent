@@ -1,12 +1,12 @@
-# Publish `efferent` to npm when a GitHub release is published.
+# Publish `@xandreed/code` to npm when a GitHub release is published.
 #
 # Auth is npm **trusted publishing** (OIDC) — no token secret to store or
-# rotate. One-time setup on npmjs.com: package `efferent` → Settings →
+# rotate. One-time setup on npmjs.com: package `@xandreed/code` → Settings →
 # Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `efferent`,
 # workflow `release.yml`. Publishing this way also generates a provenance
 # attestation (the npm page shows the source repo + the exact build run).
 #
-# Release flow: bump `packages/cli/package.json` version → push → create a
+# Release flow: bump `packages/code/package.json` version → push → create a
 # GitHub release tagged `vX.Y.Z` (matching the package version — guarded
 # below) → this workflow gates on typecheck + tests + a leak audit, then
 # publishes.
@@ -46,9 +46,9 @@ jobs:
       - name: Check release tag matches the package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./packages/cli/package.json').version")"
+          PKG="$(node -p "require('./packages/code/package.json').version")"
           if [ "$TAG" != "$PKG" ]; then
-            echo "release tag v$TAG does not match packages/cli version $PKG" >&2
+            echo "release tag v$TAG does not match packages/code version $PKG" >&2
             exit 1
           fi
 
@@ -58,10 +58,10 @@ jobs:
           # The artifact must never embed a build-machine path (bundlers bake
           # __dirname into CommonJS shims — see scripts/build.ts's tokenizer
           # stub for the incident this guards against).
-          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/cli/dist/efferent.js; then
+          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/code/dist/efferent.js; then
             echo "build-machine path found in the bundle — aborting publish" >&2
             exit 1
           fi
 
       - run: npm publish --provenance
-        working-directory: packages/cli
+        working-directory: packages/code

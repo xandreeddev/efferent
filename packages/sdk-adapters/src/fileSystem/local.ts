@@ -9,7 +9,7 @@ import {
   FileSystemError,
   NotADirectory,
   PermissionDenied,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 
 const errCode = (cause: unknown): string =>
   typeof cause === "object" && cause !== null && "code" in cause

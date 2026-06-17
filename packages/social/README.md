@@ -2,11 +2,11 @@
   <img src="../../assets/logo-social.svg" alt="efferent ( social )" width="520">
 </p>
 
-# @efferent/social
+# @xandreed/social
 
 > The built-in-public content engine — the agent reads its own blog and codebase, finds places worth engaging, and drafts/queues social posts for review.
 
-A driver-level package on the same stack as the rest of efferent (`@efferent/sdk-core` + `@efferent/sdk-adapters`, an `@effect/ai` `Toolkit`, `@effect/cli` entrypoint). Browser automation is Playwright; everything domain-shaped is an Effect over a port.
+A driver-level package on the same stack as the rest of efferent (`@xandreed/sdk-core` + `@xandreed/sdk-adapters`, an `@effect/ai` `Toolkit`, `@effect/cli` entrypoint). Browser automation is Playwright; everything domain-shaped is an Effect over a port.
 
 ## What's inside
 
