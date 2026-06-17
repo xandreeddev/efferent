@@ -3,6 +3,7 @@ import type { ApprovalState } from "../presentation/approvalView.js"
 import type { SelectState } from "../presentation/selectBox.js"
 import type { LoginFlow } from "../presentation/loginFlow.js"
 import type { SettingsState } from "../presentation/settingsView.js"
+import type { OnboardingState } from "../presentation/onboardingFlow.js"
 
 /** The mutable settings key an effort picker writes (mirrors `effortSettingKeyFor`). */
 export type EffortSettingKey =
@@ -41,6 +42,7 @@ export type Overlay =
   | { readonly kind: "login"; readonly flow: LoginFlow }
   | { readonly kind: "settings"; readonly state: SettingsState }
   | { readonly kind: "approval"; readonly state: ApprovalState }
+  | { readonly kind: "onboarding"; readonly state: OnboardingState }
 
 export interface OverlaySlice {
   readonly overlay: Accessor<Overlay>

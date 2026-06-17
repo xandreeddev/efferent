@@ -25,6 +25,7 @@ import { stopOAuthSession } from "./actions/login.js"
 import { makeSubmit } from "./actions/submit.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
+import { openOnboardingFlow } from "./actions/onboarding.js"
 import { makeEventReducer, runEventPump } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
 import { setTheme } from "./state/theme.js"
@@ -119,21 +120,15 @@ export const runTuiModeSolid = (
         footer: `logs: tail -f ${logFilePath()}`,
         sidePane,
       })
-      // No credential yet → greet with the `:login` hint (the send-gate in
-      // `submit` enforces it, but a boot-time nudge matches the old TUI).
+      // Boot conversation handling: if not onboarded or has no credentials, force onboarding.
+      // Otherwise, resume or show startup helper/picker.
       const authAll = yield* (yield* AuthStore).all
-      if (Object.keys(authAll).length === 0) {
-        store.pushBlock({
-          kind: "info",
-          text: "No models available. Run :login to add a provider — a subscription (OAuth) or an API key.",
-        })
-      }
+      const hasCreds = Object.keys(authAll).length > 0
+      const isOnboarded = settings.onboarded === true
 
-      // Boot conversation handling: an explicit `--resume <id>` replays that
-      // conversation's history into the rail; otherwise, if the workspace has
-      // prior conversations, float the startup picker over the fresh session
-      // (Esc / "start new" dismisses it). No prior conversations → empty rail.
-      if (input.resumeConversationId !== undefined) {
+      if (!hasCreds || !isOnboarded) {
+        yield* openOnboardingFlow(store)
+      } else if (input.resumeConversationId !== undefined) {
         yield* loadInitialConversation(store, cid)
       } else {
         // First contact: one line that teaches the three interactions that
