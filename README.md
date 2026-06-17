@@ -1,4 +1,6 @@
-# efferent
+<p align="center">
+  <img src="assets/logo.svg" alt="efferent" width="440">
+</p>
 
 > A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree.
 
@@ -10,25 +12,7 @@ efferent                   # opens the TUI in the current project
 
 That's it. No `init`, no wizard, no env vars. **`:login`** picks a subscription (OAuth — Claude Pro/Max, OpenAI) or an API key (Anthropic / Google / OpenAI / OpenCode / Ollama), persists to `~/.efferent/auth.json`, and the next message goes out — same turn, no restart.
 
-```
- ▌efferent  ⠹ Bash(bun test) 4s   ◆ 2 agents · fix parser, audit cli
- ┌─ Fix the failing foo test ──────────────┐  ┌─ activity ───────────┐
- │ ❯ fix the failing test in src/foo.ts    │  │ ctx ░░ 2% 18k/1M     │
- │                                         │  │ 1.2k out · 3 turns   │
- │ ● I'll read the test first.             │  │ Σ main 17k · fast 1k │
- │                                         │  │ ▾ ❯ fix the failing… │
- │ ▸ read · grep · edit  (3 tools, +6 -2)  │  │   ▾ turn 1  42 tok   │
- │                                         │  │     ✓ read_file(foo… │
- │ ● Bash(bun test src/foo.test.ts)        │  │     ✓ edit_file(foo… │
- │   ⎿ exit 0                              │  │ ── workspace ──      │
- │                                         │  │ src/foo.ts +6 -2     │
- │ ● Fixed — the regex was anchored too…   │  │ ▸ skills (2)         │
- └─────────────────────────────────────────┘  └──────────────────────┘
- ┌─ input · INSERT ───────────────────────────────────────────────────┐
- │ run the full suite                                                 │
- └────────────────────────────────────────────────────────────────────┘
-  gemini-3.5-flash · fast gemini-3.1-flash-lite ░░ 2% 18k/1M · 86% cached · sqlite · ~/proj
-```
+<!-- TODO: add a real terminal screenshot of the TUI here (assets/screenshot.png) -->
 
 ## Why efferent
 
