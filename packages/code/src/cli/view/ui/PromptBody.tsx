@@ -1,5 +1,5 @@
 import { tokens } from "../../state/theme.js"
-import { Cursor } from "./atoms.js"
+import { Cursor, KeyHints, type KeyHint } from "./atoms.js"
 
 /**
  * The inner body of a single-line text-entry overlay — the prompt line, the
@@ -15,7 +15,7 @@ export const PromptBody = (props: {
   prompt?: string | undefined
   value: string
   mask: boolean
-  footer: string
+  footer: ReadonlyArray<KeyHint>
 }) => {
   const shown = () => (props.mask ? "•".repeat(props.value.length) : props.value)
   return (
@@ -33,7 +33,7 @@ export const PromptBody = (props: {
         <Cursor />
       </box>
       <box height={1} />
-      <text fg={tokens.text.muted}>{props.footer}</text>
+      <KeyHints hints={props.footer} />
     </box>
   )
 }

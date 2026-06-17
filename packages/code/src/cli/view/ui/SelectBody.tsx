@@ -1,7 +1,7 @@
 import { createMemo, For, Show } from "solid-js"
 import type { SelectOption, SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { Cursor } from "./atoms.js"
+import { Cursor, KeyHints, type KeyHint } from "./atoms.js"
 
 /** Default visible-row window. Both the modal `SelectList` and the full-screen
  *  onboarding share this so the list never drifts between surfaces. */
@@ -26,7 +26,7 @@ const truncate = (s: string, max: number): string =>
 export const SelectBody = (props: {
   state: SelectState<unknown>
   labelBudget: number
-  footer: string
+  footer: ReadonlyArray<KeyHint>
   maxRows?: number
 }) => {
   const s = () => props.state
@@ -94,9 +94,7 @@ export const SelectBody = (props: {
 
       <box height={1} />
       <box flexDirection="row">
-        <text fg={tokens.text.muted} flexGrow={1}>
-          {props.footer}
-        </text>
+        <KeyHints hints={props.footer} grow />
         <text fg={tokens.text.muted}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
       </box>
     </box>
