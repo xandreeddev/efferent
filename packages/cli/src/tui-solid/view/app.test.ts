@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { testRender } from "@opentui/solid"
-import type { AgentMessage, ConversationId } from "@efferent/core"
+import type { AgentMessage, ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { buildContextView } from "../presentation/contextView.js"
 import { openSelect } from "../presentation/selectBox.js"
@@ -303,11 +303,14 @@ test("the :settings overlay floats the settings table with values + hints", asyn
   try {
     store.setOverlay({
       kind: "settings",
-      state: openSettings([
-        { key: "allowBash", label: "allowBash", value: "true", kind: "boolean" },
-        { key: "maxSteps", label: "maxSteps", value: "20", kind: "number" },
-        { key: "model", label: "model", value: "ollama:gemma4", kind: "readonly", hint: "use :model" },
-      ]),
+      state: {
+        ...openSettings([
+          { key: "allowBash", label: "allowBash", value: "true", kind: "boolean" },
+          { key: "maxSteps", label: "maxSteps", value: "20", kind: "number" },
+          { key: "model", label: "model", value: "ollama:gemma4", kind: "readonly", hint: "use :model" },
+        ]),
+        cursor: 2,
+      },
     })
 
     const frame = await waitForFrame((f) => f.includes("Settings") && f.includes("allowBash"))

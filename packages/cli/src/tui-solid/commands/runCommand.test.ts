@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { onToolStart } from "../presentation/executionTree.js"
 import { createTuiStore, type TuiContext, type TuiStore } from "../state/store.js"

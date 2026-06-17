@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/core"
+import type { AgentMessage, Checkpoint, ConversationId } from "@efferent/sdk-core"
 import type { ExecutionTree, TreeNode } from "./executionTree.js"
 import { buildContextView, type ContextRowData } from "./contextView.js"
 import {

@@ -1,64 +1,84 @@
 import { For, Show } from "solid-js"
 import type { SettingsRow, SettingsState } from "../../presentation/settingsView.js"
+import { currentRow } from "../../presentation/settingsView.js"
 import { glyph, tokens } from "../../state/theme.js"
 import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
 
-const LABEL_W = 14
-const pad = (s: string, n: number): string => (s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length))
+const LABEL_W = 18
+const VALUE_MAX = 14
 
 /**
- * The `:settings` table overlay, driving the pure `SettingsState`
- * (`presentation/settingsView.ts`). Each row shows a label + its value; the
- * focused row tints; an inline number edit shows a live buffer + cursor.
- * Nav/toggle/cycle/edit come from `keys/overlay.ts`; the shared `Modal` owns the
- * chrome.
+ * The `:settings` table overlay — renders as pre-formatted multiline text
+ * to avoid flex layout corruption entirely.
  */
 export const SettingsView = (props: { state: SettingsState }) => {
   const s = () => props.state
   const editingIdx = () => (s().editBuffer !== undefined ? s().cursor : -1)
+  const focused = () => currentRow(s())
 
-  const Row = (p: { row: SettingsRow; idx: number }) => {
-    const focused = () => p.idx === s().cursor
-    const editing = () => p.idx === editingIdx()
-    return (
-      <box flexDirection="row" {...(focused() ? { backgroundColor: tokens.cursorLine } : {})}>
-        <text fg={focused() ? tokens.accent.conversation : tokens.text.muted}>
-          {focused() ? `${glyph.pointer} ` : "  "}
-        </text>
-        <text fg={tokens.text.muted}>{pad(p.row.label, LABEL_W)} </text>
-        <Show
-          when={editing()}
-          fallback={
-            <text fg={p.row.kind === "readonly" ? tokens.text.muted : tokens.text.default} wrapMode="none" flexGrow={1}>
-              {p.row.value.length > 0 ? p.row.value : "default"}
-            </text>
-          }
-        >
-          <text fg={tokens.text.default} wrapMode="none">
-            {s().editBuffer ?? ""}
-          </text>
-          <Cursor />
-        </Show>
-        <Show when={p.row.hint !== undefined && !editing()}>
-          <text fg={tokens.text.dim}>{`  ${p.row.hint}`}</text>
-        </Show>
-      </box>
-    )
+  // Build the full settings table as a single multiline string
+  const settingsText = () => {
+    const lines: string[] = []
+    for (let i = 0; i < s().rows.length; i++) {
+      const row = s().rows[i]!
+      const isFocused = i === s().cursor
+      const isEditing = i === editingIdx()
+
+      // Cursor + label
+      const cursor = isFocused ? glyph.pointer : " "
+      const label = row.label.padEnd(LABEL_W, " ")
+
+      // Value
+      let value: string
+      if (isEditing && s().editBuffer !== undefined) {
+        value = s().editBuffer!
+      } else {
+        value = row.value.length > 0 ? row.value : "default"
+        if (value.length > VALUE_MAX) {
+          value = `${value.slice(0, VALUE_MAX - 1)}…`
+        }
+      }
+
+      // Truncate hint for inline display
+      let hint = ""
+      if (row.hint !== undefined && !isEditing) {
+        const hintWords = row.hint.split(" ")
+        if (hintWords.length > 0) {
+          hint = `  ${hintWords[0]}`
+        }
+      }
+
+      lines.push(`${cursor}${label}${value}${hint}`)
+    }
+    return lines.join("\n")
   }
+
+  const focusedHint = () => focused()?.hint
 
   return (
     <Modal title={s().title} width={MODAL_WIDTH}>
       <Rule width={MODAL_RULE} />
-      <For each={s().rows}>{(row, i) => <Row row={row} idx={i()} />}</For>
+      {/* Render the entire table as a single text block */}
+      <text fg={tokens.text.default} wrapMode="none">{settingsText()}</text>
       <Rule width={MODAL_RULE} />
-      <box flexDirection="row">
-        <text fg={tokens.text.muted} flexGrow={1}>
-          {s().editBuffer !== undefined
-            ? "type a value · ↵ save · esc cancel"
-            : "↑↓ move · ↵ toggle / cycle / edit · esc close"}
+      <Show when={focusedHint !== undefined}>
+        <text fg={tokens.text.dim} wrapMode="word" marginTop={1}>
+          {focusedHint()}
         </text>
-        <text fg={tokens.text.muted}>{`${s().cursor + 1}/${s().rows.length}`}</text>
-      </box>
+      </Show>
+      <Show when={s().editBuffer !== undefined}>
+        <text fg={tokens.text.dim} marginTop={1}>
+          {"  type a value · ↵ save · esc cancel"}
+        </text>
+      </Show>
+      <Show when={s().editBuffer === undefined}>
+        <box flexDirection="row" marginTop={1}>
+          <text fg={tokens.text.muted} flexGrow={1}>
+            ↑↓ move · ↵ toggle / cycle / edit · esc close
+          </text>
+          <text fg={tokens.text.muted}>{`${s().cursor + 1}/${s().rows.length}`}</text>
+        </box>
+      </Show>
     </Modal>
   )
 }

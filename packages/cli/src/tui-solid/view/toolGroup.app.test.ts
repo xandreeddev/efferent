@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { makeApp } from "./appHarness.js"
 import { createTuiStore, type TuiContext, type TuiStore } from "../state/store.js"

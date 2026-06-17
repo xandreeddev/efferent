@@ -3,15 +3,15 @@ import { Effect, Ref } from "effect"
 import {
   ApprovalAllowAllLive,
   type AgentHooks,
-  buildScopeRuntime,
-  coderAgentConfig,
-  coderPrompt,
   ConversationStore,
-  discoverInstructionFiles,
-  discoverScopeTree,
-  loadSkills,
   runAgent,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { buildScopeRuntime } from "../../../cli/src/usecases/buildScopeRuntime.js"
+import { coderAgentConfig } from "../../../cli/src/usecases/coderAgentConfig.js"
+import { coderPrompt } from "../../../cli/src/prompts/coder.js"
+import { discoverInstructionFiles } from "../../../cli/src/usecases/discoverInstructionFiles.js"
+import { discoverScopeTree } from "../../../cli/src/usecases/discoverScopeTree.js"
+import { loadSkills } from "../../../cli/src/usecases/loadSkills.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

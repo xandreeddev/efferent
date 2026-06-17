@@ -1,4 +1,4 @@
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import type { StatusState } from "../presentation/statusBar.js"
 import type { SidePaneState } from "../presentation/sidePane.js"
 import { createConversationSlice, type ConversationSlice } from "./conversation.js"

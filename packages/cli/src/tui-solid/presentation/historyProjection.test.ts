@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentMessage } from "@efferent/core"
+import type { AgentMessage } from "@efferent/sdk-core"
 import { projectHistory } from "./historyProjection.js"
 import type { TreeNode } from "./executionTree.js"
 

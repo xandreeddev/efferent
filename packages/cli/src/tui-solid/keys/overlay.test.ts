@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { openSelect, type SelectState } from "../presentation/selectBox.js"
 import { openLogin, type LoginFlow, type ProviderStatus } from "../presentation/loginFlow.js"
@@ -218,7 +218,7 @@ test("settings: Esc with no edit closes the modal", () => {
 /* --- approval modal ---------------------------------------------------- */
 
 import { openApproval } from "../presentation/approvalView.js"
-import type { ApprovalDecision } from "@efferent/core"
+import type { ApprovalDecision } from "@efferent/sdk-core"
 
 const openApprovalOverlay = (store: TuiStore): void =>
   store.setOverlay({

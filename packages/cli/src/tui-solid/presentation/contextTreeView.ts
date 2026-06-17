@@ -1,5 +1,5 @@
 import { basename } from "node:path"
-import type { AgentContextNode } from "@efferent/core"
+import type { AgentContextNode } from "@efferent/sdk-core"
 import { glyph } from "./theme/index.js"
 import { formatTokens } from "./statusBar.js"
 

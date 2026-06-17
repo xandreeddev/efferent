@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { type AgentMessage, ConversationStore, createHandoff } from "@efferent/core"
+import { type AgentMessage, ConversationStore, createHandoff } from "@efferent/sdk-core"
 import { defineEval } from "../framework/Eval.js"
 import { includesAll, llmJudge, predicate } from "../framework/scorers.js"
 import type { EvalEnv } from "../env.js"

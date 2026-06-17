@@ -10,7 +10,7 @@ import type {
   Shell,
   UtilityLlm,
   WebSearch,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import {
   EnvAuthStoreLive,
   FetchHttpClientLive,
@@ -21,7 +21,7 @@ import {
   ModelLive,
   UtilityLlmLive,
   WebSearchLive,
-} from "@efferent/adapters"
+} from "@efferent/sdk-adapters"
 import type { RunConfig } from "./config/RunConfig.js"
 import { settingsLayerForConfig } from "./config/settingsLayer.js"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"

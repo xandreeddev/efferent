@@ -8,7 +8,8 @@ import {
 } from "./contextView.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
 import { buildNavRows, type NavConversation, type TreeRowData } from "./contextTreeView.js"
-import type { AgentContextNode, PlanStep } from "@efferent/core"
+import type { AgentContextNode } from "@efferent/sdk-core"
+import type { PlanStep } from "../../usecases/codingToolkit.js"
 
 export interface SidePaneInstruction {
   readonly path: string

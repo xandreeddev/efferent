@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { themes } from "../presentation/theme/index.js"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { openThemePicker } from "../actions/theme.js"
