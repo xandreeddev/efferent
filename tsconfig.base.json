@@ -21,12 +21,13 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@efferent/sdk-core": ["packages/sdk-core/src/index.ts"],
-      "@efferent/sdk-core/*": ["packages/sdk-core/src/*"],
-      "@efferent/application": ["packages/application/src/index.ts"],
-      "@efferent/application/*": ["packages/application/src/*"],
-      "@efferent/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
-      "@efferent/sdk-adapters/*": ["packages/sdk-adapters/src/*"]
+      "@xandreed/sdk-core": ["packages/sdk-core/src/index.ts"],
+      "@xandreed/sdk-core/*": ["packages/sdk-core/src/*"],
+      "@xandreed/application": ["packages/application/src/index.ts"],
+      "@xandreed/application/*": ["packages/application/src/*"],
+      "@xandreed/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
+      "@xandreed/sdk-adapters/*": ["packages/sdk-adapters/src/*"],
+      "@xandreed/code/*": ["packages/code/src/*"]
     }
   }
 }

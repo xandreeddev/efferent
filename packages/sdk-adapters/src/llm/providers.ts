@@ -11,7 +11,7 @@ import type {
   OpenAiReasoningEffort,
   OpenCodeThinkingMode,
   Settings,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Effect, Redacted, type Scope } from "effect"
 import {
   ANTHROPIC_OAUTH_BETA,

@@ -5,8 +5,8 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
-    "dev": "bun --hot packages/cli/src/main.ts",
-    "start": "bun packages/cli/src/main.ts",
+    "dev": "bun --hot packages/code/src/main.ts",
+    "start": "bun packages/code/src/main.ts",
     "social": "bun packages/social/src/main.ts",
     "social:dev": "bun --hot packages/social/src/main.ts",
     "build": "bun run scripts/build.ts",

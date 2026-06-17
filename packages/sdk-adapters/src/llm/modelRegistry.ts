@@ -10,7 +10,7 @@ import {
   type Credential,
   type ModelInfo,
   type Provider,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { HttpClient, HttpClientRequest } from "@effect/platform"
 import { Effect, Layer, Redacted } from "effect"
 

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { SettingsStore } from "@efferent/sdk-core"
+import { SettingsStore } from "@xandreed/sdk-core"
 import { LocalFileSystemLive } from "../fileSystem/local.js"
 import { LocalSettingsStoreLive } from "./local.js"
 

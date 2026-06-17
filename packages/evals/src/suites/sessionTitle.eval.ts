@@ -1,4 +1,4 @@
-import { type AgentMessage, generateSessionTitle } from "@efferent/sdk-core"
+import { type AgentMessage, generateSessionTitle } from "@xandreed/sdk-core"
 import { Effect } from "effect"
 import { defineEval } from "../framework/Eval.js"
 import { llmJudge, predicate } from "../framework/scorers.js"

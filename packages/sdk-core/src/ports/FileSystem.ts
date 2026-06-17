@@ -28,7 +28,7 @@ export interface DirEntry {
   readonly type: "file" | "dir"
 }
 
-export class FileSystem extends Context.Tag("@efferent/core/FileSystem")<
+export class FileSystem extends Context.Tag("@xandreed/sdk-core/FileSystem")<
   FileSystem,
   {
     readonly read: (

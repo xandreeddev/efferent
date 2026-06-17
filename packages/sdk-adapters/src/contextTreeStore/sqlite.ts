@@ -8,7 +8,7 @@ import {
   ContextNodeNotFound,
   ContextTreeStore,
   ContextTreeStoreError,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import {
   encodeMessageContent,
   parseJsonColumn,

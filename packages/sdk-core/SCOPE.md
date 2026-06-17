@@ -11,11 +11,11 @@ description: Owns packages/core/. Pure domain — entities, ports, use cases, pr
 - `src/index.ts` — public surface; everything other packages import comes through here.
 
 ## Hard rules
-- Never import from `@efferent/adapters`, `@efferent/cli`, or `@efferent/web`.
+- Never import from `@xandreed/sdk-adapters`, `@xandreed/code`, or `@xandreed/web`.
 - No IO libraries and no provider SDKs — no `fs`, no Bun-only globals, no `@effect/ai-google`/`@effect/ai-openai`. The only SDK allowed is provider-agnostic `@effect/ai` (`LanguageModel`, `Tool`, `Toolkit`, `Prompt`). If a use case needs a capability, declare a port.
 - Pure standard-lib helpers from `node:path` and `node:crypto` are allowed (string-only — no filesystem access). Anything that performs IO goes through a port.
 - Schema imports use `import { Schema } from "effect"`.
-- Tags carry a fully-qualified string ID so Effect's diagnostics stay useful: `Context.Tag("@efferent/core/ConversationStore")`.
+- Tags carry a fully-qualified string ID so Effect's diagnostics stay useful: `Context.Tag("@xandreed/sdk-core/ConversationStore")`.
 
 ## Naming
 - camelCase for files that export functions (`runAgent.ts`, `codingToolkit.ts`, `buildScopeRuntime.ts`).

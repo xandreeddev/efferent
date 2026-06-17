@@ -51,7 +51,7 @@ export class AuthError extends Data.TaggedError("AuthError")<{
  * {@link resolveKey}, which refreshes an expired OAuth token first, so a
  * credential added mid-session takes effect on the next turn with no restart.
  */
-export class AuthStore extends Context.Tag("@efferent/core/AuthStore")<
+export class AuthStore extends Context.Tag("@xandreed/sdk-core/AuthStore")<
   AuthStore,
   {
     /** The full credential map — drives the `:login` provider-status tags. */

@@ -4,7 +4,7 @@ import {
   type AuthData,
   type Credential,
   type Provider,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Config, Effect, Layer, Option, Redacted } from "effect"
 
 /**

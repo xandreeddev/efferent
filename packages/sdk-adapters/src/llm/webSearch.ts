@@ -11,7 +11,7 @@ import {
   WebSearchError,
   type WebSearchResult,
   type WebSearchSource,
-} from "@efferent/sdk-core"
+} from "@xandreed/sdk-core"
 import { Config, Effect, Layer, Option } from "effect"
 
 /**

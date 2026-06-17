@@ -9,7 +9,7 @@ every key and `:` command. Up to date with `main`.
 > `<diff>`; fenced code and diff hunks are tree-sitter syntax-highlighted. The layout is
 > Yoga/flexbox boxes, not string-pasting.
 
-For *architecture* (how the TUI is wired to the Effect runtime), see `packages/cli/CLAUDE.md`.
+For *architecture* (how the TUI is wired to the Effect runtime), see `packages/code/CLAUDE.md`.
 For *what's shipped at a glance*, see `README.md`. For *what's deferred*, see `docs/roadmap.md`.
 
 ---

@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { existsSync, realpathSync, symlinkSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { Effect, Layer } from "effect"
-import { Shell } from "@efferent/sdk-core"
+import { Shell } from "@xandreed/sdk-core"
 
 /**
  * Per-case Docker isolation so real-commit tasks (which let the agent run
