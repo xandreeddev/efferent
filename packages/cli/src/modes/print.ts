@@ -10,13 +10,13 @@ import {
   SettingsStore,
   Shell,
   WebSearch,
-  buildScopeRuntime,
-  coderAgentConfig,
-  coderPrompt,
   runAgent,
   type Scope,
   type Skill,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
+import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
+import { coderPrompt } from "../prompts/coder.js"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 import { ansi } from "../terminal.js"

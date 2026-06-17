@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { Effect } from "effect"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { emptyHistory, pushPrompt } from "../presentation/promptHistory.js"
 import { createTuiStore, type ConvScroller, type TuiContext, type TuiStore } from "../state/store.js"

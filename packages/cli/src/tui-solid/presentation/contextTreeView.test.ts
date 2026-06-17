@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentContextNode } from "@efferent/core"
+import type { AgentContextNode } from "@efferent/sdk-core"
 import {
   buildNavRows,
   buildTreeRowsData,

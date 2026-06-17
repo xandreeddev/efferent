@@ -1,4 +1,4 @@
-import type { ConversationId, ModelInfo } from "@efferent/core"
+import type { ConversationId, ModelInfo } from "@efferent/sdk-core"
 import {
   filterAppend,
   filterBackspace,

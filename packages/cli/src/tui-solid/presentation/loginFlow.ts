@@ -7,7 +7,7 @@
  * `LoginAdvance` outcome it gets back.
  */
 
-import { type Provider } from "@efferent/core"
+import { type Provider } from "@efferent/sdk-core"
 import {
   filterAppend,
   filterBackspace,

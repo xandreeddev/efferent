@@ -1,9 +1,6 @@
 import { Cause, Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
-  buildScopeRuntime,
-  coderAgentConfig,
-  coderPrompt,
   ContextNodeId,
   ConversationStore,
   DEFAULT_AUTO_HANDOFF_PCT,
@@ -13,11 +10,14 @@ import {
   shouldAutoHandoff,
   type AgentHooks,
   type Approval,
-  type InstructionFile,
   type Scope,
   type Skill,
   type UtilityLlm,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
+import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
+import { coderPrompt } from "../../prompts/coder.js"
+import { type InstructionFile } from "../../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError, inspectError } from "../util/errorFormat.js"
 import { idleAgentState, submittedAgentState } from "../presentation/agentState.js"

@@ -6,12 +6,12 @@ import { createComponent } from "solid-js"
 import { Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
-  buildScopeRuntime,
   ConversationId,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
@@ -263,4 +263,6 @@ export const runTuiModeSolid = (
       // 9. Block until exit; scope finalizers then restore the terminal.
       yield* Deferred.await(exitDeferred)
     }),
-  ).pipe(Effect.provide(fileLoggerLayer(logFilePath())))
+  ).pipe(
+    Effect.provide(fileLoggerLayer(logFilePath())),
+  ) as Effect.Effect<void, never, AppServices>

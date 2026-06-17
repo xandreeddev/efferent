@@ -1,4 +1,4 @@
-import { type AgentMessage, type Checkpoint, handoffToMessage } from "@efferent/core"
+import { type AgentMessage, type Checkpoint, handoffToMessage } from "@efferent/sdk-core"
 import { glyph } from "./theme/index.js"
 
 /**

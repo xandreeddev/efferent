@@ -6,7 +6,7 @@ import {
   type ConversationId,
   type ModelInfo,
   type Settings,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { createTuiStore, type TuiStore } from "../state/store.js"
 import { applyRoleModelSelection } from "./model.js"

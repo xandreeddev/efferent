@@ -21,12 +21,12 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@efferent/core": ["packages/core/src/index.ts"],
-      "@efferent/core/*": ["packages/core/src/*"],
+      "@efferent/sdk-core": ["packages/sdk-core/src/index.ts"],
+      "@efferent/sdk-core/*": ["packages/sdk-core/src/*"],
       "@efferent/application": ["packages/application/src/index.ts"],
       "@efferent/application/*": ["packages/application/src/*"],
-      "@efferent/adapters": ["packages/adapters/src/index.ts"],
-      "@efferent/adapters/*": ["packages/adapters/src/*"]
+      "@efferent/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
+      "@efferent/sdk-adapters/*": ["packages/sdk-adapters/src/*"]
     }
   }
 }

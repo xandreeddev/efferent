@@ -1,4 +1,4 @@
-import type { AgentMessage, Checkpoint } from "@efferent/core"
+import type { AgentMessage, Checkpoint } from "@efferent/sdk-core"
 import { projectHistory } from "../presentation/historyProjection.js"
 import type { ScrollbackBlock } from "../presentation/conversation.js"
 

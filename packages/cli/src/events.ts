@@ -3,7 +3,7 @@ import type {
   AgentHooks,
   AgentMessage,
   TokenUsage,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 
 /**
  * Mode-agnostic event vocabulary the loop emits via hooks. Each mode

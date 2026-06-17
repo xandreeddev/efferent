@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { type AgentMessage, ConversationStore } from "@efferent/core"
+import { type AgentMessage, ConversationStore } from "@efferent/sdk-core"
 import { InMemoryConversationStoreLive } from "./inMemoryConversationStore.js"
 
 const user = (content: string): AgentMessage => ({ role: "user", content })

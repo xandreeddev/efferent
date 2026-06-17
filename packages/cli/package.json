@@ -45,8 +45,8 @@
     "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
-    "@efferent/adapters": "workspace:*",
-    "@efferent/core": "workspace:*",
+    "@efferent/sdk-adapters": "workspace:*",
+    "@efferent/sdk-core": "workspace:*",
     "@effect/ai": "^0.35.0",
     "@effect/cli": "^0.75.1",
     "@effect/platform": "^0.96.1",

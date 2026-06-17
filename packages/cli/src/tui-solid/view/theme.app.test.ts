@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import type { ConversationId } from "@efferent/core"
+import type { ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { openSelect } from "../presentation/selectBox.js"
 import { makeApp } from "./appHarness.js"
