@@ -6,7 +6,7 @@ import {
   ApprovalAllowAllLive,
   ConversationStore,
   runAgent,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import type { EvalEnv } from "../env.js"
 import { buildCoderConfig } from "./coder.js"
 import { dockerShellLayer, withSandbox } from "./dockerSandbox.js"

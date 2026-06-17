@@ -6,7 +6,7 @@
  * is the source of truth. A pure function so it's unit-testable.
  */
 
-import { maskDbUrl } from "@efferent/core"
+import { maskDbUrl } from "@efferent/sdk-core"
 
 export interface DbStatus {
   /** The headline line, e.g. `database: Postgres postgres://u:***@h/db  (active · from EFFERENT_DB_URL env)`. */

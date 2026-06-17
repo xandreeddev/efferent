@@ -15,8 +15,8 @@
  * the agents pane.
  */
 
-import type { AgentMessage, Checkpoint } from "@efferent/core"
-import { assistantUsage } from "@efferent/core"
+import type { AgentMessage, Checkpoint } from "@efferent/sdk-core"
+import { assistantUsage } from "@efferent/sdk-core"
 import {
   describeToolCall,
   describeToolResult,
@@ -43,7 +43,7 @@ import {
 } from "./executionTree.js"
 import { mergeFileChange, parsePlanSteps, type FileChange } from "./sidePane.js"
 import { formatTokens } from "./statusBar.js"
-import type { PlanStep } from "@efferent/core"
+import type { PlanStep } from "../../usecases/codingToolkit.js"
 
 export interface HistoryProjection {
   readonly blocks: ScrollbackBlock[]

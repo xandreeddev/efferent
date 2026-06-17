@@ -1,4 +1,5 @@
-import type { InstructionFile, Scope, Skill } from "@efferent/core"
+import type { Scope, Skill } from "@efferent/sdk-core"
+import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
 
 /**
  * The TUI driver moved to `packages/cli/src/tui-solid/` (OpenTUI + SolidJS).

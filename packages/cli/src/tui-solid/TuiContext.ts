@@ -13,7 +13,7 @@ import type {
   Shell,
   UtilityLlm,
   WebSearch,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import type { LanguageModel } from "@effect/ai"
 import type { TuiStore } from "./state/store.js"
 
@@ -47,7 +47,7 @@ export type AppServices =
  */
 export interface TuiContext {
   readonly store: TuiStore
-  readonly run: <A, E>(program: Effect.Effect<A, E, AppServices>) => Promise<A>
+  readonly run: <A, E>(program: Effect.Effect<A, E, any>) => Promise<A>
   readonly submit: (text: string) => void
   readonly interrupt: () => void
   readonly exit: () => void

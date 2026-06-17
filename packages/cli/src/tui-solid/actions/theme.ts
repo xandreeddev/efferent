@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SettingsStore } from "@efferent/core"
+import { SettingsStore } from "@efferent/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { activeThemeName, setTheme, themeNames } from "../state/theme.js"
 import type { TuiStore } from "../state/store.js"

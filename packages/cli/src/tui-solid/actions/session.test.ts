@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import type { AgentMessage, ConversationId } from "@efferent/core"
+import type { AgentMessage, ConversationId } from "@efferent/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { buildContextView } from "../presentation/contextView.js"
 import { createTuiStore, type TuiStore } from "../state/store.js"

@@ -1,6 +1,6 @@
 import { batch } from "solid-js"
 import { Effect } from "effect"
-import { ConversationStore, createHandoff, type ConversationId } from "@efferent/core"
+import { ConversationStore, createHandoff, type ConversationId } from "@efferent/sdk-core"
 import { buildContextView } from "../presentation/contextView.js"
 import { formatFullError } from "../util/errorFormat.js"
 import type { TuiStore } from "../state/store.js"

@@ -5,9 +5,9 @@ import {
   ContextNodeId,
   ContextTreeStore,
   ConversationStore,
-  getWorkspaceRef,
   type ConversationId,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { getWorkspaceRef } from "../../usecases/staleness.js"
 import type { ScrollbackBlock } from "../presentation/conversation.js"
 import type { NavConversation } from "../presentation/contextTreeView.js"
 import { withSeedMarkers } from "../presentation/nodePreview.js"
@@ -15,6 +15,7 @@ import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
 import { applyResume, conversationLabel, conversationTitle, openContextView, resumeConversation } from "./session.js"
+import { type AppServices } from "../TuiContext.js"
 
 /**
  * Load the ACTIVE session's agent-context nodes (the `agents` view shows only
@@ -22,7 +23,7 @@ import { applyResume, conversationLabel, conversationTitle, openContextView, res
  * nodes stamped with a different ref render a `stale` badge (their context
  * describes an older world). Best-effort: a store hiccup never breaks the view.
  */
-export const loadAgentTree = (store: TuiStore, activeCid: ConversationId) =>
+export const loadAgentTree = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cts = yield* ContextTreeStore
     const nodes = yield* cts.listTree(activeCid).pipe(Effect.catchAll(() => Effect.succeed([])))
@@ -40,7 +41,7 @@ export const loadAgentTree = (store: TuiStore, activeCid: ConversationId) =>
  * Load the workspace's conversations into the `sessions` view: every session
  * sharing this path, the active one marked — Enter there swaps between them.
  */
-export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
+export const loadSessions = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cs = yield* ConversationStore
     const list = yield* cs
@@ -61,7 +62,7 @@ export const loadSessions = (store: TuiStore, activeCid: ConversationId) =>
   })
 
 /** Refresh both navigator data sets (boot + every turn end). */
-export const refreshNav = (store: TuiStore, activeCid: ConversationId) =>
+export const refreshNav = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid))
 
 /**
@@ -69,7 +70,7 @@ export const refreshNav = (store: TuiStore, activeCid: ConversationId) =>
  * sub-agent nodes. **Focus-free** — the `v` view cycle uses this directly;
  * `toggleTree` layers the `:tree` command's focus choreography on top.
  */
-export const openTreeView = (store: TuiStore, cid: ConversationId) =>
+export const openTreeView = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     yield* loadAgentTree(store, cid)
     yield* Effect.sync(() =>
@@ -78,7 +79,7 @@ export const openTreeView = (store: TuiStore, cid: ConversationId) =>
   })
 
 /** Switch the side pane to the sessions list. Focus-free (the `v` cycle). */
-export const openSessionsView = (store: TuiStore, cid: ConversationId) =>
+export const openSessionsView = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     yield* loadSessions(store, cid)
     yield* Effect.sync(() =>
@@ -87,7 +88,7 @@ export const openSessionsView = (store: TuiStore, cid: ConversationId) =>
   })
 
 /** `:sessions` — toggle the workspace sessions list. Mirrors `toggleTree`. */
-export const toggleSessions = (store: TuiStore, cid: ConversationId) =>
+export const toggleSessions = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const opening = store.sidePane().view !== "sessions"
     if (opening) {
@@ -115,7 +116,7 @@ export const toggleSessions = (store: TuiStore, cid: ConversationId) =>
  * closing returns to the Activity dashboard (and the input, if the side held
  * focus). Mirrors `toggleContext`.
  */
-export const toggleTree = (store: TuiStore, cid: ConversationId) =>
+export const toggleTree = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const opening = store.sidePane().view !== "tree"
     if (opening) {

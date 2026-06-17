@@ -1,4 +1,4 @@
-import { parseModel } from "@efferent/core"
+import { parseModel } from "@efferent/sdk-core"
 
 /**
  * Status-bar **display config** — model + workspace chrome only. Token/usage

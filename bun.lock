@@ -15,25 +15,6 @@
         "typescript": "^5.9.3",
       },
     },
-    "packages/adapters": {
-      "name": "@efferent/adapters",
-      "version": "0.0.0",
-      "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "@effect/ai-anthropic": "^0.25.0",
-        "@effect/ai-google": "^0.14.0",
-        "@effect/ai-openai": "^0.39.2",
-        "@effect/experimental": "^0.60.0",
-        "@effect/opentelemetry": "^0.63.0",
-        "@effect/platform": "^0.96.1",
-        "@effect/sql": "^0.51.1",
-        "@effect/sql-pg": "^0.52.1",
-        "@effect/sql-sqlite-bun": "^0.52.0",
-        "@efferent/core": "workspace:*",
-        "@opentelemetry/api": "^1.9.1",
-        "effect": "^3.21.2",
-      },
-    },
     "packages/cli": {
       "name": "efferent",
       "version": "0.1.2",
@@ -50,19 +31,11 @@
         "@effect/cli": "^0.75.1",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@efferent/adapters": "workspace:*",
-        "@efferent/core": "workspace:*",
+        "@efferent/sdk-adapters": "workspace:*",
+        "@efferent/sdk-core": "workspace:*",
         "@opentui/solid": "0.3.1",
         "effect": "^3.21.2",
         "solid-js": "^1.9.13",
-      },
-    },
-    "packages/core": {
-      "name": "@efferent/core",
-      "version": "0.0.0",
-      "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "effect": "^3.21.2",
       },
     },
     "packages/evals": {
@@ -72,14 +45,57 @@
         "@effect/ai": "^0.35.0",
         "@effect/opentelemetry": "^0.63.0",
         "@effect/platform-bun": "^0.89.0",
-        "@efferent/adapters": "workspace:*",
-        "@efferent/core": "workspace:*",
+        "@efferent/sdk-adapters": "workspace:*",
+        "@efferent/sdk-core": "workspace:*",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
         "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
         "@opentelemetry/sdk-metrics": "^2.8.0",
         "@opentelemetry/sdk-trace-base": "^2.8.0",
         "@opentelemetry/sdk-trace-node": "^2.8.0",
+        "effect": "^3.21.2",
+      },
+    },
+    "packages/sdk-adapters": {
+      "name": "@efferent/sdk-adapters",
+      "version": "0.0.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/ai-anthropic": "^0.25.0",
+        "@effect/ai-google": "^0.14.0",
+        "@effect/ai-openai": "^0.39.2",
+        "@effect/experimental": "^0.60.0",
+        "@effect/opentelemetry": "^0.63.0",
+        "@effect/platform": "^0.96.1",
+        "@effect/sql": "^0.51.1",
+        "@effect/sql-pg": "^0.52.1",
+        "@effect/sql-sqlite-bun": "^0.52.0",
+        "@efferent/sdk-core": "workspace:*",
+        "@opentelemetry/api": "^1.9.1",
+        "effect": "^3.21.2",
+      },
+    },
+    "packages/sdk-core": {
+      "name": "@efferent/sdk-core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "effect": "^3.21.2",
+      },
+    },
+    "packages/social": {
+      "name": "@efferent/social",
+      "version": "0.0.0",
+      "dependencies": {
+        "playwright": "^1.49.0",
+      },
+      "devDependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/cli": "^0.75.1",
+        "@effect/platform": "^0.96.1",
+        "@effect/platform-bun": "^0.89.0",
+        "@efferent/sdk-adapters": "workspace:*",
+        "@efferent/sdk-core": "workspace:*",
         "effect": "^3.21.2",
       },
     },
@@ -183,11 +199,13 @@
 
     "@effect/workflow": ["@effect/workflow@0.18.1", "", { "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.1", "@effect/rpc": "^0.75.1", "effect": "^3.21.2" } }, "sha512-FxsUxkyvd7CyN7tw4bQgmAJv8tf8hUwy72bwGYzKGpeuiEObiUKgO1pg8xM49gB6EtwOdVRJhytwcFc8eM/6ow=="],
 
-    "@efferent/adapters": ["@efferent/adapters@workspace:packages/adapters"],
-
-    "@efferent/core": ["@efferent/core@workspace:packages/core"],
-
     "@efferent/evals": ["@efferent/evals@workspace:packages/evals"],
+
+    "@efferent/sdk-adapters": ["@efferent/sdk-adapters@workspace:packages/sdk-adapters"],
+
+    "@efferent/sdk-core": ["@efferent/sdk-core@workspace:packages/sdk-core"],
+
+    "@efferent/social": ["@efferent/social@workspace:packages/social"],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
@@ -345,6 +363,8 @@
 
     "fs.realpath": ["fs.realpath@1.0.0", "", {}, "sha512-OO0pH2lK6a0hZnAdau5ItzHPI6pUlvI7jMVnxUQRtw4owF2wk8lOSabtGDCTP4Ggrg2MbGnWO9X8K1t4+fGMDw=="],
 
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
 
     "gensync": ["gensync@1.0.0-beta.2", "", {}, "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="],
@@ -440,6 +460,10 @@
     "picomatch": ["picomatch@4.0.4", "", {}, "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="],
 
     "pkg-up": ["pkg-up@3.1.0", "", { "dependencies": { "find-up": "^3.0.0" } }, "sha512-nDywThFk1i4BQK4twPQ6TA4RT8bDY96yeuCVBWL3ePARCiEKDRSrNGbFIgUJpLp+XeIR65v8ra7WuJOFUBtkMA=="],
+
+    "playwright": ["playwright@1.61.0", "", { "dependencies": { "playwright-core": "1.61.0" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-Z+7BeeqQPRRzklHsVFP4KTGIyMxKUmfeRA4WisM6G3/XW6nwGeX6fX9qYaDa+CiUqpOkb2f6X3nar05R3kSuJQ=="],
+
+    "playwright-core": ["playwright-core@1.61.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-caX7TrY3Ml6egyDX0WUcTHDxodl/b51y5wJOdCEA36QviK/s2g081hvmGs8eaE3DWb6NYZQ6BjO/QkNRPenoPA=="],
 
     "postgres-array": ["postgres-array@3.0.4", "", {}, "sha512-nAUSGfSDGOaOAEGwqsRY27GPOea7CNipJPOA7lPbdEpx5Kg3qzdP0AaWC5MlhTWV9s4hFX39nomVZ+C4tnGOJQ=="],
 

@@ -4,7 +4,6 @@ import { Effect } from "effect"
 import {
   DEFAULT_AUTO_HANDOFF_PCT,
   AuthStore,
-  DEFAULT_SUB_AGENT_MAX_STEPS,
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
   FileSystem,
   ModelRegistry,
@@ -12,7 +11,8 @@ import {
   effortLevelsFor,
   effortSettingKeyFor,
   maskDbUrl,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
+import { DEFAULT_SUB_AGENT_MAX_STEPS } from "../../usecases/buildScopeRuntime.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import { describeActiveDatabase } from "../presentation/dbStatus.js"

@@ -6,7 +6,7 @@ import {
   UtilityLlm,
   type ApprovalDecision,
   type ApprovalRequest,
-} from "@efferent/core"
+} from "@efferent/sdk-core"
 import { openApproval, type ApprovalHint } from "./presentation/approvalView.js"
 import { accumulateRoleSpend } from "./presentation/sidePane.js"
 import type { TuiStore } from "./state/store.js"

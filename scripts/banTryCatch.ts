@@ -13,7 +13,7 @@ import * as ts from "typescript"
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
 
-const ROOT = join(import.meta.dir, "..", "packages", "core", "src")
+const ROOT = join(import.meta.dir, "..", "packages", "sdk-core", "src")
 
 function collectTsFiles(dir: string): string[] {
   const files: string[] = []
@@ -82,7 +82,7 @@ for (const file of files) {
 }
 
 if (allViolations.length > 0) {
-  console.error(`\n❌ Banned constructs found in @efferent/core/src/:\n`)
+  console.error(`\n❌ Banned constructs found in @efferent/sdk-core/src/:\n`)
   for (const v of allViolations) console.error(`  ${v}`)
   console.error(
     `\nUse Effect.fail / Effect.die to create errors and` +
@@ -91,4 +91,4 @@ if (allViolations.length > 0) {
   process.exit(1)
 }
 
-console.error("✅ No try/catch, throw, or .catch() in @efferent/core/src/")
+console.error("✅ No try/catch, throw, or .catch() in @efferent/sdk-core/src/")
