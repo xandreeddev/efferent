@@ -160,6 +160,35 @@ export const skipToComplete = (store: TuiStore, state: OnboardingState) =>
     })
   })
 
+/**
+ * Step BACK one screen (agy-style Esc = Go Back). Each prior step is rebuilt by
+ * its transition (the selects re-fetch from the registry), so back-nav reuses
+ * the same builders as forward-nav. From `mainModel` we return to the login
+ * picker (a fresh `startOnboarding` at the authMethod step); the caller handles
+ * `login`'s own back/exit semantics.
+ */
+export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
+  Effect.gen(function* () {
+    switch (state.step) {
+      case "mainModel":
+        yield* Effect.sync(() =>
+          store.setOverlay({ kind: "onboarding", state: startOnboarding(state.statuses) }),
+        )
+        break
+      case "fastModel":
+        yield* transitionToMainModel(store, state)
+        break
+      case "theme":
+        yield* transitionToFastModel(store, state)
+        break
+      case "complete":
+        yield* transitionToTheme(store, state)
+        break
+      case "login":
+        break
+    }
+  })
+
 export const finishOnboarding = (store: TuiStore) =>
   Effect.gen(function* () {
     const settingsStore = yield* SettingsStore

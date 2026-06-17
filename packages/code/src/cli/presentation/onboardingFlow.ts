@@ -70,7 +70,7 @@ export const onboardingToMainModel = (
   return {
     step: "mainModel",
     statuses: state.statuses,
-    sel: openSelect("Select main model (Esc to skip)", options),
+    sel: openSelect("Step 2 of 4 · Select your main model", options),
   }
 }
 
@@ -90,7 +90,7 @@ export const onboardingToFastModel = (
   return {
     step: "fastModel",
     statuses: state.statuses,
-    sel: openSelect("Select FAST model (Esc to skip)", options),
+    sel: openSelect("Step 3 of 4 · Select your fast (helper) model", options),
   }
 }
 
@@ -103,7 +103,7 @@ export const onboardingToTheme = (state: OnboardingState, activeTheme: string): 
   return {
     step: "theme",
     statuses: state.statuses,
-    sel: openSelect("Select color theme (Esc to skip)", options),
+    sel: openSelect("Step 4 of 4 · Pick a color theme", options),
   }
 }
 
