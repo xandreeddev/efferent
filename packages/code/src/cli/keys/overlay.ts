@@ -19,9 +19,7 @@ import {
 } from "../presentation/onboardingFlow.js"
 import {
   advanceOnboardingStep,
-  skipToFastModel,
-  skipToTheme,
-  skipToComplete,
+  onboardingBack,
   finishOnboarding,
 } from "../actions/onboarding.js"
 import {
@@ -295,6 +293,8 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
 
   if (o.kind === "onboarding") {
     const state = o.state
+    // Esc = Go Back (agy convention). On the first screen (login authMethod)
+    // there's nowhere back to go: close if already signed in, else exit.
     if (key.name === "escape") {
       if (state.step === "login") {
         const flow = state.flow
@@ -312,22 +312,8 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
         }
         return true
       }
-      if (state.step === "mainModel") {
-        void ctx.run(skipToFastModel(store, state))
-        return true
-      }
-      if (state.step === "fastModel") {
-        void ctx.run(skipToTheme(store, state))
-        return true
-      }
-      if (state.step === "theme") {
-        void ctx.run(skipToComplete(store, state))
-        return true
-      }
-      if (state.step === "complete") {
-        void ctx.run(finishOnboarding(store))
-        return true
-      }
+      // model / fast / theme / complete → step back to the previous screen.
+      void ctx.run(onboardingBack(store, state))
       return true
     }
 

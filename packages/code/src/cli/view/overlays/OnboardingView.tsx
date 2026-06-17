@@ -111,7 +111,7 @@ const OnboardingSelectContent = (props: { state: SelectState<unknown> }) => {
       <box height={1} />
       <box flexDirection="row">
         <text fg={tokens.text.muted} flexGrow={1}>
-          [Use arrow keys to navigate, Enter to select]
+          [↑/↓ navigate · type to filter · Enter select · Esc back]
         </text>
         <text fg={tokens.text.muted}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
       </box>
@@ -190,7 +190,13 @@ export const OnboardingView = (props: { state: OnboardingState }) => {
       left={0}
       width="100%"
       height="100%"
-      backgroundColor={tokens.overlay.bg}
+      // Opaque base surface — the onboarding is full-screen and the live rail
+      // keeps writing underneath, so a transparent fill lets that text bleed
+      // through and collide. We mask with `status.bg` (the app's own darkest
+      // base, shared with the status bar) rather than the lighter modal
+      // `overlay.bg`, so opening onboarding doesn't visibly *recolour* the
+      // screen — it reads as the same near-black surface the chrome already uses.
+      backgroundColor={tokens.status.bg}
       flexDirection="column"
       paddingLeft={4}
       paddingRight={4}
@@ -205,10 +211,13 @@ export const OnboardingView = (props: { state: OnboardingState }) => {
               wording reflects whether a credential already exists — a fresh run
               says "not signed in"; a re-run (`:onboarding`) says "set up". */}
           <Show when={loginFlowState().step === "authMethod"}>
-            <text fg={tokens.text.default} marginBottom={1}>
+            <text fg={tokens.text.default}>
               {s().statuses.some((p) => p.configured !== undefined)
                 ? "Welcome back to the Efferent CLI. Reconfigure your setup below."
                 : "Welcome to the Efferent CLI. You are currently not signed in."}
+            </text>
+            <text fg={tokens.text.muted} wrapMode="word" marginBottom={1}>
+              {"Step 1 of 4 — we'll set up a provider, your main + fast models, and a theme."}
             </text>
             <box height={1} />
           </Show>
@@ -240,7 +249,7 @@ export const OnboardingView = (props: { state: OnboardingState }) => {
               You can access these settings anytime via the :settings command.
             </text>
             <text fg={tokens.text.muted}>
-              [Press Enter to start using Efferent]
+              [Enter to start using Efferent · Esc to go back]
             </text>
           </box>
         </Show>
