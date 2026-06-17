@@ -121,13 +121,14 @@ bun run eval [name …]                 # eval suites (key-gated)
 
 ```
 packages/
-├── core/       pure domain — entities, ports, use cases, prompts (effect + @effect/ai only)
-├── adapters/   Layer impls of core ports — provider SDKs + IO live here
-├── cli/        composition root + four modes + the OpenTUI/SolidJS TUI
-└── evals/      Effect-native eval framework + the agent's suites
+├── sdk-core/     pure domain SDK — shared entities, ports, reasoning loops, prompts (effect + @effect/ai only)
+├── sdk-adapters/ Layer impls of ports — provider SDKs + database IO live here
+├── cli/          coding-agent CLI driver: TUI + print + json + rpc modes
+├── social/       social-agent CLI driver: daemon + review + test modes
+└── evals/        eval framework + test suites
 ```
 
-Dependency direction is strictly inward: `cli` → `adapters` → `core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
+Dependency direction is strictly inward: `cli` / `social` → `sdk-adapters` → `sdk-core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
 
 ## Docs
 

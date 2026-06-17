@@ -6,22 +6,23 @@ Coding agent CLI built in public as `@xandreeddev`. See `../CLAUDE.md` (parent t
 
 ```
 packages/
-├── core/         pure domain: entities, ports, use cases, prompts — depends on `effect` + `@effect/ai`
-├── adapters/     Layer impls of ports — depends on @efferent/core + external SDKs (@effect/ai-google, @effect/ai-openai, Postgres)
-└── cli/          coding-agent driver: TUI + print + json + rpc modes
+├── sdk-core/     pure domain SDK: entities, ports, use cases, prompts — depends on `effect` + `@effect/ai`
+├── sdk-adapters/ Layer impls of ports — depends on @efferent/sdk-core + external SDKs (@effect/ai-google, @effect/ai-openai, Postgres)
+├── cli/          coding-agent driver: TUI + print + json + rpc modes
+└── social/       social-agent driver: daemon + review + test modes
 ```
 
-**Dependency direction is strictly inward.** `cli` → `adapters` → `core`. `core` imports nothing from siblings. `adapters` imports `@efferent/core` + the external SDK it wraps. Drivers compose the layers at the very edge and hand off to `BunRuntime.runMain`.
+**Dependency direction is strictly inward.** `cli` / `social` → `sdk-adapters` → `sdk-core`. `sdk-core` imports nothing from siblings. `sdk-adapters` imports `@efferent/sdk-core` + the external SDK it wraps. Drivers compose the layers at the very edge and hand off to `BunRuntime.runMain`.
 
 ## Conventions
 
-- **Ports** are `Context.Tag` services in `@efferent/core/ports/`. Each ships its tagged errors next to it.
+- **Ports** are `Context.Tag` services in `@efferent/sdk-core/ports/`. Each ships its tagged errors next to it.
 - **Adapters** provide one `Layer.effect` per port. External promises go through `Effect.tryPromise`, mapped into the port's tagged error. Config via `Config.string` — never hardcode.
-- **Use cases** live in `@efferent/core/usecases/` returning `Effect.Effect<A, E, …>`. No IO; the only SDK allowed in `core` is `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`). Provider packages (`@effect/ai-google`, `@effect/ai-openai`) live in `adapters`.
-- **Agent configs** (`@efferent/core/usecases/{agentConfig,coderAgentConfig}.ts`) bundle a system prompt + an `@effect/ai` `Toolkit` into an `AgentConfig<Tools>`. `runAgent` is parameterized by config; the CLI picks `coderAgentConfig(cwd)`. The toolkit's handler `Layer` (`codingToolkitLayer(cwd, skills, { allowBash })`) is provided at the driver's composition root — it carries the runtime deps (`cwd`, `FileSystem`, `Shell`).
+- **Use cases** live in `@efferent/sdk-core/usecases/` returning `Effect.Effect<A, E, …>`. No IO; the only SDK allowed in `sdk-core` is `@effect/ai` (provider-agnostic — `LanguageModel`, `Tool`, `Toolkit`, `Prompt`). Provider packages (`@effect/ai-google`, `@effect/ai-openai`) live in `sdk-adapters`.
+- **Agent configs** (`@efferent/sdk-core/usecases/agentConfig.ts` and `@efferent/coder` CLI configs) bundle a system prompt + an `@effect/ai` `Toolkit` into an `AgentConfig<Tools>`. `runAgent` is parameterized by config; the CLI picks `coderAgentConfig(cwd)`. The toolkit's handler `Layer` (`codingToolkitLayer(cwd, skills, { allowBash })`) is provided at the driver's composition root — it carries the runtime deps (`cwd`, `FileSystem`, `Shell`).
 - **Schema** lives in `effect` itself: `import { Schema } from "effect"`.
 - Bun runs `.ts` directly. No build step, no emit. `tsc --noEmit` is purely a typecheck gate.
-- **No `try/catch`, `throw`, or `.catch()` in `@efferent/core/src/`.** Error handling uses Effect's typed errors (`Effect.fail`, `Effect.die`, `Effect.catchAll`, `Effect.catchTag`). Enforced by `scripts/banTryCatch.ts` — a zero-dep TypeScript-AST scan (so `Effect.try`/`Effect.tryPromise`/strings/comments never false-positive), folded into `bun run typecheck`.
+- **No `try/catch`, `throw`, or `.catch()` in `@efferent/sdk-core/src/`.** Error handling uses Effect's typed errors (`Effect.fail`, `Effect.die`, `Effect.catchAll`, `Effect.catchTag`). Enforced by `scripts/banTryCatch.ts` — a zero-dep TypeScript-AST scan (so `Effect.try`/`Effect.tryPromise`/strings/comments never false-positive), folded into `bun run typecheck`.
   - **After the task is complete, run `bun run typecheck` to validate the ban.** It runs tsc + the AST scan; a banned construct fails the command and the change is rejected.
   - Enforced at three layers: a local `pre-commit` hook (installed by `bun install` via the `prepare` script → `scripts/installHooks.ts`; `--no-verify` bypass discouraged), the `ci` workflow on every push/PR (`.github/workflows/ci.yml`), and the release gate. Branch protection on `main` requires `ci`, so a violation can't be merged or pushed.
 - File naming: camelCase for files that export functions; PascalCase for files that export types / `Context.Tag` classes.
