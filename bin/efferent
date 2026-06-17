@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/cli/src/main.ts" "$@"
