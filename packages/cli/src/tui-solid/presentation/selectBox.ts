@@ -22,6 +22,13 @@ export interface SelectState<T> {
   readonly matches: ReadonlyArray<SelectOption<T>>
   /** Index into `matches`. */
   readonly selected: number
+  /**
+   * When set, the overlay renders a side preview keyed to the *highlighted*
+   * option. `"theme"` → a sample conversation painted in that theme's palette,
+   * so it can be seen before Enter commits it. Preserved by the reducers (they
+   * spread `...state`); unset for ordinary pickers.
+   */
+  readonly preview?: "theme"
 }
 
 const narrow = <T>(

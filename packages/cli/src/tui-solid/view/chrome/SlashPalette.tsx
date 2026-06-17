@@ -21,15 +21,15 @@ export const SlashPalette = (props: { ctx: TuiContext }) => {
         <For each={matches()}>
           {(c, i) => (
             <box flexDirection="row">
-              <text fg={i() === selected() ? tokens.accent.conversation : tokens.text.dim}>
-                {i() === selected() ? `${glyph.pointer} ` : "  "}
+              <text fg={i() === selected() ? tokens.accent.conversation : tokens.text.dim} flexShrink={0}>
+                {i() === selected() ? `${glyph.prompt} ` : "  "}
               </text>
-              <text fg={tokens.text.default}>{c.name.padEnd(12)}</text>
+              <text fg={i() === selected() ? tokens.text.default : tokens.text.muted}>{c.name.padEnd(12)}</text>
               <text fg={tokens.text.muted}>{`  ${c.description}`}</text>
             </box>
           )}
         </For>
-        <text fg={tokens.text.dim}>{"  ↑↓ select · ⇥/→ complete · ↵ run"}</text>
+        <text fg={tokens.text.dim}>{"  ↑/↓ Navigate · enter Run · tab Complete"}</text>
       </box>
     </Show>
   )

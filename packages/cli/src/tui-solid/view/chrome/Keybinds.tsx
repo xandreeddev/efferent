@@ -1,47 +1,18 @@
-import { Show } from "solid-js"
 import { tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
- * Keybind help, two densities:
- *
- *  - **Strip** (default): ONE dim row — the focused context's essential keys.
- *    Chrome must not out-weigh content; on a 24-row terminal the old 4-row box
- *    ate a sixth of the screen to repeat itself.
- *  - **Box** (`?` in NORMAL, or `keysExpanded`): the bordered two-row version
- *    with the full vocabulary — border + title take the focused pane's accent,
- *    title carries `<pane> · <MODE>`.
+ * Keybind help — ONE dim strip with the focused context's essential keys plus
+ * `? keys` (which opens the full command + keybind reference overlay — see
+ * `presentation/helpView.ts`). Chrome must not out-weigh content; on a 24-row
+ * terminal a multi-row box ate a sixth of the screen to repeat itself, and the
+ * `?` overlay now carries the exhaustive vocabulary.
  *
  * The hints lead with keys that work in EVERY terminal (Esc, w, :, /) — the
  * Ctrl encodings die in legacy/tmux input modes, so they're the alternative,
  * not the headline. Both audiences read the same row: vi hands see Esc/w,
  * non-vi users see a visible, modifier-free path to every pane.
  */
-// Labels pad to one fixed column so the box rows align ("agents" is the widest).
-const LABEL_W = 7
-const NAV_FULL = `${"nav".padEnd(LABEL_W)} esc panes · w next pane · ^k/^l conv/side · : cmd · / search · z zoom · ^C quit`
-
-const paneRow = (ctx: TuiContext): string => {
-  const { store } = ctx
-  const row = (label: string, keys: string) => `${label.padEnd(LABEL_W)} ${keys}`
-  switch (store.focus()) {
-    case "conversation":
-      return row("conv", "j/k scroll · {}/[] para/msg · ⇥/↵ fold · gg/G ends · Z fold all · w side · i type")
-    case "side":
-      switch (store.sidePane().view) {
-        case "context":
-          return row("context", "j/k·{} move · [] head · ⇥/↵ fold · Space pick · b build · v views · i type")
-        case "tree":
-          return row("agents", "j/k·{} move · [] root · ⇥ fold · ↵ open · c fork · d drop · q close · v views")
-        case "sessions":
-          return row("sess", "j/k move · gg/G ends · ↵ switch session · v views · i type")
-        default:
-          return row("act", "j/k·{} move · [] head · ⇥/↵ fold · gg/G ends · v views · i type")
-      }
-    case "input":
-      return row("input", "↵ send · ⇧↵/^J newline · esc panes · : cmd · / search")
-  }
-}
 
 /** The one-row strip: the focused context's essentials + how to get more. */
 const strip = (ctx: TuiContext): string => {
@@ -54,7 +25,7 @@ const strip = (ctx: TuiContext): string => {
         : store.sidePane().view === "tree"
           ? "↵ open · c fork · d drop"
           : store.sidePane().view === "sessions"
-            ? "↵ switch session"
+            ? "↵ switch · F2 rename"
             : "↵ fold"
       : store.nodePreview() !== undefined
         ? "j/k scroll · q close preview"
@@ -76,33 +47,16 @@ const paneLabel = (ctx: TuiContext): string => {
 export const Keybinds = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const accent = () => tokens.accent[store.focus()]
-  const title = () => ` ${paneLabel(props.ctx)} · ${store.mode().toUpperCase()} `
 
   return (
-    <Show
-      when={store.keysExpanded()}
-      fallback={
-        <box flexDirection="row" flexShrink={0}>
-          {/* The focused context's name leads in its accent — without it the
-              strip is an anonymous key soup and you can't tell what pane the
-              keys belong to. */}
-          <text fg={accent()} flexShrink={0}>{` ${paneLabel(props.ctx)} `}</text>
-          <text fg={tokens.text.dim} wrapMode="none">
-            {` ${strip(props.ctx)}`}
-          </text>
-        </box>
-      }
-    >
-      <box
-        border
-        title={title()}
-        borderColor={accent()}
-        flexShrink={0}
-        flexDirection="column"
-      >
-        <text fg={tokens.text.dim}>{NAV_FULL}</text>
-        <text fg={tokens.text.muted}>{paneRow(props.ctx)}</text>
-      </box>
-    </Show>
+    <box flexDirection="row" flexShrink={0}>
+      {/* The focused context's name leads in its accent — without it the
+          strip is an anonymous key soup and you can't tell what pane the
+          keys belong to. */}
+      <text fg={accent()} flexShrink={0}>{` ${paneLabel(props.ctx)} `}</text>
+      <text fg={tokens.text.dim} wrapMode="none">
+        {` ${strip(props.ctx)}`}
+      </text>
+    </box>
   )
 }

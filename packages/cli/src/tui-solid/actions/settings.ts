@@ -130,14 +130,29 @@ export const openSettingsView = (store: TuiStore) =>
     const current = yield* (yield* SettingsStore).get()
     const db = describeActiveDatabase(process.env["EFFERENT_DB_URL"], current.dbUrl)
     const rows: ReadonlyArray<SettingsRow> = [
-      { key: "allowBash", label: "allowBash", value: String(current.allowBash), kind: "boolean" },
-      { key: "maxSteps", label: "maxSteps", value: String(current.maxSteps), kind: "number" },
+      {
+        key: "allowBash",
+        label: "allowBash",
+        value: String(current.allowBash),
+        kind: "boolean",
+        description:
+          "Let the agent run bash without prompting in non-interactive modes (print/json/rpc). The TUI always gates bash through the approval flow regardless.",
+      },
+      {
+        key: "maxSteps",
+        label: "maxSteps",
+        value: String(current.maxSteps),
+        kind: "number",
+        description: "Maximum model turns the agent loop takes for one message before it stops.",
+      },
       {
         key: "subAgentTokenBudget",
         label: "subAgentBudget",
         value: String(current.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET),
         kind: "readonly",
         hint: "use :set subAgentTokenBudget <n> (0 = off)",
+        description:
+          "Billed-token budget shared by every sub-agent spawned in one turn's subtree; a drained pool refuses new spawns. 0 disables the cap.",
       },
       {
         key: "subAgentMaxSteps",
@@ -145,6 +160,7 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.subAgentMaxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS),
         kind: "readonly",
         hint: "use :set subAgentMaxSteps <n>",
+        description: "Per-sub-agent turn cap; a capped run's summary is stamped as partial so the parent reads truncation.",
       },
       {
         key: "anthropicThinkingEffort",
@@ -153,6 +169,7 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "enum",
         options: ["", "off", "low", "medium", "high"],
         hint: "default/off/low/medium/high",
+        description: "Claude extended-thinking effort for the main model. Blank follows the provider default.",
       },
       {
         key: "openAiReasoningEffort",
@@ -161,6 +178,7 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "enum",
         options: ["", "none", "minimal", "low", "medium", "high"],
         hint: "default/none/minimal/low/medium/high",
+        description: "OpenAI reasoning effort for the main model. Blank follows the provider default.",
       },
       {
         key: "geminiThinkingLevel",
@@ -169,14 +187,23 @@ export const openSettingsView = (store: TuiStore) =>
         kind: "enum",
         options: ["", "off", "minimal", "low", "medium", "high"],
         hint: "default/off/minimal/low/medium/high",
+        description: "Gemini thinking level for the main model. Blank follows the provider default.",
       },
-      { key: "model", label: "model", value: current.model, kind: "readonly", hint: "use :model" },
+      {
+        key: "model",
+        label: "model",
+        value: current.model,
+        kind: "readonly",
+        hint: "use :model",
+        description: "The active main model — the root conversation's brain (sub-agents inherit it). Change with :model.",
+      },
       {
         key: "searchModel",
         label: "searchModel",
         value: current.searchModel ?? "default",
         kind: "readonly",
         hint: "use :search",
+        description: "Dedicated model for web-search grounding calls, independent of the chat model. Change with :search.",
       },
       {
         key: "fastModel",
@@ -184,6 +211,8 @@ export const openSettingsView = (store: TuiStore) =>
         value: current.fastModel ?? "default (main)",
         kind: "readonly",
         hint: "use :model fast",
+        description:
+          "Model for fast-tier helper calls (headroom digests, the approval judge, session titles). Default follows main. Change with :model fast.",
       },
       {
         key: "toolResultMaxTokens",
@@ -191,6 +220,8 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.toolResultMaxTokens ?? 4000),
         kind: "readonly",
         hint: "headroom clip budget (0 = off)",
+        description:
+          "Headroom clip budget — a tool result larger than this is compressed the moment it enters context. 0 disables compression.",
       },
       {
         key: "autoHandoffPct",
@@ -198,6 +229,8 @@ export const openSettingsView = (store: TuiStore) =>
         value: `${current.autoHandoffPct ?? DEFAULT_AUTO_HANDOFF_PCT}%`,
         kind: "readonly",
         hint: "auto-fold threshold (0 = off)",
+        description:
+          "When a finished turn's context crosses this percentage, the TUI auto-runs :handoff to fold history. 0 disables.",
       },
       {
         key: "autoApprove",
@@ -205,6 +238,8 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.autoApprove ?? true),
         kind: "boolean",
         hint: "fast judge waves through in-folder work",
+        description:
+          "Fast judge auto-waves unmatched bash commands whose paths stay inside permitted folders — a prompt-fatigue killer, not a security boundary. Any uncertainty still prompts.",
       },
       {
         key: "autoCollapse",
@@ -212,6 +247,7 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.autoCollapse ?? false),
         kind: "boolean",
         hint: "sending folds the previous turns",
+        description: "Sending a message folds all previous turns, so only the live one stays expanded.",
       },
       {
         key: "telemetry",
@@ -219,8 +255,17 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.telemetry ?? false),
         kind: "boolean",
         hint: "OTLP traces+metrics (+ LLM prompt/completion) → Grafana (next launch; run obs:up)",
+        description:
+          "Export OpenTelemetry traces + metrics (and LLM prompt/completion text) to Grafana. Takes effect on next launch; start the stack with obs:up.",
       },
-      { key: "database", label: "database", value: db.value, kind: "readonly", hint: "use :db" },
+      {
+        key: "database",
+        label: "database",
+        value: db.value,
+        kind: "readonly",
+        hint: "use :db",
+        description: "The conversation store backing this workspace (SQLite or Postgres). Change with :db.",
+      },
     ]
     yield* Effect.sync(() => store.setOverlay({ kind: "settings", state: openSettings(rows) }))
   })

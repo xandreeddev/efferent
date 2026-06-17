@@ -1,0 +1,199 @@
+{
+  "uid": "efferent-run",
+  "title": "efferent — run inspector",
+  "tags": ["efferent", "production", "traces"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "links": [
+    { "title": "Conversation", "type": "link", "url": "/d/efferent-conversation/efferent-conversation?var-conversation=$conversation", "icon": "external link" },
+    { "title": "All conversations", "type": "link", "url": "/d/efferent-conversations/efferent-conversations", "icon": "external link" }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "conversation",
+        "label": "conversation id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      },
+      {
+        "name": "trace",
+        "label": "trace id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "Run inspector",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "LangSmith-style detail for trace **`$trace`** in conversation **`$conversation`**. Use the LLM input/output and tool I/O log panels for the message stack and raw payloads; use the Tempo span tables for timing/tokens/cost."
+      }
+    },
+    {
+      "type": "table",
+      "title": "Run summary",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 3 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && trace:id = \"$trace\" && span.agent.kind = \"run\" } | select(span.agent.prompt, span.agent.model, span.agent.turns, span.agent.total_input_tokens, span.agent.total_output_tokens, span.agent.total_cache_read_tokens)",
+          "tableType": "spans",
+          "limit": 20,
+          "spss": 1
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "traceService": true, "traceName": true, "name": true, "service.name": true },
+            "renameByName": {
+              "agent.prompt": "user message",
+              "agent.model": "model",
+              "agent.turns": "turns",
+              "agent.total_input_tokens": "input",
+              "agent.total_output_tokens": "output",
+              "agent.total_cache_read_tokens": "cache read"
+            }
+          }
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "table",
+      "title": "LLM calls",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && trace:id = \"$trace\" && span.agent.kind = \"llm\" } | select(span.agent.turn, span.gen_ai.system, span.gen_ai.request.model, span.gen_ai.finish_reason, span.gen_ai.usage.input_tokens, span.gen_ai.usage.output_tokens, span.gen_ai.usage.cache_read_tokens, span.gen_ai.cost_usd)",
+          "tableType": "spans",
+          "limit": 100,
+          "spss": 5
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "traceService": true, "traceName": true, "name": true, "service.name": true },
+            "renameByName": {
+              "agent.turn": "turn",
+              "gen_ai.system": "provider",
+              "gen_ai.request.model": "model",
+              "gen_ai.finish_reason": "finish",
+              "gen_ai.usage.input_tokens": "input",
+              "gen_ai.usage.output_tokens": "output",
+              "gen_ai.usage.cache_read_tokens": "cache",
+              "gen_ai.cost_usd": "cost"
+            }
+          }
+        }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } } },
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "logs",
+      "title": "LLM input — full message stack",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=\"efferent\", trace_id=\"$trace\"} |= \"efferent.trace\" |= \"\\\"kind\\\":\\\"llm_input\\\"\"",
+          "queryType": "range"
+        }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Ascending" }
+    },
+    {
+      "type": "logs",
+      "title": "LLM output — assistant text, reasoning, tool calls",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=\"efferent\", trace_id=\"$trace\"} |= \"efferent.trace\" |= \"\\\"kind\\\":\\\"llm_output\\\"\"",
+          "queryType": "range"
+        }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Ascending" }
+    },
+    {
+      "type": "table",
+      "title": "Tool spans",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"efferent\" && trace:id = \"$trace\" && span.agent.kind = \"tool\" } | select(span.agent.turn, span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
+          "tableType": "spans",
+          "limit": 200,
+          "spss": 10
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "traceService": true, "traceName": true, "name": true, "service.name": true },
+            "renameByName": {
+              "agent.turn": "turn",
+              "agent.tool.name": "tool",
+              "agent.tool.ok": "ok",
+              "agent.tool.args_summary": "args summary"
+            }
+          }
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "logs",
+      "title": "Tool I/O — args and result payloads",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 42 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=\"efferent\", trace_id=\"$trace\"} |= \"efferent.trace\" |= \"\\\"kind\\\":\\\"tool_io\\\"\"",
+          "queryType": "range"
+        }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Ascending" }
+    },
+    {
+      "type": "text",
+      "title": "Raw waterfall",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 54 },
+      "options": {
+        "mode": "markdown",
+        "content": "Open the native Tempo trace in Explore and inspect the waterfall for **`$trace`** if you need the span hierarchy beneath the structured panels above."
+      }
+    }
+  ]
+}

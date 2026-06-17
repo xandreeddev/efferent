@@ -172,6 +172,11 @@ export const InMemoryConversationStoreLive = Layer.effect(
                 return {
                   id: id as ConversationId,
                   createdAt: conv.createdAt,
+                  // No per-message timestamp in the in-memory store — last
+                  // activity falls back to creation time (this store is
+                  // eval-only; production stores report real MAX(created_at)).
+                  updatedAt: conv.createdAt,
+                  messageCount: conv.messages.length,
                   ...(firstPrompt !== undefined ? { firstPrompt } : {}),
                   ...(conv.title !== undefined ? { title: conv.title } : {}),
                 }

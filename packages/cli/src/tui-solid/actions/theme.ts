@@ -39,7 +39,7 @@ export const openThemePicker = (store: TuiStore) =>
     }))
     store.setOverlay({
       kind: "select",
-      sel: openSelect("Select a theme", options),
+      sel: { ...openSelect("Select a theme", options), preview: "theme" },
       purpose: { tag: "theme" },
     })
   })

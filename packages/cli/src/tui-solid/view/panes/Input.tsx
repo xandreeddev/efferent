@@ -1,10 +1,10 @@
 import type { TextareaRenderable } from "@opentui/core"
-import { createEffect, createMemo, onMount } from "solid-js"
+import { createEffect, createMemo, onMount, Show } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
 import { pushPrompt } from "../../presentation/promptHistory.js"
-import { tokens } from "../../state/theme.js"
-import { Pane } from "../ui/index.js"
+import { glyph, paneBorder, tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -45,6 +45,7 @@ const MAX_ROWS = 8
  */
 export const InputBox = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
+  const dims = useTerminalDimensions()
   const focused = () => store.focus() === "input" && store.overlay().kind === "none"
   // Solid assigns this before any event fires; `!` keeps the prop type clean
   // under exactOptionalPropertyTypes.
@@ -116,16 +117,35 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     return p === undefined ? "input" : `input → ${p.title}`
   }
 
+  const rule = () => (
+    <text fg={paneBorder("input", focused())} wrapMode="none">
+      {"─".repeat(Math.max(0, dims().width))}
+    </text>
+  )
+
   return (
-    <Pane kind="input" focused={focused()} title={title()}>
-      <textarea
-        ref={ref}
-        height={rows()}
-        keyBindings={KEY_BINDINGS}
-        placeholder="Message…  (↵ to send)"
-        textColor={tokens.text.default}
-        wrapMode="word"
-        onContentChange={() => {
+    <box flexDirection="column" flexShrink={0}>
+      {/* agy-style input: a `>` prompt bracketed by full-width rules above AND
+          below; the rules + prompt tint to the input accent when focused (the
+          focus cue, no box border). */}
+      {rule()}
+      {/* Surface the redirect target when a previewed agent owns the composer. */}
+      <Show when={store.nodePreview() !== undefined}>
+        <text fg={tokens.accent.input} wrapMode="none" flexShrink={0}>
+          {title()}
+        </text>
+      </Show>
+      <box flexDirection="row">
+        <text fg={paneBorder("input", focused())} flexShrink={0}>{`${glyph.prompt} `}</text>
+        <textarea
+          ref={ref}
+          height={rows()}
+          flexGrow={1}
+          keyBindings={KEY_BINDINGS}
+          placeholder="send a message · : for commands · / to search"
+          textColor={tokens.text.default}
+          wrapMode="word"
+          onContentChange={() => {
           // A <textarea> fires a *contentless* content-change (the `"input"`
           // event with `plainText` is single-line-<input> only), so read the
           // buffer off the ref. The zero-arg handler satisfies the prop's
@@ -144,8 +164,10 @@ export const InputBox = (props: { ctx: TuiContext }) => {
             store.setHistory({ ...h, pos: null })
           }
         }}
-        onSubmit={submit}
-      />
-    </Pane>
+          onSubmit={submit}
+        />
+      </box>
+      {rule()}
+    </box>
   )
 }

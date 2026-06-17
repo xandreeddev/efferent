@@ -13,6 +13,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":quit", description: "Quit the agent" },
   { name: ":clear", description: "Start a new conversation (new id, empty scrollback)" },
   { name: ":cwd", description: "Print the current workspace directory" },
+  { name: ":help", description: "Show all commands and keybindings (also ?)" },
   { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
   { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
   { name: ":model", description: "Pick main model; :model fast sets helper; :model <provider>:<id> switches" },

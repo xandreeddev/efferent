@@ -76,6 +76,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         depth: 0,
         tokenPool,
         prompt: config.prompt,
+        telemetry: settings.telemetry === true,
         ...(settings.subAgentMaxSteps !== undefined
           ? { subAgentMaxSteps: settings.subAgentMaxSteps }
           : {}),

@@ -23,12 +23,16 @@ export interface SettingsRow {
   readonly options?: ReadonlyArray<string>
   /** A dim trailing hint (e.g. "use :model"). */
   readonly hint?: string
+  /** A full-sentence description of the setting, shown for the focused row. */
+  readonly description?: string
 }
 
 export interface SettingsState {
   readonly title: string
   readonly rows: ReadonlyArray<SettingsRow>
-  /** Index of the highlighted row. */
+  /** Type-to-filter query (matched against label + key); "" shows all rows. */
+  readonly filter: string
+  /** Index of the highlighted row WITHIN the filtered view ({@link visibleRows}). */
   readonly cursor: number
   /** When editing a number row, the in-progress buffer; else undefined. */
   readonly editBuffer?: string
@@ -37,7 +41,17 @@ export interface SettingsState {
 export const openSettings = (
   rows: ReadonlyArray<SettingsRow>,
   title = "Settings",
-): SettingsState => ({ title, rows, cursor: 0 })
+): SettingsState => ({ title, rows, filter: "", cursor: 0 })
+
+/** The rows currently visible — `rows` narrowed by `filter` (case-insensitive
+ *  substring on label or key). The cursor indexes INTO this list. */
+export const visibleRows = (state: SettingsState): ReadonlyArray<SettingsRow> => {
+  const q = state.filter.trim().toLowerCase()
+  if (q.length === 0) return state.rows
+  return state.rows.filter(
+    (r) => r.label.toLowerCase().includes(q) || r.key.toLowerCase().includes(q),
+  )
+}
 
 export const moveSettings = (
   state: SettingsState,
@@ -45,7 +59,7 @@ export const moveSettings = (
 ): SettingsState => {
   // Movement is disabled while an inline edit is open.
   if (state.editBuffer !== undefined) return state
-  const n = state.rows.length
+  const n = visibleRows(state).length
   if (n === 0) return state
   const cursor =
     dir === "up" ? (state.cursor - 1 + n) % n : (state.cursor + 1) % n
@@ -53,7 +67,22 @@ export const moveSettings = (
 }
 
 export const currentRow = (state: SettingsState): SettingsRow | undefined =>
-  state.rows[state.cursor]
+  visibleRows(state)[state.cursor]
+
+const reFilter = (state: SettingsState, filter: string): SettingsState => {
+  const n = visibleRows({ ...state, filter }).length
+  const cursor = n === 0 ? 0 : Math.min(state.cursor, n - 1)
+  return { ...state, filter, cursor }
+}
+
+export const filterAppend = (state: SettingsState, ch: string): SettingsState =>
+  state.editBuffer !== undefined ? state : reFilter(state, state.filter + ch)
+
+export const filterBackspace = (state: SettingsState): SettingsState =>
+  state.editBuffer !== undefined ? state : reFilter(state, state.filter.slice(0, -1))
+
+export const clearFilter = (state: SettingsState): SettingsState =>
+  reFilter(state, "")
 
 /** Begin an inline edit on a number row (seed the buffer with the value). */
 export const beginEdit = (state: SettingsState): SettingsState => {

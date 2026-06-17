@@ -22,6 +22,8 @@ import {
 import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
+import { openHelp } from "../presentation/helpView.js"
+import { openPrompt } from "../presentation/promptBox.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import type { ConversationId } from "@efferent/core"
 import { buildFromSelection } from "../actions/session.js"
@@ -49,17 +51,17 @@ import type { Key } from "./ParsedKey.js"
 export type { Key } from "./ParsedKey.js"
 
 /**
- * `Z` toggles between fully-compact and fully-expanded. Turns and tool groups
- * default oppositely (turn expanded, group collapsed-to-summary), so "compact" =
- * every turn folded (∈ set) AND every group collapsed (∉ set). From compact we
- * expand both (groups ∈ set, turns ∉); otherwise we make it compact.
+ * `Z` toggles between fully-compact and fully-expanded. Turns and tool groups now
+ * fold the same way (default expanded; id ∈ set ⇒ folded), so "compact" = every
+ * turn AND group ∈ set; "expanded" = none. From compact we clear the set;
+ * otherwise we fold everything.
  */
 const toggleFoldAll = (store: TuiStore): void => {
   const { turns, groups } = foldIdsByKind(buildConversation(store.viewBlocks()))
+  const all = [...turns, ...groups]
   const collapsed = store.collapsed()
-  const compact =
-    turns.every((id) => collapsed.has(id)) && groups.every((id) => !collapsed.has(id))
-  store.setCollapsed(compact ? new Set(groups) : new Set(turns))
+  const compact = all.length > 0 && all.every((id) => collapsed.has(id))
+  store.setCollapsed(compact ? new Set() : new Set(all))
 }
 
 /** n next · N prev · Esc clear — when a search is active (any focused pane). */
@@ -553,6 +555,17 @@ const sideSessionsKey = (ctx: TuiContext, key: Key): boolean => {
       void ctx.run(switchToConversation(store, row.id as ConversationId))
       return true
     }
+    case "r":
+    case "f2": {
+      const row = sessionsCurrentRow(store.nav(), store.projection())
+      if (row === undefined) return true
+      store.setOverlay({
+        kind: "prompt",
+        state: openPrompt("Rename session", "New title:", false, row.title ?? ""),
+        purpose: { tag: "rename", conversationId: row.id },
+      })
+      return true
+    }
     case "i":
       store.setFocus("input")
       store.setMode("insert")
@@ -798,9 +811,10 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // `?` in NORMAL toggles the full keybind box (default is the one-row strip).
+  // `?` in NORMAL opens the full command + keybind reference overlay (the
+  // always-on strip below the panes covers the focused pane's essentials).
   if (key.name === "?" && !key.ctrl && !key.meta && store.focus() !== "input") {
-    store.setKeysExpanded(!store.keysExpanded())
+    store.setOverlay({ kind: "help", state: openHelp() })
     return
   }
 

@@ -32,6 +32,8 @@ import type { TuiStore } from "../state/store.js"
 export type ConversationSummary = {
   readonly id: ConversationId
   readonly createdAt: number
+  readonly updatedAt?: number
+  readonly messageCount?: number
   readonly firstPrompt?: string
   readonly title?: string
 }

@@ -365,6 +365,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       depth: args.parentDepth + 1,
       tokenPool: args.tokenPool,
       ...(childPrompt !== undefined ? { prompt: childPrompt } : {}),
+      ...(args.runContext.telemetry !== undefined ? { telemetry: args.runContext.telemetry } : {}),
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }

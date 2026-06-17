@@ -12,12 +12,19 @@ import {
   loginBackspace,
   loginMove,
 } from "../presentation/loginFlow.js"
+import { cycleHelpTab, scrollHelp } from "../presentation/helpView.js"
+import { promptAppend, promptBackspace, promptValue, type PromptState } from "../presentation/promptBox.js"
+import { renameSession } from "../actions/contextTree.js"
+import type { PromptPurpose } from "../state/store.js"
 import {
   beginEdit,
   cancelEdit,
+  clearFilter,
   currentRow,
   editAppend,
   editBackspace,
+  filterAppend as settingsFilterAppend,
+  filterBackspace as settingsFilterBackspace,
   isEditing,
   moveSettings,
   type SettingsState,
@@ -91,6 +98,19 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
         )
       return
     }
+  }
+}
+
+/** Submit a single-line prompt overlay: dispatch by purpose, then close. */
+const submitPrompt = (ctx: TuiContext, state: PromptState, purpose: PromptPurpose): void => {
+  const { store } = ctx
+  const value = promptValue(state).trim()
+  store.closeOverlay()
+  switch (purpose.tag) {
+    case "rename":
+      if (value.length > 0)
+        void ctx.run(renameSession(store, purpose.conversationId as ConversationId, value))
+      return
   }
 }
 
@@ -252,8 +272,10 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
     const state = o.state
     const editing = isEditing(state)
     if (key.name === "escape" || (key.ctrl && key.name === "c")) {
-      // Esc cancels an inline edit first; otherwise closes the modal.
+      // Esc cancels an inline edit first; then clears a non-empty filter; then
+      // closes the modal (two-stage, mirroring the Antigravity CLI's settings).
       if (editing) store.setOverlay({ kind: "settings", state: cancelEdit(state) })
+      else if (state.filter.length > 0) store.setOverlay({ kind: "settings", state: clearFilter(state) })
       else store.closeOverlay()
       return true
     }
@@ -276,6 +298,61 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
     }
     if (key.name === "return") {
       settingsActivate(ctx, state)
+      return true
+    }
+    // Otherwise: type-to-filter the rows.
+    if (key.name === "backspace") {
+      store.setOverlay({ kind: "settings", state: settingsFilterBackspace(state) })
+      return true
+    }
+    const ch = printable(key)
+    if (ch !== undefined) {
+      store.setOverlay({ kind: "settings", state: settingsFilterAppend(state, ch) })
+      return true
+    }
+    return true
+  }
+
+  if (o.kind === "help") {
+    if (key.name === "escape" || (key.ctrl && key.name === "c") || key.name === "?") {
+      store.closeOverlay()
+      return true
+    }
+    if (key.name === "left" || key.name === "right") {
+      store.setOverlay({ kind: "help", state: cycleHelpTab(o.state, key.name) })
+      return true
+    }
+    if (key.name === "tab") {
+      store.setOverlay({ kind: "help", state: cycleHelpTab(o.state, "right") })
+      return true
+    }
+    if (key.name === "up" || key.name === "k") {
+      store.setOverlay({ kind: "help", state: scrollHelp(o.state, "up") })
+      return true
+    }
+    if (key.name === "down" || key.name === "j") {
+      store.setOverlay({ kind: "help", state: scrollHelp(o.state, "down") })
+      return true
+    }
+    return true // a modal owns all input while open
+  }
+
+  if (o.kind === "prompt") {
+    if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+      store.closeOverlay()
+      return true
+    }
+    if (key.name === "return") {
+      submitPrompt(ctx, o.state, o.purpose)
+      return true
+    }
+    if (key.name === "backspace") {
+      store.setOverlay({ ...o, state: promptBackspace(o.state) })
+      return true
+    }
+    const ch = printable(key)
+    if (ch !== undefined) {
+      store.setOverlay({ ...o, state: promptAppend(o.state, ch) })
       return true
     }
     return true

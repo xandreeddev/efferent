@@ -83,6 +83,10 @@ export class ConversationStore extends Context.Tag(
       ReadonlyArray<{
         readonly id: ConversationId
         readonly createdAt: number
+        /** Latest message timestamp (last activity), else `createdAt`. */
+        readonly updatedAt: number
+        /** Persisted message count (user + assistant + tool rows). */
+        readonly messageCount: number
         readonly firstPrompt?: string
         readonly title?: string
       }>,

@@ -3,6 +3,7 @@ import { Clock, Effect, FiberRef } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
+import { traceJson } from "../telemetry/payload.js"
 import { agentSpanAttributes, toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
 import { RunContextRef } from "./runContext.js"
 import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
@@ -174,6 +175,7 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
           const rc = yield* FiberRef.get(RunContextRef)
           yield* Effect.annotateCurrentSpan({
             ...(failed ? { "agent.tool.ok": false, error: true } : { "agent.tool.ok": true }),
+            ...(rc.currentTurn !== undefined ? { "agent.turn": rc.currentTurn } : {}),
             ...(rc.rootConversationId !== null
               ? { "agent.conversation_id": rc.rootConversationId }
               : {}),
@@ -186,6 +188,19 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
             `tool ${String(name)}(${safeArgsSummary(params)}) ${failed ? "✗ failed" : "▸ ok"}\n` +
               safeResultSummary(r, 1500),
           )
+          if (rc.telemetry === true) {
+            yield* Effect.logInfo(
+              `efferent.trace ${traceJson({
+                kind: "tool_io",
+                conversationId: rc.rootConversationId,
+                turn: rc.currentTurn ?? null,
+                toolName: String(name),
+                ok: !failed,
+                args: params,
+                result: r,
+              })}`,
+            )
+          }
         }),
       ),
       Effect.withSpan(toolSpanName(String(name)), {
@@ -257,6 +272,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         { role: "system", content: input.system },
         ...toPromptMessages(messages),
       ] as never)
+      const turnContext = { ...runContext, currentTurn: turnIndex }
 
       const turnStart = yield* Clock.currentTimeMillis
       const outcome = yield* LanguageModel.generateText({
@@ -286,6 +302,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
             "agent.turn": turnIndex,
           },
         }),
+        Effect.locally(RunContextRef, turnContext),
       )
       yield* recordTurn((yield* Clock.currentTimeMillis) - turnStart)
 
