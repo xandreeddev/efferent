@@ -1,33 +1,26 @@
-import { tokens } from "../../state/theme.js"
-import { Cursor, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
+import { Modal, MODAL_WIDTH, PromptBody } from "../ui/index.js"
 
 /**
  * A centered single-line text-entry overlay, driving the pure `PromptState`
- * (`presentation/promptBox.ts`). When `mask` is set the value renders as bullets
- * (API keys never show on screen / in a screenshot — OPSEC). Nav/append/backspace
- * come from `keys/overlay.ts`; the shared `Modal` owns the chrome.
+ * (`presentation/promptBox.ts`). The input itself is the shared {@link PromptBody}
+ * primitive; this component only supplies the `Modal` chrome (title + border +
+ * surface), so the modal and the full-screen onboarding render identical
+ * prompts. When `mask` is set the value renders as bullets (API keys never show
+ * on screen / in a screenshot — OPSEC). Nav/append/backspace come from
+ * `keys/overlay.ts`.
  */
 export const PromptBox = (props: {
   title: string
   prompt: string
   value: string
   mask: boolean
-}) => {
-  const shown = () => (props.mask ? "•".repeat(props.value.length) : props.value)
-  return (
-    <Modal title={props.title} width={MODAL_WIDTH}>
-      <text fg={tokens.text.muted} wrapMode="none">
-        {props.prompt}
-      </text>
-      <Rule width={MODAL_RULE} />
-      <box flexDirection="row">
-        <text fg={tokens.text.default} wrapMode="none">
-          {shown()}
-        </text>
-        <Cursor />
-      </box>
-      <Rule width={MODAL_RULE} />
-      <text fg={tokens.text.muted}>↵ submit · esc back / cancel</text>
-    </Modal>
-  )
-}
+}) => (
+  <Modal title={props.title} width={MODAL_WIDTH}>
+    <PromptBody
+      prompt={props.prompt}
+      value={props.value}
+      mask={props.mask}
+      footer="↵ submit · esc back / cancel"
+    />
+  </Modal>
+)
