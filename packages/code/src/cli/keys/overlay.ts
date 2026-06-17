@@ -13,6 +13,18 @@ import {
   loginMove,
 } from "../presentation/loginFlow.js"
 import {
+  onboardingMove,
+  onboardingAppend,
+  onboardingBackspace,
+} from "../presentation/onboardingFlow.js"
+import {
+  advanceOnboardingStep,
+  skipToFastModel,
+  skipToTheme,
+  skipToComplete,
+  finishOnboarding,
+} from "../actions/onboarding.js"
+import {
   beginEdit,
   cancelEdit,
   currentRow,
@@ -278,6 +290,111 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       settingsActivate(ctx, state)
       return true
     }
+    return true
+  }
+
+  if (o.kind === "onboarding") {
+    const state = o.state
+    if (key.name === "escape") {
+      if (state.step === "login") {
+        const flow = state.flow
+        if (flow.step === "oauth") void ctx.run(stopOAuthSession(store))
+        const back = loginBack(flow)
+        if (back !== undefined) {
+          store.setOverlay({ kind: "onboarding", state: { ...state, flow: back } })
+        } else {
+          const hasCreds = state.statuses.some((s) => s.configured !== undefined)
+          if (hasCreds) {
+            store.closeOverlay()
+          } else {
+            ctx.exit()
+          }
+        }
+        return true
+      }
+      if (state.step === "mainModel") {
+        void ctx.run(skipToFastModel(store, state))
+        return true
+      }
+      if (state.step === "fastModel") {
+        void ctx.run(skipToTheme(store, state))
+        return true
+      }
+      if (state.step === "theme") {
+        void ctx.run(skipToComplete(store, state))
+        return true
+      }
+      if (state.step === "complete") {
+        void ctx.run(finishOnboarding(store))
+        return true
+      }
+      return true
+    }
+
+    if (key.ctrl && key.name === "c") {
+      if (state.step === "login" && state.flow.step === "oauth") {
+        void ctx.run(stopOAuthSession(store))
+      }
+      const hasCreds = state.statuses.some((s) => s.configured !== undefined)
+      if (hasCreds) {
+        store.closeOverlay()
+      } else {
+        ctx.exit()
+      }
+      return true
+    }
+
+    if (state.step === "login") {
+      const flow = state.flow
+      if (key.name === "up" || key.name === "down") {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginMove(flow, key.name) } })
+        return true
+      }
+      if (key.name === "return") {
+        advanceLogin(ctx, flow)
+        return true
+      }
+      if (key.name === "backspace") {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginBackspace(flow) } })
+        return true
+      }
+      const ch = printable(key)
+      if (ch !== undefined) {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginAppend(flow, ch) } })
+        return true
+      }
+      return true
+    }
+
+    if (state.step === "mainModel" || state.step === "fastModel" || state.step === "theme") {
+      if (key.name === "up" || key.name === "down") {
+        store.setOverlay({ kind: "onboarding", state: onboardingMove(state, key.name) })
+        return true
+      }
+      if (key.name === "return") {
+        void ctx.run(advanceOnboardingStep(store, state))
+        return true
+      }
+      if (key.name === "backspace") {
+        store.setOverlay({ kind: "onboarding", state: onboardingBackspace(state) })
+        return true
+      }
+      const ch = printable(key)
+      if (ch !== undefined) {
+        store.setOverlay({ kind: "onboarding", state: onboardingAppend(state, ch) })
+        return true
+      }
+      return true
+    }
+
+    if (state.step === "complete") {
+      if (key.name === "return") {
+        void ctx.run(advanceOnboardingStep(store, state))
+        return true
+      }
+      return true
+    }
+
     return true
   }
 
