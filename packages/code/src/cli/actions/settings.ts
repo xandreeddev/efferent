@@ -2,23 +2,39 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import {
+  activeConnName,
+  type AgentMessage,
   DEFAULT_AUTO_HANDOFF_PCT,
   AuthStore,
+  type Checkpoint,
+  type ConfigScope,
+  configuredConns,
+  connFromUrl,
+  connLabel,
+  ConversationStore,
+  type DatabaseConn,
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
-  FileSystem,
+  LOCAL_DB_NAME,
   ModelRegistry,
+  type NamedConn,
   SettingsStore,
+  StoreSwitch,
+  suggestName,
   effortLevelsFor,
   effortSettingKeyFor,
-  maskDbUrl,
 } from "@xandreed/sdk-core"
 import { DEFAULT_SUB_AGENT_MAX_STEPS } from "../../usecases/buildScopeRuntime.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesChip } from "../presentation/statusBar.js"
-import { describeActiveDatabase } from "../presentation/dbStatus.js"
 import { openSettings, setRowValue, type SettingsRow } from "../presentation/settingsView.js"
+import { describeActiveDatabase } from "../presentation/dbStatus.js"
+import { resumeConversation } from "./session.js"
+import { refreshNav } from "./contextTree.js"
 import type { EffortSettingKey } from "../state/overlay.js"
 import type { TuiStore } from "../state/store.js"
+
+/** The zero-config local SQLite path (adapters' default when dbUrl is unset). */
+const dbLocalPath = join(homedir(), ".efferent", "efferent.db")
 
 // Web-search defaults (mirrors `tui.ts`); the picker only offers a provider
 // whose credential is present, plus the auto default.
@@ -454,72 +470,179 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
 
 // --- :db ---------------------------------------------------------------------
 
-/** `:db` — show the active store, or write a new `dbUrl` to project/global config. */
+/**
+ * Make `conn` the active database LIVE (no restart): switch the store (running
+ * pending migrations), persist the default (+ save the connection when `persist`
+ * is set), and **carry the current conversation across** by copying its messages
+ * + checkpoints + title into the new store (rows are never moved between DBs).
+ * Refused mid-turn. The original conversation stays intact in its own DB.
+ */
+const switchActiveDatabase = (
+  store: TuiStore,
+  name: string,
+  conn: DatabaseConn,
+  cwd: string,
+  persist?: { readonly scope: ConfigScope },
+) =>
+  Effect.gen(function* () {
+    if (store.busy()) {
+      yield* Effect.sync(() => store.toast("can't switch database mid-turn"))
+      return
+    }
+    const cs = yield* ConversationStore
+    const curId = store.run.getConversationId()
+    // Snapshot the current conversation from the CURRENT store, before switching.
+    const msgs = yield* cs
+      .list(curId)
+      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AgentMessage>)))
+    const cps = yield* cs
+      .listCheckpoints(curId)
+      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<Checkpoint>)))
+    const ws = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll(() => Effect.succeed([])))
+    const title = ws.find((c) => c.id === curId)?.title
+
+    yield* Effect.sync(() => store.setNote(`connecting to ${name}…`))
+    const res = yield* (yield* StoreSwitch).switchTo(name, conn, cwd).pipe(Effect.either)
+    if (res._tag === "Left") {
+      yield* Effect.sync(() => store.setNote(`couldn't switch to ${name}: ${res.left.message}`))
+      return
+    }
+    // Active store is now `conn`. Persist the default (+ the connection itself).
+    const isImplicitLocal = conn.kind === "sqlite" && conn.url === dbLocalPath && name === LOCAL_DB_NAME
+    yield* (yield* SettingsStore).update((curr) => {
+      const databases = { ...(curr.databases ?? {}) }
+      if (persist !== undefined && !isImplicitLocal) databases[name] = { kind: conn.kind, url: conn.url }
+      return { ...curr, databases, defaultDatabase: name }
+    }, persist?.scope ?? "local")
+
+    // Copy the current conversation into the new store (interleave checkpoints at
+    // their original positions so handoff folds survive).
+    const newId = yield* cs.create(cwd)
+    const ordered = [...cps].sort((a, b) => a.messagePosition - b.messagePosition)
+    let ci = 0
+    for (let i = 0; i < msgs.length; i++) {
+      yield* cs.append(newId, msgs[i]!).pipe(Effect.catchAll(() => Effect.void))
+      while (ci < ordered.length && ordered[ci]!.messagePosition === i) {
+        yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll(() => Effect.void))
+        ci++
+      }
+    }
+    while (ci < ordered.length) {
+      yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll(() => Effect.void))
+      ci++
+    }
+    if (title !== undefined) yield* cs.setTitle(newId, title).pipe(Effect.catchAll(() => Effect.void))
+
+    yield* Effect.sync(() => {
+      store.run.newConversation(newId)
+      store.setStatus({ storage: connLabel(name, conn.kind) })
+    })
+    yield* resumeConversation(store, newId)
+    yield* refreshNav(store, newId).pipe(Effect.catchAll(() => Effect.void))
+    yield* Effect.sync(() => {
+      store.setNote(undefined)
+      store.toast(
+        msgs.length > 0
+          ? `switched to ${name} — carried over ${msgs.length} message${msgs.length === 1 ? "" : "s"}`
+          : `switched to ${name}`,
+      )
+    })
+  })
+
+/** `:db` with no args — the manager picker: every configured connection with the
+ *  default marked, plus a hint for add/remove (which are command forms). */
+export const openDbManager = (store: TuiStore, cwd: string) =>
+  Effect.gen(function* () {
+    const settings = yield* (yield* SettingsStore).get()
+    const conns = configuredConns(settings.databases, dbLocalPath)
+    const active = activeConnName(settings.defaultDatabase)
+    const options: ReadonlyArray<SelectOption<NamedConn>> = conns.map((c) => ({
+      value: c,
+      label: c.name === active ? `${connLabel(c.name, c.kind)}  ◀ default` : connLabel(c.name, c.kind),
+      active: c.name === active,
+    }))
+    yield* Effect.sync(() => {
+      store.pushBlock({
+        kind: "info",
+        text: "add: :db pg <url> · :db sqlite [path] · remove: :db remove <name>",
+      })
+      store.setOverlay({ kind: "select", sel: openSelect("Switch database", options), purpose: { tag: "database" } })
+    })
+  })
+
+/** Picker submit — make the chosen existing connection the active default. */
+export const applyDatabasePick = (store: TuiStore, conn: NamedConn, cwd: string) =>
+  switchActiveDatabase(store, conn.name, { kind: conn.kind, url: conn.url }, cwd)
+
+/**
+ * `:db` — no args opens the manager picker; `:db pg <url>` / `:db sqlite [path]`
+ * add a named connection and switch to it live; `:db remove <name>` drops one.
+ * `[global]` targets the machine tier (default local). Connections are saved in
+ * `Settings.databases` and applied immediately — no relaunch.
+ */
 export const applyDb = (store: TuiStore, cwd: string, tokens: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const wantGlobal = tokens.some((t) => t.toLowerCase() === "global")
+    const scope: ConfigScope = wantGlobal ? "global" : "local"
     const args = tokens.filter((t) => t.toLowerCase() !== "global")
 
     if (args.length === 0) {
-      const current = yield* (yield* SettingsStore).get()
-      const db = describeActiveDatabase(process.env["EFFERENT_DB_URL"], current.dbUrl)
-      yield* Effect.sync(() => {
-        store.pushBlock({ kind: "info", text: db.line })
-        if (db.overrideNote !== undefined) store.pushBlock({ kind: "info", text: db.overrideNote })
-        store.pushBlock({
-          kind: "info",
-          text: "set: :db pg <url> [global] · :db sqlite [path] [global] (applies next launch)",
-        })
-      })
+      yield* openDbManager(store, cwd)
       return
     }
 
     const head = args[0]!.toLowerCase()
-    let dbUrl: string // "" → reset to default SQLite
-    if (head === "sqlite") {
-      dbUrl = args[1] ?? ""
-    } else if (head === "pg" || head === "postgres" || head === "postgresql") {
-      dbUrl = args.slice(1).join(" ").trim()
-      if (dbUrl.length === 0) {
+
+    if (head === "remove" || head === "rm") {
+      const name = args[1]
+      if (name === undefined) {
+        yield* Effect.sync(() => store.pushBlock({ kind: "error", text: "Usage: :db remove <name>" }))
+        return
+      }
+      const settingsStore = yield* SettingsStore
+      const settings = yield* settingsStore.get()
+      if (settings.databases?.[name] === undefined) {
+        yield* Effect.sync(() => store.toast(`no database named ${name}`))
+        return
+      }
+      yield* settingsStore.update((curr) => {
+        const databases = { ...(curr.databases ?? {}) }
+        delete databases[name]
+        if (curr.defaultDatabase === name) {
+          const { defaultDatabase: _drop, ...rest } = curr
+          return { ...rest, databases }
+        }
+        return { ...curr, databases }
+      }, scope)
+      yield* Effect.sync(() => store.toast(`removed database ${name}`))
+      return
+    }
+
+    let conn: DatabaseConn
+    if (head === "pg" || head === "postgres" || head === "postgresql") {
+      const url = args.slice(1).join(" ").trim()
+      if (url.length === 0) {
         yield* Effect.sync(() =>
           store.pushBlock({ kind: "error", text: "Usage: :db pg <postgres://… connection string> [global]" }),
         )
         return
       }
+      conn = connFromUrl(url)
+    } else if (head === "sqlite") {
+      const path = args[1] ?? ""
+      conn = { kind: "sqlite", url: path.length > 0 ? path : dbLocalPath }
     } else {
-      dbUrl = args.join(" ").trim()
-    }
-
-    const fs = yield* FileSystem
-    const cfgPath = wantGlobal
-      ? join(homedir(), ".efferent", "config.json")
-      : join(cwd, ".efferent", "config.json")
-    const exists = yield* fs.exists(cfgPath).pipe(Effect.orElseSucceed(() => false))
-    let cfg: Record<string, unknown> = {}
-    if (exists) {
-      const read = yield* fs.read(cfgPath).pipe(Effect.either)
-      if (read._tag === "Right") {
-        try {
-          cfg = JSON.parse(read.right.content) as Record<string, unknown>
-        } catch {
-          /* overwrite malformed config */
-        }
-      }
-    }
-    if (dbUrl.length > 0) cfg["dbUrl"] = dbUrl
-    else delete cfg["dbUrl"]
-    const writeResult = yield* fs.write(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`).pipe(Effect.either)
-
-    yield* Effect.sync(() => {
-      if (writeResult._tag === "Left") {
-        store.pushBlock({ kind: "error", text: `Failed to write ${cfgPath}: ${String(writeResult.left)}` })
+      const v = args.join(" ").trim()
+      if (v.length === 0) {
+        yield* openDbManager(store, cwd)
         return
       }
-      const scope = wantGlobal ? "global (~/.efferent)" : "project (.efferent)"
-      const target = dbUrl.length > 0 ? maskDbUrl(dbUrl) : "SQLite default (~/.efferent/efferent.db)"
-      store.pushBlock({
-        kind: "info",
-        text: `database → ${target} · saved to ${scope} config · relaunch efferent to connect`,
-      })
-    })
+      conn = connFromUrl(v)
+    }
+
+    const isImplicitLocal = conn.kind === "sqlite" && conn.url === dbLocalPath
+    const settings = yield* (yield* SettingsStore).get()
+    const existing = [LOCAL_DB_NAME, ...Object.keys(settings.databases ?? {})]
+    const name = isImplicitLocal ? LOCAL_DB_NAME : suggestName(conn, existing)
+    yield* switchActiveDatabase(store, name, conn, cwd, { scope })
   })

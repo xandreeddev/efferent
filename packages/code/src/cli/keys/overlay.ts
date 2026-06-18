@@ -1,4 +1,4 @@
-import type { ConversationId, ModelInfo } from "@xandreed/sdk-core"
+import type { ConversationId, ModelInfo, NamedConn } from "@xandreed/sdk-core"
 import {
   filterAppend,
   filterBackspace,
@@ -22,6 +22,8 @@ import {
   advanceOnboardingStep,
   onboardingBack,
   finishOnboarding,
+  editOnboardingDatabase,
+  removeOnboardingDatabase,
 } from "../actions/onboarding.js"
 import {
   beginEdit,
@@ -40,6 +42,7 @@ import { Effect } from "effect"
 import { refreshNav } from "../actions/contextTree.js"
 import { resumeConversation } from "../actions/session.js"
 import {
+  applyDatabasePick,
   applyEffort,
   applySearchModel,
   commitMaxSteps,
@@ -121,6 +124,10 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
         )
       return
     }
+    case "database":
+      // Make the chosen connection active (switch live + carry the conversation).
+      if (value !== undefined) void ctx.run(applyDatabasePick(store, value as NamedConn, store.status().cwd))
+      return
   }
 }
 
@@ -321,7 +328,7 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
 
   if (o.kind === "onboarding") {
     const state = o.state
-    // Esc = Go Back (agy convention). On the first screen (login authMethod)
+    // Esc = Go Back (agy convention). On the first screen (the scope picker)
     // there's nowhere back to go: close if already signed in, else exit.
     if (key.name === "escape") {
       // Scope picker is the FIRST screen — nowhere back: close if already signed
@@ -394,6 +401,19 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
         return true
       }
       return true
+    }
+
+    // In the DB manager (not the add/edit prompt), e/d edit/remove the highlighted
+    // configured connection — claimed before the printable-filter fallthrough.
+    if (state.step === "database" && state.connect === undefined) {
+      if (key.name === "e") {
+        void ctx.run(editOnboardingDatabase(store, state))
+        return true
+      }
+      if (key.name === "d") {
+        void ctx.run(removeOnboardingDatabase(store, state))
+        return true
+      }
     }
 
     if (

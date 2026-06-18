@@ -123,15 +123,17 @@ const curLogin = (store: TuiStore): LoginFlow => {
   return o.flow
 }
 
-test("login: ↓ moves the auth-method selection", () => {
+test("login: ↓ moves the home provider selection", () => {
   const store = newStore()
   openLoginOverlay(store)
   const flow = curLogin(store)
-  expect(flow.step).toBe("authMethod")
+  expect(flow.step).toBe("home")
+  if (flow.step !== "home") throw new Error("expected home")
+  const before = flow.sel.selected
   overlayKey(ctxOf(store), key("down"))
   const moved = curLogin(store)
-  if (moved.step !== "authMethod") throw new Error("step changed unexpectedly")
-  expect(moved.sel.selected).toBe(1) // "Use an API key"
+  if (moved.step !== "home") throw new Error("step changed unexpectedly")
+  expect(moved.sel.selected).toBe(before + 1)
 })
 
 test("login: typing appends to the active prompt step", () => {
@@ -155,14 +157,15 @@ test("login: typing appends to the active prompt step", () => {
   expect((curLogin(store) as { prompt: { value: string } }).prompt.value).toBe("sk-ab")
 })
 
-test("login: Esc steps back to the auth-method, then closes", () => {
+test("login: Esc steps back to home, then closes", () => {
   const store = newStore()
   openLoginOverlay(store)
-  // advance to the provider step (Enter on authMethod → provider)
+  // home opens on the first configured provider (anthropic, OAuth-capable);
+  // Enter → the per-provider method choice.
   overlayKey(ctxOf(store), key("return"))
-  expect(curLogin(store).step).toBe("provider")
-  overlayKey(ctxOf(store), key("escape")) // back to authMethod
-  expect(curLogin(store).step).toBe("authMethod")
+  expect(curLogin(store).step).toBe("method")
+  overlayKey(ctxOf(store), key("escape")) // back to home
+  expect(curLogin(store).step).toBe("home")
   overlayKey(ctxOf(store), key("escape")) // closes
   expect(store.overlay().kind).toBe("none")
 })

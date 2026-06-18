@@ -23,6 +23,7 @@ export type SelectPurpose =
   | { readonly tag: "search" }
   | { readonly tag: "theme" }
   | { readonly tag: "conversation" }
+  | { readonly tag: "database" }
 
 /**
  * The single active overlay (a modal floats above the panes and owns all input

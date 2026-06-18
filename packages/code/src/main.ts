@@ -22,7 +22,7 @@ import {
   ModelRegistryLive,
   OtlpTelemetryLive,
   resolveConfigRoots,
-  StoresLive,
+  SwitchableStoresLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
@@ -50,8 +50,9 @@ const CredentialsLive = Layer.mergeAll(
 )
 
 const AppLive = Layer.mergeAll(
-  // Both SQL stores (ConversationStore + ContextTreeStore) over one DB stack.
-  StoresLive,
+  // ConversationStore + ContextTreeStore as a runtime-switchable facade (+ the
+  // StoreSwitch control port) so the active database can change with no restart.
+  SwitchableStoresLive,
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
@@ -352,39 +353,53 @@ const root = Command.make(
 /* ------------------------------------------------------------------ */
 
 /**
- * Seed `EFFERENT_DB_URL` from config.json (`dbUrl`) when it's not already set
- * in the env, so a config-file DB selection feeds the boot-time store selector
- * (which reads the env var, at layer-build, before settings are loaded).
- * Workspace `<cwd>/.efferent/config.json` overrides the global
- * `~/.efferent/config.json`, matching SettingsStore layering. A real env var
- * always wins — this only fills the gap.
+ * Resolve the boot connection from a config.json: the named `defaultDatabase`
+ * (looked up in `databases`) wins, else the legacy `dbUrl`. Returns the
+ * connection url (empty ⇒ the implicit local SQLite) and its name, used to seed
+ * the boot-time store selector (which reads env, at layer-build, before settings
+ * load). A `defaultDatabase: "local"` yields just the name (no url).
  */
-const readDbUrl = (p: string): string | undefined => {
+const readSeed = (p: string): { url?: string; name?: string } | undefined => {
   try {
     if (!existsSync(p)) return undefined
-    const cfg = JSON.parse(readFileSync(p, "utf8")) as { dbUrl?: unknown }
-    return typeof cfg.dbUrl === "string" && cfg.dbUrl.length > 0
-      ? cfg.dbUrl
-      : undefined
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as {
+      dbUrl?: unknown
+      defaultDatabase?: unknown
+      databases?: Record<string, { url?: unknown }>
+    }
+    if (typeof cfg.defaultDatabase === "string" && cfg.defaultDatabase.length > 0) {
+      const name = cfg.defaultDatabase
+      const entry = cfg.databases?.[name]
+      if (entry !== undefined && typeof entry.url === "string" && entry.url.length > 0) {
+        return { url: entry.url, name }
+      }
+      return { name } // a named (e.g. "local") default with no explicit url
+    }
+    if (typeof cfg.dbUrl === "string" && cfg.dbUrl.length > 0) return { url: cfg.dbUrl }
+    return undefined
   } catch {
     return undefined
   }
 }
 
 /**
- * Seed `EFFERENT_DB_URL` from config.json (`dbUrl`) when it's not already set
- * in the env. The caller passes the resolved workspace dir so the lookup
- * matches `--cwd`, not `process.cwd()`. A real env var always wins.
+ * Seed `EFFERENT_DB_URL` (+ `EFFERENT_DB_NAME`) from config.json when not already
+ * in the env, so a config-file DB selection feeds the boot-time store selector.
+ * The caller passes the resolved workspace dir so the lookup matches `--cwd`.
+ * Workspace `<cwd>/.efferent` overrides global `~/.efferent` (SettingsStore
+ * layering). A real `EFFERENT_DB_URL` env var always wins.
  */
 const seedDbUrlFromConfig = (workspaceDir: string): void => {
   if (process.env.EFFERENT_DB_URL) return
-  // EFFERENT_HOME → single source; else local <cwd> overrides global ~ (matches
-  // SettingsStore layering). `resolveConfigRoots` returns the `.efferent` dirs.
   const roots = resolveConfigRoots(workspaceDir)
-  const dbUrl =
-    (roots.local !== undefined ? readDbUrl(join(roots.local, "config.json")) : undefined) ??
-    readDbUrl(join(roots.global, "config.json"))
-  if (dbUrl !== undefined) process.env.EFFERENT_DB_URL = dbUrl
+  const seed =
+    (roots.local !== undefined ? readSeed(join(roots.local, "config.json")) : undefined) ??
+    readSeed(join(roots.global, "config.json"))
+  if (seed === undefined) return
+  if (seed.url !== undefined && seed.url.length > 0) process.env.EFFERENT_DB_URL = seed.url
+  if (seed.name !== undefined && process.env.EFFERENT_DB_NAME === undefined) {
+    process.env.EFFERENT_DB_NAME = seed.name
+  }
 }
 
 // No boot gate: efferent always launches into the TUI. With no credential it

@@ -10,8 +10,29 @@ export interface SelectOption<T> {
   readonly value: T
   /** Display text (also what the filter matches against). */
   readonly label: string
-  /** Marked with a `◀ active` tag (e.g. the current model). */
+  /** Marked with a `◀ active` tag (e.g. the current model / default db). */
   readonly active?: boolean
+  /**
+   * Group heading this row belongs under. Rows sharing a contiguous `section`
+   * render beneath one dim heading line (the "manager" layout — configured items,
+   * then add actions). Omit for a flat list (`:model`, `:theme`, …). An empty
+   * string starts a fresh group with no heading text (a bare separator, e.g. a
+   * trailing "done" row).
+   */
+  readonly section?: string | undefined
+  /**
+   * Trailing status tag rendered as `◀ <tag>` (e.g. `default`, `subscription`,
+   * `api key`). Replaces the generic `active` word when present; coloured by the
+   * row's active/selected state. Omit for no tag.
+   */
+  readonly tag?: string | undefined
+  /**
+   * A standalone manager action (e.g. `add a database`, `done`) rather than a
+   * filterable item. Hidden while a filter is active — typing searches the items,
+   * and the actions reappear when the filter clears (and they're excluded from the
+   * `i/N` count). Omit for ordinary, filterable rows.
+   */
+  readonly action?: boolean | undefined
 }
 
 export interface SelectState<T> {
@@ -29,7 +50,11 @@ const narrow = <T>(
   filter: string,
 ): ReadonlyArray<SelectOption<T>> => {
   const q = filter.trim().toLowerCase()
-  return q.length === 0 ? all : all.filter((o) => o.label.toLowerCase().includes(q))
+  // While filtering, search only the items — standalone actions (add/done) are
+  // not filterable, so they drop out and return once the filter clears.
+  return q.length === 0
+    ? all
+    : all.filter((o) => o.action !== true && o.label.toLowerCase().includes(q))
 }
 
 export const openSelect = <T>(
