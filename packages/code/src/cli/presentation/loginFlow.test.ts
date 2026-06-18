@@ -7,6 +7,7 @@ import {
   loginMove,
   openLogin,
   type LoginFlow,
+  type LoginHomeItem,
   type ProviderStatus,
 } from "./loginFlow.js"
 
@@ -15,82 +16,113 @@ const STATUSES: ReadonlyArray<ProviderStatus> = [
   { provider: "google", configured: undefined },
   { provider: "openai", configured: undefined },
   { provider: "opencode", configured: undefined },
+  { provider: "ollama", configured: undefined },
 ]
 
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
 
+/** Move the home cursor onto a specific provider (linear scan from the top). */
+const selectProvider = (flow: LoginFlow, provider: string): LoginFlow => {
+  if (flow.step !== "home") throw new Error("expected home")
+  let f: LoginFlow = flow
+  for (let i = 0; i < flow.sel.all.length; i++) {
+    if (f.step !== "home") break
+    const v = selectedValue(f.sel)
+    if (v?.tag === "provider" && v.provider === provider) return f
+    f = loginMove(f, "down")
+  }
+  return f
+}
+
 describe("loginFlow", () => {
-  it("opens at the auth-method step with two options", () => {
+  it("opens at the provider-manager home with a row per provider + done", () => {
     const flow = openLogin(STATUSES)
-    expect(flow.step).toBe("authMethod")
-    if (flow.step === "authMethod") {
-      expect(flow.sel.all.map((o) => o.value)).toEqual(["subscription", "api_key"])
+    expect(flow.step).toBe("home")
+    if (flow.step === "home") {
+      const values = flow.sel.all.map((o) => o.value as LoginHomeItem)
+      expect(values.filter((v) => v.tag === "provider").length).toBe(5)
+      expect(values.at(-1)?.tag).toBe("done")
     }
   })
 
-  it("api-key path: authMethod → provider → apiKey, then commits the key", () => {
-    let flow = openLogin(STATUSES)
-    // pick "Use an API key" (second option)
-    flow = loginMove(flow, "down")
-    let adv = loginAdvance(flow)
-    expect(adv.kind).toBe("flow")
-    if (adv.kind !== "flow") throw new Error("expected flow")
-    flow = adv.flow
-    expect(flow.step).toBe("provider")
-    if (flow.step === "provider") expect(flow.method).toBe("api_key")
+  it("shows the configured status as a tag (anthropic api key, google none)", () => {
+    const flow = openLogin(STATUSES)
+    if (flow.step !== "home") throw new Error("expected home")
+    const byProvider = (p: string) =>
+      flow.sel.all.find((o) => {
+        const v = o.value as LoginHomeItem
+        return v.tag === "provider" && v.provider === p
+      })
+    expect(byProvider("anthropic")?.tag).toBe("api key")
+    expect(byProvider("google")?.tag).toBeUndefined()
+    expect(stripAnsi(byProvider("anthropic")?.label ?? "")).toContain("Anthropic")
+  })
 
-    // pick the first provider (anthropic) → apiKey step
-    adv = loginAdvance(flow)
+  it("api-key-only provider: home → apiKey → commits the key", () => {
+    let flow = selectProvider(openLogin(STATUSES), "google")
+    let adv = loginAdvance(flow)
     expect(adv.kind).toBe("flow")
     if (adv.kind !== "flow") throw new Error("expected flow")
     flow = adv.flow
     expect(flow.step).toBe("apiKey")
-    if (flow.step === "apiKey") expect(flow.provider).toBe("anthropic")
+    if (flow.step === "apiKey") expect(flow.provider).toBe("google")
 
-    // type a key + advance → apiKey commit outcome
     for (const ch of "sk-xyz") flow = loginAppend(flow, ch)
     const commit = loginAdvance(flow)
     expect(commit.kind).toBe("apiKey")
     if (commit.kind === "apiKey") {
-      expect(commit.provider).toBe("anthropic")
+      expect(commit.provider).toBe("google")
       expect(commit.key).toBe("sk-xyz")
     }
   })
 
-  it("subscription path lists only providers with OAuth and starts OAuth", () => {
-    let flow = openLogin(STATUSES) // "subscription" is selected first
+  it("subscription-capable provider: home → method → subscription starts OAuth", () => {
+    let flow = selectProvider(openLogin(STATUSES), "anthropic")
     let adv = loginAdvance(flow)
     if (adv.kind !== "flow") throw new Error("expected flow")
     flow = adv.flow
-    expect(flow.step).toBe("provider")
-    if (flow.step === "provider") {
-      expect(flow.method).toBe("subscription")
-      expect(flow.sel.all.map((o) => o.value)).toEqual(["anthropic", "openai"])
-    }
+    expect(flow.step).toBe("method")
+    // "subscription" is the first method row.
     adv = loginAdvance(flow)
     expect(adv.kind).toBe("startOAuth")
     if (adv.kind === "startOAuth") expect(adv.provider).toBe("anthropic")
   })
 
-  it("Esc steps back: provider → authMethod, authMethod → undefined", () => {
-    let flow = openLogin(STATUSES)
-    const adv = loginAdvance(flow) // → provider (subscription)
-    if (adv.kind !== "flow") throw new Error("expected flow")
-    flow = adv.flow
-    const back = loginBack(flow)
-    expect(back?.step).toBe("authMethod")
-    expect(loginBack(openLogin(STATUSES))).toBeUndefined()
+  it("method → api_key path lands on the apiKey prompt", () => {
+    const flow = selectProvider(openLogin(STATUSES), "openai")
+    const toMethod = loginAdvance(flow)
+    if (toMethod.kind !== "flow" || toMethod.flow.step !== "method") {
+      throw new Error("expected method flow")
+    }
+    const m = loginMove(toMethod.flow, "down") // api_key (second row)
+    const adv = loginAdvance(m)
+    expect(adv.kind).toBe("flow")
+    if (adv.kind === "flow") expect(adv.flow.step).toBe("apiKey")
   })
 
-  it("tags configured providers in the api-key provider list", () => {
-    let flow = openLogin(STATUSES)
-    flow = loginMove(flow, "down") // api_key
+  it("local provider (ollama): home → localUrl prompt", () => {
+    const flow = selectProvider(openLogin(STATUSES), "ollama")
     const adv = loginAdvance(flow)
-    if (adv.kind !== "flow" || adv.flow.step !== "provider") {
-      throw new Error("expected provider step")
+    expect(adv.kind).toBe("flow")
+    if (adv.kind === "flow") expect(adv.flow.step).toBe("localUrl")
+  })
+
+  it("done row → a `done` outcome", () => {
+    let flow = openLogin(STATUSES)
+    if (flow.step !== "home") throw new Error("expected home")
+    // walk to the done row (last)
+    while (flow.step === "home" && selectedValue(flow.sel)?.tag !== "done") {
+      flow = loginMove(flow, "down")
     }
-    const labels = adv.flow.sel.all.map((o) => stripAnsi(o.label))
-    expect(labels.find((l) => l.startsWith("Anthropic"))).toContain("✓ api key")
-    expect(labels.find((l) => l.startsWith("Google"))).toContain("• unconfigured")
+    expect(loginAdvance(flow).kind).toBe("done")
+  })
+
+  it("Esc steps back: method → home, home → undefined", () => {
+    const flow = selectProvider(openLogin(STATUSES), "anthropic")
+    const adv = loginAdvance(flow) // → method
+    if (adv.kind !== "flow") throw new Error("expected flow")
+    const back = loginBack(adv.flow)
+    expect(back?.step).toBe("home")
+    expect(loginBack(openLogin(STATUSES))).toBeUndefined()
   })
 })

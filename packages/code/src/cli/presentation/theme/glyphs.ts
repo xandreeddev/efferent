@@ -38,6 +38,8 @@ export const glyph = {
   pointer: "›",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
+  /** "add a new item" marker for manager rows (login providers / db connections). */
+  add: "＋",
   /** Context-viewer message-line icons, by role. */
   msg: { user: "❯", assistant: "●", tool: "⚙", result: "↳" },
   /**

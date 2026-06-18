@@ -12,6 +12,7 @@ import {
 import { browserCommand, startCallbackServer } from "../../login/oauthServer.js"
 import {
   openLogin,
+  homeStep,
   loginAdvance,
   loginSetOAuthStatus,
   type LoginFlow,
@@ -46,8 +47,10 @@ export const openLoginFlow = (store: TuiStore) =>
 
 /**
  * Post-login: if the active model's provider has no credential, switch to the
- * just-configured provider's default model; confirm on the rail and close the
- * overlay. Lifted from `tui.ts`'s `afterLogin`.
+ * just-configured provider's default model. Then return to the **home manager**
+ * (statuses refreshed so the new credential shows), so more providers can be set
+ * up before finishing — the manager is the hub for both `:login` and onboarding.
+ * The driver advances/closes only when the user picks "Done" (`advanceLogin`).
  */
 const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
   Effect.gen(function* () {
@@ -55,14 +58,6 @@ const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
     const auth = yield* AuthStore
     const cur = yield* registry.current
     const curHasCred = (yield* auth.get(cur.provider)) !== undefined
-    const o = store.overlay()
-    const isOnboarding = o.kind === "onboarding"
-    yield* Effect.sync(() => {
-      if (!isOnboarding) {
-        store.closeOverlay()
-      }
-      store.pushBlock({ kind: "info", text: `✓ logged in to ${provider} (${how})` })
-    })
     if (!curHasCred) {
       const defaultModel =
         provider === "openai" && how === "subscription"
@@ -71,9 +66,14 @@ const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
       const { provider: p, modelId } = parseModel(defaultModel)
       yield* applyModelSelection(store, { provider: p, modelId, displayName: modelId, contextWindow: 0 })
     }
-    if (isOnboarding) {
-      yield* transitionToMainModel(store, o.state)
-    }
+    // Rebuild the home list against the now-updated credentials and show it,
+    // with a transient confirmation (the onboarding rail is hidden, so a toast
+    // is the only visible feedback there).
+    const all = yield* auth.all
+    yield* Effect.sync(() => {
+      setFlow(store, homeStep(loginStatuses(all)))
+      store.toast(`logged in to ${provider} (${how})`)
+    })
   })
 
 const failLogin = (store: TuiStore, message: string): void => {
@@ -262,6 +262,17 @@ export const advanceLogin = (ctx: TuiContext, flow: LoginFlow): void => {
     case "localUrl":
       void ctx.run(commitLocalUrl(store, outcome.provider, outcome.baseUrl))
       return
+    case "done": {
+      // Leaving the manager: onboarding advances to model selection; the
+      // standalone `:login` overlay just closes.
+      const o = store.overlay()
+      if (o.kind === "onboarding" && o.state.step === "login") {
+        void ctx.run(transitionToMainModel(store, o.state))
+      } else {
+        store.closeOverlay()
+      }
+      return
+    }
     case "none":
       return
   }

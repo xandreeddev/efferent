@@ -294,7 +294,7 @@ export const skipToComplete = (store: TuiStore, state: OnboardingState) =>
  * Step BACK one screen (agy-style Esc = Go Back). Each prior step is rebuilt by
  * its transition (the selects re-fetch from the registry), so back-nav reuses
  * the same builders as forward-nav. From `mainModel` we return to the login
- * picker (a fresh `startOnboarding` at the authMethod step); the caller handles
+ * picker (a fresh `startOnboarding` at the scope step); the caller handles
  * `login`'s own back/exit semantics.
  */
 export const onboardingBack = (store: TuiStore, state: OnboardingState) =>

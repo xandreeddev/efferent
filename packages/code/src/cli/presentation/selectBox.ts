@@ -10,8 +10,22 @@ export interface SelectOption<T> {
   readonly value: T
   /** Display text (also what the filter matches against). */
   readonly label: string
-  /** Marked with a `◀ active` tag (e.g. the current model). */
+  /** Marked with a `◀ active` tag (e.g. the current model / default db). */
   readonly active?: boolean
+  /**
+   * Group heading this row belongs under. Rows sharing a contiguous `section`
+   * render beneath one dim heading line (the "manager" layout — configured items,
+   * then add actions). Omit for a flat list (`:model`, `:theme`, …). An empty
+   * string starts a fresh group with no heading text (a bare separator, e.g. a
+   * trailing "done" row).
+   */
+  readonly section?: string | undefined
+  /**
+   * Trailing status tag rendered as `◀ <tag>` (e.g. `default`, `subscription`,
+   * `api key`). Replaces the generic `active` word when present; coloured by the
+   * row's active/selected state. Omit for no tag.
+   */
+  readonly tag?: string | undefined
 }
 
 export interface SelectState<T> {
