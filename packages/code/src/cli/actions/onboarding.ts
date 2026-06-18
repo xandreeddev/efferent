@@ -1,12 +1,14 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { probePostgres } from "@xandreed/sdk-adapters"
 import {
   AuthStore,
   type ConfigScope,
+  connFromUrl,
+  connLabel,
   ModelRegistry,
   SettingsStore,
+  StoreSwitch,
   type AuthData,
   type ModelInfo,
 } from "@xandreed/sdk-core"
@@ -169,40 +171,49 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         // The zero-config default store (matches adapters' parseDbTarget when
         // dbUrl is unset): SQLite at ~/.efferent/efferent.db.
         const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
-        // Prompt mode: a connection string (remote) or a file path (local).
+        // Prompt mode: a connection string (remote) or a file path (local). Apply
+        // it LIVE — switchTo builds the store, runs pending migrations, and swaps
+        // it in this session (no restart). Persist `dbUrl` only after it connects,
+        // so a bad string never poisons the next boot.
         if (state.connect !== undefined) {
+          const sw = yield* StoreSwitch
+          const cwd = store.status().cwd
           const choice = selectedValue(state.sel) ?? "local"
           const value = promptValue(state.connect).trim()
-          if (choice === "remote") {
-            if (value.length === 0) {
-              yield* Effect.sync(() =>
-                store.toast("paste a postgres:// connection string, or Esc to go back"),
-              )
-              break
-            }
-            // Test it before persisting — a bad string would otherwise only fail
-            // at the next boot when the store builds. Stay on the prompt on error.
-            yield* Effect.sync(() => store.setNote("testing connection…"))
-            const probe = yield* probePostgres(value)
-            if (!probe.ok) {
-              yield* Effect.sync(() => store.setNote(`connection failed: ${probe.error}`))
-              break
-            }
-            yield* settingsStore.update((curr) => ({ ...curr, dbUrl: value }), onbScope(store))
-          } else {
-            // Local: blank or the default path → clear dbUrl (stay zero-config);
-            // any other path is stored verbatim (parseDbTarget reads a non-postgres
-            // value as a SQLite file).
-            yield* settingsStore.update((curr) => {
-              if (value.length === 0 || value === defaultLocalPath) {
-                const { dbUrl: _drop, ...rest } = curr
-                return rest
-              }
-              return { ...curr, dbUrl: value }
-            }, onbScope(store))
+          if (choice === "remote" && value.length === 0) {
+            yield* Effect.sync(() =>
+              store.toast("paste a postgres:// connection string, or Esc to go back"),
+            )
+            break
           }
-          yield* Effect.sync(() => store.toast("database saved — applies on next launch"))
+          const name = choice === "remote" ? "remote" : "local"
+          const conn =
+            choice === "remote"
+              ? connFromUrl(value)
+              : { kind: "sqlite" as const, url: value.length > 0 ? value : defaultLocalPath }
+          yield* Effect.sync(() => store.setNote("connecting…"))
+          const res = yield* sw.switchTo(name, conn, cwd).pipe(Effect.either)
+          if (res._tag === "Left") {
+            yield* Effect.sync(() => store.setNote(`connection failed: ${res.left.message}`))
+            break // stay on the prompt to fix/retry
+          }
+          // Connected: persist the selection (remote URL, or clear for the default
+          // local path → stay zero-config) and reflect it on the status bar.
+          yield* settingsStore.update((curr) => {
+            if (choice === "local" && (value.length === 0 || value === defaultLocalPath)) {
+              const { dbUrl: _drop, ...rest } = curr
+              return rest
+            }
+            return { ...curr, dbUrl: choice === "remote" ? value : conn.url }
+          }, onbScope(store))
+          const n = res.right.conversationCount
           yield* Effect.sync(() => {
+            store.setStatus({ storage: connLabel(name, conn.kind) })
+            store.toast(
+              n > 0
+                ? `connected to ${name} — found ${n} conversation${n === 1 ? "" : "s"}`
+                : `connected to ${name} — database ready`,
+            )
             store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
           })
           break
