@@ -11,6 +11,7 @@ import type {
   ModelRegistry,
   SettingsStore,
   Shell,
+  StoreSwitch,
   UtilityLlm,
   WebSearch,
 } from "@xandreed/sdk-core"
@@ -30,6 +31,7 @@ export type AppServices =
   | Shell
   | ConversationStore
   | ContextTreeStore
+  | StoreSwitch
   | LanguageModel.LanguageModel
   | SettingsStore
   | ModelRegistry

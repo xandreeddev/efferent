@@ -22,7 +22,7 @@ import {
   ModelRegistryLive,
   OtlpTelemetryLive,
   resolveConfigRoots,
-  StoresLive,
+  SwitchableStoresLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
@@ -50,8 +50,9 @@ const CredentialsLive = Layer.mergeAll(
 )
 
 const AppLive = Layer.mergeAll(
-  // Both SQL stores (ConversationStore + ContextTreeStore) over one DB stack.
-  StoresLive,
+  // ConversationStore + ContextTreeStore as a runtime-switchable facade (+ the
+  // StoreSwitch control port) so the active database can change with no restart.
+  SwitchableStoresLive,
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,

@@ -6,6 +6,7 @@ import * as Migrator from "@effect/sql/Migrator"
 import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import { Cause, Config, Duration, Effect, Layer, Option, Redacted } from "effect"
+import { connFromUrl, type DatabaseConn } from "@xandreed/sdk-core"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -195,3 +196,41 @@ export const StoresLive = Layer.unwrapEffect(
         ).pipe(Layer.provide(sqliteDatabaseLive(target.filename)))
   }),
 )
+
+/** Postgres client + migrator for an explicit `url` (vs the env-config variant
+ *  used at boot) — the on-demand path for runtime switching / transient reads. */
+const pgDatabaseLayer = (url: string) =>
+  PgMigrator.layer({ loader: pgLoader }).pipe(
+    Layer.provideMerge(PgClient.layer({ url: Redacted.make(url) })),
+  )
+
+/**
+ * Both SQL stores over a SINGLE db stack for an EXPLICIT connection (not the
+ * env). Building it runs the migrator → only *pending* migrations apply, so it's
+ * safe against an already-populated database. Used by the switchable store
+ * (`switchTo` / transient session reads). SQLite paths flow through
+ * `parseDbTarget` so `""`/`sqlite:`-prefixes resolve like the boot path.
+ */
+const sqliteFilenameOf = (url: string): string => {
+  const t = parseDbTarget(url)
+  return t.kind === "sqlite" ? t.filename : defaultSqlitePath()
+}
+
+export const storesLayerFor = (conn: DatabaseConn) =>
+  conn.kind === "postgres"
+    ? Layer.merge(PostgresConversationStoreLive, PostgresContextTreeStoreLive).pipe(
+        Layer.provide(pgDatabaseLayer(conn.url)),
+      )
+    : Layer.merge(SqliteConversationStoreLive, SqliteContextTreeStoreLive).pipe(
+        Layer.provide(sqliteDatabaseLive(sqliteFilenameOf(conn.url))),
+      )
+
+/** The zero-config local SQLite connection (`~/.efferent/efferent.db`). */
+export const localConn = (): DatabaseConn => ({ kind: "sqlite", url: defaultSqlitePath() })
+
+/** The active connection at boot: `EFFERENT_DB_URL` (env, or config-seeded into
+ *  it by `seedDbUrlFromConfig`) if set, else zero-config local SQLite. */
+export const bootConn = (): DatabaseConn => {
+  const raw = process.env.EFFERENT_DB_URL?.trim()
+  return raw !== undefined && raw.length > 0 ? connFromUrl(raw) : localConn()
+}
