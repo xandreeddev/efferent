@@ -1,4 +1,3 @@
-import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import {
@@ -16,6 +15,7 @@ import {
   type AuthData,
   type ModelInfo,
 } from "@xandreed/sdk-core"
+import { dirForScope, resolveConfigRoots } from "@xandreed/sdk-adapters"
 import {
   onboardingToLogin,
   onboardingToMainModel,
@@ -36,9 +36,6 @@ import { applyModelSelection } from "./model.js"
 import { applyTheme } from "./theme.js"
 import type { TuiStore } from "../state/store.js"
 
-/** The zero-config local SQLite path (matches adapters' default when dbUrl is
- *  unset): SQLite at ~/.efferent/efferent.db. */
-const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
 
 const PROVIDERS = ["anthropic", "google", "openai", "opencode", "ollama"] as const
 
@@ -131,7 +128,7 @@ const transitionToTheme = (store: TuiStore, state: OnboardingState) =>
 const goManageDatabase = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
     const settings = yield* (yield* SettingsStore).get()
-    const conns = configuredConns(settings.databases, defaultLocalPath)
+    const conns = configuredConns(settings.databases, localDbPath(store))
     const active = activeConnName(settings.defaultDatabase)
     yield* Effect.sync(() => {
       store.setOverlay({ kind: "onboarding", state: onboardingToDatabase(state, conns, active) })
@@ -142,8 +139,20 @@ const goManageDatabase = (store: TuiStore, state: OnboardingState) =>
  *  run handle), defaulting to global (machine-wide) if somehow unset. */
 const onbScope = (store: TuiStore): ConfigScope => store.run.getConfigScope() ?? "global"
 
-/** `e` on a configured connection — re-open the prompt prefilled to edit its
- *  url/path (keeps its name on save). The implicit `local` can't be edited. */
+/**
+ * The implicit local SQLite path for the chosen scope: the `.efferent` dir the
+ * setup targets (project-local `<cwd>/.efferent` for `local`, `~/.efferent` for
+ * `global`, the `$EFFERENT_HOME/.efferent` sandbox dir) + `efferent.db`. So a
+ * "local" setup keeps its conversations in the project — "local is local". The
+ * matching boot-time resolution lives in `main.ts`'s `seedDbUrlFromConfig`.
+ */
+const localDbPath = (store: TuiStore): string =>
+  join(dirForScope(resolveConfigRoots(store.status().cwd), onbScope(store)), "efferent.db")
+
+/** `e` (or ↵) on a configured connection — re-open the prompt prefilled to edit
+ *  its url/path (keeps its name on save). Works on `local` too: editing it to a
+ *  custom path stores a `local` override; editing it back to the default clears
+ *  it (see the add/edit submit branch). */
 export const editOnboardingDatabase = (
   store: TuiStore,
   state: Extract<OnboardingState, { step: "database" }>,
@@ -151,13 +160,8 @@ export const editOnboardingDatabase = (
   Effect.gen(function* () {
     const item = selectedValue(state.sel)
     if (item === undefined || item.tag !== "use") return
-    const conn = item.conn
-    if (conn.name === LOCAL_DB_NAME) {
-      yield* Effect.sync(() => store.toast("the local database can't be edited"))
-      return
-    }
     yield* Effect.sync(() =>
-      store.setOverlay({ kind: "onboarding", state: databaseEdit(state, conn) }),
+      store.setOverlay({ kind: "onboarding", state: databaseEdit(state, item.conn) }),
     )
   })
 
@@ -173,7 +177,9 @@ export const removeOnboardingDatabase = (
     if (item === undefined || item.tag !== "use") return
     const conn = item.conn
     if (conn.name === LOCAL_DB_NAME) {
-      yield* Effect.sync(() => store.toast("the local database can't be removed"))
+      yield* Effect.sync(() =>
+        store.toast("local always exists — press ↵ or e to change its path"),
+      )
       return
     }
     const settingsStore = yield* SettingsStore
@@ -193,7 +199,7 @@ export const removeOnboardingDatabase = (
     if (wasActive) {
       const sw = yield* StoreSwitch
       yield* sw
-        .switchTo(LOCAL_DB_NAME, { kind: "sqlite", url: defaultLocalPath }, store.status().cwd)
+        .switchTo(LOCAL_DB_NAME, { kind: "sqlite", url: localDbPath(store) }, store.status().cwd)
         .pipe(Effect.catchAll(() => Effect.void))
       yield* Effect.sync(() => store.setStatus({ storage: connLabel(LOCAL_DB_NAME, "sqlite") }))
     }
@@ -256,6 +262,8 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         if (state.connect !== undefined) {
           const adding = state.adding ?? "local"
           const editing = state.editName !== undefined
+          const scope = onbScope(store)
+          const defaultLocal = localDbPath(store)
           const value = promptValue(state.connect).trim()
           if (adding === "remote" && value.length === 0) {
             yield* Effect.sync(() =>
@@ -266,11 +274,15 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
           const conn =
             adding === "remote"
               ? connFromUrl(value)
-              : { kind: "sqlite" as const, url: value.length > 0 ? value : defaultLocalPath }
-          // A default-path local connection is the implicit `local` — not stored.
-          // Editing always targets a stored, named connection, so never implicit.
+              : { kind: "sqlite" as const, url: value.length > 0 ? value : defaultLocal }
+          // The implicit `local` is a scope-default-path SQLite connection. Editing
+          // a *named* entry (local-2, remote, …) is never implicit; a fresh "add
+          // local" left at the default, or editing `local` back to the default, is.
+          const editingLocal = state.editName === LOCAL_DB_NAME
           const isImplicitLocal =
-            !editing && adding === "local" && (value.length === 0 || value === defaultLocalPath)
+            adding === "local" &&
+            (state.editName === undefined || editingLocal) &&
+            (value.length === 0 || value === defaultLocal)
           const settings = yield* settingsStore.get()
           const existing = [LOCAL_DB_NAME, ...Object.keys(settings.databases ?? {})]
           // Editing keeps the connection's name; adding auto-names it.
@@ -284,9 +296,13 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
           }
           yield* settingsStore.update((curr) => {
             const databases = { ...(curr.databases ?? {}) }
-            if (!isImplicitLocal) databases[name] = { kind: conn.kind, url: conn.url }
+            // A GLOBAL-scope implicit local stays UNSTORED — it's the zero-config
+            // home default. A LOCAL-scope local IS recorded (with its project path)
+            // so "local is local" survives a restart (boot reads databases.local).
+            if (isImplicitLocal && scope === "global") delete databases[LOCAL_DB_NAME]
+            else databases[name] = { kind: conn.kind, url: conn.url }
             return { ...curr, databases, defaultDatabase: name }
-          }, onbScope(store))
+          }, scope)
           const n = res.right.conversationCount
           yield* Effect.sync(() => {
             store.setStatus({ storage: connLabel(name, conn.kind) })
@@ -314,27 +330,17 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
           yield* Effect.sync(() =>
             store.setOverlay({
               kind: "onboarding",
-              state: databaseAdd(state, adding, defaultLocalPath),
+              state: databaseAdd(state, adding, localDbPath(store)),
             }),
           )
           break
         }
-        // use: make this connection the default + switch live.
-        const conn = item.conn
-        yield* Effect.sync(() => store.setNote("connecting…"))
-        const res = yield* sw
-          .switchTo(conn.name, { kind: conn.kind, url: conn.url }, cwd)
-          .pipe(Effect.either)
-        if (res._tag === "Left") {
-          yield* Effect.sync(() => store.setNote(`connection failed: ${res.left.message}`))
-          break
-        }
-        yield* settingsStore.update((curr) => ({ ...curr, defaultDatabase: conn.name }), onbScope(store))
-        yield* Effect.sync(() => {
-          store.setStatus({ storage: connLabel(conn.name, conn.kind) })
-          store.setNote(undefined)
-        })
-        yield* goManageDatabase(store, state)
+        // use: ↵ opens the connection for editing (same as `e`); saving
+        // reconnects + makes it the default. (Editing-as-default is how you both
+        // switch to and fix a connection in one gesture.)
+        yield* Effect.sync(() =>
+          store.setOverlay({ kind: "onboarding", state: databaseEdit(state, item.conn) }),
+        )
         break
       }
       case "complete":
@@ -403,7 +409,35 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
 export const finishOnboarding = (store: TuiStore) =>
   Effect.gen(function* () {
     const settingsStore = yield* SettingsStore
-    yield* settingsStore.update((curr) => ({ ...curr, onboarded: true }), onbScope(store))
+    const scope = onbScope(store)
+    // A LOCAL-scope setup that never explicitly chose a database still means
+    // "local is local" — record the project-local db so conversations land in the
+    // project (and persist across restarts) instead of the global home file, and
+    // switch the live store there now so this first session already writes local.
+    // A global setup keeps the zero-config home default (nothing to record).
+    const needsLocalDb =
+      scope === "local" && (yield* settingsStore.get()).defaultDatabase === undefined
+    yield* settingsStore.update((curr) => {
+      const next = { ...curr, onboarded: true }
+      if (needsLocalDb) {
+        return {
+          ...next,
+          databases: {
+            ...(curr.databases ?? {}),
+            [LOCAL_DB_NAME]: { kind: "sqlite" as const, url: localDbPath(store) },
+          },
+          defaultDatabase: LOCAL_DB_NAME,
+        }
+      }
+      return next
+    }, scope)
+    if (needsLocalDb) {
+      const sw = yield* StoreSwitch
+      yield* sw
+        .switchTo(LOCAL_DB_NAME, { kind: "sqlite", url: localDbPath(store) }, store.status().cwd)
+        .pipe(Effect.catchAll(() => Effect.void))
+      yield* Effect.sync(() => store.setStatus({ storage: connLabel(LOCAL_DB_NAME, "sqlite") }))
+    }
     // Onboarding is over — runtime writes revert to their own defaults
     // (auth → global, settings → local).
     yield* Effect.sync(() => store.run.setConfigScope(undefined))

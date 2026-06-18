@@ -118,12 +118,12 @@ const dbConnectFooter: ReadonlyArray<KeyHint> = [
   { key: "esc", label: "back" },
 ]
 
-// The manager footer advertises the row actions (set-default on ↵, plus edit /
-// remove on a configured connection) — the generic select footer doesn't.
+// The manager footer advertises the row actions (↵/e edit a connection — saving
+// reconnects + makes it default — and d removes it) — the generic select footer
+// doesn't.
 const dbManagerFooter: ReadonlyArray<KeyHint> = [
   { key: "↑/↓", label: "navigate" },
-  { key: "↵", label: "select" },
-  { key: "e", label: "edit" },
+  { key: "↵/e", label: "edit" },
   { key: "d", label: "remove" },
   { key: "esc", label: "back" },
 ]
