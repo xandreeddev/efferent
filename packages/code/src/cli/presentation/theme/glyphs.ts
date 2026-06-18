@@ -35,7 +35,7 @@ export const glyph = {
   /** "More above / below" scroll affordances in windowed lists. */
   more: { above: "↑", below: "↓" },
   /** Row pointer (select list / slash palette / settings cursor). */
-  pointer: "▸",
+  pointer: "›",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
   /** Context-viewer message-line icons, by role. */

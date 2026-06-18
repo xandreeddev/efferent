@@ -103,6 +103,33 @@ const ThemeStep = (props: { state: SelectState<string> }) => (
   </box>
 )
 
+// The database step (step 6). Choose mode is the local/remote list; once "remote"
+// is picked, `connect` holds the connection-string prompt, rendered with a Neon
+// hint (the prompt text carries no URL, so it sidesteps PromptStep's link callout).
+const dbConnectFooter: ReadonlyArray<KeyHint> = [
+  { key: "↵", label: "save" },
+  { key: "esc", label: "back" },
+]
+
+const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database" }> }) => (
+  <Show
+    when={props.state.connect}
+    fallback={<SelectStep title={props.state.sel.title} state={props.state.sel} canBack={true} />}
+  >
+    {(connect) => (
+      <box flexDirection="column">
+        <text fg={tokens.text.default} marginBottom={1}>
+          {connect().title}
+        </text>
+        <text fg={tokens.text.dim} wrapMode="word" marginBottom={1}>
+          No database yet? Create a free serverless one at neon.tech and paste its connection string here.
+        </text>
+        <PromptBody prompt={connect().prompt} value={connect().value} mask={connect().mask} footer={dbConnectFooter} />
+      </box>
+    )}
+  </Show>
+)
+
 /** A prompt step: title + (rich link block for OAuth, else plain prompt via the
  *  shared PromptBody). The OAuth redirect URL gets its own ruled callout. */
 const PromptStep = (props: { title: string; prompt: string; value: string; mask: boolean }) => {
@@ -132,20 +159,31 @@ const PromptStep = (props: { title: string; prompt: string; value: string; mask:
   )
 }
 
-const OnboardingLoginView = (props: { flow: LoginFlow }) => {
+// The login flow's titles come from `loginFlow.ts` (shared with the runtime
+// `:login` overlay, which carries no counter), so the "Step 2 of 5 · …" prefix is
+// applied here — onboarding-only — to match the one-line header every other step
+// already shows from `onboardingFlow.ts`.
+const OnboardingLoginView = (props: { flow: LoginFlow; stepLabel: string }) => {
   const view = createMemo(() => stepView(props.flow))
   return (
     <Switch>
       <Match when={view().tag === "select"}>
         {(() => {
           const v = view() as Extract<StepView, { tag: "select" }>
-          return <SelectStep title={v.sel.title} state={v.sel} canBack={v.canBack} />
+          return <SelectStep title={`${props.stepLabel} · ${v.sel.title}`} state={v.sel} canBack={v.canBack} />
         })()}
       </Match>
       <Match when={view().tag === "prompt"}>
         {(() => {
           const v = view() as Extract<StepView, { tag: "prompt" }>
-          return <PromptStep title={v.title} prompt={v.prompt} value={v.value} mask={v.mask} />
+          return (
+            <PromptStep
+              title={`${props.stepLabel} · ${v.title}`}
+              prompt={v.prompt}
+              value={v.value}
+              mask={v.mask}
+            />
+          )
         })()}
       </Match>
     </Switch>
@@ -190,7 +228,7 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
                     : "Welcome to the Efferent CLI. You are currently not signed in."}
                 </text>
                 <text fg={tokens.text.muted} wrapMode="word" marginBottom={1}>
-                  {"We'll set up a provider, your main + fast models, and a theme — once."}
+                  {"We'll set up a provider, your main + fast models, a theme, and where conversations are stored — once."}
                 </text>
                 <SelectStep title={sel.title} state={sel} canBack={false} />
               </box>
@@ -199,7 +237,7 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         </Show>
 
         <Show when={s().step === "login"}>
-          <OnboardingLoginView flow={loginFlowState()} />
+          <OnboardingLoginView flow={loginFlowState()} stepLabel="Step 2 of 6" />
         </Show>
 
         <Show when={s().step === "mainModel"}>
@@ -223,8 +261,15 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
           })()}
         </Show>
 
+        <Show when={s().step === "database"}>
+          {(() => {
+            const st = s() as Extract<OnboardingState, { step: "database" }>
+            return <DatabaseStep state={st} />
+          })()}
+        </Show>
+
         <Show when={s().step === "complete"}>
-          <box flexDirection="column" marginTop={1} marginBottom={1}>
+          <box flexDirection="column" marginBottom={1}>
             <text fg={tokens.state.ok} wrapMode="none" marginBottom={1}>
               {`${glyph.ok} Onboarding complete!`}
             </text>

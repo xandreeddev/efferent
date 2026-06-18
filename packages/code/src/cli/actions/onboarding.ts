@@ -12,11 +12,14 @@ import {
   onboardingToMainModel,
   onboardingToFastModel,
   onboardingToTheme,
+  onboardingToDatabase,
+  databaseToConnect,
   onboardingToComplete,
   startOnboarding,
   type OnboardingState,
 } from "../presentation/onboardingFlow.js"
 import { selectedValue } from "../presentation/selectBox.js"
+import { promptValue } from "../presentation/promptBox.js"
 import { type ProviderStatus } from "../presentation/loginFlow.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import { applyModelSelection } from "./model.js"
@@ -99,6 +102,17 @@ const transitionToTheme = (store: TuiStore, state: OnboardingState) =>
     })
   })
 
+const transitionToDatabase = (store: TuiStore, state: OnboardingState) =>
+  Effect.gen(function* () {
+    const settings = yield* (yield* SettingsStore).get()
+    yield* Effect.sync(() => {
+      store.setOverlay({
+        kind: "onboarding",
+        state: onboardingToDatabase(state, settings.dbUrl),
+      })
+    })
+  })
+
 /** The tier onboarding writes to — the scope chosen in step 1 (stashed on the
  *  run handle), defaulting to global (machine-wide) if somehow unset. */
 const onbScope = (store: TuiStore): ConfigScope => store.run.getConfigScope() ?? "global"
@@ -144,11 +158,42 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         if (selected !== undefined) {
           yield* applyTheme(store, selected, onbScope(store))
         }
-        yield* Effect.sync(() => {
-          store.setOverlay({
-            kind: "onboarding",
-            state: onboardingToComplete(state),
+        yield* transitionToDatabase(store, state)
+        break
+      }
+      case "database": {
+        const settingsStore = yield* SettingsStore
+        // Connect (prompt) mode: a postgres:// string was being typed/pasted.
+        if (state.connect !== undefined) {
+          const url = promptValue(state.connect).trim()
+          if (url.length === 0) {
+            yield* Effect.sync(() =>
+              store.toast("paste a postgres:// connection string, or Esc to go back"),
+            )
+            break
+          }
+          yield* settingsStore.update((curr) => ({ ...curr, dbUrl: url }), onbScope(store))
+          yield* Effect.sync(() => store.toast("database saved — applies on next launch"))
+          yield* Effect.sync(() => {
+            store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
           })
+          break
+        }
+        // Choose mode: "remote" opens the connection prompt; "local" clears dbUrl
+        // (back to the zero-config default SQLite) and completes.
+        const choice = selectedValue(state.sel) ?? "local"
+        if (choice === "remote") {
+          yield* Effect.sync(() => {
+            store.setOverlay({ kind: "onboarding", state: databaseToConnect(state) })
+          })
+          break
+        }
+        yield* settingsStore.update((curr) => {
+          const { dbUrl: _drop, ...rest } = curr
+          return rest
+        }, onbScope(store))
+        yield* Effect.sync(() => {
+          store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
         })
         break
       }
@@ -198,8 +243,17 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
       case "theme":
         yield* transitionToFastModel(store, state)
         break
+      case "database":
+        if (state.connect !== undefined) {
+          // From the connection prompt, back to the local/remote choice.
+          const { connect: _drop, ...choose } = state
+          yield* Effect.sync(() => store.setOverlay({ kind: "onboarding", state: choose }))
+        } else {
+          yield* transitionToTheme(store, state)
+        }
+        break
       case "complete":
-        yield* transitionToTheme(store, state)
+        yield* transitionToDatabase(store, state)
         break
       case "scope":
       case "login":

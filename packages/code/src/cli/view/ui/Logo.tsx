@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js"
-import { glyph, tokens } from "../../state/theme.js"
+import { BRAND, glyph, tokens } from "../../state/theme.js"
 
 /**
  * Package variants of the efferent mark. Each maps to a real workspace package
@@ -30,9 +30,10 @@ const WORDMARK = "E F F E R E N T"
 /**
  * The efferent logo — the locked hybrid lockup: the `EFFERENT` wordmark with an
  * optional `<pkg>` tag inline, a brand-triad gradient underline spanning the
- * whole lockup (ember → chartreuse → verdigris, painted from the same accent
- * tokens the panes use — so the logo *is* the design system), and a tagline
- * below. Pass a `variant` to scope it to a package; default is the master mark.
+ * whole lockup (ember → chartreuse → verdigris, painted from the fixed `BRAND`
+ * triad — theme-independent, so the mark is a stable identity no matter the
+ * active theme), and a tagline below. Pass a `variant` to scope it to a package;
+ * default is the master mark.
  *
  * `compact` drops the tagline (header / tight contexts). The gradient bar is
  * split into three equal regions over the lockup's character width.
@@ -51,9 +52,9 @@ export const Logo = (props: { variant?: LogoVariant; compact?: boolean }) => {
     const a = Math.floor(n / 3)
     const b = Math.floor(n / 3)
     return [
-      { fg: tokens.accent.conversation, len: a },
-      { fg: tokens.accent.input, len: b },
-      { fg: tokens.accent.side, len: n - a - b },
+      { fg: BRAND.ember, len: a },
+      { fg: BRAND.chartreuse, len: b },
+      { fg: BRAND.verdigris, len: n - a - b },
     ]
   }
 
@@ -66,7 +67,7 @@ export const Logo = (props: { variant?: LogoVariant; compact?: boolean }) => {
         </text>
         <Show when={spec().pkg !== undefined}>
           <text fg={tokens.text.dim} wrapMode="none">{` ${spec().open} `}</text>
-          <text fg={tokens.accent.input} wrapMode="none">{spec().pkg}</text>
+          <text fg={BRAND.chartreuse} wrapMode="none">{spec().pkg}</text>
           <text fg={tokens.text.dim} wrapMode="none">{` ${spec().close}`}</text>
         </Show>
       </box>
