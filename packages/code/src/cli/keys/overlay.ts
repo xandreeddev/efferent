@@ -396,7 +396,8 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       state.step === "scope" ||
       state.step === "mainModel" ||
       state.step === "fastModel" ||
-      state.step === "theme"
+      state.step === "theme" ||
+      state.step === "database"
     ) {
       if (key.name === "up" || key.name === "down") {
         const next = onboardingMove(state, key.name)
