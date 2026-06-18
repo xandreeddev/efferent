@@ -1,6 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
+import { probePostgres } from "@xandreed/sdk-adapters"
 import {
   AuthStore,
   type ConfigScope,
@@ -177,6 +178,14 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
               yield* Effect.sync(() =>
                 store.toast("paste a postgres:// connection string, or Esc to go back"),
               )
+              break
+            }
+            // Test it before persisting — a bad string would otherwise only fail
+            // at the next boot when the store builds. Stay on the prompt on error.
+            yield* Effect.sync(() => store.setNote("testing connection…"))
+            const probe = yield* probePostgres(value)
+            if (!probe.ok) {
+              yield* Effect.sync(() => store.setNote(`connection failed: ${probe.error}`))
               break
             }
             yield* settingsStore.update((curr) => ({ ...curr, dbUrl: value }), onbScope(store))

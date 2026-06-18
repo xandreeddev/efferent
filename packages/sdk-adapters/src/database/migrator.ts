@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import * as Migrator from "@effect/sql/Migrator"
 import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
-import { Config, Effect, Layer, Option } from "effect"
+import { Config, Duration, Effect, Layer, Option, Redacted } from "effect"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -60,6 +60,48 @@ export const parseDbTarget = (raw: string | undefined): DbTarget => {
   const path = v.replace(/^sqlite:(\/\/)?/i, "")
   return { kind: "sqlite", filename: path.length > 0 ? path : defaultSqlitePath() }
 }
+
+/** Best-effort message out of a probe failure: prefer the driver's own cause
+ *  (e.g. "password authentication failed", "ENOTFOUND host") over the wrapper. */
+const probeErrorMessage = (e: unknown): string => {
+  if (typeof e === "string") return e
+  if (typeof e === "object" && e !== null) {
+    const anyE = e as { message?: unknown; cause?: { message?: unknown } }
+    const cause = anyE.cause?.message
+    if (typeof cause === "string" && cause.trim().length > 0) return cause
+    if (typeof anyE.message === "string" && anyE.message.trim().length > 0) return anyE.message
+  }
+  return "could not connect"
+}
+
+/**
+ * Probe a Postgres connection string: open a short-lived single connection and
+ * run `SELECT 1`. Returns a plain result (never fails) so callers — e.g. the
+ * onboarding DB step — can give immediate feedback before persisting `dbUrl`,
+ * which otherwise only fails at the NEXT boot when the store builds. Bounded by
+ * an 8s connect timeout + a 10s overall deadline so a bad host can't hang.
+ */
+export const probePostgres = (
+  url: string,
+): Effect.Effect<{ readonly ok: true } | { readonly ok: false; readonly error: string }> =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`select 1`
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      PgClient.layer({
+        url: Redacted.make(url),
+        connectTimeout: Duration.seconds(8),
+        maxConnections: 1,
+      }),
+    ),
+    Effect.timeoutFail({ duration: Duration.seconds(10), onTimeout: () => "connection timed out" }),
+    Effect.match({
+      onSuccess: () => ({ ok: true as const }),
+      onFailure: (e) => ({ ok: false as const, error: probeErrorMessage(e) }),
+    }),
+  )
 
 const pgLoader = Migrator.fromRecord({
   "0001_init": pg0001,
