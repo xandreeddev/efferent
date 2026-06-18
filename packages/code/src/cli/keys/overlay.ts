@@ -1,4 +1,4 @@
-import type { ConversationId, ModelInfo } from "@xandreed/sdk-core"
+import type { ConversationId, ModelInfo, NamedConn } from "@xandreed/sdk-core"
 import {
   filterAppend,
   filterBackspace,
@@ -40,6 +40,7 @@ import { Effect } from "effect"
 import { refreshNav } from "../actions/contextTree.js"
 import { resumeConversation } from "../actions/session.js"
 import {
+  applyDatabasePick,
   applyEffort,
   applySearchModel,
   commitMaxSteps,
@@ -121,6 +122,10 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
         )
       return
     }
+    case "database":
+      // Make the chosen connection active (switch live + carry the conversation).
+      if (value !== undefined) void ctx.run(applyDatabasePick(store, value as NamedConn, store.status().cwd))
+      return
   }
 }
 
