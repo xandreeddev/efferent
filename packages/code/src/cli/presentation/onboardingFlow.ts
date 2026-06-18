@@ -160,16 +160,19 @@ export const onboardingToDatabase = (
 }
 
 /** Enter the prompt after a storage option is chosen: a postgres connection
- *  string for "remote" (masked), or a SQLite file path for "local" (blank =
- *  the default location). The choice stays on `sel`, read back when submitting. */
+ *  string for "remote" (masked), or a SQLite file path for "local". The local
+ *  prompt is **prefilled with the default path** (`defaultLocalPath`, unmasked) —
+ *  mirroring the ollama base-URL step — so Enter accepts it or you edit it. The
+ *  choice stays on `sel`, read back when submitting. */
 export const databaseToConnect = (
   state: Extract<OnboardingState, { step: "database" }>,
+  defaultLocalPath: string,
 ): OnboardingState => ({
   ...state,
   connect:
     (selectedValue(state.sel) ?? "local") === "remote"
       ? openPrompt("Step 6 of 6 · Connect to Postgres", "Paste your postgres:// connection string", true)
-      : openPrompt("Step 6 of 6 · SQLite file location", "Path to the SQLite file (blank = default)", false),
+      : openPrompt("Step 6 of 6 · SQLite file location", "Database file path", false, defaultLocalPath),
 })
 
 export const onboardingToComplete = (state: OnboardingState): OnboardingState => ({
