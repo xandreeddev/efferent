@@ -38,3 +38,33 @@ export const maskConn = (c: DatabaseConn): string =>
 
 /** `<name> (pg)` / `<name> (sqlite)` — the status-bar + picker label. */
 export const connLabel = (name: string, kind: DbKind): string => `${name} (${kindTag(kind)})`
+
+/** A fresh, unique name for a newly-added connection (auto-named like the
+ *  provider keys — `remote`, `remote-2`, … / `local-2`). */
+export const suggestName = (conn: DatabaseConn, existing: ReadonlyArray<string>): string => {
+  const base = conn.kind === "postgres" ? "remote" : "local"
+  if (!existing.includes(base)) return base
+  for (let i = 2; ; i++) {
+    const candidate = `${base}-${i}`
+    if (!existing.includes(candidate)) return candidate
+  }
+}
+
+/**
+ * The full list of configured connections for a settings snapshot: the implicit
+ * zero-config **local** SQLite first, then every named entry in `databases`. The
+ * active one is `defaultDatabase` (falling back to `local`).
+ */
+export const configuredConns = (
+  databases: Record<string, DatabaseConn> | undefined,
+  localUrl: string,
+): ReadonlyArray<NamedConn> => {
+  const named = Object.entries(databases ?? {}).map(([name, c]) => ({ name, kind: c.kind, url: c.url }))
+  const hasLocal = named.some((c) => c.name === LOCAL_DB_NAME)
+  return hasLocal ? named : [{ name: LOCAL_DB_NAME, kind: "sqlite", url: localUrl }, ...named]
+}
+
+/** The active connection name for a settings snapshot (default ⇒ `local`). */
+export const activeConnName = (defaultDatabase: string | undefined): string =>
+  defaultDatabase ?? LOCAL_DB_NAME
+

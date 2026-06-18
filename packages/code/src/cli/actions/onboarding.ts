@@ -2,13 +2,17 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import {
+  activeConnName,
   AuthStore,
   type ConfigScope,
+  configuredConns,
   connFromUrl,
   connLabel,
+  LOCAL_DB_NAME,
   ModelRegistry,
   SettingsStore,
   StoreSwitch,
+  suggestName,
   type AuthData,
   type ModelInfo,
 } from "@xandreed/sdk-core"
@@ -18,7 +22,7 @@ import {
   onboardingToFastModel,
   onboardingToTheme,
   onboardingToDatabase,
-  databaseToConnect,
+  databaseAdd,
   onboardingToComplete,
   startOnboarding,
   type OnboardingState,
@@ -30,6 +34,10 @@ import { rolesChip } from "../presentation/statusBar.js"
 import { applyModelSelection } from "./model.js"
 import { applyTheme } from "./theme.js"
 import type { TuiStore } from "../state/store.js"
+
+/** The zero-config local SQLite path (matches adapters' default when dbUrl is
+ *  unset): SQLite at ~/.efferent/efferent.db. */
+const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
 
 const PROVIDERS = ["anthropic", "google", "openai", "opencode", "ollama"] as const
 
@@ -107,14 +115,16 @@ const transitionToTheme = (store: TuiStore, state: OnboardingState) =>
     })
   })
 
-const transitionToDatabase = (store: TuiStore, state: OnboardingState) =>
+/** Show the database MANAGER: every configured connection (implicit `local`
+ *  first) with the default marked, plus add/done rows. Rebuilt from settings so
+ *  it reflects each add / set-default. */
+const goManageDatabase = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
     const settings = yield* (yield* SettingsStore).get()
+    const conns = configuredConns(settings.databases, defaultLocalPath)
+    const active = activeConnName(settings.defaultDatabase)
     yield* Effect.sync(() => {
-      store.setOverlay({
-        kind: "onboarding",
-        state: onboardingToDatabase(state, settings.dbUrl),
-      })
+      store.setOverlay({ kind: "onboarding", state: onboardingToDatabase(state, conns, active) })
     })
   })
 
@@ -163,65 +173,95 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         if (selected !== undefined) {
           yield* applyTheme(store, selected, onbScope(store))
         }
-        yield* transitionToDatabase(store, state)
+        yield* goManageDatabase(store, state)
         break
       }
       case "database": {
         const settingsStore = yield* SettingsStore
-        // The zero-config default store (matches adapters' parseDbTarget when
-        // dbUrl is unset): SQLite at ~/.efferent/efferent.db.
-        const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
-        // Prompt mode: a connection string (remote) or a file path (local). Apply
-        // it LIVE — switchTo builds the store, runs pending migrations, and swaps
-        // it in this session (no restart). Persist `dbUrl` only after it connects,
-        // so a bad string never poisons the next boot.
+        const sw = yield* StoreSwitch
+        const cwd = store.status().cwd
+
+        // Add mode: a path (local) / connection string (remote) is being entered.
+        // Apply it LIVE — switchTo builds the store + runs pending migrations +
+        // swaps it in (no restart). Save the connection only after it connects.
         if (state.connect !== undefined) {
-          const sw = yield* StoreSwitch
-          const cwd = store.status().cwd
-          const choice = selectedValue(state.sel) ?? "local"
+          const adding = state.adding ?? "local"
           const value = promptValue(state.connect).trim()
-          if (choice === "remote" && value.length === 0) {
+          if (adding === "remote" && value.length === 0) {
             yield* Effect.sync(() =>
               store.toast("paste a postgres:// connection string, or Esc to go back"),
             )
             break
           }
-          const name = choice === "remote" ? "remote" : "local"
           const conn =
-            choice === "remote"
+            adding === "remote"
               ? connFromUrl(value)
               : { kind: "sqlite" as const, url: value.length > 0 ? value : defaultLocalPath }
+          // A default-path local connection is the implicit `local` — not stored.
+          const isImplicitLocal =
+            adding === "local" && (value.length === 0 || value === defaultLocalPath)
+          const settings = yield* settingsStore.get()
+          const existing = [LOCAL_DB_NAME, ...Object.keys(settings.databases ?? {})]
+          const name = isImplicitLocal ? LOCAL_DB_NAME : suggestName(conn, existing)
           yield* Effect.sync(() => store.setNote("connecting…"))
           const res = yield* sw.switchTo(name, conn, cwd).pipe(Effect.either)
           if (res._tag === "Left") {
             yield* Effect.sync(() => store.setNote(`connection failed: ${res.left.message}`))
             break // stay on the prompt to fix/retry
           }
-          // Connected: persist the selection (remote URL, or clear for the default
-          // local path → stay zero-config) and reflect it on the status bar.
           yield* settingsStore.update((curr) => {
-            if (choice === "local" && (value.length === 0 || value === defaultLocalPath)) {
-              const { dbUrl: _drop, ...rest } = curr
-              return rest
-            }
-            return { ...curr, dbUrl: choice === "remote" ? value : conn.url }
+            const databases = { ...(curr.databases ?? {}) }
+            if (!isImplicitLocal) databases[name] = { kind: conn.kind, url: conn.url }
+            return { ...curr, databases, defaultDatabase: name }
           }, onbScope(store))
           const n = res.right.conversationCount
           yield* Effect.sync(() => {
             store.setStatus({ storage: connLabel(name, conn.kind) })
+            store.setNote(undefined)
             store.toast(
               n > 0
-                ? `connected to ${name} — found ${n} conversation${n === 1 ? "" : "s"}`
-                : `connected to ${name} — database ready`,
+                ? `added ${name} — found ${n} conversation${n === 1 ? "" : "s"}`
+                : `added ${name} — database ready`,
             )
-            store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
           })
+          yield* goManageDatabase(store, state)
           break
         }
-        // Choose mode: open the path / connection prompt for the picked option.
+
+        // Manager mode: act on the selected row.
+        const item = selectedValue(state.sel)
+        if (item === undefined || item.tag === "done") {
+          yield* Effect.sync(() =>
+            store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) }),
+          )
+          break
+        }
+        if (item.tag === "addLocal" || item.tag === "addRemote") {
+          const adding = item.tag === "addLocal" ? "local" : "remote"
+          yield* Effect.sync(() =>
+            store.setOverlay({
+              kind: "onboarding",
+              state: databaseAdd(state, adding, defaultLocalPath),
+            }),
+          )
+          break
+        }
+        // use: make this connection the default + switch live.
+        const conn = item.conn
+        yield* Effect.sync(() => store.setNote("connecting…"))
+        const res = yield* sw
+          .switchTo(conn.name, { kind: conn.kind, url: conn.url }, cwd)
+          .pipe(Effect.either)
+        if (res._tag === "Left") {
+          yield* Effect.sync(() => store.setNote(`connection failed: ${res.left.message}`))
+          break
+        }
+        yield* settingsStore.update((curr) => ({ ...curr, defaultDatabase: conn.name }), onbScope(store))
         yield* Effect.sync(() => {
-          store.setOverlay({ kind: "onboarding", state: databaseToConnect(state, defaultLocalPath) })
+          store.setStatus({ storage: connLabel(conn.name, conn.kind) })
+          store.setNote(undefined)
         })
+        yield* goManageDatabase(store, state)
         break
       }
       case "complete":
@@ -272,15 +312,14 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
         break
       case "database":
         if (state.connect !== undefined) {
-          // From the connection prompt, back to the local/remote choice.
-          const { connect: _drop, ...choose } = state
-          yield* Effect.sync(() => store.setOverlay({ kind: "onboarding", state: choose }))
+          // From the add prompt, back to the manager list.
+          yield* goManageDatabase(store, state)
         } else {
           yield* transitionToTheme(store, state)
         }
         break
       case "complete":
-        yield* transitionToDatabase(store, state)
+        yield* goManageDatabase(store, state)
         break
       case "scope":
       case "login":

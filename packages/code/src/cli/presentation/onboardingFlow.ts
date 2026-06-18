@@ -14,11 +14,11 @@ import {
   moveSelect,
   filterAppend,
   filterBackspace,
-  selectedValue,
   type SelectState,
 } from "./selectBox.js"
 import { openPrompt, promptAppend, promptBackspace, type PromptState } from "./promptBox.js"
 import { themes } from "./theme/themes.js"
+import { connLabel, type DbKind, type NamedConn } from "@xandreed/sdk-core"
 
 export type OnboardingStep =
   | "scope"
@@ -29,8 +29,13 @@ export type OnboardingStep =
   | "database"
   | "complete"
 
-/** Conversation-store choice on the database step. */
-export type DbChoice = "local" | "remote"
+/** A row in the database manager: use/make-default a configured connection, add
+ *  a new local or remote one, or finish. Mirrors the provider list in `:login`. */
+export type DbManagerItem =
+  | { readonly tag: "use"; readonly conn: NamedConn }
+  | { readonly tag: "addLocal" }
+  | { readonly tag: "addRemote" }
+  | { readonly tag: "done" }
 
 export type OnboardingState =
   | {
@@ -61,9 +66,12 @@ export type OnboardingState =
   | {
       readonly step: "database"
       readonly statuses: ReadonlyArray<ProviderStatus>
-      readonly sel: SelectState<DbChoice>
-      /** Present once "remote" is chosen — the connection-string prompt. */
+      /** The manager list (configured connections + add/done rows). */
+      readonly sel: SelectState<DbManagerItem>
+      /** Present while adding — the path (local) / connection-string (remote)
+       *  prompt; `adding` says which, to interpret the value + hint. */
       readonly connect?: PromptState
+      readonly adding?: "local" | "remote"
     }
   | {
       readonly step: "complete"
@@ -142,38 +150,47 @@ export const onboardingToTheme = (state: OnboardingState, activeTheme: string): 
   }
 }
 
-/** Step 6: where conversations are stored — local SQLite (default) or a remote
- *  Postgres (Neon/Supabase/…). `currentDbUrl` pre-selects the matching row. */
+/** Step 6: the database **manager** — configure as many connections as you want
+ *  (local + remote) and pick the default, mirroring the providers/API-keys step.
+ *  `conns` is every configured connection (implicit `local` first); `activeName`
+ *  is the default, marked `◀ default`. */
 export const onboardingToDatabase = (
   state: OnboardingState,
-  currentDbUrl?: string,
-): OnboardingState => {
-  const isRemote = currentDbUrl !== undefined && /^postgres(ql)?:\/\//i.test(currentDbUrl)
-  return {
-    step: "database",
-    statuses: state.statuses,
-    sel: openSelect<DbChoice>("Step 6 of 6 · Where should conversations be stored?", [
-      { value: "local", label: "Local file (SQLite) — default or custom path", active: !isRemote },
-      { value: "remote", label: "Remote Postgres (Neon, Supabase, …)", active: isRemote },
-    ]),
-  }
-}
+  conns: ReadonlyArray<NamedConn>,
+  activeName: string,
+): OnboardingState => ({
+  step: "database",
+  statuses: state.statuses,
+  sel: openSelect<DbManagerItem>("Step 6 of 6 · Databases", [
+    ...conns.map((c) => ({
+      value: { tag: "use", conn: c } as DbManagerItem,
+      label: c.name === activeName ? `${connLabel(c.name, c.kind)}  ◀ default` : connLabel(c.name, c.kind),
+      active: c.name === activeName,
+    })),
+    { value: { tag: "addRemote" } as DbManagerItem, label: "＋ add a remote database (Postgres)" },
+    { value: { tag: "addLocal" } as DbManagerItem, label: "＋ add a local database (SQLite)" },
+    { value: { tag: "done" } as DbManagerItem, label: "✓ done" },
+  ]),
+})
 
-/** Enter the prompt after a storage option is chosen: a postgres connection
- *  string for "remote" (masked), or a SQLite file path for "local". The local
- *  prompt is **prefilled with the default path** (`defaultLocalPath`, unmasked) —
- *  mirroring the ollama base-URL step — so Enter accepts it or you edit it. The
- *  choice stays on `sel`, read back when submitting. */
-export const databaseToConnect = (
+/** Open the add prompt: a postgres connection string (`remote`, masked) or a
+ *  SQLite file path (`local`, prefilled with the default, unmasked — like the
+ *  ollama base-URL step). */
+export const databaseAdd = (
   state: Extract<OnboardingState, { step: "database" }>,
+  adding: "local" | "remote",
   defaultLocalPath: string,
 ): OnboardingState => ({
   ...state,
+  adding,
   connect:
-    (selectedValue(state.sel) ?? "local") === "remote"
-      ? openPrompt("Step 6 of 6 · Connect to Postgres", "Paste your postgres:// connection string", true)
-      : openPrompt("Step 6 of 6 · SQLite file location", "Database file path", false, defaultLocalPath),
+    adding === "remote"
+      ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
+      : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
 })
+
+/** Leave the add prompt, back to the manager list (rebuilt from `conns`). */
+export const databaseToManage = onboardingToDatabase
 
 export const onboardingToComplete = (state: OnboardingState): OnboardingState => ({
   step: "complete",

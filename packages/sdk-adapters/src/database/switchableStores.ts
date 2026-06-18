@@ -38,8 +38,11 @@ const buildErrorMessage = (e: unknown): string => {
   return "could not open database"
 }
 
-const bootName = (conn: DatabaseConn): string =>
-  conn.kind === "postgres" ? "remote" : LOCAL_DB_NAME
+const bootName = (conn: DatabaseConn): string => {
+  const named = process.env.EFFERENT_DB_NAME?.trim()
+  if (named !== undefined && named.length > 0) return named
+  return conn.kind === "postgres" ? "remote" : LOCAL_DB_NAME
+}
 
 /**
  * Provides `ConversationStore` + `ContextTreeStore` as facades over a `Ref` to
