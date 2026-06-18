@@ -339,8 +339,12 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
         if (back !== undefined) {
           store.setOverlay({ kind: "onboarding", state: { ...state, flow: back } })
         } else {
-          // Back out of login → the scope picker (step 1).
-          store.setOverlay({ kind: "onboarding", state: startOnboarding(state.statuses) })
+          // Back out of login → the scope picker (step 1), restoring the
+          // scope chosen on the way in (stashed on the run handle).
+          store.setOverlay({
+            kind: "onboarding",
+            state: startOnboarding(state.statuses, store.run.getConfigScope()),
+          })
         }
         return true
       }
