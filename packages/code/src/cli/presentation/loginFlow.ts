@@ -124,7 +124,7 @@ export const homeStep = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow => 
         tag: statusWord(configured),
       }
     }),
-    { value: { tag: "done" } as LoginHomeItem, label: `${glyph.ok} Done`, section: "" },
+    { value: { tag: "done" } as LoginHomeItem, label: `${glyph.ok} Done`, section: "", action: true },
   ]
   return { step: "home", statuses, sel: openSelect("Sign in to your providers", options) }
 }

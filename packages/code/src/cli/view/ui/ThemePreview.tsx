@@ -43,6 +43,8 @@ export const ThemePreview = (props: { width?: number }) => {
       flexDirection="column"
       paddingLeft={1}
       paddingRight={1}
+      paddingTop={1}
+      paddingBottom={1}
       width={props.width ?? "auto"}
     >
       <For each={rows()}>

@@ -23,6 +23,7 @@ import {
   onboardingToTheme,
   onboardingToDatabase,
   databaseAdd,
+  databaseEdit,
   onboardingToComplete,
   startOnboarding,
   type OnboardingState,
@@ -141,6 +142,65 @@ const goManageDatabase = (store: TuiStore, state: OnboardingState) =>
  *  run handle), defaulting to global (machine-wide) if somehow unset. */
 const onbScope = (store: TuiStore): ConfigScope => store.run.getConfigScope() ?? "global"
 
+/** `e` on a configured connection — re-open the prompt prefilled to edit its
+ *  url/path (keeps its name on save). The implicit `local` can't be edited. */
+export const editOnboardingDatabase = (
+  store: TuiStore,
+  state: Extract<OnboardingState, { step: "database" }>,
+) =>
+  Effect.gen(function* () {
+    const item = selectedValue(state.sel)
+    if (item === undefined || item.tag !== "use") return
+    const conn = item.conn
+    if (conn.name === LOCAL_DB_NAME) {
+      yield* Effect.sync(() => store.toast("the local database can't be edited"))
+      return
+    }
+    yield* Effect.sync(() =>
+      store.setOverlay({ kind: "onboarding", state: databaseEdit(state, conn) }),
+    )
+  })
+
+/** `d` on a configured connection — forget it (drop from `databases`). If it was
+ *  the active default, fall back to the implicit `local` and switch the live store
+ *  there so the status bar stays truthful. The implicit `local` can't be removed. */
+export const removeOnboardingDatabase = (
+  store: TuiStore,
+  state: Extract<OnboardingState, { step: "database" }>,
+) =>
+  Effect.gen(function* () {
+    const item = selectedValue(state.sel)
+    if (item === undefined || item.tag !== "use") return
+    const conn = item.conn
+    if (conn.name === LOCAL_DB_NAME) {
+      yield* Effect.sync(() => store.toast("the local database can't be removed"))
+      return
+    }
+    const settingsStore = yield* SettingsStore
+    const settings = yield* settingsStore.get()
+    const wasActive = activeConnName(settings.defaultDatabase) === conn.name
+    yield* settingsStore.update((curr) => {
+      const databases = { ...(curr.databases ?? {}) }
+      delete databases[conn.name]
+      if (curr.defaultDatabase === conn.name) {
+        const { defaultDatabase: _drop, ...rest } = curr
+        return { ...rest, databases }
+      }
+      return { ...curr, databases }
+    }, onbScope(store))
+    // If the removed one was live, switch back to local so the active store and
+    // the status bar reflect reality.
+    if (wasActive) {
+      const sw = yield* StoreSwitch
+      yield* sw
+        .switchTo(LOCAL_DB_NAME, { kind: "sqlite", url: defaultLocalPath }, store.status().cwd)
+        .pipe(Effect.catchAll(() => Effect.void))
+      yield* Effect.sync(() => store.setStatus({ storage: connLabel(LOCAL_DB_NAME, "sqlite") }))
+    }
+    yield* Effect.sync(() => store.toast(`removed ${conn.name}`))
+    yield* goManageDatabase(store, state)
+  })
+
 export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
     switch (state.step) {
@@ -190,11 +250,12 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         const sw = yield* StoreSwitch
         const cwd = store.status().cwd
 
-        // Add mode: a path (local) / connection string (remote) is being entered.
-        // Apply it LIVE — switchTo builds the store + runs pending migrations +
-        // swaps it in (no restart). Save the connection only after it connects.
+        // Add/edit mode: a path (local) / connection string (remote) is being
+        // entered. Apply it LIVE — switchTo builds the store + runs pending
+        // migrations + swaps it in (no restart). Save only after it connects.
         if (state.connect !== undefined) {
           const adding = state.adding ?? "local"
+          const editing = state.editName !== undefined
           const value = promptValue(state.connect).trim()
           if (adding === "remote" && value.length === 0) {
             yield* Effect.sync(() =>
@@ -207,11 +268,14 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
               ? connFromUrl(value)
               : { kind: "sqlite" as const, url: value.length > 0 ? value : defaultLocalPath }
           // A default-path local connection is the implicit `local` — not stored.
+          // Editing always targets a stored, named connection, so never implicit.
           const isImplicitLocal =
-            adding === "local" && (value.length === 0 || value === defaultLocalPath)
+            !editing && adding === "local" && (value.length === 0 || value === defaultLocalPath)
           const settings = yield* settingsStore.get()
           const existing = [LOCAL_DB_NAME, ...Object.keys(settings.databases ?? {})]
-          const name = isImplicitLocal ? LOCAL_DB_NAME : suggestName(conn, existing)
+          // Editing keeps the connection's name; adding auto-names it.
+          const name = state.editName ?? (isImplicitLocal ? LOCAL_DB_NAME : suggestName(conn, existing))
+          const verb = editing ? "updated" : "added"
           yield* Effect.sync(() => store.setNote("connecting…"))
           const res = yield* sw.switchTo(name, conn, cwd).pipe(Effect.either)
           if (res._tag === "Left") {
@@ -229,8 +293,8 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
             store.setNote(undefined)
             store.toast(
               n > 0
-                ? `added ${name} — found ${n} conversation${n === 1 ? "" : "s"}`
-                : `added ${name} — database ready`,
+                ? `${verb} ${name} — found ${n} conversation${n === 1 ? "" : "s"}`
+                : `${verb} ${name} — database ready`,
             )
           })
           yield* goManageDatabase(store, state)

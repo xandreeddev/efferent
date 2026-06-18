@@ -77,11 +77,13 @@ const SelectStep = (props: { title: string; state: SelectState<unknown>; canBack
 // Theme step: the list on the left, a live `ThemePreview` on the right (agy
 // pattern). Moving the highlight live-swaps the active theme (`keys/overlay.ts`),
 // so the preview — painting the reactive tokens — recolours along with the list.
-// A narrow list column leaves the bulk of the width for a larger preview — the
-// theme is the one step where seeing it big matters. 22 is the floor that still
-// fits the theme names (incl. the " ◀ active" tag) without ellipsis.
-const THEME_LIST_W = 22
-const THEME_PREVIEW_W = MODAL_RULE - THEME_LIST_W - 2 // −2 for the column gap
+// The theme step gets its own slightly-wider container (it's the one step where
+// seeing the preview big matters), so a roomy preview + generous gap don't squeeze
+// the list down to truncating the names.
+const THEME_TOTAL_W = 76
+const THEME_GAP = 4
+const THEME_PREVIEW_W = 46
+const THEME_LIST_W = THEME_TOTAL_W - THEME_GAP - THEME_PREVIEW_W // = 26
 // The full nav footer won't fit beside the preview in the narrow list column, so
 // the theme step uses a compact two-hint footer (↑/↓ + filter stay discoverable).
 const themeFooter: ReadonlyArray<KeyHint> = [
@@ -100,7 +102,7 @@ const ThemeStep = (props: { state: SelectState<string> }) => (
       <box width={THEME_LIST_W}>
         <SelectBody state={props.state} labelBudget={THEME_LIST_W - 4} footer={themeFooter} />
       </box>
-      <box width={2} />
+      <box width={THEME_GAP} />
       <ThemePreview width={THEME_PREVIEW_W} />
     </box>
   </box>
@@ -116,10 +118,27 @@ const dbConnectFooter: ReadonlyArray<KeyHint> = [
   { key: "esc", label: "back" },
 ]
 
+// The manager footer advertises the row actions (set-default on ↵, plus edit /
+// remove on a configured connection) — the generic select footer doesn't.
+const dbManagerFooter: ReadonlyArray<KeyHint> = [
+  { key: "↑/↓", label: "navigate" },
+  { key: "↵", label: "select" },
+  { key: "e", label: "edit" },
+  { key: "d", label: "remove" },
+  { key: "esc", label: "back" },
+]
+
 const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database" }> }) => (
   <Show
     when={props.state.connect}
-    fallback={<SelectStep title={props.state.sel.title} state={props.state.sel} canBack={true} />}
+    fallback={
+      <box flexDirection="column">
+        <text fg={tokens.text.default} marginBottom={1}>
+          {props.state.sel.title}
+        </text>
+        <SelectBody state={props.state.sel} labelBudget={MODAL_RULE - 2} footer={dbManagerFooter} />
+      </box>
+    }
   >
     {(connect) => (
       <box flexDirection="column">
@@ -220,8 +239,14 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
       <Logo variant="code" />
 
       {/* One consistent blank line between the logo and the step body on EVERY
-          step (marginTop), so the gap never changes as you move through. */}
-      <box width={MODAL_RULE} flexDirection="column" marginTop={1}>
+          step (marginTop), so the gap never changes as you move through. The
+          theme step widens to fit its list + larger preview; all others keep the
+          standard modal width so titles/prose stay aligned. */}
+      <box
+        width={s().step === "theme" ? THEME_TOTAL_W : MODAL_RULE}
+        flexDirection="column"
+        marginTop={1}
+      >
         {/* Step 1 — the scope picker is the FIRST screen, so it carries the
             welcome line (agy-style). */}
         <Show when={s().step === "scope"}>

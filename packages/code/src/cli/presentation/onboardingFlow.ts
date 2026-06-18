@@ -69,10 +69,13 @@ export type OnboardingState =
       readonly statuses: ReadonlyArray<ProviderStatus>
       /** The manager list (configured connections + add/done rows). */
       readonly sel: SelectState<DbManagerItem>
-      /** Present while adding — the path (local) / connection-string (remote)
-       *  prompt; `adding` says which, to interpret the value + hint. */
+      /** Present while adding/editing — the path (local) / connection-string
+       *  (remote) prompt; `adding` says which, to interpret the value + hint. */
       readonly connect?: PromptState
       readonly adding?: "local" | "remote"
+      /** When set, the prompt is EDITING this existing connection (keep its name)
+       *  rather than adding a new one. */
+      readonly editName?: string | undefined
     }
   | {
       readonly step: "complete"
@@ -177,14 +180,16 @@ export const onboardingToDatabase = (
       value: { tag: "addRemote" } as DbManagerItem,
       label: `${glyph.add} Remote database (Postgres)`,
       section: "add a database",
+      action: true,
     },
     {
       value: { tag: "addLocal" } as DbManagerItem,
       label: `${glyph.add} Local database (SQLite)`,
       section: "add a database",
+      action: true,
     },
     // …and a bare "done" separator row to finish.
-    { value: { tag: "done" } as DbManagerItem, label: `${glyph.ok} Done`, section: "" },
+    { value: { tag: "done" } as DbManagerItem, label: `${glyph.ok} Done`, section: "", action: true },
   ]),
 })
 
@@ -195,13 +200,31 @@ export const databaseAdd = (
   state: Extract<OnboardingState, { step: "database" }>,
   adding: "local" | "remote",
   defaultLocalPath: string,
+): OnboardingState => {
+  const { editName: _drop, ...rest } = state // a fresh add is never an edit
+  return {
+    ...rest,
+    adding,
+    connect:
+      adding === "remote"
+        ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
+        : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
+  }
+}
+
+/** Open the prompt to EDIT an existing connection, prefilled with its current
+ *  url/path (postgres masked, like the add-remote step). Keeps its name on save. */
+export const databaseEdit = (
+  state: Extract<OnboardingState, { step: "database" }>,
+  conn: NamedConn,
 ): OnboardingState => ({
   ...state,
-  adding,
+  adding: conn.kind === "postgres" ? "remote" : "local",
+  editName: conn.name,
   connect:
-    adding === "remote"
-      ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
-      : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
+    conn.kind === "postgres"
+      ? openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Edit the postgres:// connection string", true, conn.url)
+      : openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Database file path", false, conn.url),
 })
 
 /** Leave the add prompt, back to the manager list (rebuilt from `conns`). */
