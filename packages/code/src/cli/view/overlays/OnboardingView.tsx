@@ -1,7 +1,7 @@
 import { createMemo, Match, Show, Switch } from "solid-js"
 import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
-import { selectedValue, type SelectState } from "../../presentation/selectBox.js"
+import type { SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
 import {
   KeyHints,
@@ -103,10 +103,11 @@ const ThemeStep = (props: { state: SelectState<string> }) => (
   </box>
 )
 
-// The database step (step 6). Choose mode is the local/remote list; picking one
-// opens `connect` — a SQLite file path (local) or a postgres connection string
-// (remote). The hint adapts to the choice. Rendered with PromptBody directly (not
-// PromptStep), so the neon.tech mention doesn't trip PromptStep's link callout.
+// The database step (step 6) is a MANAGER: the list of configured connections
+// (manage mode) with add/done rows. Picking add opens `connect` — a SQLite file
+// path (`adding: "local"`) or a postgres connection string (`adding: "remote"`).
+// The hint adapts to `adding`. Rendered with PromptBody directly (not PromptStep),
+// so the neon.tech mention doesn't trip PromptStep's link callout.
 const dbConnectFooter: ReadonlyArray<KeyHint> = [
   { key: "↵", label: "save" },
   { key: "esc", label: "back" },
@@ -123,7 +124,7 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
           {connect().title}
         </text>
         <text fg={tokens.text.dim} wrapMode="word" marginBottom={1}>
-          {selectedValue(props.state.sel) === "remote"
+          {props.state.adding === "remote"
             ? "No database yet? Create a free serverless one at neon.tech and paste its connection string here."
             : "Where conversation history is stored. Press Enter to accept the default, or edit the path."}
         </text>
