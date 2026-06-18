@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import * as Migrator from "@effect/sql/Migrator"
 import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
-import { Config, Duration, Effect, Layer, Option, Redacted } from "effect"
+import { Cause, Config, Duration, Effect, Layer, Option, Redacted } from "effect"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -79,7 +79,12 @@ const probeErrorMessage = (e: unknown): string => {
  * run `SELECT 1`. Returns a plain result (never fails) so callers — e.g. the
  * onboarding DB step — can give immediate feedback before persisting `dbUrl`,
  * which otherwise only fails at the NEXT boot when the store builds. Bounded by
- * an 8s connect timeout + a 10s overall deadline so a bad host can't hang.
+ * a 15s connect timeout + an 18s overall deadline (serverless Postgres like Neon
+ * can take several seconds to wake a suspended compute) so a bad host can't hang.
+ *
+ * `matchCause` (not `match`) so a **defect** — an SSL/socket error the driver
+ * throws rather than returning as a `SqlError`, or a finalizer hiccup — becomes a
+ * clean `ok:false` too, instead of crashing the caller. The probe never fails.
  */
 export const probePostgres = (
   url: string,
@@ -92,14 +97,14 @@ export const probePostgres = (
     Effect.provide(
       PgClient.layer({
         url: Redacted.make(url),
-        connectTimeout: Duration.seconds(8),
+        connectTimeout: Duration.seconds(15),
         maxConnections: 1,
       }),
     ),
-    Effect.timeoutFail({ duration: Duration.seconds(10), onTimeout: () => "connection timed out" }),
-    Effect.match({
+    Effect.timeoutFail({ duration: Duration.seconds(18), onTimeout: () => "connection timed out" }),
+    Effect.matchCause({
       onSuccess: () => ({ ok: true as const }),
-      onFailure: (e) => ({ ok: false as const, error: probeErrorMessage(e) }),
+      onFailure: (cause) => ({ ok: false as const, error: probeErrorMessage(Cause.squash(cause)) }),
     }),
   )
 
