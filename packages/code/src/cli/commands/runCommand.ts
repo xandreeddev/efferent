@@ -22,6 +22,7 @@ import {
   openSettingsView,
 } from "../actions/settings.js"
 import { logout, openLoginFlow } from "../actions/login.js"
+import { openOnboardingFlow } from "../actions/onboarding.js"
 import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
@@ -133,6 +134,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     }
     case ":login":
       void ctx.run(openLoginFlow(store))
+      return
+    case ":onboarding":
+      void ctx.run(openOnboardingFlow(store))
       return
     case ":logout":
       void ctx.run(logout(store, arg))

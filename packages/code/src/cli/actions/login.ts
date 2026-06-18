@@ -20,6 +20,7 @@ import {
 import { formatFullError } from "../util/errorFormat.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
 import { applyModelSelection } from "./model.js"
+import { transitionToMainModel } from "./onboarding.js"
 
 const PROVIDERS = ["anthropic", "google", "openai", "opencode", "ollama"] as const
 
@@ -28,7 +29,12 @@ const loginStatuses = (auth: AuthData): ReadonlyArray<ProviderStatus> =>
 
 /** Replace the open login overlay's flow (no-op if a different overlay is up). */
 const setFlow = (store: TuiStore, flow: LoginFlow): void => {
-  if (store.overlay().kind === "login") store.setOverlay({ kind: "login", flow })
+  const o = store.overlay()
+  if (o.kind === "login") {
+    store.setOverlay({ kind: "login", flow })
+  } else if (o.kind === "onboarding" && o.state.step === "login") {
+    store.setOverlay({ kind: "onboarding", state: { ...o.state, flow } })
+  }
 }
 
 /** Open `:login`, tagging which providers are already configured. */
@@ -49,8 +55,12 @@ const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
     const auth = yield* AuthStore
     const cur = yield* registry.current
     const curHasCred = (yield* auth.get(cur.provider)) !== undefined
+    const o = store.overlay()
+    const isOnboarding = o.kind === "onboarding"
     yield* Effect.sync(() => {
-      store.closeOverlay()
+      if (!isOnboarding) {
+        store.closeOverlay()
+      }
       store.pushBlock({ kind: "info", text: `✓ logged in to ${provider} (${how})` })
     })
     if (!curHasCred) {
@@ -60,6 +70,9 @@ const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
           : defaultModelForProvider(provider)
       const { provider: p, modelId } = parseModel(defaultModel)
       yield* applyModelSelection(store, { provider: p, modelId, displayName: modelId, contextWindow: 0 })
+    }
+    if (isOnboarding) {
+      yield* transitionToMainModel(store, o.state)
     }
   })
 
@@ -72,7 +85,9 @@ const failLogin = (store: TuiStore, message: string): void => {
 export const commitApiKey = (store: TuiStore, provider: Provider, key: string) =>
   Effect.gen(function* () {
     const auth = yield* AuthStore
-    const res = yield* auth.setApiKey(provider, key).pipe(Effect.either)
+    // Onboarding may target the local tier (scope on the run handle); plain
+    // `:login` leaves it undefined → the global default.
+    const res = yield* auth.setApiKey(provider, key, store.run.getConfigScope()).pipe(Effect.either)
     if (res._tag === "Left") {
       yield* Effect.sync(() => failLogin(store, res.left.message))
       return
@@ -84,7 +99,7 @@ export const commitApiKey = (store: TuiStore, provider: Provider, key: string) =
 export const commitLocalUrl = (store: TuiStore, provider: Provider, baseUrl: string) =>
   Effect.gen(function* () {
     const auth = yield* AuthStore
-    const res = yield* auth.setLocal(provider, baseUrl).pipe(Effect.either)
+    const res = yield* auth.setLocal(provider, baseUrl, store.run.getConfigScope()).pipe(Effect.either)
     if (res._tag === "Left") {
       yield* Effect.sync(() => failLogin(store, res.left.message))
       return
@@ -103,7 +118,7 @@ const finishOAuth = (
   Effect.gen(function* () {
     const auth = yield* AuthStore
     const tokens = yield* (yield* AuthFlow).exchange(provider, code, verifier)
-    yield* auth.setOAuth(provider, tokens)
+    yield* auth.setOAuth(provider, tokens, store.run.getConfigScope())
     yield* Effect.sync(() => {
       stop()
       store.run.setOAuth(undefined)

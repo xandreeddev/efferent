@@ -1,6 +1,12 @@
 import { batch } from "solid-js"
 import { Effect } from "effect"
-import { modelForRole, ModelRegistry, SettingsStore, type ModelInfo } from "@xandreed/sdk-core"
+import {
+  type ConfigScope,
+  modelForRole,
+  ModelRegistry,
+  SettingsStore,
+  type ModelInfo,
+} from "@xandreed/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import type { TuiStore } from "../state/store.js"
@@ -14,15 +20,18 @@ export type PickerRole = "fast"
  * `ModelRegistry` (router reads it next turn), recompute the provider's effort
  * setting, and warn once on a cross-provider switch mid-conversation.
  */
-export const applyModelSelection = (store: TuiStore, chosen: ModelInfo) =>
+export const applyModelSelection = (store: TuiStore, chosen: ModelInfo, scope?: ConfigScope) =>
   Effect.gen(function* () {
     const registry = yield* ModelRegistry
     const prev = yield* registry.current
-    const sel = yield* registry.select({
-      provider: chosen.provider,
-      modelId: chosen.modelId,
-      ...(chosen.contextWindow > 0 ? { contextWindow: chosen.contextWindow } : {}),
-    })
+    const sel = yield* registry.select(
+      {
+        provider: chosen.provider,
+        modelId: chosen.modelId,
+        ...(chosen.contextWindow > 0 ? { contextWindow: chosen.contextWindow } : {}),
+      },
+      scope,
+    )
     const settings = yield* (yield* SettingsStore).get()
     const newEffort =
       sel.provider === "anthropic"

@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SettingsStore } from "@xandreed/sdk-core"
+import { type ConfigScope, SettingsStore } from "@xandreed/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { activeThemeName, setTheme, themeNames } from "../state/theme.js"
 import type { TuiStore } from "../state/store.js"
@@ -11,7 +11,7 @@ import type { TuiStore } from "../state/store.js"
  * `config.json` via `SettingsStore.update` so it survives a restart (seeded back
  * at boot in `runtime.ts`). An unknown name is a no-op with a rail hint.
  */
-export const applyTheme = (store: TuiStore, name: string) =>
+export const applyTheme = (store: TuiStore, name: string, scope?: ConfigScope) =>
   Effect.gen(function* () {
     if (!setTheme(name)) {
       store.pushBlock({
@@ -20,7 +20,7 @@ export const applyTheme = (store: TuiStore, name: string) =>
       })
       return
     }
-    yield* (yield* SettingsStore).update((s) => ({ ...s, theme: name }))
+    yield* (yield* SettingsStore).update((s) => ({ ...s, theme: name }), scope)
     store.toast(`theme: ${name}`)
   })
 

@@ -13,6 +13,17 @@ import {
   loginMove,
 } from "../presentation/loginFlow.js"
 import {
+  onboardingMove,
+  onboardingAppend,
+  onboardingBackspace,
+  startOnboarding,
+} from "../presentation/onboardingFlow.js"
+import {
+  advanceOnboardingStep,
+  onboardingBack,
+  finishOnboarding,
+} from "../actions/onboarding.js"
+import {
   beginEdit,
   cancelEdit,
   currentRow,
@@ -24,6 +35,7 @@ import {
 } from "../presentation/settingsView.js"
 import { applyModelSelection, applyRoleModelSelection } from "../actions/model.js"
 import { applyTheme } from "../actions/theme.js"
+import { setTheme } from "../state/theme.js"
 import { Effect } from "effect"
 import { refreshNav } from "../actions/contextTree.js"
 import { resumeConversation } from "../actions/session.js"
@@ -44,6 +56,24 @@ import {
 } from "../presentation/approvalView.js"
 import type { SelectPurpose, TuiContext } from "../state/store.js"
 import type { Key } from "./ParsedKey.js"
+
+/**
+ * Live-preview the highlighted theme by flipping the active-theme signal (NOT
+ * persisted) — the whole UI, including the `ThemePreview` panel, recolours. Used
+ * by the theme picker (onboarding step + the `:theme` modal). A no-op for any
+ * non-string value, so it's safe to call on every move regardless of purpose.
+ */
+const previewTheme = (sel: SelectState<unknown>): void => {
+  const value = sel.matches[sel.selected]?.value
+  if (typeof value === "string") setTheme(value)
+}
+
+/** Revert a live theme preview to the option flagged `active` — the theme that
+ *  was in effect when the picker opened. Cancels the preview without persisting. */
+const revertThemePreview = (sel: SelectState<unknown>): void => {
+  const entry = sel.all.find((o) => o.active === true)?.value
+  if (typeof entry === "string") setTheme(entry)
+}
 
 /** The printable character a key types into a filter, or undefined. */
 const printable = (key: Key): string | undefined => {
@@ -142,12 +172,16 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
   if (o.kind === "none") return false
 
   if (o.kind === "select") {
+    const isTheme = o.purpose.tag === "theme"
     if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+      if (isTheme) revertThemePreview(o.sel) // undo the live preview
       store.closeOverlay()
       return true
     }
     if (key.name === "up" || key.name === "down") {
-      store.setOverlay({ ...o, sel: moveSelect(o.sel, key.name) })
+      const sel = moveSelect(o.sel, key.name)
+      store.setOverlay({ ...o, sel })
+      if (isTheme) previewTheme(sel)
       return true
     }
     if (key.name === "return") {
@@ -155,12 +189,16 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       return true
     }
     if (key.name === "backspace") {
-      store.setOverlay({ ...o, sel: filterBackspace(o.sel) })
+      const sel = filterBackspace(o.sel)
+      store.setOverlay({ ...o, sel })
+      if (isTheme) previewTheme(sel)
       return true
     }
     const ch = printable(key)
     if (ch !== undefined) {
-      store.setOverlay({ ...o, sel: filterAppend(o.sel, ch) })
+      const sel = filterAppend(o.sel, ch)
+      store.setOverlay({ ...o, sel })
+      if (isTheme) previewTheme(sel)
       return true
     }
     return true // swallow everything else while the modal is open
@@ -278,6 +316,122 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       settingsActivate(ctx, state)
       return true
     }
+    return true
+  }
+
+  if (o.kind === "onboarding") {
+    const state = o.state
+    // Esc = Go Back (agy convention). On the first screen (login authMethod)
+    // there's nowhere back to go: close if already signed in, else exit.
+    if (key.name === "escape") {
+      // Scope picker is the FIRST screen — nowhere back: close if already signed
+      // in, else exit.
+      if (state.step === "scope") {
+        const hasCreds = state.statuses.some((s) => s.configured !== undefined)
+        if (hasCreds) store.closeOverlay()
+        else ctx.exit()
+        return true
+      }
+      if (state.step === "login") {
+        const flow = state.flow
+        if (flow.step === "oauth") void ctx.run(stopOAuthSession(store))
+        const back = loginBack(flow)
+        if (back !== undefined) {
+          store.setOverlay({ kind: "onboarding", state: { ...state, flow: back } })
+        } else {
+          // Back out of login → the scope picker (step 1).
+          store.setOverlay({ kind: "onboarding", state: startOnboarding(state.statuses) })
+        }
+        return true
+      }
+      // model / fast / theme / complete → step back to the previous screen.
+      // Leaving the theme step undoes its live preview first.
+      if (state.step === "theme") revertThemePreview(state.sel)
+      void ctx.run(onboardingBack(store, state))
+      return true
+    }
+
+    if (key.ctrl && key.name === "c") {
+      const hasCreds = state.statuses.some((s) => s.configured !== undefined)
+      if (hasCreds) {
+        // Already signed in → Ctrl-C just dismisses the onboarding overlay.
+        if (state.step === "login" && state.flow.step === "oauth") {
+          void ctx.run(stopOAuthSession(store))
+        }
+        store.closeOverlay()
+        return true
+      }
+      // No creds → Ctrl-C would QUIT the app. Don't handle it here: fall through
+      // to the main dispatch's proven 2×-to-quit (arms with a hint, second press
+      // within 2s exits). Cancel any in-flight OAuth first.
+      if (state.step === "login" && state.flow.step === "oauth") {
+        void ctx.run(stopOAuthSession(store))
+      }
+      return false
+    }
+
+    if (state.step === "login") {
+      const flow = state.flow
+      if (key.name === "up" || key.name === "down") {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginMove(flow, key.name) } })
+        return true
+      }
+      if (key.name === "return") {
+        advanceLogin(ctx, flow)
+        return true
+      }
+      if (key.name === "backspace") {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginBackspace(flow) } })
+        return true
+      }
+      const ch = printable(key)
+      if (ch !== undefined) {
+        store.setOverlay({ kind: "onboarding", state: { ...state, flow: loginAppend(flow, ch) } })
+        return true
+      }
+      return true
+    }
+
+    if (
+      state.step === "scope" ||
+      state.step === "mainModel" ||
+      state.step === "fastModel" ||
+      state.step === "theme"
+    ) {
+      if (key.name === "up" || key.name === "down") {
+        const next = onboardingMove(state, key.name)
+        store.setOverlay({ kind: "onboarding", state: next })
+        if (next.step === "theme") previewTheme(next.sel) // live recolour on highlight
+        return true
+      }
+      if (key.name === "return") {
+        void ctx.run(advanceOnboardingStep(store, state))
+        return true
+      }
+      if (key.name === "backspace") {
+        const next = onboardingBackspace(state)
+        store.setOverlay({ kind: "onboarding", state: next })
+        if (next.step === "theme") previewTheme(next.sel)
+        return true
+      }
+      const ch = printable(key)
+      if (ch !== undefined) {
+        const next = onboardingAppend(state, ch)
+        store.setOverlay({ kind: "onboarding", state: next })
+        if (next.step === "theme") previewTheme(next.sel)
+        return true
+      }
+      return true
+    }
+
+    if (state.step === "complete") {
+      if (key.name === "return") {
+        void ctx.run(advanceOnboardingStep(store, state))
+        return true
+      }
+      return true
+    }
+
     return true
   }
 

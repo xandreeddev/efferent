@@ -1,16 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { randomUUID } from "node:crypto"
-import { homedir } from "node:os"
 import { join } from "node:path"
 import {
   AuthError,
   AuthStore,
   type AuthData,
+  type ConfigScope,
   type Credential,
   type OAuthTokens,
   type Provider,
 } from "@xandreed/sdk-core"
 import { Effect, Layer, Redacted, Ref } from "effect"
+import {
+  type ConfigRoots,
+  dirForScope,
+  ensureLocalGitignore,
+  resolveConfigRoots,
+} from "../configRoots.js"
 import { refreshAnthropicToken } from "./oauth/anthropic.js"
 import { refreshOpenAiToken } from "./oauth/openai.js"
 
@@ -36,14 +42,8 @@ const REFRESH_SKEW_MS = 60_000
 
 const PROVIDERS = ["google", "openai", "anthropic", "opencode", "ollama"] as const
 
-// `~/.efferent`, or `<EFFERENT_HOME>/.efferent` when that env var points
-// elsewhere (relocate config / test isolation). This is a directory knob, not
-// a credential — credentials themselves are never read from the env.
-const authDir = (): string => {
-  const override = process.env.EFFERENT_HOME
-  return join(override !== undefined && override.length > 0 ? override : homedir(), ".efferent")
-}
-const authFilePath = (): string => join(authDir(), "auth.json")
+/** `auth.json` inside a resolved `.efferent` dir (global or local tier). */
+const authFileIn = (efferentDir: string): string => join(efferentDir, "auth.json")
 
 const isProvider = (s: string): s is Provider =>
   (PROVIDERS as ReadonlyArray<string>).includes(s)
@@ -109,14 +109,14 @@ const parseAuth = (raw: string): { data: AuthData; changed: boolean } => {
   return { data: out, changed }
 }
 
-const readAuthFile = (): AuthData => {
+const readAuthFile = (efferentDir: string): AuthData => {
   try {
-    const p = authFilePath()
+    const p = authFileIn(efferentDir)
     if (!existsSync(p)) return {}
     const parsed = parseAuth(readFileSync(p, "utf8"))
     if (parsed.changed) {
       try {
-        writeAuthFile(parsed.data)
+        writeAuthFile(efferentDir, parsed.data)
       } catch {
         // Best-effort migration only; keep the in-memory credential usable.
       }
@@ -127,9 +127,9 @@ const readAuthFile = (): AuthData => {
   }
 }
 
-const writeAuthFile = (data: AuthData): void => {
-  mkdirSync(authDir(), { recursive: true })
-  const p = authFilePath()
+const writeAuthFile = (efferentDir: string, data: AuthData): void => {
+  mkdirSync(efferentDir, { recursive: true })
+  const p = authFileIn(efferentDir)
   const tmp = `${p}.tmp`
   writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 })
   renameSync(tmp, p)
@@ -153,7 +153,18 @@ const oauthCredential = (provider: Provider, tokens: OAuthTokens): Credential =>
 export const LocalAuthStoreLive = Layer.effect(
   AuthStore,
   Effect.gen(function* () {
-    const ref = yield* Ref.make<AuthData>(readAuthFile())
+    // Per-tier on-disk credentials + the merged read view (local overrides
+    // global per provider). Roots default to the build-time cwd so the store is
+    // usable before `init` (the common no-`--cwd` case); `init(cwd)` corrects it.
+    const initialRoots = resolveConfigRoots(process.cwd())
+    const rootsRef = yield* Ref.make<ConfigRoots>(initialRoots)
+    const globalRef = yield* Ref.make<AuthData>(readAuthFile(initialRoots.global))
+    const localRef = yield* Ref.make<AuthData>(
+      initialRoots.single || initialRoots.local === undefined
+        ? {}
+        : readAuthFile(initialRoots.local),
+    )
+    const ref = yield* Ref.make<AuthData>({}) // merged
     // Single-flight gate for OAuth refreshes. resolveKey is called per request
     // — and requests are CONCURRENT now (tool concurrency + parallel
     // sub-agents) — so two near-expiry calls would otherwise both refresh,
@@ -162,22 +173,60 @@ export const LocalAuthStoreLive = Layer.effect(
     // refresh is rare and fast.
     const refreshGate = yield* Effect.makeSemaphore(1)
 
-    const write = (provider: Provider, next: AuthData) =>
-      Effect.try({
-        try: () => writeAuthFile(next),
-        catch: (e) =>
-          new AuthError({
-            provider,
-            message: `failed to write auth.json: ${String(e)}`,
-          }),
-      }).pipe(Effect.zipRight(Ref.set(ref, next)))
+    const recompute = Effect.gen(function* () {
+      const g = yield* Ref.get(globalRef)
+      const l = yield* Ref.get(localRef)
+      yield* Ref.set(ref, { ...g, ...l })
+    })
+    yield* recompute
 
-    const set = (provider: Provider, cred: Credential) =>
-      Ref.get(ref).pipe(
-        Effect.flatMap((cur) => write(provider, { ...cur, [provider]: cred })),
-      )
+    const tierRefFor = (roots: ConfigRoots, scope: ConfigScope) =>
+      roots.single || scope === "global" ? globalRef : localRef
+
+    // Persist a mutation of one tier's credential map to that tier's file, then
+    // re-merge. A local write seeds the per-folder `.gitignore`.
+    const persist = (provider: Provider, scope: ConfigScope, mutate: (cur: AuthData) => AuthData) =>
+      Effect.gen(function* () {
+        const roots = yield* Ref.get(rootsRef)
+        const tref = tierRefFor(roots, scope)
+        const next = mutate(yield* Ref.get(tref))
+        const dir = dirForScope(roots, scope)
+        yield* Effect.try({
+          try: () => writeAuthFile(dir, next),
+          catch: (e) =>
+            new AuthError({ provider, message: `failed to write auth.json: ${String(e)}` }),
+        })
+        yield* Ref.set(tref, next)
+        if (!roots.single && (scope === "local")) yield* Effect.sync(() => ensureLocalGitignore(dir))
+        yield* recompute
+      })
+
+    const set = (provider: Provider, cred: Credential, scope: ConfigScope = "global") =>
+      persist(provider, scope, (cur) => ({ ...cur, [provider]: cred }))
+
+    // After an OAuth refresh, write the rotated token back to whichever tier
+    // currently holds the credential (local wins), so the merge stays coherent.
+    const persistRefreshed = (provider: Provider, cred: Credential) =>
+      Effect.gen(function* () {
+        const roots = yield* Ref.get(rootsRef)
+        const l = yield* Ref.get(localRef)
+        const scope: ConfigScope = !roots.single && l[provider] !== undefined ? "local" : "global"
+        yield* persist(provider, scope, (cur) => ({ ...cur, [provider]: cred }))
+      })
 
     return AuthStore.of({
+      init: (cwd) =>
+        Effect.gen(function* () {
+          const roots = resolveConfigRoots(cwd)
+          yield* Ref.set(rootsRef, roots)
+          yield* Ref.set(globalRef, readAuthFile(roots.global))
+          yield* Ref.set(
+            localRef,
+            roots.single || roots.local === undefined ? {} : readAuthFile(roots.local),
+          )
+          yield* recompute
+        }),
+
       all: Ref.get(ref),
 
       get: (p) => Ref.get(ref).pipe(Effect.map((d) => d[p])),
@@ -241,28 +290,40 @@ export const LocalAuthStoreLive = Layer.effect(
                       }),
                   ),
                 )
-                yield* set(p, oauthCredential(p, tokens))
+                yield* persistRefreshed(p, oauthCredential(p, tokens))
                 return Redacted.make(tokens.access)
               }),
             )
           }),
         ),
 
-      setApiKey: (p, key) => set(p, { type: "api_key", key }),
+      setApiKey: (p, key, scope) => set(p, { type: "api_key", key }, scope),
 
-      setOAuth: (p, tokens: OAuthTokens) => set(p, oauthCredential(p, tokens)),
+      setOAuth: (p, tokens: OAuthTokens, scope) => set(p, oauthCredential(p, tokens), scope),
 
-      setLocal: (p, baseUrl) =>
-        set(p, { type: "local", ...(baseUrl !== undefined && baseUrl.length > 0 ? { baseUrl } : {}) }),
+      setLocal: (p, baseUrl, scope) =>
+        set(
+          p,
+          { type: "local", ...(baseUrl !== undefined && baseUrl.length > 0 ? { baseUrl } : {}) },
+          scope,
+        ),
 
+      // Forget the credential from BOTH tiers (it may live in either).
       remove: (p) =>
-        Ref.get(ref).pipe(
-          Effect.flatMap((cur) => {
+        Effect.gen(function* () {
+          const roots = yield* Ref.get(rootsRef)
+          const drop = (cur: AuthData): AuthData => {
             const next = { ...cur }
             delete next[p]
-            return write(p, next)
-          }),
-        ),
+            return next
+          }
+          if ((yield* Ref.get(globalRef))[p] !== undefined) {
+            yield* persist(p, "global", drop)
+          }
+          if (!roots.single && (yield* Ref.get(localRef))[p] !== undefined) {
+            yield* persist(p, "local", drop)
+          }
+        }),
     })
   }),
 )

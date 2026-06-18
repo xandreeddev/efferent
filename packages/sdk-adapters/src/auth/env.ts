@@ -49,6 +49,7 @@ export const EnvAuthStoreLive = Layer.effect(
       )
 
     return AuthStore.of({
+      init: () => Effect.void, // env-backed: no local tier to bind
       all: Effect.succeed(snapshot),
       get: (p) => Effect.succeed(snapshot[p]),
       resolveKey: (p) =>
