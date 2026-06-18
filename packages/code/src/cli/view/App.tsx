@@ -1,6 +1,7 @@
 import { Show } from "solid-js"
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { dispatch } from "../keys/dispatch.js"
+import { pasteIntoOverlay } from "../keys/overlay.js"
 import { Header } from "./chrome/Header.js"
 import { Conversation } from "./panes/Conversation.js"
 import { Side } from "./panes/side/Side.js"
@@ -21,6 +22,18 @@ import type { TuiContext } from "../state/store.js"
 export const App = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   useKeyboard((key) => dispatch(props.ctx, key))
+  // Bracketed paste arrives as one `paste` event, not keypresses. The native
+  // composer <textarea> handles its own paste; route a paste into the open
+  // overlay's text field (API key, connection string, …) so it isn't dropped,
+  // and preventDefault so the hidden textarea doesn't also swallow it.
+  usePaste((event: { bytes?: Uint8Array | string; preventDefault?: () => void }) => {
+    const raw = event.bytes
+    const decoded = typeof raw === "string" ? raw : raw ? new TextDecoder().decode(raw) : ""
+    // These overlays are all single-line fields (keys, URLs, paths), so strip
+    // any line breaks a copy picked up rather than inserting stray whitespace.
+    const text = decoded.replace(/[\r\n]+/g, "")
+    if (text.length > 0 && pasteIntoOverlay(props.ctx, text)) event.preventDefault?.()
+  })
   const dims = useTerminalDimensions()
   // Below ~110 cols the side pane is too narrow to read (every row clips) yet
   // still eats 40% of the width — hide it and give the conversation the full

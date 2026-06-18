@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import * as Migrator from "@effect/sql/Migrator"
 import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
-import { Config, Effect, Layer, Option } from "effect"
+import { Cause, Config, Duration, Effect, Layer, Option, Redacted } from "effect"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -60,6 +60,53 @@ export const parseDbTarget = (raw: string | undefined): DbTarget => {
   const path = v.replace(/^sqlite:(\/\/)?/i, "")
   return { kind: "sqlite", filename: path.length > 0 ? path : defaultSqlitePath() }
 }
+
+/** Best-effort message out of a probe failure: prefer the driver's own cause
+ *  (e.g. "password authentication failed", "ENOTFOUND host") over the wrapper. */
+const probeErrorMessage = (e: unknown): string => {
+  if (typeof e === "string") return e
+  if (typeof e === "object" && e !== null) {
+    const anyE = e as { message?: unknown; cause?: { message?: unknown } }
+    const cause = anyE.cause?.message
+    if (typeof cause === "string" && cause.trim().length > 0) return cause
+    if (typeof anyE.message === "string" && anyE.message.trim().length > 0) return anyE.message
+  }
+  return "could not connect"
+}
+
+/**
+ * Probe a Postgres connection string: open a short-lived single connection and
+ * run `SELECT 1`. Returns a plain result (never fails) so callers — e.g. the
+ * onboarding DB step — can give immediate feedback before persisting `dbUrl`,
+ * which otherwise only fails at the NEXT boot when the store builds. Bounded by
+ * a 15s connect timeout + an 18s overall deadline (serverless Postgres like Neon
+ * can take several seconds to wake a suspended compute) so a bad host can't hang.
+ *
+ * `matchCause` (not `match`) so a **defect** — an SSL/socket error the driver
+ * throws rather than returning as a `SqlError`, or a finalizer hiccup — becomes a
+ * clean `ok:false` too, instead of crashing the caller. The probe never fails.
+ */
+export const probePostgres = (
+  url: string,
+): Effect.Effect<{ readonly ok: true } | { readonly ok: false; readonly error: string }> =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`select 1`
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      PgClient.layer({
+        url: Redacted.make(url),
+        connectTimeout: Duration.seconds(15),
+        maxConnections: 1,
+      }),
+    ),
+    Effect.timeoutFail({ duration: Duration.seconds(18), onTimeout: () => "connection timed out" }),
+    Effect.matchCause({
+      onSuccess: () => ({ ok: true as const }),
+      onFailure: (cause) => ({ ok: false as const, error: probeErrorMessage(Cause.squash(cause)) }),
+    }),
+  )
 
 const pgLoader = Migrator.fromRecord({
   "0001_init": pg0001,

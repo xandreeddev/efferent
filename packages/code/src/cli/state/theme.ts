@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import {
   activeTheme as defaultTheme,
+  BRAND,
   glyph,
   themes,
   type PaneKind,
@@ -68,5 +69,5 @@ export const paneBorder = (pane: PaneKind, focused: boolean): string =>
 // The glyph vocabulary is static (a theme is colours, not box-drawing), but
 // re-exported here so a view's single `from "…/state/theme.js"` import still
 // covers both `glyph` and `tokens`.
-export { glyph }
+export { glyph, BRAND }
 export type { PaneKind, Theme, Tokens }

@@ -8,7 +8,7 @@
  * hex or a palette entry); `view/syntax.ts` builds its `SyntaxStyle` from
  * `tokens.syntax`. Re-theming is one swap of the palette in `tokens.ts`.
  */
-export { type Palette, defaultPalette } from "./palette.js"
+export { type Palette, defaultPalette, BRAND } from "./palette.js"
 export { type Tokens, type SyntaxTokens, type PaneKind, makeTokens } from "./tokens.js"
 export {
   type Theme,
