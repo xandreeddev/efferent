@@ -109,7 +109,25 @@ export const Settings = Schema.Struct({
   dbUrl: Schema.optional(
     Schema.String.annotations({
       description:
-        "Conversation store location. A 'postgres://…' connection string selects Postgres; anything else (a filesystem path, optionally 'sqlite:'-prefixed) selects SQLite at that path. Unset → SQLite at ~/.efferent/efferent.db. The EFFERENT_DB_URL env var overrides this.",
+        "Legacy single conversation-store location (superseded by `databases`/`defaultDatabase`, still honored). A 'postgres://…' connection string selects Postgres; anything else (a filesystem path, optionally 'sqlite:'-prefixed) selects SQLite at that path. Unset → SQLite at ~/.efferent/efferent.db. The EFFERENT_DB_URL env var overrides this.",
+    }),
+  ),
+  databases: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.Struct({
+        kind: Schema.Literal("sqlite", "postgres"),
+        url: Schema.String,
+      }),
+    }).annotations({
+      description:
+        "Named database connections beyond the implicit zero-config 'local' SQLite. Keyed by name; `url` is a file path (sqlite) or a postgres:// connection string. Add/switch them live via :db or onboarding.",
+    }),
+  ),
+  defaultDatabase: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Name of the active database at boot — a key in `databases`, or 'local' for the zero-config SQLite. Switchable live (no restart) via :db / the sessions tabs.",
     }),
   ),
   grafanaUrl: Schema.optional(

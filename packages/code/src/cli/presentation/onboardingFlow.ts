@@ -14,11 +14,12 @@ import {
   moveSelect,
   filterAppend,
   filterBackspace,
-  selectedValue,
   type SelectState,
 } from "./selectBox.js"
 import { openPrompt, promptAppend, promptBackspace, type PromptState } from "./promptBox.js"
 import { themes } from "./theme/themes.js"
+import { glyph } from "./theme/glyphs.js"
+import { connLabel, type DbKind, type NamedConn } from "@xandreed/sdk-core"
 
 export type OnboardingStep =
   | "scope"
@@ -29,8 +30,13 @@ export type OnboardingStep =
   | "database"
   | "complete"
 
-/** Conversation-store choice on the database step. */
-export type DbChoice = "local" | "remote"
+/** A row in the database manager: use/make-default a configured connection, add
+ *  a new local or remote one, or finish. Mirrors the provider list in `:login`. */
+export type DbManagerItem =
+  | { readonly tag: "use"; readonly conn: NamedConn }
+  | { readonly tag: "addLocal" }
+  | { readonly tag: "addRemote" }
+  | { readonly tag: "done" }
 
 export type OnboardingState =
   | {
@@ -61,9 +67,15 @@ export type OnboardingState =
   | {
       readonly step: "database"
       readonly statuses: ReadonlyArray<ProviderStatus>
-      readonly sel: SelectState<DbChoice>
-      /** Present once "remote" is chosen — the connection-string prompt. */
+      /** The manager list (configured connections + add/done rows). */
+      readonly sel: SelectState<DbManagerItem>
+      /** Present while adding/editing — the path (local) / connection-string
+       *  (remote) prompt; `adding` says which, to interpret the value + hint. */
       readonly connect?: PromptState
+      readonly adding?: "local" | "remote"
+      /** When set, the prompt is EDITING this existing connection (keep its name)
+       *  rather than adding a new one. */
+      readonly editName?: string | undefined
     }
   | {
       readonly step: "complete"
@@ -142,38 +154,81 @@ export const onboardingToTheme = (state: OnboardingState, activeTheme: string): 
   }
 }
 
-/** Step 6: where conversations are stored — local SQLite (default) or a remote
- *  Postgres (Neon/Supabase/…). `currentDbUrl` pre-selects the matching row. */
+/** Step 6: the database **manager** — configure as many connections as you want
+ *  (local + remote) and pick the default, mirroring the providers/API-keys step.
+ *  `conns` is every configured connection (implicit `local` first); `activeName`
+ *  is the default, marked `◀ default`. */
 export const onboardingToDatabase = (
   state: OnboardingState,
-  currentDbUrl?: string,
+  conns: ReadonlyArray<NamedConn>,
+  activeName: string,
+): OnboardingState => ({
+  step: "database",
+  statuses: state.statuses,
+  sel: openSelect<DbManagerItem>("Step 6 of 6 · Databases", [
+    // Configured connections first — the default marked, so the active store is
+    // always visible at a glance.
+    ...conns.map((c) => ({
+      value: { tag: "use", conn: c } as DbManagerItem,
+      label: connLabel(c.name, c.kind),
+      section: "configured",
+      active: c.name === activeName,
+      tag: c.name === activeName ? "default" : undefined,
+    })),
+    // Then the two add actions, grouped under one heading.
+    {
+      value: { tag: "addRemote" } as DbManagerItem,
+      label: `${glyph.add} Remote database (Postgres)`,
+      section: "add a database",
+      action: true,
+    },
+    {
+      value: { tag: "addLocal" } as DbManagerItem,
+      label: `${glyph.add} Local database (SQLite)`,
+      section: "add a database",
+      action: true,
+    },
+    // …and a bare "done" separator row to finish.
+    { value: { tag: "done" } as DbManagerItem, label: `${glyph.ok} Done`, section: "", action: true },
+  ]),
+})
+
+/** Open the add prompt: a postgres connection string (`remote`, masked) or a
+ *  SQLite file path (`local`, prefilled with the default, unmasked — like the
+ *  ollama base-URL step). */
+export const databaseAdd = (
+  state: Extract<OnboardingState, { step: "database" }>,
+  adding: "local" | "remote",
+  defaultLocalPath: string,
 ): OnboardingState => {
-  const isRemote = currentDbUrl !== undefined && /^postgres(ql)?:\/\//i.test(currentDbUrl)
+  const { editName: _drop, ...rest } = state // a fresh add is never an edit
   return {
-    step: "database",
-    statuses: state.statuses,
-    sel: openSelect<DbChoice>("Step 6 of 6 · Where should conversations be stored?", [
-      { value: "local", label: "Local file (SQLite) — default or custom path", active: !isRemote },
-      { value: "remote", label: "Remote Postgres (Neon, Supabase, …)", active: isRemote },
-    ]),
+    ...rest,
+    adding,
+    connect:
+      adding === "remote"
+        ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
+        : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
   }
 }
 
-/** Enter the prompt after a storage option is chosen: a postgres connection
- *  string for "remote" (masked), or a SQLite file path for "local". The local
- *  prompt is **prefilled with the default path** (`defaultLocalPath`, unmasked) —
- *  mirroring the ollama base-URL step — so Enter accepts it or you edit it. The
- *  choice stays on `sel`, read back when submitting. */
-export const databaseToConnect = (
+/** Open the prompt to EDIT an existing connection, prefilled with its current
+ *  url/path (postgres masked, like the add-remote step). Keeps its name on save. */
+export const databaseEdit = (
   state: Extract<OnboardingState, { step: "database" }>,
-  defaultLocalPath: string,
+  conn: NamedConn,
 ): OnboardingState => ({
   ...state,
+  adding: conn.kind === "postgres" ? "remote" : "local",
+  editName: conn.name,
   connect:
-    (selectedValue(state.sel) ?? "local") === "remote"
-      ? openPrompt("Step 6 of 6 · Connect to Postgres", "Paste your postgres:// connection string", true)
-      : openPrompt("Step 6 of 6 · SQLite file location", "Database file path", false, defaultLocalPath),
+    conn.kind === "postgres"
+      ? openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Edit the postgres:// connection string", true, conn.url)
+      : openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Database file path", false, conn.url),
 })
+
+/** Leave the add prompt, back to the manager list (rebuilt from `conns`). */
+export const databaseToManage = onboardingToDatabase
 
 export const onboardingToComplete = (state: OnboardingState): OnboardingState => ({
   step: "complete",

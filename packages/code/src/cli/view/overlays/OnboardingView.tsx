@@ -1,7 +1,7 @@
 import { createMemo, Match, Show, Switch } from "solid-js"
 import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
-import { selectedValue, type SelectState } from "../../presentation/selectBox.js"
+import type { SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
 import {
   KeyHints,
@@ -40,9 +40,9 @@ type StepView =
 
 const stepView = (flow: LoginFlow): StepView => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return { tag: "select", sel: flow.sel, canBack: true }
-    case "provider":
+    case "method":
       return { tag: "select", sel: flow.sel, canBack: true }
     case "apiKey":
     case "localUrl":
@@ -77,8 +77,13 @@ const SelectStep = (props: { title: string; state: SelectState<unknown>; canBack
 // Theme step: the list on the left, a live `ThemePreview` on the right (agy
 // pattern). Moving the highlight live-swaps the active theme (`keys/overlay.ts`),
 // so the preview — painting the reactive tokens — recolours along with the list.
-const THEME_LIST_W = 28
-const THEME_PREVIEW_W = MODAL_RULE - THEME_LIST_W - 2 // −2 for the column gap
+// The theme step gets its own slightly-wider container (it's the one step where
+// seeing the preview big matters), so a roomy preview + generous gap don't squeeze
+// the list down to truncating the names.
+const THEME_TOTAL_W = 76
+const THEME_GAP = 4
+const THEME_PREVIEW_W = 46
+const THEME_LIST_W = THEME_TOTAL_W - THEME_GAP - THEME_PREVIEW_W // = 26
 // The full nav footer won't fit beside the preview in the narrow list column, so
 // the theme step uses a compact two-hint footer (↑/↓ + filter stay discoverable).
 const themeFooter: ReadonlyArray<KeyHint> = [
@@ -97,25 +102,43 @@ const ThemeStep = (props: { state: SelectState<string> }) => (
       <box width={THEME_LIST_W}>
         <SelectBody state={props.state} labelBudget={THEME_LIST_W - 4} footer={themeFooter} />
       </box>
-      <box width={2} />
+      <box width={THEME_GAP} />
       <ThemePreview width={THEME_PREVIEW_W} />
     </box>
   </box>
 )
 
-// The database step (step 6). Choose mode is the local/remote list; picking one
-// opens `connect` — a SQLite file path (local) or a postgres connection string
-// (remote). The hint adapts to the choice. Rendered with PromptBody directly (not
-// PromptStep), so the neon.tech mention doesn't trip PromptStep's link callout.
+// The database step (step 6) is a MANAGER: the list of configured connections
+// (manage mode) with add/done rows. Picking add opens `connect` — a SQLite file
+// path (`adding: "local"`) or a postgres connection string (`adding: "remote"`).
+// The hint adapts to `adding`. Rendered with PromptBody directly (not PromptStep),
+// so the neon.tech mention doesn't trip PromptStep's link callout.
 const dbConnectFooter: ReadonlyArray<KeyHint> = [
   { key: "↵", label: "save" },
+  { key: "esc", label: "back" },
+]
+
+// The manager footer advertises the row actions (↵/e edit a connection — saving
+// reconnects + makes it default — and d removes it) — the generic select footer
+// doesn't.
+const dbManagerFooter: ReadonlyArray<KeyHint> = [
+  { key: "↑/↓", label: "navigate" },
+  { key: "↵/e", label: "edit" },
+  { key: "d", label: "remove" },
   { key: "esc", label: "back" },
 ]
 
 const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database" }> }) => (
   <Show
     when={props.state.connect}
-    fallback={<SelectStep title={props.state.sel.title} state={props.state.sel} canBack={true} />}
+    fallback={
+      <box flexDirection="column">
+        <text fg={tokens.text.default} marginBottom={1}>
+          {props.state.sel.title}
+        </text>
+        <SelectBody state={props.state.sel} labelBudget={MODAL_RULE - 2} footer={dbManagerFooter} />
+      </box>
+    }
   >
     {(connect) => (
       <box flexDirection="column">
@@ -123,7 +146,7 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
           {connect().title}
         </text>
         <text fg={tokens.text.dim} wrapMode="word" marginBottom={1}>
-          {selectedValue(props.state.sel) === "remote"
+          {props.state.adding === "remote"
             ? "No database yet? Create a free serverless one at neon.tech and paste its connection string here."
             : "Where conversation history is stored. Press Enter to accept the default, or edit the path."}
         </text>
@@ -216,8 +239,14 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
       <Logo variant="code" />
 
       {/* One consistent blank line between the logo and the step body on EVERY
-          step (marginTop), so the gap never changes as you move through. */}
-      <box width={MODAL_RULE} flexDirection="column" marginTop={1}>
+          step (marginTop), so the gap never changes as you move through. The
+          theme step widens to fit its list + larger preview; all others keep the
+          standard modal width so titles/prose stay aligned. */}
+      <box
+        width={s().step === "theme" ? THEME_TOTAL_W : MODAL_RULE}
+        flexDirection="column"
+        marginTop={1}
+      >
         {/* Step 1 — the scope picker is the FIRST screen, so it carries the
             welcome line (agy-style). */}
         <Show when={s().step === "scope"}>
@@ -293,12 +322,13 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         </Show>
       </box>
 
-      {/* Transient hint line (e.g. the Ctrl-C-again-to-quit arming toast) —
-          rendered here because onboarding hides the status bar that normally
-          shows it. Dim + subtle, agy-style. */}
+      {/* Transient hint line (login confirmations, the Ctrl-C-again-to-quit
+          arming toast, db "connecting…") — rendered here because onboarding hides
+          the status bar that normally shows it. Sits just below the step body
+          (one blank line) instead of pinned to the bottom of the screen, so it
+          reads as feedback for the section above it. Dim + subtle, agy-style. */}
       <Show when={props.note !== undefined}>
-        <box flexGrow={1} />
-        <text fg={tokens.text.dim}>{props.note}</text>
+        <text fg={tokens.text.dim} marginTop={1}>{props.note}</text>
       </Show>
     </box>
   )

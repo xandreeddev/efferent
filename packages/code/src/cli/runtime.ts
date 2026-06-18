@@ -6,16 +6,17 @@ import { createComponent } from "solid-js"
 import { Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
+  connLabel,
   ConversationId,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
+  StoreSwitch,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
-import { storageLabel } from "./presentation/dbStatus.js"
 import { rolesChip } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
 import { App } from "./view/App.js"
@@ -107,11 +108,14 @@ export const runTuiModeSolid = (
         instructions: input.instructionFiles.map((f) => ({ path: f.path, scope: f.path })),
         stats: { ...emptyStats, startedAt: Date.now(), contextWindow: meta.contextWindow },
       }
+      // The active database (name + kind) for the status bar — read from the
+      // switchable store so it reflects the connection actually built at boot.
+      const activeDb = yield* (yield* StoreSwitch).current
       const store = createTuiStore({
         status: {
           modelId: meta.modelId,
           cwd: input.cwd,
-          storage: storageLabel(process.env.EFFERENT_DB_URL),
+          storage: connLabel(activeDb.name, activeDb.kind),
           effort,
           roles: rolesChip(settings),
         },

@@ -11,8 +11,8 @@ type StepView =
 /** Map the active login step to renderable props (mirrors `renderLoginFlow`). */
 const stepView = (flow: LoginFlow): StepView => {
   switch (flow.step) {
-    case "authMethod":
-    case "provider":
+    case "home":
+    case "method":
       return { tag: "select", sel: flow.sel }
     case "apiKey":
     case "localUrl":
