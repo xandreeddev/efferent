@@ -69,6 +69,17 @@ export const efferentPalette: Palette = {
   matchLineCurrent: "#5a4a1f", // brighter amber — the current match
 } as const
 
+/**
+ * The fixed brand triad — the logo paints these regardless of the active theme,
+ * so the mark is a stable identity. Aliases of the efferent palette primaries
+ * (never hardcoded), named by brand role.
+ */
+export const BRAND = {
+  ember: efferentPalette.cyan, // ember
+  verdigris: efferentPalette.magenta, // verdigris
+  chartreuse: efferentPalette.green, // chartreuse
+} as const
+
 /** The One-Dark-ish palette (the previous default, kept as a theme). */
 export const defaultPalette: Palette = {
   cyan: "#5fd7ff", // bright cyan — conversation accent / links

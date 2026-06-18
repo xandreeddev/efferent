@@ -1,4 +1,7 @@
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Effect } from "effect"
+import { probePostgres } from "@xandreed/sdk-adapters"
 import {
   AuthStore,
   type ConfigScope,
@@ -12,11 +15,14 @@ import {
   onboardingToMainModel,
   onboardingToFastModel,
   onboardingToTheme,
+  onboardingToDatabase,
+  databaseToConnect,
   onboardingToComplete,
   startOnboarding,
   type OnboardingState,
 } from "../presentation/onboardingFlow.js"
 import { selectedValue } from "../presentation/selectBox.js"
+import { promptValue } from "../presentation/promptBox.js"
 import { type ProviderStatus } from "../presentation/loginFlow.js"
 import { rolesChip } from "../presentation/statusBar.js"
 import { applyModelSelection } from "./model.js"
@@ -99,6 +105,17 @@ const transitionToTheme = (store: TuiStore, state: OnboardingState) =>
     })
   })
 
+const transitionToDatabase = (store: TuiStore, state: OnboardingState) =>
+  Effect.gen(function* () {
+    const settings = yield* (yield* SettingsStore).get()
+    yield* Effect.sync(() => {
+      store.setOverlay({
+        kind: "onboarding",
+        state: onboardingToDatabase(state, settings.dbUrl),
+      })
+    })
+  })
+
 /** The tier onboarding writes to — the scope chosen in step 1 (stashed on the
  *  run handle), defaulting to global (machine-wide) if somehow unset. */
 const onbScope = (store: TuiStore): ConfigScope => store.run.getConfigScope() ?? "global"
@@ -144,11 +161,55 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         if (selected !== undefined) {
           yield* applyTheme(store, selected, onbScope(store))
         }
-        yield* Effect.sync(() => {
-          store.setOverlay({
-            kind: "onboarding",
-            state: onboardingToComplete(state),
+        yield* transitionToDatabase(store, state)
+        break
+      }
+      case "database": {
+        const settingsStore = yield* SettingsStore
+        // The zero-config default store (matches adapters' parseDbTarget when
+        // dbUrl is unset): SQLite at ~/.efferent/efferent.db.
+        const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
+        // Prompt mode: a connection string (remote) or a file path (local).
+        if (state.connect !== undefined) {
+          const choice = selectedValue(state.sel) ?? "local"
+          const value = promptValue(state.connect).trim()
+          if (choice === "remote") {
+            if (value.length === 0) {
+              yield* Effect.sync(() =>
+                store.toast("paste a postgres:// connection string, or Esc to go back"),
+              )
+              break
+            }
+            // Test it before persisting — a bad string would otherwise only fail
+            // at the next boot when the store builds. Stay on the prompt on error.
+            yield* Effect.sync(() => store.setNote("testing connection…"))
+            const probe = yield* probePostgres(value)
+            if (!probe.ok) {
+              yield* Effect.sync(() => store.setNote(`connection failed: ${probe.error}`))
+              break
+            }
+            yield* settingsStore.update((curr) => ({ ...curr, dbUrl: value }), onbScope(store))
+          } else {
+            // Local: blank or the default path → clear dbUrl (stay zero-config);
+            // any other path is stored verbatim (parseDbTarget reads a non-postgres
+            // value as a SQLite file).
+            yield* settingsStore.update((curr) => {
+              if (value.length === 0 || value === defaultLocalPath) {
+                const { dbUrl: _drop, ...rest } = curr
+                return rest
+              }
+              return { ...curr, dbUrl: value }
+            }, onbScope(store))
+          }
+          yield* Effect.sync(() => store.toast("database saved — applies on next launch"))
+          yield* Effect.sync(() => {
+            store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
           })
+          break
+        }
+        // Choose mode: open the path / connection prompt for the picked option.
+        yield* Effect.sync(() => {
+          store.setOverlay({ kind: "onboarding", state: databaseToConnect(state, defaultLocalPath) })
         })
         break
       }
@@ -198,8 +259,17 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
       case "theme":
         yield* transitionToFastModel(store, state)
         break
+      case "database":
+        if (state.connect !== undefined) {
+          // From the connection prompt, back to the local/remote choice.
+          const { connect: _drop, ...choose } = state
+          yield* Effect.sync(() => store.setOverlay({ kind: "onboarding", state: choose }))
+        } else {
+          yield* transitionToTheme(store, state)
+        }
+        break
       case "complete":
-        yield* transitionToTheme(store, state)
+        yield* transitionToDatabase(store, state)
         break
       case "scope":
       case "login":
