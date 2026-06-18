@@ -125,7 +125,7 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
         <text fg={tokens.text.dim} wrapMode="word" marginBottom={1}>
           {selectedValue(props.state.sel) === "remote"
             ? "No database yet? Create a free serverless one at neon.tech and paste its connection string here."
-            : "Leave blank to use the default location (~/.efferent/efferent.db)."}
+            : "Where conversation history is stored. Press Enter to accept the default, or edit the path."}
         </text>
         <PromptBody prompt={connect().prompt} value={connect().value} mask={connect().mask} footer={dbConnectFooter} />
       </box>

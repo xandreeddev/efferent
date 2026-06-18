@@ -1,3 +1,5 @@
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Effect } from "effect"
 import {
   AuthStore,
@@ -163,6 +165,9 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
       }
       case "database": {
         const settingsStore = yield* SettingsStore
+        // The zero-config default store (matches adapters' parseDbTarget when
+        // dbUrl is unset): SQLite at ~/.efferent/efferent.db.
+        const defaultLocalPath = join(homedir(), ".efferent", "efferent.db")
         // Prompt mode: a connection string (remote) or a file path (local).
         if (state.connect !== undefined) {
           const choice = selectedValue(state.sel) ?? "local"
@@ -176,11 +181,11 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
             }
             yield* settingsStore.update((curr) => ({ ...curr, dbUrl: value }), onbScope(store))
           } else {
-            // Local: a blank path means the default SQLite location → clear dbUrl;
-            // a path is stored verbatim (parseDbTarget reads any non-postgres value
-            // as a SQLite file).
+            // Local: blank or the default path → clear dbUrl (stay zero-config);
+            // any other path is stored verbatim (parseDbTarget reads a non-postgres
+            // value as a SQLite file).
             yield* settingsStore.update((curr) => {
-              if (value.length === 0) {
+              if (value.length === 0 || value === defaultLocalPath) {
                 const { dbUrl: _drop, ...rest } = curr
                 return rest
               }
@@ -195,7 +200,7 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         }
         // Choose mode: open the path / connection prompt for the picked option.
         yield* Effect.sync(() => {
-          store.setOverlay({ kind: "onboarding", state: databaseToConnect(state) })
+          store.setOverlay({ kind: "onboarding", state: databaseToConnect(state, defaultLocalPath) })
         })
         break
       }
