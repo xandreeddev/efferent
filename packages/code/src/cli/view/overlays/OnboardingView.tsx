@@ -1,7 +1,7 @@
 import { createMemo, Match, Show, Switch } from "solid-js"
 import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
-import type { SelectState } from "../../presentation/selectBox.js"
+import { selectedValue, type SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
 import {
   KeyHints,
@@ -103,9 +103,10 @@ const ThemeStep = (props: { state: SelectState<string> }) => (
   </box>
 )
 
-// The database step (step 6). Choose mode is the local/remote list; once "remote"
-// is picked, `connect` holds the connection-string prompt, rendered with a Neon
-// hint (the prompt text carries no URL, so it sidesteps PromptStep's link callout).
+// The database step (step 6). Choose mode is the local/remote list; picking one
+// opens `connect` — a SQLite file path (local) or a postgres connection string
+// (remote). The hint adapts to the choice. Rendered with PromptBody directly (not
+// PromptStep), so the neon.tech mention doesn't trip PromptStep's link callout.
 const dbConnectFooter: ReadonlyArray<KeyHint> = [
   { key: "↵", label: "save" },
   { key: "esc", label: "back" },
@@ -122,7 +123,9 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
           {connect().title}
         </text>
         <text fg={tokens.text.dim} wrapMode="word" marginBottom={1}>
-          No database yet? Create a free serverless one at neon.tech and paste its connection string here.
+          {selectedValue(props.state.sel) === "remote"
+            ? "No database yet? Create a free serverless one at neon.tech and paste its connection string here."
+            : "Leave blank to use the default location (~/.efferent/efferent.db)."}
         </text>
         <PromptBody prompt={connect().prompt} value={connect().value} mask={connect().mask} footer={dbConnectFooter} />
       </box>

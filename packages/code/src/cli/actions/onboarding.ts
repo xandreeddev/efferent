@@ -163,37 +163,39 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
       }
       case "database": {
         const settingsStore = yield* SettingsStore
-        // Connect (prompt) mode: a postgres:// string was being typed/pasted.
+        // Prompt mode: a connection string (remote) or a file path (local).
         if (state.connect !== undefined) {
-          const url = promptValue(state.connect).trim()
-          if (url.length === 0) {
-            yield* Effect.sync(() =>
-              store.toast("paste a postgres:// connection string, or Esc to go back"),
-            )
-            break
+          const choice = selectedValue(state.sel) ?? "local"
+          const value = promptValue(state.connect).trim()
+          if (choice === "remote") {
+            if (value.length === 0) {
+              yield* Effect.sync(() =>
+                store.toast("paste a postgres:// connection string, or Esc to go back"),
+              )
+              break
+            }
+            yield* settingsStore.update((curr) => ({ ...curr, dbUrl: value }), onbScope(store))
+          } else {
+            // Local: a blank path means the default SQLite location → clear dbUrl;
+            // a path is stored verbatim (parseDbTarget reads any non-postgres value
+            // as a SQLite file).
+            yield* settingsStore.update((curr) => {
+              if (value.length === 0) {
+                const { dbUrl: _drop, ...rest } = curr
+                return rest
+              }
+              return { ...curr, dbUrl: value }
+            }, onbScope(store))
           }
-          yield* settingsStore.update((curr) => ({ ...curr, dbUrl: url }), onbScope(store))
           yield* Effect.sync(() => store.toast("database saved — applies on next launch"))
           yield* Effect.sync(() => {
             store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
           })
           break
         }
-        // Choose mode: "remote" opens the connection prompt; "local" clears dbUrl
-        // (back to the zero-config default SQLite) and completes.
-        const choice = selectedValue(state.sel) ?? "local"
-        if (choice === "remote") {
-          yield* Effect.sync(() => {
-            store.setOverlay({ kind: "onboarding", state: databaseToConnect(state) })
-          })
-          break
-        }
-        yield* settingsStore.update((curr) => {
-          const { dbUrl: _drop, ...rest } = curr
-          return rest
-        }, onbScope(store))
+        // Choose mode: open the path / connection prompt for the picked option.
         yield* Effect.sync(() => {
-          store.setOverlay({ kind: "onboarding", state: onboardingToComplete(state) })
+          store.setOverlay({ kind: "onboarding", state: databaseToConnect(state) })
         })
         break
       }
