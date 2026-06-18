@@ -14,6 +14,7 @@ import {
   moveSelect,
   filterAppend,
   filterBackspace,
+  selectedValue,
   type SelectState,
 } from "./selectBox.js"
 import { openPrompt, promptAppend, promptBackspace, type PromptState } from "./promptBox.js"
@@ -152,18 +153,23 @@ export const onboardingToDatabase = (
     step: "database",
     statuses: state.statuses,
     sel: openSelect<DbChoice>("Step 6 of 6 · Where should conversations be stored?", [
-      { value: "local", label: "Local file (SQLite) — default, zero setup", active: !isRemote },
+      { value: "local", label: "Local file (SQLite) — default or custom path", active: !isRemote },
       { value: "remote", label: "Remote Postgres (Neon, Supabase, …)", active: isRemote },
     ]),
   }
 }
 
-/** Enter the connection-string prompt after "remote" is chosen on the db step. */
+/** Enter the prompt after a storage option is chosen: a postgres connection
+ *  string for "remote" (masked), or a SQLite file path for "local" (blank =
+ *  the default location). The choice stays on `sel`, read back when submitting. */
 export const databaseToConnect = (
   state: Extract<OnboardingState, { step: "database" }>,
 ): OnboardingState => ({
   ...state,
-  connect: openPrompt("Step 6 of 6 · Connect to Postgres", "Paste your postgres:// connection string", true),
+  connect:
+    (selectedValue(state.sel) ?? "local") === "remote"
+      ? openPrompt("Step 6 of 6 · Connect to Postgres", "Paste your postgres:// connection string", true)
+      : openPrompt("Step 6 of 6 · SQLite file location", "Path to the SQLite file (blank = default)", false),
 })
 
 export const onboardingToComplete = (state: OnboardingState): OnboardingState => ({
