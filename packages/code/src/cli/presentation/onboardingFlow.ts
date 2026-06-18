@@ -69,13 +69,18 @@ export type OnboardingState =
       readonly statuses: ReadonlyArray<ProviderStatus>
     }
 
-/** Step 1: choose whether this setup is machine-wide or just this folder. */
-export const startOnboarding = (statuses: ReadonlyArray<ProviderStatus>): OnboardingState => ({
+/** Step 1: choose whether this setup is machine-wide or just this folder.
+ *  `currentScope` pre-selects the matching row — so stepping BACK into this
+ *  screen restores the previously-chosen scope instead of resetting to global. */
+export const startOnboarding = (
+  statuses: ReadonlyArray<ProviderStatus>,
+  currentScope?: ConfigScope,
+): OnboardingState => ({
   step: "scope",
   statuses,
   sel: openSelect<ConfigScope>("Step 1 of 6 · Where should this setup live?", [
-    { value: "global", label: "This machine — every project (global)", active: true },
-    { value: "local", label: "Just this folder (local, gitignored)" },
+    { value: "global", label: "This machine — every project (global)", active: (currentScope ?? "global") === "global" },
+    { value: "local", label: "Just this folder (local, gitignored)", active: currentScope === "local" },
   ]),
 })
 
