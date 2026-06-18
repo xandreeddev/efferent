@@ -442,3 +442,46 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
 
   return false
 }
+
+/**
+ * Append pasted text to whatever single-line text field the open overlay shows
+ * (API-key / connection-string prompts, login, the deny-reason box, an inline
+ * settings edit, or a select filter). Returns true if it consumed the paste, so
+ * the caller can `preventDefault()` the event and stop the hidden composer
+ * `<textarea>` from also receiving it. The `*Append` reducers are plain
+ * `value + s` concatenations, so the whole pasted string inserts in one step.
+ *
+ * Why this is separate from `overlayKey`: OpenTUI delivers a paste as a single
+ * bracketed-paste `paste` event, NOT as keypresses — so the per-key `printable`
+ * routing never sees it. The native `<textarea>` subscribes to paste itself;
+ * these custom prompt overlays don't, so pasting (e.g. an API key) did nothing.
+ */
+export const pasteIntoOverlay = (ctx: TuiContext, text: string): boolean => {
+  const { store } = ctx
+  if (text.length === 0) return false
+  const o = store.overlay()
+  switch (o.kind) {
+    case "select": {
+      const sel = filterAppend(o.sel, text)
+      store.setOverlay({ ...o, sel })
+      if (o.purpose.tag === "theme") previewTheme(sel)
+      return true
+    }
+    case "login":
+      store.setOverlay({ kind: "login", flow: loginAppend(o.flow, text) })
+      return true
+    case "onboarding":
+      store.setOverlay({ kind: "onboarding", state: onboardingAppend(o.state, text) })
+      return true
+    case "settings":
+      if (!isEditing(o.state)) return false
+      store.setOverlay({ kind: "settings", state: editAppend(o.state, text) })
+      return true
+    case "approval":
+      if (o.state.mode !== "deny") return false
+      store.setOverlay({ kind: "approval", state: reasonAppend(o.state, text) })
+      return true
+    default:
+      return false
+  }
+}
