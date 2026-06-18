@@ -21,6 +21,7 @@ import {
   ModelLive,
   ModelRegistryLive,
   OtlpTelemetryLive,
+  resolveConfigRoots,
   StoresLive,
   UtilityLlmLive,
   WebSearchLive,
@@ -214,9 +215,11 @@ const root = Command.make(
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
-      // Load settings
+      // Load settings + bind the workspace so AuthStore can read a local-tier
+      // credential (`<cwd>/.efferent/auth.json`); no-op in the EFFERENT_HOME sandbox.
       const settingsStore = yield* SettingsStore
       const settings = yield* settingsStore.load(workspace, homedir())
+      yield* (yield* AuthStore).init(workspace)
       const effectiveAllowBash = allowBash || settings.allowBash
 
       // Auto-inject AGENT.md / AGENT.local.md from the ancestor chain
@@ -375,9 +378,12 @@ const readDbUrl = (p: string): string | undefined => {
  */
 const seedDbUrlFromConfig = (workspaceDir: string): void => {
   if (process.env.EFFERENT_DB_URL) return
+  // EFFERENT_HOME → single source; else local <cwd> overrides global ~ (matches
+  // SettingsStore layering). `resolveConfigRoots` returns the `.efferent` dirs.
+  const roots = resolveConfigRoots(workspaceDir)
   const dbUrl =
-    readDbUrl(join(workspaceDir, ".efferent", "config.json")) ??
-    readDbUrl(join(homedir(), ".efferent", "config.json"))
+    (roots.local !== undefined ? readDbUrl(join(roots.local, "config.json")) : undefined) ??
+    readDbUrl(join(roots.global, "config.json"))
   if (dbUrl !== undefined) process.env.EFFERENT_DB_URL = dbUrl
 }
 

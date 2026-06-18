@@ -23,6 +23,13 @@ export const glyph = {
   /** Terminal status ticks for completed tree nodes. */
   ok: "✓",
   error: "✗",
+  /** Theme-preview sample markers (`view/ui/ThemePreview.tsx`): a warning sign,
+   *  a link arrow, an accent star, a dim bullet, and unified-diff gutter signs. */
+  warn: "⚠",
+  arrow: "→",
+  star: "★",
+  bullet: "·",
+  diff: { add: "+", remove: "-" },
   /** Block cursor for text-entry overlays. */
   cursorBlock: "█",
   /** "More above / below" scroll affordances in windowed lists. */

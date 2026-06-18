@@ -1,12 +1,14 @@
 import { Effect } from "effect"
 import {
   AuthStore,
+  type ConfigScope,
   ModelRegistry,
   SettingsStore,
   type AuthData,
   type ModelInfo,
 } from "@xandreed/sdk-core"
 import {
+  onboardingToLogin,
   onboardingToMainModel,
   onboardingToFastModel,
   onboardingToTheme,
@@ -37,6 +39,10 @@ export const openOnboardingFlow = (store: TuiStore) =>
       })
     })
   })
+
+/** scope → login (step 1 → step 2). */
+const transitionToLogin = (store: TuiStore, state: OnboardingState) =>
+  Effect.sync(() => store.setOverlay({ kind: "onboarding", state: onboardingToLogin(state) }))
 
 export const transitionToMainModel = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
@@ -93,15 +99,27 @@ const transitionToTheme = (store: TuiStore, state: OnboardingState) =>
     })
   })
 
+/** The tier onboarding writes to — the scope chosen in step 1 (stashed on the
+ *  run handle), defaulting to global (machine-wide) if somehow unset. */
+const onbScope = (store: TuiStore): ConfigScope => store.run.getConfigScope() ?? "global"
+
 export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
     switch (state.step) {
+      case "scope": {
+        const scope = selectedValue(state.sel) ?? "global"
+        // Stash the choice so EVERY onboarding write (auth via the login flow,
+        // and the settings writes below) lands in the same tier.
+        yield* Effect.sync(() => store.run.setConfigScope(scope))
+        yield* transitionToLogin(store, state)
+        break
+      }
       case "login":
         break
       case "mainModel": {
         const selected = selectedValue(state.sel)
         if (selected !== undefined) {
-          yield* applyModelSelection(store, selected)
+          yield* applyModelSelection(store, selected, onbScope(store))
         }
         yield* transitionToFastModel(store, state)
         break
@@ -115,7 +133,7 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
             return rest
           }
           return { ...curr, fastModel: `${selected.provider}:${selected.modelId}` }
-        })
+        }, onbScope(store))
         const nextSettings = yield* settingsStore.get()
         yield* Effect.sync(() => store.setStatus({ roles: rolesChip(nextSettings) }))
         yield* transitionToTheme(store, state)
@@ -124,7 +142,7 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
       case "theme": {
         const selected = selectedValue(state.sel)
         if (selected !== undefined) {
-          yield* applyTheme(store, selected)
+          yield* applyTheme(store, selected, onbScope(store))
         }
         yield* Effect.sync(() => {
           store.setOverlay({
@@ -171,9 +189,8 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
     switch (state.step) {
       case "mainModel":
-        yield* Effect.sync(() =>
-          store.setOverlay({ kind: "onboarding", state: startOnboarding(state.statuses) }),
-        )
+        // Back to the login step (step 2), not the scope picker.
+        yield* transitionToLogin(store, state)
         break
       case "fastModel":
         yield* transitionToMainModel(store, state)
@@ -184,6 +201,7 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
       case "complete":
         yield* transitionToTheme(store, state)
         break
+      case "scope":
       case "login":
         break
     }
@@ -192,7 +210,10 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
 export const finishOnboarding = (store: TuiStore) =>
   Effect.gen(function* () {
     const settingsStore = yield* SettingsStore
-    yield* settingsStore.update((curr) => ({ ...curr, onboarded: true }))
+    yield* settingsStore.update((curr) => ({ ...curr, onboarded: true }), onbScope(store))
+    // Onboarding is over — runtime writes revert to their own defaults
+    // (auth → global, settings → local).
+    yield* Effect.sync(() => store.run.setConfigScope(undefined))
     yield* Effect.sync(() => {
       store.closeOverlay()
       store.pushBlock({

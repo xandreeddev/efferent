@@ -48,6 +48,7 @@ const settingsLayer = (initial: Partial<Settings>) => {
       SettingsStore,
       SettingsStore.of({
         get: () => Ref.get(ref),
+        global: () => Ref.get(ref),
         update: (f) => Ref.updateAndGet(ref, f),
         load: () => Ref.get(ref),
       }),

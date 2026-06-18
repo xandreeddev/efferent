@@ -27,6 +27,8 @@ export const FixedSettingsStoreLive = (settings: Settings): Layer.Layer<Settings
       const ref = yield* Ref.make(settings)
       return SettingsStore.of({
         get: () => Ref.get(ref),
+        // No tier split in evals — the pinned value is both merged and global.
+        global: () => Ref.get(ref),
         update: (f) => Ref.updateAndGet(ref, f),
         load: () => Ref.get(ref),
       })

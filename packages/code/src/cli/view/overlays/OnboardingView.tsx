@@ -3,7 +3,16 @@ import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
 import type { SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { KeyHints, Logo, MODAL_RULE, PromptBody, Rule, SelectBody, type KeyHint } from "../ui/index.js"
+import {
+  KeyHints,
+  Logo,
+  MODAL_RULE,
+  PromptBody,
+  Rule,
+  SelectBody,
+  ThemePreview,
+  type KeyHint,
+} from "../ui/index.js"
 
 /** Footer hints, agy-style (accent key chips + dim labels via `KeyHints`),
  *  shared by every onboarding step. `canBack` is false only on the very first
@@ -32,7 +41,7 @@ type StepView =
 const stepView = (flow: LoginFlow): StepView => {
   switch (flow.step) {
     case "authMethod":
-      return { tag: "select", sel: flow.sel, canBack: false }
+      return { tag: "select", sel: flow.sel, canBack: true }
     case "provider":
       return { tag: "select", sel: flow.sel, canBack: true }
     case "apiKey":
@@ -62,6 +71,35 @@ const SelectStep = (props: { title: string; state: SelectState<unknown>; canBack
       {props.title}
     </text>
     <SelectBody state={props.state} labelBudget={MODAL_RULE - 2} footer={selectFooter(props.canBack)} />
+  </box>
+)
+
+// Theme step: the list on the left, a live `ThemePreview` on the right (agy
+// pattern). Moving the highlight live-swaps the active theme (`keys/overlay.ts`),
+// so the preview — painting the reactive tokens — recolours along with the list.
+const THEME_LIST_W = 28
+const THEME_PREVIEW_W = MODAL_RULE - THEME_LIST_W - 2 // −2 for the column gap
+// The full nav footer won't fit beside the preview in the narrow list column, so
+// the theme step uses a compact two-hint footer (↑/↓ + filter stay discoverable).
+const themeFooter: ReadonlyArray<KeyHint> = [
+  { key: "↵", label: "pick" },
+  { key: "esc", label: "back" },
+]
+
+/** The theme picker step — title above, list + live preview side by side.
+ *  Moving the highlight live-swaps the theme, so the preview recolours with it. */
+const ThemeStep = (props: { state: SelectState<string> }) => (
+  <box flexDirection="column">
+    <text fg={tokens.text.default} marginBottom={1}>
+      {props.state.title}
+    </text>
+    <box flexDirection="row">
+      <box width={THEME_LIST_W}>
+        <SelectBody state={props.state} labelBudget={THEME_LIST_W - 4} footer={themeFooter} />
+      </box>
+      <box width={2} />
+      <ThemePreview width={THEME_PREVIEW_W} />
+    </box>
   </box>
 )
 
@@ -134,23 +172,33 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
       paddingRight={2}
       paddingTop={1}
     >
-      <Logo variant="master" />
+      <Logo variant="code" />
 
-      <box width={MODAL_RULE} flexDirection="column">
+      {/* One consistent blank line between the logo and the step body on EVERY
+          step (marginTop), so the gap never changes as you move through. */}
+      <box width={MODAL_RULE} flexDirection="column" marginTop={1}>
+        {/* Step 1 — the scope picker is the FIRST screen, so it carries the
+            welcome line (agy-style). */}
+        <Show when={s().step === "scope"}>
+          {(() => {
+            const sel = (s() as Extract<OnboardingState, { step: "scope" }>).sel
+            return (
+              <box flexDirection="column">
+                <text fg={tokens.text.default}>
+                  {s().statuses.some((p) => p.configured !== undefined)
+                    ? "Welcome back to the Efferent CLI."
+                    : "Welcome to the Efferent CLI. You are currently not signed in."}
+                </text>
+                <text fg={tokens.text.muted} wrapMode="word" marginBottom={1}>
+                  {"We'll set up a provider, your main + fast models, and a theme — once."}
+                </text>
+                <SelectStep title={sel.title} state={sel} canBack={false} />
+              </box>
+            )
+          })()}
+        </Show>
+
         <Show when={s().step === "login"}>
-          {/* Welcome line only on the FIRST screen (authMethod), agy-style. Its
-              wording reflects whether a credential already exists. */}
-          <Show when={loginFlowState().step === "authMethod"}>
-            <text fg={tokens.text.default}>
-              {s().statuses.some((p) => p.configured !== undefined)
-                ? "Welcome back to the Efferent CLI. Reconfigure your setup below."
-                : "Welcome to the Efferent CLI. You are currently not signed in."}
-            </text>
-            <text fg={tokens.text.muted} wrapMode="word" marginBottom={1}>
-              {"Step 1 of 4 — we'll set up a provider, your main + fast models, and a theme."}
-            </text>
-            <box height={1} />
-          </Show>
           <OnboardingLoginView flow={loginFlowState()} />
         </Show>
 
@@ -171,7 +219,7 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         <Show when={s().step === "theme"}>
           {(() => {
             const sel = (s() as Extract<OnboardingState, { step: "theme" }>).sel
-            return <SelectStep title={sel.title} state={sel} canBack={true} />
+            return <ThemeStep state={sel} />
           })()}
         </Show>
 
