@@ -56,9 +56,18 @@ export const openOnboardingFlow = (store: TuiStore) =>
     })
   })
 
-/** scope → login (step 1 → step 2). */
+/** scope → login (step 1 → step 2). Statuses are re-read from the `AuthStore`
+ *  (the source of truth) every time, so stepping back out of login and into it
+ *  again — or arriving from the model step on Esc — always reflects credentials
+ *  added so far, instead of the snapshot captured when onboarding opened. */
 const transitionToLogin = (store: TuiStore, state: OnboardingState) =>
-  Effect.sync(() => store.setOverlay({ kind: "onboarding", state: onboardingToLogin(state) }))
+  Effect.gen(function* () {
+    const all = yield* (yield* AuthStore).all
+    const statuses = loginStatuses(all)
+    yield* Effect.sync(() =>
+      store.setOverlay({ kind: "onboarding", state: onboardingToLogin({ ...state, statuses }) }),
+    )
+  })
 
 export const transitionToMainModel = (store: TuiStore, state: OnboardingState) =>
   Effect.gen(function* () {
