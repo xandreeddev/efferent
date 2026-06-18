@@ -30,24 +30,32 @@ export const App = (props: { ctx: TuiContext }) => {
   const showConv = () => (wide() && !store.zoomed()) || store.focus() !== "side"
   const showSide = () => (wide() && !store.zoomed()) || store.focus() === "side"
 
+  // Onboarding is a full-screen takeover (agy-style): while it's open we render
+  // ONLY it — no panes/chrome behind it. That lets the onboarding be genuinely
+  // transparent (it shows the terminal background, like the rest of the app)
+  // with zero risk of the live rail bleeding through.
+  const onboarding = () => store.overlay().kind === "onboarding"
+
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Header ctx={props.ctx} />
-      <box flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
-        <Show when={showConv()}>
-          <Conversation ctx={props.ctx} />
-        </Show>
-        <Show when={showSide()}>
-          <Side ctx={props.ctx} />
-        </Show>
-      </box>
-      <Keybinds ctx={props.ctx} />
-      <SlashPalette ctx={props.ctx} />
-      <SearchStatus ctx={props.ctx} />
-      <InputBox ctx={props.ctx} />
-      <StatusBar ctx={props.ctx} />
-      {/* Modal layer — absolutely positioned, floats over everything above. */}
-      <Overlay ctx={props.ctx} />
+      <Show when={!onboarding()} fallback={<Overlay ctx={props.ctx} />}>
+        <Header ctx={props.ctx} />
+        <box flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
+          <Show when={showConv()}>
+            <Conversation ctx={props.ctx} />
+          </Show>
+          <Show when={showSide()}>
+            <Side ctx={props.ctx} />
+          </Show>
+        </box>
+        <Keybinds ctx={props.ctx} />
+        <SlashPalette ctx={props.ctx} />
+        <SearchStatus ctx={props.ctx} />
+        <InputBox ctx={props.ctx} />
+        <StatusBar ctx={props.ctx} />
+        {/* Modal layer — absolutely positioned, floats over everything above. */}
+        <Overlay ctx={props.ctx} />
+      </Show>
     </box>
   )
 }

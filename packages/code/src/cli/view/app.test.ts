@@ -260,7 +260,7 @@ test("an open select overlay floats over the panes with its options + hints", as
     expect(frame).toContain("google:gemini-3.5-flash")
     expect(frame).toContain("openai:gpt-5.5")
     expect(frame).toContain("◀ active") // the current model tag
-    expect(frame).toContain("↑↓ move") // the footer hint
+    expect(frame).toContain("↑/↓ move") // the footer hint (KeyHints: accent key + dim label)
     expect(frame).toContain("1/2") // the counter
   } finally {
     renderer.destroy()

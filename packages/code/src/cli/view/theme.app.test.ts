@@ -5,10 +5,20 @@ import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { openSelect } from "../presentation/selectBox.js"
 import { makeApp } from "./appHarness.js"
 import { createTuiStore, type TuiContext, type TuiStore } from "../state/store.js"
-import { setTheme } from "../state/theme.js"
+import { activeThemeName, setTheme } from "../state/theme.js"
+import { overlayKey } from "../keys/overlay.js"
+import type { Key } from "../keys/ParsedKey.js"
 
 // The active theme is a process-global signal — reset after each test.
 afterEach(() => setTheme("one-dark"))
+
+const key = (name: string): Key => ({
+  name,
+  ctrl: false,
+  shift: false,
+  meta: false,
+  option: false,
+})
 
 const cid = "00000000-0000-0000-0000-000000000000" as unknown as ConversationId
 const newStore = (): TuiStore =>
@@ -44,6 +54,33 @@ test("the App paints under tokyo-night (the reactive token proxy survives the na
   } finally {
     renderer.destroy()
   }
+})
+
+test("the theme picker live-recolours on highlight move and reverts on Esc", () => {
+  setTheme("one-dark")
+  const store = newStore()
+  const ctx = fakeCtx(store)
+  // one-dark is the active (entry) theme; registry order is efferent · one-dark · tokyo-night.
+  store.setOverlay({
+    kind: "select",
+    sel: openSelect("Select a theme", [
+      { value: "efferent", label: "efferent" },
+      { value: "one-dark", label: "one-dark", active: true },
+      { value: "tokyo-night", label: "tokyo-night" },
+    ]),
+    purpose: { tag: "theme" },
+  })
+
+  // Moving the highlight flips the active theme live (preview), not just the list.
+  overlayKey(ctx, key("down"))
+  expect(activeThemeName()).toBe("tokyo-night")
+  overlayKey(ctx, key("up"))
+  overlayKey(ctx, key("up"))
+  expect(activeThemeName()).toBe("efferent")
+
+  // Esc cancels: the preview reverts to the entry theme (the active-flagged option).
+  overlayKey(ctx, key("escape"))
+  expect(activeThemeName()).toBe("one-dark")
 })
 
 test("the :theme picker overlay floats with both registered themes", async () => {

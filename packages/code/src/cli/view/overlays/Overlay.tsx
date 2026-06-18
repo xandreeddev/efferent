@@ -5,6 +5,7 @@ import { ApprovalView } from "./ApprovalView.js"
 import { SelectList } from "./SelectList.js"
 import { Login } from "./Login.js"
 import { SettingsView } from "./SettingsView.js"
+import { OnboardingView } from "./OnboardingView.js"
 
 /**
  * The modal overlay host: an absolutely-positioned, full-screen layer (high
@@ -39,6 +40,12 @@ export const Overlay = (props: { ctx: TuiContext }) => {
         </Show>
         <Show when={o().kind === "approval"}>
           <ApprovalView state={(o() as Extract<OverlayState, { kind: "approval" }>).state} />
+        </Show>
+        <Show when={o().kind === "onboarding"}>
+          <OnboardingView
+            state={(o() as Extract<OverlayState, { kind: "onboarding" }>).state}
+            note={props.ctx.store.note()}
+          />
         </Show>
       </box>
     </Show>

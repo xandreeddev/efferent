@@ -101,6 +101,11 @@ export const Settings = Schema.Struct({
         "Active TUI colour theme name (e.g. 'one-dark', 'tokyo-night'). Switch at runtime with :theme; unknown names fall back to the default.",
     }),
   ),
+  onboarded: Schema.optional(
+    Schema.Boolean.annotations({
+      description: "Whether first-run onboarding has completed.",
+    }),
+  ),
   dbUrl: Schema.optional(
     Schema.String.annotations({
       description:
