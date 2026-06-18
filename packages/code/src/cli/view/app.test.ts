@@ -267,7 +267,7 @@ test("an open select overlay floats over the panes with its options + hints", as
   }
 })
 
-test("the :login overlay floats the auth-method chooser", async () => {
+test("the :login overlay floats the provider manager with statuses", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 120,
@@ -285,10 +285,11 @@ test("the :login overlay floats the auth-method chooser", async () => {
       ]),
     })
 
-    const frame = await waitForFrame((f) => f.includes("How do you want to log in?"))
-    expect(frame).toContain("How do you want to log in?") // the step title
-    expect(frame).toContain("Use a subscription")
-    expect(frame).toContain("Use an API key")
+    const frame = await waitForFrame((f) => f.includes("Sign in to your providers"))
+    expect(frame).toContain("Sign in to your providers") // the manager title
+    expect(frame).toContain("Anthropic")
+    expect(frame).toContain("subscription") // anthropic's status tag (oauth)
+    expect(frame).toContain("api key") // google's status tag
   } finally {
     renderer.destroy()
   }

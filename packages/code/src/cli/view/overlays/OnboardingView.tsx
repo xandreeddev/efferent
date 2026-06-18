@@ -40,9 +40,9 @@ type StepView =
 
 const stepView = (flow: LoginFlow): StepView => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return { tag: "select", sel: flow.sel, canBack: true }
-    case "provider":
+    case "method":
       return { tag: "select", sel: flow.sel, canBack: true }
     case "apiKey":
     case "localUrl":
@@ -77,7 +77,10 @@ const SelectStep = (props: { title: string; state: SelectState<unknown>; canBack
 // Theme step: the list on the left, a live `ThemePreview` on the right (agy
 // pattern). Moving the highlight live-swaps the active theme (`keys/overlay.ts`),
 // so the preview — painting the reactive tokens — recolours along with the list.
-const THEME_LIST_W = 28
+// A narrow list column leaves the bulk of the width for a larger preview — the
+// theme is the one step where seeing it big matters. 22 is the floor that still
+// fits the theme names (incl. the " ◀ active" tag) without ellipsis.
+const THEME_LIST_W = 22
 const THEME_PREVIEW_W = MODAL_RULE - THEME_LIST_W - 2 // −2 for the column gap
 // The full nav footer won't fit beside the preview in the narrow list column, so
 // the theme step uses a compact two-hint footer (↑/↓ + filter stay discoverable).
@@ -294,12 +297,13 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         </Show>
       </box>
 
-      {/* Transient hint line (e.g. the Ctrl-C-again-to-quit arming toast) —
-          rendered here because onboarding hides the status bar that normally
-          shows it. Dim + subtle, agy-style. */}
+      {/* Transient hint line (login confirmations, the Ctrl-C-again-to-quit
+          arming toast, db "connecting…") — rendered here because onboarding hides
+          the status bar that normally shows it. Sits just below the step body
+          (one blank line) instead of pinned to the bottom of the screen, so it
+          reads as feedback for the section above it. Dim + subtle, agy-style. */}
       <Show when={props.note !== undefined}>
-        <box flexGrow={1} />
-        <text fg={tokens.text.dim}>{props.note}</text>
+        <text fg={tokens.text.dim} marginTop={1}>{props.note}</text>
       </Show>
     </box>
   )

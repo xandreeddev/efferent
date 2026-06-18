@@ -18,6 +18,7 @@ import {
 } from "./selectBox.js"
 import { openPrompt, promptAppend, promptBackspace, type PromptState } from "./promptBox.js"
 import { themes } from "./theme/themes.js"
+import { glyph } from "./theme/glyphs.js"
 import { connLabel, type DbKind, type NamedConn } from "@xandreed/sdk-core"
 
 export type OnboardingStep =
@@ -162,14 +163,28 @@ export const onboardingToDatabase = (
   step: "database",
   statuses: state.statuses,
   sel: openSelect<DbManagerItem>("Step 6 of 6 · Databases", [
+    // Configured connections first — the default marked, so the active store is
+    // always visible at a glance.
     ...conns.map((c) => ({
       value: { tag: "use", conn: c } as DbManagerItem,
-      label: c.name === activeName ? `${connLabel(c.name, c.kind)}  ◀ default` : connLabel(c.name, c.kind),
+      label: connLabel(c.name, c.kind),
+      section: "configured",
       active: c.name === activeName,
+      tag: c.name === activeName ? "default" : undefined,
     })),
-    { value: { tag: "addRemote" } as DbManagerItem, label: "＋ add a remote database (Postgres)" },
-    { value: { tag: "addLocal" } as DbManagerItem, label: "＋ add a local database (SQLite)" },
-    { value: { tag: "done" } as DbManagerItem, label: "✓ done" },
+    // Then the two add actions, grouped under one heading.
+    {
+      value: { tag: "addRemote" } as DbManagerItem,
+      label: `${glyph.add} Remote database (Postgres)`,
+      section: "add a database",
+    },
+    {
+      value: { tag: "addLocal" } as DbManagerItem,
+      label: `${glyph.add} Local database (SQLite)`,
+      section: "add a database",
+    },
+    // …and a bare "done" separator row to finish.
+    { value: { tag: "done" } as DbManagerItem, label: `${glyph.ok} Done`, section: "" },
   ]),
 })
 

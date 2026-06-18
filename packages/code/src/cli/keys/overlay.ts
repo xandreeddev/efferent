@@ -326,7 +326,7 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
 
   if (o.kind === "onboarding") {
     const state = o.state
-    // Esc = Go Back (agy convention). On the first screen (login authMethod)
+    // Esc = Go Back (agy convention). On the first screen (the scope picker)
     // there's nowhere back to go: close if already signed in, else exit.
     if (key.name === "escape") {
       // Scope picker is the FIRST screen — nowhere back: close if already signed

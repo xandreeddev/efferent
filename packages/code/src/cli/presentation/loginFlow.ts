@@ -1,10 +1,13 @@
 /**
- * The in-app `:login` flow as a **pure** state machine (pi-shaped): pick an
- * auth method → pick a provider (with per-provider status tags) → either paste
- * an API key or run the OAuth subscription flow. It composes the existing
- * `selectBox` (menu steps) and `promptBox` (text-entry steps); transitions are
- * pure and the driver performs the effects (persist a key, start OAuth) on the
- * `LoginAdvance` outcome it gets back.
+ * The in-app `:login` flow as a **pure** state machine, shaped as a **provider
+ * manager** (uniform with the database manager): the home screen lists every
+ * provider with its configured status, so what's already set up is always
+ * visible and you can configure as many as you want. Pick a provider → choose a
+ * method (subscription/API key, only where both apply) → paste a key or run the
+ * OAuth flow → land back on the home list (now showing the new status). A `done`
+ * row finishes. It composes `selectBox` (menu steps) and `promptBox` (text-entry
+ * steps); transitions are pure and the driver performs the effects (persist a
+ * key, start OAuth, refresh the home list) on the `LoginAdvance` outcome.
  */
 
 import { type Provider } from "@xandreed/sdk-core"
@@ -23,6 +26,7 @@ import {
   promptBackspace,
   type PromptState,
 } from "./promptBox.js"
+import { glyph } from "./theme/glyphs.js"
 
 export type AuthMethod = "subscription" | "api_key"
 
@@ -32,17 +36,22 @@ export interface ProviderStatus {
   readonly configured: "api_key" | "oauth" | "local" | undefined
 }
 
+/** A row in the login home manager: configure a provider, or finish. */
+export type LoginHomeItem =
+  | { readonly tag: "provider"; readonly provider: Provider }
+  | { readonly tag: "done" }
+
 export type LoginFlow =
   | {
-      readonly step: "authMethod"
+      readonly step: "home"
       readonly statuses: ReadonlyArray<ProviderStatus>
-      readonly sel: SelectState<AuthMethod>
+      readonly sel: SelectState<LoginHomeItem>
     }
   | {
-      readonly step: "provider"
-      readonly method: AuthMethod
+      readonly step: "method"
       readonly statuses: ReadonlyArray<ProviderStatus>
-      readonly sel: SelectState<Provider>
+      readonly provider: Provider
+      readonly sel: SelectState<AuthMethod>
     }
   | {
       readonly step: "apiKey"
@@ -71,6 +80,7 @@ export type LoginAdvance =
   | { readonly kind: "startOAuth"; readonly provider: Provider; readonly flow: LoginFlow }
   | { readonly kind: "oauthManual"; readonly provider: Provider; readonly redirect: string }
   | { readonly kind: "localUrl"; readonly provider: Provider; readonly baseUrl: string }
+  | { readonly kind: "done" }
   | { readonly kind: "none" }
 
 const PROVIDER_LABEL: Record<Provider, string> = {
@@ -81,53 +91,57 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   ollama: "Ollama (local)",
 }
 
-// Anthropic and OpenAI expose subscription/OAuth flows; every provider accepts
-// an API key. Ollama is local-only and uses a URL prompt instead of a key.
-const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "openai"]
-const API_KEY_PROVIDERS: ReadonlyArray<Provider> = [
+/** The provider list shown on the home manager, in display order. */
+const HOME_PROVIDERS: ReadonlyArray<Provider> = [
   "anthropic",
-  "google",
   "openai",
+  "google",
   "opencode",
   "ollama",
 ]
+
+// Anthropic and OpenAI expose subscription/OAuth flows; every provider accepts
+// an API key. Ollama is local-only and uses a URL prompt instead of a key.
+const SUBSCRIPTION_PROVIDERS: ReadonlyArray<Provider> = ["anthropic", "openai"]
 const LOCAL_PROVIDERS: ReadonlyArray<Provider> = ["ollama"]
 
-const statusTag = (s: ProviderStatus["configured"]): string =>
-  s === "api_key"
-    ? "✓ api key"
-    : s === "oauth"
-      ? "✓ subscription"
-      : s === "local"
-        ? "✓ local"
-        : "• unconfigured"
+/** The trailing status tag for a configured provider (none when unconfigured —
+ *  an empty row reads as "not set up yet"). */
+const statusWord = (s: ProviderStatus["configured"]): string | undefined =>
+  s === "api_key" ? "api key" : s === "oauth" ? "subscription" : s === "local" ? "local" : undefined
 
-const pad = (s: string, n: number): string =>
-  s.length >= n ? s : s + " ".repeat(n - s.length)
-
-const providerStep = (
-  method: AuthMethod,
-  statuses: ReadonlyArray<ProviderStatus>,
-): LoginFlow => {
-  const allowed = method === "subscription" ? SUBSCRIPTION_PROVIDERS : API_KEY_PROVIDERS
-  const options: ReadonlyArray<SelectOption<Provider>> = allowed.map((p) => {
-    const configured = statuses.find((s) => s.provider === p)?.configured
-    return {
-      value: p,
-      label: `${pad(PROVIDER_LABEL[p], 10)}  ${statusTag(configured)}`,
-      active: configured !== undefined,
-    }
-  })
-  return {
-    step: "provider",
-    method,
-    statuses,
-    sel: openSelect(
-      method === "subscription" ? "Select a subscription provider" : "Select a provider",
-      options,
-    ),
-  }
+/** The home manager: every provider with its status, then a `done` row. Rebuilt
+ *  after each login so the status tags reflect what's now configured. */
+export const homeStep = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow => {
+  const options: ReadonlyArray<SelectOption<LoginHomeItem>> = [
+    ...HOME_PROVIDERS.map((p) => {
+      const configured = statuses.find((s) => s.provider === p)?.configured
+      return {
+        value: { tag: "provider", provider: p } as LoginHomeItem,
+        label: PROVIDER_LABEL[p],
+        section: "providers",
+        active: configured !== undefined,
+        tag: statusWord(configured),
+      }
+    }),
+    { value: { tag: "done" } as LoginHomeItem, label: `${glyph.ok} Done`, section: "" },
+  ]
+  return { step: "home", statuses, sel: openSelect("Sign in to your providers", options) }
 }
+
+/** The per-provider method choice (only for providers offering both). */
+const methodStep = (
+  statuses: ReadonlyArray<ProviderStatus>,
+  provider: Provider,
+): LoginFlow => ({
+  step: "method",
+  statuses,
+  provider,
+  sel: openSelect(`Log in to ${PROVIDER_LABEL[provider]}`, [
+    { value: "subscription", label: "Use a subscription (OAuth — Claude Pro/Max or ChatGPT)" },
+    { value: "api_key", label: "Use an API key" },
+  ]),
+})
 
 const apiKeyStep = (
   statuses: ReadonlyArray<ProviderStatus>,
@@ -170,22 +184,17 @@ export const oauthStep = (
   ),
 })
 
-export const openLogin = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow => ({
-  step: "authMethod",
-  statuses,
-  sel: openSelect("How do you want to log in?", [
-    { value: "subscription", label: "Use a subscription (OAuth — Claude Pro/Max or ChatGPT)" },
-    { value: "api_key", label: "Use an API key" },
-  ]),
-})
+/** Open the login manager, tagging which providers are already configured. */
+export const openLogin = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow =>
+  homeStep(statuses)
 
-// NB: `authMethod` and `provider` get separate case bodies (not a fallthrough)
-// so each `flow.sel` stays concretely typed — a shared body widens the union.
+// NB: `home` and `method` get separate case bodies (not a fallthrough) so each
+// `flow.sel` stays concretely typed — a shared body widens the union.
 export const loginMove = (flow: LoginFlow, dir: "up" | "down"): LoginFlow => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return { ...flow, sel: moveSelect(flow.sel, dir) }
-    case "provider":
+    case "method":
       return { ...flow, sel: moveSelect(flow.sel, dir) }
     default:
       return flow
@@ -194,9 +203,9 @@ export const loginMove = (flow: LoginFlow, dir: "up" | "down"): LoginFlow => {
 
 export const loginAppend = (flow: LoginFlow, ch: string): LoginFlow => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return { ...flow, sel: filterAppend(flow.sel, ch) }
-    case "provider":
+    case "method":
       return { ...flow, sel: filterAppend(flow.sel, ch) }
     case "apiKey":
       return { ...flow, prompt: promptAppend(flow.prompt, ch) }
@@ -209,9 +218,9 @@ export const loginAppend = (flow: LoginFlow, ch: string): LoginFlow => {
 
 export const loginBackspace = (flow: LoginFlow): LoginFlow => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return { ...flow, sel: filterBackspace(flow.sel) }
-    case "provider":
+    case "method":
       return { ...flow, sel: filterBackspace(flow.sel) }
     case "apiKey":
       return { ...flow, prompt: promptBackspace(flow.prompt) }
@@ -225,16 +234,20 @@ export const loginBackspace = (flow: LoginFlow): LoginFlow => {
 /** Esc: step back one level, or `undefined` to close the flow entirely. */
 export const loginBack = (flow: LoginFlow): LoginFlow | undefined => {
   switch (flow.step) {
-    case "authMethod":
+    case "home":
       return undefined
-    case "provider":
-      return openLogin(flow.statuses)
+    case "method":
+      return homeStep(flow.statuses)
     case "apiKey":
-      return providerStep("api_key", flow.statuses)
+      // Came via the method choice only for subscription-capable providers;
+      // others were reached straight from the home list.
+      return SUBSCRIPTION_PROVIDERS.includes(flow.provider)
+        ? methodStep(flow.statuses, flow.provider)
+        : homeStep(flow.statuses)
     case "oauth":
-      return providerStep("subscription", flow.statuses)
+      return methodStep(flow.statuses, flow.provider)
     case "localUrl":
-      return providerStep("api_key", flow.statuses)
+      return homeStep(flow.statuses)
   }
 }
 
@@ -244,21 +257,24 @@ export const loginSetOAuthStatus = (flow: LoginFlow, status: string): LoginFlow 
 
 export const loginAdvance = (flow: LoginFlow): LoginAdvance => {
   switch (flow.step) {
-    case "authMethod": {
-      const method = selectedValue(flow.sel)
-      return method === undefined
-        ? { kind: "none" }
-        : { kind: "flow", flow: providerStep(method, flow.statuses) }
-    }
-    case "provider": {
-      const provider = selectedValue(flow.sel)
-      if (provider === undefined) return { kind: "none" }
-      if (flow.method === "api_key" && LOCAL_PROVIDERS.includes(provider)) {
-        return { kind: "flow", flow: localUrlStep(flow.statuses, provider) }
+    case "home": {
+      const item = selectedValue(flow.sel)
+      if (item === undefined) return { kind: "none" }
+      if (item.tag === "done") return { kind: "done" }
+      const p = item.provider
+      if (LOCAL_PROVIDERS.includes(p)) {
+        return { kind: "flow", flow: localUrlStep(flow.statuses, p) }
       }
-      return flow.method === "api_key"
-        ? { kind: "flow", flow: apiKeyStep(flow.statuses, provider) }
-        : { kind: "startOAuth", provider, flow: oauthStep(flow.statuses, provider) }
+      return SUBSCRIPTION_PROVIDERS.includes(p)
+        ? { kind: "flow", flow: methodStep(flow.statuses, p) }
+        : { kind: "flow", flow: apiKeyStep(flow.statuses, p) }
+    }
+    case "method": {
+      const method = selectedValue(flow.sel)
+      if (method === undefined) return { kind: "none" }
+      return method === "api_key"
+        ? { kind: "flow", flow: apiKeyStep(flow.statuses, flow.provider) }
+        : { kind: "startOAuth", provider: flow.provider, flow: oauthStep(flow.statuses, flow.provider) }
     }
     case "apiKey": {
       const key = flow.prompt.value.trim()
