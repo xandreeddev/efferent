@@ -1,4 +1,4 @@
-import type { ModelInfo } from "@xandreed/sdk-core"
+import type { ConfigScope, ModelInfo } from "@xandreed/sdk-core"
 import {
   openLogin,
   loginMove,
@@ -19,6 +19,7 @@ import {
 import { themes } from "./theme/themes.js"
 
 export type OnboardingStep =
+  | "scope"
   | "login"
   | "mainModel"
   | "fastModel"
@@ -26,6 +27,11 @@ export type OnboardingStep =
   | "complete"
 
 export type OnboardingState =
+  | {
+      readonly step: "scope"
+      readonly statuses: ReadonlyArray<ProviderStatus>
+      readonly sel: SelectState<ConfigScope>
+    }
   | {
       readonly step: "login"
       readonly statuses: ReadonlyArray<ProviderStatus>
@@ -51,10 +57,21 @@ export type OnboardingState =
       readonly statuses: ReadonlyArray<ProviderStatus>
     }
 
+/** Step 1: choose whether this setup is machine-wide or just this folder. */
 export const startOnboarding = (statuses: ReadonlyArray<ProviderStatus>): OnboardingState => ({
-  step: "login",
+  step: "scope",
   statuses,
-  flow: openLogin(statuses),
+  sel: openSelect<ConfigScope>("Step 1 of 5 · Where should this setup live?", [
+    { value: "global", label: "This machine — every project (global)", active: true },
+    { value: "local", label: "Just this folder (local, gitignored)" },
+  ]),
+})
+
+/** Step 2: the credential/login flow (after the scope is chosen). */
+export const onboardingToLogin = (state: OnboardingState): OnboardingState => ({
+  step: "login",
+  statuses: state.statuses,
+  flow: openLogin(state.statuses),
 })
 
 export const onboardingToMainModel = (
@@ -70,7 +87,7 @@ export const onboardingToMainModel = (
   return {
     step: "mainModel",
     statuses: state.statuses,
-    sel: openSelect("Step 2 of 4 · Select your main model", options),
+    sel: openSelect("Step 3 of 5 · Select your main model", options),
   }
 }
 
@@ -90,7 +107,7 @@ export const onboardingToFastModel = (
   return {
     step: "fastModel",
     statuses: state.statuses,
-    sel: openSelect("Step 3 of 4 · Select your fast (helper) model", options),
+    sel: openSelect("Step 4 of 5 · Select your fast (helper) model", options),
   }
 }
 
@@ -103,7 +120,7 @@ export const onboardingToTheme = (state: OnboardingState, activeTheme: string): 
   return {
     step: "theme",
     statuses: state.statuses,
-    sel: openSelect("Step 4 of 4 · Pick a color theme", options),
+    sel: openSelect("Step 5 of 5 · Pick a color theme", options),
   }
 }
 
@@ -114,6 +131,8 @@ export const onboardingToComplete = (state: OnboardingState): OnboardingState =>
 
 export const onboardingMove = (state: OnboardingState, dir: "up" | "down"): OnboardingState => {
   switch (state.step) {
+    case "scope":
+      return { ...state, sel: moveSelect(state.sel, dir) }
     case "login":
       return { ...state, flow: loginMove(state.flow, dir) }
     case "mainModel":
@@ -129,6 +148,8 @@ export const onboardingMove = (state: OnboardingState, dir: "up" | "down"): Onbo
 
 export const onboardingAppend = (state: OnboardingState, ch: string): OnboardingState => {
   switch (state.step) {
+    case "scope":
+      return { ...state, sel: filterAppend(state.sel, ch) }
     case "login":
       return { ...state, flow: loginAppend(state.flow, ch) }
     case "mainModel":
@@ -144,6 +165,8 @@ export const onboardingAppend = (state: OnboardingState, ch: string): Onboarding
 
 export const onboardingBackspace = (state: OnboardingState): OnboardingState => {
   switch (state.step) {
+    case "scope":
+      return { ...state, sel: filterBackspace(state.sel) }
     case "login":
       return { ...state, flow: loginBackspace(state.flow) }
     case "mainModel":

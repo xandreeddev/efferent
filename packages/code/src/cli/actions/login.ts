@@ -85,7 +85,9 @@ const failLogin = (store: TuiStore, message: string): void => {
 export const commitApiKey = (store: TuiStore, provider: Provider, key: string) =>
   Effect.gen(function* () {
     const auth = yield* AuthStore
-    const res = yield* auth.setApiKey(provider, key).pipe(Effect.either)
+    // Onboarding may target the local tier (scope on the run handle); plain
+    // `:login` leaves it undefined → the global default.
+    const res = yield* auth.setApiKey(provider, key, store.run.getConfigScope()).pipe(Effect.either)
     if (res._tag === "Left") {
       yield* Effect.sync(() => failLogin(store, res.left.message))
       return
@@ -97,7 +99,7 @@ export const commitApiKey = (store: TuiStore, provider: Provider, key: string) =
 export const commitLocalUrl = (store: TuiStore, provider: Provider, baseUrl: string) =>
   Effect.gen(function* () {
     const auth = yield* AuthStore
-    const res = yield* auth.setLocal(provider, baseUrl).pipe(Effect.either)
+    const res = yield* auth.setLocal(provider, baseUrl, store.run.getConfigScope()).pipe(Effect.either)
     if (res._tag === "Left") {
       yield* Effect.sync(() => failLogin(store, res.left.message))
       return
@@ -116,7 +118,7 @@ const finishOAuth = (
   Effect.gen(function* () {
     const auth = yield* AuthStore
     const tokens = yield* (yield* AuthFlow).exchange(provider, code, verifier)
-    yield* auth.setOAuth(provider, tokens)
+    yield* auth.setOAuth(provider, tokens, store.run.getConfigScope())
     yield* Effect.sync(() => {
       stop()
       store.run.setOAuth(undefined)

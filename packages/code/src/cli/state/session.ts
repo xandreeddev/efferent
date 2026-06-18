@@ -1,6 +1,6 @@
 import { createSignal, type Accessor } from "solid-js"
 import type { Fiber } from "effect"
-import type { ConversationId } from "@xandreed/sdk-core"
+import type { ConfigScope, ConversationId } from "@xandreed/sdk-core"
 import { idleAgentState, type AgentState } from "../presentation/agentState.js"
 import type { StatusState } from "../presentation/statusBar.js"
 
@@ -44,6 +44,14 @@ export interface RunHandle {
   setOAuth(session: OAuthSession | undefined): void
   getCtrlCArmedAt(): number | undefined
   setCtrlCArmedAt(at: number | undefined): void
+  /**
+   * The config tier onboarding is writing to (`"global"` machine-wide or
+   * `"local"` this folder), or `undefined` outside onboarding so writes fall
+   * back to their own defaults (auth → global, settings → local). Set when the
+   * onboarding scope step is answered; cleared when onboarding ends.
+   */
+  getConfigScope(): ConfigScope | undefined
+  setConfigScope(scope: ConfigScope | undefined): void
 }
 
 const createRunHandle = (conversationId: ConversationId): RunHandle => {
@@ -53,6 +61,7 @@ const createRunHandle = (conversationId: ConversationId): RunHandle => {
   let oauth: OAuthSession | undefined
   let browseList: ReadonlyArray<BrowseEntry> = []
   let ctrlCArmedAt: number | undefined
+  let configScope: ConfigScope | undefined
 
   return {
     getConversationId: () => cid,
@@ -79,6 +88,10 @@ const createRunHandle = (conversationId: ConversationId): RunHandle => {
     getCtrlCArmedAt: () => ctrlCArmedAt,
     setCtrlCArmedAt: (at) => {
       ctrlCArmedAt = at
+    },
+    getConfigScope: () => configScope,
+    setConfigScope: (s) => {
+      configScope = s
     },
   }
 }

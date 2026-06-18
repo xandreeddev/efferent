@@ -261,9 +261,9 @@ export const ModelRegistryLive = Layer.effect(
         }),
       ),
 
-      select: (info) =>
+      select: (info, scope) =>
         settings
-          .update((s) => ({ ...s, model: formatModel(info.provider, info.modelId) }))
+          .update((s) => ({ ...s, model: formatModel(info.provider, info.modelId) }), scope)
           .pipe(
             Effect.as({
               provider: info.provider,

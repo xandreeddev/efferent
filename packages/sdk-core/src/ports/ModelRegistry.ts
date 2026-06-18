@@ -1,5 +1,6 @@
 import { Context, Data, type Effect } from "effect"
 import type { ModelInfo, ModelSelection, Provider } from "../entities/Model.js"
+import type { ConfigScope } from "./SettingsStore.js"
 
 /** Listing the live model catalogue failed (network / auth / parse). */
 export class ModelListError extends Data.TaggedError("ModelListError")<{
@@ -28,11 +29,15 @@ export class ModelRegistry extends Context.Tag("@xandreed/sdk-core/ModelRegistry
      * configured. Embeddings/audio/image models are filtered out.
      */
     readonly list: Effect.Effect<ReadonlyArray<ModelInfo>, ModelListError>
-    /** Switch the active model and persist the choice. Returns the new selection. */
-    readonly select: (info: {
-      readonly provider: Provider
-      readonly modelId: string
-      readonly contextWindow?: number
-    }) => Effect.Effect<ModelSelection>
+    /** Switch the active model and persist the choice to the given config tier
+     *  (default `"local"`). Returns the new selection. */
+    readonly select: (
+      info: {
+        readonly provider: Provider
+        readonly modelId: string
+        readonly contextWindow?: number
+      },
+      scope?: ConfigScope,
+    ) => Effect.Effect<ModelSelection>
   }
 >() {}

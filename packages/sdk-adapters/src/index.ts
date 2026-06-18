@@ -1,5 +1,6 @@
 export * from "./auth/env.js"
 export * from "./auth/local.js"
+export * from "./configRoots.js"
 export * from "./auth/oauth/anthropic.js"
 export * from "./auth/oauth/openai.js"
 export * from "./auth/oauth/flowLive.js"

@@ -1,5 +1,6 @@
 import { Context, Data, type Effect, type Redacted } from "effect"
 import type { Provider } from "../entities/Model.js"
+import type { ConfigScope } from "./SettingsStore.js"
 
 /**
  * A stored provider credential. Either a raw API key, or an OAuth
@@ -54,7 +55,14 @@ export class AuthError extends Data.TaggedError("AuthError")<{
 export class AuthStore extends Context.Tag("@xandreed/sdk-core/AuthStore")<
   AuthStore,
   {
-    /** The full credential map — drives the `:login` provider-status tags. */
+    /**
+     * Bind the workspace `cwd` so the store can read/merge a local
+     * `<cwd>/.efferent/auth.json` (local overrides global per provider). No-op in
+     * the single-source `EFFERENT_HOME` sandbox. Call once at startup before any
+     * credential is resolved.
+     */
+    readonly init: (cwd: string) => Effect.Effect<void>
+    /** The full credential map (merged global ∪ local) — drives `:login` tags. */
     readonly all: Effect.Effect<AuthData>
     /** The raw stored credential for a provider, if any. */
     readonly get: (p: Provider) => Effect.Effect<Credential | undefined>
@@ -66,16 +74,25 @@ export class AuthStore extends Context.Tag("@xandreed/sdk-core/AuthStore")<
     readonly resolveKey: (
       p: Provider,
     ) => Effect.Effect<Redacted.Redacted | undefined, AuthError>
-    /** Store (and persist) an API-key credential for a provider. */
-    readonly setApiKey: (p: Provider, key: string) => Effect.Effect<void, AuthError>
+    /** Store (and persist) an API-key credential for a provider (default global). */
+    readonly setApiKey: (
+      p: Provider,
+      key: string,
+      scope?: ConfigScope,
+    ) => Effect.Effect<void, AuthError>
     /** Store (and persist) an OAuth-subscription credential for a provider. */
     readonly setOAuth: (
       p: Provider,
       tokens: OAuthTokens,
+      scope?: ConfigScope,
     ) => Effect.Effect<void, AuthError>
     /** Store (and persist) a local (no-auth) credential, optionally with a custom base URL. */
-    readonly setLocal: (p: Provider, baseUrl?: string) => Effect.Effect<void, AuthError>
-    /** Forget a provider's credential (`:logout`). */
+    readonly setLocal: (
+      p: Provider,
+      baseUrl?: string,
+      scope?: ConfigScope,
+    ) => Effect.Effect<void, AuthError>
+    /** Forget a provider's credential (`:logout`) — from whichever tier(s) hold it. */
     readonly remove: (p: Provider) => Effect.Effect<void, AuthError>
   }
 >() {}

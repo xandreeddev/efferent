@@ -120,13 +120,15 @@ export const runTuiModeSolid = (
         footer: `logs: tail -f ${logFilePath()}`,
         sidePane,
       })
-      // Boot conversation handling: if not onboarded or has no credentials, force onboarding.
-      // Otherwise, resume or show startup helper/picker.
+      // Boot conversation handling: onboarding is gated SOLELY on whether a
+      // usable credential exists (merged global ∪ local). A credential is the
+      // real "set up" signal — the model always has a default — so a global
+      // login covers every workspace (once per machine), and no per-folder
+      // `config.json` can re-trigger or suppress onboarding.
       const authAll = yield* (yield* AuthStore).all
       const hasCreds = Object.keys(authAll).length > 0
-      const isOnboarded = settings.onboarded === true
 
-      if (!hasCreds || !isOnboarded) {
+      if (!hasCreds) {
         yield* openOnboardingFlow(store)
       } else if (input.resumeConversationId !== undefined) {
         yield* loadInitialConversation(store, cid)
