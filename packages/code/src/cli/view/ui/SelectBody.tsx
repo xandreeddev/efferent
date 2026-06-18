@@ -138,7 +138,11 @@ export const SelectBody = (props: {
       <box height={1} />
       <box flexDirection="row">
         <KeyHints hints={props.footer} grow />
-        <text fg={tokens.text.muted}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
+        {/* The `i/N` counter is meaningful for flat lists (models/themes); in a
+            grouped manager it would count action/separator rows, so it's hidden. */}
+        <Show when={!grouped()}>
+          <text fg={tokens.text.muted}>{n() === 0 ? "0/0" : `${s().selected + 1}/${n()}`}</text>
+        </Show>
       </box>
     </box>
   )

@@ -22,6 +22,8 @@ import {
   advanceOnboardingStep,
   onboardingBack,
   finishOnboarding,
+  editOnboardingDatabase,
+  removeOnboardingDatabase,
 } from "../actions/onboarding.js"
 import {
   beginEdit,
@@ -399,6 +401,19 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
         return true
       }
       return true
+    }
+
+    // In the DB manager (not the add/edit prompt), e/d edit/remove the highlighted
+    // configured connection — claimed before the printable-filter fallthrough.
+    if (state.step === "database" && state.connect === undefined) {
+      if (key.name === "e") {
+        void ctx.run(editOnboardingDatabase(store, state))
+        return true
+      }
+      if (key.name === "d") {
+        void ctx.run(removeOnboardingDatabase(store, state))
+        return true
+      }
     }
 
     if (

@@ -26,6 +26,13 @@ export interface SelectOption<T> {
    * row's active/selected state. Omit for no tag.
    */
   readonly tag?: string | undefined
+  /**
+   * A standalone manager action (e.g. `add a database`, `done`) rather than a
+   * filterable item. Hidden while a filter is active — typing searches the items,
+   * and the actions reappear when the filter clears (and they're excluded from the
+   * `i/N` count). Omit for ordinary, filterable rows.
+   */
+  readonly action?: boolean | undefined
 }
 
 export interface SelectState<T> {
@@ -43,7 +50,11 @@ const narrow = <T>(
   filter: string,
 ): ReadonlyArray<SelectOption<T>> => {
   const q = filter.trim().toLowerCase()
-  return q.length === 0 ? all : all.filter((o) => o.label.toLowerCase().includes(q))
+  // While filtering, search only the items — standalone actions (add/done) are
+  // not filterable, so they drop out and return once the filter clears.
+  return q.length === 0
+    ? all
+    : all.filter((o) => o.action !== true && o.label.toLowerCase().includes(q))
 }
 
 export const openSelect = <T>(

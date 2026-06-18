@@ -38,8 +38,9 @@ export const glyph = {
   pointer: "›",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
-  /** "add a new item" marker for manager rows (login providers / db connections). */
-  add: "＋",
+  /** "add a new item" marker for manager rows (db connections). Plain ASCII so it
+   *  renders in every terminal font (the fullwidth ＋ U+FF0B tofu'd on some). */
+  add: "+",
   /** Context-viewer message-line icons, by role. */
   msg: { user: "❯", assistant: "●", tool: "⚙", result: "↳" },
   /**
