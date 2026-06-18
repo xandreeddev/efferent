@@ -68,10 +68,21 @@ const afterLogin = (store: TuiStore, provider: Provider, how: string) =>
     }
     // Rebuild the home list against the now-updated credentials and show it,
     // with a transient confirmation (the onboarding rail is hidden, so a toast
-    // is the only visible feedback there).
+    // is the only visible feedback there). Refresh the onboarding state's own
+    // `statuses` too (not just the flow), so stepping away and back — or the
+    // scope step's "welcome back" line — also reflects the new credential.
     const all = yield* auth.all
+    const statuses = loginStatuses(all)
     yield* Effect.sync(() => {
-      setFlow(store, homeStep(loginStatuses(all)))
+      const o = store.overlay()
+      if (o.kind === "login") {
+        store.setOverlay({ kind: "login", flow: homeStep(statuses) })
+      } else if (o.kind === "onboarding" && o.state.step === "login") {
+        store.setOverlay({
+          kind: "onboarding",
+          state: { ...o.state, statuses, flow: homeStep(statuses) },
+        })
+      }
       store.toast(`logged in to ${provider} (${how})`)
     })
   })
