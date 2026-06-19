@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
+import { Clock, Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
   connLabel,
@@ -28,6 +28,13 @@ import { makeSubmit } from "./actions/submit.js"
 import { makeSpawnAgent } from "./actions/spawnAgent.js"
 import { makeFleetSupervisor } from "./state/fleet.js"
 import type { Directive } from "../usecases/directive.js"
+import {
+  cronMatches,
+  loadJobs,
+  markJobRun,
+  minuteBucket,
+  parseCron,
+} from "../usecases/schedule.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { openOnboardingFlow } from "./actions/onboarding.js"
@@ -339,6 +346,40 @@ export const runTuiModeSolid = (
             if (store.busy()) store.tickSpinner()
           }).pipe(Effect.delay("120 millis")),
         ),
+      )
+
+      // 7c. Cron tick (Phase 5) — once a minute, fire this workspace's due
+      //     scheduled jobs as detached agents. File-backed job list; the tick
+      //     runs only while the TUI is up (a headless daemon is the Phase 7
+      //     follow-up). Fires at most once per matching minute (minuteBucket).
+      const tickScheduler = Effect.gen(function* () {
+        const nowMs = yield* Clock.currentTimeMillis
+        const now = new Date(nowMs)
+        const jobs = yield* loadJobs()
+        for (const job of jobs) {
+          if (job.cwd !== input.cwd) continue
+          const fields = parseCron(job.cron)
+          if (fields === undefined || !cronMatches(fields, now)) continue
+          if (job.lastRunMs !== undefined && minuteBucket(job.lastRunMs) === minuteBucket(nowMs)) {
+            continue
+          }
+          yield* markJobRun(job.id, nowMs)
+          store.pushBlock({ kind: "info", text: `⏰ scheduled job fired (${job.cron}): ${job.prompt}` })
+          yield* Effect.forkDaemon(
+            scopeRuntime
+              .spawnAgent({
+                rootConversationId: store.run.getConversationId(),
+                folder: job.folder,
+                task: job.prompt,
+                title: `scheduled: ${job.prompt.slice(0, 30)}`,
+                ...(job.agent !== undefined ? { agent: job.agent } : {}),
+              })
+              .pipe(Effect.provide(approval.layer), Effect.ignore),
+          )
+        }
+      }).pipe(Effect.catchAll(() => Effect.void))
+      yield* Effect.forkScoped(
+        Effect.forever(tickScheduler.pipe(Effect.delay("60 seconds"))),
       )
 
       // 8. Mount Solid. `createComponent` avoids JSX in this `.ts` driver.

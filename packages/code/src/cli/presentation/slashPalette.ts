@@ -48,6 +48,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":stop", description: "Stop a running fired agent: :stop <id> (or :stop to list)" },
   { name: ":goal", description: "Set a standing goal: :goal <objective> [:: criteria] (· clear · bare shows it)" },
   { name: ":verify", description: "Spawn a fresh verifier to judge the goal (or :verify <objective>)" },
+  { name: ":schedule", description: "Cron a job: :schedule add <cron> :: <folder> :: <prompt> (· list · rm <id>)" },
   { name: ":build", description: "Build a new session from the turns selected in :context" },
   { name: ":browse", description: "Pick a conversation to resume (contextual menu)" },
   { name: ":resume", description: "Resume a conversation by id, e.g. :resume <id>" },

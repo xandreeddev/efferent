@@ -25,6 +25,13 @@ import { logout, openLoginFlow, openLogoutPicker } from "../actions/login.js"
 import { openOnboardingFlow } from "../actions/onboarding.js"
 import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
 import { parseDirective } from "../../usecases/directive.js"
+import {
+  addJob,
+  loadJobs,
+  parseScheduleArg,
+  removeJob,
+  type ScheduledJob,
+} from "../../usecases/schedule.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
@@ -240,6 +247,91 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       }
       ctx.stopAgent(id)
       store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
+      return
+    }
+    case ":schedule": {
+      const a = arg ?? ""
+      if (a.startsWith("add")) {
+        const parsed = parseScheduleArg(a.replace(/^add\s+/, ""))
+        if (parsed === undefined) {
+          store.pushBlock({
+            kind: "info",
+            text: "usage: :schedule add <cron> :: <folder> :: <prompt> [:: <agent>]  (e.g. :schedule add 0 9 * * 1 :: . :: review open PRs)",
+          })
+          return
+        }
+        const job: ScheduledJob = {
+          id: crypto.randomUUID(),
+          cron: parsed.cron,
+          cwd: store.status().cwd,
+          folder: parsed.folder,
+          prompt: parsed.prompt,
+          ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+          createdAt: Date.now(),
+        }
+        void ctx.run(
+          addJob(job).pipe(
+            Effect.flatMap(() =>
+              Effect.sync(() =>
+                store.pushBlock({
+                  kind: "info",
+                  text: `scheduled (${job.cron}): ${job.prompt}${job.agent !== undefined ? ` [${job.agent}]` : ""} — fires while efferent is open. :schedule to list · :schedule rm ${job.id.slice(0, 8)} to drop.`,
+                }),
+              ),
+            ),
+          ),
+        )
+        return
+      }
+      if (a.startsWith("rm") || a.startsWith("remove")) {
+        const id = a.replace(/^(rm|remove)\s+/, "").trim()
+        if (id.length === 0) {
+          store.pushBlock({ kind: "info", text: "usage: :schedule rm <id>" })
+          return
+        }
+        void ctx.run(
+          loadJobs().pipe(
+            Effect.flatMap((jobs) => {
+              const match = jobs.find((j) => j.id === id || j.id.startsWith(id))
+              if (match === undefined) {
+                return Effect.sync(() =>
+                  store.pushBlock({ kind: "info", text: `no scheduled job '${id}'` }),
+                )
+              }
+              return removeJob(match.id).pipe(
+                Effect.flatMap(() =>
+                  Effect.sync(() =>
+                    store.pushBlock({ kind: "info", text: `removed scheduled job: ${match.prompt}` }),
+                  ),
+                ),
+              )
+            }),
+          ),
+        )
+        return
+      }
+      void ctx.run(
+        loadJobs().pipe(
+          Effect.flatMap((jobs) =>
+            Effect.sync(() => {
+              const mine = jobs.filter((j) => j.cwd === store.status().cwd)
+              store.pushBlock({
+                kind: "info",
+                text:
+                  mine.length === 0
+                    ? "no scheduled jobs — :schedule add <cron> :: <folder> :: <prompt>"
+                    : "scheduled jobs (this workspace):\n" +
+                      mine
+                        .map(
+                          (j) =>
+                            `  ${j.id.slice(0, 8)}  ${j.cron}  ${j.folder}  ${j.prompt}${j.agent !== undefined ? ` [${j.agent}]` : ""}`,
+                        )
+                        .join("\n"),
+              })
+            }),
+          ),
+        ),
+      )
       return
     }
     case ":tools": {
