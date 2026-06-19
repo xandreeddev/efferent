@@ -95,6 +95,28 @@ standard day-of-month / day-of-week OR semantics); a `minuteBucket` guard fires 
 most once. The tick runs in the TUI runtime while it's up, and headless in `--mode daemon` — both
 filter jobs to their own workspace `cwd`.
 
+## Becoming an assistant — how work arrives
+
+Scheduling is the first instance of a broader idea: a **trigger** is anything that turns an
+external event into an agent run. Cron is the *time* trigger; the family that makes the fleet a
+real background assistant is `cron` · `webhook`/HTTP · `manual` — each routing an event payload
+into a fresh run (the payload templated into the task the way
+[declarative tools](/docs/guides/fleet/) fill `${param}` placeholders), hosted by the daemon.
+
+That **front door** is what efferent doesn't have yet — and it's what the "how does this become an
+assistant?" questions keep circling:
+
+- **Review on PR open** — a GitHub `pull_request` webhook fires the `reviewer` role scoped to the
+  repo; it reads the diff (via `gh`) and posts comments. *(Today's approximation: a cron job that
+  polls for new PRs, or CI calling `efferent --print` on the diff.)*
+- **A social agent on a cadence** — a Friday cron fires a role that drafts the week's post; or a
+  daily job summarises the day's commits to the blackboard for it to pick up.
+- **Background operation** — triggers live in the daemon, so work arrives and runs whether or not a
+  TUI is open; you attach later to see what happened.
+
+This is the high-leverage **next build** (not shipped): a `cron | webhook | manual` trigger layer,
+triggers defined as files like agents and tools, with GitHub as the first webhook adapter.
+
 ## The execution model is staged
 
 The agent loop is **identical** whether the fleet runs in your TUI or behind a daemon — only
@@ -107,6 +129,18 @@ The agent loop is **identical** whether the fleet runs in your TUI or behind a d
   `rpc` / `json` protocol extended with `fleet.spawn` / `send` / `list` / `subscribe`. Agents are
   *still fibers*; the bus just fans over a socket. `modes/daemon.ts` is the seam — today it runs
   the scheduler headless; the attach protocol is the deferred remainder.
+
+:::note[Durability: record vs. resumable execution]
+efferent persists the **transcript** — every message lands in the store, at run boundaries
+(`ConversationStore.append` in `runAgent`; a sub-agent flushes its tail when the spawn finishes).
+`:resume` reloads that history and **re-drives** the agent — the model re-derives, file writes are
+already on disk. That is *not* the same as a per-step event-log **replay** (Temporal / Vercel
+Workflow), which resumes *mid-run* without re-running completed steps. The small, cheap win here is
+**per-turn flushing** — append each turn's tail as it lands instead of the whole run at the end.
+Full replay only earns its complexity for long autonomous background runs in the daemon, and trades
+against re-running non-idempotent steps — so it's deliberately not a priority; the transcript +
+`:resume` covers the rest.
+:::
 
 ## The seams
 
@@ -121,10 +155,23 @@ The agent loop is **identical** whether the fleet runs in your TUI or behind a d
 | Persistent nodes | `sdk-core/ports/ContextTreeStore.ts` |
 | The headless daemon | `code/modes/daemon.ts` |
 
+## Prior art — Vercel Eve
+
+Vercel's [Eve](https://vercel.com/eve) — an open-source "filesystem-first agent framework" — is the
+closest thing in the wild, and it validates this shape: agents, tools, and skills as files; cron
+*schedules* and event *channels* (GitHub / Slack / HTTP → an agent turn) as the trigger model;
+durable execution. efferent already does the filesystem-first part, and differs on purpose:
+**local-first** (no serverless lock-in), a **peer comms bus + blackboard** (not only parent→child
+delegation), and a **standing directive + fresh-context verifier** (Eve leaves goal-pursuit to the
+model). The one pattern worth borrowing next is **channels** — the event front door above.
+
 ## Deferred
 
-Each piece ships a real v1 with an honest remainder: **MCP** server refs (a larger client; the
-declarative format covers tool-sharing), an **autonomous supervisor loop** and **persisting the
-directive across resume**, a **live reactive cockpit pane** (`:fleet` is today's snapshot), a
-**model-facing `schedule` tool** (human-driven for now), and the full **Stage B attach protocol**.
-The substrate — fibers, the supervisor, the bus, the context tree — is what the rest hangs off.
+Each piece ships a real v1 with an honest remainder. The named next items: **event/webhook
+triggers** (the channels front door above — `webhook` / `manual` alongside the cron that's built),
+the **autonomous supervisor loop** (pursue the directive with no human turn), the full **Stage B
+attach protocol**, and **per-turn flushing** (the durability nudge above). Further out: **MCP**
+server refs (a larger client; the declarative format already covers tool-sharing), a **live
+reactive cockpit pane** (`:fleet` is today's snapshot), and **persisting the directive across
+resume**. The substrate — fibers, the supervisor, the bus, the context tree — is what the rest
+hangs off.
