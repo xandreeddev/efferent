@@ -18,6 +18,7 @@ import {
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 import { ansi } from "../terminal.js"
@@ -75,6 +76,7 @@ export interface PrintModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
   readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope
   readonly allowBash: boolean
   readonly resumeConversationId?: string
@@ -106,11 +108,11 @@ export const runPrintMode = (
     const hooks = makeEventHooks(queue)
     const runtime = buildScopeRuntime(
       input.rootScope,
-      { skills: input.skills, agents: input.agents, allowBash: input.allowBash },
+      { skills: input.skills, agents: input.agents, tools: input.tools, allowBash: input.allowBash },
       hooks,
     )
 
-    const prompt = coderPrompt(input.cwd, new Date(), input.skills, [], input.agents)
+    const prompt = coderPrompt(input.cwd, new Date(), input.skills, [], input.agents, input.tools)
     const result = yield* runAgent(
       coderAgentConfig(input.rootScope, runtime, prompt),
       cid,

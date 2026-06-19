@@ -3,6 +3,7 @@ import {
   type InstructionFile,
   renderInstructionsSection,
 } from "../usecases/discoverInstructionFiles.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 
 const systemSection = `# System
 - All text you output outside of tool use is displayed to the user. Use it sparingly — see "Doing tasks" below.
@@ -47,6 +48,19 @@ const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   return `
 # Skills
 The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
+
+${lines}
+`
+}
+
+const renderToolsSection = (tools: ReadonlyArray<ToolDefinition>): string => {
+  if (tools.length === 0) return ""
+  const lines = tools
+    .map((t) => `- ${t.name}(${t.params.map((p) => p.name).join(", ")}) — ${t.description}`)
+    .join("\n")
+  return `
+# Custom tools
+Project-defined tools, callable via run_tool({ name, args }) where 'args' is a JSON object of the named string params. Use one when its description fits the task.
 
 ${lines}
 `
@@ -149,12 +163,13 @@ export const coderPrompt = (
   skills: ReadonlyArray<Skill> = [],
   instructionFiles: ReadonlyArray<InstructionFile> = [],
   agents: ReadonlyArray<AgentDefinition> = [],
+  tools: ReadonlyArray<ToolDefinition> = [],
   variant?: string,
 ): Prompt => ({
   name: "coder",
   version: CODER_PROMPT_VERSION,
   variant,
-  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents),
+  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools),
 })
 
 export const coderSystemPrompt = (
@@ -163,6 +178,7 @@ export const coderSystemPrompt = (
   skills: ReadonlyArray<Skill> = [],
   instructionFiles: ReadonlyArray<InstructionFile> = [],
   agents: ReadonlyArray<AgentDefinition> = [],
+  tools: ReadonlyArray<ToolDefinition> = [],
 ): string =>
   `You are a coding assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there. If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
@@ -187,8 +203,8 @@ ${systemSection}
 - run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
-- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
-${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${coordinationSection}
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
+${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}
 ${doingTasksSection}
 
 ${toneSection}

@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path"
 import { Data, Effect } from "effect"
 import { FileSystem, Http } from "@xandreed/sdk-core"
 import { parseAgentFile } from "./loadAgents.js"
+import { parseToolFile } from "./loadTools.js"
 
 /** A git-import failed at the spec/network/listing level (per-file problems are
  *  collected in `skipped`, not thrown). */
@@ -74,9 +75,16 @@ const safeJsonArray = (s: string): ReadonlyArray<ContentsEntry> | undefined => {
  * bad files are reported in `skipped`, not written. No git, no npm — just the
  * `Http` + `FileSystem` ports.
  */
-export const importAgentsFromGithub = (
+/**
+ * Generic GitHub import: fetch `.md` definitions (a single file or every `.md`
+ * in a directory) and write the valid ones into `destDir`. `validate` returns
+ * the canonical name to file it under (used as `<name>.md`), or undefined to
+ * skip it. Shared by the agent + tool importers.
+ */
+export const importDefsFromGithub = (
   spec: string,
   destDir: string,
+  validate: (content: string) => string | undefined,
 ): Effect.Effect<ImportResult, ImportAgentsError, Http | FileSystem> =>
   Effect.gen(function* () {
     const parsed = parseSpec(spec)
@@ -106,12 +114,12 @@ export const importAgentsFromGithub = (
           skipped.push(`${filename}: too large (likely truncated)`)
           return
         }
-        const def = parseAgentFile(res.body, "")
-        if (def === undefined) {
-          skipped.push(`${filename}: missing name/description frontmatter`)
+        const name = validate(res.body)
+        if (name === undefined) {
+          skipped.push(`${filename}: invalid (missing required frontmatter)`)
           return
         }
-        const dest = resolve(destDir, `${def.name}.md`)
+        const dest = resolve(destDir, `${name}.md`)
         yield* fs.write(dest, res.body).pipe(
           Effect.mapError(
             (e) =>
@@ -120,7 +128,7 @@ export const importAgentsFromGithub = (
               }),
           ),
         )
-        written.push(def.name)
+        written.push(name)
       })
 
     if (path.endsWith(".md")) {
@@ -165,3 +173,17 @@ export const importAgentsFromGithub = (
 
     return { written, skipped }
   })
+
+/** Import agent ROLES from GitHub into `.efferent/agents/`. */
+export const importAgentsFromGithub = (
+  spec: string,
+  destDir: string,
+): Effect.Effect<ImportResult, ImportAgentsError, Http | FileSystem> =>
+  importDefsFromGithub(spec, destDir, (content) => parseAgentFile(content, "")?.name)
+
+/** Import declarative TOOLS from GitHub into `.efferent/tools/`. */
+export const importToolsFromGithub = (
+  spec: string,
+  destDir: string,
+): Effect.Effect<ImportResult, ImportAgentsError, Http | FileSystem> =>
+  importDefsFromGithub(spec, destDir, (content) => parseToolFile(content, "")?.name)

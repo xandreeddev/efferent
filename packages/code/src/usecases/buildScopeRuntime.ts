@@ -9,7 +9,8 @@ import {
   type AgentMessage,
   type Prompt,
   type Scope,
-  type Approval,
+  Approval,
+  bashRuleKey,
   ContextTreeStore,
   FileSystem,
   Http,
@@ -44,6 +45,7 @@ import {
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
+import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 
 /**
@@ -144,6 +146,11 @@ export interface BuildScopeRuntimeOptions {
    * time; an agent imported mid-session applies on the next launch.
    */
   readonly agents: ReadonlyArray<AgentDefinition>
+  /**
+   * Declarative tools (`.efferent/tools/*.md`) callable via `run_tool`. Required
+   * like `skills`/`agents` — pass `[]` when there are none.
+   */
+  readonly tools: ReadonlyArray<ToolDefinition>
   /** Step budget for each (nested) sub-agent loop. Default 80. */
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
@@ -154,6 +161,21 @@ export interface BuildScopeRuntimeOptions {
 
 const clip = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n)}…`
+
+/** Parse a `run_tool` args JSON-object string into string-valued params. `{}` for
+ *  empty/absent; undefined when it isn't a JSON object (a validation failure). */
+const parseToolArgs = (raw: string | undefined): Record<string, string> | undefined => {
+  if (raw === undefined || raw.trim().length === 0) return {}
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined
+    const out: Record<string, string> = {}
+    for (const [k, val] of Object.entries(v)) out[k] = typeof val === "string" ? val : String(val)
+    return out
+  } catch {
+    return undefined
+  }
+}
 
 /** Base coding tool definitions (read/write/edit/bash/grep/glob/ls/read_skill/web_fetch). */
 const baseToolDefs = Object.values(codingToolkit.tools) as ReadonlyArray<Tool.Any>
@@ -273,14 +295,42 @@ const BlackboardReadTool = Tool.make("blackboard_read", {
   failureMode: "return",
 })
 
-/** `[name, def]` entries for the comms tools — for the toolkit + role allowlists. */
+/**
+ * The single dispatcher for declarative tools (Phase 2). The tools themselves
+ * are defined in `.efferent/tools/*.md` and listed in the prompt; the model
+ * names one + passes its params as a JSON-object string (uniform across
+ * providers — no per-tool dynamic schema).
+ */
+const RunToolTool = Tool.make("run_tool", {
+  description:
+    "Run a custom tool defined in .efferent/tools (see the '# Custom tools' section for names + params). " +
+    "Pass the tool's name and its params as a JSON-object string in 'args' with string values, e.g. " +
+    'args: \'{"glob":"src/**/*.ts"}\'. Omit args for a tool that takes none.',
+  parameters: {
+    name: Schema.String.annotations({ description: "The custom tool's name (from # Custom tools)." }),
+    args: Schema.optional(Schema.String).annotations({
+      description: 'JSON object of the tool\'s params as string values, e.g. {"path":"src"}.',
+    }),
+  },
+  success: Schema.Struct({
+    output: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `[name, def]` entries for the comms + run_tool tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
   ["send_message", SendMessageTool],
   ["blackboard_post", BlackboardPostTool],
   ["blackboard_read", BlackboardReadTool],
+  ["run_tool", RunToolTool],
 ]
 
-/** The toolkit is static: base coding tools + comms tools + the `run_agent` tool. */
+/** The toolkit is static: base coding tools + comms/run_tool + the `run_agent` tool.
+ *  (Declarative tools are dispatched through the single `run_tool`, so the
+ *  toolkit shape doesn't vary with which tool files are present.) */
 const genericToolkit = Toolkit.make(
   ...([
     ...baseToolDefs,
@@ -848,7 +898,82 @@ const buildGenericHandlers = <R>(
     const base = yield* makeCodingHandlers(binding, opts.skills)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
+    const http = yield* Http
+    const approval = yield* Approval
     const run_agent = makeRunAgentHandler(store, shell, locks, bus, binding.displayRoot, opts, hooks)
+
+    // Declarative tools dispatcher: look up the named def, substitute escaped
+    // args into its template, then execute (shell via Shell — gated by allowBash
+    // + the Approval port; http via Http GET). Every failure is model-facing data.
+    const toolDefs = new Map(opts.tools.map((t) => [t.name, t] as const))
+    const run_tool = (params: { readonly name: string; readonly args?: string }) =>
+      Effect.gen(function* () {
+        const def = toolDefs.get(params.name)
+        if (def === undefined) {
+          return yield* Effect.fail({
+            error: "UnknownTool",
+            message: `no custom tool '${params.name}'. Available: ${[...toolDefs.keys()].join(", ") || "(none)"}.`,
+          })
+        }
+        const parsedArgs = parseToolArgs(params.args)
+        if (parsedArgs === undefined) {
+          return yield* Effect.fail({
+            error: "InvalidArgs",
+            message: 'args must be a JSON object of string values, e.g. {"path":"src"}',
+          })
+        }
+        const escape = def.kind === "shell" ? shellEscape : encodeURIComponent
+        const { filled, missing } = substituteTemplate(def.template, parsedArgs, escape)
+        if (missing.length > 0) {
+          return yield* Effect.fail({
+            error: "MissingParams",
+            message: `missing required params: ${missing.join(", ")}`,
+          })
+        }
+        if (def.kind === "http") {
+          const res = yield* http
+            .get(filled, { maxBytes: 50_000 })
+            .pipe(Effect.mapError((e) => ({ error: "HttpError", message: e.message })))
+          return { output: clip(res.body, 16_000), exitCode: res.status }
+        }
+        if (!binding.allowBash) {
+          return yield* Effect.fail({
+            error: "BashDisabled",
+            message: "custom shell tools need bash enabled (--allow-bash, or the TUI).",
+          })
+        }
+        const decision = yield* approval.request({
+          tool: "Bash",
+          summary: filled,
+          cwd: binding.rootDir,
+          ruleKey: bashRuleKey(filled),
+        })
+        if (decision.kind === "deny") {
+          return yield* Effect.fail({
+            error: "Denied",
+            message: decision.reason ?? "the command was denied",
+          })
+        }
+        const res = yield* shell
+          .exec({
+            command: filled,
+            cwd: binding.rootDir,
+            ...(def.timeoutMs !== undefined ? { timeoutMs: def.timeoutMs } : {}),
+          })
+          .pipe(
+            Effect.mapError((e) => ({
+              error: e._tag,
+              message:
+                e._tag === "ShellError"
+                  ? e.message
+                  : e._tag === "ShellTimeout"
+                    ? `timed out after ${e.timeoutMs}ms`
+                    : `aborted: ${e.command}`,
+            })),
+          )
+        const out = clip([res.stdout, res.stderr].filter((s) => s.length > 0).join("\n"), 16_000)
+        return { output: out, ...(res.exitCode !== null ? { exitCode: res.exitCode } : {}) }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
     // The sender's label for comms: this fiber's own node (re-seeded as
     // `parentNodeId` for its children), else the lead agent (root conversation).
@@ -889,7 +1014,14 @@ const buildGenericHandlers = <R>(
         return { notes: picked.map((n) => ({ from: n.from, note: n.note })) }
       })
 
-    return { ...base, run_agent, send_message, blackboard_post, blackboard_read } as never
+    return {
+      ...base,
+      run_agent,
+      send_message,
+      blackboard_post,
+      blackboard_read,
+      run_tool,
+    } as never
   })
 
 /**

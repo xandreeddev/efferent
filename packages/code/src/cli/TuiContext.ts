@@ -18,6 +18,7 @@ import type {
 } from "@xandreed/sdk-core"
 import type { LanguageModel } from "@effect/ai"
 import type { Directive } from "../usecases/directive.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 import type { TuiStore } from "./state/store.js"
 
 /**
@@ -57,6 +58,8 @@ export interface TuiContext {
   readonly exit: () => void
   /** The loaded agent ROLES (`.efferent/agents/*.md`) — for `:agents` + `:spawn`. */
   readonly roles: ReadonlyArray<AgentDefinition>
+  /** The loaded declarative tools (`.efferent/tools/*.md`) — for `:tools`. */
+  readonly tools: ReadonlyArray<ToolDefinition>
   /**
    * Fire a named agent role detached from the current turn (`:spawn`) — runs
    * alongside the conversation, shows in `:tree`/activity, cancellable via
@@ -74,6 +77,9 @@ export interface TuiContext {
   /** Import agent-definition files from GitHub into `.efferent/agents/`
    *  (`:agents add github:owner/repo[/path][@ref]`). Applies on next launch. */
   readonly importAgents: (spec: string) => void
+  /** Import declarative tool files from GitHub into `.efferent/tools/`
+   *  (`:tools add github:owner/repo[/path][@ref]`). Applies on next launch. */
+  readonly importTools: (spec: string) => void
   /** The session's standing goal (Phase 4), injected into every turn's prompt. */
   readonly getDirective: () => Directive | undefined
   readonly setDirective: (d: Directive | undefined) => void
