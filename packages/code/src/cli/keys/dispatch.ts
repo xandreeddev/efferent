@@ -40,6 +40,7 @@ import {
   sessionsToTop,
 } from "../presentation/sidePane.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
+import { editLastQueued } from "../actions/submit.js"
 import { runCommand } from "../commands/runCommand.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
 import { bracketMotion } from "./brackets.js"
@@ -585,6 +586,13 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
     return true
   }
 
+  // `?` on an EMPTY composer opens the shortcuts overlay (agy "? for shortcuts");
+  // with any text typed it inserts normally.
+  if (key.name === "?" && text.length === 0) {
+    store.setOverlay({ kind: "shortcuts" })
+    return claim()
+  }
+
   const isCommand = text.startsWith(":")
   const isSearch = text.startsWith("/") && text.length > 1
   const paletteOpen = isCommand && !text.includes(" ") && !text.includes("\n")
@@ -632,6 +640,14 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
 
   // Single-line ordinary buffer: ↑/↓ recall sent-message history.
   if (!key.shift && !isCommand && !isSearch && !text.includes("\n")) {
+    // With messages queued (typed while a turn ran), ↑ on an EMPTY composer
+    // pulls the most-recent one back to edit (agy "Press up to edit queued") —
+    // it takes precedence over history recall, which an empty buffer would
+    // otherwise trigger.
+    if (key.name === "up" && text.length === 0 && store.queued().length > 0) {
+      editLastQueued(store)
+      return claim()
+    }
     if (key.name === "up") {
       const r = historyPrev(store.history(), text)
       if (r !== undefined) {
@@ -798,9 +814,10 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // `?` in NORMAL toggles the full keybind box (default is the one-row strip).
+  // `?` in NORMAL opens the shortcuts overlay (agy "? for shortcuts" — the
+  // persistent keybind box is retired). The input handler owns `?` while typing.
   if (key.name === "?" && !key.ctrl && !key.meta && store.focus() !== "input") {
-    store.setKeysExpanded(!store.keysExpanded())
+    store.setOverlay({ kind: "shortcuts" })
     return
   }
 

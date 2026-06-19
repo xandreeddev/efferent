@@ -178,6 +178,20 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
   const o = store.overlay()
   if (o.kind === "none") return false
 
+  if (o.kind === "shortcuts") {
+    // A reference card: Esc / Ctrl-C / ? / q dismiss it; anything else is swallowed
+    // so it can't leak to the panes while it's up.
+    if (
+      key.name === "escape" ||
+      (key.ctrl && key.name === "c") ||
+      key.name === "?" ||
+      key.name === "q"
+    ) {
+      store.closeOverlay()
+    }
+    return true
+  }
+
   if (o.kind === "select") {
     const isTheme = o.purpose.tag === "theme"
     if (key.name === "escape" || (key.ctrl && key.name === "c")) {

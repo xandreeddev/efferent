@@ -36,6 +36,8 @@ export interface RunHandle {
   newConversation(id: ConversationId): void
   enqueue(text: string): void
   dequeue(): string | undefined
+  /** Pull the MOST-recently queued message back off the queue (↑-to-edit). */
+  popQueued(): string | undefined
   getBrowseList(): ReadonlyArray<BrowseEntry>
   setBrowseList(list: ReadonlyArray<BrowseEntry>): void
   getFiber(): Fiber.RuntimeFiber<void, never> | undefined
@@ -54,7 +56,12 @@ export interface RunHandle {
   setConfigScope(scope: ConfigScope | undefined): void
 }
 
-const createRunHandle = (conversationId: ConversationId): RunHandle => {
+const createRunHandle = (
+  conversationId: ConversationId,
+  /** Mirror the (non-reactive) queue into a reactive signal so the UI can show
+   *  the pending `▸ …` list — the only reactive view of this Effect-owned state. */
+  onQueue: (queue: ReadonlyArray<string>) => void,
+): RunHandle => {
   let cid = conversationId
   let queue: string[] = []
   let fiber: Fiber.RuntimeFiber<void, never> | undefined
@@ -68,11 +75,22 @@ const createRunHandle = (conversationId: ConversationId): RunHandle => {
     newConversation: (id) => {
       cid = id
       queue = []
+      onQueue([])
     },
     enqueue: (text) => {
       queue.push(text)
+      onQueue([...queue])
     },
-    dequeue: () => queue.shift(),
+    dequeue: () => {
+      const v = queue.shift()
+      onQueue([...queue])
+      return v
+    },
+    popQueued: () => {
+      const v = queue.pop()
+      onQueue([...queue])
+      return v
+    },
     getBrowseList: () => browseList,
     setBrowseList: (list) => {
       browseList = list
@@ -119,6 +137,9 @@ export interface SessionSlice {
    */
   readonly toast: (text: string) => void
   readonly footer: Accessor<string>
+  /** The messages typed while a turn runs, awaiting their turn — shown as a
+   *  `▸ …` list above the input (a reactive mirror of the `run` handle's queue). */
+  readonly queued: Accessor<ReadonlyArray<string>>
   /** Non-reactive, Effect-owned run lifecycle, behind typed methods. */
   readonly run: RunHandle
 }
@@ -135,6 +156,7 @@ export const createSessionSlice = (init: SessionInit): SessionSlice => {
   const [agentState, setAgentStateSig] = createSignal<AgentState>(idleAgentState)
   const [note, setNoteSig] = createSignal<string | undefined>(undefined)
   const [footer] = createSignal(init.footer)
+  const [queued, setQueued] = createSignal<ReadonlyArray<string>>([])
 
   return {
     status,
@@ -153,6 +175,7 @@ export const createSessionSlice = (init: SessionInit): SessionSlice => {
       }, 4000)
     },
     footer,
-    run: createRunHandle(init.conversationId),
+    queued,
+    run: createRunHandle(init.conversationId, setQueued),
   }
 }

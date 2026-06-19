@@ -31,6 +31,25 @@ export const rolesChip = (settings: {
   return `fast ${parseModel(settings.fastModel).modelId}`
 }
 
+/**
+ * The status bar's **left zone** — one contextual hint, agy-style (the right
+ * zone carries the model + gauge + storage + cwd). Precedence: a live transient
+ * note (theme switched · working in agent …) wins; then a pending queue offers
+ * `↑ to edit queued`; then a running turn / open overlay offers `esc to cancel`;
+ * otherwise the resting `? for shortcuts`.
+ */
+export const statusHint = (s: {
+  readonly busy: boolean
+  readonly overlayOpen: boolean
+  readonly queuedCount: number
+  readonly note?: string | undefined
+}): string => {
+  if (s.note !== undefined && s.note.length > 0) return s.note
+  if (s.queuedCount > 0) return "↑ to edit queued"
+  if (s.busy || s.overlayOpen) return "esc to cancel"
+  return "? for shortcuts"
+}
+
 export const formatTokens = (n: number): string => {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`
