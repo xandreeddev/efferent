@@ -71,6 +71,53 @@ export const KeyHints = (props: { hints: ReadonlyArray<KeyHint>; grow?: boolean 
   </box>
 )
 
+/** Truncate a label to fit `max` cells (… elision). Shared by every menu row. */
+export const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`
+
+/**
+ * One selectable menu row — the single source for a list/menu/picker row across
+ * the whole app (the `:` command menu and every `SelectBody` list/manager). A
+ * leading marker glyph in the selection accent, the label, an optional dim
+ * description column (agy contextual-menu look), and an optional trailing
+ * `◀ tag`. Change the caret, the selection colour, or the row shape HERE and
+ * every menu in the app follows.
+ */
+export const MenuRow = (props: {
+  selected: boolean
+  /** Leading marker — the pointer when selected, or a scroll arrow / blank. */
+  marker: string
+  label: string
+  labelBudget: number
+  desc?: string | undefined
+  tag?: string | undefined
+  /** Tint the tag with the selection accent even when the row isn't selected. */
+  tagActive?: boolean | undefined
+}) => (
+  <box flexDirection="row" {...(props.selected ? { backgroundColor: tokens.cursorLine } : {})}>
+    {/* Selection accent is `marker.select` — the same hue as the filter cursor —
+        so one menu never mixes two accents (agy uses a single accent throughout). */}
+    <text fg={props.selected ? tokens.marker.select : tokens.text.muted}>
+      {`${props.marker} `}
+    </text>
+    <text
+      fg={props.selected ? tokens.text.default : tokens.text.muted}
+      wrapMode="none"
+      flexGrow={props.desc === undefined ? 1 : 0}
+    >
+      {truncate(props.label, props.labelBudget)}
+    </text>
+    <Show when={props.desc !== undefined}>
+      <text fg={tokens.text.muted} wrapMode="none" flexGrow={1}>{`  ${props.desc}`}</text>
+    </Show>
+    <Show when={props.tag !== undefined}>
+      <text fg={props.selected || props.tagActive === true ? tokens.marker.select : tokens.text.dim}>
+        {` ${glyph.activeTag} ${props.tag}`}
+      </text>
+    </Show>
+  </box>
+)
+
 /** The block text cursor (`█`) shown in text-entry overlays/filters. */
 export const Cursor = () => <text fg={tokens.marker.cursor}>{glyph.cursorBlock}</text>
 

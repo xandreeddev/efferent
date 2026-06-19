@@ -6,7 +6,7 @@ import { Header } from "./chrome/Header.js"
 import { Conversation } from "./panes/Conversation.js"
 import { Side } from "./panes/side/Side.js"
 import { InputBox } from "./panes/Input.js"
-import { Keybinds } from "./chrome/Keybinds.js"
+import { QueuedMessages } from "./panes/QueuedMessages.js"
 import { SlashPalette } from "./chrome/SlashPalette.js"
 import { SearchStatus } from "./chrome/SearchStatus.js"
 import { StatusBar } from "./chrome/StatusBar.js"
@@ -61,10 +61,14 @@ export const App = (props: { ctx: TuiContext }) => {
             <Side ctx={props.ctx} />
           </Show>
         </box>
-        <Keybinds ctx={props.ctx} />
+        {/* agy bottom chrome: the pending queue sits above the input fence; the
+            `:` command menu + `/` search drop BELOW it (contextual menus), and
+            the two-zone status bar anchors the very bottom. Keybind discovery
+            moved to the `?` shortcuts overlay (no persistent footer box). */}
+        <QueuedMessages ctx={props.ctx} />
+        <InputBox ctx={props.ctx} />
         <SlashPalette ctx={props.ctx} />
         <SearchStatus ctx={props.ctx} />
-        <InputBox ctx={props.ctx} />
         <StatusBar ctx={props.ctx} />
         {/* Modal layer — absolutely positioned, floats over everything above. */}
         <Overlay ctx={props.ctx} />
