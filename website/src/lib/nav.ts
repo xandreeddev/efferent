@@ -94,6 +94,7 @@ export const docsOrder: DocItem[] = docsNav.flatMap((g) => g.items)
 export const products = [
   {
     name: "efferent SDK",
+    logo: "sdk" as const,
     tag: "@xandreed/sdk-core",
     accent: "var(--ember)",
     blurb:
@@ -104,6 +105,7 @@ export const products = [
   },
   {
     name: "efferent code",
+    logo: "code" as const,
     tag: "the efferent CLI",
     accent: "var(--verdigris)",
     blurb:

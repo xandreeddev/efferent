@@ -1,14 +1,14 @@
 ---
 import Icon from "./Icon.astro"
+import BrandLogo from "./BrandLogo.astro"
 import { href, GITHUB, NPM } from "../lib/nav"
 ---
 
 <footer class="ft">
   <div class="ft-inner">
     <div class="ft-brand">
-      <a class="brand" href={href("/")}>
-        <Icon name="logo" size={22} />
-        <span>efferent</span>
+      <a class="brand" href={href("/")} aria-label="efferent home">
+        <BrandLogo height={26} />
       </a>
       <p>A coding-agent SDK on Effect.ts + Bun — built in public.</p>
     </div>

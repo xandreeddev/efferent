@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro"
 import SourceFile from "../components/SourceFile.astro"
+import ProductLogo from "../components/ProductLogo.astro"
 import Icon from "../components/Icon.astro"
 import { href, products, capabilities, GITHUB } from "../lib/nav"
 
@@ -78,11 +79,8 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
         {
           products.map((p) => (
             <a class="product" href={href(p.href)} style={`--card-accent:${p.accent}`}>
-              <div class="product-top">
-                <span class="dot" />
-                <span class="product-tag">{p.tag}</span>
-              </div>
-              <h3>{p.name}</h3>
+              <div class="product-logo-wrap"><ProductLogo name={p.logo} /></div>
+              <p class="product-tag">{p.tag}</p>
               <p class="product-blurb">{p.blurb}</p>
               <ul class="product-points">
                 {p.points.map((pt) => (
@@ -311,28 +309,14 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
     border-color: var(--card-accent);
     text-decoration: none;
   }
-  .product-top {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin-bottom: 0.7rem;
-  }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--card-accent);
-    box-shadow: 0 0 12px var(--card-accent);
+  .product-logo-wrap {
+    margin-bottom: 0.9rem;
   }
   .product-tag {
     font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--text-faint);
-  }
-  .product h3 {
-    font-size: 1.5rem;
-    margin-bottom: 0.6rem;
-    color: var(--text);
+    margin-bottom: 0.5rem;
   }
   .product-blurb {
     color: var(--text-dim);

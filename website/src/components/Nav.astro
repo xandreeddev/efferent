@@ -1,5 +1,6 @@
 ---
 import Icon from "./Icon.astro"
+import BrandLogo from "./BrandLogo.astro"
 import { href, topNav, GITHUB } from "../lib/nav"
 const path = Astro.url.pathname
 const isActive = (h: string) => h.startsWith("/docs") && path.includes("/docs")
@@ -8,8 +9,7 @@ const isActive = (h: string) => h.startsWith("/docs") && path.includes("/docs")
 <header class="nav">
   <div class="nav-inner">
     <a class="brand" href={href("/")} aria-label="efferent home">
-      <Icon name="logo" size={26} />
-      <span class="wordmark">efferent</span>
+      <BrandLogo height={28} />
     </a>
 
     <nav class="links" aria-label="Primary">
