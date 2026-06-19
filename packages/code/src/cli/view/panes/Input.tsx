@@ -4,7 +4,7 @@ import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
 import { pushPrompt } from "../../presentation/promptHistory.js"
 import { tokens } from "../../state/theme.js"
-import { Pane } from "../ui/index.js"
+import { InputFence } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
@@ -110,17 +110,18 @@ export const InputBox = (props: { ctx: TuiContext }) => {
   }
 
   // While a node-session preview is open, messages route to THAT sub-agent
-  // (submit's preview branch) — the title must say so or the redirect is silent.
-  const title = () => {
+  // (submit's preview branch) — the suffix must say so or the redirect is silent.
+  const suffix = () => {
     const p = store.nodePreview()
-    return p === undefined ? "input" : `input → ${p.title}`
+    return p === undefined ? undefined : `→ ${p.title}`
   }
 
   return (
-    <Pane kind="input" focused={focused()} title={title()}>
+    <InputFence focused={focused()} suffix={suffix()}>
       <textarea
         ref={ref}
         height={rows()}
+        flexGrow={1}
         keyBindings={KEY_BINDINGS}
         placeholder="Message…  (↵ to send)"
         textColor={tokens.text.default}
@@ -146,6 +147,6 @@ export const InputBox = (props: { ctx: TuiContext }) => {
         }}
         onSubmit={submit}
       />
-    </Pane>
+    </InputFence>
   )
 }

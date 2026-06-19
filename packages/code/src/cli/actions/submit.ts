@@ -30,6 +30,19 @@ import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
 
+/**
+ * Pull the most-recently queued message back into the composer for editing —
+ * the agy "Press up to edit queued messages" gesture, wired to `↑` on an empty
+ * input (`keys/dispatch.ts:inputKey`). A no-op when nothing is queued.
+ */
+export const editLastQueued = (store: TuiStore): void => {
+  const text = store.run.popQueued()
+  if (text === undefined) return
+  store.inputControl.current?.seed(text)
+  store.setFocus("input")
+  store.setMode("insert")
+}
+
 export interface SubmitDeps {
   readonly store: TuiStore
   readonly scopeRuntime: ReturnType<typeof buildScopeRuntime>
@@ -155,10 +168,11 @@ export const makeSubmit = (
         return
       }
 
-      // Busy → queue it for after the current turn.
+      // Busy → queue it for after the current turn. The pending queue is now
+      // shown as a `▸ …` list above the input (and the status hint flips to
+      // `↑ to edit queued`), so no transient toast is needed.
       if (store.busy()) {
         store.run.enqueue(text)
-        store.toast(`queued: ${text}`)
         store.setInput("")
         return
       }
