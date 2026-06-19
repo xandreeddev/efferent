@@ -6,7 +6,7 @@ sidebar:
   order: 4
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/hooksAgent.ts?raw';
 
 `AgentHooks` let the application watch and influence the loop without owning it. This example logs each
@@ -18,4 +18,4 @@ a tool result so it adjusts in the same turn.
 bun examples/hooksAgent.ts
 ```
 
-<Code code={source} lang="ts" title="examples/hooksAgent.ts" />
+<SourceFile code={source} file="examples/hooksAgent.ts" lang="ts" />

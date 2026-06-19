@@ -6,7 +6,7 @@ sidebar:
   order: 3
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/fileAgent.ts?raw';
 
 A `read_file` tool whose handler uses the `FileSystem` **port**. Tool handlers must be `R = never`, so
@@ -19,4 +19,4 @@ tool runs in a test with no disk.
 bun examples/fileAgent.ts
 ```
 
-<Code code={source} lang="ts" title="examples/fileAgent.ts" />
+<SourceFile code={source} file="examples/fileAgent.ts" lang="ts" />

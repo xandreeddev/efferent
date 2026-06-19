@@ -6,7 +6,7 @@ sidebar:
   order: 5
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/compressionAgent.ts?raw';
 
 Compression ("headroom") is a property of the agent — `AgentConfig.compression` — not a hardcoded loop
@@ -19,4 +19,4 @@ clip + reversible marker actually fire.
 bun examples/compressionAgent.ts
 ```
 
-<Code code={source} lang="ts" title="examples/compressionAgent.ts" />
+<SourceFile code={source} file="examples/compressionAgent.ts" lang="ts" />

@@ -7,7 +7,7 @@ sidebar:
 ---
 
 From `@xandreed/sdk-core` — `entities/Compression.ts` (types + combinators) and `usecases/headroom.ts`
-(the default tactics). Concepts: [context headroom](/efferent/concepts/headroom/).
+(the default tactics). Concepts: [context headroom](/docs/concepts/headroom/).
 
 ## Types
 

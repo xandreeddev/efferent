@@ -35,7 +35,7 @@ on the next message.
 :::tip
 `:logout <provider>` removes a credential. Credentials are read **only** from `~/.efferent/auth.json`
 on the local path — efferent never reads provider keys from environment variables (that path exists
-only for CI/evals; see [Providers](/efferent/concepts/providers/)).
+only for CI/evals; see [Providers](/docs/concepts/providers/)).
 :::
 
 ### The four run modes
@@ -88,6 +88,6 @@ clone of the repo; standalone packages may follow. The `efferent` CLI is the pub
 
 ## Next
 
-- **[Your first agent](/efferent/your-first-agent/)** — build the dice agent line by line.
-- **[Concepts](/efferent/concepts/architecture/)** — what the SDK leverages and why.
-- **[Examples](/efferent/examples/)** — the runnable files, rendered from source.
+- **[Your first agent](/docs/your-first-agent/)** — build the dice agent line by line.
+- **[Concepts](/docs/concepts/architecture/)** — what the SDK leverages and why.
+- **[Examples](/docs/examples/)** — the runnable files, rendered from source.

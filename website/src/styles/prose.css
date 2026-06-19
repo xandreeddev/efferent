@@ -1,0 +1,109 @@
+/* Typography for rendered markdown (docs articles). Scoped under .prose so it
+ * never touches the landing. Astro auto-generates heading ids → TOC anchors work. */
+.prose {
+  font-size: 1rem;
+  line-height: 1.72;
+  color: var(--text);
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+  scroll-margin-top: calc(var(--nav-h) + 20px);
+  letter-spacing: -0.02em;
+}
+.prose h2 {
+  font-size: 1.5rem;
+  margin: 2.6rem 0 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.prose h3 {
+  font-size: 1.18rem;
+  margin: 2rem 0 0.7rem;
+}
+.prose h4 {
+  font-size: 1rem;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--text-dim);
+}
+.prose p,
+.prose ul,
+.prose ol {
+  margin: 1rem 0;
+}
+.prose ul,
+.prose ol {
+  padding-left: 1.4rem;
+}
+.prose li {
+  margin: 0.35rem 0;
+}
+.prose li::marker {
+  color: var(--text-faint);
+}
+.prose strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.prose a {
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
+}
+.prose a:hover {
+  text-decoration-color: var(--link-hover);
+}
+.prose pre.astro-code {
+  margin: 1.4rem 0;
+}
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--hairline);
+  margin: 2.4rem 0;
+}
+.prose blockquote {
+  margin: 1.4rem 0;
+  padding: 0.2rem 1.1rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+.prose img {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  margin: 1.4rem 0;
+}
+
+/* Tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.92rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose th,
+.prose td {
+  text-align: left;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+}
+.prose thead th {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.prose tbody tr:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+.prose td code,
+.prose th code {
+  white-space: nowrap;
+}

@@ -15,7 +15,7 @@ most are set with `:set <key> <value>`; `model`/`fastModel` also via `/model` an
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `model` | `google:gemini-3.5-flash` | The main model, `"<provider>:<modelId>"`. |
-| `fastModel` | *(follows main)* | The [fast helper tier](/efferent/concepts/providers/). |
+| `fastModel` | *(follows main)* | The [fast helper tier](/docs/concepts/providers/). |
 | `searchModel` | *(auto)* | Dedicated model for `search_web`. |
 | `anthropicThinkingEffort` / `openAiReasoningEffort` / `geminiThinkingLevel` / `openCodeThinkingMode` | provider-specific | Extended-thinking / reasoning effort per provider. |
 
@@ -41,7 +41,7 @@ most are set with `:set <key> <value>`; `model`/`fastModel` also via `/model` an
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `telemetry` | `off` | The **sole** switch for [OTLP export](/efferent/concepts/observability/). |
+| `telemetry` | `off` | The **sole** switch for [OTLP export](/docs/concepts/observability/). |
 | `grafanaUrl` | `http://localhost:3000` | Base for the `:traces` / `:dashboard` deep-links. |
 | `theme` | `efferent` | TUI theme (`efferent` / `one-dark` / `tokyo-night`). |
 | `autoCollapse` | `off` | Fold previous turns when sending a new message. |

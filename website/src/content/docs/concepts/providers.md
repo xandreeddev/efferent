@@ -38,18 +38,18 @@ only); context windows come from a generated catalogue snapshotted from [models.
 All **agentic** work runs on **main** (`settings.model`) — the root conversation *and* sub-agents
 (delegation changes the context, not the brain). A second **fast** role (`settings.fastModel`; unset ⇒
 main) backs one-shot helper calls reached via `UtilityLlm.complete(prompt, { role: "fast" })`: headroom
-[middle digests](/efferent/concepts/headroom/), the auto-approval judge, and session titles. Per-role
+[middle digests](/docs/concepts/headroom/), the auto-approval judge, and session titles. Per-role
 spend is tracked separately.
 
 ## Credentials
 
 Keys live only in `~/.efferent/auth.json` (written by `:login`), never read from the environment on the
 local path. The `AuthStore` port resolves them lazily per request. For CI/evals, `EnvAuthStoreLive` is the
-**one** place provider key env vars are read. See [Getting started](/efferent/getting-started/).
+**one** place provider key env vars are read. See [Getting started](/docs/getting-started/).
 
 ## Caching
 
 Caching is aggressive but provider-native: OpenAI gets automatic prefix caching + a stable cache key,
 Gemini relies on implicit context caching (stable prefix), and Anthropic gets explicit
 `cache_control: ephemeral` breakpoints stamped by the router on the last system + last two messages every
-call. This is exactly why [compression must keep the prefix byte-stable](/efferent/concepts/headroom/).
+call. This is exactly why [compression must keep the prefix byte-stable](/docs/concepts/headroom/).

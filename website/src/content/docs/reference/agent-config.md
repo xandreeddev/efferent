@@ -35,7 +35,7 @@ From `@xandreed/sdk-core/usecases/agentConfig.ts`.
 | `key` | `string` | Isolates prompt-cache keys across different configs in one conversation. Use something stable and descriptive (the coder uses `coder:<rootDir>`). |
 | `prompt` | [`Prompt`](#prompt) | The system prompt — versioned so you can A/B prompt variants. |
 | `toolkit` | `Toolkit.Toolkit<Tools>` | The `@effect/ai` toolkit. Its **handler `Layer`** is provided separately at the composition root (that's where runtime deps like `cwd`/`FileSystem` enter). |
-| `compression?` | [`CompressionPolicy`](/efferent/reference/compression/) | Optional. Omit for the cache-safe default; see [context headroom](/efferent/concepts/headroom/). |
+| `compression?` | [`CompressionPolicy`](/docs/reference/compression/) | Optional. Omit for the cache-safe default; see [context headroom](/docs/concepts/headroom/). |
 
 ## Prompt
 
@@ -61,4 +61,4 @@ const config: AgentConfig<Tools> = {
 }
 ```
 
-See also: [`runAgent`](/efferent/reference/run-agent/) · [Your first agent](/efferent/your-first-agent/).
+See also: [`runAgent`](/docs/reference/run-agent/) · [Your first agent](/docs/your-first-agent/).

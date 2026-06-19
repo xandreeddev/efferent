@@ -37,7 +37,7 @@ const readConfig = Effect.gen(function* () {
 
 The full set: `ConversationStore`, `ContextTreeStore`, `FileSystem`, `Shell`, `Http`, `WebSearch`,
 `AuthStore`, `SettingsStore`, `ModelRegistry`, `LlmInfo`, `UtilityLlm`, `Approval`, `AuthFlow`. See the
-[ports reference](/efferent/reference/ports/).
+[ports reference](/docs/reference/ports/).
 
 ## Adapters are Layers
 
@@ -45,12 +45,12 @@ An **adapter** in `@xandreed/sdk-adapters` provides exactly one port as a `Layer
 External promises go through `Effect.tryPromise`, mapped into the port's tagged error — an untyped error
 never escapes. Keys and config are resolved *per call* (never captured at layer-build), so a `:login` or
 `/model` switch applies on the next request with no rebuild. See the
-[adapters reference](/efferent/reference/adapters/).
+[adapters reference](/docs/reference/adapters/).
 
 ## Use cases are Effects
 
-The domain logic — the [agent loop](/efferent/concepts/agent-loop/), [handoff](/efferent/concepts/headroom/),
-[sub-agent spawning](/efferent/concepts/sub-agents/) — lives in `usecases/` as Effects over the ports. No
+The domain logic — the [agent loop](/docs/concepts/agent-loop/), [handoff](/docs/concepts/headroom/),
+[sub-agent spawning](/docs/concepts/sub-agents/) — lives in `usecases/` as Effects over the ports. No
 IO; the only SDK allowed in the core is `@effect/ai` (provider-agnostic: `LanguageModel`, `Tool`,
 `Toolkit`, `Prompt`). Provider packages live in adapters.
 
@@ -65,4 +65,4 @@ each function's type, so the compiler tells you what can go wrong.
 A driver assembles the layers once and provides them to `runAgent`. Because everything is a `Layer`, you
 swap an implementation by swapping an import — Postgres for SQLite, a stub LLM for a real one in tests,
 an in-memory store for evals. That single seam is what makes the agent loop the same code in the TUI, in
-a one-shot script, in CI, and in your app. See [the composition root](/efferent/guides/composition-root/).
+a one-shot script, in CI, and in your app. See [the composition root](/docs/guides/composition-root/).

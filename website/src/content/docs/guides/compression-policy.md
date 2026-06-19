@@ -6,8 +6,8 @@ sidebar:
   order: 4
 ---
 
-[Context compression](/efferent/concepts/headroom/) is a property of the agent: the optional
-`compression` field on [`AgentConfig`](/efferent/reference/agent-config/). Omit it and you get the
+[Context compression](/docs/concepts/headroom/) is a property of the agent: the optional
+`compression` field on [`AgentConfig`](/docs/reference/agent-config/). Omit it and you get the
 cache-safe default. Here's how to change it.
 
 ## Use the defaults (or turn it off)
@@ -63,4 +63,4 @@ A custom compressor stays `R = never` by reaching optional services via `Effect.
 iff provided at the root, like `UtilityLlm`) or by closing over a pre-built client — so `AgentConfig`
 never needs a requirements type parameter. The policy is **inherited by this agent's sub-agents**.
 
-Runnable version: the [compression agent](/efferent/examples/compression-agent/).
+Runnable version: the [compression agent](/docs/examples/compression-agent/).

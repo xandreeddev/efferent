@@ -45,6 +45,9 @@ jobs:
 
       - run: bun run build
 
+      - name: Check every internal link resolves
+        run: bun run linkcheck
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

@@ -7,7 +7,7 @@ sidebar:
 ---
 
 Delegation is one tool — `run_agent` — backed by a [persistent context
-tree](/efferent/concepts/sub-agents/). It ships in the coding agent's toolkit (`buildScopeRuntime`); any
+tree](/docs/concepts/sub-agents/). It ships in the coding agent's toolkit (`buildScopeRuntime`); any
 agent built on a scope runtime gets it. This guide is about *using* it well.
 
 ## The call
@@ -47,4 +47,4 @@ cheapest sufficient seed.*
 - Resuming against a moved git HEAD prepends a **staleness brief** so the sub-agent re-reads before editing.
 
 Tune the bounds with `:set subAgentTokenBudget <n>` / `:set subAgentMaxSteps <n>`, or the corresponding
-[settings](/efferent/reference/settings/).
+[settings](/docs/reference/settings/).

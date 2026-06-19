@@ -71,5 +71,5 @@ const handlers = toolkit.toLayer(
 
 Because the handler resolves ports from context, the *same* tool definition runs with real IO in the
 app and with stubs in a test — you change only the layer you provide. See
-[Your first agent](/efferent/your-first-agent/) for the end-to-end build and
-[the composition root](/efferent/guides/composition-root/) for what to provide.
+[Your first agent](/docs/your-first-agent/) for the end-to-end build and
+[the composition root](/docs/guides/composition-root/) for what to provide.

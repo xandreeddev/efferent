@@ -18,18 +18,18 @@ const runAgent: <Tools extends Record<string, Tool.Any>, R>(
 ) => Effect.Effect<AgentResult, /* tagged errors */, /* ports + R */>
 ```
 
-It appends the user message, loads history (applying the latest [handoff](/efferent/concepts/headroom/#handoff)
-checkpoint), runs the [loop](/efferent/concepts/agent-loop/) until the model stops calling tools or
+It appends the user message, loads history (applying the latest [handoff](/docs/concepts/headroom/#handoff)
+checkpoint), runs the [loop](/docs/concepts/agent-loop/) until the model stops calling tools or
 `maxSteps`, persists the new tail, and returns the result.
 
 ## Parameters
 
 | Param | Type | Notes |
 | --- | --- | --- |
-| `config` | [`AgentConfig<Tools>`](/efferent/reference/agent-config/) | The agent definition (prompt + toolkit + optional compression). |
+| `config` | [`AgentConfig<Tools>`](/docs/reference/agent-config/) | The agent definition (prompt + toolkit + optional compression). |
 | `conversationId` | `ConversationId` | A branded UUID. `Schema.decodeUnknown(ConversationId)(crypto.randomUUID())` to mint one. |
 | `userPrompt` | `string` | The user's message for this run. |
-| `extraHooks?` | [`AgentHooks<R>`](/efferent/reference/hooks/) | Observe/steer the loop. Pass a typed value to pin `R`. |
+| `extraHooks?` | [`AgentHooks<R>`](/docs/reference/hooks/) | Observe/steer the loop. Pass a typed value to pin `R`. |
 | `workspaceDir?` | `string` | Workspace root (for staleness stamping / scope). Defaults to the process cwd. |
 
 ## Returns — `AgentResult`
@@ -47,5 +47,5 @@ const AgentResult = Schema.Struct({
 
 The effect requires the ports the loop uses — `ConversationStore`, `LanguageModel`, `SettingsStore`,
 `AuthStore`, plus whatever your tool handlers need — satisfied by your
-[composition root](/efferent/guides/composition-root/). The toolkit's **handler layer** is provided
+[composition root](/docs/guides/composition-root/). The toolkit's **handler layer** is provided
 separately: `runAgent(...).pipe(Effect.provide(handlerLayer))`.

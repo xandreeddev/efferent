@@ -6,7 +6,7 @@ sidebar:
   order: 5
 ---
 
-The [dice agent](/efferent/your-first-agent/) shows the bare primitives. efferent's own coding agent is
+The [dice agent](/docs/your-first-agent/) shows the bare primitives. efferent's own coding agent is
 the *batteries-included* counterpart — a full file/shell/web toolkit, a scoped sandbox, and sub-agents —
 assembled from the **same `AgentConfig` shape**. This lives in the `@xandreed/code` driver (it carries
 runtime concerns), but the pattern is worth knowing.
@@ -52,9 +52,9 @@ const result = yield* runAgent(
 ```
 
 The `handlerLayer` is where `FileSystem`, `Shell`, approval, and the context-tree store enter — provided
-*alongside* your [composition root](/efferent/guides/composition-root/). Because it's the same
+*alongside* your [composition root](/docs/guides/composition-root/). Because it's the same
 `AgentConfig` contract, the coding agent runs identically in the TUI, in one-shot `print` mode, in `json`
 mode, and in CI — only the driver around it differs.
 
 The `Scope` (`rootDir` + `displayRoot` + `SCOPE.md` body + write-enforcement) is what confines tool writes
-and powers the [sub-agent sandbox](/efferent/concepts/sub-agents/).
+and powers the [sub-agent sandbox](/docs/concepts/sub-agents/).

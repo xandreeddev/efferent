@@ -1,0 +1,63 @@
+---
+import "@fontsource-variable/hanken-grotesk"
+import "@fontsource-variable/jetbrains-mono"
+import "../styles/global.css"
+import Nav from "../components/Nav.astro"
+import Footer from "../components/Footer.astro"
+import { href } from "../lib/nav"
+
+interface Props {
+  title: string
+  description?: string
+}
+const { title, description = "A coding-agent SDK on Effect.ts + Bun." } = Astro.props
+const canonical = new URL(Astro.url.pathname, Astro.site)
+const fullTitle = title === "efferent" ? title : `${title} · efferent`
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href={href("/favicon.svg")} type="image/svg+xml" />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="generator" content={Astro.generator} />
+    <script is:inline>
+      (function () {
+        try {
+          var t = localStorage.getItem("efferent-theme")
+          if (t !== "light" && t !== "dark") {
+            t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+          }
+          document.documentElement.dataset.theme = t
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark"
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <Nav />
+    <slot />
+    <Footer />
+
+    <script>
+      const btn = document.querySelector("[data-theme-toggle]")
+      btn?.addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "light" ? "dark" : "light"
+        document.documentElement.dataset.theme = next
+        try {
+          localStorage.setItem("efferent-theme", next)
+        } catch (e) {}
+      })
+    </script>
+  </body>
+</html>

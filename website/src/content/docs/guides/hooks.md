@@ -8,7 +8,7 @@ sidebar:
 
 `AgentHooks` is how a driver (the TUI, your app) observes and influences the loop **without owning it**.
 Every hook is optional and returns an `Effect`; you pass the object as the 4th argument to
-[`runAgent`](/efferent/reference/run-agent/).
+[`runAgent`](/docs/reference/run-agent/).
 
 ```ts
 import { type AgentHooks } from "@xandreed/sdk-core"
@@ -39,14 +39,14 @@ const hooks: AgentHooks = {
 | `onTransformContext` | `AgentMessage[]` | Rewrite the buffer before a turn (advanced). |
 | `onShouldStopAfterTurn` | `boolean` | Stop early on a custom condition. |
 | `onAgentEnd` | `void` | Final text + full message history. |
-| `onSubAgentStart` / `onSubAgentEnd` | `void` | Track [sub-agent](/efferent/concepts/sub-agents/) runs. |
-| `onSkillLoad` | `void` | A [skill](/efferent/concepts/skills/) body was lazy-loaded. |
+| `onSubAgentStart` / `onSubAgentEnd` | `void` | Track [sub-agent](/docs/concepts/sub-agents/) runs. |
+| `onSkillLoad` | `void` | A [skill](/docs/concepts/skills/) body was lazy-loaded. |
 | `onHelperUsage` | `void` | Account fast-tier helper spend (e.g. headroom digests). |
 
 :::note[Type tip]
 `AgentHooks` is generic in `R` (the union of port requirements your hooks need). With all-`Effect.log`
 hooks, `R = never`. Passing a value typed as `AgentHooks` also pins `runAgent`'s requirements to `never`
-even when you don't otherwise need hooks — see the [calculator example](/efferent/examples/calc-agent/).
+even when you don't otherwise need hooks — see the [calculator example](/docs/examples/calc-agent/).
 :::
 
-Runnable version: the [hooks agent](/efferent/examples/hooks-agent/).
+Runnable version: the [hooks agent](/docs/examples/hooks-agent/).

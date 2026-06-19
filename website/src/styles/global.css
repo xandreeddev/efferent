@@ -1,0 +1,257 @@
+/*
+ * efferent — bespoke design system.
+ *
+ * Brand: warm near-black with an ember / verdigris / chartreuse triad (signals
+ * travelling outward). Two tiers — raw tokens here, components paint against them.
+ * Dark is the primary identity; light is a warm-paper variant. Toggle via the
+ * `data-theme` attribute on <html> (set before paint by an inline script).
+ */
+
+/* ── Tokens ──────────────────────────────────────────────────────────────── */
+:root {
+  --ember: #ffa657;
+  --verdigris: #2dd4bf;
+  --chartreuse: #a3e635;
+
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius: 12px;
+  --radius-lg: 18px;
+  --maxw: 720px; /* docs prose measure */
+  --maxw-wide: 1180px; /* shell / landing */
+  --nav-h: 60px;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Dark (default) */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14110e;
+  --bg-soft: #1a1713;
+  --surface: #1f1c17;
+  --surface-2: #26221d;
+  --border: #322d26;
+  --hairline: rgba(230, 225, 217, 0.08);
+
+  --text: #ece7df;
+  --text-dim: #a8a299;
+  --text-faint: #756f66;
+
+  --accent: var(--ember);
+  --accent-2: var(--verdigris);
+  --accent-3: var(--chartreuse);
+  --link: #ffb877;
+  --link-hover: #ffd0a0;
+
+  --code-bg: #1b1813;
+  --code-border: #2c2720;
+  --inline-code-bg: rgba(255, 166, 87, 0.1);
+  --inline-code-fg: #ffc89a;
+
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  --glow: radial-gradient(60% 60% at 70% 30%, rgba(255, 166, 87, 0.16), transparent 70%);
+}
+
+/* Light (warm paper) */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf6ef;
+  --bg-soft: #f4ede1;
+  --surface: #fffdf9;
+  --surface-2: #f6efe3;
+  --border: #e7ddcc;
+  --hairline: rgba(40, 34, 29, 0.1);
+
+  --text: #2a2620;
+  --text-dim: #5f5950;
+  --text-faint: #938c82;
+
+  --accent: #c25a12;
+  --accent-2: #0f8c7e;
+  --accent-3: #5f8c10;
+  --link: #b8560f;
+  --link-hover: #8f4209;
+
+  --code-bg: #1b1813; /* code stays dark in both themes — a terminal look */
+  --code-border: #2c2720;
+  --inline-code-bg: rgba(194, 90, 18, 0.1);
+  --inline-code-fg: #9a4a12;
+
+  --shadow: 0 1px 2px rgba(40, 34, 29, 0.06), 0 18px 40px -28px rgba(40, 34, 29, 0.3);
+  --glow: radial-gradient(60% 60% at 70% 30%, rgba(194, 90, 18, 0.1), transparent 70%);
+}
+
+/* ── Reset / base ────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  margin: 0;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--nav-h) + 16px);
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: var(--link);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color 0.15s var(--ease);
+}
+a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.15;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+}
+::selection {
+  background: rgba(255, 166, 87, 0.28);
+  color: #fff;
+}
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.62rem 1.15rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 560;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: transform 0.15s var(--ease), background 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.btn:hover {
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+.btn-primary {
+  background: linear-gradient(135deg, #ffb877, var(--ember));
+  color: #1a1208;
+}
+.btn-primary:hover {
+  color: #1a1208;
+  box-shadow: 0 8px 28px -10px rgba(255, 166, 87, 0.6);
+}
+.btn-ghost {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--surface);
+}
+.btn-ghost:hover {
+  border-color: var(--accent-2);
+  color: var(--text);
+}
+
+/* ── Code (Shiki) — dark terminal look in both themes ────────────────────── */
+.astro-code {
+  background: var(--code-bg) !important;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  line-height: 1.7;
+  overflow-x: auto;
+  tab-size: 2;
+}
+:not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-fg);
+  padding: 0.12em 0.42em;
+  border-radius: 6px;
+  word-break: break-word;
+}
+
+/* ── Callouts (from remark-callouts) ─────────────────────────────────────── */
+.callout {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  margin: 1.5rem 0;
+  background: var(--surface);
+  font-size: 0.95rem;
+}
+.callout > :last-child {
+  margin-bottom: 0;
+}
+.callout-title {
+  font-weight: 640;
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem !important;
+}
+.callout-note {
+  border-left-color: var(--verdigris);
+}
+.callout-note .callout-title {
+  color: var(--verdigris);
+}
+.callout-tip {
+  border-left-color: var(--chartreuse);
+}
+.callout-tip .callout-title {
+  color: var(--chartreuse);
+}
+.callout-caution,
+.callout-important {
+  border-left-color: var(--ember);
+}
+.callout-caution .callout-title,
+.callout-important .callout-title {
+  color: var(--ember);
+}
+.callout-danger {
+  border-left-color: #f47067;
+}
+.callout-danger .callout-title {
+  color: #f47067;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

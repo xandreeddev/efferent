@@ -17,7 +17,7 @@ your tools and the SDK's are the same kind of thing.
 - **Handler** — an `Effect`, bound to the tool's name in a `Layer`. This is the **dependency seam**:
   the handler resolves ports (`FileSystem`, `Shell`, …) — at *layer-build time*, since handlers
   themselves are `R = never` — and you provide that layer at the [composition
-  root](/efferent/guides/composition-root/).
+  root](/docs/guides/composition-root/).
 
 ```ts
 const toolkit = Toolkit.make(ReadFile, Bash, Grep)   // bundle
@@ -26,14 +26,14 @@ const handlers = toolkit.toLayer(/* handlers, or an Effect that builds them */)
 
 Because the handler resolves ports from context, the same tool definition runs with real IO in the app
 and with stubs in a test — you change only the layer you provide. Full walkthrough:
-[Define a tool](/efferent/guides/define-a-tool/).
+[Define a tool](/docs/guides/define-a-tool/).
 
 ## The coding toolkit
 
 The bundled coding agent ships a toolkit of `read_file`, `write_file`, `edit_file`, `Bash`, `grep`,
 `glob`, `ls`, `web_fetch`, `search_web`, `run_agent`, and `update_plan`, backed by the `FileSystem`,
 `Shell`, `Http`, and `WebSearch` ports. It's just an `AgentConfig` like any other —
-see [the coding agent](/efferent/guides/coding-agent/).
+see [the coding agent](/docs/guides/coding-agent/).
 
 :::caution[Two rules providers enforce]
 - **`success` must be an object** and **every tool needs ≥1 parameter** — a parameterless tool or a

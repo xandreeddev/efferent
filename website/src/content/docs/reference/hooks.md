@@ -43,5 +43,5 @@ type BeforeToolCallDecision =
 | `AgentSubAgentEndEvent` | `name`, `nodeId?`, `ok`, `summary`, `filesChanged`, `usage?` |
 | `AgentHelperUsageEvent` | `role: "fast"`, `usage` |
 
-See the [hooks guide](/efferent/guides/hooks/) for usage and the runnable
-[hooks agent](/efferent/examples/hooks-agent/).
+See the [hooks guide](/docs/guides/hooks/) for usage and the runnable
+[hooks agent](/docs/examples/hooks-agent/).

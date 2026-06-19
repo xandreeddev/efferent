@@ -7,12 +7,12 @@ sidebar:
 ---
 
 Ports are `Context.Tag` services in `@xandreed/sdk-core/ports/`. The domain programs against these;
-[adapters](/efferent/reference/adapters/) provide them. Each port ships its tagged errors next to it.
+[adapters](/docs/reference/adapters/) provide them. Each port ships its tagged errors next to it.
 
 | Port | Purpose | Key methods |
 | --- | --- | --- |
 | `ConversationStore` | Message-history persistence + handoff checkpoints. | `create`, `ensure`, `append`, `list`, `listActive`, `checkpoint`, `getLatestCheckpoint`, `setTitle`, `listByWorkspace` |
-| `ContextTreeStore` | The branching [sub-agent](/efferent/concepts/sub-agents/) tree. | `spawn`, `append`, `listMessages`, `recordReturn`, `get`, `listTree`, `drop` |
+| `ContextTreeStore` | The branching [sub-agent](/docs/concepts/sub-agents/) tree. | `spawn`, `append`, `listMessages`, `recordReturn`, `get`, `listTree`, `drop` |
 | `FileSystem` | Workspace file access. | `read`, `write`, `exists`, `list`, `glob` |
 | `Shell` | Command execution. | `exec({ command, cwd, timeoutMs? })` |
 | `Http` | HTTP GET (the `web_fetch` tool). | `get(url, options?)` |
@@ -32,4 +32,4 @@ const fs = yield* FileSystem
 const { content } = yield* fs.read("README.md")
 ```
 
-See [architecture](/efferent/concepts/architecture/) for how ports, adapters, and use cases fit together.
+See [architecture](/docs/concepts/architecture/) for how ports, adapters, and use cases fit together.

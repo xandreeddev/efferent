@@ -7,7 +7,7 @@ sidebar:
 ---
 
 The bundled coding agent ships as the `efferent` npm package (bins `efferent` / `eff`), a Bun bundle.
-Install and run: see [Getting started](/efferent/getting-started/).
+Install and run: see [Getting started](/docs/getting-started/).
 
 ## Modes
 
@@ -43,4 +43,4 @@ Type `:` for the command menu. Common ones:
 - **Help** — `?` (or `:shortcuts` / `:keys`) for the shortcuts overlay.
 
 Credentials and model selection are managed *in-session* — there is no `init` command and no env-var key
-reading on the local path (see [providers](/efferent/concepts/providers/)).
+reading on the local path (see [providers](/docs/concepts/providers/)).

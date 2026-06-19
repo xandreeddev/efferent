@@ -6,16 +6,16 @@ sidebar:
   order: 1
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/diceAgent.ts?raw';
 
 The minimal agent: one tool (`roll_dice`), bundled into an `AgentConfig`, run through the real loop
 against a logged-in provider — no coding toolkit, no scope runtime, no sub-agents. The
-[Your first agent](/efferent/your-first-agent/) guide walks through it piece by piece; below is the
+[Your first agent](/docs/your-first-agent/) guide walks through it piece by piece; below is the
 **complete, runnable file** exactly as it ships in the repo.
 
 ```sh
 bun examples/diceAgent.ts
 ```
 
-<Code code={source} lang="ts" title="examples/diceAgent.ts" />
+<SourceFile code={source} file="examples/diceAgent.ts" lang="ts" />

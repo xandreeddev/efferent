@@ -33,7 +33,7 @@ runAgent(config, conversationId, prompt, hooks)
 ```
 
 `maxSteps` defaults to 20 (`Settings.maxSteps`). The result is an `AgentResult` — see
-[`runAgent`](/efferent/reference/run-agent/).
+[`runAgent`](/docs/reference/run-agent/).
 
 ## Prompt mapping
 
@@ -49,10 +49,10 @@ decodes a call's parameters **before** the handler runs, so a malformed or hallu
 `AiError.MalformedOutput`, which `failureMode` can't catch. `recoverMalformedToolCalls` (in
 `agentLoop.ts`) converts that into an ordinary tool result too, so the loop proceeds and the model reads
 the decode error from context. Same recovery path, no retry machinery. See
-[Define a tool](/efferent/guides/define-a-tool/).
+[Define a tool](/docs/guides/define-a-tool/).
 
 ## Hooks
 
 The loop re-emits a small event vocabulary from each response — `onTurnStart`, the tool events,
 `onAssistantMessage`, and more — so a driver (the TUI, your app) can observe and steer without owning the
-loop. See [Hooks](/efferent/guides/hooks/) and the [`AgentHooks` reference](/efferent/reference/hooks/).
+loop. See [Hooks](/docs/guides/hooks/) and the [`AgentHooks` reference](/docs/reference/hooks/).

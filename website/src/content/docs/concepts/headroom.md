@@ -21,7 +21,7 @@ governing constraint: provider prompt caches key on a **byte-stable prefix**, so
    (`[…headroom: ~4509 tokens of this Bash output omitted…]` → re-read with a narrower grep or
    offset/limit). Compression the model can *undo* on demand.
 3. **Fast-tier middle digests.** When `UtilityLlm` is available and the dropped middle is big enough, the
-   [fast role](/efferent/concepts/providers/) writes a short summary into the marker.
+   [fast role](/docs/concepts/providers/) writes a short summary into the marker.
 4. **Threshold auto-fold.** When a finished turn crosses a percentage of the window, the driver folds the
    history into a [handoff summary](#handoff) — the one cache-safe way to actually shrink history.
 
@@ -51,10 +51,10 @@ Compression.when(pred, step)   // apply a compressor only when a budget predicat
 A custom tail compressor **must be deterministic and only touch the new tail** (the cached prefix stays
 byte-stable). It reaches optional services via `Effect.serviceOption`, so the public type stays
 `R = never` and `AgentConfig` needs no requirements parameter. The policy is inherited by sub-agents.
-See the [compression-policy guide](/efferent/guides/compression-policy/) and the
-[reference](/efferent/reference/compression/).
+See the [compression-policy guide](/docs/guides/compression-policy/) and the
+[reference](/docs/reference/compression/).
 
-## Handoff {#handoff}
+## Handoff
 
 A **handoff** replaces the *loaded* history with a model-generated summary while keeping the originals on
 disk (a checkpoint at the current position). It's how a long session frees context without losing the

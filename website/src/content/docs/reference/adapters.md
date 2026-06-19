@@ -6,8 +6,8 @@ sidebar:
   order: 6
 ---
 
-Each adapter is a `Layer` named `<Thing>Live` providing exactly one [port](/efferent/reference/ports/)
-(or a bundle). You compose the ones you need at the [composition root](/efferent/guides/composition-root/).
+Each adapter is a `Layer` named `<Thing>Live` providing exactly one [port](/docs/reference/ports/)
+(or a bundle). You compose the ones you need at the [composition root](/docs/guides/composition-root/).
 
 | Layer | Provides | Needs / notes |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Each adapter is a `Layer` named `<Thing>Live` providing exactly one [port](/effe
 | `LocalFileSystemLive` | `FileSystem` | `node:fs` + gitignore-aware glob. `Layer.succeed` (no deps). |
 | `LocalShellLive` | `Shell` | Bun `spawn`, streaming. |
 | `HttpLive` | `Http` | global `fetch`, body capped at `maxBytes`. |
-| `OtlpTelemetryLive` | (tracer/meter at the edge) | OTLP export over HTTP; gated by `Settings.telemetry`. See [observability](/efferent/concepts/observability/). |
+| `OtlpTelemetryLive` | (tracer/meter at the edge) | OTLP export over HTTP; gated by `Settings.telemetry`. See [observability](/docs/concepts/observability/). |
 
 Rules that hold across all adapters: external promises go through `Effect.tryPromise` mapped into the
 port's tagged error (no untyped error escapes), and **keys are never captured at layer-build** — they're

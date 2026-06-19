@@ -19,14 +19,14 @@ bun diceAgent.ts              # run one (needs a credential — see Getting star
 
 | Example | Shows | Page |
 | --- | --- | --- |
-| `diceAgent.ts` | The minimal agent: one tool → toolkit → `AgentConfig` → `runAgent`. | [Dice agent](/efferent/examples/dice-agent/) |
-| `calcAgent.ts` | A multi-tool toolkit (`add`, `multiply`). | [Calculator agent](/efferent/examples/calc-agent/) |
-| `fileAgent.ts` | A tool whose handler uses the `FileSystem` port — the dependency seam. | [File agent](/efferent/examples/file-agent/) |
-| `hooksAgent.ts` | Observing and steering the loop with `AgentHooks`. | [Hooks agent](/efferent/examples/hooks-agent/) |
-| `compressionAgent.ts` | Customizing context compression with a `CompressionPolicy`. | [Compression agent](/efferent/examples/compression-agent/) |
+| `diceAgent.ts` | The minimal agent: one tool → toolkit → `AgentConfig` → `runAgent`. | [Dice agent](/docs/examples/dice-agent/) |
+| `calcAgent.ts` | A multi-tool toolkit (`add`, `multiply`). | [Calculator agent](/docs/examples/calc-agent/) |
+| `fileAgent.ts` | A tool whose handler uses the `FileSystem` port — the dependency seam. | [File agent](/docs/examples/file-agent/) |
+| `hooksAgent.ts` | Observing and steering the loop with `AgentHooks`. | [Hooks agent](/docs/examples/hooks-agent/) |
+| `compressionAgent.ts` | Customizing context compression with a `CompressionPolicy`. | [Compression agent](/docs/examples/compression-agent/) |
 
 :::tip
 Running an example needs a provider credential in `~/.efferent/auth.json` — install the CLI, run
-`efferent`, and `:login` once (see [Getting started](/efferent/getting-started/)). Typechecking needs
+`efferent`, and `:login` once (see [Getting started](/docs/getting-started/)). Typechecking needs
 nothing.
 :::

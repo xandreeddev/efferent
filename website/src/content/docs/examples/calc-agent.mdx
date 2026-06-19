@@ -6,10 +6,10 @@ sidebar:
   order: 2
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/calcAgent.ts?raw';
 
-The same shape as the [dice agent](/efferent/examples/dice-agent/), with **two** tools (`add`,
+The same shape as the [dice agent](/docs/examples/dice-agent/), with **two** tools (`add`,
 `multiply`) in one `Toolkit`. The only differences: pass more tools positionally to `Toolkit.make`,
 and bind one handler per tool name. The config, loop, and composition root are unchanged.
 
@@ -17,4 +17,4 @@ and bind one handler per tool name. The config, loop, and composition root are u
 bun examples/calcAgent.ts
 ```
 
-<Code code={source} lang="ts" title="examples/calcAgent.ts" />
+<SourceFile code={source} file="examples/calcAgent.ts" lang="ts" />
