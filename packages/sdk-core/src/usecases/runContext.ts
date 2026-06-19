@@ -1,5 +1,6 @@
 import { FiberRef } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
+import type { CompressionPolicy } from "../entities/Compression.js"
 import type { ConversationId } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
 import type { TokenPool } from "./tokenBudget.js"
@@ -33,6 +34,10 @@ export interface RunContext {
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */
   readonly toolResultMaxChars?: number
+  /** The agent's compression policy, threaded so the whole sub-agent subtree
+   *  inherits it (the loop reads this when no `input.compression` override is
+   *  given). Absent → `Headroom.default()`. */
+  readonly compression?: CompressionPolicy
 }
 
 export const initialRunContext: RunContext = {

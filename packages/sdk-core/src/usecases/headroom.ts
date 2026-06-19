@@ -1,4 +1,11 @@
 import { Effect, FiberRef, Option } from "effect"
+import {
+  sumUsage,
+  type CompressionPolicy,
+  type CompressionReport,
+  type ContextCompressor,
+  type TailCompressor,
+} from "../entities/Compression.js"
 import type { AgentMessage } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
@@ -122,31 +129,12 @@ const headroomDigestPrompt = (): Prompt => ({
   text: SUMMARIZE_PROMPT,
 })
 
-/** What one compression pass did — surfaced so callers can report spend. */
-export interface CompressionReport {
-  readonly messages: ReadonlyArray<AgentMessage>
-  /** FAST-tier usage from middle summaries (absent when none ran). */
-  readonly helperUsage?: TokenUsage
-}
-
 interface ToolResultPart {
   readonly type: string
   readonly toolName?: string
   output?: unknown
   [k: string]: unknown
 }
-
-const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined =>
-  a === undefined
-    ? b
-    : b === undefined
-      ? a
-      : {
-          inputTokens: a.inputTokens + b.inputTokens,
-          outputTokens: a.outputTokens + b.outputTokens,
-          totalTokens: a.totalTokens + b.totalTokens,
-          cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
-        }
 
 /**
  * Compress every oversized string inside the tool-result parts of a step's
@@ -248,3 +236,79 @@ export const compressToolResults = (
     }
     return { messages: out, ...(helperUsage !== undefined ? { helperUsage } : {}) }
   })
+
+/** Replace a tool result's string output(s) with a short reversible marker. */
+const elidedMarker = (toolName: string): string =>
+  `[…headroom: an earlier ${toolName} result was elided from the working context to save room.` +
+  ` Re-run the tool (read_file/grep/Bash) if you need it again.]`
+
+const elideOutput = (value: unknown, toolName: string): unknown => {
+  if (typeof value === "string") {
+    return value.length > elidedMarker(toolName).length ? elidedMarker(toolName) : value
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>
+    const out: Record<string, unknown> = { ...obj }
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string" && v.length > elidedMarker(toolName).length) {
+        out[k] = elidedMarker(toolName)
+      }
+    }
+    return out
+  }
+  return value
+}
+
+/**
+ * **Headroom** — the SDK's default context-compression tactics, packaged as
+ * composable {@link TailCompressor}/{@link ContextCompressor} values. An agent
+ * opts in by setting `AgentConfig.compression` (absent ⇒ {@link Headroom.default}
+ * applies, so behaviour is unchanged). Build a custom policy from these, from
+ * the `Compression` combinators, or from the exported pure primitives
+ * (`planClip`/`renderClip`/`planContentCompression`/`renderContent`).
+ */
+export const Headroom = {
+  /**
+   * Append-time tool-result compression — the engine behind today's behaviour.
+   * Structure-aware first (grep/log shapes), blind head+tail clip otherwise,
+   * with an optional FAST-tier digest of the dropped middle when `UtilityLlm`
+   * is in context (resolved via `serviceOption`, so the strategy stays
+   * `R = never`). Budget comes from `CompressionBudget.maxChars`.
+   */
+  toolResults:
+    (): TailCompressor =>
+    (tail, budget) =>
+      compressToolResults(tail, budget.maxChars),
+
+  /** The default policy: headroom tail compression + identity context. */
+  default: (): CompressionPolicy => ({ tail: Headroom.toolResults() }),
+
+  /**
+   * In-run, in-memory whole-context strategy (moment 2): keep the most recent
+   * `keep` tool-result messages full and replace older tool-result string
+   * outputs with a short reversible marker. Pure + deterministic. NOT applied
+   * by default — opting in trades prompt-cache hits for headroom, because it
+   * rewrites the (in-memory) prefix the model sees each turn.
+   */
+  keepRecentToolResults:
+    (keep: number): ContextCompressor =>
+    (messages) =>
+      Effect.sync(() => {
+        if (keep < 0) return messages
+        const toolIdx: number[] = []
+        messages.forEach((m, i) => {
+          if (m.role === "tool") toolIdx.push(i)
+        })
+        if (toolIdx.length <= keep) return messages
+        const elide = new Set(toolIdx.slice(0, toolIdx.length - keep))
+        return messages.map((m, i) => {
+          if (!elide.has(i) || typeof m.content === "string") return m
+          const parts = (m.content as ReadonlyArray<unknown>).map((raw) => {
+            const p = raw as ToolResultPart
+            if (p?.type !== "tool-result") return raw
+            return { ...p, output: elideOutput(p.output, p.toolName ?? "tool") }
+          })
+          return { ...m, content: parts } as unknown as AgentMessage
+        })
+      }),
+}
