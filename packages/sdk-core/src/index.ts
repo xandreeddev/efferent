@@ -1,6 +1,7 @@
 // Entities
 export * from "./entities/AgentContext.js"
 export * from "./entities/AgentHooks.js"
+export * from "./entities/Compression.js"
 export * from "./entities/Conversation.js"
 export * from "./entities/Database.js"
 export * from "./entities/Model.js"
