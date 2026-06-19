@@ -21,7 +21,7 @@ import {
 } from "../presentation/sidePane.js"
 import { buildConversation, buildConversationRows, foldIdsByKind } from "../presentation/conversation.js"
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
-import { computePalette, PALETTE_VISIBLE } from "../presentation/slashPalette.js"
+import { computePalette } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
 import type { ConversationId } from "@xandreed/sdk-core"
 import { buildFromSelection } from "../actions/session.js"
@@ -596,8 +596,9 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
   const isCommand = text.startsWith(":")
   const isSearch = text.startsWith("/") && text.length > 1
   const paletteOpen = isCommand && !text.includes(" ") && !text.includes("\n")
-  // The navigable/visible slice (keymap + view agree via PALETTE_VISIBLE).
-  const matches = paletteOpen ? computePalette(text).matches.slice(0, PALETTE_VISIBLE) : []
+  // Navigate the FULL match list — the view (`BottomMenu`) windows it, so ↑/↓
+  // reach every command, not just the first screenful.
+  const matches = paletteOpen ? computePalette(text).matches : []
   const palIdx = clampCursor(matches.length, store.paletteIndex())
 
   if (paletteOpen && !key.shift && matches.length > 0) {

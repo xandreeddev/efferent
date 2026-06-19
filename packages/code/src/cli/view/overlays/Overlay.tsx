@@ -2,11 +2,8 @@ import { Show } from "solid-js"
 import type { Overlay as OverlayState } from "../../state/store.js"
 import type { TuiContext } from "../../state/store.js"
 import { ApprovalView } from "./ApprovalView.js"
-import { SelectList } from "./SelectList.js"
 import { Login } from "./Login.js"
-import { SettingsView } from "./SettingsView.js"
 import { OnboardingView } from "./OnboardingView.js"
-import { Shortcuts } from "./Shortcuts.js"
 
 /**
  * The modal overlay host: an absolutely-positioned, full-screen layer (high
@@ -17,13 +14,19 @@ import { Shortcuts } from "./Shortcuts.js"
  */
 export const Overlay = (props: { ctx: TuiContext }) => {
   const o = (): OverlayState => props.ctx.store.overlay()
-  // The command pickers (select / login) are agy **contextual menus**: they rise
-  // from the bottom, just above the status bar, near the command line that
-  // summoned them. The heavier panels (settings / approval) stay centered.
-  const bottom = () => o().kind === "select" || o().kind === "login"
+  // The agy contextual menus — `select` pickers, `settings`, and the `shortcuts`
+  // card — render INLINE in the bottom chrome (their own components), so this
+  // floating host never draws them. What's left is the genuinely modal stuff:
+  // the `login` flow, the bash `approval` prompt (both anchored low, rising from
+  // the command line), and `onboarding` (a full-screen first-run takeover — its
+  // own absolute box, so the anchor wouldn't affect it anyway).
+  const inline = (k: OverlayState["kind"]) =>
+    k === "select" || k === "settings" || k === "shortcuts" || k === "resume"
+  const hosted = () => o().kind !== "none" && !inline(o().kind)
+  const bottom = () => o().kind !== "onboarding"
 
   return (
-    <Show when={o().kind !== "none"}>
+    <Show when={hosted()}>
       <box
         position="absolute"
         top={0}
@@ -35,14 +38,8 @@ export const Overlay = (props: { ctx: TuiContext }) => {
         alignItems="center"
         paddingBottom={bottom() ? 1 : 0}
       >
-        <Show when={o().kind === "select"}>
-          <SelectList state={(o() as Extract<OverlayState, { kind: "select" }>).sel} />
-        </Show>
         <Show when={o().kind === "login"}>
           <Login flow={(o() as Extract<OverlayState, { kind: "login" }>).flow} />
-        </Show>
-        <Show when={o().kind === "settings"}>
-          <SettingsView state={(o() as Extract<OverlayState, { kind: "settings" }>).state} />
         </Show>
         <Show when={o().kind === "approval"}>
           <ApprovalView state={(o() as Extract<OverlayState, { kind: "approval" }>).state} />
@@ -52,9 +49,6 @@ export const Overlay = (props: { ctx: TuiContext }) => {
             state={(o() as Extract<OverlayState, { kind: "onboarding" }>).state}
             note={props.ctx.store.note()}
           />
-        </Show>
-        <Show when={o().kind === "shortcuts"}>
-          <Shortcuts />
         </Show>
       </box>
     </Show>

@@ -123,8 +123,9 @@ const dbConnectFooter: ReadonlyArray<KeyHint> = [
 // doesn't.
 const dbManagerFooter: ReadonlyArray<KeyHint> = [
   { key: "↑/↓", label: "navigate" },
-  { key: "↵/e", label: "edit" },
-  { key: "d", label: "remove" },
+  { key: "type", label: "search" },
+  { key: "↵", label: "edit" },
+  { key: "^D", label: "remove" },
   { key: "esc", label: "back" },
 ]
 
@@ -136,6 +137,11 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
         <text fg={tokens.text.default} marginBottom={1}>
           {props.state.sel.title}
         </text>
+        <Show when={props.state.confirmRemove !== undefined}>
+          <text fg={tokens.state.error} wrapMode="none" marginBottom={1}>
+            {`Remove ${props.state.confirmRemove}? ↵ confirm · esc cancel`}
+          </text>
+        </Show>
         <SelectBody state={props.state.sel} labelBudget={MODAL_RULE - 2} footer={dbManagerFooter} />
       </box>
     }

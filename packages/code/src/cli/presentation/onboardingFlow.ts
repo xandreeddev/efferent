@@ -76,6 +76,10 @@ export type OnboardingState =
       /** When set, the prompt is EDITING this existing connection (keep its name)
        *  rather than adding a new one. */
       readonly editName?: string | undefined
+      /** When set, a delete is awaiting confirmation for this connection name —
+       *  the manager shows a "Remove <name>? ↵ confirm · esc cancel" line instead
+       *  of acting on a bare keypress (so an accidental key can't drop a DB). */
+      readonly confirmRemove?: string | undefined
     }
   | {
       readonly step: "complete"
@@ -210,6 +214,21 @@ export const databaseAdd = (
         ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
         : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
   }
+}
+
+/** Arm a delete confirmation for `name` (the manager renders the confirm line;
+ *  ↵ confirms, esc cancels). Keeps search free — delete is no longer a bare key. */
+export const databaseConfirmRemove = (
+  state: Extract<OnboardingState, { step: "database" }>,
+  name: string,
+): OnboardingState => ({ ...state, confirmRemove: name })
+
+/** Clear a pending delete confirmation (esc / acted). */
+export const databaseCancelRemove = (
+  state: Extract<OnboardingState, { step: "database" }>,
+): OnboardingState => {
+  const { confirmRemove: _drop, ...rest } = state
+  return rest
 }
 
 /** Open the prompt to EDIT an existing connection, prefilled with its current

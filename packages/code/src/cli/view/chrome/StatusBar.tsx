@@ -8,6 +8,7 @@ import {
   prettyCwd,
   statusHint,
 } from "../../presentation/statusBar.js"
+import { composerMode } from "../../presentation/slashPalette.js"
 import { tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
@@ -39,6 +40,9 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
       busy: store.busy(),
       overlayOpen: store.overlay().kind !== "none",
       queuedCount: store.queued().length,
+      // A `:`/`/` line being composed reads "esc to cancel", matching the caret
+      // recolour + the menu below — not the idle "? for shortcuts".
+      composing: store.focus() === "input" && composerMode(store.input()) !== "message",
       note: store.note(),
     })
   // A live note (theme switched · working in agent …) speaks in the running
@@ -46,7 +50,9 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
   const hintColor = () => (store.note() ? tokens.state.running : tokens.text.dim)
 
   return (
-    <box flexDirection="row" justifyContent="space-between" backgroundColor={tokens.status.bg} flexShrink={0}>
+    // No surface fill — agy's status bar is plain text on the terminal background
+    // (a filled bar reads as a heavy band under the borderless bottom chrome).
+    <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
       <text fg={hintColor()} wrapMode="none">{hint()}</text>
       <box flexDirection="row">
         <text fg={tokens.accent.conversation}>{s().modelId}</text>

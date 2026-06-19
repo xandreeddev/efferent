@@ -20,6 +20,12 @@ describe("statusHint (status-bar left zone)", () => {
   test("a pending queue offers '↑ to edit queued' (over cancel)", () => {
     expect(statusHint({ ...base, busy: true, queuedCount: 2 })).toBe("↑ to edit queued")
   })
+  test("composing a :command / /search line reads 'esc to cancel' (not idle)", () => {
+    expect(statusHint({ ...base, composing: true })).toBe("esc to cancel")
+    // …but a queued message or a live note still win over the composing hint.
+    expect(statusHint({ ...base, composing: true, queuedCount: 1 })).toBe("↑ to edit queued")
+    expect(statusHint({ ...base, composing: true, note: "theme: efferent" })).toBe("theme: efferent")
+  })
   test("a live note wins over everything", () => {
     expect(statusHint({ ...base, busy: true, queuedCount: 1, note: "theme: tokyo-night" })).toBe(
       "theme: tokyo-night",
