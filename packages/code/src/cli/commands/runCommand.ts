@@ -249,6 +249,43 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
       return
     }
+    case ":fleet": {
+      // The orchestration cockpit snapshot: the standing goal (P4), the live
+      // fired agents (P3/fleet), and this workspace's scheduled jobs (P5) — the
+      // three persistent orchestration concerns, in one readout. (The header's
+      // ◆ N agents chip tracks the live fleet continuously via the event pump;
+      // :tree shows the full run tree.)
+      const d = ctx.getDirective()
+      const fired = ctx.listFleet()
+      void ctx.run(
+        loadJobs().pipe(
+          Effect.flatMap((jobs) =>
+            Effect.sync(() => {
+              const mine = jobs.filter((j) => j.cwd === store.status().cwd)
+              const lines: Array<string> = ["── fleet ──"]
+              lines.push(
+                d === undefined
+                  ? "directive: none (:goal <objective> to set)"
+                  : `directive: ${d.objective}${d.criteria !== undefined ? ` — done when ${d.criteria}` : ""}`,
+              )
+              lines.push(
+                fired.length === 0
+                  ? "running agents: none (:spawn <agent> <folder> <task> to fire one)"
+                  : `running agents: ${fired.map((f) => `#${f.id} ${f.title} (${f.folder})`).join(", ")}`,
+              )
+              lines.push(
+                mine.length === 0
+                  ? "scheduled: none (:schedule add …)"
+                  : `scheduled: ${mine.map((j) => `${j.cron} → ${j.prompt}`).join(" · ")}`,
+              )
+              lines.push("verbs: :spawn · :stop <id> · :goal · :verify · :schedule · :tree · :agents · :tools")
+              store.pushBlock({ kind: "info", text: lines.join("\n") })
+            }),
+          ),
+        ),
+      )
+      return
+    }
     case ":schedule": {
       const a = arg ?? ""
       if (a.startsWith("add")) {
