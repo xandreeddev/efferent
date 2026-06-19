@@ -1,0 +1,125 @@
+---
+import Icon from "./Icon.astro"
+import BrandLogo from "./BrandLogo.astro"
+import { href, GITHUB, NPM } from "../lib/nav"
+---
+
+<footer class="ft">
+  <div class="ft-inner">
+    <div class="ft-brand">
+      <a class="brand" href={href("/")} aria-label="efferent home">
+        <BrandLogo height={26} />
+      </a>
+      <p>A coding-agent SDK on Effect.ts + Bun — built in public.</p>
+    </div>
+
+    <nav class="ft-cols" aria-label="Footer">
+      <div>
+        <h4>Docs</h4>
+        <a href={href("/docs/getting-started")}>Getting started</a>
+        <a href={href("/docs/your-first-agent")}>Your first agent</a>
+        <a href={href("/docs/concepts/architecture")}>Concepts</a>
+        <a href={href("/docs/reference/agent-config")}>Reference</a>
+      </div>
+      <div>
+        <h4>Ecosystem</h4>
+        <a href={href("/#ecosystem")}>The SDK</a>
+        <a href={href("/docs/getting-started")}>The coding agent</a>
+        <a href={href("/docs/concepts/evals")}>Evals</a>
+        <a href={href("/docs/examples")}>Examples</a>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
+        <a href={NPM} target="_blank" rel="noopener">npm</a>
+      </div>
+    </nav>
+  </div>
+
+  <div class="ft-base">
+    <span>MIT licensed · built with Effect, Bun &amp; Astro</span>
+    <span class="ft-social">
+      <a href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"><Icon name="github" size={16} /></a>
+      <a href={NPM} target="_blank" rel="noopener" aria-label="npm"><Icon name="npm" size={16} /></a>
+    </span>
+  </div>
+</footer>
+
+<style>
+  .ft {
+    border-top: 1px solid var(--hairline);
+    margin-top: 5rem;
+    background: var(--bg-soft);
+  }
+  .ft-inner {
+    max-width: var(--maxw-wide);
+    margin: 0 auto;
+    padding: 3rem 1.25rem 2rem;
+    display: grid;
+    grid-template-columns: 1.4fr 2fr;
+    gap: 2rem;
+  }
+  .ft-brand .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 680;
+    font-size: 1.05rem;
+    color: var(--text);
+    letter-spacing: -0.03em;
+  }
+  .ft-brand p {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin-top: 0.7rem;
+    max-width: 32ch;
+  }
+  .ft-cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .ft-cols h4 {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 0.8rem;
+  }
+  .ft-cols a {
+    display: block;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    padding: 0.22rem 0;
+  }
+  .ft-cols a:hover {
+    color: var(--accent);
+  }
+  .ft-base {
+    max-width: var(--maxw-wide);
+    margin: 0 auto;
+    padding: 1.2rem 1.25rem;
+    border-top: 1px solid var(--hairline);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-faint);
+    font-size: 0.82rem;
+  }
+  .ft-social {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .ft-social a {
+    color: var(--text-faint);
+  }
+  .ft-social a:hover {
+    color: var(--accent);
+  }
+  @media (max-width: 720px) {
+    .ft-inner {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

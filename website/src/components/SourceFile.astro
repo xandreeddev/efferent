@@ -1,0 +1,65 @@
+---
+import { Code } from "astro:components"
+interface Props {
+  code: string
+  lang?: string
+  file: string
+}
+const { code, lang = "ts", file } = Astro.props
+---
+
+<figure class="src">
+  <figcaption class="src-head">
+    <span class="dots"><i></i><i></i><i></i></span>
+    <span class="name">{file}</span>
+  </figcaption>
+  <Code code={code} lang={lang as any} theme="one-dark-pro" />
+</figure>
+
+<style>
+  .src {
+    margin: 1.5rem 0;
+    border: 1px solid var(--code-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--code-bg);
+  }
+  .src-head {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.55rem 0.95rem;
+    border-bottom: 1px solid var(--code-border);
+    background: color-mix(in srgb, var(--code-bg) 70%, #000);
+  }
+  .dots {
+    display: inline-flex;
+    gap: 5px;
+  }
+  .dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #4a443c;
+  }
+  .dots i:first-child {
+    background: #f47067;
+  }
+  .dots i:nth-child(2) {
+    background: var(--ember);
+  }
+  .dots i:nth-child(3) {
+    background: var(--chartreuse);
+  }
+  .name {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+  /* the inner Shiki block sits flush inside the frame */
+  .src :global(.astro-code) {
+    border: none;
+    border-radius: 0;
+    margin: 0;
+  }
+</style>

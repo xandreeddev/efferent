@@ -1,0 +1,10 @@
+# Astro build output + generated types
+dist/
+.astro/
+
+# Dependencies
+node_modules/
+
+# Local preview/playwright artifacts
+.playwright-mcp/
+*.log

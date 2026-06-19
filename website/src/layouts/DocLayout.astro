@@ -1,0 +1,197 @@
+---
+import BaseLayout from "./BaseLayout.astro"
+import Sidebar from "../components/Sidebar.astro"
+import Toc from "../components/Toc.astro"
+import Icon from "../components/Icon.astro"
+import "../styles/prose.css"
+import { href, docsOrder } from "../lib/nav"
+
+interface Heading {
+  depth: number
+  slug: string
+  text: string
+}
+interface Props {
+  title: string
+  description?: string
+  current: string
+  headings?: Heading[]
+}
+const { title, description, current, headings = [] } = Astro.props
+
+const i = docsOrder.findIndex((d) => d.slug === current)
+const prev = i > 0 ? docsOrder[i - 1] : undefined
+const next = i >= 0 && i < docsOrder.length - 1 ? docsOrder[i + 1] : undefined
+---
+
+<BaseLayout title={title} description={description}>
+  <div class="shell">
+    <aside class="col-side">
+      <div class="side-sticky"><Sidebar current={current} /></div>
+    </aside>
+
+    <main class="col-main">
+      <details class="mobile-nav">
+        <summary><Icon name="menu" size={16} /> Documentation menu</summary>
+        <Sidebar current={current} />
+      </details>
+
+      <article>
+        <header class="doc-head">
+          <h1>{title}</h1>
+          {description && <p class="lead">{description}</p>}
+        </header>
+
+        <div class="prose">
+          <slot />
+        </div>
+
+        <nav class="pager" aria-label="Pagination">
+          {prev ? (
+            <a class="pg prev" href={href(`/docs/${prev.slug}`)}>
+              <span class="pg-dir">← Previous</span>
+              <span class="pg-label">{prev.label}</span>
+            </a>
+          ) : (
+            <span />
+          )}
+          {next && (
+            <a class="pg next" href={href(`/docs/${next.slug}`)}>
+              <span class="pg-dir">Next →</span>
+              <span class="pg-label">{next.label}</span>
+            </a>
+          )}
+        </nav>
+      </article>
+
+      <aside class="col-toc">
+        <div class="toc-sticky"><Toc headings={headings} /></div>
+      </aside>
+    </main>
+  </div>
+</BaseLayout>
+
+<style>
+  .shell {
+    max-width: var(--maxw-wide);
+    margin: 0 auto;
+    padding: 0 1.25rem;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: start;
+  }
+  .col-side {
+    display: none;
+  }
+  .side-sticky,
+  .toc-sticky {
+    position: sticky;
+    top: calc(var(--nav-h) + 1.5rem);
+    max-height: calc(100vh - var(--nav-h) - 3rem);
+    overflow-y: auto;
+    padding: 1.5rem 0;
+  }
+  .col-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+    padding: 2rem 0 1rem;
+    min-width: 0;
+  }
+  .col-toc {
+    display: none;
+  }
+  article {
+    min-width: 0;
+    max-width: var(--maxw);
+  }
+  .doc-head {
+    margin-bottom: 2rem;
+  }
+  .doc-head h1 {
+    font-size: clamp(1.9rem, 4vw, 2.5rem);
+  }
+  .lead {
+    margin-top: 0.8rem;
+    color: var(--text-dim);
+    font-size: 1.12rem;
+    line-height: 1.55;
+  }
+  .pager {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--hairline);
+  }
+  .pg {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.8rem 1.1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    min-width: 0;
+  }
+  .pg.next {
+    text-align: right;
+    margin-left: auto;
+  }
+  .pg:hover {
+    border-color: var(--accent-2);
+    text-decoration: none;
+  }
+  .pg-dir {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+  }
+  .pg-label {
+    font-weight: 580;
+    color: var(--text);
+  }
+
+  /* Mobile docs nav */
+  .mobile-nav {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.3rem 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+  .mobile-nav summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+    font-weight: 560;
+    color: var(--text);
+  }
+  .mobile-nav[open] summary {
+    border-bottom: 1px solid var(--hairline);
+    margin-bottom: 0.8rem;
+  }
+
+  @media (min-width: 880px) {
+    .col-side {
+      display: block;
+    }
+    .mobile-nav {
+      display: none;
+    }
+  }
+  @media (min-width: 1200px) {
+    .shell {
+      grid-template-columns: 240px minmax(0, 1fr);
+    }
+    .col-main {
+      grid-template-columns: minmax(0, 1fr) 200px;
+    }
+    .col-toc {
+      display: block;
+    }
+  }
+</style>

@@ -1,0 +1,71 @@
+---
+import { href, docsNav } from "../lib/nav"
+interface Props {
+  current: string
+}
+const { current } = Astro.props
+---
+
+<nav class="sidebar" aria-label="Documentation">
+  {
+    docsNav.map((group) => (
+      <div class="grp">
+        <p class="grp-title">{group.group}</p>
+        <ul>
+          {group.items.map((it) => (
+            <li>
+              <a
+                href={href(`/docs/${it.slug}`)}
+                class:list={["s-link", { active: it.slug === current }]}
+                aria-current={it.slug === current ? "page" : undefined}
+              >
+                {it.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))
+  }
+</nav>
+
+<style>
+  .sidebar {
+    font-size: 0.9rem;
+  }
+  .grp + .grp {
+    margin-top: 1.4rem;
+  }
+  .grp-title {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 0.5rem;
+  }
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .s-link {
+    display: block;
+    color: var(--text-dim);
+    padding: 0.28rem 0.7rem;
+    border-radius: 7px;
+    border-left: 2px solid transparent;
+    margin-left: -2px;
+  }
+  .s-link:hover {
+    color: var(--text);
+    background: var(--surface);
+    text-decoration: none;
+  }
+  .s-link.active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+    border-left-color: var(--accent);
+    font-weight: 560;
+  }
+</style>

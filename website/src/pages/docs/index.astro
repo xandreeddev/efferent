@@ -1,0 +1,60 @@
+---
+import DocLayout from "../../layouts/DocLayout.astro"
+import { href, docsNav } from "../../lib/nav"
+---
+
+<DocLayout
+  title="Documentation"
+  description="Build a coding agent on the efferent SDK — from your first tool to the full architecture and API."
+  current=""
+>
+  <p>
+    efferent is a coding-agent SDK on <a href="https://effect.website">Effect.ts</a> + Bun, and the
+    coding agent built on it. New here? Start with <a href={href("/docs/getting-started")}>Getting started</a>,
+    then build <a href={href("/docs/your-first-agent")}>your first agent</a>.
+  </p>
+
+  <div class="dgrid not-prose">
+    {
+      docsNav.map((group) => (
+        <a class="dcard" href={href(`/docs/${group.items[0].slug}`)}>
+          <h3>{group.group}</h3>
+          <p>{group.items.map((i) => i.label).join(" · ")}</p>
+        </a>
+      ))
+    }
+  </div>
+</DocLayout>
+
+<style>
+  .dgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1.8rem;
+  }
+  .dcard {
+    display: block;
+    padding: 1.1rem 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    transition: border-color 0.15s var(--ease), transform 0.15s var(--ease);
+  }
+  .dcard:hover {
+    border-color: var(--accent-2);
+    transform: translateY(-2px);
+    text-decoration: none;
+  }
+  .dcard h3 {
+    font-size: 1.05rem;
+    margin: 0 0 0.4rem;
+    color: var(--text);
+  }
+  .dcard p {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 0.84rem;
+    line-height: 1.5;
+  }
+</style>
