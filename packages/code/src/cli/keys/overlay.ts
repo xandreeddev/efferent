@@ -17,14 +17,16 @@ import {
   onboardingAppend,
   onboardingBackspace,
   startOnboarding,
+  databaseConfirmRemove,
+  databaseCancelRemove,
 } from "../presentation/onboardingFlow.js"
 import {
   advanceOnboardingStep,
   onboardingBack,
   finishOnboarding,
-  editOnboardingDatabase,
   removeOnboardingDatabase,
 } from "../actions/onboarding.js"
+import { LOCAL_DB_NAME } from "@xandreed/sdk-core"
 import {
   beginEdit,
   cancelEdit,
@@ -40,7 +42,15 @@ import { applyTheme } from "../actions/theme.js"
 import { setTheme } from "../state/theme.js"
 import { Effect } from "effect"
 import { refreshNav } from "../actions/contextTree.js"
-import { resumeConversation } from "../actions/session.js"
+import { resumeConversation, resumeFromBrowser } from "../actions/session.js"
+import {
+  resumeClearFilter,
+  resumeCycleTab,
+  resumeFilterAppend,
+  resumeFilterBackspace,
+  resumeMove,
+  selectedResume,
+} from "../presentation/resumeBrowser.js"
 import {
   applyDatabasePick,
   applyEffort,
@@ -49,7 +59,7 @@ import {
   cycleEnumSetting,
   toggleBooleanSetting,
 } from "../actions/settings.js"
-import { advanceLogin, stopOAuthSession } from "../actions/login.js"
+import { advanceLogin, logout, stopOAuthSession } from "../actions/login.js"
 import {
   backToChoose,
   beginDenyReason,
@@ -128,6 +138,10 @@ const submitSelect = (ctx: TuiContext, sel: SelectState<unknown>, purpose: Selec
       // Make the chosen connection active (switch live + carry the conversation).
       if (value !== undefined) void ctx.run(applyDatabasePick(store, value as NamedConn, store.status().cwd))
       return
+    case "logout":
+      // Forget the highlighted provider's credential (same path as `:logout <p>`).
+      if (value !== undefined) void ctx.run(logout(store, value as string))
+      return
   }
 }
 
@@ -190,6 +204,56 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       store.closeOverlay()
     }
     return true
+  }
+
+  if (o.kind === "resume") {
+    const st = o.state
+    if (key.name === "escape") {
+      // esc clears the search first (agy "Go back / Clear search"), then closes.
+      const cleared = resumeClearFilter(st)
+      if (cleared === undefined) store.closeOverlay()
+      else store.setOverlay({ kind: "resume", state: cleared })
+      return true
+    }
+    if (key.ctrl && key.name === "c") {
+      store.closeOverlay()
+      return true
+    }
+    if (key.name === "tab" || key.name === "right") {
+      store.setOverlay({ kind: "resume", state: resumeCycleTab(st, "right") })
+      return true
+    }
+    if (key.name === "left") {
+      store.setOverlay({ kind: "resume", state: resumeCycleTab(st, "left") })
+      return true
+    }
+    if (key.name === "up" || key.name === "down") {
+      store.setOverlay({ kind: "resume", state: resumeMove(st, key.name) })
+      return true
+    }
+    if (key.name === "return") {
+      const pick = selectedResume(st)
+      if (pick === undefined) {
+        store.closeOverlay()
+      } else {
+        void ctx.run(
+          resumeFromBrowser(store, store.status().cwd, pick.conn, pick.active, pick.conv.id).pipe(
+            Effect.zipRight(refreshNav(store, pick.conv.id).pipe(Effect.catchAll(() => Effect.void))),
+          ),
+        )
+      }
+      return true
+    }
+    if (key.name === "backspace") {
+      store.setOverlay({ kind: "resume", state: resumeFilterBackspace(st) })
+      return true
+    }
+    const ch = printable(key)
+    if (ch !== undefined) {
+      store.setOverlay({ kind: "resume", state: resumeFilterAppend(st, ch) })
+      return true
+    }
+    return true // a modal owns all input while open
   }
 
   if (o.kind === "select") {
@@ -342,6 +406,22 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
 
   if (o.kind === "onboarding") {
     const state = o.state
+
+    // A pending DB-delete confirmation owns input: ↵ removes, esc cancels,
+    // anything else is swallowed (so the confirm stays put). MUST precede the
+    // general Esc/Go-Back handler below, or esc would navigate away mid-confirm.
+    if (state.step === "database" && state.connect === undefined && state.confirmRemove !== undefined) {
+      if (key.name === "return") {
+        void ctx.run(removeOnboardingDatabase(store, state))
+        return true
+      }
+      if (key.name === "escape") {
+        store.setOverlay({ kind: "onboarding", state: databaseCancelRemove(state) })
+        return true
+      }
+      return true
+    }
+
     // Esc = Go Back (agy convention). On the first screen (the scope picker)
     // there's nowhere back to go: close if already signed in, else exit.
     if (key.name === "escape") {
@@ -417,17 +497,21 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
       return true
     }
 
-    // In the DB manager (not the add/edit prompt), e/d edit/remove the highlighted
-    // configured connection — claimed before the printable-filter fallthrough.
-    if (state.step === "database" && state.connect === undefined) {
-      if (key.name === "e") {
-        void ctx.run(editOnboardingDatabase(store, state))
-        return true
+    // In the DB manager (not the add/edit prompt), Ctrl-D arms a delete
+    // CONFIRMATION for the highlighted configured connection. A non-letter trigger
+    // on purpose: every printable key (incl. d/e) now flows to the filter, so the
+    // manager is freely searchable (the old bare `d` deleted instead of searching).
+    // Editing is `↵` (the manager's primary action — see advanceOnboardingStep).
+    if (state.step === "database" && state.connect === undefined && key.ctrl && key.name === "d") {
+      const item = selectedValue(state.sel)
+      if (item !== undefined && item.tag === "use") {
+        if (item.conn.name === LOCAL_DB_NAME) {
+          store.toast("local always exists — press ↵ to change its path")
+        } else {
+          store.setOverlay({ kind: "onboarding", state: databaseConfirmRemove(state, item.conn.name) })
+        }
       }
-      if (key.name === "d") {
-        void ctx.run(removeOnboardingDatabase(store, state))
-        return true
-      }
+      return true
     }
 
     if (
@@ -506,6 +590,9 @@ export const pasteIntoOverlay = (ctx: TuiContext, text: string): boolean => {
       return true
     case "onboarding":
       store.setOverlay({ kind: "onboarding", state: onboardingAppend(o.state, text) })
+      return true
+    case "resume":
+      store.setOverlay({ kind: "resume", state: resumeFilterAppend(o.state, text) })
       return true
     case "settings":
       if (!isEditing(o.state)) return false

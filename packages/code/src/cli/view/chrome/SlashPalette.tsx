@@ -1,50 +1,39 @@
-import { createMemo, For, Show } from "solid-js"
-import { computePalette, PALETTE_VISIBLE } from "../../presentation/slashPalette.js"
+import { createMemo, Show } from "solid-js"
+import { computePalette } from "../../presentation/slashPalette.js"
 import { clampCursor } from "../../presentation/paneNav.js"
-import { glyph } from "../../state/theme.js"
-import { KeyHints, MenuRow, type KeyHint } from "../ui/index.js"
+import { BottomMenu, type KeyHint } from "../ui/index.js"
 import type { TuiContext } from "../../state/store.js"
 
-/** The agy contextual-menu footer — same `KeyHints` painter every picker uses. */
+/** The agy command-palette footer (matches agy's wording: Navigate/Select/Complete). */
 const PALETTE_FOOTER: ReadonlyArray<KeyHint> = [
-  { key: "↑/↓", label: "navigate" },
-  { key: "⇥/→", label: "complete" },
-  { key: "↵", label: "run" },
+  { key: "↑/↓", label: "Navigate" },
+  { key: "enter", label: "Select" },
+  { key: "tab", label: "Complete" },
 ]
 
 // Command names pad to one column so the descriptions align (agy contextual
-// menu). The widest is ":onboarding" (11) — pad to 12 and let MenuRow keep it.
+// menu). The widest is ":onboarding" (11) — pad to 12.
 const NAME_W = 12
 
 /**
- * The `:` command menu — the agy contextual menu shown **below** the input as the
- * user types a `:` command. Rendered through the shared {@link MenuRow} +
- * {@link KeyHints} primitives, so it's the SAME caret/row/footer as every select
- * picker: change the menu look once, this follows. The highlighted row is
- * `store.paletteIndex()` (moved by ↑/↓), which `⇥`/`→` complete to and `↵` runs
- * (see `keys/dispatch.ts:inputKey`).
+ * The `:` command menu — the agy borderless contextual menu shown **below** the
+ * input fence as the user types a `:` command. Rendered through the shared
+ * {@link BottomMenu} (the SAME renderer every picker uses): `>` pointer, dim
+ * descriptions, `↑/↓ N more` overflow lines, a blank line, then the indented
+ * footer. The highlighted row is `store.paletteIndex()` (moved by ↑/↓ over the
+ * FULL match list — `keys/dispatch.ts:inputKey`), which `⇥`/`→` complete to and
+ * `↵` runs.
  */
 export const SlashPalette = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const palette = createMemo(() => computePalette(store.input()))
-  const matches = createMemo(() => palette().matches.slice(0, PALETTE_VISIBLE))
-  const selected = createMemo(() => clampCursor(matches().length, store.paletteIndex()))
+  const items = createMemo(() =>
+    palette().matches.map((c) => ({ label: c.name.padEnd(NAME_W), desc: c.description })),
+  )
+  const selected = createMemo(() => clampCursor(items().length, store.paletteIndex()))
   return (
     <Show when={palette().visible}>
-      <box flexDirection="column" flexShrink={0}>
-        <For each={matches()}>
-          {(c, i) => (
-            <MenuRow
-              selected={i() === selected()}
-              marker={i() === selected() ? glyph.pointer : " "}
-              label={c.name.padEnd(NAME_W)}
-              labelBudget={NAME_W}
-              desc={c.description}
-            />
-          )}
-        </For>
-        <KeyHints hints={PALETTE_FOOTER} />
-      </box>
+      <BottomMenu items={items()} selected={selected()} labelBudget={NAME_W} footer={PALETTE_FOOTER} maxRows={6} />
     </Show>
   )
 }
