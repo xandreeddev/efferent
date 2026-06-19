@@ -45,6 +45,7 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/providers", label: "Providers & models" },
       { slug: "concepts/headroom", label: "Context headroom" },
       { slug: "concepts/sub-agents", label: "Sub-agents" },
+      { slug: "concepts/fleet", label: "The fleet" },
       { slug: "concepts/skills", label: "Skills" },
       { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/evals", label: "Evals" },
@@ -59,6 +60,7 @@ export const docsNav: DocGroup[] = [
       { slug: "guides/compression-policy", label: "Compression policy" },
       { slug: "guides/coding-agent", label: "The coding agent" },
       { slug: "guides/sub-agents", label: "Spawning sub-agents" },
+      { slug: "guides/fleet", label: "Run a fleet" },
     ],
   },
   {
@@ -132,6 +134,11 @@ export const capabilities = [
     title: "Sub-agents & context tree",
     desc: "One generic run_agent tool spawns folder-scoped sub-agents; resume, branch, or hand off — every spawn persists.",
     href: "/docs/concepts/sub-agents",
+  },
+  {
+    title: "Fleet & orchestration",
+    desc: "Named agent roles you fire from a live session, a shared comms bus, a standing directive with a verifier, and cron — fibers in one runtime.",
+    href: "/docs/concepts/fleet",
   },
   {
     title: "Colocated evals",
