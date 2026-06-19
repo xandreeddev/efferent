@@ -79,5 +79,7 @@ export const makeStubCtx = (opts: {
     stopAgent: () => {},
     listFleet: () => [],
     importAgents: () => {},
+    getDirective: () => undefined,
+    setDirective: () => {},
   }
 }

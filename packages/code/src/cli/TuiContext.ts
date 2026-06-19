@@ -17,6 +17,7 @@ import type {
   WebSearch,
 } from "@xandreed/sdk-core"
 import type { LanguageModel } from "@effect/ai"
+import type { Directive } from "../usecases/directive.js"
 import type { TuiStore } from "./state/store.js"
 
 /**
@@ -73,6 +74,9 @@ export interface TuiContext {
   /** Import agent-definition files from GitHub into `.efferent/agents/`
    *  (`:agents add github:owner/repo[/path][@ref]`). Applies on next launch. */
   readonly importAgents: (spec: string) => void
+  /** The session's standing goal (Phase 4), injected into every turn's prompt. */
+  readonly getDirective: () => Directive | undefined
+  readonly setDirective: (d: Directive | undefined) => void
   /**
    * Copy the current OpenTUI mouse selection to the system clipboard (OSC 52).
    * Returns false when nothing is selected. Bound to `y` on the read-only panes

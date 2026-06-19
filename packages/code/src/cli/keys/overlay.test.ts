@@ -35,6 +35,8 @@ const ctxOf = (store: TuiStore): TuiContext => ({
   stopAgent: () => {},
   listFleet: () => [],
   importAgents: () => {},
+  getDirective: () => undefined,
+  setDirective: () => {},
 })
 
 const key = (name: string, mods: Partial<Key> = {}): Key => ({

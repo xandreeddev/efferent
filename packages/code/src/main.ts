@@ -30,6 +30,7 @@ import {
 import { coderPrompt } from "./prompts/coder.js"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
+import { withBuiltinAgents } from "./usecases/directive.js"
 import { loadAgents } from "./usecases/loadAgents.js"
 import { loadSkills } from "./usecases/loadSkills.js"
 
@@ -220,7 +221,7 @@ const root = Command.make(
       // Discover agent ROLES the same way: `.efferent/agents/*.md` walked from
       // cwd → parents → ~/.efferent/agents. Selectable via `run_agent({ agent })`
       // and the TUI `:spawn`. Empty when none — never breaks the agent.
-      const agents = yield* loadAgents(workspace, homedir())
+      const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
 
       // Load settings + bind the workspace so AuthStore can read a local-tier
       // credential (`<cwd>/.efferent/auth.json`); no-op in the EFFERENT_HOME sandbox.

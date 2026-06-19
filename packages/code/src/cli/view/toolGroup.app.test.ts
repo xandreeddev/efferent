@@ -29,6 +29,8 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   stopAgent: () => {},
   listFleet: () => [],
   importAgents: () => {},
+  getDirective: () => undefined,
+  setDirective: () => {},
 })
 
 /**
