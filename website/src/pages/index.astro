@@ -1,0 +1,437 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro"
+import SourceFile from "../components/SourceFile.astro"
+import ProductLogo from "../components/ProductLogo.astro"
+import Icon from "../components/Icon.astro"
+import { href, products, capabilities, GITHUB } from "../lib/nav"
+
+const heroCode = `import { Tool, Toolkit } from "@effect/ai"
+import { Effect, Schema } from "effect"
+import { runAgent, type AgentConfig } from "@xandreed/sdk-core"
+
+const Roll = Tool.make("roll_dice", {
+  description: "Roll an N-sided die.",
+  parameters: { sides: Schema.Number },
+  success: Schema.Struct({ value: Schema.Number }),
+  failure: Schema.Struct({ error: Schema.String }),
+  failureMode: "return",
+})
+
+const toolkit = Toolkit.make(Roll)
+const handlers = toolkit.toLayer(toolkit.of({
+  roll_dice: ({ sides }) =>
+    Effect.succeed({ value: 1 + Math.floor(Math.random() * sides) }),
+}))
+
+const config = {
+  key: "dice-agent",
+  prompt: { name: "dice", version: "1.0.0", text: "Roll when asked." },
+  toolkit,
+} satisfies AgentConfig<any>
+
+await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
+---
+
+<BaseLayout
+  title="efferent"
+  description="An open-source coding-agent SDK on Effect.ts + Bun, and the coding agent built on it — composable Effects, a multi-provider router, context compression, and a persistent sub-agent tree."
+>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">The efferent ecosystem</p>
+        <h1>Coding agents,<br /><span class="grad">composed on Effect.</span></h1>
+        <p class="sub">
+          An open-source SDK for building agents — and a batteries-included coding agent built on it.
+          The loop, the multi-provider router, context compression, and a sub-agent tree live in your
+          codebase as composable Effects, not buried in a CLI.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href={href("/docs/getting-started")}>
+            Get started <Icon name="arrow" size={16} />
+          </a>
+          <a class="btn btn-ghost" href={href("/#ecosystem")}>Explore the ecosystem</a>
+        </div>
+        <div class="cmd">
+          <code><span class="prompt">$</span> npm i -g @xandreed/code</code>
+          <button class="copy" data-copy="npm i -g @xandreed/code" aria-label="Copy install command">Copy</button>
+        </div>
+      </div>
+
+      <div class="hero-code">
+        <SourceFile code={heroCode} file="dice-agent.ts" lang="ts" />
+        <p class="hero-code-cap">A real agent in a handful of lines — the same shape powers the coding agent.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ECOSYSTEM -->
+  <section class="section" id="ecosystem">
+    <div class="section-inner">
+      <header class="sec-head">
+        <p class="eyebrow">Two products, one codebase</p>
+        <h2>The ecosystem</h2>
+        <p class="sec-sub">A pure-domain SDK, and the apps built on it. Each app is a thin driver composing the same Layers.</p>
+      </header>
+
+      <div class="products">
+        {
+          products.map((p) => (
+            <a class="product" href={href(p.href)} style={`--card-accent:${p.accent}`}>
+              <div class="product-logo-wrap"><ProductLogo name={p.logo} /></div>
+              <p class="product-tag">{p.tag}</p>
+              <p class="product-blurb">{p.blurb}</p>
+              <ul class="product-points">
+                {p.points.map((pt) => (
+                  <li>{pt}</li>
+                ))}
+              </ul>
+              <span class="product-cta">
+                {p.cta} <Icon name="arrow" size={15} />
+              </span>
+            </a>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- CAPABILITIES -->
+  <section class="section alt">
+    <div class="section-inner">
+      <header class="sec-head">
+        <p class="eyebrow">What it leverages</p>
+        <h2>One codebase, batteries included</h2>
+        <p class="sec-sub">The hard parts of an agent harness — already solved, as composable Effects.</p>
+      </header>
+
+      <div class="caps">
+        {
+          capabilities.map((c) => (
+            <a class="cap" href={href(c.href)}>
+              <h3>{c.title}</h3>
+              <p>{c.desc}</p>
+              <span class="cap-more">Learn more <Icon name="arrow" size={14} /></span>
+            </a>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY EFFECT -->
+  <section class="section">
+    <div class="section-inner why">
+      <p class="eyebrow">Why Effect</p>
+      <h2>Typed errors, Layers, and a loop you can read.</h2>
+      <p>
+        efferent is the wedge: the agent loop, the context tree, headroom compression, the multi-provider
+        router, and approval are all composable <code>Layer</code>s and Effects in a pure-domain package —
+        typed errors end to end, no <code>try</code>/<code>catch</code>, provider selection a runtime
+        concern. Each agent is a thin driver that composes those Layers at the edge and hands off to Bun.
+        No build step: Bun runs the TypeScript directly.
+      </p>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="section">
+    <div class="section-inner cta">
+      <h2>Build your first agent in minutes.</h2>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href={href("/docs/getting-started")}>Get started <Icon name="arrow" size={16} /></a>
+        <a class="btn btn-ghost" href={GITHUB} target="_blank" rel="noopener">
+          <Icon name="github" size={16} /> Star on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy || "")
+        const prev = b.textContent
+        b.textContent = "Copied"
+        setTimeout(() => (b.textContent = prev), 1200)
+      } catch (e) {}
+    })
+  })
+</script>
+
+<style>
+  .section-inner,
+  .hero-inner {
+    max-width: var(--maxw-wide);
+    margin: 0 auto;
+    padding: 0 1.25rem;
+  }
+
+  /* Hero */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--glow);
+    pointer-events: none;
+  }
+  .hero-inner {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 3rem;
+    align-items: center;
+    padding-top: 4.5rem;
+    padding-bottom: 4.5rem;
+  }
+  h1 {
+    font-size: clamp(2.4rem, 5.5vw, 4rem);
+    line-height: 1.04;
+    margin: 1rem 0 1.3rem;
+  }
+  .grad {
+    background: linear-gradient(100deg, var(--ember), var(--chartreuse) 75%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    font-size: 1.15rem;
+    color: var(--text-dim);
+    max-width: 46ch;
+    line-height: 1.6;
+  }
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin: 1.8rem 0 1.4rem;
+  }
+  .cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.8rem;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 10px;
+    padding: 0.55rem 0.6rem 0.55rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+  }
+  .cmd code {
+    color: #e6e1d9;
+  }
+  .cmd .prompt {
+    color: var(--chartreuse);
+    margin-right: 0.5rem;
+  }
+  .copy {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+  }
+  .copy:hover {
+    color: var(--text);
+    border-color: var(--accent-2);
+  }
+  .hero-code-cap {
+    margin-top: 0.8rem;
+    color: var(--text-faint);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  /* Sections */
+  .section {
+    padding: 4.5rem 0;
+  }
+  .section.alt {
+    background: var(--bg-soft);
+    border-block: 1px solid var(--hairline);
+  }
+  .sec-head {
+    max-width: 40rem;
+    margin-bottom: 2.5rem;
+  }
+  .sec-head h2,
+  .why h2,
+  .cta h2 {
+    font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+    margin: 0.6rem 0 0.7rem;
+  }
+  .sec-sub {
+    color: var(--text-dim);
+    font-size: 1.05rem;
+  }
+
+  /* Products */
+  .products {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+  .product {
+    display: flex;
+    flex-direction: column;
+    padding: 1.8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition: transform 0.18s var(--ease), border-color 0.18s var(--ease);
+  }
+  .product::after {
+    content: "";
+    display: block;
+    height: 3px;
+    border-radius: 3px;
+    margin-bottom: 1.3rem;
+    margin-top: -1.8rem;
+    margin-inline: -1.8rem;
+    background: linear-gradient(90deg, var(--card-accent), transparent 70%);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .product:hover {
+    transform: translateY(-3px);
+    border-color: var(--card-accent);
+    text-decoration: none;
+  }
+  .product-logo-wrap {
+    margin-bottom: 0.9rem;
+  }
+  .product-tag {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin-bottom: 0.5rem;
+  }
+  .product-blurb {
+    color: var(--text-dim);
+    font-size: 0.98rem;
+    line-height: 1.6;
+  }
+  .product-points {
+    list-style: none;
+    padding: 0;
+    margin: 1.1rem 0 1.4rem;
+    display: grid;
+    gap: 0.4rem;
+  }
+  .product-points li {
+    position: relative;
+    padding-left: 1.3rem;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+  }
+  .product-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--card-accent);
+  }
+  .product-cta {
+    margin-top: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--card-accent);
+    font-weight: 580;
+    font-size: 0.95rem;
+  }
+
+  /* Capabilities */
+  .caps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.2rem;
+  }
+  .cap {
+    display: flex;
+    flex-direction: column;
+    padding: 1.4rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    transition: transform 0.15s var(--ease), border-color 0.15s var(--ease);
+  }
+  .cap:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-2);
+    text-decoration: none;
+  }
+  .cap h3 {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+  }
+  .cap p {
+    color: var(--text-dim);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    flex: 1;
+  }
+  .cap-more {
+    margin-top: 1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-faint);
+    font-size: 0.85rem;
+  }
+  .cap:hover .cap-more {
+    color: var(--accent-2);
+  }
+
+  /* Why / CTA */
+  .why {
+    max-width: 50rem;
+  }
+  .why p {
+    color: var(--text-dim);
+    font-size: 1.1rem;
+    line-height: 1.7;
+    margin-top: 0.5rem;
+  }
+  .cta {
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 3rem 1.5rem;
+    background: var(--surface);
+    background-image: var(--glow);
+  }
+  .cta .hero-cta {
+    justify-content: center;
+  }
+
+  @media (max-width: 880px) {
+    .hero-inner {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      padding-top: 3rem;
+    }
+    .products {
+      grid-template-columns: 1fr;
+    }
+    .caps {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

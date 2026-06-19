@@ -1,0 +1,23 @@
+{
+  "name": "@xandreed/website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "efferent ecosystem site + bespoke docs (Astro, hand-built, static, deployed to GitHub Pages).",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "linkcheck": "bun scripts/linkcheck.mjs dist /efferent",
+    "check": "astro build && bun scripts/linkcheck.mjs dist /efferent"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^6.0.3",
+    "@astrojs/sitemap": "^3.7.3",
+    "@fontsource-variable/hanken-grotesk": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "astro": "^6.4.8",
+    "remark-directive": "^4.0.0",
+    "sharp": "^0.35.1"
+  }
+}

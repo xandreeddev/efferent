@@ -1,0 +1,24 @@
+---
+// The official efferent wordmark (compact, no tagline), inlined so its
+// currentColor wordmark adapts to the active theme. Gradient bar keeps brand hues.
+import raw from "../assets/logos/logo-wordmark.svg?raw"
+interface Props {
+  height?: number
+}
+const { height = 30 } = Astro.props
+---
+
+<span class="brand-logo" style={`--logo-h:${height}px`} set:html={raw} />
+
+<style>
+  .brand-logo {
+    display: inline-flex;
+    color: var(--text);
+    line-height: 0;
+  }
+  .brand-logo :global(svg) {
+    height: var(--logo-h);
+    width: auto;
+    display: block;
+  }
+</style>

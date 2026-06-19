@@ -1,0 +1,32 @@
+---
+// Official per-product lockups (efferent { sdk } / < code > / [ evals ] / ( social )),
+// inlined so the EFFERENT wordmark adapts to the theme; the product word + gradient
+// keep their brand hues.
+import sdk from "../assets/logos/logo-sdk.svg?raw"
+import code from "../assets/logos/logo-code.svg?raw"
+import evals from "../assets/logos/logo-evals.svg?raw"
+import social from "../assets/logos/logo-social.svg?raw"
+
+const map = { sdk, code, evals, social } as const
+interface Props {
+  name: keyof typeof map
+  height?: number
+}
+const { name, height = 34 } = Astro.props
+---
+
+<span class="product-logo" style={`--logo-h:${height}px`} set:html={map[name]} />
+
+<style>
+  .product-logo {
+    display: block;
+    color: var(--text);
+    line-height: 0;
+  }
+  .product-logo :global(svg) {
+    height: var(--logo-h);
+    width: auto;
+    max-width: 100%;
+    display: block;
+  }
+</style>

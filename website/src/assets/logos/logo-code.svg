@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="804" height="100" viewBox="0 0 804 100" role="img" aria-label="efferent code">
+<title>efferent code</title><defs><linearGradient id="g-code" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ffa657"/><stop offset="50%" stop-color="#a3e635"/><stop offset="100%" stop-color="#2dd4bf"/></linearGradient></defs>
+<text x="12" y="54" font-family="'DejaVu Sans Mono', 'Liberation Mono', monospace" font-size="42" font-weight="600" textLength="780" lengthAdjust="spacingAndGlyphs" xml:space="preserve"><tspan fill="currentColor">E F F E R E N T</tspan><tspan fill="#6e6a63"> &lt; </tspan><tspan fill="#a3e635" font-weight="600">code</tspan><tspan fill="#6e6a63"> &gt;</tspan></text>
+<rect x="12" y="62" width="780" height="7" rx="1.5" fill="url(#g-code)"/>
+<text x="12" y="92" font-family="'DejaVu Sans Mono', 'Liberation Mono', monospace" font-size="14" fill="currentColor" opacity=".55">the agent loop · TUI · headless modes</text>
+</svg>

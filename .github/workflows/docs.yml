@@ -1,0 +1,65 @@
+# Build the documentation site (website/, Astro Starlight) and deploy it to
+# GitHub Pages — the project page at https://xandreeddev.github.io/efferent/.
+#
+# One-time setup: enable Pages with source "GitHub Actions"
+#   Settings → Pages → Build and deployment → Source: GitHub Actions
+#   (or: gh api -X POST /repos/xandreeddev/efferent/pages -f build_type=workflow)
+#
+# website/ is NOT a Bun workspace member (root workspaces = packages/*), so it
+# installs from its own website/bun.lock and never touches the monorepo install.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "examples/**" # docs render example sources via ?raw
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deploy; don't cancel an in-flight one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - name: Check every internal link resolves
+        run: bun run linkcheck
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
