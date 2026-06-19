@@ -1,20 +1,23 @@
 import { createMemo, For, Show } from "solid-js"
+import type { Overlay as OverlayState, TuiContext } from "../../state/store.js"
 import type { SettingsState } from "../../presentation/settingsView.js"
 import { currentRow } from "../../presentation/settingsView.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { KeyHints, Modal, MODAL_RULE, MODAL_WIDTH, Rule } from "../ui/index.js"
+import { KeyHints } from "../ui/index.js"
 
 const MAX_ROWS = 12
 const LABEL_W = 18
 const VALUE_MAX = 14
 
 /**
- * The `:settings` table overlay. Each row is rendered as ONE pre-formatted
- * `<text>` line stacked in a column (never sibling `<text>` in a flex row — that
- * corrupts under OpenTUI/Yoga). The focused row carries the selection accent +
- * cursor-line tint, consistent with `SelectBody` (one accent: `marker.select`).
+ * The `:settings` table — a **borderless inline** menu in the bottom chrome (agy
+ * `/config` is inline, not a modal): a title, the key/value rows (each ONE
+ * pre-formatted `<text>` line — sibling `<text>` in a flex row corrupts under
+ * Yoga), a per-row hint, and an indented `KeyHints` footer. Reads the active
+ * settings overlay from the store (the floating `Overlay` host skips `settings`);
+ * keys still come from `keys/overlay.ts` on the same `SettingsState`.
  */
-export const SettingsView = (props: { state: SettingsState }) => {
+const SettingsBody = (props: { state: SettingsState }) => {
   const s = () => props.state
   const editingIdx = () => (s().editBuffer !== undefined ? s().cursor : -1)
   const focused = () => currentRow(s())
@@ -29,7 +32,6 @@ export const SettingsView = (props: { state: SettingsState }) => {
     return { start, rows, moreAbove: start > 0, moreBelow: start + rows < n() }
   })
 
-  // One window row → its full pre-formatted text + whether it's the cursor row.
   const rows = createMemo(() => {
     const w = win()
     const out: Array<{ text: string; focused: boolean }> = []
@@ -62,10 +64,9 @@ export const SettingsView = (props: { state: SettingsState }) => {
   const focusedHint = () => focused()?.hint
 
   return (
-    <Modal title={s().title} width={MODAL_WIDTH}>
-      {/* Per-row column: focused row gets the selection accent + cursor tint;
-          the rest are default fg. Single <text> per row (column-stacked) is
-          corruption-safe. */}
+    <box flexDirection="column" flexShrink={0}>
+      <text fg={tokens.text.default} wrapMode="none">{s().title}</text>
+      <box height={1} />
       <box flexDirection="column">
         <For each={rows()}>
           {(r) => (
@@ -79,36 +80,49 @@ export const SettingsView = (props: { state: SettingsState }) => {
           )}
         </For>
       </box>
-      <Rule width={MODAL_RULE} />
       <Show when={focusedHint() !== undefined}>
         <text fg={tokens.text.dim} wrapMode="word" marginTop={1}>
           {focusedHint()}
         </text>
       </Show>
-      <Show when={s().editBuffer !== undefined}>
-        <box marginTop={1}>
+      <box height={1} />
+      <box paddingLeft={2}>
+        <Show
+          when={s().editBuffer !== undefined}
+          fallback={
+            <KeyHints
+              hints={[
+                { key: "↑/↓", label: "Navigate" },
+                { key: "↵", label: "toggle / cycle / edit" },
+                { key: "esc", label: "Close" },
+              ]}
+            />
+          }
+        >
           <KeyHints
             hints={[
               { key: "type", label: "a value" },
-              { key: "↵", label: "save" },
-              { key: "esc", label: "cancel" },
+              { key: "↵", label: "Save" },
+              { key: "esc", label: "Cancel" },
             ]}
           />
-        </box>
-      </Show>
-      <Show when={s().editBuffer === undefined}>
-        <box flexDirection="row" marginTop={1}>
-          <KeyHints
-            hints={[
-              { key: "↑/↓", label: "move" },
-              { key: "↵", label: "toggle / cycle / edit" },
-              { key: "esc", label: "close" },
-            ]}
-            grow
-          />
-          <text fg={tokens.text.muted}>{`${s().cursor + 1}/${n()}`}</text>
-        </box>
-      </Show>
-    </Modal>
+        </Show>
+      </box>
+    </box>
+  )
+}
+
+/** Inline `:settings` — renders {@link SettingsBody} in the bottom chrome when a
+ *  settings overlay is active (keyed `Show` so it never reads `.state` off a
+ *  different overlay). */
+export const SettingsView = (props: { ctx: TuiContext }) => {
+  const state = createMemo((): SettingsState | undefined => {
+    const o: OverlayState = props.ctx.store.overlay()
+    return o.kind === "settings" ? o.state : undefined
+  })
+  return (
+    <Show when={state()}>
+      {(st) => <SettingsBody state={st()} />}
+    </Show>
   )
 }

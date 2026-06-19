@@ -34,8 +34,10 @@ export const glyph = {
   cursorBlock: "█",
   /** "More above / below" scroll affordances in windowed lists. */
   more: { above: "↑", below: "↓" },
-  /** Row pointer (select list / slash palette / settings cursor). */
-  pointer: "›",
+  /** Row pointer (select list / slash palette / settings cursor). agy uses a
+   *  plain `>` for the selected row — same glyph as the input prompt — so the
+   *  whole app reads one "current line" mark. */
+  pointer: ">",
   /** The composer's prompt prefix (`> ` before the textarea, agy-style). Plain
    *  ASCII so it renders in every terminal font; distinct from the rail's `❯`. */
   prompt: ">",

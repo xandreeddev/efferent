@@ -8,9 +8,13 @@ import { Side } from "./panes/side/Side.js"
 import { InputBox } from "./panes/Input.js"
 import { QueuedMessages } from "./panes/QueuedMessages.js"
 import { SlashPalette } from "./chrome/SlashPalette.js"
+import { SelectMenu } from "./chrome/SelectMenu.js"
+import { ResumeBrowser } from "./chrome/ResumeBrowser.js"
 import { SearchStatus } from "./chrome/SearchStatus.js"
 import { StatusBar } from "./chrome/StatusBar.js"
 import { Overlay } from "./overlays/Overlay.js"
+import { SettingsView } from "./overlays/SettingsView.js"
+import { Shortcuts } from "./overlays/Shortcuts.js"
 import type { TuiContext } from "../state/store.js"
 
 /**
@@ -40,8 +44,16 @@ export const App = (props: { ctx: TuiContext }) => {
   // pane. It stays reachable: focusing it (w / ^l / :tree / :context) zooms it.
   const wide = () => dims().width >= 110
 
-  const showConv = () => (wide() && !store.zoomed()) || store.focus() !== "side"
-  const showSide = () => (wide() && !store.zoomed()) || store.focus() === "side"
+  // Inline menus render in the bottom chrome below the fence; the panes above
+  // shrink to fit. Short menus (pickers, the settings table) leave the bordered
+  // panes plenty of room, so they stay. The **shortcuts reference card** is ~30
+  // rows, though — it would squeeze the bordered panes below their borders and
+  // corrupt the frame — so for that one surface we hand the whole pane area over
+  // to it (panes hidden). The short `:` command palette is not an overlay.
+  const hidePanes = () => store.overlay().kind === "shortcuts"
+
+  const showConv = () => !hidePanes() && ((wide() && !store.zoomed()) || store.focus() !== "side")
+  const showSide = () => !hidePanes() && ((wide() && !store.zoomed()) || store.focus() === "side")
 
   // Onboarding is a full-screen takeover (agy-style): while it's open we render
   // ONLY it — no panes/chrome behind it. That lets the onboarding be genuinely
@@ -68,6 +80,13 @@ export const App = (props: { ctx: TuiContext }) => {
         <QueuedMessages ctx={props.ctx} />
         <InputBox ctx={props.ctx} />
         <SlashPalette ctx={props.ctx} />
+        {/* Pickers / settings / shortcuts render INLINE here (borderless,
+            agy-style), not as floating modals — the `Overlay` host below skips
+            these kinds. Only one is ever active at a time. */}
+        <SelectMenu ctx={props.ctx} />
+        <ResumeBrowser ctx={props.ctx} />
+        <SettingsView ctx={props.ctx} />
+        <Shortcuts ctx={props.ctx} />
         <SearchStatus ctx={props.ctx} />
         <StatusBar ctx={props.ctx} />
         {/* Modal layer — absolutely positioned, floats over everything above. */}

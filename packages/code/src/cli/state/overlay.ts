@@ -4,6 +4,7 @@ import type { SelectState } from "../presentation/selectBox.js"
 import type { LoginFlow } from "../presentation/loginFlow.js"
 import type { SettingsState } from "../presentation/settingsView.js"
 import type { OnboardingState } from "../presentation/onboardingFlow.js"
+import type { ResumeState } from "../presentation/resumeBrowser.js"
 
 /** The mutable settings key an effort picker writes (mirrors `effortSettingKeyFor`). */
 export type EffortSettingKey =
@@ -24,6 +25,7 @@ export type SelectPurpose =
   | { readonly tag: "theme" }
   | { readonly tag: "conversation" }
   | { readonly tag: "database" }
+  | { readonly tag: "logout" }
 
 /**
  * The single active overlay (a modal floats above the panes and owns all input
@@ -44,6 +46,7 @@ export type Overlay =
   | { readonly kind: "settings"; readonly state: SettingsState }
   | { readonly kind: "approval"; readonly state: ApprovalState }
   | { readonly kind: "onboarding"; readonly state: OnboardingState }
+  | { readonly kind: "resume"; readonly state: ResumeState }
   | { readonly kind: "shortcuts" }
 
 export interface OverlaySlice {

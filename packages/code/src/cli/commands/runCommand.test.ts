@@ -88,3 +88,17 @@ test("a unique prefix resolves (`:cl` → :clear)", () => {
   runCommand(ctxOf(store), ":cl")
   expect(store.blocks()).toHaveLength(1) // :clear ran and pushed the info line
 })
+
+test("bare `:set` opens the settings menu (no usage error)", () => {
+  const store = newStore()
+  runCommand(ctxOf(store), ":set")
+  // The settings overlay is opened via ctx.run (a no-op stub here), so no error
+  // block is pushed — the old usage error is gone for the bare form.
+  expect(store.blocks().some((b) => b.kind === "error")).toBe(false)
+})
+
+test("`:set <key>` with no value still hints the direct form", () => {
+  const store = newStore()
+  runCommand(ctxOf(store), ":set maxSteps")
+  expect(store.blocks().at(-1)).toMatchObject({ kind: "error", text: expect.stringContaining("Usage: :set") })
+})
