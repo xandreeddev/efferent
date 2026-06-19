@@ -135,6 +135,7 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
 - run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
 - send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
+- schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
 ${subAgentsSection}${coordinationSection}
 # Doing tasks
@@ -203,6 +204,7 @@ ${systemSection}
 - run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
+- schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
 ${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}
 ${doingTasksSection}
