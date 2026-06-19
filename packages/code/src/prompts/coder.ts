@@ -1,4 +1,4 @@
-import type { Prompt, Skill } from "@xandreed/sdk-core"
+import type { AgentDefinition, Prompt, Skill } from "@xandreed/sdk-core"
 import {
   type InstructionFile,
   renderInstructionsSection,
@@ -47,6 +47,17 @@ const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   return `
 # Skills
 The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
+
+${lines}
+`
+}
+
+const renderAgentsSection = (agents: ReadonlyArray<AgentDefinition>): string => {
+  if (agents.length === 0) return ""
+  const lines = agents.map((a) => `- ${a.name}: ${a.description}`).join("\n")
+  return `
+# Agent roles
+These predefined roles can be run via run_agent({ agent: "<name>", folder, task }) — each carries its own instructions, model, and tool set. Pick the role whose description fits the task; omit 'agent' for a generic folder-scoped coder.
 
 ${lines}
 `
@@ -128,12 +139,13 @@ export const coderPrompt = (
   now: Date = new Date(),
   skills: ReadonlyArray<Skill> = [],
   instructionFiles: ReadonlyArray<InstructionFile> = [],
+  agents: ReadonlyArray<AgentDefinition> = [],
   variant?: string,
 ): Prompt => ({
   name: "coder",
   version: CODER_PROMPT_VERSION,
   variant,
-  text: coderSystemPrompt(cwd, now, skills, instructionFiles),
+  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents),
 })
 
 export const coderSystemPrompt = (
@@ -141,6 +153,7 @@ export const coderSystemPrompt = (
   now: Date = new Date(),
   skills: ReadonlyArray<Skill> = [],
   instructionFiles: ReadonlyArray<InstructionFile> = [],
+  agents: ReadonlyArray<AgentDefinition> = [],
 ): string =>
   `You are a coding assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there. If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
@@ -162,9 +175,9 @@ ${systemSection}
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
-- run_agent({ name, folder, task }) — spawn a sub-agent scoped to a folder for focused, localized work (see Sub-agents below).
+- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
-${renderSkillsSection(skills)}${subAgentsSection}
+${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}
 ${doingTasksSection}
 
 ${toneSection}

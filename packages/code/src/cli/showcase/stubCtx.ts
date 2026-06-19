@@ -74,5 +74,10 @@ export const makeStubCtx = (opts: {
     exit: opts.onExit,
     copySelection: () => false,
     resolveApproval: () => {},
+    roles: [],
+    spawnAgent: () => {},
+    stopAgent: () => {},
+    listFleet: () => [],
+    importAgents: () => {},
   }
 }

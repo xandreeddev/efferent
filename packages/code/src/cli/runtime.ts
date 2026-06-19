@@ -14,6 +14,7 @@ import {
   StoreSwitch,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
+import { importAgentsFromGithub } from "../usecases/importAgents.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
@@ -24,6 +25,8 @@ import { treeSitterClient } from "./view/syntax.js"
 import { makeTuiApproval } from "./approval.js"
 import { stopOAuthSession } from "./actions/login.js"
 import { makeSubmit } from "./actions/submit.js"
+import { makeSpawnAgent } from "./actions/spawnAgent.js"
+import { makeFleetSupervisor } from "./state/fleet.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { openOnboardingFlow } from "./actions/onboarding.js"
@@ -92,7 +95,7 @@ export const runTuiModeSolid = (
       const baseHooks = makeEventHooks(eventQueue)
       const scopeRuntime = buildScopeRuntime(
         input.rootScope,
-        { skills: input.skills, allowBash: true },
+        { skills: input.skills, agents: input.agents, allowBash: true },
         baseHooks,
       )
 
@@ -163,8 +166,20 @@ export const runTuiModeSolid = (
         rootScope: input.rootScope,
         cwd: input.cwd,
         skills: input.skills,
+        agents: input.agents,
         instructionFiles: input.instructionFiles,
         approvalLayer: approval.layer,
+      })
+
+      // The live fleet: detached fired agents (`:spawn`), held so `:stop` can
+      // cancel one. The persistent tree (`:tree`) is the durable view.
+      const fleet = makeFleetSupervisor()
+      const spawnAgentAction = makeSpawnAgent({
+        store,
+        scopeRuntime,
+        eventQueue,
+        approvalLayer: approval.layer,
+        fleet,
       })
       const reduce = makeEventReducer(store, {
         // Live navigator reload on sub-agent spawn/end (current session — it
@@ -189,6 +204,40 @@ export const runTuiModeSolid = (
         interrupt: () => {
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
+        },
+        roles: input.agents,
+        spawnAgent: (agent, folder, task) => {
+          void Runtime.runPromise(rt)(spawnAgentAction({ agent, folder, task }))
+        },
+        stopAgent: (id) => {
+          const entry = fleet.get(id)
+          if (entry !== undefined) Runtime.runFork(rt)(Fiber.interrupt(entry.fiber))
+        },
+        listFleet: () =>
+          fleet.list().map((e) => ({ id: e.id, title: e.title, folder: e.folder })),
+        importAgents: (spec) => {
+          void Runtime.runPromise(rt)(
+            Effect.gen(function* () {
+              store.pushBlock({ kind: "info", text: `importing agents from ${spec}…` })
+              const res = yield* importAgentsFromGithub(
+                spec,
+                join(input.cwd, ".efferent/agents"),
+              )
+              const parts: Array<string> = []
+              if (res.written.length > 0) parts.push(`imported ${res.written.join(", ")}`)
+              if (res.skipped.length > 0) parts.push(`skipped — ${res.skipped.join("; ")}`)
+              store.pushBlock({
+                kind: "info",
+                text: `${parts.join(" · ") || "nothing imported"} (applies on next launch)`,
+              })
+            }).pipe(
+              Effect.catchAll((e) =>
+                Effect.sync(() =>
+                  store.pushBlock({ kind: "error", text: `import failed: ${e.message}` }),
+                ),
+              ),
+            ),
+          )
         },
         exit: () => {
           Runtime.runFork(rt)(Deferred.succeed(exitDeferred, undefined))

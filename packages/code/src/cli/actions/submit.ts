@@ -8,6 +8,7 @@ import {
   runAgent,
   SettingsStore,
   shouldAutoHandoff,
+  type AgentDefinition,
   type AgentHooks,
   type Approval,
   type Scope,
@@ -51,6 +52,7 @@ export interface SubmitDeps {
   readonly rootScope: Scope
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly agents: ReadonlyArray<AgentDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
   readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
@@ -68,7 +70,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, instructionFiles, approvalLayer } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, agents, instructionFiles, approvalLayer } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -292,7 +294,7 @@ export const makeSubmit = (
         if (next !== undefined) yield* submit(next)
       })
 
-      const prompt = coderPrompt(cwd, new Date(), skills, instructionFiles)
+      const prompt = coderPrompt(cwd, new Date(), skills, instructionFiles, agents)
       const runEffect = runAgent(
         coderAgentConfig(rootScope, scopeRuntime, prompt),
         cid,

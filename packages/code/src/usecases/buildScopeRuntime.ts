@@ -31,6 +31,7 @@ import {
   Failure,
   toFailure,
   type Skill,
+  type AgentDefinition,
   ConversationId,
   type RunContext,
 } from "@xandreed/sdk-core"
@@ -89,6 +90,34 @@ export interface ScopeRuntime {
     | Approval
     | LanguageModel.LanguageModel
   >
+  /**
+   * **Human-driven fresh spawn**: fire a new folder-scoped agent from a live
+   * session — the driver's counterpart of the model's `run_agent` fresh spawn.
+   * Creates a top-level context node under `rootConversationId` (so it shows in
+   * `:tree`), runs it at depth 0 with its own fresh token pool, and records the
+   * return. Pass `agent` to run a predefined role (else a generic coder).
+   * `budget`/`maxSteps` default to the sub-agent constants when omitted.
+   */
+  readonly spawnAgent: (args: {
+    readonly rootConversationId: ConversationId
+    readonly folder: string
+    readonly task: string
+    readonly title?: string
+    readonly agent?: string
+    readonly budget?: number
+    readonly maxSteps?: number
+    readonly toolResultMaxChars?: number
+  }) => Effect.Effect<
+    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    Failure,
+    | FileSystem
+    | Shell
+    | Http
+    | WebSearch
+    | ContextTreeStore
+    | Approval
+    | LanguageModel.LanguageModel
+  >
 }
 
 /** Default step (turn) cap per spawned sub-agent — overridable via
@@ -103,6 +132,13 @@ export const STEP_STOP_NOTE =
 
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
+  /**
+   * Predefined agent ROLES (`.efferent/agents/*.md`) selectable by name via
+   * `run_agent({ agent })` and the TUI `:spawn`. Required like `skills` —
+   * pass `[]` when there are none (the sane default). Snapshotted at build
+   * time; an agent imported mid-session applies on the next launch.
+   */
+  readonly agents: ReadonlyArray<AgentDefinition>
   /** Step budget for each (nested) sub-agent loop. Default 80. */
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
@@ -163,6 +199,13 @@ const RunAgentTool = Tool.make("run_agent", {
         "the node verbatim (full history every turn — only when exact file contents in its context " +
         "matter); 'branch' copies the full history into a new node. Defaults to 'branch'.",
     }),
+    agent: Schema.optional(Schema.String).annotations({
+      description:
+        "Optional name of a predefined agent ROLE (from .efferent/agents/<name>.md) to run this task " +
+        "as — it sets the sub-agent's system-prompt instructions, its model, and its tool allowlist. " +
+        "Omit for a generic folder-scoped coder. Use a role when the task fits a specialty (e.g. " +
+        "'reviewer', 'security-auditor', 'docs-writer').",
+    }),
   },
   success: Schema.Struct({
     summary: Schema.String,
@@ -180,6 +223,48 @@ const RunAgentTool = Tool.make("run_agent", {
 const genericToolkit = Toolkit.make(
   ...([...baseToolDefs, RunAgentTool] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/**
+ * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
+ * a `tools` list is filtered against the available tools (base coding tools +
+ * `run_agent`) — so `run_agent` is offered only when the list names it. A
+ * definition WITHOUT a list gets all base coding tools but NOT `run_agent`
+ * (roles are leaf workers by default). Unknown names in the list are silently
+ * dropped. The names returned are exactly the keys to project the handler
+ * record onto, so the subset toolkit and its handlers always agree.
+ */
+export const roleToolEntries = (
+  def: AgentDefinition,
+): ReadonlyArray<readonly [string, Tool.Any]> => {
+  const base = Object.entries(codingToolkit.tools) as Array<[string, Tool.Any]>
+  if (def.tools === undefined) return base
+  const allow = new Set(def.tools)
+  const all: Array<[string, Tool.Any]> = [...base, ["run_agent", RunAgentTool]]
+  return all.filter(([name]) => allow.has(name))
+}
+
+/**
+ * Resolve a requested role name against the loaded definitions. Absent/blank ⇒
+ * no role (generic spawn). A named-but-unknown agent fails with a model-facing
+ * `UnknownAgent` (it lists what's available) rather than silently degrading —
+ * an unhonoured role request is a real mistake to surface.
+ */
+const resolveAgent = (
+  agents: ReadonlyArray<AgentDefinition>,
+  name: string | undefined,
+): Effect.Effect<AgentDefinition | undefined, { error: string; message: string }> => {
+  if (name === undefined || name.trim().length === 0) return Effect.succeed(undefined)
+  const wanted = name.trim()
+  const found = agents.find((a) => a.name === wanted)
+  if (found !== undefined) return Effect.succeed(found)
+  const available = agents.map((a) => a.name).join(", ")
+  return Effect.fail({
+    error: "UnknownAgent",
+    message: `No agent named '${wanted}'.${
+      available.length > 0 ? ` Available: ${available}.` : " No agent roles are defined."
+    }`,
+  })
+}
 
 /**
  * Inner hooks for a spawned sub-agent's loop. Forwards the parent's tool-call +
@@ -283,6 +368,9 @@ interface RunSpawnedArgs<R> {
   readonly task: string
   /** Display name from the spawner — the label every event/UI surface uses. */
   readonly title?: string
+  /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
+   *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
+  readonly definition?: AgentDefinition
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -314,6 +402,7 @@ interface RunSpawnedArgs<R> {
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
   withFolderLock(args.locks, args.folder)(Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
+    const definition = args.definition
     const label = args.title ?? (basename(folder) || folder)
     const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
     const usageRef = yield* Ref.make<ContextUsage>({
@@ -339,12 +428,18 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       enforceWrite: true,
       allowBash: opts.allowBash ?? true,
     }
-    const body = yield* getScopePromptBody(folder)
+    const scopeBody = yield* getScopePromptBody(folder)
+    // Role instructions (if any) lead, then the folder's ambient SCOPE.md body —
+    // both land in renderScopeSystemPrompt's instructions slot, so the scope /
+    // write-confinement / return-contract scaffold always wraps them.
+    const combinedBody = [definition?.body, scopeBody]
+      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+      .join("\n\n")
     const system = renderScopeSystemPrompt({
       name: label,
       rootDir: folder,
       displayRoot,
-      body: body ?? "",
+      body: combinedBody,
       now: new Date(),
     })
     const parentPrompt = args.runContext.prompt
@@ -356,9 +451,33 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
           }
         : undefined
 
-    const childLayer = genericToolkit.toLayer(
-      buildGenericHandlers(binding, opts, hooks, args.locks),
-    )
+    // Toolkit: a role with an allowlist runs a SUBSET of tools — build the
+    // subset toolkit (what the model sees) AND a matching handler subset (from
+    // the same full handler record), so the two never disagree. No role ⇒ the
+    // full generic toolkit (base tools + run_agent).
+    const handlers = buildGenericHandlers(binding, opts, hooks, args.locks)
+    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
+    const useToolkit =
+      roleEntries !== undefined
+        ? (Toolkit.make(
+            ...(roleEntries.map(([, d]) => d) as ReadonlyArray<Tool.Any>),
+          ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>)
+        : genericToolkit
+    const useLayer =
+      roleEntries !== undefined
+        ? (useToolkit.toLayer(
+            handlers.pipe(
+              Effect.map((full) => {
+                const allow = new Set(roleEntries.map(([n]) => n))
+                return Object.fromEntries(
+                  Object.entries(full as Record<string, unknown>).filter(([k]) =>
+                    allow.has(k),
+                  ),
+                ) as never
+              }),
+            ),
+          ) as ScopeRuntime["handlerLayer"])
+        : (genericToolkit.toLayer(handlers) as ScopeRuntime["handlerLayer"])
     const childRc = {
       rootConversationId: args.rootConversationId,
       parentNodeId: nodeId,
@@ -374,19 +493,23 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       ...(args.runContext.compression !== undefined
         ? { compression: args.runContext.compression }
         : {}),
+      // A role that pins a model overrides the main tier for THIS run only
+      // (read by the router off RunContextRef). NOT inherited by nested generic
+      // spawns — they re-seed their own childRc without it.
+      ...(definition?.model !== undefined ? { modelOverride: definition.model } : {}),
     }
 
     const outcome = yield* runAgentLoop({
       system,
       messages: seedMessages,
-      toolkit: genericToolkit,
+      toolkit: useToolkit,
       maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
       hooks: innerHooks,
     }).pipe(
-      Effect.provide(childLayer),
+      Effect.provide(useLayer),
       Effect.locally(RunContextRef, childRc),
       Effect.map((r) => ({ ok: true as const, r })),
       Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
@@ -491,6 +614,7 @@ const makeRunAgentHandler =
     readonly task: string
     readonly seedFromNode?: string
     readonly seedMode?: "resume" | "branch" | "handoff"
+    readonly agent?: string
   }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
@@ -507,11 +631,16 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
-      const { name, folder, task, seedFromNode, seedMode } = params
+      const { name, folder, task, seedFromNode, seedMode, agent } = params
       // The model-given display name; blank/absent (a stale provider replaying
       // an old-schema call) degrades to the folder basename.
       const title =
         typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
+
+      // Resolve the requested role (if any). A named-but-unknown agent is a
+      // model-facing failure — silently ignoring a requested role hides a real
+      // mistake (mirrors read_skill's UnknownSkill). Absent ⇒ generic spawn.
+      const definition = yield* resolveAgent(opts.agents, agent)
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -538,6 +667,7 @@ const makeRunAgentHandler =
             store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
+            ...(definition !== undefined ? { definition } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -573,6 +703,7 @@ const makeRunAgentHandler =
         return yield* runSpawnedAgent({
           store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
+          ...(definition !== undefined ? { definition } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -598,6 +729,7 @@ const makeRunAgentHandler =
       return yield* runSpawnedAgent({
         store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
+        ...(definition !== undefined ? { definition } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
@@ -695,5 +827,64 @@ export const buildScopeRuntime = <R = never>(
       ScopeRuntime["resumeNode"]
     >
 
-  return { toolkit: genericToolkit, handlerLayer, resumeNode }
+  // The human-driven mirror of the handler's FRESH-spawn branch: create a
+  // top-level node under the active conversation, then run it at depth 0 with a
+  // fresh pool. Resolves a role by name when `agent` is given (UnknownAgent if
+  // it isn't loaded). Children it spawns hang off the node.
+  const spawnAgent: ScopeRuntime["spawnAgent"] = ({
+    rootConversationId,
+    folder,
+    task,
+    title,
+    agent,
+    budget,
+    maxSteps,
+    toolResultMaxChars,
+  }) =>
+    Effect.gen(function* () {
+      const store = yield* ContextTreeStore
+      const shell = yield* Shell
+      const definition = yield* resolveAgent(opts.agents, agent)
+      const folderAbs = resolve(binding.displayRoot, folder)
+      const tokenPool = yield* makeTokenPool(budget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET)
+      const cleanTitle =
+        typeof title === "string" && title.trim().length > 0 ? title.trim() : undefined
+      const seedMessages: ReadonlyArray<AgentMessage> = [{ role: "user", content: task }]
+      const nodeId = yield* store.spawn({
+        parentId: null,
+        rootConversationId,
+        edgeKind: "spawned",
+        folder: folderAbs,
+        displayRoot: binding.displayRoot,
+        ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
+        seed: { kind: "task", preview: clip(task, 80) },
+        seedMessages,
+      })
+      const rc = yield* FiberRef.get(RunContextRef)
+      return yield* runSpawnedAgent({
+        store,
+        shell,
+        locks,
+        displayRoot: binding.displayRoot,
+        opts,
+        hooks,
+        nodeId,
+        folder: folderAbs,
+        task,
+        seedMessages,
+        ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
+        ...(definition !== undefined ? { definition } : {}),
+        parentDepth: 0,
+        parentNodeId: null,
+        rootConversationId,
+        tokenPool,
+        runContext: rc,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+      })
+    }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
+      ScopeRuntime["spawnAgent"]
+    >
+
+  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent }
 }

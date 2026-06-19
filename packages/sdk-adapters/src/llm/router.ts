@@ -13,6 +13,7 @@ import {
   recordLlmCall,
   responseText,
   RunContextRef,
+  selectionFromString,
   SettingsStore,
   usageAttributes,
   type ModelSelection,
@@ -73,6 +74,18 @@ export const RouterLanguageModelLive = Layer.effect(
     const authStore = yield* AuthStore
     const settingsStore = yield* SettingsStore
     const http = yield* HttpClient.HttpClient
+
+    // The selection for THIS call: a per-fiber `RunContext.modelOverride` (set
+    // by an agent role that pins a model) wins over the global session model.
+    // Pure parse — no settings write — so the override never leaks past the
+    // fiber that set it, and the status bar (`LlmInfoLive`) keeps showing the
+    // session model. Helper tiers don't read this, so the override is main-only.
+    const currentSelection = Effect.gen(function* () {
+      const rc = yield* FiberRef.get(RunContextRef)
+      return rc.modelOverride !== undefined
+        ? selectionFromString(rc.modelOverride)
+        : yield* registry.current
+    })
 
     const resolveAndBuild = (sel: ModelSelection) =>
       Effect.gen(function* () {
@@ -199,7 +212,7 @@ export const RouterLanguageModelLive = Layer.effect(
 
     const service: LanguageModel.Service = {
       generateText: (options) =>
-        registry.current.pipe(
+        currentSelection.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
@@ -218,7 +231,7 @@ export const RouterLanguageModelLive = Layer.effect(
         ),
 
       generateObject: (options) =>
-        registry.current.pipe(
+        currentSelection.pipe(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
@@ -238,7 +251,7 @@ export const RouterLanguageModelLive = Layer.effect(
 
       streamText: (options) =>
         Stream.unwrapScoped(
-          registry.current.pipe(
+          currentSelection.pipe(
             Effect.flatMap((sel) =>
               resolveAndBuild(sel).pipe(
                 Effect.map(({ svc, prependClaudeCode: shouldPrepend }) =>

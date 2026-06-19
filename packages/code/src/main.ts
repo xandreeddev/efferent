@@ -30,6 +30,7 @@ import {
 import { coderPrompt } from "./prompts/coder.js"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
+import { loadAgents } from "./usecases/loadAgents.js"
 import { loadSkills } from "./usecases/loadSkills.js"
 
 import { runPrintMode } from "./modes/print.js"
@@ -216,6 +217,11 @@ const root = Command.make(
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
+      // Discover agent ROLES the same way: `.efferent/agents/*.md` walked from
+      // cwd → parents → ~/.efferent/agents. Selectable via `run_agent({ agent })`
+      // and the TUI `:spawn`. Empty when none — never breaks the agent.
+      const agents = yield* loadAgents(workspace, homedir())
+
       // Load settings + bind the workspace so AuthStore can read a local-tier
       // credential (`<cwd>/.efferent/auth.json`); no-op in the EFFERENT_HOME sandbox.
       const settingsStore = yield* SettingsStore
@@ -237,7 +243,7 @@ const root = Command.make(
       // child SCOPE.md becomes a nested, write-confined sub-scope. With no
       // SCOPE.md anywhere, the root has no children and behaves exactly
       // like a plain workspace-wide agent.
-      const coder = coderPrompt(workspace, new Date(), skills, instructionFiles)
+      const coder = coderPrompt(workspace, new Date(), skills, instructionFiles, agents)
       const rootScope: Scope = yield* discoverScopeTree(
         workspace,
         (_children, body) => {
@@ -278,6 +284,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            agents,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -298,6 +305,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            agents,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -308,6 +316,7 @@ const root = Command.make(
           yield* runRpcMode({
             cwd: workspace,
             skills,
+            agents,
             rootScope,
             allowBash: effectiveAllowBash,
           }).pipe(Effect.provide(stderrLoggerLayer))
@@ -318,6 +327,7 @@ const root = Command.make(
           const tuiInput = {
             cwd: workspace,
             skills,
+            agents,
             rootScope,
             instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
