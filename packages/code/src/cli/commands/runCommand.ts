@@ -175,6 +175,72 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":db":
       void ctx.run(applyDb(store, store.status().cwd, arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)))
       return
+    case ":spawn": {
+      // Fire a named agent role from the live session: :spawn <agent> <folder> <task>
+      const parts = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (parts.length < 3) {
+        store.pushBlock({
+          kind: "info",
+          text: "usage: :spawn <agent> <folder> <task>  (see :agents for roles)",
+        })
+        return
+      }
+      const [agent, folder, ...rest] = parts
+      ctx.spawnAgent(agent!, folder!, rest.join(" "))
+      return
+    }
+    case ":agents": {
+      const sub = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (sub[0] === "add") {
+        if (sub[1] === undefined) {
+          store.pushBlock({
+            kind: "info",
+            text: "usage: :agents add github:owner/repo[/path][@ref]",
+          })
+          return
+        }
+        ctx.importAgents(sub[1])
+        return
+      }
+      if (ctx.roles.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text: "no agent roles defined — add .efferent/agents/<name>.md, or :agents add github:owner/repo/path",
+        })
+        return
+      }
+      store.pushBlock({
+        kind: "info",
+        text:
+          "agent roles:\n" +
+          ctx.roles.map((r) => `  ${r.name} — ${r.description}`).join("\n") +
+          "\nfire one with :spawn <agent> <folder> <task>",
+      })
+      return
+    }
+    case ":stop": {
+      const running = ctx.listFleet()
+      if (arg === undefined || arg.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text:
+            running.length === 0
+              ? "no agents running"
+              : "running agents:\n" +
+                running.map((e) => `  ${e.id}: ${e.title} (${e.folder})`).join("\n") +
+                "\nstop one with :stop <id>",
+        })
+        return
+      }
+      const id = Number(arg)
+      if (!Number.isInteger(id)) {
+        store.pushBlock({ kind: "info", text: "usage: :stop <id> (run :stop for running ids)" })
+        return
+      }
+      ctx.stopAgent(id)
+      store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
+      return
+    }
     case ":traces":
       void ctx.run(openConversationTraces(store, store.run.getConversationId()))
       return

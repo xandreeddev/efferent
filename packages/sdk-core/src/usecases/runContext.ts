@@ -38,6 +38,13 @@ export interface RunContext {
    *  inherits it (the loop reads this when no `input.compression` override is
    *  given). Absent → `Headroom.default()`. */
   readonly compression?: CompressionPolicy
+  /** Per-run main-model override as `"<provider>:<modelId>"` — set by an agent
+   *  ROLE (`run_agent({ agent })`) whose definition pins a model. The router
+   *  prefers this over the global `ModelRegistry.current` for main-tier calls on
+   *  this fiber; helper tiers (fast/web-search) are unaffected. Absent ⇒ the
+   *  session's main model. NOT inherited by nested generic spawns — only set
+   *  when the spawned child's own role pins a model. */
+  readonly modelOverride?: string
 }
 
 export const initialRunContext: RunContext = {

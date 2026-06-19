@@ -38,6 +38,11 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   exit: () => {},
   copySelection: () => false,
   resolveApproval: () => {},
+  roles: [],
+  spawnAgent: () => {},
+  stopAgent: () => {},
+  listFleet: () => [],
+  importAgents: () => {},
 })
 
 test("conversation rail renders a user turn, assistant prose, and a tool pill", async () => {

@@ -67,6 +67,11 @@ const harness = (): Harness => {
         return true
       },
       resolveApproval: () => {},
+      roles: [],
+      spawnAgent: () => {},
+      stopAgent: () => {},
+      listFleet: () => [],
+      importAgents: () => {},
     },
   }
   return h

@@ -1,5 +1,6 @@
 import type { Effect } from "effect"
 import type {
+  AgentDefinition,
   ApprovalDecision,
   AuthFlow,
   AuthStore,
@@ -53,6 +54,25 @@ export interface TuiContext {
   readonly submit: (text: string) => void
   readonly interrupt: () => void
   readonly exit: () => void
+  /** The loaded agent ROLES (`.efferent/agents/*.md`) — for `:agents` + `:spawn`. */
+  readonly roles: ReadonlyArray<AgentDefinition>
+  /**
+   * Fire a named agent role detached from the current turn (`:spawn`) — runs
+   * alongside the conversation, shows in `:tree`/activity, cancellable via
+   * `:stop <id>`. Fire-and-forget (the action owns its own errors).
+   */
+  readonly spawnAgent: (agent: string, folder: string, task: string) => void
+  /** Interrupt a running fired agent by its fleet index (`:stop <id>`). */
+  readonly stopAgent: (id: number) => void
+  /** Currently-running fired agents, for `:stop`/status display. */
+  readonly listFleet: () => ReadonlyArray<{
+    readonly id: number
+    readonly title: string
+    readonly folder: string
+  }>
+  /** Import agent-definition files from GitHub into `.efferent/agents/`
+   *  (`:agents add github:owner/repo[/path][@ref]`). Applies on next launch. */
+  readonly importAgents: (spec: string) => void
   /**
    * Copy the current OpenTUI mouse selection to the system clipboard (OSC 52).
    * Returns false when nothing is selected. Bound to `y` on the read-only panes
