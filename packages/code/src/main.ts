@@ -38,6 +38,7 @@ import { loadTools } from "./usecases/loadTools.js"
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
+import { runDaemonMode } from "./modes/daemon.js"
 import { stderrLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
@@ -110,10 +111,11 @@ const modeOption = Options.choice("mode", [
   "print",
   "json",
   "rpc",
+  "daemon",
 ]).pipe(
   Options.withDefault("auto" as const),
   Options.withDescription(
-    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print.",
+    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print. 'daemon' runs the cron scheduler headlessly.",
   ),
 )
 
@@ -140,7 +142,7 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
-type Mode = "tui" | "print" | "json" | "rpc"
+type Mode = "tui" | "print" | "json" | "rpc" | "daemon"
 
 const resolveMode = (
   modeFlag: "auto" | Mode,
@@ -321,6 +323,19 @@ const root = Command.make(
         case "rpc":
           yield* ensureBatchCredential
           yield* runRpcMode({
+            cwd: workspace,
+            skills,
+            agents,
+            tools,
+            rootScope,
+            allowBash: effectiveAllowBash,
+          }).pipe(Effect.provide(stderrLoggerLayer))
+          return
+        case "daemon":
+          // Headless scheduler: needs a credential (no `:login` here) just like
+          // the other non-interactive modes; then runs the cron tick forever.
+          yield* ensureBatchCredential
+          yield* runDaemonMode({
             cwd: workspace,
             skills,
             agents,
