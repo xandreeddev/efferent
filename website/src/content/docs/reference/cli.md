@@ -6,7 +6,7 @@ sidebar:
   order: 8
 ---
 
-The bundled coding agent ships as the `@xandreed/code` npm package (binaries `efferent` / `eff`), a Bun bundle.
+The bundled coding agent ships as the `@xandreed/code` npm package (binaries `efferent`, `eff`, `e`), a Bun bundle.
 Install and run: see [Getting started](/docs/getting-started/).
 
 ## Modes
