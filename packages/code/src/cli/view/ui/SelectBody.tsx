@@ -1,16 +1,11 @@
 import { createMemo, For, Show } from "solid-js"
 import type { SelectOption, SelectState } from "../../presentation/selectBox.js"
 import { glyph, tokens } from "../../state/theme.js"
-import { Cursor, KeyHints, type KeyHint } from "./atoms.js"
+import { Cursor, KeyHints, MenuRow, type KeyHint } from "./atoms.js"
 
 /** Default visible-row window. Both the modal `SelectList` and the full-screen
  *  onboarding share this so the list never drifts between surfaces. */
 export const SELECT_MAX_ROWS = 12
-
-/** Truncate to fit the available width so long labels (model ids, conversation
- *  names) don't overflow. Active rows reserve room for the " ◀ active" tag. */
-const truncate = (s: string, max: number): string =>
-  s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`
 
 /**
  * The inner body of a select overlay — the `/ filter` line, a window of matches
@@ -109,26 +104,18 @@ export const SelectBody = (props: {
                     </>
                   )}
                 </Show>
-                <box flexDirection="row" {...(sel() ? { backgroundColor: tokens.cursorLine } : {})}>
-                  {/* Selection accent is `marker.select` — the dedicated selection
-                      token, the SAME hue as the filter `Cursor` block — so one
-                      overlay never mixes two accents (agy uses a single accent for
-                      cursor + selection). */}
-                  <text fg={sel() ? tokens.marker.select : tokens.text.muted}>
-                    {`${marker(row.idx, row.pos)} `}
-                  </text>
-                  <text fg={sel() ? tokens.text.default : tokens.text.muted} wrapMode="none" flexGrow={1}>
-                    {truncate(row.opt.label, budget())}
-                  </text>
-                  {/* The trailing tag rides the row's own colour: selection accent
-                      on the active/selected row, dim otherwise (agy keeps the tag
-                      in-row). */}
-                  <Show when={tagText() !== undefined}>
-                    <text fg={sel() || row.opt.active === true ? tokens.marker.select : tokens.text.dim}>
-                      {` ${glyph.activeTag} ${tagText()}`}
-                    </text>
-                  </Show>
-                </box>
+                {/* One shared row painter (`MenuRow`) — the SAME component the `:`
+                    command menu uses — so the caret, selection accent, and tag
+                    can't drift between the two surfaces. */}
+                <MenuRow
+                  selected={sel()}
+                  marker={marker(row.idx, row.pos)}
+                  label={row.opt.label}
+                  labelBudget={budget()}
+                  desc={row.opt.desc}
+                  tag={tagText()}
+                  tagActive={row.opt.active === true}
+                />
               </>
             )
           }}

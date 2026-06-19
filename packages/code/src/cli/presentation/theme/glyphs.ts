@@ -36,6 +36,11 @@ export const glyph = {
   more: { above: "↑", below: "↓" },
   /** Row pointer (select list / slash palette / settings cursor). */
   pointer: "›",
+  /** The composer's prompt prefix (`> ` before the textarea, agy-style). Plain
+   *  ASCII so it renders in every terminal font; distinct from the rail's `❯`. */
+  prompt: ">",
+  /** Marker for a message queued while a turn runs (shown above the input). */
+  queued: "▸",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
   /** "add a new item" marker for manager rows (db connections). Plain ASCII so it

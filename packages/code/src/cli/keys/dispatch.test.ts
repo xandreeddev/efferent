@@ -233,6 +233,33 @@ test("history is NOT triggered in command mode (palette owns ↑/↓)", () => {
   expect(seeds).not.toContain("a message")
 })
 
+test("↑ on an empty composer pulls the most-recent queued message back to edit", () => {
+  const h = harness()
+  const { seeds } = wireInput(h)
+  h.store.setHistory(pushPrompt(emptyHistory, "old message"))
+  h.store.run.enqueue("queued one")
+  h.store.run.enqueue("queued two")
+  h.store.setInput("")
+  dispatch(h.ctx, key("up"))
+  expect(seeds.at(-1)).toBe("queued two") // most-recent queued, NOT history recall
+  expect(h.store.queued()).toEqual(["queued one"]) // it left the queue
+})
+
+test("? on an empty composer opens the shortcuts overlay", () => {
+  const h = harness()
+  wireInput(h)
+  h.store.setInput("")
+  dispatch(h.ctx, key("?"))
+  expect(h.store.overlay().kind).toBe("shortcuts")
+})
+
+test("? in a read-only pane opens the shortcuts overlay", () => {
+  const h = harness()
+  h.store.setFocus("conversation")
+  dispatch(h.ctx, key("?"))
+  expect(h.store.overlay().kind).toBe("shortcuts")
+})
+
 test("conversation pane: Tab folds the ENCLOSING turn from a body row", () => {
   const h = harness()
   h.store.setFocus("conversation")
