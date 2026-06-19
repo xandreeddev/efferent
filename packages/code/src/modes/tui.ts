@@ -1,5 +1,6 @@
 import type { AgentDefinition, Scope, Skill } from "@xandreed/sdk-core"
 import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 
 /**
  * The TUI driver lives in `packages/code/src/cli/` (OpenTUI + SolidJS) — the
@@ -16,6 +17,7 @@ export interface TuiModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
   readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly resumeConversationId?: string

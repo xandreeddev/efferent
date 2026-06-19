@@ -242,6 +242,33 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
       return
     }
+    case ":tools": {
+      const sub = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (sub[0] === "add") {
+        if (sub[1] === undefined) {
+          store.pushBlock({ kind: "info", text: "usage: :tools add github:owner/repo[/path][@ref]" })
+          return
+        }
+        ctx.importTools(sub[1])
+        return
+      }
+      if (ctx.tools.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text: "no custom tools — add .efferent/tools/<name>.md, or :tools add github:owner/repo/path",
+        })
+        return
+      }
+      store.pushBlock({
+        kind: "info",
+        text:
+          "custom tools (run_tool):\n" +
+          ctx.tools
+            .map((t) => `  ${t.name}(${t.params.map((p) => p.name).join(", ")}) — ${t.description}`)
+            .join("\n"),
+      })
+      return
+    }
     case ":goal": {
       if (arg === undefined || arg.length === 0) {
         const d = ctx.getDirective()

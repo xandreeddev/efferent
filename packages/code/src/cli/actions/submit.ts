@@ -19,6 +19,7 @@ import { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../../prompts/coder.js"
 import { type Directive, renderDirectiveSection } from "../../usecases/directive.js"
+import type { ToolDefinition } from "../../usecases/loadTools.js"
 import { type InstructionFile } from "../../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError, inspectError } from "../util/errorFormat.js"
@@ -54,6 +55,7 @@ export interface SubmitDeps {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
   readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
   readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
@@ -74,7 +76,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, agents, instructionFiles, approvalLayer, getDirective } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, agents, tools, instructionFiles, approvalLayer, getDirective } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -317,7 +319,7 @@ export const makeSubmit = (
       })
 
       // Append the session's standing goal (if any) so it rides every turn.
-      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents)
+      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools)
       const directiveText = renderDirectiveSection(getDirective())
       const prompt =
         directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base

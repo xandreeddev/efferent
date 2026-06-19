@@ -28,7 +28,7 @@ const rootScope: Scope = {
 
 describe("buildScopeRuntime", () => {
   test("toolkit is the generic set: base coding tools + run_agent, no delegate_to_*", () => {
-    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], agents: [], allowBash: true })
+    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [], allowBash: true })
     const names = Object.keys(toolkit.tools)
     expect(names).toContain("run_agent")
     expect(names).toContain("read_file")
@@ -55,8 +55,8 @@ describe("buildScopeRuntime", () => {
         },
       ],
     }
-    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [], agents: [] }).toolkit.tools).sort()
-    const b = Object.keys(buildScopeRuntime(withChild, { skills: [], agents: [] }).toolkit.tools).sort()
+    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
+    const b = Object.keys(buildScopeRuntime(withChild, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
     expect(b).toEqual(a)
   })
 })
@@ -190,7 +190,7 @@ const stubPorts = Layer.mergeAll(
 describe("ScopeRuntime.resumeNode", () => {
   test("resumes a finished node in place: appends the task, re-runs, records the return", async () => {
     const { entries, layer } = stubTreeStore()
-    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [] })
+    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] })
 
     const program = Effect.gen(function* () {
       const store = yield* ContextTreeStore

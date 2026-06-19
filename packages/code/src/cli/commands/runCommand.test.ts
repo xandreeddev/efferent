@@ -28,10 +28,12 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   copySelection: () => false,
   resolveApproval: () => {},
   roles: [],
+  tools: [],
   spawnAgent: () => {},
   stopAgent: () => {},
   listFleet: () => [],
   importAgents: () => {},
+  importTools: () => {},
   getDirective: () => undefined,
   setDirective: () => {},
 })

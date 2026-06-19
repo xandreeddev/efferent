@@ -14,7 +14,7 @@ import {
   StoreSwitch,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
-import { importAgentsFromGithub } from "../usecases/importAgents.js"
+import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
@@ -96,7 +96,7 @@ export const runTuiModeSolid = (
       const baseHooks = makeEventHooks(eventQueue)
       const scopeRuntime = buildScopeRuntime(
         input.rootScope,
-        { skills: input.skills, agents: input.agents, allowBash: true },
+        { skills: input.skills, agents: input.agents, tools: input.tools, allowBash: true },
         baseHooks,
       )
 
@@ -168,6 +168,7 @@ export const runTuiModeSolid = (
         cwd: input.cwd,
         skills: input.skills,
         agents: input.agents,
+        tools: input.tools,
         instructionFiles: input.instructionFiles,
         approvalLayer: approval.layer,
         getDirective: () => directiveRef.current,
@@ -213,6 +214,7 @@ export const runTuiModeSolid = (
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
         roles: input.agents,
+        tools: input.tools,
         spawnAgent: (agent, folder, task) => {
           void Runtime.runPromise(rt)(spawnAgentAction({ agent, folder, task }))
         },
@@ -234,6 +236,27 @@ export const runTuiModeSolid = (
                 spec,
                 join(input.cwd, ".efferent/agents"),
               )
+              const parts: Array<string> = []
+              if (res.written.length > 0) parts.push(`imported ${res.written.join(", ")}`)
+              if (res.skipped.length > 0) parts.push(`skipped — ${res.skipped.join("; ")}`)
+              store.pushBlock({
+                kind: "info",
+                text: `${parts.join(" · ") || "nothing imported"} (applies on next launch)`,
+              })
+            }).pipe(
+              Effect.catchAll((e) =>
+                Effect.sync(() =>
+                  store.pushBlock({ kind: "error", text: `import failed: ${e.message}` }),
+                ),
+              ),
+            ),
+          )
+        },
+        importTools: (spec) => {
+          void Runtime.runPromise(rt)(
+            Effect.gen(function* () {
+              store.pushBlock({ kind: "info", text: `importing tools from ${spec}…` })
+              const res = yield* importToolsFromGithub(spec, join(input.cwd, ".efferent/tools"))
               const parts: Array<string> = []
               if (res.written.length > 0) parts.push(`imported ${res.written.join(", ")}`)
               if (res.skipped.length > 0) parts.push(`skipped — ${res.skipped.join("; ")}`)
