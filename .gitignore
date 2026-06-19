@@ -29,6 +29,8 @@ pg-data/
 
 # Local debug screenshots
 *.png
+# tracked brand asset (the GitHub avatar) — exception to the *.png ignore above
+!assets/avatar.png
 
 # Skills are local to each workspace; agents read them, repos don't carry them.
 .efferent/
