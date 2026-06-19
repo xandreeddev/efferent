@@ -1,5 +1,5 @@
 import type { Tool } from "@effect/ai"
-import type { AgentConfig, Prompt, Scope } from "@xandreed/sdk-core"
+import type { AgentConfig, CompressionPolicy, Prompt, Scope } from "@xandreed/sdk-core"
 import type { ScopeRuntime } from "./buildScopeRuntime.js"
 
 /**
@@ -14,6 +14,7 @@ export const coderAgentConfig = (
   rootScope: Scope,
   runtime: ScopeRuntime,
   prompt?: Prompt,
+  opts?: { readonly compression?: CompressionPolicy },
 ): AgentConfig<Record<string, Tool.Any>> => ({
   key: `coder:${rootScope.rootDir}`,
   prompt:
@@ -25,4 +26,5 @@ export const coderAgentConfig = (
           text: rootScope.systemPrompt,
         },
   toolkit: runtime.toolkit,
+  ...(opts?.compression !== undefined ? { compression: opts.compression } : {}),
 })

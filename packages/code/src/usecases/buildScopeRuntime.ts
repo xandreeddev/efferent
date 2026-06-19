@@ -369,6 +369,11 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
+      // Inherit the root agent's compression policy (the loop reads it off
+      // RunContext when no per-call override is given).
+      ...(args.runContext.compression !== undefined
+        ? { compression: args.runContext.compression }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
