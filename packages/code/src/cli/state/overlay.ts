@@ -44,6 +44,7 @@ export type Overlay =
   | { readonly kind: "settings"; readonly state: SettingsState }
   | { readonly kind: "approval"; readonly state: ApprovalState }
   | { readonly kind: "onboarding"; readonly state: OnboardingState }
+  | { readonly kind: "shortcuts" }
 
 export interface OverlaySlice {
   readonly overlay: Accessor<Overlay>
