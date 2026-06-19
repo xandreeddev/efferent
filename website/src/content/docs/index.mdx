@@ -1,0 +1,106 @@
+---
+title: efferent
+description: An open-source coding-agent SDK on Effect.ts + Bun — ports & adapters, an @effect/ai toolkit, a multi-provider router, cache-safe context compression, and a persistent sub-agent tree.
+template: splash
+head:
+  - tag: title
+    content: efferent — a coding-agent SDK on Effect.ts
+hero:
+  title: The coding-agent SDK built on Effect.
+  tagline: Ports &amp; adapters, an <code>@effect/ai</code> toolkit, a multi-provider router, cache-safe context compression, and a persistent sub-agent tree — the agent loop lives in your codebase as composable Effects, not buried in a CLI.
+  image:
+    file: ../../assets/efferent-mark.svg
+  actions:
+    - text: Get started
+      link: /efferent/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: Your first agent
+      link: /efferent/your-first-agent/
+      icon: right-arrow
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/xandreeddev/efferent
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Code } from '@astrojs/starlight/components';
+
+A real agent in a handful of lines: define a tool, bundle it into a config, run the loop.
+
+```ts
+import { Tool, Toolkit } from "@effect/ai"
+import { Effect, Schema } from "effect"
+import { runAgent, type AgentConfig } from "@xandreed/sdk-core"
+
+const Roll = Tool.make("roll_dice", {
+  description: "Roll an N-sided die.",
+  parameters: { sides: Schema.Number },
+  success: Schema.Struct({ value: Schema.Number }),
+  failure: Schema.Struct({ error: Schema.String }),
+  failureMode: "return",
+})
+
+const toolkit = Toolkit.make(Roll)
+const handlers = toolkit.toLayer(toolkit.of({
+  roll_dice: ({ sides }) =>
+    Effect.succeed({ value: 1 + Math.floor(Math.random() * sides) }),
+}))
+
+const config = {
+  key: "dice-agent",
+  prompt: { name: "dice", version: "1.0.0", text: "Roll when asked." },
+  toolkit,
+} satisfies AgentConfig<any>
+
+// runAgent(config, conversationId, "Roll a d20").pipe(Effect.provide(handlers))
+```
+
+The same `AgentConfig` shape powers efferent's own coding agent. The whole loop —
+tools, the multi-provider router, context compression, sub-agents, approval — lives in
+`@xandreed/sdk-core` as Effects you compose. The [dice walkthrough](/efferent/your-first-agent/)
+builds this end-to-end; every snippet on this site is backed by a [runnable example](/efferent/examples/).
+
+## What it leverages
+
+<CardGrid>
+  <LinkCard
+    title="Ports & adapters on Effect"
+    href="/efferent/concepts/architecture/"
+    description="Pure domain, Context.Tag ports, Layer adapters, typed errors — dependencies point strictly inward."
+  />
+  <LinkCard
+    title="Tools as an @effect/ai Toolkit"
+    href="/efferent/concepts/tools/"
+    description="Tool.make + Toolkit.make; handler failures return to the model as data instead of aborting the turn."
+  />
+  <LinkCard
+    title="A multi-provider router"
+    href="/efferent/concepts/providers/"
+    description="One LanguageModel port; Google / OpenAI / Anthropic / local resolved per request from your login + /model choice."
+  />
+  <LinkCard
+    title="Cache-safe context headroom"
+    href="/efferent/concepts/headroom/"
+    description="Compression that never rewrites the cached prefix — a customizable policy on the agent, on by default."
+  />
+  <LinkCard
+    title="Sub-agents over a context tree"
+    href="/efferent/concepts/sub-agents/"
+    description="One generic run_agent tool spawns folder-scoped sub-agents; resume, branch, or hand off — every spawn persists."
+  />
+  <LinkCard
+    title="Colocated evals & observability"
+    href="/efferent/concepts/evals/"
+    description="An Effect-native eval harness and OpenTelemetry spans/metrics that live in the codebase, not bolted on."
+  />
+</CardGrid>
+
+## Why Effect
+
+efferent is the wedge: the agent loop, the context tree, headroom compression, the
+multi-provider router, and approval are all **composable `Layer`s and Effects** in a pure
+domain package — typed errors end to end, no `try`/`catch`, provider selection a runtime
+concern. Each agent (the bundled coding agent, your own) is a thin driver that composes those
+layers at the edge and hands off to Bun. No build step: Bun runs the TypeScript directly.

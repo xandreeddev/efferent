@@ -1,0 +1,21 @@
+---
+title: Hooks agent
+description: Observing and steering the agent loop with AgentHooks — including blocking a tool call.
+sidebar:
+  label: Hooks agent
+  order: 4
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../../examples/hooksAgent.ts?raw';
+
+`AgentHooks` let the application watch and influence the loop without owning it. This example logs each
+turn and tool result (observe) and **blocks** a tool call that violates a guardrail (steer) —
+`onBeforeToolCall` returns `{ action: "block", reason }`, and the reason is handed back to the model as
+a tool result so it adjusts in the same turn.
+
+```sh
+bun examples/hooksAgent.ts
+```
+
+<Code code={source} lang="ts" title="examples/hooksAgent.ts" />

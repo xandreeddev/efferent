@@ -1,0 +1,101 @@
+/*
+ * efferent brand theme for Starlight.
+ *
+ * Maps the real TUI palette (packages/code/src/cli/presentation/theme/palette.ts →
+ * efferentPalette) onto Starlight's CSS custom properties so the docs are
+ * recognizably efferent — warm near-black with the ember / verdigris / chartreuse
+ * accent triad — and not a stock Starlight site.
+ *
+ *   ember     #ffa657  — primary accent: links, active nav, buttons
+ *   verdigris #2dd4bf  — secondary: asides, the orchestration voice
+ *   chartreuse#a3e635  — tertiary: highlights, the "your input" voice
+ */
+
+:root {
+  --efferent-ember: #ffa657;
+  --efferent-verdigris: #2dd4bf;
+  --efferent-chartreuse: #a3e635;
+
+  --sl-font: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* ── Dark theme (the brand default) ───────────────────────────────────────── */
+:root,
+:root[data-theme="dark"] {
+  /* Accent — ember. */
+  --sl-color-accent-low: #3a2614;
+  --sl-color-accent: #c9701f;
+  --sl-color-accent-high: #ffcf9e;
+
+  /* Warm grayscale: white (highest contrast) → black (page bg). */
+  --sl-color-white: #f4efe7;
+  --sl-color-gray-1: #e6e1d9;
+  --sl-color-gray-2: #c4bfb6;
+  --sl-color-gray-3: #9e9a93;
+  --sl-color-gray-4: #6e6a63;
+  --sl-color-gray-5: #423e38;
+  --sl-color-gray-6: #2a2620;
+  --sl-color-black: #1c1916;
+
+  /* Links sit on dark, so use the brighter ember directly. */
+  --sl-color-text-accent: var(--efferent-ember);
+
+  --sl-color-bg-nav: #211d18;
+  --sl-color-bg-sidebar: #211d18;
+  --sl-color-hairline-shade: #322d26;
+}
+
+/* ── Light theme (warm paper) ─────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #ffe7cf;
+  --sl-color-accent: #b8560f;
+  --sl-color-accent-high: #5c2a08;
+
+  --sl-color-white: #26221d;
+  --sl-color-gray-1: #34302a;
+  --sl-color-gray-2: #4b463f;
+  --sl-color-gray-3: #6e6960;
+  --sl-color-gray-4: #948e84;
+  --sl-color-gray-5: #ccc5b9;
+  --sl-color-gray-6: #ece5d9;
+  --sl-color-gray-7: #f6f0e6;
+  --sl-color-black: #faf6ef;
+
+  --sl-color-text-accent: #b8560f;
+  --sl-color-bg-nav: #f3ece0;
+  --sl-color-bg-sidebar: #f6f0e6;
+  --sl-color-hairline-shade: #e6ddcd;
+}
+
+/* ── Brand flourishes ─────────────────────────────────────────────────────── */
+
+/* The site title wordmark — lowercase, tight, the way the TUI renders it. */
+.site-title {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+/* Rotate the aside (callout) accent through the triad so the brand reads:
+   tip = chartreuse, note = verdigris, caution/danger keep their semantic hues. */
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--efferent-chartreuse);
+  --sl-color-asides-border: var(--efferent-chartreuse);
+}
+.starlight-aside--note {
+  --sl-color-asides-text-accent: var(--efferent-verdigris);
+  --sl-color-asides-border: var(--efferent-verdigris);
+}
+
+/* Hero CTA: the primary button glows ember; the minimal one picks up verdigris. */
+.hero .actions .sl-link-button.primary {
+  background: linear-gradient(135deg, #ffa657, #f69d50);
+  color: #1c1916;
+  border-color: transparent;
+}
+.hero .actions .sl-link-button.minimal {
+  color: var(--efferent-verdigris);
+}
+.hero .actions .sl-link-button.minimal:hover {
+  border-color: var(--efferent-verdigris);
+}

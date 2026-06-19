@@ -1,0 +1,22 @@
+---
+title: File agent
+description: A tool whose handler uses the FileSystem port — the dependency seam, resolved at layer-build time.
+sidebar:
+  label: File agent
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../../examples/fileAgent.ts?raw';
+
+A `read_file` tool whose handler uses the `FileSystem` **port**. Tool handlers must be `R = never`, so
+the port is resolved **once, at layer-build time** (the handler closes over it) — exactly how efferent's
+real coding toolkit injects `FileSystem`/`Shell`. The handler layer then *requires* `FileSystem`, which
+the composition root satisfies with `LocalFileSystemLive`. Swap that one layer for a stub and the same
+tool runs in a test with no disk.
+
+```sh
+bun examples/fileAgent.ts
+```
+
+<Code code={source} lang="ts" title="examples/fileAgent.ts" />
