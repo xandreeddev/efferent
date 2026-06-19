@@ -6,6 +6,7 @@ import { SelectList } from "./SelectList.js"
 import { Login } from "./Login.js"
 import { SettingsView } from "./SettingsView.js"
 import { OnboardingView } from "./OnboardingView.js"
+import { Shortcuts } from "./Shortcuts.js"
 
 /**
  * The modal overlay host: an absolutely-positioned, full-screen layer (high
@@ -16,6 +17,10 @@ import { OnboardingView } from "./OnboardingView.js"
  */
 export const Overlay = (props: { ctx: TuiContext }) => {
   const o = (): OverlayState => props.ctx.store.overlay()
+  // The command pickers (select / login) are agy **contextual menus**: they rise
+  // from the bottom, just above the status bar, near the command line that
+  // summoned them. The heavier panels (settings / approval) stay centered.
+  const bottom = () => o().kind === "select" || o().kind === "login"
 
   return (
     <Show when={o().kind !== "none"}>
@@ -26,8 +31,9 @@ export const Overlay = (props: { ctx: TuiContext }) => {
         width="100%"
         height="100%"
         zIndex={100}
-        justifyContent="center"
+        justifyContent={bottom() ? "flex-end" : "center"}
         alignItems="center"
+        paddingBottom={bottom() ? 1 : 0}
       >
         <Show when={o().kind === "select"}>
           <SelectList state={(o() as Extract<OverlayState, { kind: "select" }>).sel} />
@@ -46,6 +52,9 @@ export const Overlay = (props: { ctx: TuiContext }) => {
             state={(o() as Extract<OverlayState, { kind: "onboarding" }>).state}
             note={props.ctx.store.note()}
           />
+        </Show>
+        <Show when={o().kind === "shortcuts"}>
+          <Shortcuts />
         </Show>
       </box>
     </Show>

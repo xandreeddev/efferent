@@ -27,6 +27,12 @@ export interface SelectOption<T> {
    */
   readonly tag?: string | undefined
   /**
+   * A dim description rendered after the label (the agy contextual-menu look —
+   * `:model   Set the main model`). Used by the `:` command menu; omit for plain
+   * value lists where the label stands alone.
+   */
+  readonly desc?: string | undefined
+  /**
    * A standalone manager action (e.g. `add a database`, `done`) rather than a
    * filterable item. Hidden while a filter is active — typing searches the items,
    * and the actions reappear when the filter clears (and they're excluded from the

@@ -5,7 +5,27 @@ import {
   formatTokens,
   gaugeSeverity,
   rolesChip,
+  statusHint,
 } from "./statusBar.js"
+
+describe("statusHint (status-bar left zone)", () => {
+  const base = { busy: false, overlayOpen: false, queuedCount: 0 } as const
+  test("rests on '? for shortcuts'", () => {
+    expect(statusHint(base)).toBe("? for shortcuts")
+  })
+  test("a running turn or open overlay offers 'esc to cancel'", () => {
+    expect(statusHint({ ...base, busy: true })).toBe("esc to cancel")
+    expect(statusHint({ ...base, overlayOpen: true })).toBe("esc to cancel")
+  })
+  test("a pending queue offers '↑ to edit queued' (over cancel)", () => {
+    expect(statusHint({ ...base, busy: true, queuedCount: 2 })).toBe("↑ to edit queued")
+  })
+  test("a live note wins over everything", () => {
+    expect(statusHint({ ...base, busy: true, queuedCount: 1, note: "theme: tokyo-night" })).toBe(
+      "theme: tokyo-night",
+    )
+  })
+})
 
 describe("context + cache clarity helpers", () => {
   test("contextPercent: whole percent; undefined without a window", () => {

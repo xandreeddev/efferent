@@ -5,8 +5,8 @@ import { emptyStats } from "../presentation/sidePane.js"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
 import type { TuiContext } from "../state/store.js"
 import {
-  browseConversations,
   buildFromSelection,
+  openConversationPicker,
   resumeConversation,
   toggleContext,
 } from "../actions/session.js"
@@ -83,6 +83,10 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":cwd":
       store.pushBlock({ kind: "info", text: store.status().cwd })
       return
+    case ":shortcuts":
+    case ":keys":
+      store.setOverlay({ kind: "shortcuts" })
+      return
     case ":context":
       void ctx.run(toggleContext(store, store.run.getConversationId()))
       return
@@ -96,7 +100,10 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       void ctx.run(buildFromSelection(store, store.status().cwd))
       return
     case ":browse":
-      void ctx.run(browseConversations(store, store.status().cwd))
+      // agy contextual menu: float the workspace's conversations as a
+      // bottom-anchored picker; Enter resumes the highlighted one. (`:resume <id>`
+      // remains for resuming a raw id directly.)
+      void ctx.run(openConversationPicker(store, store.status().cwd))
       return
     case ":resume":
       resume(ctx, arg)
