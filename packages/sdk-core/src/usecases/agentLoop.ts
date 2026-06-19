@@ -1,11 +1,12 @@
 import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
 import { Clock, Effect, FiberRef } from "effect"
+import { Compression, type CompressionBudget, type CompressionPolicy } from "../entities/Compression.js"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
 import { agentSpanAttributes, toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
 import { RunContextRef } from "./runContext.js"
-import { compressToolResults, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./headroom.js"
+import { DEFAULT_TOOL_RESULT_MAX_CHARS, Headroom } from "./headroom.js"
 import {
   attachUsageToAssistant,
   extractUsage,
@@ -56,6 +57,13 @@ export interface RunAgentLoopInput<
    * Default {@link DEFAULT_TOOL_RESULT_MAX_CHARS}; 0 disables.
    */
   readonly toolResultMaxChars?: number
+  /**
+   * The agent's compression policy (moment 1 tail + moment 2 context). When
+   * omitted, the loop reads it from `RunContextRef` (so sub-agents inherit the
+   * root agent's policy), falling back to `Headroom.default()`. An explicit
+   * value here overrides both — handy for direct/test callers.
+   */
+  readonly compression?: CompressionPolicy
 }
 
 /** Tool calls resolved concurrently per step (interruption-safe via Effect). */
@@ -227,6 +235,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // the (renamable) span name.
     const runContext = yield* FiberRef.get(RunContextRef)
 
+    // Compression is an agent property: an explicit override on the input wins,
+    // else the policy threaded on RunContext (so a sub-agent inherits its root's
+    // policy), else the SDK default (today's headroom tail + identity context).
+    const compression = input.compression ?? runContext.compression ?? Headroom.default()
+    const tailCompressor = compression.tail ?? Compression.passthroughTail
+
     // A response whose parts don't decode — most often a hallucinated tool
     // *name* (not in the toolkit's name union), which fails INSIDE
     // `generateText` before any handler runs, so `recoverMalformedToolCalls`
@@ -246,6 +260,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     let totalCache = 0
 
     while (turnIndex < maxSteps) {
+      // Moment 2 — in-memory whole-context transform before the prompt is built.
+      // The agent's policy runs first, then the driver's hook (both respected;
+      // neither is persisted). Default policy context is identity (off).
+      if (compression.context) {
+        messages = yield* compression.context(messages)
+      }
       if (hooks?.onTransformContext) {
         messages = yield* hooks.onTransformContext(messages)
       }
@@ -321,15 +341,15 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
       const content = res.content as ReadonlyArray<unknown>
       const rawTail = responseToAgentMessages(content)
-      // Headroom: oversized tool results are compressed HERE — the only
-      // moment they enter the buffer — so the persisted history and every
-      // future prompt prefix carry the clipped form from byte one (caches
-      // stay warm; nothing is ever rewritten). Hooks below still emit the
-      // RAW results, so the human-facing rail shows the full output.
-      const compressed = yield* compressToolResults(
-        rawTail,
-        input.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
-      )
+      // Moment 1 — the agent's tail compressor runs HERE, the only moment a
+      // tool result enters the buffer, so the persisted history and every
+      // future prompt prefix carry the compressed form from byte one (caches
+      // stay warm; nothing is ever rewritten). Hooks below still emit the RAW
+      // results, so the human-facing rail shows the full output.
+      const budget: CompressionBudget = {
+        maxChars: input.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+      }
+      const compressed = yield* tailCompressor(rawTail, budget)
       const tail = [...compressed.messages]
       if (compressed.helperUsage !== undefined && hooks?.onHelperUsage) {
         yield* hooks.onHelperUsage({ role: "fast", usage: compressed.helperUsage })
