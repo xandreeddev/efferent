@@ -63,6 +63,17 @@ Coordination is two channels, both `Ref`-backed (`usecases/agentBus.ts`):
 The human messaging a *running* agent uses the very same mailbox (the node-preview composer posts
 to it). It's all in-process — no transport, no serialization.
 
+## The seat
+
+The supervisor tracks what's *running*; the **seat** is where *you* are — your keyboard attaches to
+exactly one session at a time. Open a running node in `:tree` (`↵`) and your input routes to its
+mailbox (the agent keeps running, reading at its next turn boundary); open a finished node and it
+resumes in place; the lead conversation streams underneath the whole time, so detaching is free.
+Foreground and background work are the same primitive — the only difference is where the seat sits.
+(Unifying this into a single first-class attachment — moved with one keystroke, with a standing
+"back to the lead" — is the cohesive layer being built over the mailbox/preview/resume mechanics
+described here.)
+
 ## Roles and the toolkit subset
 
 A role ([`.efferent/agents/*.md`](/docs/guides/fleet/)) is discovered
@@ -78,6 +89,16 @@ three things change for that one fiber:
 - **Model** — a role can pin a `model`. It rides the `RunContext` `FiberRef` as a
   `modelOverride`, which the [router](/docs/concepts/providers/) prefers over the session model
   for that fiber's main-tier calls only — helper tiers (fast, web search) are untouched.
+
+## Extending: in code, not at runtime
+
+Two doors, and the line is firm. **Compose with files** — roles, declarative tools, and skills
+under `.efferent/` (read at startup, git-shareable) wire together capability efferent already has;
+they carry no new logic. **Build in code** — a genuinely new capability is a typed `Tool.make` plus
+an Effect handler in the source, gated by the type checker and the no-`try/catch` ban, loaded on the
+next launch. efferent can write that code itself (it's a coding agent on its own tree), but it ships
+like any code: nothing is hot-loaded, and there is no runtime `eval`. The payoff is that every
+capability is reviewable, typed code — never an opaque blob injected mid-run.
 
 ## The directive and the verifier
 

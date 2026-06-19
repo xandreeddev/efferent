@@ -61,6 +61,7 @@ export const docsNav: DocGroup[] = [
       { slug: "guides/coding-agent", label: "The coding agent" },
       { slug: "guides/sub-agents", label: "Spawning sub-agents" },
       { slug: "guides/fleet", label: "Run a fleet" },
+      { slug: "guides/using-efferent", label: "Using efferent" },
     ],
   },
   {
@@ -137,7 +138,7 @@ export const capabilities = [
   },
   {
     title: "Fleet & orchestration",
-    desc: "Named agent roles you fire from a live session, a shared comms bus, a standing directive with a verifier, and cron — fibers in one runtime.",
+    desc: "One workspace, many sessions, one seat: fire named agent roles from a live session, attach to any of them, give the fleet a goal with a verifier, schedule with cron — fibers in one runtime.",
     href: "/docs/concepts/fleet",
   },
   {
