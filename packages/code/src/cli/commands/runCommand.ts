@@ -24,6 +24,7 @@ import {
 import { logout, openLoginFlow, openLogoutPicker } from "../actions/login.js"
 import { openOnboardingFlow } from "../actions/onboarding.js"
 import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
+import { parseDirective } from "../../usecases/directive.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
@@ -239,6 +240,54 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       }
       ctx.stopAgent(id)
       store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
+      return
+    }
+    case ":goal": {
+      if (arg === undefined || arg.length === 0) {
+        const d = ctx.getDirective()
+        store.pushBlock({
+          kind: "info",
+          text:
+            d === undefined
+              ? "no directive set — :goal <objective> [:: done-when criteria]"
+              : `directive: ${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""} (:verify to check · :goal clear to drop)`,
+        })
+        return
+      }
+      if (arg.trim() === "clear") {
+        ctx.setDirective(undefined)
+        store.pushBlock({ kind: "info", text: "directive cleared" })
+        return
+      }
+      const d = parseDirective(arg)
+      if (d === undefined) {
+        store.pushBlock({ kind: "info", text: "usage: :goal <objective> [:: done-when criteria]" })
+        return
+      }
+      ctx.setDirective(d)
+      store.pushBlock({
+        kind: "info",
+        text: `directive set — pursued every turn until :verify confirms it.\n${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""}`,
+      })
+      return
+    }
+    case ":verify": {
+      const d = ctx.getDirective()
+      const adhoc = arg !== undefined && arg.length > 0
+      const objective = adhoc ? arg! : d?.objective
+      if (objective === undefined) {
+        store.pushBlock({
+          kind: "info",
+          text: "nothing to verify — set a goal (:goal <objective>) or :verify <objective>",
+        })
+        return
+      }
+      const criteria = adhoc ? undefined : d?.criteria
+      const task =
+        `Verify whether this objective is genuinely met:\n${objective}` +
+        (criteria !== undefined ? `\nAcceptance: ${criteria}` : "") +
+        `\n\nRead the workspace, check it independently, and report MET / NOT MET / INCONCLUSIVE with concrete evidence.`
+      ctx.spawnAgent("verifier", ".", task)
       return
     }
     case ":traces":

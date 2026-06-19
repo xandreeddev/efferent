@@ -27,6 +27,7 @@ import { stopOAuthSession } from "./actions/login.js"
 import { makeSubmit } from "./actions/submit.js"
 import { makeSpawnAgent } from "./actions/spawnAgent.js"
 import { makeFleetSupervisor } from "./state/fleet.js"
+import type { Directive } from "../usecases/directive.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { openOnboardingFlow } from "./actions/onboarding.js"
@@ -169,6 +170,7 @@ export const runTuiModeSolid = (
         agents: input.agents,
         instructionFiles: input.instructionFiles,
         approvalLayer: approval.layer,
+        getDirective: () => directiveRef.current,
       })
 
       // The live fleet: detached fired agents (`:spawn`), held so `:stop` can
@@ -181,6 +183,11 @@ export const runTuiModeSolid = (
         approvalLayer: approval.layer,
         fleet,
       })
+
+      // The session's standing goal (Phase 4): held in the runtime closure
+      // (session-scoped — persisting across resume is a follow-up), injected into
+      // every turn's prompt by `submit`, and checked by the built-in verifier role.
+      const directiveRef: { current: Directive | undefined } = { current: undefined }
       const reduce = makeEventReducer(store, {
         // Live navigator reload on sub-agent spawn/end (current session — it
         // can change via the sessions view, so resolve the id per call).
@@ -215,6 +222,10 @@ export const runTuiModeSolid = (
         },
         listFleet: () =>
           fleet.list().map((e) => ({ id: e.id, title: e.title, folder: e.folder })),
+        getDirective: () => directiveRef.current,
+        setDirective: (d) => {
+          directiveRef.current = d
+        },
         importAgents: (spec) => {
           void Runtime.runPromise(rt)(
             Effect.gen(function* () {

@@ -32,6 +32,8 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   stopAgent: () => {},
   listFleet: () => [],
   importAgents: () => {},
+  getDirective: () => undefined,
+  setDirective: () => {},
 })
 
 test(":clear starts a new conversation and clears scrollback", () => {

@@ -72,6 +72,8 @@ const harness = (): Harness => {
       stopAgent: () => {},
       listFleet: () => [],
       importAgents: () => {},
+      getDirective: () => undefined,
+      setDirective: () => {},
     },
   }
   return h
