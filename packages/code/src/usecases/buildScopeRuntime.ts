@@ -46,6 +46,7 @@ import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
 import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
+import { addJob, parseCron, type ScheduledJob } from "./schedule.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 
 /**
@@ -320,12 +321,43 @@ const RunToolTool = Tool.make("run_tool", {
   failureMode: "return",
 })
 
-/** `[name, def]` entries for the comms + run_tool tools — for the toolkit + role allowlists. */
+/**
+ * Schedule a future/recurring run — cron as a TOOL, so the orchestrator can
+ * defer its own work or set up recurring checks, not just the human via
+ * `:schedule`. The job fires as a fresh agent run in this workspace while
+ * efferent (or its daemon) is open.
+ */
+const ScheduleTool = Tool.make("schedule", {
+  description:
+    "Schedule a task to run later or on a recurring schedule (5-field cron: 'min hour dom month dow'). " +
+    "The job fires as a fresh agent run in THIS workspace whenever it's due, while efferent or its daemon " +
+    "is open — use it to defer follow-up work or set up recurring checks (e.g. a daily review). " +
+    "Returns the job id. The human manages jobs with :schedule.",
+  parameters: {
+    cron: Schema.String.annotations({
+      description:
+        "5-field cron, e.g. '0 9 * * 1' (Mondays 9am) or '*/30 * * * *' (every 30 minutes).",
+    }),
+    task: Schema.String.annotations({ description: "What the scheduled run should do." }),
+    folder: Schema.optional(Schema.String).annotations({
+      description: "Folder to scope the run to, relative to the workspace root (default the root).",
+    }),
+    agent: Schema.optional(Schema.String).annotations({
+      description: "Optional agent role to run the job as (e.g. 'reviewer').",
+    }),
+  },
+  success: Schema.Struct({ id: Schema.String, cron: Schema.String }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
   ["send_message", SendMessageTool],
   ["blackboard_post", BlackboardPostTool],
   ["blackboard_read", BlackboardReadTool],
   ["run_tool", RunToolTool],
+  ["schedule", ScheduleTool],
 ]
 
 /** The toolkit is static: base coding tools + comms/run_tool + the `run_agent` tool.
@@ -899,8 +931,39 @@ const buildGenericHandlers = <R>(
     const store = yield* ContextTreeStore
     const shell = yield* Shell
     const http = yield* Http
+    const fs = yield* FileSystem
     const approval = yield* Approval
     const run_agent = makeRunAgentHandler(store, shell, locks, bus, binding.displayRoot, opts, hooks)
+
+    // Cron as a tool: the orchestrator schedules its own follow-up / recurring
+    // work. Validates the expression, writes the job to the shared cron list
+    // (the same one :schedule + the tick read), returns the id.
+    const schedule = (params: {
+      readonly cron: string
+      readonly task: string
+      readonly folder?: string
+      readonly agent?: string
+    }) =>
+      Effect.gen(function* () {
+        if (parseCron(params.cron) === undefined) {
+          return yield* Effect.fail({
+            error: "InvalidCron",
+            message: `'${params.cron}' is not a valid 5-field cron expression ('min hour dom month dow').`,
+          })
+        }
+        const at = yield* Clock.currentTimeMillis
+        const job: ScheduledJob = {
+          id: crypto.randomUUID(),
+          cron: params.cron,
+          cwd: binding.displayRoot,
+          folder: params.folder !== undefined && params.folder.length > 0 ? params.folder : ".",
+          prompt: params.task,
+          ...(params.agent !== undefined && params.agent.length > 0 ? { agent: params.agent } : {}),
+          createdAt: at,
+        }
+        yield* addJob(job).pipe(Effect.provideService(FileSystem, fs))
+        return { id: job.id, cron: job.cron }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
     // Declarative tools dispatcher: look up the named def, substitute escaped
     // args into its template, then execute (shell via Shell — gated by allowBash
@@ -1021,6 +1084,7 @@ const buildGenericHandlers = <R>(
       blackboard_post,
       blackboard_read,
       run_tool,
+      schedule,
     } as never
   })
 
