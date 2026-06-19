@@ -239,7 +239,7 @@ test("selecting a turn in the context viewer shows the ◉ marker and a count", 
   }
 })
 
-test("an open select overlay floats over the panes with its options + hints", async () => {
+test("an open select picker renders inline (agy borderless menu) with its options + hints", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 120,
@@ -256,12 +256,15 @@ test("an open select overlay floats over the panes with its options + hints", as
     })
 
     const frame = await waitForFrame((f) => f.includes("Select a model") && f.includes("gpt-5.5"))
-    expect(frame).toContain("Select a model") // overlay title (in the border)
+    // The picker is now a borderless inline `BottomMenu` in the bottom chrome
+    // (not a floating modal): title line, `>`-pointer rows, agy footer — no border,
+    // no `i/N` counter.
+    expect(frame).toContain("Select a model") // title line
     expect(frame).toContain("google:gemini-3.5-flash")
     expect(frame).toContain("openai:gpt-5.5")
     expect(frame).toContain("◀ active") // the current model tag
-    expect(frame).toContain("↑/↓ move") // the footer hint (KeyHints: accent key + dim label)
-    expect(frame).toContain("1/2") // the counter
+    expect(frame).toContain("↑/↓ Navigate") // the agy footer hint
+    expect(frame).toContain("Select") // ↵ Select in the footer
   } finally {
     renderer.destroy()
   }
