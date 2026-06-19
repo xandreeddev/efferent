@@ -13,10 +13,10 @@ efferent runs TypeScript directly — there is no build step for development.
 
 ## Track 1 — Use the coding agent
 
-The agent ships on npm as the `efferent` package (a Bun bundle; bins `efferent` / `eff`).
+The agent ships on npm as **`@xandreed/code`** (a Bun bundle; the binaries it installs are `efferent` / `eff`).
 
 ```sh
-npm i -g efferent
+npm i -g @xandreed/code
 efferent
 ```
 
