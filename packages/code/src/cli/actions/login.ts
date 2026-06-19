@@ -18,6 +18,7 @@ import {
   type LoginFlow,
   type ProviderStatus,
 } from "../presentation/loginFlow.js"
+import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { formatFullError } from "../util/errorFormat.js"
 import type { TuiContext, TuiStore } from "../state/store.js"
 import { applyModelSelection } from "./model.js"
@@ -288,6 +289,40 @@ export const advanceLogin = (ctx: TuiContext, flow: LoginFlow): void => {
       return
   }
 }
+
+/** Human label for a stored credential's kind — the row's trailing `◀ tag`. */
+const credTag = (type: string | undefined): string =>
+  type === "oauth" ? "subscription" : type === "local" ? "local" : "api key"
+
+/**
+ * `:logout` with no provider — the agy contextual picker: every logged-in
+ * provider with its credential kind tagged, Enter forgets the highlighted one
+ * (`submitSelect`'s `logout` purpose → {@link logout}). A bare `:logout <name>`
+ * still removes one directly without opening the menu.
+ */
+export const openLogoutPicker = (store: TuiStore) =>
+  Effect.gen(function* () {
+    const all = yield* (yield* AuthStore).all
+    const configured = PROVIDERS.filter((p) => all[p]?.type !== undefined)
+    if (configured.length === 0) {
+      yield* Effect.sync(() =>
+        store.pushBlock({ kind: "info", text: "no providers are logged in — run :login first" }),
+      )
+      return
+    }
+    const options: ReadonlyArray<SelectOption<string>> = configured.map((p) => ({
+      value: p,
+      label: p,
+      tag: credTag(all[p]?.type),
+    }))
+    yield* Effect.sync(() =>
+      store.setOverlay({
+        kind: "select",
+        sel: openSelect("Log out of a provider", options),
+        purpose: { tag: "logout" },
+      }),
+    )
+  })
 
 /** `:logout <provider>` — forget a provider's credential. */
 export const logout = (store: TuiStore, arg: string | undefined) =>

@@ -3,6 +3,19 @@ export interface SlashCommand {
   readonly description: string
 }
 
+/**
+ * Classify the composer buffer so the input fence can recolour its caret (agy
+ * "the command palette replaces the caret"): a `:`-led line is a command, a
+ * `/`-led line is a search, anything else an ordinary message. Mirrors the
+ * `runCommand`/`runSearch` routing in `Input.tsx:submit`, so the caret can't
+ * disagree with what Enter will do.
+ */
+export const composerMode = (text: string): "message" | "command" | "search" => {
+  if (text.startsWith(":")) return "command"
+  if (text.startsWith("/")) return "search"
+  return "message"
+}
+
 /** Max command rows shown (and navigable) in the palette — the view slices to
  *  this and the keymap wraps the highlight within it, so they can't drift. */
 export const PALETTE_VISIBLE = 6
@@ -16,14 +29,14 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: ":shortcuts", description: "Show the keyboard shortcuts (or press ?)" },
   { name: ":keys", description: "Show the keyboard shortcuts (or press ?)" },
   { name: ":onboarding", description: "Re-run the first-run onboarding flow" },
-  { name: ":settings", description: "Open the settings modal (arrow + ↵ to edit)" },
-  { name: ":set", description: "Update a config setting, e.g. :set maxSteps 30" },
+  { name: ":settings", description: "Open the settings menu (arrow + ↵ to edit)" },
+  { name: ":set", description: "Open settings, or set one directly: :set maxSteps 30" },
   { name: ":model", description: "Pick main model; :model fast sets helper; :model <provider>:<id> switches" },
   { name: ":search", description: "Open the web search model picker, or :search openai:gpt-4o / default" },
   { name: ":effort", description: "Open the thinking/reasoning effort picker, or :effort <level>" },
   { name: ":theme", description: "Switch the colour theme (↑↓/↵), or :theme <name>" },
   { name: ":login", description: "Add a provider — subscription (OAuth) or API key" },
-  { name: ":logout", description: "Remove a provider's credential: :logout <provider>" },
+  { name: ":logout", description: "Pick a provider to log out (or :logout <provider>)" },
   { name: ":db", description: "Show or set the store: :db pg <url> / :db sqlite [path] [global]" },
   { name: ":handoff", description: "Summarize & hand off — replace loaded history, keep originals" },
   { name: ":context", description: "Toggle the context viewer (turn tree — Space select, b build)" },

@@ -36,17 +36,22 @@ export const rolesChip = (settings: {
  * zone carries the model + gauge + storage + cwd). Precedence: a live transient
  * note (theme switched · working in agent …) wins; then a pending queue offers
  * `↑ to edit queued`; then a running turn / open overlay offers `esc to cancel`;
- * otherwise the resting `? for shortcuts`.
+ * then a `:`/`/` line being composed also offers `esc to cancel` (Esc clears the
+ * command line — so the hint must read true while you type a command, not the
+ * idle `? for shortcuts`); otherwise the resting `? for shortcuts`.
  */
 export const statusHint = (s: {
   readonly busy: boolean
   readonly overlayOpen: boolean
   readonly queuedCount: number
+  /** The composer holds a `:command` / `/search` line (not an ordinary message). */
+  readonly composing?: boolean | undefined
   readonly note?: string | undefined
 }): string => {
   if (s.note !== undefined && s.note.length > 0) return s.note
   if (s.queuedCount > 0) return "↑ to edit queued"
   if (s.busy || s.overlayOpen) return "esc to cancel"
+  if (s.composing === true) return "esc to cancel"
   return "? for shortcuts"
 }
 

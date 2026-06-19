@@ -2,6 +2,7 @@ import type { TextareaRenderable } from "@opentui/core"
 import { createEffect, createMemo, onMount } from "solid-js"
 import { runCommand } from "../../commands/runCommand.js"
 import { runSearch } from "../../actions/search.js"
+import { composerMode } from "../../presentation/slashPalette.js"
 import { pushPrompt } from "../../presentation/promptHistory.js"
 import { tokens } from "../../state/theme.js"
 import { InputFence } from "../ui/index.js"
@@ -116,14 +117,20 @@ export const InputBox = (props: { ctx: TuiContext }) => {
     return p === undefined ? undefined : `→ ${p.title}`
   }
 
+  // The caret recolours to signal which menu the buffer summons (command/search),
+  // matching what Enter will run — see `InputFence`/`composerMode`.
+  const mode = () => composerMode(store.input())
+
   return (
-    <InputFence focused={focused()} suffix={suffix()}>
+    <InputFence focused={focused()} mode={mode()} suffix={suffix()}>
       <textarea
         ref={ref}
         height={rows()}
         flexGrow={1}
         keyBindings={KEY_BINDINGS}
-        placeholder="Message…  (↵ to send)"
+        // Blank while a menu/overlay owns input (a picker is open below) — agy
+        // shows a clean empty `>` there, not the resting "Message…" hint.
+        placeholder={store.overlay().kind === "none" ? "Message…  (↵ to send)" : ""}
         textColor={tokens.text.default}
         wrapMode="word"
         onContentChange={() => {

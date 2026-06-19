@@ -1,12 +1,22 @@
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { batch } from "solid-js"
 import { Effect } from "effect"
 import {
+  activeConnName,
+  configuredConns,
+  connLabel,
   ConversationStore,
+  type ConvSummary,
+  type NamedConn,
   recoverConversationStats,
+  SettingsStore,
+  StoreSwitch,
   type AgentMessage,
   type Checkpoint,
   type ConversationId,
 } from "@xandreed/sdk-core"
+import { openResume, type ResumeTab } from "../presentation/resumeBrowser.js"
 import {
   buildContextView,
   messagesForSelectedTurns,
@@ -383,6 +393,79 @@ export const openConversationPicker = (store: TuiStore, cwd: string) =>
         purpose: { tag: "conversation" },
       }),
     )
+  })
+
+/** The zero-config local SQLite path — the implicit `local` connection's url. */
+const dbLocalPath = join(homedir(), ".efferent", "efferent.db")
+
+/**
+ * `:resume` / `:browse` — the agy-style **tabbed** conversation browser: one tab
+ * per configured database connection (local + every remote), each loaded LIVE via
+ * `StoreSwitch.listSessions` (a transient read-only store per connection; an
+ * unreachable remote degrades to an `error` tab rather than failing the whole
+ * browser). Opens at the active connection's tab. Refused mid-turn (a switch can't
+ * happen while a turn runs). With only the local connection it's still tabbed
+ * (one tab) — the same UI as one or many.
+ */
+export const openResumeBrowser = (store: TuiStore, cwd: string) =>
+  Effect.gen(function* () {
+    if (store.busy()) {
+      yield* Effect.sync(() => store.toast("can't resume while a turn is running"))
+      return
+    }
+    const settings = yield* (yield* SettingsStore).get()
+    const conns = configuredConns(settings.databases, dbLocalPath)
+    const active = activeConnName(settings.defaultDatabase)
+    const sw = yield* StoreSwitch
+    yield* Effect.sync(() => store.toast("loading conversations…"))
+    const tabs = yield* Effect.all(
+      conns.map((c) => {
+        const base = { conn: c, label: connLabel(c.name, c.kind), active: c.name === active }
+        return sw.listSessions({ kind: c.kind, url: c.url }, cwd).pipe(
+          Effect.map((convs): ResumeTab => ({ ...base, convs })),
+          Effect.catchAll((e) => Effect.succeed<ResumeTab>({ ...base, convs: [], error: e.message })),
+          // Backstop: a non-typed defect (bad path, native sqlite error) must not
+          // sink the whole browser — degrade that one tab to an error instead.
+          Effect.catchAllCause(() => Effect.succeed<ResumeTab>({ ...base, convs: [], error: "couldn't open this database" })),
+        )
+      }),
+      { concurrency: 4 },
+    )
+    const total = tabs.reduce((n, t) => n + t.convs.length, 0)
+    if (total === 0 && tabs.every((t) => t.error === undefined)) {
+      yield* Effect.sync(() => store.toast("no conversations on this workspace yet"))
+      return
+    }
+    yield* Effect.sync(() => store.setOverlay({ kind: "resume", state: openResume(tabs) }))
+  })
+
+/**
+ * Resume `target` from `conn`: if it's a non-active connection, switch the live
+ * store there first (persist the new default + status), then replay the
+ * conversation. The nav refresh is composed by the caller (`keys/overlay.ts`),
+ * mirroring the plain conversation-picker resume.
+ */
+export const resumeFromBrowser = (
+  store: TuiStore,
+  cwd: string,
+  conn: NamedConn,
+  isActive: boolean,
+  target: ConversationId,
+): Effect.Effect<void, never, AppServices> =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => store.closeOverlay())
+    if (!isActive) {
+      const res = yield* (yield* StoreSwitch)
+        .switchTo(conn.name, { kind: conn.kind, url: conn.url }, cwd)
+        .pipe(Effect.either)
+      if (res._tag === "Left") {
+        yield* Effect.sync(() => store.pushBlock({ kind: "error", text: `couldn't open ${conn.name}: ${res.left.message}` }))
+        return
+      }
+      yield* (yield* SettingsStore).update((curr) => ({ ...curr, defaultDatabase: conn.name }), "local")
+      yield* Effect.sync(() => store.setStatus({ storage: connLabel(conn.name, conn.kind) }))
+    }
+    yield* resumeConversation(store, target)
   })
 
 /** List this workspace's conversations into the rail (`:browse`). */
