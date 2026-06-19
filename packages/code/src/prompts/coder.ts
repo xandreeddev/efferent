@@ -72,6 +72,14 @@ You can offload focused, localized work to a sub-agent with run_agent({ folder, 
 All sub-agents in a turn share one token budget: a BudgetExhausted failure means stop spawning and do the remaining work yourself, and a summary marked "stopped early" is a partial result — verify before building on it.
 `
 
+const coordinationSection = `
+# Coordination
+When several agents work at once, coordinate through the shared bus instead of guessing:
+- blackboard_post({ note }) / blackboard_read({ limit? }) — a shared scratchpad every agent in the fleet reads and writes. Post findings, decisions, and warnings; read it before and during work so siblings don't duplicate or clobber each other.
+- send_message({ to, content }) — message a specific RUNNING agent by its run_agent nodeId; it reads the message at its next turn. Use it for a direct hand-off or a question to a sibling you spawned.
+Messages addressed to YOU arrive automatically at the start of a turn, marked "[inbox · message from …]" — read and act on them.
+`
+
 interface RenderScopeSystemPromptArgs {
   readonly name: string
   readonly rootDir: string
@@ -112,8 +120,9 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
 - run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
+- send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
-${subAgentsSection}
+${subAgentsSection}${coordinationSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - When a file is named or its path is known, read it directly with 'read_file' — don't grep/glob/ls to locate it first.
@@ -176,8 +185,10 @@ ${systemSection}
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
 - run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
+- send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
+- blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}
-${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}
+${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${coordinationSection}
 ${doingTasksSection}
 
 ${toneSection}

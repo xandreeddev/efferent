@@ -1,6 +1,6 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import {
   ContextNodeId,
   type ContextUsage,
@@ -43,6 +43,7 @@ import {
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
+import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 
 /**
@@ -118,6 +119,10 @@ export interface ScopeRuntime {
     | Approval
     | LanguageModel.LanguageModel
   >
+  /** The in-memory comms bus (Phase 3): per-agent mailboxes + a shared
+   *  blackboard. The driver posts to a RUNNING node's mailbox (human → agent);
+   *  the loop drains it at each turn boundary. */
+  readonly bus: AgentBus
 }
 
 /** Default step (turn) cap per spawned sub-agent — overridable via
@@ -219,9 +224,69 @@ const RunAgentTool = Tool.make("run_agent", {
   failureMode: "return",
 })
 
-/** The toolkit is static now: base tools + the one `run_agent` tool. */
+/**
+ * The comms tools (Phase 3): message a sibling agent's inbox, and post/read a
+ * shared blackboard. Handler-backed by the in-memory {@link AgentBus}; the
+ * recipient drains its inbox at its next turn boundary.
+ */
+const SendMessageTool = Tool.make("send_message", {
+  description:
+    "Send a message to another RUNNING agent by its context-node id (a nodeId from a run_agent result). " +
+    "The recipient reads it at its next turn. Use it to coordinate with sibling agents you spawned or were " +
+    "told about. Fails if that agent isn't currently running (a finished agent's result is in its return summary).",
+  parameters: {
+    to: Schema.String.annotations({
+      description: "The recipient agent's context-node id (the nodeId a run_agent call returned).",
+    }),
+    content: Schema.String.annotations({ description: "The message to deliver." }),
+  },
+  success: Schema.Struct({ delivered: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+const BlackboardPostTool = Tool.make("blackboard_post", {
+  description:
+    "Post a short note to the shared blackboard every agent in this turn's fleet can read — a finding, a " +
+    "decision, a warning. Use it so parallel siblings don't duplicate work or clobber each other.",
+  parameters: {
+    note: Schema.String.annotations({ description: "The note to share (keep it short)." }),
+  },
+  success: Schema.Struct({ posted: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+const BlackboardReadTool = Tool.make("blackboard_read", {
+  description:
+    "Read the shared blackboard — notes other agents in this fleet have posted. Check it before starting and " +
+    "while working to stay coordinated.",
+  parameters: {
+    limit: Schema.optional(Schema.Number).annotations({
+      description: "Max recent notes to return; omit for all.",
+    }),
+  },
+  success: Schema.Struct({
+    notes: Schema.Array(Schema.Struct({ from: Schema.String, note: Schema.String })),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `[name, def]` entries for the comms tools — for the toolkit + role allowlists. */
+const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
+  ["send_message", SendMessageTool],
+  ["blackboard_post", BlackboardPostTool],
+  ["blackboard_read", BlackboardReadTool],
+]
+
+/** The toolkit is static: base coding tools + comms tools + the `run_agent` tool. */
 const genericToolkit = Toolkit.make(
-  ...([...baseToolDefs, RunAgentTool] as ReadonlyArray<Tool.Any>),
+  ...([
+    ...baseToolDefs,
+    ...commsToolEntries.map(([, d]) => d),
+    RunAgentTool,
+  ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
 
 /**
@@ -239,7 +304,11 @@ export const roleToolEntries = (
   const base = Object.entries(codingToolkit.tools) as Array<[string, Tool.Any]>
   if (def.tools === undefined) return base
   const allow = new Set(def.tools)
-  const all: Array<[string, Tool.Any]> = [...base, ["run_agent", RunAgentTool]]
+  const all: ReadonlyArray<readonly [string, Tool.Any]> = [
+    ...base,
+    ...commsToolEntries,
+    ["run_agent", RunAgentTool] as const,
+  ]
   return all.filter(([name]) => allow.has(name))
 }
 
@@ -286,6 +355,7 @@ const makeInnerHooks = <R>(
   usageRef: Ref.Ref<ContextUsage>,
   pool: TokenPool,
   budgetStopRef: Ref.Ref<boolean>,
+  bus: AgentBus,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -339,6 +409,14 @@ const makeInnerHooks = <R>(
         if (spent) yield* Ref.set(budgetStopRef, true)
         return spent
       }),
+    // Inbox drain: at each turn boundary, fold any messages sent to THIS node
+    // (by a sibling agent or the human) into its context as inbound user turns.
+    // Ephemeral (not persisted to the node) — the agent's reply is what's saved.
+    onTransformContext: (messages) =>
+      Effect.gen(function* () {
+        const inbox = yield* bus.drain(nodeId)
+        return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
+      }),
     ...(parent?.onSubAgentStart !== undefined
       ? { onSubAgentStart: parent.onSubAgentStart }
       : {}),
@@ -360,6 +438,7 @@ interface RunSpawnedArgs<R> {
   readonly store: ContextTreeStore["Type"]
   readonly shell: Shell["Type"]
   readonly locks: FolderLocks
+  readonly bus: AgentBus
   readonly displayRoot: string
   readonly opts: BuildScopeRuntimeOptions
   readonly hooks: AgentHooks<R> | undefined
@@ -419,8 +498,19 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
         ...(args.parentNodeId !== null ? { parentNodeId: args.parentNodeId } : {}),
       })
     }
+    // Register a live mailbox so siblings/the human can message this run; torn
+    // down on every exit path (success, failure, interrupt) by the ensuring below.
+    yield* args.bus.markRunning(nodeId, label)
     const budgetStopRef = yield* Ref.make(false)
-    const innerHooks = makeInnerHooks(hooks, nodeId, filesRef, usageRef, args.tokenPool, budgetStopRef)
+    const innerHooks = makeInnerHooks(
+      hooks,
+      nodeId,
+      filesRef,
+      usageRef,
+      args.tokenPool,
+      budgetStopRef,
+      args.bus,
+    )
 
     const binding: ScopeBinding = {
       rootDir: folder,
@@ -455,7 +545,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     // subset toolkit (what the model sees) AND a matching handler subset (from
     // the same full handler record), so the two never disagree. No role ⇒ the
     // full generic toolkit (base tools + run_agent).
-    const handlers = buildGenericHandlers(binding, opts, hooks, args.locks)
+    const handlers = buildGenericHandlers(binding, opts, hooks, args.locks, args.bus)
     const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
     const useToolkit =
       roleEntries !== undefined
@@ -596,7 +686,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       })
     }
     return yield* Effect.fail(f)
-  }))
+  })).pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
 
 /** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent. */
 const makeRunAgentHandler =
@@ -604,6 +694,7 @@ const makeRunAgentHandler =
     store: ContextTreeStore["Type"],
     shell: Shell["Type"],
     locks: FolderLocks,
+    bus: AgentBus,
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
@@ -664,7 +755,7 @@ const makeRunAgentHandler =
           yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
-            store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
@@ -701,7 +792,7 @@ const makeRunAgentHandler =
           seedMessages,
         })
         return yield* runSpawnedAgent({
-          store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          store, shell, locks, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
@@ -727,7 +818,7 @@ const makeRunAgentHandler =
         seedMessages,
       })
       return yield* runSpawnedAgent({
-        store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
@@ -751,13 +842,54 @@ const buildGenericHandlers = <R>(
   opts: BuildScopeRuntimeOptions,
   hooks: AgentHooks<R> | undefined,
   locks: FolderLocks,
+  bus: AgentBus,
 ) =>
   Effect.gen(function* () {
     const base = yield* makeCodingHandlers(binding, opts.skills)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
-    const run_agent = makeRunAgentHandler(store, shell, locks, binding.displayRoot, opts, hooks)
-    return { ...base, run_agent } as never
+    const run_agent = makeRunAgentHandler(store, shell, locks, bus, binding.displayRoot, opts, hooks)
+
+    // The sender's label for comms: this fiber's own node (re-seeded as
+    // `parentNodeId` for its children), else the lead agent (root conversation).
+    const senderLabel = (rc: RunContext): string =>
+      rc.parentNodeId !== null ? `agent ${String(rc.parentNodeId).slice(0, 8)}` : "the lead agent"
+
+    const send_message = (params: { readonly to: string; readonly content: string }) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const at = yield* Clock.currentTimeMillis
+        const delivered = yield* bus.post(params.to, {
+          from: senderLabel(rc),
+          content: params.content,
+          at,
+        })
+        if (!delivered) {
+          return yield* Effect.fail({
+            error: "AgentNotRunning",
+            message: `agent '${params.to}' is not running — it may have finished (its result is in :tree). Spawn or resume it instead of messaging.`,
+          })
+        }
+        return { delivered: true }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    const blackboard_post = (params: { readonly note: string }) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const at = yield* Clock.currentTimeMillis
+        yield* bus.boardPost({ from: senderLabel(rc), note: params.note, at })
+        return { posted: true }
+      })
+
+    const blackboard_read = (params: { readonly limit?: number }) =>
+      Effect.gen(function* () {
+        const all = yield* bus.boardRead()
+        const picked =
+          params.limit !== undefined && params.limit > 0 ? all.slice(-params.limit) : all
+        return { notes: picked.map((n) => ({ from: n.from, note: n.note })) }
+      })
+
+    return { ...base, run_agent, send_message, blackboard_post, blackboard_read } as never
   })
 
 /**
@@ -781,8 +913,11 @@ export const buildScopeRuntime = <R = never>(
   // One locks map per runtime: parallel spawns into the SAME folder serialize
   // even across subtrees (cousins included); disjoint folders fan out freely.
   const locks = makeFolderLocks()
+  // One comms bus per runtime: per-agent mailboxes + a shared blackboard, drawn
+  // on by send_message / blackboard_* and drained into each agent's context.
+  const bus = makeAgentBus()
   const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks, locks),
+    buildGenericHandlers(binding, opts, hooks, locks, bus),
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
@@ -807,6 +942,7 @@ export const buildScopeRuntime = <R = never>(
         store,
         shell,
         locks,
+        bus,
         displayRoot: binding.displayRoot,
         opts,
         hooks,
@@ -865,6 +1001,7 @@ export const buildScopeRuntime = <R = never>(
         store,
         shell,
         locks,
+        bus,
         displayRoot: binding.displayRoot,
         opts,
         hooks,
@@ -886,5 +1023,5 @@ export const buildScopeRuntime = <R = never>(
       ScopeRuntime["spawnAgent"]
     >
 
-  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent }
+  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent, bus }
 }

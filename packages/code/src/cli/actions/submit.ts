@@ -1,4 +1,4 @@
-import { Cause, Effect, Queue, Schema, type Layer } from "effect"
+import { Cause, Clock, Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
   ContextNodeId,
@@ -86,6 +86,24 @@ export const makeSubmit = (
   ): Effect.Effect<void, never, AppServices> =>
     Effect.gen(function* () {
       const folder = preview.title.replace(/^agent: /, "")
+
+      // If this node is a LIVE fiber, deliver to its mailbox — it reads the
+      // message at its next turn boundary — instead of resuming a finished node.
+      // The composer stays free (no busy flip); the agent keeps running.
+      const live = yield* scopeRuntime.bus.isRunning(nodeId)
+      if (live) {
+        const at = yield* Clock.currentTimeMillis
+        yield* scopeRuntime.bus.post(nodeId, { from: "you", content: text, at })
+        store.setNodePreview({
+          ...preview,
+          blocks: [...preview.blocks, { kind: "user", text }],
+        })
+        store.setInput("")
+        store.setNote(`delivered to running agent ${folder} — it reads at its next turn`)
+        store.convScroller.current?.scrollToBottom()
+        return
+      }
+
       store.setNodePreview({
         ...preview,
         blocks: [...preview.blocks, { kind: "user", text }],
