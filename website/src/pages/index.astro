@@ -126,7 +126,7 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
       <p class="eyebrow">Why Effect</p>
       <h2>Typed errors, Layers, and a loop you can read.</h2>
       <p>
-        efferent is the wedge: the agent loop, the context tree, headroom compression, the multi-provider
+        efferent is the wedge: the agent loop, the context tree, compaction compression, the multi-provider
         router, and approval are all composable <code>Layer</code>s and Effects in a pure-domain package —
         typed errors end to end, no <code>try</code>/<code>catch</code>, provider selection a runtime
         concern. Each agent is a thin driver that composes those Layers at the edge and hands off to Bun.

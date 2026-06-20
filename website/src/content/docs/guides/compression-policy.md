@@ -6,20 +6,20 @@ sidebar:
   order: 4
 ---
 
-[Context compression](/docs/concepts/headroom/) is a property of the agent: the optional
+[Context compression](/docs/concepts/compaction/) is a property of the agent: the optional
 `compression` field on [`AgentConfig`](/docs/reference/agent-config/). Omit it and you get the
 cache-safe default. Here's how to change it.
 
 ## Use the defaults (or turn it off)
 
 ```ts
-import { Compression, Headroom } from "@xandreed/sdk-core"
+import { Compression, Compaction } from "@xandreed/sdk-core"
 
 const config = {
   key: "my-agent",
   prompt,
   toolkit,
-  compression: Headroom.default(), // explicit — same as omitting the field
+  compression: Compaction.default(), // explicit — same as omitting the field
   // compression: Compression.none, // disable compression entirely
 }
 ```
@@ -35,17 +35,17 @@ interface CompressionPolicy {
 }
 ```
 
-Build the `tail` from the combinators and the headroom engine:
+Build the `tail` from the combinators and the compaction engine:
 
 ```ts
 const compression: CompressionPolicy = {
   // Only clip when the per-result budget is tight; otherwise pass through.
   tail: Compression.when(
     (budget) => budget.maxChars < 20_000,
-    Headroom.toolResults(),
+    Compaction.toolResults(),
   ),
   // Optionally also keep only the last N tool results full, in-memory, each turn.
-  context: Headroom.keepRecentToolResults(5),
+  context: Compaction.keepRecentToolResults(5),
 }
 ```
 
@@ -56,7 +56,7 @@ Other combinators: `Compression.pipeline(a, b, …)` runs tail compressors in se
 A custom **tail** compressor must be **deterministic** and only touch the **new tail** — the provider
 prompt cache keys on a byte-stable prefix, and rewriting history would blow the cache. (The `context`
 moment *does* rewrite the in-memory buffer, which is why it's off by default: it trades cache hits for
-headroom.)
+compaction.)
 :::
 
 A custom compressor stays `R = never` by reaching optional services via `Effect.serviceOption(Tag)` (found

@@ -40,4 +40,4 @@ bun run eval [name …] [--config f] [--main m] [--fast m] [--json]
 
 Gated on having a key — no key, the run skips cleanly. Suites cover the full loop (bug-fix, multi-file,
 refactor, failing-test, read-only Q&A) plus the [fast-tier](/docs/concepts/providers/) use cases
-(approval judging, headroom digests, session titles).
+(approval judging, compaction digests, session titles).

@@ -13,7 +13,7 @@
  *
  *   bun examples/diceAgent.ts
  *
- * The four "context headroom" tactics connect here too:
+ * The four "context compaction" tactics connect here too:
  *   1+2  append-time tool-result clipping + reversible markers — automatic in
  *        the loop, gated only by `Settings.toolResultMaxTokens`.
  *   3    fast-tier digests — provided by the `UtilityLlmLive` line below; drop
@@ -90,7 +90,7 @@ const config: AgentConfig<typeof toolkit extends Toolkit.Toolkit<infer T> ? T : 
 
 // ── 5. Hooks (optional) — observe/steer the loop. onBeforeToolCall returns a
 //      decision ({ action: "continue" } | { action: "block", reason });
-//      onHelperUsage accounts fast-tier headroom digests.
+//      onHelperUsage accounts fast-tier compaction digests.
 const hooks: AgentHooks = {
   onBeforeToolCall: (e) =>
     Effect.as(Effect.log(`-> ${e.toolName}`), { action: "continue" } as const),
@@ -109,7 +109,7 @@ const program = Effect.gen(function* () {
 
 // ── 7. Composition root: the layers runAgent's environment needs.
 //      Required: ConversationStore (in StoresLive) + SettingsStore +
-//      LanguageModel (ModelLive). UtilityLlm is optional (headroom digests).
+//      LanguageModel (ModelLive). UtilityLlm is optional (compaction digests).
 //      StoresLive's SQLite store needs platform FileSystem/Path — BunContext
 //      supplies those (same as the real CLI's main.ts).
 const AppLive = Layer.mergeAll(

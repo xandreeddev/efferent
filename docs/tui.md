@@ -308,7 +308,7 @@ A unique prefix resolves (`:mod` → `:model`).
 |---|---|
 | `:theme [name]` | Switch the colour theme (↑↓ / ↵), or `:theme <name>` — ships `efferent` (default) + `one-dark` + `tokyo-night` |
 | `:settings` | Open the settings modal (arrow + ↵ to edit) |
-| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (helper calls: tool summaries, approval judgments, session titles); unset → follows main. Headroom: `:set toolResultMaxTokens 4000` (tool-result clip budget, 0 = off) · `:set autoHandoffPct 85` (auto-fold threshold, 0 = off) |
+| `:set <key> <value>` | Update a config setting, e.g. `:set maxSteps 30` or `:set fastModel google:gemini-3.1-flash-lite` (helper calls: tool summaries, approval judgments, session titles); unset → follows main. Compaction: `:set toolResultMaxTokens 4000` (tool-result clip budget, 0 = off) · `:set autoHandoffPct 85` (auto-fold threshold, 0 = off) |
 | `:db [pg <url>\|sqlite [path]]` | Show or set the conversation store (trailing `global` writes `~/.efferent/config.json`) |
 
 **Meta**
