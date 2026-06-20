@@ -8,7 +8,7 @@ import type {
 /**
  * Mode-agnostic event vocabulary the loop emits via hooks. Each mode
  * (tui / print / json / rpc) subscribes to the same queue and renders
- * accordingly. Modeled loosely on Pi's AgentEventSink.
+ * accordingly.
  */
 export type AgentEvent =
   // Internal drain sentinel: offered by a mode AFTER its run completes so the
