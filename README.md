@@ -16,7 +16,7 @@ The framework is the wedge: the agent loop, the context tree, compaction compres
 
 ## The coding agent (`@xandreed/code`)
 
-The flagship app: a coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree. The TUI is the frontend; the agent also runs headless (print / json / rpc) with no UI.
+The flagship app: a coding agent that lives in your terminal. **Effect.ts + Bun**, a borderless full-screen TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree. The TUI is the frontend; the agent also runs headless (print / json / rpc) with no UI.
 
 ```bash
 npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
@@ -83,7 +83,7 @@ Credentials live **only** in `~/.efferent/auth.json` (atomic `0600` writes). Non
 | `:settings` / `:set` | live-tunable knobs (budgets, compression, auto-approval…) |
 | `:theme` | efferent · one-dark · tokyo-night |
 | `Esc` | interrupt the running turn (sub-agents included) |
-| `Ctrl-h/j/k/l` | move between panes · `v` cycles the side views |
+| `Ctrl-h/j/k/l` | move between the conversation, panel, and composer · `v` cycles the panel views |
 
 ## Skills
 

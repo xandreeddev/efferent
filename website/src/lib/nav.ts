@@ -102,7 +102,7 @@ export const products = [
     accent: "var(--ember)",
     blurb:
       "The agent framework: entities, ports, and use cases as Effect Layers; tools as an @effect/ai Toolkit; every error tagged; the provider a runtime choice. Build your own agent in a handful of lines.",
-    points: ["The agent loop as one Effect", "Ports & adapters, typed errors", "Cache-safe context compression"],
+    points: ["The agent loop as one Effect", "Ports & adapters, typed errors", "Cache-safe context compaction"],
     href: "/docs/concepts/architecture",
     cta: "Explore the SDK",
   },
@@ -112,7 +112,7 @@ export const products = [
     tag: "the efferent CLI",
     accent: "var(--verdigris)",
     blurb:
-      "The batteries-included coding agent built on the SDK — a multi-pane terminal UI (and headless print / json / rpc modes), file + shell + web tools, and a persistent sub-agent tree. One npm install.",
+      "The batteries-included coding agent built on the SDK — a borderless full-screen terminal UI (and headless print / json / rpc modes), file + shell + web tools, and a persistent sub-agent fleet. One npm install.",
     points: ["TUI + print + json + rpc", "Sub-agents over a context tree", "Multi-provider, subscription or key"],
     href: "/docs/getting-started",
     cta: "Get started",

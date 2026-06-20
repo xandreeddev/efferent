@@ -81,13 +81,6 @@ activity. From there you either **watch** (read-only — the lead keeps streamin
 your composer never blocking. Type into a *finished* node and it resumes in place. Then detach back
 to the lead.
 
-:::note[Landing next]
-Today you attach per-node through `:tree`, and the lead runs underneath. The unifying step — a
-first-class **seat** that's always attached to exactly one session, with one keystroke to move it
-and a single "back to the lead" — is the cohesive layer being built on top of this plumbing. The
-mailbox/preview/resume mechanics it rides are already here.
-:::
-
 ## Background work proposes; you approve
 
 Not every agent should act unsupervised. A background agent — a social drafter, a release prep, an
@@ -99,25 +92,13 @@ This is live today for shell commands (the bash approval modal, with a fast-tier
 routine work and only prompts on the exceptions — see
 [the agent loop](/docs/concepts/agent-loop/)).
 
-:::note[Landing next]
-Generalising that one modal into a **workspace proposal inbox** — every background session's pending
-asks in one place, each tagged with which session is asking, surfaced no matter which session your
-seat is on, and covering more than bash (out-of-folder writes, network, a worktree merge) — is the
-next step. The approval port, the rule ledger, and the judge it reuses are already in place.
-:::
-
 ## Isolation
 
-Parallel coders must not trample each other. Today every spawned session is **write-confined to its
-folder** and same-folder spawns **serialize on a lock**, so disjoint work is safe by construction
-and overlapping work can't race.
-
-:::note[Landing next]
-Stronger isolation — each background coder in its own **git worktree**, so even same-file edits are
-independent — is being added on top. A clean run prunes its worktree; a run with changes surfaces a
-diff to merge back (through the proposal inbox above). It builds directly on the folder sandbox and
-the git plumbing the staleness checks already use.
-:::
+Parallel coders must not trample each other. Every spawned session is **write-confined to its
+folder** — a write or bash command outside it comes back as a tool failure, not a silent escape —
+and same-folder spawns **serialize on a per-folder lock**. Disjoint work is safe by construction;
+overlapping work can't race. Reads stay workspace-wide, so a sub-agent still learns types and
+conventions from anywhere in the tree.
 
 ## Shut down, come back
 

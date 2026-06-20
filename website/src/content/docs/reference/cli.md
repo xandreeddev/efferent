@@ -16,7 +16,7 @@ Mode resolves automatically: an argv prompt or piped stdin → `print`; a TTY �
 
 | Mode | Invocation | Behaviour |
 | --- | --- | --- |
-| `tui` | `efferent` | Interactive multi-pane terminal UI (default in a TTY). |
+| `tui` | `efferent` | Interactive borderless terminal UI (default in a TTY). |
 | `print` | `efferent "<prompt>"` · `-p` · stdin `-` | One-shot: final text on stdout, tool log on stderr. |
 | `json` | `efferent --mode json "<prompt>"` | Same loop; every agent event as JSONL on stdout. |
 | `rpc` | `efferent --mode rpc` | Bidirectional JSON-RPC over stdio (`agent.send`). |
