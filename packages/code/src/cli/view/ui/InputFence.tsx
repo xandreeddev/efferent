@@ -41,7 +41,7 @@ export const InputFence = (props: {
         return tokens.accent.input
     }
   }
-  const rule = () => "─".repeat(Math.max(1, dims().width))
+  const rule = () => glyph.rule.repeat(Math.max(1, dims().width))
   return (
     <box flexDirection="column" flexShrink={0}>
       <Show when={props.suffix !== undefined}>

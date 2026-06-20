@@ -44,7 +44,7 @@ export const HlText = (props: {
 
 /** A horizontal divider rule of `width` cells (dim `─`). */
 export const Rule = (props: { width: number }) => (
-  <text fg={tokens.text.dim}>{"─".repeat(props.width)}</text>
+  <text fg={tokens.text.dim}>{glyph.rule.repeat(props.width)}</text>
 )
 
 /** One key→label pair for {@link KeyHints} (e.g. `{ key: "↑/↓", label: "navigate" }`). */
