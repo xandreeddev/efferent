@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/xandreeddev/efferent/main/assets/logo-code.svg" alt="efferent &lt; code &gt;" width="520">
 </p>
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree.
+> A coding agent that lives in your terminal. **Effect.ts + Bun**, a borderless full-screen TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree.
 
 ```bash
 npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
