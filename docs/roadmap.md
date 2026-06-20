@@ -2,7 +2,7 @@
 
 Living backlog of what's **not yet built** in efferent — what's coming next, what's optional, and what we're consciously skipping. Up to date with `main` as of the last edit to this file.
 
-For *what's shipped*, see `AGENT.md` (architecture) and `README.md` (feature tour).
+For *what's shipped*, see `AGENT.md` (architecture) and `../README.md` (feature tour).
 
 ---
 
@@ -59,6 +59,10 @@ Parse `@path/to/file` in user input → expand to a `read_file` block prepended 
 ### Cost tracking
 We already track `inputTokens` / `outputTokens` / `cacheReadTokens` per turn (status bar gauge). Multiply by per-model pricing for a session $ readout (and a per-turn one when expanded). Add a `pricing.json` (or a `Pricing` port that fetches it). Informational; no budgeting yet.
 
+### Handoff & web-search spend tracking
+
+Two billed-LLM call sites are uncounted: handoff briefs (`:handoff`, `seedMode: "handoff"`) and web search (`search_web`). Both are real spend that doesn't appear in `byRole` — add usage reporting to their callers. See [`models.md`](./models.md) for the full call-site inventory.
+
 ---
 
 ## Tier 3 — extensions + later
@@ -92,12 +96,23 @@ A real win for language-aware navigation (find-references, go-to-definition). Bi
 
 ---
 
+## Known rough edges
+
+These are unfixed bugs/blockers, documented fully in [`journeys.md`](./journeys.md).
+
+- **`--cwd` outside repo crashes** — running from source with `cwd` outside the repo dies on the missing Solid transform (bunfig preload is cwd-relative). The failure message should say to use `--cwd` from the repo root or use the npm bundle. (journeys.md item 3)
+- **Shell adapter hardening** — no process group on timeout kill (grandchildren may survive); unbounded output buffering before truncation. (journeys.md item 5)
+- **Live credentialed smoke** — the populated live journey (spawn → running nodes → resume) still needs a credentialed smoke. bash approval mid-turn, OAuth round-trip, and a live `run_agent` spawn with tool use remain unexercised. (journeys.md item 1)
+- **Fast input bursts** — Enter inside the same terminal chunk as text can land as a newline instead of running a `:` command. Typing-speed input is fine. (journeys.md item 2)
+
+---
+
 ## Consciously skipped
 
 These are *not* on the roadmap. Revisit only if a concrete need surfaces.
 
 - **Plugins marketplace** — extensions-as-Layers is the on-thesis answer; a marketplace is off-thesis for a lean Effect CLI.
-- **Team / coordinator multi-agent mode** — Claude Code's `coordinatorMode` orchestrates teams of agents. Heavy; `run_agent` over the persistent context tree (spawn / resume / branch, recursive) already handles the cases we actually need.
+- **Out-of-process coordinator mode** — Claude Code's heavyweight `coordinatorMode` spawns agents in separate processes. Efferent's coordinator is an in-process agent role using `run_agent` over the persistent context tree — the out-of-process version is what's skipped.
 - **Cron / remote-trigger / scheduling** — agents that fire on a schedule or react to webhooks. Outside the CLI's wedge.
 - **ToolSearch** — only useful at large tool counts (Claude Code carries a vast tool surface). With our handful, it's pointless.
 - **Output styles** — purely cosmetic theming. We have the per-pane accent system; that's enough.
