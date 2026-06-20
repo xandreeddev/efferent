@@ -1,10 +1,9 @@
 import type { Effect } from "effect"
 
 /**
- * A minimal, Effect-native eval library — Evalite's `data → task → scorers`
- * shape re-expressed as Effects so a `task` can be the real agent loop and a
- * `Scorer` can itself call an LLM. No sqlite, no Vercel AI SDK, no Node-only
- * runner: a spec is pure data; `runEval` turns it into an `Effect`.
+ * A minimal, Effect-native eval library — the `data → task → scorers` shape
+ * expressed as Effects so a `task` can be the real agent loop and a `Scorer` can
+ * itself call an LLM. A spec is pure data; `runEval` turns it into an `Effect`.
  */
 
 /** A scorer returns either a bare 0..1 number or a `{ score, detail }`. */
