@@ -19,7 +19,7 @@ interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   readonly toolkit: Toolkit.Toolkit<Tools>
   /**
    * How this agent keeps its context small. Absent ⇒ the SDK default
-   * (Headroom.default()). Compression.none disables it; a custom policy replaces it.
+   * (Compaction.default()). Compression.none disables it; a custom policy replaces it.
    * Inherited by this agent's sub-agents.
    */
   readonly compression?: CompressionPolicy
@@ -35,7 +35,7 @@ From `@xandreed/sdk-core/usecases/agentConfig.ts`.
 | `key` | `string` | Isolates prompt-cache keys across different configs in one conversation. Use something stable and descriptive (the coder uses `coder:<rootDir>`). |
 | `prompt` | [`Prompt`](#prompt) | The system prompt — versioned so you can A/B prompt variants. |
 | `toolkit` | `Toolkit.Toolkit<Tools>` | The `@effect/ai` toolkit. Its **handler `Layer`** is provided separately at the composition root (that's where runtime deps like `cwd`/`FileSystem` enter). |
-| `compression?` | [`CompressionPolicy`](/docs/reference/compression/) | Optional. Omit for the cache-safe default; see [context headroom](/docs/concepts/headroom/). |
+| `compression?` | [`CompressionPolicy`](/docs/reference/compression/) | Optional. Omit for the cache-safe default; see [context compaction](/docs/concepts/compaction/). |
 
 ## Prompt
 

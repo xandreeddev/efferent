@@ -22,7 +22,7 @@ agent.run            one per user message — conversation id, prompt excerpt, m
    └─ agent.subagent a spawned run's subtree — node, depth, folder
 ```
 
-Plus helper spans (`agent.approval.judge`, `agent.headroom.digest`, `agent.title`).
+Plus helper spans (`agent.approval.judge`, `agent.compaction.digest`, `agent.title`).
 
 ## Metrics
 

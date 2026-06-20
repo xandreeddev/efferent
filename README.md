@@ -4,7 +4,7 @@
 
 > An **agent framework on Effect.ts** — and the apps built on it. A pure-domain SDK (entities, ports, and use cases as `Layer`s; tools as an `@effect/ai` `Toolkit`; every error tagged; provider selection a runtime concern), with a coding agent, a content engine, and a colocated eval harness on top.
 
-The framework is the wedge: the agent loop, the context tree, headroom compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each agent is a thin driver that composes those Layers; the coding agent (`@xandreed/code`) **bundles a terminal UI** and also runs headless.
+The framework is the wedge: the agent loop, the context tree, compaction compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each agent is a thin driver that composes those Layers; the coding agent (`@xandreed/code`) **bundles a terminal UI** and also runs headless.
 
 ```
 @xandreed/sdk-core       the framework — agent loop, ports, use cases (effect + @effect/ai only)

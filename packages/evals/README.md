@@ -13,7 +13,7 @@ A driver-level package (depends on `@xandreed/sdk-core` + `@xandreed/sdk-adapter
 - **`framework/`** — `Eval.ts` (`EvalSpec` / `Scorer` / `defineEval`), `scorers.ts` (`predicate` · `includesAll` · `fromEffect` · `llmJudge`), `runEval.ts` (wraps suite/case/scorer in **spans**), `report.ts` (coloured per-suite ANSI scorecard).
 - **`config/`** — `RunConfig` pins `{ main, fast, judge, promptVariant, maxSteps }`; `FixedSettingsStoreLive` ignores disk so a `--config matrix.json` run is A/B'd against a baseline.
 - **`telemetry/`** + **`trace/`** — collect spans in-memory (and to OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), then `processSpans()` **builds the eval report from the traces**.
-- **`suites/`** — `handoff`, `tool-selection`, `coder-edit`, `whole-task` (the full loop), plus fast-model suites: `judge-approval`, `headroom-digest`, `session-title`.
+- **`suites/`** — `handoff`, `tool-selection`, `coder-edit`, `whole-task` (the full loop), plus fast-model suites: `judge-approval`, `compaction-digest`, `session-title`.
 
 ## Run
 

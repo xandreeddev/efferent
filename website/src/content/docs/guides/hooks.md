@@ -41,7 +41,7 @@ const hooks: AgentHooks = {
 | `onAgentEnd` | `void` | Final text + full message history. |
 | `onSubAgentStart` / `onSubAgentEnd` | `void` | Track [sub-agent](/docs/concepts/sub-agents/) runs. |
 | `onSkillLoad` | `void` | A [skill](/docs/concepts/skills/) body was lazy-loaded. |
-| `onHelperUsage` | `void` | Account fast-tier helper spend (e.g. headroom digests). |
+| `onHelperUsage` | `void` | Account fast-tier helper spend (e.g. compaction digests). |
 
 :::note[Type tip]
 `AgentHooks` is generic in `R` (the union of port requirements your hooks need). With all-`Effect.log`
