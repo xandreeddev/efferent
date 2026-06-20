@@ -55,23 +55,18 @@ export interface Tokens {
     readonly handoff: string
     readonly loaded: string
   }
-  /** Conversation `/`-search highlights: fg buckets (current · other · header),
+  /** Conversation `/`-search highlights: fg buckets (current · other),
    *  the row-background tints (`line` every match, `currentLine` the one under
    *  the [i/N] position), and the WORD chips — the matched substring itself,
    *  hlsearch-style (`word` everywhere, `wordCurrent` on the current row). */
   readonly match: {
     readonly current: string
     readonly other: string
-    readonly header: string
     readonly line: string
     readonly currentLine: string
     readonly word: { readonly bg: string; readonly fg: string }
     readonly wordCurrent: { readonly bg: string; readonly fg: string }
   }
-  /** Modal overlay surface + its border. */
-  readonly overlay: { readonly bg: string; readonly border: string }
-  /** Status-bar surface. */
-  readonly status: { readonly bg: string }
   /** Focused-row background tint (context viewer / select list / settings). */
   readonly cursorLine: string
   /** The "no tint" background — an explicit transparent so a row that loses the
@@ -104,7 +99,6 @@ export const makeTokens = (p: Palette): Tokens => ({
   match: {
     current: p.green,
     other: p.cyan,
-    header: p.blue,
     line: p.matchLine,
     currentLine: p.matchLineCurrent,
     // The chips invert the match accents: accent bg, darkest surface as text —
@@ -112,8 +106,6 @@ export const makeTokens = (p: Palette): Tokens => ({
     word: { bg: p.cyan, fg: p.bgStatus },
     wordCurrent: { bg: p.green, fg: p.bgStatus },
   },
-  overlay: { bg: p.bgOverlay, border: p.magenta },
-  status: { bg: p.bgStatus },
   cursorLine: p.cursorLine,
   bgNone: "transparent",
   info: p.gray,

@@ -28,8 +28,8 @@ export interface Palette {
   readonly dim: string
   readonly comment: string
   readonly punctuation: string
-  /** Surfaces — modal + status-bar backgrounds and the cursor-row tint. */
-  readonly bgOverlay: string
+  /** Surfaces — the darkest base (also the search-chip text colour) and the
+   *  focused-row tint. */
   readonly bgStatus: string
   readonly cursorLine: string
   /** `/`-search row tints: every match gets `matchLine`, the current one the
@@ -62,8 +62,7 @@ export const efferentPalette: Palette = {
   dim: "#6e6a63", // unfocused borders / faint hints
   comment: "#857f76", // code comments
   punctuation: "#b3aea6", // code punctuation/brackets
-  bgOverlay: "#26221d", // warm dark — modal background
-  bgStatus: "#1c1916", // warm darker — status-bar background
+  bgStatus: "#1c1916", // warm darkest — status base + search-chip text
   cursorLine: "#322d26", // focused-row tint
   matchLine: "#3a321d", // dark amber — `/`-search match row
   matchLineCurrent: "#5a4a1f", // brighter amber — the current match
@@ -98,8 +97,7 @@ export const defaultPalette: Palette = {
   dim: "#6b7280", // unfocused borders / faint hints
   comment: "#7f848e", // code comments
   punctuation: "#abb2bf", // code punctuation/brackets
-  bgOverlay: "#23232e", // modal background (opaque, floats over panes)
-  bgStatus: "#1f2430", // status-bar background
+  bgStatus: "#1f2430", // status base + search-chip text
   cursorLine: "#2d2d3d", // focused-row background tint
   matchLine: "#314365", // dim blue — `/`-search match row (One Dark find)
   matchLineCurrent: "#42557b", // stronger blue — the current match
@@ -129,8 +127,7 @@ export const tokyoNightPalette: Palette = {
   dim: "#545c7e", // TN dark3 — unfocused borders / faint hints
   comment: "#565f89", // TN comment
   punctuation: "#a9b1d6", // TN fg-dark — code punctuation
-  bgOverlay: "#1f2335", // TN bg-dark — modal background
-  bgStatus: "#16161e", // TN bg-darker — status-bar background
+  bgStatus: "#16161e", // TN bg-darkest — status base + search-chip text
   cursorLine: "#2f334d", // TN bg-highlight — focused-row tint
   matchLine: "#283457", // TN bg-visual — `/`-search match row
   matchLineCurrent: "#3d59a1", // TN bg-search — the current match
