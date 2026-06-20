@@ -199,7 +199,7 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
       return true
     }
     case "z":
-      // `Z` folds all; plain `z` falls through to the zoom toggle below.
+      // `Z` folds all; plain `z` is unbound (single region — nothing to zoom).
       if (!key.shift) return false
       toggleFoldAll(store)
       return true
@@ -672,7 +672,7 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
 /**
  * Root key dispatch — the global precedence the focused `<textarea>` doesn't
  * consume. Order: overlay → quit → interrupt → pane focus → input keys →
- * side/conversation nav → zoom. Vim modal editing is deferred; the read-only
+ * panel/conversation nav → yank. Vim modal editing is deferred; the read-only
  * panes route only scroll / fold / search / context-viewer keys.
  */
 export const dispatch = (ctx: TuiContext, raw: Key): void => {
@@ -909,12 +909,6 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
   // panes only; the input's textarea owns its own selection/copy).
   if (key.name === "y" && !key.ctrl && !key.meta && store.focus() !== "input") {
     ctx.copySelection()
-    return
-  }
-
-  // `z` zooms the focused read-only pane (never while typing in the input).
-  if (key.name === "z" && !key.ctrl && !key.meta && store.focus() !== "input") {
-    store.setZoomed(!store.zoomed())
     return
   }
 }
