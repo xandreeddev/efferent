@@ -40,7 +40,3 @@ export const activeTheme: Theme =
 /** The active semantic tokens — what every view imports. Same names across
  *  themes; values from {@link activeTheme}. */
 export const tokens: Tokens = activeTheme.tokens
-
-/** The focused box's accent; the unfocused border colour otherwise. */
-export const paneBorder = (pane: PaneKind, focused: boolean): string =>
-  focused ? tokens.accent[pane] : tokens.border.unfocused
