@@ -42,7 +42,7 @@ only for CI/evals; see [Providers](/docs/concepts/providers/)).
 
 | Mode | How | What it does |
 | --- | --- | --- |
-| **tui** | `efferent` (in a TTY) | Interactive multi-pane terminal UI (the default). |
+| **tui** | `efferent` (in a TTY) | Interactive borderless terminal UI (the default). |
 | **print** | `efferent "<prompt>"` or `-p` | One-shot: final text on stdout, tool log on stderr. |
 | **json** | `efferent --mode json "<prompt>"` | Same loop, but every agent event as JSONL on stdout. |
 | **rpc** | `efferent --mode rpc` | Bidirectional JSON-RPC over stdin/stdout. |

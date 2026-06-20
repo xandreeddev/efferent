@@ -1,6 +1,6 @@
 ---
 title: The fleet
-description: How a network of agents actually runs — fibers in one Effect runtime, a supervisor registry, an in-memory bus, a standing directive, and a path to a headless daemon.
+description: How a network of agents actually runs — fibers in one Effect runtime, a supervisor registry, an in-memory bus, a standing directive with a verifier, cron, and a headless scheduler daemon.
 sidebar:
   label: The fleet
   order: 7
@@ -34,9 +34,9 @@ boundaries), never the history.
 
 :::important[Why not a process per agent]
 LLM agents are I/O-bound — they spend their life waiting on a provider — so fibers beat
-processes handily, and the folder sandbox already gives write-safety. Per-process isolation
-would only cost us the elegant in-memory orchestration. The one real-isolation knob, optional
-git-worktree scoping for same-repo parallel writers, is a sandbox detail, not a process model.
+processes handily, and the folder sandbox already gives write-safety: a sub-agent writes only
+inside its folder, and same-folder writers serialize on a per-folder lock. Per-process isolation
+would only cost us the elegant in-memory orchestration.
 :::
 
 ## The supervisor
@@ -70,9 +70,6 @@ exactly one session at a time. Open a running node in `:tree` (`↵`) and your i
 mailbox (the agent keeps running, reading at its next turn boundary); open a finished node and it
 resumes in place; the lead conversation streams underneath the whole time, so detaching is free.
 Foreground and background work are the same primitive — the only difference is where the seat sits.
-(Unifying this into a single first-class attachment — moved with one keystroke, with a standing
-"back to the lead" — is the cohesive layer being built over the mailbox/preview/resume mechanics
-described here.)
 
 ## Roles and the toolkit subset
 
@@ -110,57 +107,26 @@ It returns `MET` / `NOT MET` / `INCONCLUSIVE` with evidence.
 
 ## Scheduling
 
-Cron is the Hermes pattern: a JSON job list (`~/.efferent/cron.json`) plus a per-minute tick that
-fires due jobs. The cron matcher is self-contained (`usecases/schedule.ts` — 5 fields, with the
+Cron is a JSON job list (`~/.efferent/cron.json`) plus a per-minute tick that fires due jobs.
+The cron matcher is self-contained (`usecases/schedule.ts` — 5 fields, with the
 standard day-of-month / day-of-week OR semantics); a `minuteBucket` guard fires each match at
 most once. The tick runs in the TUI runtime while it's up, and headless in `--mode daemon` — both
 filter jobs to their own workspace `cwd`.
 
-## Becoming an assistant — how work arrives
-
-Scheduling is the first instance of a broader idea: a **trigger** is anything that turns an
-external event into an agent run. Cron is the *time* trigger; the family that makes the fleet a
-real background assistant is `cron` · `webhook`/HTTP · `manual` — each routing an event payload
-into a fresh run (the payload templated into the task the way
-[declarative tools](/docs/guides/fleet/) fill `${param}` placeholders), hosted by the daemon.
-
-That **front door** is what efferent doesn't have yet — and it's what the "how does this become an
-assistant?" questions keep circling:
-
-- **Review on PR open** — a GitHub `pull_request` webhook fires the `reviewer` role scoped to the
-  repo; it reads the diff (via `gh`) and posts comments. *(Today's approximation: a cron job that
-  polls for new PRs, or CI calling `efferent --print` on the diff.)*
-- **A social agent on a cadence** — a Friday cron fires a role that drafts the week's post; or a
-  daily job summarises the day's commits to the blackboard for it to pick up.
-- **Background operation** — triggers live in the daemon, so work arrives and runs whether or not a
-  TUI is open; you attach later to see what happened.
-
-This is the high-leverage **next build** (not shipped): a `cron | webhook | manual` trigger layer,
-triggers defined as files like agents and tools, with GitHub as the first webhook adapter.
-
-## The execution model is staged
+## Running headless
 
 The agent loop is **identical** whether the fleet runs in your TUI or behind a daemon — only
-*where the runtime lives* and *how the bus is transported* change:
+*where the runtime lives* changes. `efferent --mode daemon` hosts the same runtime + scheduler with
+no UI: it runs the per-minute cron tick forever, firing each workspace's due jobs as fresh agent
+runs. The work persists to the same store, so you can open the TUI later and browse what ran in
+`:tree` / `:sessions`. The print / json / rpc modes run the same loop too — one-shot or programmatic
+(see [CLI & modes](/docs/reference/cli/)).
 
-- **Stage A — in-process** (today). One process, one runtime, in-memory bus. A live,
-  message-into-able fleet. Agents die when the client exits; state persists.
-- **Stage B — daemon** (the platform end-state). A long-lived `efferent daemon` hosts the
-  runtime + supervisor + scheduler; TUI / CLI / web attach as clients over the existing
-  `rpc` / `json` protocol extended with `fleet.spawn` / `send` / `list` / `subscribe`. Agents are
-  *still fibers*; the bus just fans over a socket. `modes/daemon.ts` is the seam — today it runs
-  the scheduler headless; the attach protocol is the deferred remainder.
-
-:::note[Durability: record vs. resumable execution]
-efferent persists the **transcript** — every message lands in the store, at run boundaries
+:::note[Durability is the record, re-driven]
+efferent persists the **transcript** — every message lands in the store at run boundaries
 (`ConversationStore.append` in `runAgent`; a sub-agent flushes its tail when the spawn finishes).
-`:resume` reloads that history and **re-drives** the agent — the model re-derives, file writes are
-already on disk. That is *not* the same as a per-step event-log **replay** (Temporal / Vercel
-Workflow), which resumes *mid-run* without re-running completed steps. The small, cheap win here is
-**per-turn flushing** — append each turn's tail as it lands instead of the whole run at the end.
-Full replay only earns its complexity for long autonomous background runs in the daemon, and trades
-against re-running non-idempotent steps — so it's deliberately not a priority; the transcript +
-`:resume` covers the rest.
+`:resume` reloads that history and **re-drives** the agent: the model re-derives from the record,
+and file writes are already on disk. A crash loses only the turns in flight, never the history.
 :::
 
 ## The seams
@@ -175,24 +141,3 @@ against re-running non-idempotent steps — so it's deliberately not a priority;
 | Shared token pool, folder locks | `sdk-core/usecases/tokenBudget.ts`, `code/usecases/folderLock.ts` |
 | Persistent nodes | `sdk-core/ports/ContextTreeStore.ts` |
 | The headless daemon | `code/modes/daemon.ts` |
-
-## Prior art — Vercel Eve
-
-Vercel's [Eve](https://vercel.com/eve) — an open-source "filesystem-first agent framework" — is the
-closest thing in the wild, and it validates this shape: agents, tools, and skills as files; cron
-*schedules* and event *channels* (GitHub / Slack / HTTP → an agent turn) as the trigger model;
-durable execution. efferent already does the filesystem-first part, and differs on purpose:
-**local-first** (no serverless lock-in), a **peer comms bus + blackboard** (not only parent→child
-delegation), and a **standing directive + fresh-context verifier** (Eve leaves goal-pursuit to the
-model). The one pattern worth borrowing next is **channels** — the event front door above.
-
-## Deferred
-
-Each piece ships a real v1 with an honest remainder. The named next items: **event/webhook
-triggers** (the channels front door above — `webhook` / `manual` alongside the cron that's built),
-the **autonomous supervisor loop** (pursue the directive with no human turn), the full **Stage B
-attach protocol**, and **per-turn flushing** (the durability nudge above). Further out: **MCP**
-server refs (a larger client; the declarative format already covers tool-sharing), a **live
-reactive cockpit pane** (`:fleet` is today's snapshot), and **persisting the directive across
-resume**. The substrate — fibers, the supervisor, the bus, the context tree — is what the rest
-hangs off.

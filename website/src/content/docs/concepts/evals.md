@@ -7,7 +7,7 @@ sidebar:
 ---
 
 Evals live **in the codebase**, not bolted on — part of the wedge. `packages/evals` is a minimal,
-Effect-native harness: Evalite's `data → task → scorers` shape re-expressed as Effects, so a `task` can be
+Effect-native harness: the `data → task → scorers` shape expressed as Effects, so a `task` can be
 the *real* agent loop and a `Scorer` can itself call an LLM.
 
 ## The shape
