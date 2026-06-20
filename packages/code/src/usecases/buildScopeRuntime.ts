@@ -613,6 +613,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       displayRoot,
       body: combinedBody,
       now: new Date(),
+      // Give a coordinator (a role with run_agent) the roster so it can name its
+      // specialists; leaf workers ignore it.
+      agents: opts.agents,
     })
     const parentPrompt = args.runContext.prompt
     const childPrompt: Prompt | undefined =

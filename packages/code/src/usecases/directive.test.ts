@@ -42,9 +42,20 @@ describe("withBuiltinAgents", () => {
     expect(VERIFIER_AGENT.tools).not.toContain("write_file")
     expect(VERIFIER_AGENT.tools).not.toContain("edit_file")
   })
+  it("adds the built-in coding team when absent", () => {
+    const names = withBuiltinAgents([]).map((a) => a.name)
+    expect(names).toContain("coordinator")
+    expect(names).toContain("architect")
+    expect(names).toContain("implementer")
+  })
   it("lets a workspace file role of the same name win", () => {
     const custom = { name: "verifier", description: "mine", body: "custom", sourcePath: "/x.md" }
     const merged = withBuiltinAgents([custom])
     expect(merged.filter((a) => a.name === "verifier")).toEqual([custom])
+  })
+  it("lets a workspace coordinator override the built-in", () => {
+    const custom = { name: "coordinator", description: "mine", body: "custom", sourcePath: "/c.md" }
+    const merged = withBuiltinAgents([custom])
+    expect(merged.filter((a) => a.name === "coordinator")).toEqual([custom])
   })
 })

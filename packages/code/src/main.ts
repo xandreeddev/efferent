@@ -27,7 +27,7 @@ import {
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
 
-import { coderPrompt } from "./prompts/coder.js"
+import { rootPrompt } from "./prompts/coder.js"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
 import { withBuiltinAgents } from "./usecases/directive.js"
@@ -245,16 +245,16 @@ const root = Command.make(
       )
 
       // Discover the scope tree from SCOPE.md files. The root is always
-      // present (its prompt = built-in coder prompt + any root SCOPE.md
-      // body, plus a delegation section for its direct children); each
+      // present (its prompt = the generic root prompt, which delegates real
+      // coding to the coordinator-led team, plus any root SCOPE.md body); each
       // child SCOPE.md becomes a nested, write-confined sub-scope. With no
       // SCOPE.md anywhere, the root has no children and behaves exactly
       // like a plain workspace-wide agent.
-      const coder = coderPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
+      const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
       const rootScope: Scope = yield* discoverScopeTree(
         workspace,
         (_children, body) => {
-          const base = coder.text
+          const base = root.text
           return body !== undefined && body.trim().length > 0
             ? `${base}\n\n# Project scope\n\n${body}`
             : base

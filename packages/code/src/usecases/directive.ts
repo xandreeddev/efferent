@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "@xandreed/sdk-core"
+import { BUILTIN_TEAM_AGENTS } from "./teamAgents.js"
 
 /**
  * Phase 4 — a **directive** is a standing goal for the session: an objective the
@@ -57,7 +58,7 @@ export const VERIFIER_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-const BUILTINS: ReadonlyArray<AgentDefinition> = [VERIFIER_AGENT]
+const BUILTINS: ReadonlyArray<AgentDefinition> = [VERIFIER_AGENT, ...BUILTIN_TEAM_AGENTS]
 
 /**
  * Merge the built-in roles into the loaded ones. A workspace/home file role of

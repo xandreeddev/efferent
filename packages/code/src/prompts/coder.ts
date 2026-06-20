@@ -100,12 +100,19 @@ interface RenderScopeSystemPromptArgs {
   readonly displayRoot: string
   readonly body: string
   readonly now: Date
+  /**
+   * The agent roster, so a sub-agent that can delegate (a coordinator — a role
+   * whose allowlist includes `run_agent`) knows its specialists by name. Absent
+   * ⇒ no roster section (a leaf worker doesn't need it).
+   */
+  readonly agents?: ReadonlyArray<AgentDefinition>
 }
 
 /**
  * System prompt for a non-root scope: a standard header (scope semantics,
- * confined bash, return contract) + a delegation section for its own direct
- * children + the SCOPE.md body verbatim.
+ * confined bash, return contract) + the sub-agent / coordination policy + the
+ * agent roster (so a coordinator can name its specialists) + the SCOPE.md body
+ * verbatim.
  */
 export const renderScopeSystemPrompt = (
   args: RenderScopeSystemPromptArgs,
@@ -137,7 +144,7 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
-${subAgentsSection}${coordinationSection}
+${subAgentsSection}${renderAgentsSection(args.agents ?? [])}${coordinationSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - When a file is named or its path is known, read it directly with 'read_file' — don't grep/glob/ls to locate it first.
@@ -217,3 +224,88 @@ ${safetySection}
 
 ${actionsSection}
 ${renderInstructionsSection(instructionFiles)}`
+
+/**
+ * The `# Delegating coding work` section for the generic root. Emitted only when
+ * a `coordinator` role is in the roster (so the root never points at a role that
+ * isn't loaded) — directs non-trivial coding to the coordinator-led team.
+ */
+const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string => {
+  if (!agents.some((a) => a.name === "coordinator")) return ""
+  return `
+# Delegating coding work
+For any non-trivial coding or implementation task — anything beyond a quick read or a one-line edit — hand it to the coordinator instead of doing it yourself:
+  run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task, with everything you already know>" })
+The coordinator drives a team: it plans, delegates each piece to an implementer, validates the result with the architect (a read-only reviewer in a fresh context), and reports back. You stay the user's point of contact — relay the coordinator's progress and final result. The user can jump into the coordinator or any team member to steer.
+Do small things yourself: answer questions, read/grep/inspect the workspace, a single-file edit. Reach for the coordinator when the work is multi-file, multi-step, or benefits from review.
+`
+}
+
+const ROOT_PROMPT_VERSION = "1.0.0"
+
+/** Build the generic root prompt as a versioned {@link Prompt}. */
+export const rootPrompt = (
+  cwd: string,
+  now: Date = new Date(),
+  skills: ReadonlyArray<Skill> = [],
+  instructionFiles: ReadonlyArray<InstructionFile> = [],
+  agents: ReadonlyArray<AgentDefinition> = [],
+  tools: ReadonlyArray<ToolDefinition> = [],
+  variant?: string,
+): Prompt => ({
+  name: "root",
+  version: ROOT_PROMPT_VERSION,
+  variant,
+  text: rootSystemPrompt(cwd, now, skills, instructionFiles, agents, tools),
+})
+
+/**
+ * The generic root agent: a coding-and-engineering assistant that does small
+ * things directly but **delegates real coding to the coordinator-led team**
+ * (see `# Delegating coding work`). Same toolkit as the coder (base + run_agent
+ * + comms) — only the identity + delegation policy differ. Used for the root
+ * scope; folder-scoped coders still use {@link coderPrompt}.
+ */
+export const rootSystemPrompt = (
+  cwd: string,
+  now: Date = new Date(),
+  skills: ReadonlyArray<Skill> = [],
+  instructionFiles: ReadonlyArray<InstructionFile> = [],
+  agents: ReadonlyArray<AgentDefinition> = [],
+  tools: ReadonlyArray<ToolDefinition> = [],
+): string =>
+  `You are a coding-and-engineering assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace. You help directly with quick things — answering questions, reading and searching code, small edits — but for real implementation work you don't code alone: you coordinate a team (see "Delegating coding work" below). If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
+
+IMPORTANT: Never generate or guess URLs unless you are confident they are for helping the user with programming. You may use URLs the user provides in their messages or in local files.
+
+# Workspace
+cwd: ${cwd}
+date: ${now.toISOString().slice(0, 10)}
+
+${systemSection}
+
+# Tools
+- read_file({ path, offset?, limit? }) — read a file's contents (line-numbered). Use offset/limit on big files.
+- write_file({ path, content }) — create or fully replace a file. Prefer 'edit_file' for changes to existing files.
+- edit_file({ path, edits: [{ oldText, newText }] }) — apply targeted in-place edits. 'oldText' must match exactly (whitespace included).
+- Bash({ command, timeout? }) — run a shell command in cwd. Confirmation may be required.
+- grep({ pattern, dir?, flags?, context? }) — regex search across files. Respects .gitignore.
+- glob({ pattern, dir? }) — find files by name pattern (e.g. '**/*.ts').
+- ls({ path?, recursive? }) — list a directory.
+- search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
+- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
+- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Delegating coding work / Agent roles below).
+- send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
+- blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
+- schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due.
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
+${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationSection(agents)}
+${doingTasksSection}
+
+${toneSection}
+
+${knowledgeSection}
+
+${safetySection}
+
+${actionsSection}${renderInstructionsSection(instructionFiles)}`
