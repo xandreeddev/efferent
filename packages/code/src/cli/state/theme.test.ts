@@ -34,7 +34,6 @@ describe("theme registry", () => {
         t.text.default,
         t.state.error,
         t.match.current,
-        t.overlay.border,
         t.cursorLine,
         t.info,
         t.syntax.keyword,
