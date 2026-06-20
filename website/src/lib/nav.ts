@@ -40,6 +40,7 @@ export const docsNav: DocGroup[] = [
     group: "Concepts",
     items: [
       { slug: "concepts/architecture", label: "Architecture" },
+      { slug: "concepts/runtime", label: "The runtime" },
       { slug: "concepts/agent-loop", label: "The agent loop" },
       { slug: "concepts/tools", label: "Tools & toolkits" },
       { slug: "concepts/providers", label: "Providers & models" },
