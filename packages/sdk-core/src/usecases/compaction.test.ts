@@ -11,7 +11,7 @@ import {
   planClip,
   renderClip,
   shouldAutoHandoff,
-} from "./headroom.js"
+} from "./compaction.js"
 
 const BIG = "line of log output\n".repeat(3000) // ~57k chars
 
@@ -37,7 +37,7 @@ describe("planClip / renderClip", () => {
     const rendered = renderClip(plan, "Bash")
     expect(rendered.startsWith(plan.head)).toBe(true)
     expect(rendered.endsWith(plan.tail)).toBe(true)
-    expect(rendered).toContain("…headroom:")
+    expect(rendered).toContain("…compaction:")
     expect(rendered).toContain("re-run the tool narrower")
     // The result is in the budget's ballpark, not the original's.
     expect(rendered.length).toBeLessThan(BIG.length / 4)
@@ -73,7 +73,7 @@ describe("compressToolResults", () => {
     expect(outputOf(report.messages[0]!)).toEqual({ stdout: "ok", exitCode: 0 })
     const compressed = outputOf(report.messages[1]!)
     expect((compressed.stdout as string).length).toBeLessThan(10_000)
-    expect(compressed.stdout as string).toContain("…headroom:")
+    expect(compressed.stdout as string).toContain("…compaction:")
     expect(compressed.exitCode).toBe(0) // non-string fields untouched
     expect(report.helperUsage).toBeUndefined() // no UtilityLlm in context
   })
@@ -88,7 +88,7 @@ describe("compressToolResults", () => {
     const out = outputOf(report.messages[0]!).output as string
     expect(out.length).toBeLessThan(10_000)
     expect(out).toContain("src/pkg0/mod.ts (50 matches, showing 5)")
-    expect(out).toContain("…headroom:") // reversible marker present
+    expect(out).toContain("…compaction:") // reversible marker present
     expect(out).toContain("matched lines omitted")
     expect(out).toContain("re-run the search narrower")
   })
@@ -131,12 +131,12 @@ describe("compressToolResults", () => {
       compressToolResults([toolMsg({ stdout: BIG })], 8000).pipe(Effect.provide(utility)),
     )
     const compressed = outputOf(report.messages[0]!)
-    expect(compressed.stdout as string).toContain("…headroom:")
+    expect(compressed.stdout as string).toContain("…compaction:")
     expect(compressed.stdout as string).not.toContain("Summary of the omitted part")
   })
 })
 
-describe("runAgentLoop — headroom at append time", () => {
+describe("runAgentLoop — compaction at append time", () => {
   /** Turn 1: a tool call whose result is huge; turn 2: done. */
   const bigResultModel = () => {
     let calls = 0
@@ -192,7 +192,7 @@ describe("runAgentLoop — headroom at append time", () => {
     const toolTail = result.newTail.find((m) => m.role === "tool")!
     const out = outputOf(toolTail)
     expect((out.stdout as string).length).toBeLessThan(10_000)
-    expect(out.stdout as string).toContain("…headroom:")
+    expect(out.stdout as string).toContain("…compaction:")
     expect(out.exitCode).toBe(0)
   })
 
@@ -240,7 +240,7 @@ describe("properties — planClip / renderClip", () => {
           expect(rendered.length).toBeLessThanOrEqual(maxChars + 256)
           expect(rendered.startsWith(plan.head)).toBe(true)
           expect(rendered.endsWith(plan.tail)).toBe(true)
-          expect(rendered).toContain("…headroom:")
+          expect(rendered).toContain("…compaction:")
         },
       ),
       { numRuns: 100 },

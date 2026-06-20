@@ -295,7 +295,7 @@ export const makeSubmit = (
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
         yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
-        // Headroom: fold at the boundary. When the last turn's context crossed
+        // Compaction: fold at the boundary. When the last turn's context crossed
         // the threshold, run the handoff fold NOW — one deliberate prefix
         // rebuild (the only cache-safe way to shrink history), then the cache
         // is warm again. Skipped while messages are queued (fold once the

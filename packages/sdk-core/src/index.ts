@@ -40,7 +40,7 @@ export * from "./usecases/runAgent.js"
 export * from "./usecases/runContext.js"
 export * from "./usecases/tokenBudget.js"
 export * from "./usecases/handoff.js"
-export * from "./usecases/headroom.js"
+export * from "./usecases/compaction.js"
 export * from "./usecases/autoApproval.js"
 export * from "./usecases/generateTitle.js"
 

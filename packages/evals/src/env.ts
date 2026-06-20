@@ -32,7 +32,7 @@ import { InMemoryContextTreeStoreLive } from "./support/inMemoryContextTreeStore
  * `main.ts`, but with the in-memory `ConversationStore` instead of Postgres
  * (evals must run without Docker). `ModelLive` is the real multi-provider
  * router, so suites exercise the actual LLM path. `UtilityLlm` is wired in too
- * (the CLI's fast-tier helpers — auto-approval, headroom digests, titles —
+ * (the CLI's fast-tier helpers — auto-approval, compaction digests, titles —
  * need it; the fast-model suites call it directly).
  */
 export type EvalEnv =

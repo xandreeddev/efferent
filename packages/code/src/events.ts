@@ -69,7 +69,7 @@ export type AgentEvent =
     }
   | { readonly type: "skill_load"; readonly name: string }
   | {
-      /** A fast-tier helper call ran inside the loop (e.g. a headroom middle-summary or session title). */
+      /** A fast-tier helper call ran inside the loop (e.g. a compaction middle-summary or session title). */
       readonly type: "helper_usage"
       readonly role: "fast"
       readonly usage: TokenUsage

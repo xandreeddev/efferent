@@ -30,13 +30,13 @@ export interface RunContext {
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
   readonly subAgentMaxSteps?: number
-  /** Headroom budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
+  /** Compaction budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */
   readonly toolResultMaxChars?: number
   /** The agent's compression policy, threaded so the whole sub-agent subtree
    *  inherits it (the loop reads this when no `input.compression` override is
-   *  given). Absent → `Headroom.default()`. */
+   *  given). Absent → `Compaction.default()`. */
   readonly compression?: CompressionPolicy
   /** Per-run main-model override as `"<provider>:<modelId>"` — set by an agent
    *  ROLE (`run_agent({ agent })`) whose definition pins a model. The router

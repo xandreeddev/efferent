@@ -40,9 +40,9 @@ interface RepoInput {
 }
 
 // — Case 1: structure-aware compression (new pure module, commit 773da5268b0) —
-const headroomTest = gitShow(
+const compactionTest = gitShow(
   "773da5268b0",
-  "packages/core/src/usecases/headroomContent.test.ts",
+  "packages/core/src/usecases/compactionContent.test.ts",
 )
 
 // — Case 2: shared sub-agent token budget (new module, commit d6d5d7f7d4e) —
@@ -89,21 +89,21 @@ const scopeDeps = {
   "ports/FileSystem.ts": gitShow(SCOPE_FIX, "packages/core/src/ports/FileSystem.ts"),
 }
 
-// — Case 5 (HARDEST + LONGEST): the context-headroom orchestration (HEAD) —
+// — Case 5 (HARDEST + LONGEST): the context-compaction orchestration (HEAD) —
 // The most complex single module in the agent (233 lines): cache-safe context
 // compression — token estimation, head+tail clipping with REVERSIBLE markers,
 // structure-aware routing into `planContentCompression` (from the given
-// `headroomContent.ts`), FAST-tier middle digests via the `UtilityLlm` port, a
+// `compactionContent.ts`), FAST-tier middle digests via the `UtilityLlm` port, a
 // threshold auto-fold, AND append-time integration with the REAL `runAgentLoop`
 // (materialised as fixed context — the model's `compressToolResults` must make
 // the actual loop behave). A 249-line, partly property-based oracle. Its closure
 // pulls in `@effect/ai` via `agentLoop.ts`, resolved by the sandbox's `@effect`
 // mount (`dockerSandbox.ts`). Self-consistency verified: real module → 13/13.
 const hrShow = (p: string): string => gitShow("HEAD", `packages/core/src/${p}`)
-const headroomTestFull = hrShow("usecases/headroom.test.ts")
-const headroomDeps: Record<string, string> = {
+const compactionTestFull = hrShow("usecases/compaction.test.ts")
+const compactionDeps: Record<string, string> = {
   "usecases/agentLoop.ts": hrShow("usecases/agentLoop.ts"),
-  "usecases/headroomContent.ts": hrShow("usecases/headroomContent.ts"),
+  "usecases/compactionContent.ts": hrShow("usecases/compactionContent.ts"),
   "usecases/promptMapping.ts": hrShow("usecases/promptMapping.ts"),
   "entities/Conversation.ts": hrShow("entities/Conversation.ts"),
   "entities/AgentContext.ts": hrShow("entities/AgentContext.ts"),
@@ -116,21 +116,21 @@ const CASES: ReadonlyArray<{ name: string; input: RepoInput }> = [
   {
     name: "structure-aware-compression",
     input: {
-      files: { "headroomContent.test.ts": headroomTest },
-      testPaths: ["headroomContent.test.ts"],
-      canonicalTests: { "headroomContent.test.ts": headroomTest },
+      files: { "compactionContent.test.ts": compactionTest },
+      testPaths: ["compactionContent.test.ts"],
+      canonicalTests: { "compactionContent.test.ts": compactionTest },
       prompt:
-        "Implement a new file `headroomContent.ts` (pure TypeScript, no imports needed) that " +
+        "Implement a new file `compactionContent.ts` (pure TypeScript, no imports needed) that " +
         "compresses large coding-tool outputs for an LLM's context window, exporting " +
         "`planSearchCompression`, `planLogCompression`, and `planContentCompression`. The colocated " +
-        "`headroomContent.test.ts` is the COMPLETE specification (grep-flood output grouped per file " +
+        "`compactionContent.test.ts` is the COMPLETE specification (grep-flood output grouped per file " +
         "with every file visible and a per-file cap within a char budget; Bash logs keep the head, " +
         "error blocks with their traces, deduped warnings, summary lines, and the tail; " +
         "`planContentCompression` routes search-shape from any tool but log-shape only from Bash).\n\n" +
         "Work step by step USING YOUR TOOLS — do not just describe a plan:\n" +
-        "1. `read_file` headroomContent.test.ts to learn the exact API and behavior.\n" +
-        "2. `write_file` headroomContent.ts with a full implementation.\n" +
-        "3. Run `bun test headroomContent.test.ts` with the Bash tool, read the failures, and " +
+        "1. `read_file` compactionContent.test.ts to learn the exact API and behavior.\n" +
+        "2. `write_file` compactionContent.ts with a full implementation.\n" +
+        "3. Run `bun test compactionContent.test.ts` with the Bash tool, read the failures, and " +
         "`edit_file` until every test passes.\n" +
         "Do NOT modify the test file.",
     },
@@ -285,18 +285,18 @@ const CASES: ReadonlyArray<{ name: string; input: RepoInput }> = [
     },
   },
   {
-    name: "context-headroom",
+    name: "context-compaction",
     input: {
       files: {
-        ...headroomDeps,
-        "usecases/headroom.test.ts": headroomTestFull, // visible spec
+        ...compactionDeps,
+        "usecases/compaction.test.ts": compactionTestFull, // visible spec
       },
-      testPaths: ["usecases/headroom.test.ts"],
-      canonicalTests: { "usecases/headroom.test.ts": headroomTestFull },
+      testPaths: ["usecases/compaction.test.ts"],
+      canonicalTests: { "usecases/compaction.test.ts": compactionTestFull },
       prompt:
-        "Implement `usecases/headroom.ts` — the agent's CACHE-SAFE context-compression module — " +
+        "Implement `usecases/compaction.ts` — the agent's CACHE-SAFE context-compression module — " +
         "exporting at least: `estimateTokens`, `DEFAULT_TOOL_RESULT_MAX_CHARS`, `planClip`, `renderClip`, " +
-        "`shouldAutoHandoff`, and `compressToolResults`. The colocated `usecases/headroom.test.ts` is the " +
+        "`shouldAutoHandoff`, and `compressToolResults`. The colocated `usecases/compaction.test.ts` is the " +
         "COMPLETE specification (it includes property-based tests and integration tests that drive the " +
         "REAL `runAgentLoop`).\n\n" +
         "Behaviors the test pins (read it for the exact marker strings and numbers):\n" +
@@ -309,20 +309,20 @@ const CASES: ReadonlyArray<{ name: string; input: RepoInput }> = [
         "context window or a 0 percent.\n" +
         "- `compressToolResults(messages, ...)` walks the messages and, for any oversized STRING inside a " +
         "tool-result output, replaces it with a compressed form: grep-shaped output is routed to the " +
-        "structure-aware `planContentCompression` (imported from `./headroomContent.js`, already present) " +
+        "structure-aware `planContentCompression` (imported from `./compactionContent.js`, already present) " +
         "rather than blindly clipped; small outputs and non-tool / string-content messages pass through " +
         "UNCHANGED. When a `UtilityLlm` service is in context, the dropped middle gets a FAST digest woven " +
         "into the marker and its usage is reported on the result (`helperUsage`); a summarizer failure " +
         "degrades to the plain marker and must NEVER fail the pass. The TUI sees the RAW result — only the " +
         "persisted tail is compressed (the `runAgentLoop` integration tests assert this).\n\n" +
         "Work step by step USING YOUR TOOLS — this is a large module, do not just describe a plan:\n" +
-        "1. `read_file` usecases/headroom.test.ts (the spec), then `usecases/headroomContent.ts` for the " +
+        "1. `read_file` usecases/compaction.test.ts (the spec), then `usecases/compactionContent.ts` for the " +
         "`planContentCompression` API and `ports/UtilityLlm.ts` for the digest service shape.\n" +
-        "2. `write_file` usecases/headroom.ts with a full implementation.\n" +
-        "3. Run `bun test usecases/headroom.test.ts` with the Bash tool, read the failures, and " +
+        "2. `write_file` usecases/compaction.ts with a full implementation.\n" +
+        "3. Run `bun test usecases/compaction.test.ts` with the Bash tool, read the failures, and " +
         "`edit_file` until EVERY test passes.\n" +
         "Do NOT modify the test file or any of the provided dependency files (`agentLoop.ts`, " +
-        "`headroomContent.ts`, `promptMapping.ts`, the entities, or the ports).",
+        "`compactionContent.ts`, `promptMapping.ts`, the entities, or the ports).",
     },
   },
 ]

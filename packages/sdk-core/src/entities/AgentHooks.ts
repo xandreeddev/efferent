@@ -90,7 +90,7 @@ export interface AgentSkillLoadEvent {
   readonly name: string
 }
 
-/** A fast-tier helper call ran inside the loop — e.g. a headroom
+/** A fast-tier helper call ran inside the loop — e.g. a compaction
  *  middle-summary or session title. Reported so the driver's ledger can
  *  count helper spend separately from main. */
 export interface AgentHelperUsageEvent {

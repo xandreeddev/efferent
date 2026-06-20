@@ -4,8 +4,8 @@ import type { AgentMessage } from "./Conversation.js"
 
 /**
  * **Context compression** — the seam by which an agent customizes how its
- * context is kept small. The SDK still *provides* the headroom tactics (see
- * `usecases/headroom.ts` → `Headroom`), but which (if any) run is a property of
+ * context is kept small. The SDK still *provides* the compaction tactics (see
+ * `usecases/compaction.ts` → `Compaction`), but which (if any) run is a property of
  * the agent (`AgentConfig.compression`), not a hardcoded step in the loop.
  *
  * Two moments, deliberately distinct:
@@ -17,11 +17,11 @@ import type { AgentMessage } from "./Conversation.js"
  *   would blow the cache.
  * - {@link ContextCompressor} — **in-memory**, per-turn. Transforms the whole
  *   buffer before a turn's prompt is built; never persisted. Active context
- *   rewriting trades cache hits for headroom, so the default is identity (off).
+ *   rewriting trades cache hits for compaction, so the default is identity (off).
  *
  * Strategies are `R = never`: a custom one reaches services it needs via
  * `Effect.serviceOption(Tag)` (found iff provided at the composition root, like
- * `UtilityLlm` in headroom) or by closing over a pre-built client — so
+ * `UtilityLlm` in compaction) or by closing over a pre-built client — so
  * `AgentConfig` never needs a requirements type parameter.
  */
 
@@ -60,7 +60,7 @@ export interface CompressionPolicy {
   readonly context?: ContextCompressor
 }
 
-/** Add two optional usages — `undefined` is the identity. Shared with headroom. */
+/** Add two optional usages — `undefined` is the identity. Shared with compaction. */
 export const sumUsage = (
   a: TokenUsage | undefined,
   b: TokenUsage | undefined,
@@ -81,7 +81,7 @@ const passthroughTail: TailCompressor = (messages) => Effect.succeed({ messages 
 
 /**
  * Strategy-level combinators — compose/branch whole {@link TailCompressor}s.
- * (The headroom *tactics* live in `Headroom`; these are the generic glue.)
+ * (The compaction *tactics* live in `Compaction`; these are the generic glue.)
  */
 export const Compression = {
   /** Disable compression entirely (passthrough tail, identity context). */

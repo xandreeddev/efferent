@@ -81,7 +81,7 @@ export interface ScopeRuntime {
     readonly task: string
     readonly budget?: number
     readonly maxSteps?: number
-    /** Headroom budget (chars) per tool-result string for the resumed run. */
+    /** Compaction budget (chars) per tool-result string for the resumed run. */
     readonly toolResultMaxChars?: number
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
@@ -508,7 +508,7 @@ const makeInnerHooks = <R>(
     ...(parent?.onSkillLoad !== undefined
       ? { onSkillLoad: parent.onSkillLoad }
       : {}),
-    // Helper-tier spend inside a sub-agent's loop (headroom summaries) still
+    // Helper-tier spend inside a sub-agent's loop (compaction summaries) still
     // belongs on the session ledger — forward it.
     ...(parent?.onHelperUsage !== undefined
       ? { onHelperUsage: parent.onHelperUsage }
@@ -542,7 +542,7 @@ interface RunSpawnedArgs<R> {
   readonly runContext: RunContext
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
   readonly maxSteps?: number
-  /** Headroom budget (chars) per tool-result string, via `RunContext`. */
+  /** Compaction budget (chars) per tool-result string, via `RunContext`. */
   readonly toolResultMaxChars?: number
 }
 

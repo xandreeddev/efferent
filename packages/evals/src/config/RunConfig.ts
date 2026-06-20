@@ -1,7 +1,7 @@
 /**
  * A `RunConfig` pins everything that changes the agent's behaviour for an eval
  * run — the main model, the fast (helper) model, an optional system-prompt
- * variant, the step cap, the headroom budget — so a model or prompt change is
+ * variant, the step cap, the compaction budget — so a model or prompt change is
  * one config you can A/B against a baseline. Injected as a fixed `SettingsStore`
  * layer (`settingsLayer.ts`) that the router and every fast-tier helper read
  * per request, so one config governs the whole run with zero core changes.
@@ -23,7 +23,7 @@ export interface RunConfig {
   readonly promptVariant?: string
   /** Agent-loop step cap → `settings.maxSteps`. */
   readonly maxSteps?: number
-  /** Per-tool-result headroom budget (tokens) → `settings.toolResultMaxTokens`. */
+  /** Per-tool-result compaction budget (tokens) → `settings.toolResultMaxTokens`. */
   readonly toolResultMaxTokens?: number
 }
 
