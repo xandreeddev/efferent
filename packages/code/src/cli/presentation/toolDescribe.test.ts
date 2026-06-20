@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { toolArtifacts } from "./toolDescribe.js"
+import { describeToolCall, describeToolResult, toolArtifacts } from "./toolDescribe.js"
 import { mergeFileChange, type FileChange } from "./sidePane.js"
 
 const DIFF = [
@@ -11,6 +11,33 @@ const DIFF = [
   "+const b = 3",
   "+const c = 4",
 ].join("\n")
+
+describe("fleet comms render as readable, live events (messages flying)", () => {
+  test("send_message labels with the content and reports delivery", () => {
+    expect(describeToolCall("send_message", { to: "nodeX", content: "re-read the schema" })).toBe(
+      "Message(re-read the schema)",
+    )
+    expect(describeToolResult("send_message", true, { delivered: true })).toBe("delivered")
+    expect(describeToolResult("send_message", true, { delivered: false })).toBe("not running")
+  })
+
+  test("blackboard post/read label distinctly", () => {
+    expect(describeToolCall("blackboard_post", { note: "I own the SQLite adapter" })).toBe(
+      "Note(I own the SQLite adapter)",
+    )
+    expect(describeToolResult("blackboard_post", true, {})).toBe("posted")
+    expect(describeToolCall("blackboard_read", {})).toBe("Board(read)")
+    expect(describeToolResult("blackboard_read", true, { notes: [1, 2, 3] })).toBe("3 notes")
+  })
+
+  test("run_tool + schedule read as their own verbs", () => {
+    expect(describeToolCall("run_tool", { name: "find_todos", args: "{}" })).toBe("Tool(find_todos)")
+    expect(describeToolCall("schedule", { cron: "0 9 * * 1", task: "review" })).toBe(
+      "Schedule(0 9 * * 1)",
+    )
+    expect(describeToolResult("schedule", true, {})).toBe("scheduled")
+  })
+})
 
 describe("toolArtifacts.fileChange — structured diffstat (no regex on the detail string)", () => {
   test("edit_file: counts +/- from the diff and takes the path from the result", () => {
