@@ -58,7 +58,7 @@ test("the App paints under tokyo-night (the reactive token proxy survives the na
     store.pushBlock({ kind: "user", text: "hello from tokyo" })
     const frame = await waitForFrame((f) => f.includes("hello from tokyo"))
     expect(frame).toContain("hello from tokyo") // rail painted
-    expect(frame).toContain("conversation") // chrome painted (no colour-parse throw)
+    expect(frame).toContain("efferent") // header wordmark painted (no colour-parse throw)
     expect(frame).toContain("test-model")
   } finally {
     renderer.destroy()

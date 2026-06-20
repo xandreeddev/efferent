@@ -389,25 +389,8 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     return { query: s.query, current: s.matchIds[s.index] === id }
   }
 
-  // The pane IS the session — title it by the session's generated name (the
-  // title daemon refreshes the nav list, so this follows live). An open node
-  // preview overrides with the agent's name; a nameless session stays plain.
-  const paneTitle = () => {
-    const preview = store.nodePreview()?.title
-    if (preview !== undefined) return preview
-    const session = store.projection().sessions?.find((c) => c.active)?.title
-    return session !== undefined && session.length > 0 && session !== "(empty)"
-      ? session
-      : "conversation"
-  }
-
   return (
-    <Pane
-      kind="conversation"
-      focused={focused()}
-      title={paneTitle()}
-      grow
-    >
+    <Pane grow>
       <scrollbox
         ref={sb}
         stickyScroll

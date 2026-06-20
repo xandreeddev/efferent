@@ -1,6 +1,4 @@
 import { For, Match, Switch } from "solid-js"
-import { useTerminalDimensions } from "@opentui/solid"
-import { Pane } from "../../ui/index.js"
 import { glyph, tokens } from "../../../state/theme.js"
 import type { TuiContext } from "../../../state/store.js"
 import { Activity } from "./Activity.js"
@@ -17,45 +15,28 @@ const VIEWS = [
 ] as const
 
 /**
- * The side pane: a bordered box with three views (`v` cycles, the tab row
- * shows where you are). **activity** and **context** take the whole pane; the
- * **agents** view splits it — the navigator tree on TOP holds the cursor,
- * and BELOW it a live **detail section** mirrors whatever the cursor is on
- * (full summary / files / seed for a node, its live tool feed while running,
- * session identity for a conversation). Width: a fixed
- * 38% column, or the full middle region when this pane is focused + zoomed.
+ * The contextual **panel** (agy direction): borderless, fills the message
+ * region when a side view is focused (`:activity` / `:context` / `:tree` /
+ * `:sessions`, or `v` to cycle). A leading tab row shows where you are; the
+ * **agents** view splits — the navigator tree on TOP holds the cursor, and a
+ * live **detail section** BELOW mirrors whatever the cursor is on (summary /
+ * files / seed for a node, its live tool feed while running, session identity
+ * for a conversation). No box, no border — the conversation lives in the same
+ * region and this rises over it on demand.
  */
 export const Side = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const dims = useTerminalDimensions()
-  const focused = () => store.focus() === "side"
   const view = () => store.sidePane().view
-  const title = () =>
-    view() === "context"
-      ? "context"
-      : view() === "tree"
-        ? "agents"
-        : view() === "sessions"
-          ? "sessions"
-          : "activity"
-  // Full region when zoomed OR when the narrow breakpoint hid the other pane
-  // (App only renders one pane below 110 cols — a 38% orphan wastes the rest).
-  const full = () => focused() && (store.zoomed() || dims().width < 110)
 
   // A rule-style head (`── agents ──`) — the corner glyph read as a tree row.
   const sectionHead = (label: string) => (
-    <text fg={focused() ? tokens.accent.side : tokens.text.dim} flexShrink={0}>
+    <text fg={tokens.accent.side} flexShrink={0}>
       {`${glyph.seedRule} ${label} ${glyph.seedRule}`}
     </text>
   )
 
   return (
-    <Pane
-      kind="side"
-      focused={focused()}
-      title={title()}
-      width={full() ? "100%" : "38%"}
-    >
+    <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0}>
       {/* The view switcher: the active tab leads with a pointer in the side
           accent; a blank line below separates the chrome from the content. */}
       <box flexDirection="row" flexShrink={0} marginBottom={1}>
@@ -77,7 +58,7 @@ export const Side = (props: { ctx: TuiContext }) => {
         <Match when={view() === "tree"}>
           {/* Tree on top (holds the cursor); the detail mirrors the cursor
               BELOW it, content-sized (capped at half) — a three-line detail
-              must not cost fifty percent of the pane. */}
+              must not cost fifty percent of the region. */}
           <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
             {sectionHead("agents")}
             <ContextTreeView ctx={props.ctx} />
@@ -91,6 +72,6 @@ export const Side = (props: { ctx: TuiContext }) => {
           <SessionsView ctx={props.ctx} />
         </Match>
       </Switch>
-    </Pane>
+    </box>
   )
 }
