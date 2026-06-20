@@ -16,6 +16,5 @@ export {
   activeTheme,
   activeThemeName,
   tokens,
-  paneBorder,
 } from "./themes.js"
 export { glyph } from "./glyphs.js"
