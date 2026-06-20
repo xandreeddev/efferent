@@ -13,8 +13,8 @@ export const Checkpoint = Schema.Struct({
 export type Checkpoint = typeof Checkpoint.Type
 
 /**
- * Content-part schemas, structurally mirroring Vercel AI SDK v6
- * `ModelMessage` parts so the adapter boundary is a near-identity cast.
+ * Content-part schemas for a persisted message — a stable, provider-agnostic
+ * shape the adapter boundary maps to/from with a near-identity cast.
  * `providerOptions` is opaque — it round-trips provider-private fields
  * (e.g. Gemini's `thought_signature` on a reasoning part) without us
  * inspecting them.

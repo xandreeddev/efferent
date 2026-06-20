@@ -14,11 +14,9 @@ import { planContentCompression, type ContentPlan } from "./compactionContent.js
 import { RunContextRef } from "./runContext.js"
 
 /**
- * **Compaction** — cache-safe context compression, inspired by the tactics in
- * github.com/chopratejas/compaction (a Python proxy we can't depend on; the
- * ideas port cleanly). The constraint that shapes everything here: provider
- * prompt caches key on a **byte-stable prefix**, so compression must never
- * rewrite history. Three tactics follow:
+ * **Compaction** — cache-safe context compression. The constraint that shapes
+ * everything here: provider prompt caches key on a **byte-stable prefix**, so
+ * compression must never rewrite history. Three tactics follow:
  *
  * 1. **Append-time compression** — oversized tool results are clipped the
  *    moment they enter the message buffer, before the model (or the cache)

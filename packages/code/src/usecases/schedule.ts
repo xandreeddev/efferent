@@ -4,10 +4,9 @@ import { Effect } from "effect"
 import { FileSystem } from "@xandreed/sdk-core"
 
 /**
- * Phase 5 — cron scheduling (the Hermes pattern: a JSON job list + a per-minute
- * tick that fires a fresh run per due job). File-backed (no DB migration) and
- * EFFERENT_HOME-aware. The tick lives in the TUI runtime while it's up; a
- * headless `efferent daemon` is the Phase 7 follow-up.
+ * Cron scheduling: a JSON job list plus a per-minute tick that fires a fresh run
+ * per due job. File-backed (no DB migration) and EFFERENT_HOME-aware. The tick
+ * runs in the TUI runtime while it's up, and headless under `efferent daemon`.
  */
 export interface ScheduledJob {
   readonly id: string
