@@ -1,13 +1,13 @@
 /**
  * Customizing context compression with a `CompressionPolicy`.
  *
- * Compression ("headroom") is a property of the agent, not a hardcoded loop step:
+ * Compression ("compaction") is a property of the agent, not a hardcoded loop step:
  * `AgentConfig.compression`. Omit it and you get the SDK default
- * (`Headroom.default()` — cache-safe, append-time tool-result clipping). This
+ * (`Compaction.default()` — cache-safe, append-time tool-result clipping). This
  * example sets a custom policy and exercises it with a tool that returns a large
  * payload, so the clip + reversible marker actually fire.
  *
- *   - `Headroom.default()`           the default (what you get with no policy)
+ *   - `Compaction.default()`           the default (what you get with no policy)
  *   - `Compression.none`             disable compression entirely
  *   - `Compression.pipeline(...)`    run tail compressors in sequence
  *   - `Compression.when(pred, step)` apply a compressor only when a budget holds
@@ -23,7 +23,7 @@ import { Effect, Layer, Schema } from "effect"
 import {
   Compression,
   ConversationId,
-  Headroom,
+  Compaction,
   runAgent,
   type AgentConfig,
   type AgentHooks,
@@ -67,11 +67,11 @@ const handlerLayer = toolkit.toLayer(
 )
 
 // ── A custom policy: only clip when the per-result budget is tight, using the
-//    SDK's headroom engine as the step. Swap for `Compression.none` to disable,
-//    or `Headroom.default()` for the standard behaviour. The policy is inherited
+//    SDK's compaction engine as the step. Swap for `Compression.none` to disable,
+//    or `Compaction.default()` for the standard behaviour. The policy is inherited
 //    by any sub-agents this agent spawns.
 const compression: CompressionPolicy = {
-  tail: Compression.when((budget) => budget.maxChars < 20_000, Headroom.toolResults()),
+  tail: Compression.when((budget) => budget.maxChars < 20_000, Compaction.toolResults()),
 }
 
 const config: AgentConfig<typeof toolkit extends Toolkit.Toolkit<infer T> ? T : never> = {

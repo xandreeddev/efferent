@@ -35,18 +35,10 @@ export const ThemePreview = (props: { width?: number }) => {
   ]
 
   return (
-    <box
-      border
-      title=" preview "
-      borderColor={tokens.overlay.border}
-      backgroundColor={tokens.bgNone}
-      flexDirection="column"
-      paddingLeft={1}
-      paddingRight={1}
-      paddingTop={1}
-      paddingBottom={1}
-      width={props.width ?? "auto"}
-    >
+    <box flexDirection="column" width={props.width ?? "auto"}>
+      <text fg={tokens.accent.side} marginBottom={1}>
+        preview
+      </text>
       <For each={rows()}>
         {(r) =>
           r.text.length === 0 ? (

@@ -27,14 +27,18 @@ import {
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
 
-import { coderPrompt } from "./prompts/coder.js"
+import { rootPrompt } from "./prompts/coder.js"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
+import { withBuiltinAgents } from "./usecases/directive.js"
+import { loadAgents } from "./usecases/loadAgents.js"
 import { loadSkills } from "./usecases/loadSkills.js"
+import { loadTools } from "./usecases/loadTools.js"
 
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
+import { runDaemonMode } from "./modes/daemon.js"
 import { stderrLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
@@ -107,10 +111,11 @@ const modeOption = Options.choice("mode", [
   "print",
   "json",
   "rpc",
+  "daemon",
 ]).pipe(
   Options.withDefault("auto" as const),
   Options.withDescription(
-    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print.",
+    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print. 'daemon' runs the cron scheduler headlessly.",
   ),
 )
 
@@ -137,7 +142,7 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
-type Mode = "tui" | "print" | "json" | "rpc"
+type Mode = "tui" | "print" | "json" | "rpc" | "daemon"
 
 const resolveMode = (
   modeFlag: "auto" | Mode,
@@ -216,6 +221,14 @@ const root = Command.make(
       // Failures fall back to an empty list — never breaks the agent.
       const skills = yield* loadSkills(workspace, homedir())
 
+      // Discover agent ROLES the same way: `.efferent/agents/*.md` walked from
+      // cwd → parents → ~/.efferent/agents. Selectable via `run_agent({ agent })`
+      // and the TUI `:spawn`. Empty when none — never breaks the agent.
+      const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
+
+      // Discover declarative tools (`.efferent/tools/*.md`), callable via run_tool.
+      const tools = yield* loadTools(workspace, homedir())
+
       // Load settings + bind the workspace so AuthStore can read a local-tier
       // credential (`<cwd>/.efferent/auth.json`); no-op in the EFFERENT_HOME sandbox.
       const settingsStore = yield* SettingsStore
@@ -232,16 +245,16 @@ const root = Command.make(
       )
 
       // Discover the scope tree from SCOPE.md files. The root is always
-      // present (its prompt = built-in coder prompt + any root SCOPE.md
-      // body, plus a delegation section for its direct children); each
+      // present (its prompt = the generic root prompt, which delegates real
+      // coding to the coordinator-led team, plus any root SCOPE.md body); each
       // child SCOPE.md becomes a nested, write-confined sub-scope. With no
       // SCOPE.md anywhere, the root has no children and behaves exactly
       // like a plain workspace-wide agent.
-      const coder = coderPrompt(workspace, new Date(), skills, instructionFiles)
+      const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
       const rootScope: Scope = yield* discoverScopeTree(
         workspace,
         (_children, body) => {
-          const base = coder.text
+          const base = root.text
           return body !== undefined && body.trim().length > 0
             ? `${base}\n\n# Project scope\n\n${body}`
             : base
@@ -278,6 +291,8 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            agents,
+            tools,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -298,6 +313,8 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            agents,
+            tools,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -308,6 +325,21 @@ const root = Command.make(
           yield* runRpcMode({
             cwd: workspace,
             skills,
+            agents,
+            tools,
+            rootScope,
+            allowBash: effectiveAllowBash,
+          }).pipe(Effect.provide(stderrLoggerLayer))
+          return
+        case "daemon":
+          // Headless scheduler: needs a credential (no `:login` here) just like
+          // the other non-interactive modes; then runs the cron tick forever.
+          yield* ensureBatchCredential
+          yield* runDaemonMode({
+            cwd: workspace,
+            skills,
+            agents,
+            tools,
             rootScope,
             allowBash: effectiveAllowBash,
           }).pipe(Effect.provide(stderrLoggerLayer))
@@ -318,6 +350,8 @@ const root = Command.make(
           const tuiInput = {
             cwd: workspace,
             skills,
+            agents,
+            tools,
             rootScope,
             instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),

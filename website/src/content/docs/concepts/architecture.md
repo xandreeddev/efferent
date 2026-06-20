@@ -49,7 +49,7 @@ never escapes. Keys and config are resolved *per call* (never captured at layer-
 
 ## Use cases are Effects
 
-The domain logic — the [agent loop](/docs/concepts/agent-loop/), [handoff](/docs/concepts/headroom/),
+The domain logic — the [agent loop](/docs/concepts/agent-loop/), [handoff](/docs/concepts/compaction/),
 [sub-agent spawning](/docs/concepts/sub-agents/) — lives in `usecases/` as Effects over the ports. No
 IO; the only SDK allowed in the core is `@effect/ai` (provider-agnostic: `LanguageModel`, `Tool`,
 `Toolkit`, `Prompt`). Provider packages live in adapters.

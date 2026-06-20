@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, usePaste } from "@opentui/solid"
 import { dispatch } from "../keys/dispatch.js"
 import { pasteIntoOverlay } from "../keys/overlay.js"
 import { Header } from "./chrome/Header.js"
@@ -12,16 +12,20 @@ import { SelectMenu } from "./chrome/SelectMenu.js"
 import { ResumeBrowser } from "./chrome/ResumeBrowser.js"
 import { SearchStatus } from "./chrome/SearchStatus.js"
 import { StatusBar } from "./chrome/StatusBar.js"
-import { Overlay } from "./overlays/Overlay.js"
 import { SettingsView } from "./overlays/SettingsView.js"
 import { Shortcuts } from "./overlays/Shortcuts.js"
+import { Login } from "./overlays/Login.js"
+import { ApprovalView } from "./overlays/ApprovalView.js"
+import { Onboarding } from "./overlays/OnboardingView.js"
 import type { TuiContext } from "../state/store.js"
 
 /**
- * Root of the Solid/OpenTUI TUI. Middle region: two bordered boxes
- * (conversation + activity) with a 1-col gap; below them the keybind box,
- * input, status bar, footer — the same stack as the old `FrameRenderer`. Zoom
- * maximizes the focused read-only pane; the side pane hides on narrow terminals.
+ * Root of the Solid/OpenTUI TUI (agy direction). One **borderless message
+ * region** fills the space under the header: it shows the conversation, or — when
+ * a contextual panel is focused (`:activity`/`:context`/`:tree`/`:sessions`, or
+ * `v`) — that panel in its place. Below it the agy bottom chrome: the pending
+ * queue, the input fence, the `:` / `/` contextual menus, and the two-zone status
+ * bar. No bordered panes, no sidebar, no floating modals.
  */
 export const App = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
@@ -38,22 +42,13 @@ export const App = (props: { ctx: TuiContext }) => {
     const text = decoded.replace(/[\r\n]+/g, "")
     if (text.length > 0 && pasteIntoOverlay(props.ctx, text)) event.preventDefault?.()
   })
-  const dims = useTerminalDimensions()
-  // Below ~110 cols the side pane is too narrow to read (every row clips) yet
-  // still eats 40% of the width — hide it and give the conversation the full
-  // pane. It stays reachable: focusing it (w / ^l / :tree / :context) zooms it.
-  const wide = () => dims().width >= 110
 
-  // Inline menus render in the bottom chrome below the fence; the panes above
-  // shrink to fit. Short menus (pickers, the settings table) leave the bordered
-  // panes plenty of room, so they stay. The **shortcuts reference card** is ~30
-  // rows, though — it would squeeze the bordered panes below their borders and
-  // corrupt the frame — so for that one surface we hand the whole pane area over
-  // to it (panes hidden). The short `:` command palette is not an overlay.
+  // The shortcuts reference card (~30 rows) hands the whole message region over
+  // to itself; the short `:` command palette is not an overlay. Otherwise the
+  // region shows the conversation, or the contextual panel when it's focused.
   const hidePanes = () => store.overlay().kind === "shortcuts"
-
-  const showConv = () => !hidePanes() && ((wide() && !store.zoomed()) || store.focus() !== "side")
-  const showSide = () => !hidePanes() && ((wide() && !store.zoomed()) || store.focus() === "side")
+  const showConv = () => !hidePanes() && store.focus() !== "side"
+  const showSide = () => !hidePanes() && store.focus() === "side"
 
   // Onboarding is a full-screen takeover (agy-style): while it's open we render
   // ONLY it — no panes/chrome behind it. That lets the onboarding be genuinely
@@ -63,9 +58,11 @@ export const App = (props: { ctx: TuiContext }) => {
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Show when={!onboarding()} fallback={<Overlay ctx={props.ctx} />}>
+      <Show when={!onboarding()} fallback={<Onboarding ctx={props.ctx} />}>
         <Header ctx={props.ctx} />
-        <box flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
+        {/* The single borderless message region: the conversation, or the
+            contextual panel (activity/context/agents/sessions) in its place. */}
+        <box flexDirection="column" flexGrow={1} minHeight={0}>
           <Show when={showConv()}>
             <Conversation ctx={props.ctx} />
           </Show>
@@ -80,17 +77,18 @@ export const App = (props: { ctx: TuiContext }) => {
         <QueuedMessages ctx={props.ctx} />
         <InputBox ctx={props.ctx} />
         <SlashPalette ctx={props.ctx} />
-        {/* Pickers / settings / shortcuts render INLINE here (borderless,
-            agy-style), not as floating modals — the `Overlay` host below skips
-            these kinds. Only one is ever active at a time. */}
+        {/* Every contextual surface renders INLINE here (borderless, agy-style),
+            never as a floating modal — pickers, settings, shortcuts, the login
+            flow, and the bash-approval sheet. Only one is ever active at a time
+            (the single `overlay` signal), and each Shows on its own kind. */}
         <SelectMenu ctx={props.ctx} />
         <ResumeBrowser ctx={props.ctx} />
         <SettingsView ctx={props.ctx} />
         <Shortcuts ctx={props.ctx} />
+        <Login ctx={props.ctx} />
+        <ApprovalView ctx={props.ctx} />
         <SearchStatus ctx={props.ctx} />
         <StatusBar ctx={props.ctx} />
-        {/* Modal layer — absolutely positioned, floats over everything above. */}
-        <Overlay ctx={props.ctx} />
       </Show>
     </box>
   )

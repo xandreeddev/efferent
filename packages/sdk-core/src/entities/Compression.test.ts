@@ -1,7 +1,7 @@
 import { LanguageModel, type Toolkit } from "@effect/ai"
 import { describe, expect, it } from "bun:test"
 import { Context, Effect } from "effect"
-import { compressToolResults, Headroom } from "../usecases/headroom.js"
+import { compressToolResults, Compaction } from "../usecases/compaction.js"
 import { runAgentLoop } from "../usecases/agentLoop.js"
 import { initialRunContext, RunContextRef } from "../usecases/runContext.js"
 import { Compression, type CompressionPolicy, type TailCompressor } from "./Compression.js"
@@ -30,17 +30,17 @@ describe("Compression.none", () => {
   })
 })
 
-describe("Headroom.default / Headroom.toolResults", () => {
+describe("Compaction.default / Compaction.toolResults", () => {
   it("toolResults() is exactly compressToolResults(tail, budget.maxChars)", async () => {
     const msgs = [toolMsg({ stdout: BIG, exitCode: 0 })]
-    const viaHeadroom = await Effect.runPromise(Headroom.toolResults()(msgs, { maxChars: 8000 }))
+    const viaCompaction = await Effect.runPromise(Compaction.toolResults()(msgs, { maxChars: 8000 }))
     const direct = await Effect.runPromise(compressToolResults(msgs, 8000))
-    expect(outputOf(viaHeadroom.messages[0]!)).toEqual(outputOf(direct.messages[0]!))
-    expect((outputOf(viaHeadroom.messages[0]!).stdout as string)).toContain("…headroom:")
+    expect(outputOf(viaCompaction.messages[0]!)).toEqual(outputOf(direct.messages[0]!))
+    expect((outputOf(viaCompaction.messages[0]!).stdout as string)).toContain("…compaction:")
   })
 
-  it("default() = headroom tail + identity context", () => {
-    const policy = Headroom.default()
+  it("default() = compaction tail + identity context", () => {
+    const policy = Compaction.default()
     expect(policy.tail).toBeDefined()
     expect(policy.context).toBeUndefined()
   })
@@ -72,14 +72,14 @@ describe("Compression.pipeline / when", () => {
   })
 })
 
-describe("Headroom.keepRecentToolResults (context strategy)", () => {
+describe("Compaction.keepRecentToolResults (context strategy)", () => {
   it("elides older tool-result outputs, keeps the most recent N intact", async () => {
     const msgs = [
       toolMsg({ stdout: BIG }), // 0 — oldest, should be elided
       { role: "user", content: "thinking" } as AgentMessage,
       toolMsg({ stdout: BIG }), // 2 — kept (within last 1)
     ]
-    const out = await Effect.runPromise(Headroom.keepRecentToolResults(1)(msgs))
+    const out = await Effect.runPromise(Compaction.keepRecentToolResults(1)(msgs))
     expect(outputOf(out[0]!).stdout as string).toContain("elided from the working context")
     expect(out[1]).toBe(msgs[1]) // non-tool untouched
     expect(outputOf(out[2]!).stdout).toBe(BIG) // recent one intact
@@ -87,7 +87,7 @@ describe("Headroom.keepRecentToolResults (context strategy)", () => {
 
   it("no-op when there are <= N tool results", async () => {
     const msgs = [toolMsg({ stdout: BIG })]
-    const out = await Effect.runPromise(Headroom.keepRecentToolResults(2)(msgs))
+    const out = await Effect.runPromise(Compaction.keepRecentToolResults(2)(msgs))
     expect(out).toBe(msgs)
   })
 })
@@ -161,7 +161,7 @@ describe("runAgentLoop — compression is an agent property", () => {
             ? ({ ...m, content: [{ type: "tool-result", toolCallId: "t", toolName: "Bash", output: { custom: true } }] } as unknown as AgentMessage)
             : m,
         ),
-        // only report spend on turns that actually carried a tool result (like headroom)
+        // only report spend on turns that actually carried a tool result (like compaction)
         ...(tail.some((m) => m.role === "tool") ? { helperUsage: usage } : {}),
       })
     const helperSeen: Array<{ total: number }> = []
@@ -181,7 +181,7 @@ describe("runAgentLoop — compression is an agent property", () => {
     >
     const result = await Effect.runPromise(program)
     const toolTail = result.newTail.find((m) => m.role === "tool")!
-    expect(outputOf(toolTail)).toEqual({ custom: true }) // the custom compressor ran, not headroom
+    expect(outputOf(toolTail)).toEqual({ custom: true }) // the custom compressor ran, not compaction
     expect(helperSeen).toEqual([{ total: 10 }]) // its helperUsage was re-emitted
   })
 
@@ -206,7 +206,7 @@ describe("runAgentLoop — compression is an agent property", () => {
     ) as Effect.Effect<AgentResult, unknown, never>
     const result = await Effect.runPromise(program)
     expect(called).toBeGreaterThan(0) // the RunContext policy ran
-    // passthrough means the big output is NOT clipped (proves headroom did not run)
+    // passthrough means the big output is NOT clipped (proves compaction did not run)
     const toolTail = result.newTail.find((m) => m.role === "tool")!
     expect((outputOf(toolTail).stdout as string).length).toBe(BIG.length)
   })

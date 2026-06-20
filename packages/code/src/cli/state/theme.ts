@@ -58,14 +58,6 @@ export const tokens: Tokens = new Proxy({} as Tokens, {
   get: (_target, prop) => activeTheme().tokens[prop as keyof Tokens],
 })
 
-/**
- * The focused pane's accent, else the unfocused border colour — reactive (reads
- * the proxy, so a focused border follows a `:theme` switch). Mirrors the static
- * `paneBorder` in `presentation/theme/`, but bound to the live tokens.
- */
-export const paneBorder = (pane: PaneKind, focused: boolean): string =>
-  focused ? tokens.accent[pane] : tokens.border.unfocused
-
 // The glyph vocabulary is static (a theme is colours, not box-drawing), but
 // re-exported here so a view's single `from "…/state/theme.js"` import still
 // covers both `glyph` and `tokens`.

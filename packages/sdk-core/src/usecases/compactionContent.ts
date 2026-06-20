@@ -1,17 +1,15 @@
 /**
- * Structure-aware compression planners for headroom — the content-router
- * idea from chopratejas/headroom's SearchCompressor + LogCompressor, ported
- * to the two shapes our tools actually emit. Pure string functions: detect a
- * shape, select what carries signal, report what was dropped. `headroom.ts`
- * weaves the result into its reversible marker (and a fast-tier digest where
- * one helps). When no shape matches, callers fall back to the blind
- * head+tail clip — these planners only ever *improve* on it, never replace
- * its guarantees.
+ * Structure-aware compression planners for compaction — a content router for the
+ * two shapes our tools actually emit. Pure string functions: detect a shape,
+ * select what carries signal, report what was dropped. `compaction.ts` weaves the
+ * result into its reversible marker (and a fast-tier digest where one helps).
+ * When no shape matches, callers fall back to the blind head+tail clip — these
+ * planners only ever *improve* on it, never replace its guarantees.
  *
- * Routing is source-hinted like upstream's ContentRouter: search-shape can
- * come from any tool (the `path:NN:` shape is unmistakable), log-shape is
- * only trusted for `Bash` output — prose from web_fetch or file contents
- * mentioning the word "error" must not get log treatment.
+ * Routing is source-hinted: search-shape can come from any tool (the `path:NN:`
+ * shape is unmistakable), log-shape is only trusted for `Bash` output — prose
+ * from web_fetch or file contents mentioning the word "error" must not get log
+ * treatment.
  */
 
 /** One planned structural compression. */

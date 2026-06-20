@@ -18,7 +18,7 @@ const runAgent: <Tools extends Record<string, Tool.Any>, R>(
 ) => Effect.Effect<AgentResult, /* tagged errors */, /* ports + R */>
 ```
 
-It appends the user message, loads history (applying the latest [handoff](/docs/concepts/headroom/#handoff)
+It appends the user message, loads history (applying the latest [handoff](/docs/concepts/compaction/#handoff)
 checkpoint), runs the [loop](/docs/concepts/agent-loop/) until the model stops calling tools or
 `maxSteps`, persists the new tail, and returns the result.
 

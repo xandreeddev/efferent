@@ -38,7 +38,7 @@ const renderSegments = (d: () => ContextRowDisplay) => {
     case "header":
       return (
         <text fg={tokens.text.muted} wrapMode="none">
-          {`── context ── ` +
+          {`${glyph.seedRule} context ${glyph.seedRule} ` +
             (v.hasFold
               ? `loaded ${v.loaded}${v.hasSummary ? ` + ${glyph.summary}` : ""} · archived ${v.archived}`
               : `${v.loaded} msg${v.loaded === 1 ? "" : "s"} · no handoff yet`) +

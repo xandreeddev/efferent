@@ -11,12 +11,14 @@ import {
   Shell,
   WebSearch,
   runAgent,
+  type AgentDefinition,
   type Scope,
   type Skill,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 
@@ -40,6 +42,8 @@ export interface JsonModeInput {
   readonly prompt: string
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope
   readonly allowBash: boolean
   readonly resumeConversationId?: string
@@ -71,11 +75,11 @@ export const runJsonMode = (
     const hooks = makeEventHooks(queue)
     const runtime = buildScopeRuntime(
       input.rootScope,
-      { skills: input.skills, allowBash: input.allowBash },
+      { skills: input.skills, agents: input.agents, tools: input.tools, allowBash: input.allowBash },
       hooks,
     )
 
-    const prompt = coderPrompt(input.cwd, new Date(), input.skills)
+    const prompt = coderPrompt(input.cwd, new Date(), input.skills, [], input.agents, input.tools)
     yield* runAgent(
       coderAgentConfig(input.rootScope, runtime, prompt),
       cid,

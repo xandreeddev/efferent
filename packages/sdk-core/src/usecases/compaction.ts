@@ -10,22 +10,20 @@ import type { AgentMessage } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
-import { planContentCompression, type ContentPlan } from "./headroomContent.js"
+import { planContentCompression, type ContentPlan } from "./compactionContent.js"
 import { RunContextRef } from "./runContext.js"
 
 /**
- * **Headroom** — cache-safe context compression, inspired by the tactics in
- * github.com/chopratejas/headroom (a Python proxy we can't depend on; the
- * ideas port cleanly). The constraint that shapes everything here: provider
- * prompt caches key on a **byte-stable prefix**, so compression must never
- * rewrite history. Three tactics follow:
+ * **Compaction** — cache-safe context compression. The constraint that shapes
+ * everything here: provider prompt caches key on a **byte-stable prefix**, so
+ * compression must never rewrite history. Three tactics follow:
  *
  * 1. **Append-time compression** — oversized tool results are clipped the
  *    moment they enter the message buffer, before the model (or the cache)
  *    ever sees them. The buffer stays append-only; every earlier byte is
  *    untouched; caches keep hitting. (The TUI still shows the full output —
  *    hooks fire from the raw response before the tail is compressed.)
- *    Compression is **structure-aware first** (`headroomContent.ts`):
+ *    Compression is **structure-aware first** (`compactionContent.ts`):
  *    grep-shaped output is grouped per file, Bash logs keep errors + traces
  *    + summaries; only shapeless text gets the blind head+tail clip.
  * 2. **Reversible markers** — the clip marker tells the model exactly how to
@@ -87,7 +85,7 @@ export const renderClip = (plan: ClipPlan, toolName: string, summary?: string): 
     : ""
   return (
     `${plan.head}\n` +
-    `[…headroom: ${dropped} of this ${toolName} output omitted.${digest}` +
+    `[…compaction: ${dropped} of this ${toolName} output omitted.${digest}` +
     ` To retrieve it, re-run the tool narrower — read_file with offset/limit,` +
     ` a more specific grep, or bash piped through head/tail.]\n` +
     `${plan.tail}`
@@ -101,7 +99,7 @@ export const renderContent = (plan: ContentPlan, summary?: string): string => {
     : ""
   return (
     `${plan.kept}\n` +
-    `[…headroom: ${plan.summary}.${digest} To retrieve, ${plan.hint}.]`
+    `[…compaction: ${plan.summary}.${digest} To retrieve, ${plan.hint}.]`
   )
 }
 
@@ -116,16 +114,16 @@ export const shouldAutoHandoff = (
 ): boolean =>
   pct > 0 && contextWindow > 0 && inputTokens / contextWindow >= pct / 100
 
-const HEADROOM_DIGEST_PROMPT_VERSION = "1.0.0"
+const COMPACTION_DIGEST_PROMPT_VERSION = "1.0.0"
 
 const SUMMARIZE_PROMPT =
   "Condense the following omitted middle section of a tool output into at most 120 words. " +
   "Dense and factual: preserve identifiers, file paths, numbers, error messages. " +
   "No preamble — output only the summary."
 
-const headroomDigestPrompt = (): Prompt => ({
-  name: "headroom-digest",
-  version: HEADROOM_DIGEST_PROMPT_VERSION,
+const compactionDigestPrompt = (): Prompt => ({
+  name: "compaction-digest",
+  version: COMPACTION_DIGEST_PROMPT_VERSION,
   text: SUMMARIZE_PROMPT,
 })
 
@@ -159,7 +157,7 @@ export const compressToolResults = (
         if (Option.isNone(utility) || dropped.length < SUMMARY_MIN_DROPPED_CHARS) {
           return undefined
         }
-        const prompt = headroomDigestPrompt()
+        const prompt = compactionDigestPrompt()
         const rc = yield* FiberRef.get(RunContextRef)
         return yield* utility.value
           .complete(
@@ -173,12 +171,12 @@ export const compressToolResults = (
               return res.text
             }),
             Effect.catchAll(() => Effect.succeed(undefined)),
-            Effect.withSpan("agent.headroom.digest"),
+            Effect.withSpan("agent.compaction.digest"),
           )
       })
 
     // One string path: try a structure-aware plan first (grep shape from
-    // any tool, log shape from Bash — see headroomContent.ts), fall back to
+    // any tool, log shape from Bash — see compactionContent.ts), fall back to
     // the blind head+tail clip. Both end in the same reversible marker; the
     // fast digest runs only where the dropped text carries something a
     // digest can say (logs and blind middles — not omitted grep matches).
@@ -239,7 +237,7 @@ export const compressToolResults = (
 
 /** Replace a tool result's string output(s) with a short reversible marker. */
 const elidedMarker = (toolName: string): string =>
-  `[…headroom: an earlier ${toolName} result was elided from the working context to save room.` +
+  `[…compaction: an earlier ${toolName} result was elided from the working context to save room.` +
   ` Re-run the tool (read_file/grep/Bash) if you need it again.]`
 
 const elideOutput = (value: unknown, toolName: string): unknown => {
@@ -260,14 +258,14 @@ const elideOutput = (value: unknown, toolName: string): unknown => {
 }
 
 /**
- * **Headroom** — the SDK's default context-compression tactics, packaged as
+ * **Compaction** — the SDK's default context-compression tactics, packaged as
  * composable {@link TailCompressor}/{@link ContextCompressor} values. An agent
- * opts in by setting `AgentConfig.compression` (absent ⇒ {@link Headroom.default}
+ * opts in by setting `AgentConfig.compression` (absent ⇒ {@link Compaction.default}
  * applies, so behaviour is unchanged). Build a custom policy from these, from
  * the `Compression` combinators, or from the exported pure primitives
  * (`planClip`/`renderClip`/`planContentCompression`/`renderContent`).
  */
-export const Headroom = {
+export const Compaction = {
   /**
    * Append-time tool-result compression — the engine behind today's behaviour.
    * Structure-aware first (grep/log shapes), blind head+tail clip otherwise,
@@ -280,14 +278,14 @@ export const Headroom = {
     (tail, budget) =>
       compressToolResults(tail, budget.maxChars),
 
-  /** The default policy: headroom tail compression + identity context. */
-  default: (): CompressionPolicy => ({ tail: Headroom.toolResults() }),
+  /** The default policy: compaction tail compression + identity context. */
+  default: (): CompressionPolicy => ({ tail: Compaction.toolResults() }),
 
   /**
    * In-run, in-memory whole-context strategy (moment 2): keep the most recent
    * `keep` tool-result messages full and replace older tool-result string
    * outputs with a short reversible marker. Pure + deterministic. NOT applied
-   * by default — opting in trades prompt-cache hits for headroom, because it
+   * by default — opting in trades prompt-cache hits for compaction, because it
    * rewrites the (in-memory) prefix the model sees each turn.
    */
   keepRecentToolResults:

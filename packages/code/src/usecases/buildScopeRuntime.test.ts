@@ -13,7 +13,7 @@ import {
   Shell,
   WebSearch,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "./buildScopeRuntime.js"
+import { buildScopeRuntime, roleToolEntries } from "./buildScopeRuntime.js"
 
 const rootScope: Scope = {
   name: "root",
@@ -28,7 +28,7 @@ const rootScope: Scope = {
 
 describe("buildScopeRuntime", () => {
   test("toolkit is the generic set: base coding tools + run_agent, no delegate_to_*", () => {
-    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], allowBash: true })
+    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [], allowBash: true })
     const names = Object.keys(toolkit.tools)
     expect(names).toContain("run_agent")
     expect(names).toContain("read_file")
@@ -55,9 +55,37 @@ describe("buildScopeRuntime", () => {
         },
       ],
     }
-    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [] }).toolkit.tools).sort()
-    const b = Object.keys(buildScopeRuntime(withChild, { skills: [] }).toolkit.tools).sort()
+    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
+    const b = Object.keys(buildScopeRuntime(withChild, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
     expect(b).toEqual(a)
+  })
+})
+
+describe("roleToolEntries (agent-role tool allowlist)", () => {
+  const def = (tools?: ReadonlyArray<string>) => ({
+    name: "r",
+    description: "d",
+    body: "b",
+    sourcePath: "/x.md",
+    ...(tools !== undefined ? { tools } : {}),
+  })
+
+  test("no allowlist → all base coding tools, but NOT run_agent (roles are leaf workers)", () => {
+    const names = roleToolEntries(def()).map(([n]) => n)
+    expect(names).toContain("read_file")
+    expect(names).toContain("edit_file")
+    expect(names).toContain("Bash")
+    expect(names).not.toContain("run_agent")
+  })
+
+  test("an allowlist restricts to the named tools; unknown names are dropped", () => {
+    const names = roleToolEntries(def(["read_file", "grep", "made_up"])).map(([n]) => n)
+    expect(names.sort()).toEqual(["grep", "read_file"])
+  })
+
+  test("run_agent is offered only when the allowlist names it (roles can opt into spawning)", () => {
+    expect(roleToolEntries(def(["read_file"])).map(([n]) => n)).not.toContain("run_agent")
+    expect(roleToolEntries(def(["read_file", "run_agent"])).map(([n]) => n)).toContain("run_agent")
   })
 })
 
@@ -162,7 +190,7 @@ const stubPorts = Layer.mergeAll(
 describe("ScopeRuntime.resumeNode", () => {
   test("resumes a finished node in place: appends the task, re-runs, records the return", async () => {
     const { entries, layer } = stubTreeStore()
-    const rt = buildScopeRuntime(rootScope, { skills: [] })
+    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] })
 
     const program = Effect.gen(function* () {
       const store = yield* ContextTreeStore

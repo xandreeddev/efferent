@@ -2,7 +2,7 @@ import type { AgentMessage } from "../entities/Conversation.js"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 
 /**
- * Bridges our persisted `AgentMessage` (Vercel-shaped) with `@effect/ai`'s
+ * Bridges our persisted `AgentMessage` with `@effect/ai`'s
  * `Prompt`/`Response`. The opaque provider blob is carried verbatim both
  * ways — `AgentMessage.providerOptions ↔ Prompt part options ↔ Response
  * part metadata` — which is how Gemini's `thought_signature` round-trips

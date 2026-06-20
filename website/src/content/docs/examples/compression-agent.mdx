@@ -9,9 +9,9 @@ sidebar:
 import SourceFile from '../../../components/SourceFile.astro';
 import source from '../../../../../examples/compressionAgent.ts?raw';
 
-Compression ("headroom") is a property of the agent — `AgentConfig.compression` — not a hardcoded loop
-step. Omit it for the cache-safe default (`Headroom.default()`); set it to `Compression.none` to disable,
-or compose a custom policy from `Compression.pipeline` / `Compression.when` and the `Headroom.*` tactics.
+Compression ("compaction") is a property of the agent — `AgentConfig.compression` — not a hardcoded loop
+step. Omit it for the cache-safe default (`Compaction.default()`); set it to `Compression.none` to disable,
+or compose a custom policy from `Compression.pipeline` / `Compression.when` and the `Compaction.*` tactics.
 This example sets a conditional policy and exercises it with a tool that returns a large payload, so the
 clip + reversible marker actually fire.
 

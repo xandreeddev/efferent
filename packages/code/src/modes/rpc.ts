@@ -11,9 +11,11 @@ import {
   Shell,
   WebSearch,
   runAgent,
+  type AgentDefinition,
   type Scope,
   type Skill,
 } from "@xandreed/sdk-core"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
@@ -61,6 +63,8 @@ const decodeConversationId = Schema.decodeUnknown(ConversationId)
 export interface RpcModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope
   readonly allowBash: boolean
 }
@@ -139,17 +143,17 @@ const handleSend = (
       cwd === defaults.cwd
         ? defaults.rootScope
         : yield* discoverScopeTree(cwd, (_children, body) => {
-            const base = coderPrompt(cwd, new Date(), defaults.skills, []).text
+            const base = coderPrompt(cwd, new Date(), defaults.skills, [], defaults.agents, defaults.tools).text
             return body !== undefined && body.trim().length > 0
               ? `${base}\n\n# Project scope\n\n${body}`
               : base
           })
     const runtime = buildScopeRuntime(
       rootScope,
-      { skills: defaults.skills, allowBash },
+      { skills: defaults.skills, agents: defaults.agents, tools: defaults.tools, allowBash },
       hooks,
     )
-    const coderPromptObj = coderPrompt(cwd, new Date(), defaults.skills, [])
+    const coderPromptObj = coderPrompt(cwd, new Date(), defaults.skills, [], defaults.agents, defaults.tools)
 
     const ran = yield* runAgent(
       coderAgentConfig(rootScope, runtime, coderPromptObj),

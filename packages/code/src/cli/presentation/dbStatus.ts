@@ -20,15 +20,6 @@ export interface DbStatus {
 const isPostgres = (v: string): boolean => /^postgres(ql)?:\/\//i.test(v)
 const sqlitePath = (v: string): string => v.replace(/^sqlite:(\/\/)?/i, "")
 
-/**
- * Short storage label for the status bar. `pg` when EFFERENT_DB_URL is a
- * Postgres URL, else `sqlite` (a path, or the default when unset).
- */
-export const storageLabel = (envDbUrl: string | undefined): "pg" | "sqlite" => {
-  const v = envDbUrl?.trim()
-  return v && v.length > 0 && isPostgres(v) ? "pg" : "sqlite"
-}
-
 export const describeActiveDatabase = (
   envDbUrl: string | undefined,
   configDbUrl: string | undefined,

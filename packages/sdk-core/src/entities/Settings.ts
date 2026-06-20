@@ -86,7 +86,7 @@ export const Settings = Schema.Struct({
   toolResultMaxTokens: Schema.optional(
     Schema.Number.annotations({
       description:
-        "Headroom: per-string token budget for a tool result entering the context (≈chars/4). Oversized results are clipped head+tail with a reversible marker (+ a fast-tier digest of the dropped middle). Unset → 4000; 0 disables.",
+        "Compaction: per-string token budget for a tool result entering the context (≈chars/4). Oversized results are clipped head+tail with a reversible marker (+ a fast-tier digest of the dropped middle). Unset → 4000; 0 disables.",
     }),
   ),
   autoHandoffPct: Schema.optional(

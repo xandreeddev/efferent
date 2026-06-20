@@ -7,7 +7,7 @@ sidebar:
 ---
 
 Evals live **in the codebase**, not bolted on — part of the wedge. `packages/evals` is a minimal,
-Effect-native harness: Evalite's `data → task → scorers` shape re-expressed as Effects, so a `task` can be
+Effect-native harness: the `data → task → scorers` shape expressed as Effects, so a `task` can be
 the *real* agent loop and a `Scorer` can itself call an LLM.
 
 ## The shape
@@ -40,4 +40,4 @@ bun run eval [name …] [--config f] [--main m] [--fast m] [--json]
 
 Gated on having a key — no key, the run skips cleanly. Suites cover the full loop (bug-fix, multi-file,
 refactor, failing-test, read-only Q&A) plus the [fast-tier](/docs/concepts/providers/) use cases
-(approval judging, headroom digests, session titles).
+(approval judging, compaction digests, session titles).

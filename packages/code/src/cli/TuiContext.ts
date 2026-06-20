@@ -1,5 +1,6 @@
 import type { Effect } from "effect"
 import type {
+  AgentDefinition,
   ApprovalDecision,
   AuthFlow,
   AuthStore,
@@ -16,6 +17,8 @@ import type {
   WebSearch,
 } from "@xandreed/sdk-core"
 import type { LanguageModel } from "@effect/ai"
+import type { Directive } from "../usecases/directive.js"
+import type { ToolDefinition } from "../usecases/loadTools.js"
 import type { TuiStore } from "./state/store.js"
 
 /**
@@ -53,6 +56,33 @@ export interface TuiContext {
   readonly submit: (text: string) => void
   readonly interrupt: () => void
   readonly exit: () => void
+  /** The loaded agent ROLES (`.efferent/agents/*.md`) — for `:agents` + `:spawn`. */
+  readonly roles: ReadonlyArray<AgentDefinition>
+  /** The loaded declarative tools (`.efferent/tools/*.md`) — for `:tools`. */
+  readonly tools: ReadonlyArray<ToolDefinition>
+  /**
+   * Fire a named agent role detached from the current turn (`:spawn`) — runs
+   * alongside the conversation, shows in `:tree`/activity, cancellable via
+   * `:stop <id>`. Fire-and-forget (the action owns its own errors).
+   */
+  readonly spawnAgent: (agent: string, folder: string, task: string) => void
+  /** Interrupt a running fired agent by its fleet index (`:stop <id>`). */
+  readonly stopAgent: (id: number) => void
+  /** Currently-running fired agents, for `:stop`/status display. */
+  readonly listFleet: () => ReadonlyArray<{
+    readonly id: number
+    readonly title: string
+    readonly folder: string
+  }>
+  /** Import agent-definition files from GitHub into `.efferent/agents/`
+   *  (`:agents add github:owner/repo[/path][@ref]`). Applies on next launch. */
+  readonly importAgents: (spec: string) => void
+  /** Import declarative tool files from GitHub into `.efferent/tools/`
+   *  (`:tools add github:owner/repo[/path][@ref]`). Applies on next launch. */
+  readonly importTools: (spec: string) => void
+  /** The session's standing goal (Phase 4), injected into every turn's prompt. */
+  readonly getDirective: () => Directive | undefined
+  readonly setDirective: (d: Directive | undefined) => void
   /**
    * Copy the current OpenTUI mouse selection to the system clipboard (OSC 52).
    * Returns false when nothing is selected. Bound to `y` on the read-only panes

@@ -1,4 +1,5 @@
 import { parseModel } from "@xandreed/sdk-core"
+import { glyph } from "./theme/index.js"
 
 /**
  * Status-bar **display config** — model + workspace chrome only. Token/usage
@@ -67,9 +68,9 @@ export const formatTokens = (n: number): string => {
  * both so the two gauges can't drift.
  */
 export const gaugeBar = (used: number, total: number, width: number): string => {
-  if (total <= 0) return "─".repeat(width)
+  if (total <= 0) return glyph.rule.repeat(width)
   const filled = Math.max(0, Math.min(width, Math.round((used / total) * width)))
-  return "▓".repeat(filled) + "░".repeat(width - filled)
+  return glyph.gauge.full.repeat(filled) + glyph.gauge.empty.repeat(width - filled)
 }
 
 /** Context usage as a whole percent (`12`), or undefined when the window is unknown. */

@@ -5,7 +5,7 @@ import { themes } from "../presentation/theme/index.js"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { openThemePicker } from "../actions/theme.js"
 import { createTuiStore, type TuiStore } from "./store.js"
-import { activeThemeName, paneBorder, setTheme, themeNames, tokens } from "./theme.js"
+import { activeThemeName, setTheme, themeNames, tokens } from "./theme.js"
 
 // The active theme is a process-global signal — reset it so tests don't leak.
 afterEach(() => setTheme("one-dark"))
@@ -34,7 +34,6 @@ describe("theme registry", () => {
         t.text.default,
         t.state.error,
         t.match.current,
-        t.overlay.border,
         t.cursorLine,
         t.info,
         t.syntax.keyword,
@@ -60,9 +59,6 @@ describe("setTheme / reactive tokens", () => {
     expect(tokens.syntax.keyword).toBe("#bb9af7")
     expect(tokens.accent.conversation).not.toBe(darkAccent)
     expect(tokens.syntax.keyword).not.toBe(darkKeyword)
-    // paneBorder is reactive too (reads the proxy)
-    expect(paneBorder("conversation", true)).toBe("#7aa2f7")
-    expect(paneBorder("conversation", false)).toBe(themes["tokyo-night"]!.tokens.border.unfocused)
   })
 
   test("an unknown theme name is a no-op returning false", () => {

@@ -1,15 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { describeActiveDatabase, storageLabel } from "./dbStatus.js"
-
-describe("storageLabel — status-bar indicator", () => {
-  it("unset → sqlite", () => expect(storageLabel(undefined)).toBe("sqlite"))
-  it("a path → sqlite", () => expect(storageLabel("/data/conv.db")).toBe("sqlite"))
-  it("sqlite:-prefixed → sqlite", () => expect(storageLabel("sqlite:/x.db")).toBe("sqlite"))
-  it("postgres:// → pg", () =>
-    expect(storageLabel("postgres://u:p@h/db")).toBe("pg"))
-  it("postgresql:// (case-insensitive) → pg", () =>
-    expect(storageLabel("POSTGRESQL://u:p@h/db")).toBe("pg"))
-})
+import { describeActiveDatabase } from "./dbStatus.js"
 
 describe("describeActiveDatabase — :settings reflects the active store", () => {
   it("env unset → SQLite default", () => {

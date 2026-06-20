@@ -81,7 +81,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
           : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
         // The agent's compression policy rides RunContext so the whole sub-agent
-        // subtree inherits it; the loop falls back to Headroom.default() when absent.
+        // subtree inherits it; the loop falls back to Compaction.default() when absent.
         ...(config.compression !== undefined ? { compression: config.compression } : {}),
       }),
       // A failed run marks its span errored (the conversation drill-down lists

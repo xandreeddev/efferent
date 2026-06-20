@@ -108,7 +108,7 @@ import {
 const AppLive = Layer.mergeAll(
   StoresLive,                 // ConversationStore (+ ContextTreeStore) — SQLite by default
   ModelLive,                  // the LanguageModel router
-  UtilityLlmLive.pipe(        // optional: fast-tier headroom digests
+  UtilityLlmLive.pipe(        // optional: fast-tier compaction digests
     Layer.provide(ModelRegistryLive),
     Layer.provide(FetchHttpClient.layer),
   ),
