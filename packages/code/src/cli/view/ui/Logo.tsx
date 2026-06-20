@@ -17,11 +17,11 @@ interface VariantSpec {
 }
 
 const VARIANTS: Record<LogoVariant, VariantSpec> = {
-  master: { tagline: "a coding agent on effect.ts" },
-  code: { pkg: "code", open: "<", close: ">", tagline: "the agent loop · TUI · headless modes" },
-  social: { pkg: "social", open: "(", close: ")", tagline: "built-in-public content engine" },
-  sdk: { pkg: "sdk", open: "{", close: "}", tagline: "ports · adapters · @effect/ai toolkit" },
-  evals: { pkg: "evals", open: "[", close: "]", tagline: "colocated, effect-native evals" },
+  master: { tagline: "agents, composed on Effect" },
+  code: { pkg: "code", open: "<", close: ">", tagline: "a coding agent + fleet, in your terminal" },
+  social: { pkg: "social", open: "(", close: ")", tagline: "a build-in-public content engine" },
+  sdk: { pkg: "sdk", open: "{", close: "}", tagline: "ports, adapters, a typed agent loop" },
+  evals: { pkg: "evals", open: "[", close: "]", tagline: "colocated, Effect-native evals" },
 }
 
 /** The wordmark, letterspaced to match the gradient underline width. */
