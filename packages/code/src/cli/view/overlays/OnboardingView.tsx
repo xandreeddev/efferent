@@ -2,11 +2,12 @@ import { createMemo, Match, Show, Switch } from "solid-js"
 import type { OnboardingState } from "../../presentation/onboardingFlow.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
 import type { SelectState } from "../../presentation/selectBox.js"
+import type { Overlay as OverlayState, TuiContext } from "../../state/store.js"
 import { glyph, tokens } from "../../state/theme.js"
 import {
   KeyHints,
   Logo,
-  MODAL_RULE,
+  SHEET_RULE,
   PromptBody,
   Rule,
   SelectBody,
@@ -70,7 +71,7 @@ const SelectStep = (props: { title: string; state: SelectState<unknown>; canBack
     <text fg={tokens.text.default} marginBottom={1}>
       {props.title}
     </text>
-    <SelectBody state={props.state} labelBudget={MODAL_RULE - 2} footer={selectFooter(props.canBack)} />
+    <SelectBody state={props.state} labelBudget={SHEET_RULE - 2} footer={selectFooter(props.canBack)} />
   </box>
 )
 
@@ -142,7 +143,7 @@ const DatabaseStep = (props: { state: Extract<OnboardingState, { step: "database
             {`Remove ${props.state.confirmRemove}? ↵ confirm · esc cancel`}
           </text>
         </Show>
-        <SelectBody state={props.state.sel} labelBudget={MODAL_RULE - 2} footer={dbManagerFooter} />
+        <SelectBody state={props.state.sel} labelBudget={SHEET_RULE - 2} footer={dbManagerFooter} />
       </box>
     }
   >
@@ -180,11 +181,11 @@ const PromptStep = (props: { title: string; prompt: string; value: string; mask:
         <text fg={tokens.text.muted} wrapMode="word">
           Open this link in the browser:
         </text>
-        <Rule width={MODAL_RULE} />
+        <Rule width={SHEET_RULE} />
         <text fg={tokens.accent.conversation} wrapMode="word">
           {props.prompt.split("\n\n")[1] || props.prompt}
         </text>
-        <Rule width={MODAL_RULE} />
+        <Rule width={SHEET_RULE} />
         <PromptBody value={props.value} mask={props.mask} footer={promptFooter} />
       </Show>
     </box>
@@ -249,7 +250,7 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
           theme step widens to fit its list + larger preview; all others keep the
           standard modal width so titles/prose stay aligned. */}
       <box
-        width={s().step === "theme" ? THEME_TOTAL_W : MODAL_RULE}
+        width={s().step === "theme" ? THEME_TOTAL_W : SHEET_RULE}
         flexDirection="column"
         marginTop={1}
       >
@@ -337,5 +338,20 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         <text fg={tokens.text.dim} marginTop={1}>{props.note}</text>
       </Show>
     </box>
+  )
+}
+
+/** Full-screen onboarding host: App renders ONLY this (its `Show` fallback) while
+ *  the onboarding overlay is open, so the first-run takeover has nothing behind
+ *  it. Reads the active onboarding state + transient note from the store. */
+export const Onboarding = (props: { ctx: TuiContext }) => {
+  const state = createMemo((): OnboardingState | undefined => {
+    const o: OverlayState = props.ctx.store.overlay()
+    return o.kind === "onboarding" ? o.state : undefined
+  })
+  return (
+    <Show when={state()}>
+      {(st) => <OnboardingView state={st()} note={props.ctx.store.note()} />}
+    </Show>
   )
 }

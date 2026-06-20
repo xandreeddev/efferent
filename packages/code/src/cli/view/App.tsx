@@ -12,9 +12,11 @@ import { SelectMenu } from "./chrome/SelectMenu.js"
 import { ResumeBrowser } from "./chrome/ResumeBrowser.js"
 import { SearchStatus } from "./chrome/SearchStatus.js"
 import { StatusBar } from "./chrome/StatusBar.js"
-import { Overlay } from "./overlays/Overlay.js"
 import { SettingsView } from "./overlays/SettingsView.js"
 import { Shortcuts } from "./overlays/Shortcuts.js"
+import { Login } from "./overlays/Login.js"
+import { ApprovalView } from "./overlays/ApprovalView.js"
+import { Onboarding } from "./overlays/OnboardingView.js"
 import type { TuiContext } from "../state/store.js"
 
 /**
@@ -56,7 +58,7 @@ export const App = (props: { ctx: TuiContext }) => {
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Show when={!onboarding()} fallback={<Overlay ctx={props.ctx} />}>
+      <Show when={!onboarding()} fallback={<Onboarding ctx={props.ctx} />}>
         <Header ctx={props.ctx} />
         {/* The single borderless message region: the conversation, or the
             contextual panel (activity/context/agents/sessions) in its place. */}
@@ -75,17 +77,18 @@ export const App = (props: { ctx: TuiContext }) => {
         <QueuedMessages ctx={props.ctx} />
         <InputBox ctx={props.ctx} />
         <SlashPalette ctx={props.ctx} />
-        {/* Pickers / settings / shortcuts render INLINE here (borderless,
-            agy-style), not as floating modals — the `Overlay` host below skips
-            these kinds. Only one is ever active at a time. */}
+        {/* Every contextual surface renders INLINE here (borderless, agy-style),
+            never as a floating modal — pickers, settings, shortcuts, the login
+            flow, and the bash-approval sheet. Only one is ever active at a time
+            (the single `overlay` signal), and each Shows on its own kind. */}
         <SelectMenu ctx={props.ctx} />
         <ResumeBrowser ctx={props.ctx} />
         <SettingsView ctx={props.ctx} />
         <Shortcuts ctx={props.ctx} />
+        <Login ctx={props.ctx} />
+        <ApprovalView ctx={props.ctx} />
         <SearchStatus ctx={props.ctx} />
         <StatusBar ctx={props.ctx} />
-        {/* Modal layer — absolutely positioned, floats over everything above. */}
-        <Overlay ctx={props.ctx} />
       </Show>
     </box>
   )
