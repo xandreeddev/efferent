@@ -129,11 +129,11 @@ test("conversation pane: Z folds all turns, then unfolds them", () => {
   expect([...h.store.collapsed()]).toEqual([])
 })
 
-test("plain z toggles zoom (not fold-all) on a read-only pane", () => {
+test("plain z is unbound on a read-only pane (only Z folds all)", () => {
   const h = harness()
   h.store.setFocus("conversation")
   dispatch(h.ctx, key("z"))
-  expect(h.store.zoomed()).toBe(true)
+  expect([...h.store.collapsed()]).toEqual([])
 })
 
 test("Ctrl-C arms first, quits on the second press", () => {

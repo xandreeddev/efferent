@@ -17,14 +17,13 @@ export interface ShortcutGroup {
 
 export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
   {
-    title: "panes",
+    title: "regions",
     rows: [
-      { keys: "^h / ^k", label: "focus conversation" },
-      { keys: "^l", label: "focus side" },
-      { keys: "^j", label: "focus input" },
-      { keys: "w", label: "cycle panes (NORMAL)" },
-      { keys: "v", label: "cycle side views" },
-      { keys: "z", label: "zoom the focused pane" },
+      { keys: "^h / ^k", label: "the conversation" },
+      { keys: "^l", label: "the panel (activity/agents/sessions)" },
+      { keys: "^j", label: "the composer" },
+      { keys: "w", label: "cycle regions (NORMAL)" },
+      { keys: "v", label: "cycle panel views" },
     ],
   },
   {
@@ -51,14 +50,14 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
     ],
   },
   {
-    title: "side · context",
+    title: "panel · context",
     rows: [
       { keys: "Space", label: "pick a turn" },
       { keys: "b", label: "build a session from picks" },
     ],
   },
   {
-    title: "side · agents",
+    title: "panel · agents",
     rows: [
       { keys: "↵", label: "open / preview a node" },
       { keys: "c", label: "fork into a new session" },
