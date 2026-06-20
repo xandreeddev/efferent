@@ -88,7 +88,7 @@ ops sweep — can gather data and **propose** an action rather than take it. You
 your seat: a proposal surfaces as a prompt you answer (`a` allow once · `s` this session · `p` this
 project · `d` deny with a reason), and the decision feeds straight back to the agent.
 
-This is live today for shell commands (the bash approval modal, with a fast-tier judge that clears
+This is live today for shell commands (the bash approval prompt, with a fast-tier judge that clears
 routine work and only prompts on the exceptions — see
 [the agent loop](/docs/concepts/agent-loop/)).
 

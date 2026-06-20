@@ -133,7 +133,7 @@ Dependency direction is strictly inward: every app (`code` / `social` / `evals`)
 - **[`AGENT.md`](./AGENT.md)** — the authoritative architecture reference.
 - **[`docs/roadmap.md`](./docs/roadmap.md)** — what's deferred and what we're consciously skipping.
 - **[`docs/models.md`](./docs/models.md)** — every LLM call site, its model selection, where the spend lands.
-- **[`docs/tui.md`](./docs/tui.md)** — the full TUI manual.
+- **[the docs site](https://xandreed.dev/efferent/docs/getting-started/)** — the live guides + concept docs (the TUI is covered in *Using efferent* and *CLI & modes*).
 - **[`docs/journeys.md`](./docs/journeys.md)** — user journeys + their verification status.
 
 ## Tech
