@@ -15,7 +15,7 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   readonly toolkit: Toolkit.Toolkit<Tools>
   /**
    * How this agent keeps its context small. Absent ⇒ the SDK default
-   * (`Headroom.default()`: headroom tail compression + identity context), so
+   * (`Compaction.default()`: compaction tail compression + identity context), so
    * behaviour is unchanged. `Compression.none` disables it; a composed or
    * hand-written {@link CompressionPolicy} replaces it. The policy is inherited
    * by this agent's sub-agents (threaded via `RunContext`).

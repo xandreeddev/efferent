@@ -5,7 +5,7 @@ import { includesAll, llmJudge, predicate } from "../framework/scorers.js"
 import type { EvalEnv } from "../env.js"
 
 /**
- * **Headroom digest fidelity (fast tier).** Feed an oversized tool result
+ * **Compaction digest fidelity (fast tier).** Feed an oversized tool result
  * through `compressToolResults` and check the compression: head/tail facts
  * survive, the reversible marker is present, the output is far smaller than the
  * input, and (LLM judge) the fast-tier digest of the omitted middle reads as
@@ -52,8 +52,8 @@ const CASES: ReadonlyArray<{ name: string; input: DigestInput; expected: DigestE
   },
 ]
 
-export const headroomDigestEval = defineEval<DigestInput, string, DigestExpected, EvalEnv>({
-  name: "headroom-digest",
+export const compactionDigestEval = defineEval<DigestInput, string, DigestExpected, EvalEnv>({
+  name: "compaction-digest",
   description: "oversized tool output is clipped with a reversible, faithful marker",
   threshold: 0.6,
   data: CASES,
@@ -68,7 +68,7 @@ export const headroomDigestEval = defineEval<DigestInput, string, DigestExpected
     })),
     predicate(
       "compressed_with_marker",
-      ({ input, output }) => output.length < input.content.length / 2 && output.includes("headroom"),
+      ({ input, output }) => output.length < input.content.length / 2 && output.includes("compaction"),
     ),
     llmJudge(
       "digest_fidelity",

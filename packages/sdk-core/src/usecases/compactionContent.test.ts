@@ -4,7 +4,7 @@ import {
   planContentCompression,
   planLogCompression,
   planSearchCompression,
-} from "./headroomContent.js"
+} from "./compactionContent.js"
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 

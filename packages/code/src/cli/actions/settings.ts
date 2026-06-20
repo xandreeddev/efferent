@@ -206,7 +206,7 @@ export const openSettingsView = (store: TuiStore) =>
         label: "toolResultMax",
         value: String(current.toolResultMaxTokens ?? 4000),
         kind: "readonly",
-        hint: "headroom clip budget (0 = off)",
+        hint: "compaction clip budget (0 = off)",
       },
       {
         key: "autoHandoffPct",
@@ -395,7 +395,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
     if (key === "toolResultMaxTokens") {
       const num = Number(value)
       if (!Number.isFinite(num) || num < 0) {
-        return yield* err("Setting 'toolResultMaxTokens' must be a number ≥ 0 (0 disables headroom clipping)")
+        return yield* err("Setting 'toolResultMaxTokens' must be a number ≥ 0 (0 disables compaction clipping)")
       }
       yield* settings.update((curr) => ({ ...curr, toolResultMaxTokens: Math.floor(num) }))
       yield* Effect.sync(() => {

@@ -6,7 +6,7 @@ import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
 import { agentSpanAttributes, toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
 import { RunContextRef } from "./runContext.js"
-import { DEFAULT_TOOL_RESULT_MAX_CHARS, Headroom } from "./headroom.js"
+import { DEFAULT_TOOL_RESULT_MAX_CHARS, Compaction } from "./compaction.js"
 import {
   attachUsageToAssistant,
   extractUsage,
@@ -50,7 +50,7 @@ export interface RunAgentLoopInput<
    */
   readonly toolConcurrency?: number
   /**
-   * Headroom: per-string budget (chars) for a tool result entering the
+   * Compaction: per-string budget (chars) for a tool result entering the
    * buffer — over it, the string is clipped head+tail with a reversible
    * marker (+ a FAST-tier digest of the dropped middle when `UtilityLlm` is
    * around). Append-time, so the prompt-cache prefix is never rewritten.
@@ -60,7 +60,7 @@ export interface RunAgentLoopInput<
   /**
    * The agent's compression policy (moment 1 tail + moment 2 context). When
    * omitted, the loop reads it from `RunContextRef` (so sub-agents inherit the
-   * root agent's policy), falling back to `Headroom.default()`. An explicit
+   * root agent's policy), falling back to `Compaction.default()`. An explicit
    * value here overrides both — handy for direct/test callers.
    */
   readonly compression?: CompressionPolicy
@@ -237,8 +237,8 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
     // Compression is an agent property: an explicit override on the input wins,
     // else the policy threaded on RunContext (so a sub-agent inherits its root's
-    // policy), else the SDK default (today's headroom tail + identity context).
-    const compression = input.compression ?? runContext.compression ?? Headroom.default()
+    // policy), else the SDK default (today's compaction tail + identity context).
+    const compression = input.compression ?? runContext.compression ?? Compaction.default()
     const tailCompressor = compression.tail ?? Compression.passthroughTail
 
     // A response whose parts don't decode — most often a hallucinated tool

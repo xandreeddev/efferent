@@ -33,7 +33,7 @@ const NODE_MODULES = join(REPO_ROOT, "node_modules")
 
 /**
  * Ensure `node_modules/@effect` resolves, so a module that imports `@effect/ai`
- * (e.g. `agentLoop.ts`, pulled in by the headroom/loop cases) loads in the
+ * (e.g. `agentLoop.ts`, pulled in by the compaction/loop cases) loads in the
  * container. `@effect/ai` is installed PER-PACKAGE (`packages/core/node_modules`)
  * and not hoisted to the root `node_modules` the sandbox mounts. We can't add a
  * nested bind mount (the root mount is read-only — Docker can't create the
