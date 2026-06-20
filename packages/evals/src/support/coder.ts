@@ -11,7 +11,9 @@ import { coderAgentConfig } from "@xandreed/code/usecases/coderAgentConfig.js"
 import { coderPrompt } from "@xandreed/code/prompts/coder.js"
 import { discoverInstructionFiles } from "@xandreed/code/usecases/discoverInstructionFiles.js"
 import { discoverScopeTree } from "@xandreed/code/usecases/discoverScopeTree.js"
+import { loadAgents } from "@xandreed/code/usecases/loadAgents.js"
 import { loadSkills } from "@xandreed/code/usecases/loadSkills.js"
+import { loadTools } from "@xandreed/code/usecases/loadTools.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 
@@ -44,15 +46,17 @@ export const buildCoderConfig = (
 ) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
+    const agents = yield* loadAgents(dir, homedir())
+    const tools = yield* loadTools(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
-    const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, variant)
+    const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, agents, tools, variant)
     const rootScope = yield* discoverScopeTree(dir, (_children, body) => {
       const base = transform(prompt.text)
       return body !== undefined && body.trim().length > 0
         ? `${base}\n\n# Project scope\n\n${body}`
         : base
     })
-    const runtime = buildScopeRuntime(rootScope, { skills, allowBash: true })
+    const runtime = buildScopeRuntime(rootScope, { skills, agents, tools, allowBash: true })
     return { config: coderAgentConfig(rootScope, runtime, prompt), runtime }
   })
 

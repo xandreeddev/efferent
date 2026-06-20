@@ -284,9 +284,9 @@ const formatReadOutput = (
 /**
  * Tool-level output cap: keep head + tail, drop the middle. The tail matters
  * — long runs END in their conclusion (exit summaries, "N pass / M fail"),
- * and a head-only cut erased exactly the lines headroom's log compression
+ * and a head-only cut erased exactly the lines compaction's log compression
  * most wants to keep. This cap bounds what a single call can return at all;
- * headroom (usecases/headroom.ts) is the context-budget backstop downstream.
+ * compaction (usecases/compaction.ts) is the context-budget backstop downstream.
  */
 export const truncateOutput = (s: string, max: number): string => {
   if (s.length <= max) return s

@@ -1,5 +1,6 @@
 // Entities
 export * from "./entities/AgentContext.js"
+export * from "./entities/AgentDefinition.js"
 export * from "./entities/AgentHooks.js"
 export * from "./entities/Compression.js"
 export * from "./entities/Conversation.js"
@@ -39,7 +40,7 @@ export * from "./usecases/runAgent.js"
 export * from "./usecases/runContext.js"
 export * from "./usecases/tokenBudget.js"
 export * from "./usecases/handoff.js"
-export * from "./usecases/headroom.js"
+export * from "./usecases/compaction.js"
 export * from "./usecases/autoApproval.js"
 export * from "./usecases/generateTitle.js"
 

@@ -374,7 +374,7 @@ export const makeEventReducer = (
         return
 
       case "helper_usage":
-        // A fast-tier helper call inside the loop (headroom summaries, titles) — ledger only.
+        // A fast-tier helper call inside the loop (compaction summaries, titles) — ledger only.
         store.setStats((s) =>
           accumulateRoleSpend(s, event.role, event.usage.inputTokens + event.usage.outputTokens),
         )

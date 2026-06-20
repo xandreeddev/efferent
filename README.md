@@ -4,7 +4,7 @@
 
 > An **agent framework on Effect.ts** — and the apps built on it. A pure-domain SDK (entities, ports, and use cases as `Layer`s; tools as an `@effect/ai` `Toolkit`; every error tagged; provider selection a runtime concern), with a coding agent, a content engine, and a colocated eval harness on top.
 
-The framework is the wedge: the agent loop, the context tree, headroom compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each agent is a thin driver that composes those Layers; the coding agent (`@xandreed/code`) **bundles a terminal UI** and also runs headless.
+The framework is the wedge: the agent loop, the context tree, compaction compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each agent is a thin driver that composes those Layers; the coding agent (`@xandreed/code`) **bundles a terminal UI** and also runs headless.
 
 ```
 @xandreed/sdk-core       the framework — agent loop, ports, use cases (effect + @effect/ai only)
@@ -16,7 +16,7 @@ The framework is the wedge: the agent loop, the context tree, headroom compressi
 
 ## The coding agent (`@xandreed/code`)
 
-The flagship app: a coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree. The TUI is the frontend; the agent also runs headless (print / json / rpc) with no UI.
+The flagship app: a coding agent that lives in your terminal. **Effect.ts + Bun**, a borderless full-screen TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree. The TUI is the frontend; the agent also runs headless (print / json / rpc) with no UI.
 
 ```bash
 npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
@@ -83,7 +83,7 @@ Credentials live **only** in `~/.efferent/auth.json` (atomic `0600` writes). Non
 | `:settings` / `:set` | live-tunable knobs (budgets, compression, auto-approval…) |
 | `:theme` | efferent · one-dark · tokyo-night |
 | `Esc` | interrupt the running turn (sub-agents included) |
-| `Ctrl-h/j/k/l` | move between panes · `v` cycles the side views |
+| `Ctrl-h/j/k/l` | move between the conversation, panel, and composer · `v` cycles the panel views |
 
 ## Skills
 
@@ -133,7 +133,7 @@ Dependency direction is strictly inward: every app (`code` / `social` / `evals`)
 - **[`AGENT.md`](./AGENT.md)** — the authoritative architecture reference.
 - **[`docs/roadmap.md`](./docs/roadmap.md)** — what's deferred and what we're consciously skipping.
 - **[`docs/models.md`](./docs/models.md)** — every LLM call site, its model selection, where the spend lands.
-- **[`docs/tui.md`](./docs/tui.md)** — the full TUI manual.
+- **[the docs site](https://xandreed.dev/efferent/docs/getting-started/)** — the live guides + concept docs (the TUI is covered in *Using efferent* and *CLI & modes*).
 - **[`docs/journeys.md`](./docs/journeys.md)** — user journeys + their verification status.
 
 ## Tech

@@ -1,6 +1,6 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import {
   ContextNodeId,
   type ContextUsage,
@@ -9,7 +9,8 @@ import {
   type AgentMessage,
   type Prompt,
   type Scope,
-  type Approval,
+  Approval,
+  bashRuleKey,
   ContextTreeStore,
   FileSystem,
   Http,
@@ -31,6 +32,7 @@ import {
   Failure,
   toFailure,
   type Skill,
+  type AgentDefinition,
   ConversationId,
   type RunContext,
 } from "@xandreed/sdk-core"
@@ -42,6 +44,9 @@ import {
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
+import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
+import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
+import { addJob, parseCron, type ScheduledJob } from "./schedule.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 
 /**
@@ -76,7 +81,7 @@ export interface ScopeRuntime {
     readonly task: string
     readonly budget?: number
     readonly maxSteps?: number
-    /** Headroom budget (chars) per tool-result string for the resumed run. */
+    /** Compaction budget (chars) per tool-result string for the resumed run. */
     readonly toolResultMaxChars?: number
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
@@ -89,6 +94,38 @@ export interface ScopeRuntime {
     | Approval
     | LanguageModel.LanguageModel
   >
+  /**
+   * **Human-driven fresh spawn**: fire a new folder-scoped agent from a live
+   * session — the driver's counterpart of the model's `run_agent` fresh spawn.
+   * Creates a top-level context node under `rootConversationId` (so it shows in
+   * `:tree`), runs it at depth 0 with its own fresh token pool, and records the
+   * return. Pass `agent` to run a predefined role (else a generic coder).
+   * `budget`/`maxSteps` default to the sub-agent constants when omitted.
+   */
+  readonly spawnAgent: (args: {
+    readonly rootConversationId: ConversationId
+    readonly folder: string
+    readonly task: string
+    readonly title?: string
+    readonly agent?: string
+    readonly budget?: number
+    readonly maxSteps?: number
+    readonly toolResultMaxChars?: number
+  }) => Effect.Effect<
+    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    Failure,
+    | FileSystem
+    | Shell
+    | Http
+    | WebSearch
+    | ContextTreeStore
+    | Approval
+    | LanguageModel.LanguageModel
+  >
+  /** The in-memory comms bus (Phase 3): per-agent mailboxes + a shared
+   *  blackboard. The driver posts to a RUNNING node's mailbox (human → agent);
+   *  the loop drains it at each turn boundary. */
+  readonly bus: AgentBus
 }
 
 /** Default step (turn) cap per spawned sub-agent — overridable via
@@ -103,6 +140,18 @@ export const STEP_STOP_NOTE =
 
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
+  /**
+   * Predefined agent ROLES (`.efferent/agents/*.md`) selectable by name via
+   * `run_agent({ agent })` and the TUI `:spawn`. Required like `skills` —
+   * pass `[]` when there are none (the sane default). Snapshotted at build
+   * time; an agent imported mid-session applies on the next launch.
+   */
+  readonly agents: ReadonlyArray<AgentDefinition>
+  /**
+   * Declarative tools (`.efferent/tools/*.md`) callable via `run_tool`. Required
+   * like `skills`/`agents` — pass `[]` when there are none.
+   */
+  readonly tools: ReadonlyArray<ToolDefinition>
   /** Step budget for each (nested) sub-agent loop. Default 80. */
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
@@ -113,6 +162,21 @@ export interface BuildScopeRuntimeOptions {
 
 const clip = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n)}…`
+
+/** Parse a `run_tool` args JSON-object string into string-valued params. `{}` for
+ *  empty/absent; undefined when it isn't a JSON object (a validation failure). */
+const parseToolArgs = (raw: string | undefined): Record<string, string> | undefined => {
+  if (raw === undefined || raw.trim().length === 0) return {}
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined
+    const out: Record<string, string> = {}
+    for (const [k, val] of Object.entries(v)) out[k] = typeof val === "string" ? val : String(val)
+    return out
+  } catch {
+    return undefined
+  }
+}
 
 /** Base coding tool definitions (read/write/edit/bash/grep/glob/ls/read_skill/web_fetch). */
 const baseToolDefs = Object.values(codingToolkit.tools) as ReadonlyArray<Tool.Any>
@@ -163,6 +227,13 @@ const RunAgentTool = Tool.make("run_agent", {
         "the node verbatim (full history every turn — only when exact file contents in its context " +
         "matter); 'branch' copies the full history into a new node. Defaults to 'branch'.",
     }),
+    agent: Schema.optional(Schema.String).annotations({
+      description:
+        "Optional name of a predefined agent ROLE (from .efferent/agents/<name>.md) to run this task " +
+        "as — it sets the sub-agent's system-prompt instructions, its model, and its tool allowlist. " +
+        "Omit for a generic folder-scoped coder. Use a role when the task fits a specialty (e.g. " +
+        "'reviewer', 'security-auditor', 'docs-writer').",
+    }),
   },
   success: Schema.Struct({
     summary: Schema.String,
@@ -176,10 +247,175 @@ const RunAgentTool = Tool.make("run_agent", {
   failureMode: "return",
 })
 
-/** The toolkit is static now: base tools + the one `run_agent` tool. */
+/**
+ * The comms tools (Phase 3): message a sibling agent's inbox, and post/read a
+ * shared blackboard. Handler-backed by the in-memory {@link AgentBus}; the
+ * recipient drains its inbox at its next turn boundary.
+ */
+const SendMessageTool = Tool.make("send_message", {
+  description:
+    "Send a message to another RUNNING agent by its context-node id (a nodeId from a run_agent result). " +
+    "The recipient reads it at its next turn. Use it to coordinate with sibling agents you spawned or were " +
+    "told about. Fails if that agent isn't currently running (a finished agent's result is in its return summary).",
+  parameters: {
+    to: Schema.String.annotations({
+      description: "The recipient agent's context-node id (the nodeId a run_agent call returned).",
+    }),
+    content: Schema.String.annotations({ description: "The message to deliver." }),
+  },
+  success: Schema.Struct({ delivered: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+const BlackboardPostTool = Tool.make("blackboard_post", {
+  description:
+    "Post a short note to the shared blackboard every agent in this turn's fleet can read — a finding, a " +
+    "decision, a warning. Use it so parallel siblings don't duplicate work or clobber each other.",
+  parameters: {
+    note: Schema.String.annotations({ description: "The note to share (keep it short)." }),
+  },
+  success: Schema.Struct({ posted: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+const BlackboardReadTool = Tool.make("blackboard_read", {
+  description:
+    "Read the shared blackboard — notes other agents in this fleet have posted. Check it before starting and " +
+    "while working to stay coordinated.",
+  parameters: {
+    limit: Schema.optional(Schema.Number).annotations({
+      description: "Max recent notes to return; omit for all.",
+    }),
+  },
+  success: Schema.Struct({
+    notes: Schema.Array(Schema.Struct({ from: Schema.String, note: Schema.String })),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
+ * The single dispatcher for declarative tools (Phase 2). The tools themselves
+ * are defined in `.efferent/tools/*.md` and listed in the prompt; the model
+ * names one + passes its params as a JSON-object string (uniform across
+ * providers — no per-tool dynamic schema).
+ */
+const RunToolTool = Tool.make("run_tool", {
+  description:
+    "Run a custom tool defined in .efferent/tools (see the '# Custom tools' section for names + params). " +
+    "Pass the tool's name and its params as a JSON-object string in 'args' with string values, e.g. " +
+    'args: \'{"glob":"src/**/*.ts"}\'. Omit args for a tool that takes none.',
+  parameters: {
+    name: Schema.String.annotations({ description: "The custom tool's name (from # Custom tools)." }),
+    args: Schema.optional(Schema.String).annotations({
+      description: 'JSON object of the tool\'s params as string values, e.g. {"path":"src"}.',
+    }),
+  },
+  success: Schema.Struct({
+    output: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
+ * Schedule a future/recurring run — cron as a TOOL, so the orchestrator can
+ * defer its own work or set up recurring checks, not just the human via
+ * `:schedule`. The job fires as a fresh agent run in this workspace while
+ * efferent (or its daemon) is open.
+ */
+const ScheduleTool = Tool.make("schedule", {
+  description:
+    "Schedule a task to run later or on a recurring schedule (5-field cron: 'min hour dom month dow'). " +
+    "The job fires as a fresh agent run in THIS workspace whenever it's due, while efferent or its daemon " +
+    "is open — use it to defer follow-up work or set up recurring checks (e.g. a daily review). " +
+    "Returns the job id. The human manages jobs with :schedule.",
+  parameters: {
+    cron: Schema.String.annotations({
+      description:
+        "5-field cron, e.g. '0 9 * * 1' (Mondays 9am) or '*/30 * * * *' (every 30 minutes).",
+    }),
+    task: Schema.String.annotations({ description: "What the scheduled run should do." }),
+    folder: Schema.optional(Schema.String).annotations({
+      description: "Folder to scope the run to, relative to the workspace root (default the root).",
+    }),
+    agent: Schema.optional(Schema.String).annotations({
+      description: "Optional agent role to run the job as (e.g. 'reviewer').",
+    }),
+  },
+  success: Schema.Struct({ id: Schema.String, cron: Schema.String }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
+const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
+  ["send_message", SendMessageTool],
+  ["blackboard_post", BlackboardPostTool],
+  ["blackboard_read", BlackboardReadTool],
+  ["run_tool", RunToolTool],
+  ["schedule", ScheduleTool],
+]
+
+/** The toolkit is static: base coding tools + comms/run_tool + the `run_agent` tool.
+ *  (Declarative tools are dispatched through the single `run_tool`, so the
+ *  toolkit shape doesn't vary with which tool files are present.) */
 const genericToolkit = Toolkit.make(
-  ...([...baseToolDefs, RunAgentTool] as ReadonlyArray<Tool.Any>),
+  ...([
+    ...baseToolDefs,
+    ...commsToolEntries.map(([, d]) => d),
+    RunAgentTool,
+  ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/**
+ * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
+ * a `tools` list is filtered against the available tools (base coding tools +
+ * `run_agent`) — so `run_agent` is offered only when the list names it. A
+ * definition WITHOUT a list gets all base coding tools but NOT `run_agent`
+ * (roles are leaf workers by default). Unknown names in the list are silently
+ * dropped. The names returned are exactly the keys to project the handler
+ * record onto, so the subset toolkit and its handlers always agree.
+ */
+export const roleToolEntries = (
+  def: AgentDefinition,
+): ReadonlyArray<readonly [string, Tool.Any]> => {
+  const base = Object.entries(codingToolkit.tools) as Array<[string, Tool.Any]>
+  if (def.tools === undefined) return base
+  const allow = new Set(def.tools)
+  const all: ReadonlyArray<readonly [string, Tool.Any]> = [
+    ...base,
+    ...commsToolEntries,
+    ["run_agent", RunAgentTool] as const,
+  ]
+  return all.filter(([name]) => allow.has(name))
+}
+
+/**
+ * Resolve a requested role name against the loaded definitions. Absent/blank ⇒
+ * no role (generic spawn). A named-but-unknown agent fails with a model-facing
+ * `UnknownAgent` (it lists what's available) rather than silently degrading —
+ * an unhonoured role request is a real mistake to surface.
+ */
+const resolveAgent = (
+  agents: ReadonlyArray<AgentDefinition>,
+  name: string | undefined,
+): Effect.Effect<AgentDefinition | undefined, { error: string; message: string }> => {
+  if (name === undefined || name.trim().length === 0) return Effect.succeed(undefined)
+  const wanted = name.trim()
+  const found = agents.find((a) => a.name === wanted)
+  if (found !== undefined) return Effect.succeed(found)
+  const available = agents.map((a) => a.name).join(", ")
+  return Effect.fail({
+    error: "UnknownAgent",
+    message: `No agent named '${wanted}'.${
+      available.length > 0 ? ` Available: ${available}.` : " No agent roles are defined."
+    }`,
+  })
+}
 
 /**
  * Inner hooks for a spawned sub-agent's loop. Forwards the parent's tool-call +
@@ -201,6 +437,7 @@ const makeInnerHooks = <R>(
   usageRef: Ref.Ref<ContextUsage>,
   pool: TokenPool,
   budgetStopRef: Ref.Ref<boolean>,
+  bus: AgentBus,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -254,6 +491,14 @@ const makeInnerHooks = <R>(
         if (spent) yield* Ref.set(budgetStopRef, true)
         return spent
       }),
+    // Inbox drain: at each turn boundary, fold any messages sent to THIS node
+    // (by a sibling agent or the human) into its context as inbound user turns.
+    // Ephemeral (not persisted to the node) — the agent's reply is what's saved.
+    onTransformContext: (messages) =>
+      Effect.gen(function* () {
+        const inbox = yield* bus.drain(nodeId)
+        return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
+      }),
     ...(parent?.onSubAgentStart !== undefined
       ? { onSubAgentStart: parent.onSubAgentStart }
       : {}),
@@ -263,7 +508,7 @@ const makeInnerHooks = <R>(
     ...(parent?.onSkillLoad !== undefined
       ? { onSkillLoad: parent.onSkillLoad }
       : {}),
-    // Helper-tier spend inside a sub-agent's loop (headroom summaries) still
+    // Helper-tier spend inside a sub-agent's loop (compaction summaries) still
     // belongs on the session ledger — forward it.
     ...(parent?.onHelperUsage !== undefined
       ? { onHelperUsage: parent.onHelperUsage }
@@ -275,6 +520,7 @@ interface RunSpawnedArgs<R> {
   readonly store: ContextTreeStore["Type"]
   readonly shell: Shell["Type"]
   readonly locks: FolderLocks
+  readonly bus: AgentBus
   readonly displayRoot: string
   readonly opts: BuildScopeRuntimeOptions
   readonly hooks: AgentHooks<R> | undefined
@@ -283,6 +529,9 @@ interface RunSpawnedArgs<R> {
   readonly task: string
   /** Display name from the spawner — the label every event/UI surface uses. */
   readonly title?: string
+  /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
+   *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
+  readonly definition?: AgentDefinition
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -293,7 +542,7 @@ interface RunSpawnedArgs<R> {
   readonly runContext: RunContext
   /** Live per-run step cap (`Settings.subAgentMaxSteps` via `RunContext`). */
   readonly maxSteps?: number
-  /** Headroom budget (chars) per tool-result string, via `RunContext`. */
+  /** Compaction budget (chars) per tool-result string, via `RunContext`. */
   readonly toolResultMaxChars?: number
 }
 
@@ -314,6 +563,7 @@ interface RunSpawnedArgs<R> {
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
   withFolderLock(args.locks, args.folder)(Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
+    const definition = args.definition
     const label = args.title ?? (basename(folder) || folder)
     const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
     const usageRef = yield* Ref.make<ContextUsage>({
@@ -330,8 +580,19 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
         ...(args.parentNodeId !== null ? { parentNodeId: args.parentNodeId } : {}),
       })
     }
+    // Register a live mailbox so siblings/the human can message this run; torn
+    // down on every exit path (success, failure, interrupt) by the ensuring below.
+    yield* args.bus.markRunning(nodeId, label)
     const budgetStopRef = yield* Ref.make(false)
-    const innerHooks = makeInnerHooks(hooks, nodeId, filesRef, usageRef, args.tokenPool, budgetStopRef)
+    const innerHooks = makeInnerHooks(
+      hooks,
+      nodeId,
+      filesRef,
+      usageRef,
+      args.tokenPool,
+      budgetStopRef,
+      args.bus,
+    )
 
     const binding: ScopeBinding = {
       rootDir: folder,
@@ -339,13 +600,22 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       enforceWrite: true,
       allowBash: opts.allowBash ?? true,
     }
-    const body = yield* getScopePromptBody(folder)
+    const scopeBody = yield* getScopePromptBody(folder)
+    // Role instructions (if any) lead, then the folder's ambient SCOPE.md body —
+    // both land in renderScopeSystemPrompt's instructions slot, so the scope /
+    // write-confinement / return-contract scaffold always wraps them.
+    const combinedBody = [definition?.body, scopeBody]
+      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+      .join("\n\n")
     const system = renderScopeSystemPrompt({
       name: label,
       rootDir: folder,
       displayRoot,
-      body: body ?? "",
+      body: combinedBody,
       now: new Date(),
+      // Give a coordinator (a role with run_agent) the roster so it can name its
+      // specialists; leaf workers ignore it.
+      agents: opts.agents,
     })
     const parentPrompt = args.runContext.prompt
     const childPrompt: Prompt | undefined =
@@ -356,9 +626,33 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
           }
         : undefined
 
-    const childLayer = genericToolkit.toLayer(
-      buildGenericHandlers(binding, opts, hooks, args.locks),
-    )
+    // Toolkit: a role with an allowlist runs a SUBSET of tools — build the
+    // subset toolkit (what the model sees) AND a matching handler subset (from
+    // the same full handler record), so the two never disagree. No role ⇒ the
+    // full generic toolkit (base tools + run_agent).
+    const handlers = buildGenericHandlers(binding, opts, hooks, args.locks, args.bus)
+    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
+    const useToolkit =
+      roleEntries !== undefined
+        ? (Toolkit.make(
+            ...(roleEntries.map(([, d]) => d) as ReadonlyArray<Tool.Any>),
+          ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>)
+        : genericToolkit
+    const useLayer =
+      roleEntries !== undefined
+        ? (useToolkit.toLayer(
+            handlers.pipe(
+              Effect.map((full) => {
+                const allow = new Set(roleEntries.map(([n]) => n))
+                return Object.fromEntries(
+                  Object.entries(full as Record<string, unknown>).filter(([k]) =>
+                    allow.has(k),
+                  ),
+                ) as never
+              }),
+            ),
+          ) as ScopeRuntime["handlerLayer"])
+        : (genericToolkit.toLayer(handlers) as ScopeRuntime["handlerLayer"])
     const childRc = {
       rootConversationId: args.rootConversationId,
       parentNodeId: nodeId,
@@ -374,19 +668,23 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       ...(args.runContext.compression !== undefined
         ? { compression: args.runContext.compression }
         : {}),
+      // A role that pins a model overrides the main tier for THIS run only
+      // (read by the router off RunContextRef). NOT inherited by nested generic
+      // spawns — they re-seed their own childRc without it.
+      ...(definition?.model !== undefined ? { modelOverride: definition.model } : {}),
     }
 
     const outcome = yield* runAgentLoop({
       system,
       messages: seedMessages,
-      toolkit: genericToolkit,
+      toolkit: useToolkit,
       maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
       hooks: innerHooks,
     }).pipe(
-      Effect.provide(childLayer),
+      Effect.provide(useLayer),
       Effect.locally(RunContextRef, childRc),
       Effect.map((r) => ({ ok: true as const, r })),
       Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
@@ -473,7 +771,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       })
     }
     return yield* Effect.fail(f)
-  }))
+  })).pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
 
 /** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent. */
 const makeRunAgentHandler =
@@ -481,6 +779,7 @@ const makeRunAgentHandler =
     store: ContextTreeStore["Type"],
     shell: Shell["Type"],
     locks: FolderLocks,
+    bus: AgentBus,
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
@@ -491,6 +790,7 @@ const makeRunAgentHandler =
     readonly task: string
     readonly seedFromNode?: string
     readonly seedMode?: "resume" | "branch" | "handoff"
+    readonly agent?: string
   }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
@@ -507,11 +807,16 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
-      const { name, folder, task, seedFromNode, seedMode } = params
+      const { name, folder, task, seedFromNode, seedMode, agent } = params
       // The model-given display name; blank/absent (a stale provider replaying
       // an old-schema call) degrades to the folder basename.
       const title =
         typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
+
+      // Resolve the requested role (if any). A named-but-unknown agent is a
+      // model-facing failure — silently ignoring a requested role hides a real
+      // mistake (mirrors read_skill's UnknownSkill). Absent ⇒ generic spawn.
+      const definition = yield* resolveAgent(opts.agents, agent)
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -535,9 +840,10 @@ const makeRunAgentHandler =
           yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* runSpawnedAgent({
-            store, shell, locks, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
+            ...(definition !== undefined ? { definition } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -571,8 +877,9 @@ const makeRunAgentHandler =
           seedMessages,
         })
         return yield* runSpawnedAgent({
-          store, shell, locks, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          store, shell, locks, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
+          ...(definition !== undefined ? { definition } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -596,8 +903,9 @@ const makeRunAgentHandler =
         seedMessages,
       })
       return yield* runSpawnedAgent({
-        store, shell, locks, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
+        ...(definition !== undefined ? { definition } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
@@ -619,13 +927,168 @@ const buildGenericHandlers = <R>(
   opts: BuildScopeRuntimeOptions,
   hooks: AgentHooks<R> | undefined,
   locks: FolderLocks,
+  bus: AgentBus,
 ) =>
   Effect.gen(function* () {
     const base = yield* makeCodingHandlers(binding, opts.skills)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
-    const run_agent = makeRunAgentHandler(store, shell, locks, binding.displayRoot, opts, hooks)
-    return { ...base, run_agent } as never
+    const http = yield* Http
+    const fs = yield* FileSystem
+    const approval = yield* Approval
+    const run_agent = makeRunAgentHandler(store, shell, locks, bus, binding.displayRoot, opts, hooks)
+
+    // Cron as a tool: the orchestrator schedules its own follow-up / recurring
+    // work. Validates the expression, writes the job to the shared cron list
+    // (the same one :schedule + the tick read), returns the id.
+    const schedule = (params: {
+      readonly cron: string
+      readonly task: string
+      readonly folder?: string
+      readonly agent?: string
+    }) =>
+      Effect.gen(function* () {
+        if (parseCron(params.cron) === undefined) {
+          return yield* Effect.fail({
+            error: "InvalidCron",
+            message: `'${params.cron}' is not a valid 5-field cron expression ('min hour dom month dow').`,
+          })
+        }
+        const at = yield* Clock.currentTimeMillis
+        const job: ScheduledJob = {
+          id: crypto.randomUUID(),
+          cron: params.cron,
+          cwd: binding.displayRoot,
+          folder: params.folder !== undefined && params.folder.length > 0 ? params.folder : ".",
+          prompt: params.task,
+          ...(params.agent !== undefined && params.agent.length > 0 ? { agent: params.agent } : {}),
+          createdAt: at,
+        }
+        yield* addJob(job).pipe(Effect.provideService(FileSystem, fs))
+        return { id: job.id, cron: job.cron }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    // Declarative tools dispatcher: look up the named def, substitute escaped
+    // args into its template, then execute (shell via Shell — gated by allowBash
+    // + the Approval port; http via Http GET). Every failure is model-facing data.
+    const toolDefs = new Map(opts.tools.map((t) => [t.name, t] as const))
+    const run_tool = (params: { readonly name: string; readonly args?: string }) =>
+      Effect.gen(function* () {
+        const def = toolDefs.get(params.name)
+        if (def === undefined) {
+          return yield* Effect.fail({
+            error: "UnknownTool",
+            message: `no custom tool '${params.name}'. Available: ${[...toolDefs.keys()].join(", ") || "(none)"}.`,
+          })
+        }
+        const parsedArgs = parseToolArgs(params.args)
+        if (parsedArgs === undefined) {
+          return yield* Effect.fail({
+            error: "InvalidArgs",
+            message: 'args must be a JSON object of string values, e.g. {"path":"src"}',
+          })
+        }
+        const escape = def.kind === "shell" ? shellEscape : encodeURIComponent
+        const { filled, missing } = substituteTemplate(def.template, parsedArgs, escape)
+        if (missing.length > 0) {
+          return yield* Effect.fail({
+            error: "MissingParams",
+            message: `missing required params: ${missing.join(", ")}`,
+          })
+        }
+        if (def.kind === "http") {
+          const res = yield* http
+            .get(filled, { maxBytes: 50_000 })
+            .pipe(Effect.mapError((e) => ({ error: "HttpError", message: e.message })))
+          return { output: clip(res.body, 16_000), exitCode: res.status }
+        }
+        if (!binding.allowBash) {
+          return yield* Effect.fail({
+            error: "BashDisabled",
+            message: "custom shell tools need bash enabled (--allow-bash, or the TUI).",
+          })
+        }
+        const decision = yield* approval.request({
+          tool: "Bash",
+          summary: filled,
+          cwd: binding.rootDir,
+          ruleKey: bashRuleKey(filled),
+        })
+        if (decision.kind === "deny") {
+          return yield* Effect.fail({
+            error: "Denied",
+            message: decision.reason ?? "the command was denied",
+          })
+        }
+        const res = yield* shell
+          .exec({
+            command: filled,
+            cwd: binding.rootDir,
+            ...(def.timeoutMs !== undefined ? { timeoutMs: def.timeoutMs } : {}),
+          })
+          .pipe(
+            Effect.mapError((e) => ({
+              error: e._tag,
+              message:
+                e._tag === "ShellError"
+                  ? e.message
+                  : e._tag === "ShellTimeout"
+                    ? `timed out after ${e.timeoutMs}ms`
+                    : `aborted: ${e.command}`,
+            })),
+          )
+        const out = clip([res.stdout, res.stderr].filter((s) => s.length > 0).join("\n"), 16_000)
+        return { output: out, ...(res.exitCode !== null ? { exitCode: res.exitCode } : {}) }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    // The sender's label for comms: this fiber's own node (re-seeded as
+    // `parentNodeId` for its children), else the lead agent (root conversation).
+    const senderLabel = (rc: RunContext): string =>
+      rc.parentNodeId !== null ? `agent ${String(rc.parentNodeId).slice(0, 8)}` : "the lead agent"
+
+    const send_message = (params: { readonly to: string; readonly content: string }) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const at = yield* Clock.currentTimeMillis
+        const delivered = yield* bus.post(params.to, {
+          from: senderLabel(rc),
+          content: params.content,
+          at,
+        })
+        if (!delivered) {
+          return yield* Effect.fail({
+            error: "AgentNotRunning",
+            message: `agent '${params.to}' is not running — it may have finished (its result is in :tree). Spawn or resume it instead of messaging.`,
+          })
+        }
+        return { delivered: true }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    const blackboard_post = (params: { readonly note: string }) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const at = yield* Clock.currentTimeMillis
+        yield* bus.boardPost({ from: senderLabel(rc), note: params.note, at })
+        return { posted: true }
+      })
+
+    const blackboard_read = (params: { readonly limit?: number }) =>
+      Effect.gen(function* () {
+        const all = yield* bus.boardRead()
+        const picked =
+          params.limit !== undefined && params.limit > 0 ? all.slice(-params.limit) : all
+        return { notes: picked.map((n) => ({ from: n.from, note: n.note })) }
+      })
+
+    return {
+      ...base,
+      run_agent,
+      send_message,
+      blackboard_post,
+      blackboard_read,
+      run_tool,
+      schedule,
+    } as never
   })
 
 /**
@@ -649,8 +1112,11 @@ export const buildScopeRuntime = <R = never>(
   // One locks map per runtime: parallel spawns into the SAME folder serialize
   // even across subtrees (cousins included); disjoint folders fan out freely.
   const locks = makeFolderLocks()
+  // One comms bus per runtime: per-agent mailboxes + a shared blackboard, drawn
+  // on by send_message / blackboard_* and drained into each agent's context.
+  const bus = makeAgentBus()
   const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks, locks),
+    buildGenericHandlers(binding, opts, hooks, locks, bus),
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
@@ -675,6 +1141,7 @@ export const buildScopeRuntime = <R = never>(
         store,
         shell,
         locks,
+        bus,
         displayRoot: binding.displayRoot,
         opts,
         hooks,
@@ -695,5 +1162,65 @@ export const buildScopeRuntime = <R = never>(
       ScopeRuntime["resumeNode"]
     >
 
-  return { toolkit: genericToolkit, handlerLayer, resumeNode }
+  // The human-driven mirror of the handler's FRESH-spawn branch: create a
+  // top-level node under the active conversation, then run it at depth 0 with a
+  // fresh pool. Resolves a role by name when `agent` is given (UnknownAgent if
+  // it isn't loaded). Children it spawns hang off the node.
+  const spawnAgent: ScopeRuntime["spawnAgent"] = ({
+    rootConversationId,
+    folder,
+    task,
+    title,
+    agent,
+    budget,
+    maxSteps,
+    toolResultMaxChars,
+  }) =>
+    Effect.gen(function* () {
+      const store = yield* ContextTreeStore
+      const shell = yield* Shell
+      const definition = yield* resolveAgent(opts.agents, agent)
+      const folderAbs = resolve(binding.displayRoot, folder)
+      const tokenPool = yield* makeTokenPool(budget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET)
+      const cleanTitle =
+        typeof title === "string" && title.trim().length > 0 ? title.trim() : undefined
+      const seedMessages: ReadonlyArray<AgentMessage> = [{ role: "user", content: task }]
+      const nodeId = yield* store.spawn({
+        parentId: null,
+        rootConversationId,
+        edgeKind: "spawned",
+        folder: folderAbs,
+        displayRoot: binding.displayRoot,
+        ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
+        seed: { kind: "task", preview: clip(task, 80) },
+        seedMessages,
+      })
+      const rc = yield* FiberRef.get(RunContextRef)
+      return yield* runSpawnedAgent({
+        store,
+        shell,
+        locks,
+        bus,
+        displayRoot: binding.displayRoot,
+        opts,
+        hooks,
+        nodeId,
+        folder: folderAbs,
+        task,
+        seedMessages,
+        ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
+        ...(definition !== undefined ? { definition } : {}),
+        parentDepth: 0,
+        parentNodeId: null,
+        rootConversationId,
+        tokenPool,
+        runContext: rc,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+      })
+    }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))) as ReturnType<
+      ScopeRuntime["spawnAgent"]
+    >
+
+  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent, bus }
 }

@@ -49,7 +49,7 @@ BunRuntime.runMain(program.pipe(Effect.provide(AppLive)))
 | `LocalSettingsStoreLive` | ✅ | `SettingsStore` — config from `~/.efferent/config.json`. |
 | `LocalFileSystemLive` | ✅ | `FileSystem` — needed by settings/stores, and by any tool handler that reads files. |
 | `BunContext.layer` | ✅ | Platform services (the SQLite store needs Bun's FileSystem/Path). |
-| `UtilityLlmLive` | ⬜ optional | The [fast helper tier](/docs/concepts/providers/) — headroom digests, etc. Drop it and oversized clips degrade to plain markers. |
+| `UtilityLlmLive` | ⬜ optional | The [fast helper tier](/docs/concepts/providers/) — compaction digests, etc. Drop it and oversized clips degrade to plain markers. |
 | `ModelRegistryLive`, `FetchHttpClient.layer` | ⬜ | Dependencies of `UtilityLlm`/the live catalogue. |
 | `LocalShellLive`, `WebSearchLive` | ⬜ | Only if your tools use the `Shell` / `WebSearch` ports (the coding agent does). |
 

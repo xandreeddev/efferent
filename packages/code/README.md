@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/xandreeddev/efferent/main/assets/logo-code.svg" alt="efferent &lt; code &gt;" width="520">
 </p>
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, a modal multi-pane TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, context compression that never breaks the prompt cache, and sub-agent orchestration over a persistent context tree.
+> A coding agent that lives in your terminal. **Effect.ts + Bun**, a borderless full-screen TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree.
 
 ```bash
 npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
@@ -136,7 +136,7 @@ Dependency direction is strictly inward: `cli` → `adapters` → `core`. Tests 
 - **[`AGENT.md`](./AGENT.md)** — the authoritative architecture reference.
 - **[`docs/roadmap.md`](./docs/roadmap.md)** — what's deferred and what we're consciously skipping.
 - **[`docs/models.md`](./docs/models.md)** — every LLM call site, its model selection, where the spend lands.
-- **[`docs/tui.md`](./docs/tui.md)** — the full TUI manual.
+- **[the docs site](https://xandreed.dev/efferent/docs/getting-started/)** — the live guides + concept docs (TUI usage lives in *Using efferent* and *CLI & modes*).
 - **[`docs/journeys.md`](./docs/journeys.md)** — user journeys + their verification status.
 
 ## Tech

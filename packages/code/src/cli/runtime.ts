@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
+import { Clock, Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
   connLabel,
@@ -14,6 +14,7 @@ import {
   StoreSwitch,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
+import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
@@ -24,6 +25,16 @@ import { treeSitterClient } from "./view/syntax.js"
 import { makeTuiApproval } from "./approval.js"
 import { stopOAuthSession } from "./actions/login.js"
 import { makeSubmit } from "./actions/submit.js"
+import { makeSpawnAgent } from "./actions/spawnAgent.js"
+import { makeFleetSupervisor } from "./state/fleet.js"
+import type { Directive } from "../usecases/directive.js"
+import {
+  cronMatches,
+  loadJobs,
+  markJobRun,
+  minuteBucket,
+  parseCron,
+} from "../usecases/schedule.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { openOnboardingFlow } from "./actions/onboarding.js"
@@ -92,7 +103,7 @@ export const runTuiModeSolid = (
       const baseHooks = makeEventHooks(eventQueue)
       const scopeRuntime = buildScopeRuntime(
         input.rootScope,
-        { skills: input.skills, allowBash: true },
+        { skills: input.skills, agents: input.agents, tools: input.tools, allowBash: true },
         baseHooks,
       )
 
@@ -163,9 +174,28 @@ export const runTuiModeSolid = (
         rootScope: input.rootScope,
         cwd: input.cwd,
         skills: input.skills,
+        agents: input.agents,
+        tools: input.tools,
         instructionFiles: input.instructionFiles,
         approvalLayer: approval.layer,
+        getDirective: () => directiveRef.current,
       })
+
+      // The live fleet: detached fired agents (`:spawn`), held so `:stop` can
+      // cancel one. The persistent tree (`:tree`) is the durable view.
+      const fleet = makeFleetSupervisor()
+      const spawnAgentAction = makeSpawnAgent({
+        store,
+        scopeRuntime,
+        eventQueue,
+        approvalLayer: approval.layer,
+        fleet,
+      })
+
+      // The session's standing goal (Phase 4): held in the runtime closure
+      // (session-scoped — persisting across resume is a follow-up), injected into
+      // every turn's prompt by `submit`, and checked by the built-in verifier role.
+      const directiveRef: { current: Directive | undefined } = { current: undefined }
       const reduce = makeEventReducer(store, {
         // Live navigator reload on sub-agent spawn/end (current session — it
         // can change via the sessions view, so resolve the id per call).
@@ -189,6 +219,66 @@ export const runTuiModeSolid = (
         interrupt: () => {
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
+        },
+        roles: input.agents,
+        tools: input.tools,
+        spawnAgent: (agent, folder, task) => {
+          void Runtime.runPromise(rt)(spawnAgentAction({ agent, folder, task }))
+        },
+        stopAgent: (id) => {
+          const entry = fleet.get(id)
+          if (entry !== undefined) Runtime.runFork(rt)(Fiber.interrupt(entry.fiber))
+        },
+        listFleet: () =>
+          fleet.list().map((e) => ({ id: e.id, title: e.title, folder: e.folder })),
+        getDirective: () => directiveRef.current,
+        setDirective: (d) => {
+          directiveRef.current = d
+        },
+        importAgents: (spec) => {
+          void Runtime.runPromise(rt)(
+            Effect.gen(function* () {
+              store.pushBlock({ kind: "info", text: `importing agents from ${spec}…` })
+              const res = yield* importAgentsFromGithub(
+                spec,
+                join(input.cwd, ".efferent/agents"),
+              )
+              const parts: Array<string> = []
+              if (res.written.length > 0) parts.push(`imported ${res.written.join(", ")}`)
+              if (res.skipped.length > 0) parts.push(`skipped — ${res.skipped.join("; ")}`)
+              store.pushBlock({
+                kind: "info",
+                text: `${parts.join(" · ") || "nothing imported"} (applies on next launch)`,
+              })
+            }).pipe(
+              Effect.catchAll((e) =>
+                Effect.sync(() =>
+                  store.pushBlock({ kind: "error", text: `import failed: ${e.message}` }),
+                ),
+              ),
+            ),
+          )
+        },
+        importTools: (spec) => {
+          void Runtime.runPromise(rt)(
+            Effect.gen(function* () {
+              store.pushBlock({ kind: "info", text: `importing tools from ${spec}…` })
+              const res = yield* importToolsFromGithub(spec, join(input.cwd, ".efferent/tools"))
+              const parts: Array<string> = []
+              if (res.written.length > 0) parts.push(`imported ${res.written.join(", ")}`)
+              if (res.skipped.length > 0) parts.push(`skipped — ${res.skipped.join("; ")}`)
+              store.pushBlock({
+                kind: "info",
+                text: `${parts.join(" · ") || "nothing imported"} (applies on next launch)`,
+              })
+            }).pipe(
+              Effect.catchAll((e) =>
+                Effect.sync(() =>
+                  store.pushBlock({ kind: "error", text: `import failed: ${e.message}` }),
+                ),
+              ),
+            ),
+          )
         },
         exit: () => {
           Runtime.runFork(rt)(Deferred.succeed(exitDeferred, undefined))
@@ -256,6 +346,40 @@ export const runTuiModeSolid = (
             if (store.busy()) store.tickSpinner()
           }).pipe(Effect.delay("120 millis")),
         ),
+      )
+
+      // 7c. Cron tick (Phase 5) — once a minute, fire this workspace's due
+      //     scheduled jobs as detached agents. File-backed job list; the tick
+      //     runs only while the TUI is up (a headless daemon is the Phase 7
+      //     follow-up). Fires at most once per matching minute (minuteBucket).
+      const tickScheduler = Effect.gen(function* () {
+        const nowMs = yield* Clock.currentTimeMillis
+        const now = new Date(nowMs)
+        const jobs = yield* loadJobs()
+        for (const job of jobs) {
+          if (job.cwd !== input.cwd) continue
+          const fields = parseCron(job.cron)
+          if (fields === undefined || !cronMatches(fields, now)) continue
+          if (job.lastRunMs !== undefined && minuteBucket(job.lastRunMs) === minuteBucket(nowMs)) {
+            continue
+          }
+          yield* markJobRun(job.id, nowMs)
+          store.pushBlock({ kind: "info", text: `⏰ scheduled job fired (${job.cron}): ${job.prompt}` })
+          yield* Effect.forkDaemon(
+            scopeRuntime
+              .spawnAgent({
+                rootConversationId: store.run.getConversationId(),
+                folder: job.folder,
+                task: job.prompt,
+                title: `scheduled: ${job.prompt.slice(0, 30)}`,
+                ...(job.agent !== undefined ? { agent: job.agent } : {}),
+              })
+              .pipe(Effect.provide(approval.layer), Effect.ignore),
+          )
+        }
+      }).pipe(Effect.catchAll(() => Effect.void))
+      yield* Effect.forkScoped(
+        Effect.forever(tickScheduler.pipe(Effect.delay("60 seconds"))),
       )
 
       // 8. Mount Solid. `createComponent` avoids JSX in this `.ts` driver.

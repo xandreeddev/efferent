@@ -4,8 +4,7 @@ import { type Pkce } from "./anthropic.js"
 
 /**
  * OpenAI Codex OAuth (ChatGPT Plus/Pro subscription) — authorization-code + PKCE.
- * Protocol constants match the public ChatGPT/Codex OAuth client; see
- * `pi/packages/ai/src/utils/oauth/openai-codex.ts`.
+ * Protocol constants match the public ChatGPT/Codex OAuth client.
  */
 
 export const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"

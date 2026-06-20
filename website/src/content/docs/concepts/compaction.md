@@ -1,14 +1,14 @@
 ---
-title: Context headroom
+title: Context compaction
 description: Cache-safe context compression — four tactics that never rewrite the cached prefix, exposed as a customizable policy on the agent.
 sidebar:
-  label: Context headroom
+  label: Context compaction
   order: 5
 ---
 
-Long agent runs blow past the context window. **Headroom** is efferent's compression — but with one
+Long agent runs blow past the context window. **Compaction** is efferent's compression — but with one
 governing constraint: provider prompt caches key on a **byte-stable prefix**, so compression must
-**never rewrite history**. The tactics live natively in `usecases/headroom.ts`.
+**never rewrite history**. The tactics live natively in `usecases/compaction.ts`.
 
 ## The four tactics
 
@@ -18,7 +18,7 @@ governing constraint: provider prompt caches key on a **byte-stable prefix**, so
    (grep-shaped output grouped per file; bash output keeping head/tail + every error + a test summary),
    falling back to a blind head/tail clip.
 2. **Reversible markers.** The clip names what it dropped and how to get it back
-   (`[…headroom: ~4509 tokens of this Bash output omitted…]` → re-read with a narrower grep or
+   (`[…compaction: ~4509 tokens of this Bash output omitted…]` → re-read with a narrower grep or
    offset/limit). Compression the model can *undo* on demand.
 3. **Fast-tier middle digests.** When `UtilityLlm` is available and the dropped middle is big enough, the
    [fast role](/docs/concepts/providers/) writes a short summary into the marker.
@@ -37,12 +37,12 @@ interface CompressionPolicy {
 }
 ```
 
-Absent ⇒ the SDK default (`Headroom.default()`, today's behaviour). The building blocks:
+Absent ⇒ the SDK default (`Compaction.default()`, today's behaviour). The building blocks:
 
 ```ts
-Headroom.default()              // { tail: Headroom.toolResults() } — the default policy
-Headroom.toolResults()         // the append-time engine, as a TailCompressor
-Headroom.keepRecentToolResults(n) // a ContextCompressor: keep the last n tool results full
+Compaction.default()              // { tail: Compaction.toolResults() } — the default policy
+Compaction.toolResults()         // the append-time engine, as a TailCompressor
+Compaction.keepRecentToolResults(n) // a ContextCompressor: keep the last n tool results full
 Compression.none               // disable entirely
 Compression.pipeline(a, b)     // run tail compressors in sequence
 Compression.when(pred, step)   // apply a compressor only when a budget predicate holds

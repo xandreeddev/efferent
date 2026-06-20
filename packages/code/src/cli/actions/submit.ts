@@ -1,4 +1,4 @@
-import { Cause, Effect, Queue, Schema, type Layer } from "effect"
+import { Cause, Clock, Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
   ContextNodeId,
@@ -8,6 +8,7 @@ import {
   runAgent,
   SettingsStore,
   shouldAutoHandoff,
+  type AgentDefinition,
   type AgentHooks,
   type Approval,
   type Scope,
@@ -17,6 +18,8 @@ import {
 import { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../../prompts/coder.js"
+import { type Directive, renderDirectiveSection } from "../../usecases/directive.js"
+import type { ToolDefinition } from "../../usecases/loadTools.js"
 import { type InstructionFile } from "../../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError, inspectError } from "../util/errorFormat.js"
@@ -51,9 +54,14 @@ export interface SubmitDeps {
   readonly rootScope: Scope
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly agents: ReadonlyArray<AgentDefinition>
+  readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   /** The TUI's interactive Approval impl — satisfies the bash handler's ask. */
   readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
+  /** The session's standing goal (Phase 4), read per turn and appended to the
+   *  prompt. Returns undefined when none is set. */
+  readonly getDirective: () => Directive | undefined
 }
 
 /**
@@ -68,7 +76,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, instructionFiles, approvalLayer } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, agents, tools, instructionFiles, approvalLayer, getDirective } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -84,6 +92,24 @@ export const makeSubmit = (
   ): Effect.Effect<void, never, AppServices> =>
     Effect.gen(function* () {
       const folder = preview.title.replace(/^agent: /, "")
+
+      // If this node is a LIVE fiber, deliver to its mailbox — it reads the
+      // message at its next turn boundary — instead of resuming a finished node.
+      // The composer stays free (no busy flip); the agent keeps running.
+      const live = yield* scopeRuntime.bus.isRunning(nodeId)
+      if (live) {
+        const at = yield* Clock.currentTimeMillis
+        yield* scopeRuntime.bus.post(nodeId, { from: "you", content: text, at })
+        store.setNodePreview({
+          ...preview,
+          blocks: [...preview.blocks, { kind: "user", text }],
+        })
+        store.setInput("")
+        store.setNote(`delivered to running agent ${folder} — it reads at its next turn`)
+        store.convScroller.current?.scrollToBottom()
+        return
+      }
+
       store.setNodePreview({
         ...preview,
         blocks: [...preview.blocks, { kind: "user", text }],
@@ -269,7 +295,7 @@ export const makeSubmit = (
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
         yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
-        // Headroom: fold at the boundary. When the last turn's context crossed
+        // Compaction: fold at the boundary. When the last turn's context crossed
         // the threshold, run the handoff fold NOW — one deliberate prefix
         // rebuild (the only cache-safe way to shrink history), then the cache
         // is warm again. Skipped while messages are queued (fold once the
@@ -292,7 +318,11 @@ export const makeSubmit = (
         if (next !== undefined) yield* submit(next)
       })
 
-      const prompt = coderPrompt(cwd, new Date(), skills, instructionFiles)
+      // Append the session's standing goal (if any) so it rides every turn.
+      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools)
+      const directiveText = renderDirectiveSection(getDirective())
+      const prompt =
+        directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
       const runEffect = runAgent(
         coderAgentConfig(rootScope, scopeRuntime, prompt),
         cid,

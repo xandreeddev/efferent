@@ -184,11 +184,22 @@ interface ParsedScope {
   readonly body: string
 }
 
+export interface Frontmatter {
+  /** Flat `key: value` pairs from the fence. No arrays / nested YAML. */
+  readonly fields: Record<string, string>
+  /** Everything after the closing fence, leading blank lines trimmed. */
+  readonly body: string
+}
+
 /**
- * Same frontmatter conventions as skills: a `---\n…\n---` fence at the top,
- * `key: value` lines inside. Required keys: `name`, `description`.
+ * The one frontmatter parser shared by scopes, skills, and agent definitions:
+ * a `---\n…\n---` fence at the top with `key: value` lines inside, then a
+ * free-form body. Values are taken verbatim, trimmed, surrounding quotes
+ * stripped; comment (`#`) and blank lines are skipped. No arrays, no nested
+ * YAML, no multi-line values. Returns `undefined` when the fence is missing or
+ * unterminated. Callers decide which `fields` are required.
  */
-const parseScopeFile = (content: string): ParsedScope | undefined => {
+export const parseFrontmatter = (content: string): Frontmatter | undefined => {
   if (!content.startsWith("---")) return undefined
   const rest = content.slice(3)
   const lfIndex = rest.indexOf("\n")
@@ -209,10 +220,20 @@ const parseScopeFile = (content: string): ParsedScope | undefined => {
     const value = trimmed.slice(colon + 1).trim().replace(/^["']|["']$/g, "")
     fields[key] = value
   }
-  const name = fields["name"]
-  const description = fields["description"]
+  return { fields, body }
+}
+
+/**
+ * Same frontmatter conventions as skills/agents. Required keys: `name`,
+ * `description`.
+ */
+const parseScopeFile = (content: string): ParsedScope | undefined => {
+  const fm = parseFrontmatter(content)
+  if (fm === undefined) return undefined
+  const name = fm.fields["name"]
+  const description = fm.fields["description"]
   if (name === undefined || description === undefined) return undefined
-  return { name, description, body }
+  return { name, description, body: fm.body }
 }
 
 /**

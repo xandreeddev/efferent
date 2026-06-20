@@ -40,11 +40,13 @@ export const docsNav: DocGroup[] = [
     group: "Concepts",
     items: [
       { slug: "concepts/architecture", label: "Architecture" },
+      { slug: "concepts/runtime", label: "The runtime" },
       { slug: "concepts/agent-loop", label: "The agent loop" },
       { slug: "concepts/tools", label: "Tools & toolkits" },
       { slug: "concepts/providers", label: "Providers & models" },
-      { slug: "concepts/headroom", label: "Context headroom" },
+      { slug: "concepts/compaction", label: "Context compaction" },
       { slug: "concepts/sub-agents", label: "Sub-agents" },
+      { slug: "concepts/fleet", label: "The fleet" },
       { slug: "concepts/skills", label: "Skills" },
       { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/evals", label: "Evals" },
@@ -59,6 +61,8 @@ export const docsNav: DocGroup[] = [
       { slug: "guides/compression-policy", label: "Compression policy" },
       { slug: "guides/coding-agent", label: "The coding agent" },
       { slug: "guides/sub-agents", label: "Spawning sub-agents" },
+      { slug: "guides/fleet", label: "Run a fleet" },
+      { slug: "guides/using-efferent", label: "Using efferent" },
     ],
   },
   {
@@ -67,7 +71,7 @@ export const docsNav: DocGroup[] = [
       { slug: "reference/agent-config", label: "AgentConfig" },
       { slug: "reference/run-agent", label: "runAgent" },
       { slug: "reference/hooks", label: "AgentHooks" },
-      { slug: "reference/compression", label: "Compression & Headroom" },
+      { slug: "reference/compression", label: "Compression & Compaction" },
       { slug: "reference/ports", label: "Ports" },
       { slug: "reference/adapters", label: "Adapter layers" },
       { slug: "reference/settings", label: "Settings" },
@@ -99,7 +103,7 @@ export const products = [
     accent: "var(--ember)",
     blurb:
       "The agent framework: entities, ports, and use cases as Effect Layers; tools as an @effect/ai Toolkit; every error tagged; the provider a runtime choice. Build your own agent in a handful of lines.",
-    points: ["The agent loop as one Effect", "Ports & adapters, typed errors", "Cache-safe context compression"],
+    points: ["The agent loop as one Effect", "Ports & adapters, typed errors", "Cache-safe context compaction"],
     href: "/docs/concepts/architecture",
     cta: "Explore the SDK",
   },
@@ -109,7 +113,7 @@ export const products = [
     tag: "the efferent CLI",
     accent: "var(--verdigris)",
     blurb:
-      "The batteries-included coding agent built on the SDK — a multi-pane terminal UI (and headless print / json / rpc modes), file + shell + web tools, and a persistent sub-agent tree. One npm install.",
+      "The batteries-included coding agent built on the SDK — a borderless full-screen terminal UI (and headless print / json / rpc modes), file + shell + web tools, and a persistent sub-agent fleet. One npm install.",
     points: ["TUI + print + json + rpc", "Sub-agents over a context tree", "Multi-provider, subscription or key"],
     href: "/docs/getting-started",
     cta: "Get started",
@@ -124,14 +128,19 @@ export const capabilities = [
     href: "/docs/concepts/providers",
   },
   {
-    title: "Context headroom",
+    title: "Context compaction",
     desc: "Compression that never rewrites the cached prefix — a customizable policy on the agent, on by default.",
-    href: "/docs/concepts/headroom",
+    href: "/docs/concepts/compaction",
   },
   {
     title: "Sub-agents & context tree",
     desc: "One generic run_agent tool spawns folder-scoped sub-agents; resume, branch, or hand off — every spawn persists.",
     href: "/docs/concepts/sub-agents",
+  },
+  {
+    title: "Fleet & orchestration",
+    desc: "One workspace, many sessions, one seat: fire named agent roles from a live session, attach to any of them, give the fleet a goal with a verifier, schedule with cron — fibers in one runtime.",
+    href: "/docs/concepts/fleet",
   },
   {
     title: "Colocated evals",

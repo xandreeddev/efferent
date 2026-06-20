@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
 import { FileSystem, type Skill } from "@xandreed/sdk-core"
+import { parseFrontmatter } from "./discoverScopeTree.js"
 
 /**
  * Walk `cwd → parents → home` looking for `.efferent/skills/*.md` files,
@@ -72,42 +73,18 @@ const skillSearchPath = (cwd: string, homeDir: string): ReadonlyArray<string> =>
 }
 
 /**
- * Minimal frontmatter parser. Expects:
- *
- *   ---
- *   name: <slug>
- *   description: <one line>
- *   ---
- *   (body)
- *
- * Returns `undefined` if frontmatter is missing or required keys are
- * absent. Values are taken verbatim, trimmed; no nested YAML, no arrays,
- * no multi-line values.
+ * Parse one skill `.md` via the shared {@link parseFrontmatter}. Required
+ * keys: `name`, `description`. The body is read lazily by `read_skill`, so
+ * only the metadata is kept here.
  */
 const parseSkillFile = (
   content: string,
   sourcePath: string,
 ): Skill | undefined => {
-  if (!content.startsWith("---")) return undefined
-  const rest = content.slice(3)
-  const lfIndex = rest.indexOf("\n")
-  if (lfIndex === -1) return undefined
-  const afterFirstFence = rest.slice(lfIndex + 1)
-  const closeIndex = afterFirstFence.indexOf("\n---")
-  if (closeIndex === -1) return undefined
-  const frontmatter = afterFirstFence.slice(0, closeIndex)
-  const fields: Record<string, string> = {}
-  for (const line of frontmatter.split("\n")) {
-    const trimmed = line.trim()
-    if (trimmed === "" || trimmed.startsWith("#")) continue
-    const colon = trimmed.indexOf(":")
-    if (colon === -1) continue
-    const key = trimmed.slice(0, colon).trim()
-    const value = trimmed.slice(colon + 1).trim().replace(/^["']|["']$/g, "")
-    fields[key] = value
-  }
-  const name = fields["name"]
-  const description = fields["description"]
+  const fm = parseFrontmatter(content)
+  if (fm === undefined) return undefined
+  const name = fm.fields["name"]
+  const description = fm.fields["description"]
   if (name === undefined || description === undefined) return undefined
   return { name, description, sourcePath }
 }

@@ -27,7 +27,7 @@ src/
 │   ├── inMemoryConversationStore.ts / inMemoryContextTreeStore.ts   Ref-backed; mirror Postgres
 │   ├── workspace.ts    withTempWorkspace (acquire/release temp dir) + readWorkspaceFile
 │   └── coder.ts        runCoder — real coder agent over a temp repo + tool/file capture
-├── suites/{handoff,toolSelection,coderEdit,wholeTask,judgeApproval,headroomDigest,sessionTitle}.eval.ts
+├── suites/{handoff,toolSelection,coderEdit,wholeTask,judgeApproval,compactionDigest,sessionTitle}.eval.ts
 └── run.ts              bun run eval [name …] [--config f] [--main m] [--fast m] [--json]
 ```
 

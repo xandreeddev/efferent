@@ -8,7 +8,7 @@ import type {
 /**
  * Mode-agnostic event vocabulary the loop emits via hooks. Each mode
  * (tui / print / json / rpc) subscribes to the same queue and renders
- * accordingly. Modeled loosely on Pi's AgentEventSink.
+ * accordingly.
  */
 export type AgentEvent =
   // Internal drain sentinel: offered by a mode AFTER its run completes so the
@@ -69,7 +69,7 @@ export type AgentEvent =
     }
   | { readonly type: "skill_load"; readonly name: string }
   | {
-      /** A fast-tier helper call ran inside the loop (e.g. a headroom middle-summary or session title). */
+      /** A fast-tier helper call ran inside the loop (e.g. a compaction middle-summary or session title). */
       readonly type: "helper_usage"
       readonly role: "fast"
       readonly usage: TokenUsage

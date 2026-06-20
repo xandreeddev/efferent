@@ -24,6 +24,15 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   exit: () => {},
   copySelection: () => false,
   resolveApproval: () => {},
+  roles: [],
+  tools: [],
+  spawnAgent: () => {},
+  stopAgent: () => {},
+  listFleet: () => [],
+  importAgents: () => {},
+  importTools: () => {},
+  getDirective: () => undefined,
+  setDirective: () => {},
 })
 
 /**

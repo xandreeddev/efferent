@@ -38,6 +38,15 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   exit: () => {},
   copySelection: () => false,
   resolveApproval: () => {},
+  roles: [],
+  tools: [],
+  spawnAgent: () => {},
+  stopAgent: () => {},
+  listFleet: () => [],
+  importAgents: () => {},
+  importTools: () => {},
+  getDirective: () => undefined,
+  setDirective: () => {},
 })
 
 test("conversation rail renders a user turn, assistant prose, and a tool pill", async () => {
@@ -87,6 +96,9 @@ test("conversation rail renders a user turn, assistant prose, and a tool pill", 
 
 test("activity pane shows the execution tree, stats header, and sections", async () => {
   const store = newStore()
+  // agy: the contextual panel fills the message region only when focused
+  // (no default sidebar) — focus it to see the activity view.
+  store.setFocus("side")
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 110,
     height: 32,

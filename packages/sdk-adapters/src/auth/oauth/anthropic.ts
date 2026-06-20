@@ -3,10 +3,9 @@ import { Effect } from "effect"
 
 /**
  * Anthropic OAuth (Claude Pro/Max subscription) — authorization-code + PKCE.
- * Protocol constants match the public Claude Code OAuth client (the same flow
- * pi and other CLIs use); see `pi/packages/ai/src/utils/oauth/anthropic.ts`.
- * Pure protocol helpers; the callback server + browser-open live in the CLI
- * driver (`cli/src/login/oauthServer.ts`).
+ * Protocol constants match the public Claude Code OAuth client. Pure protocol
+ * helpers; the callback server + browser-open live in the CLI driver
+ * (`cli/src/login/oauthServer.ts`).
  */
 
 // Public Claude Code OAuth client id (not a secret).

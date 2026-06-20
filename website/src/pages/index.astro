@@ -34,7 +34,7 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
 
 <BaseLayout
   title="efferent"
-  description="An open-source coding-agent SDK on Effect.ts + Bun, and the coding agent built on it — composable Effects, a multi-provider router, context compression, and a persistent sub-agent tree."
+  description="An open-source agent framework on Effect.ts + Bun — and the coding agent built on it. The loop, a multi-provider router, cache-safe context compaction, and a persistent sub-agent fleet, composed as Effects in your codebase."
 >
   <!-- HERO -->
   <section class="hero">
@@ -44,8 +44,8 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
         <h1>Coding agents,<br /><span class="grad">composed on Effect.</span></h1>
         <p class="sub">
           An open-source SDK for building agents — and a batteries-included coding agent built on it.
-          The loop, the multi-provider router, context compression, and a sub-agent tree live in your
-          codebase as composable Effects, not buried in a CLI.
+          The loop, the multi-provider router, cache-safe context compaction, and a sub-agent fleet
+          live in your codebase as composable Effects, not buried in a CLI.
         </p>
         <div class="hero-cta">
           <a class="btn btn-primary" href={href("/docs/getting-started")}>
@@ -126,8 +126,8 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
       <p class="eyebrow">Why Effect</p>
       <h2>Typed errors, Layers, and a loop you can read.</h2>
       <p>
-        efferent is the wedge: the agent loop, the context tree, headroom compression, the multi-provider
-        router, and approval are all composable <code>Layer</code>s and Effects in a pure-domain package —
+        efferent is the wedge: the agent loop, the context tree, cache-safe context compaction, the
+        multi-provider router, and approval are all composable <code>Layer</code>s and Effects in a pure-domain package —
         typed errors end to end, no <code>try</code>/<code>catch</code>, provider selection a runtime
         concern. Each agent is a thin driver that composes those Layers at the edge and hands off to Bun.
         No build step: Bun runs the TypeScript directly.

@@ -24,6 +24,14 @@ import {
 import { logout, openLoginFlow, openLogoutPicker } from "../actions/login.js"
 import { openOnboardingFlow } from "../actions/onboarding.js"
 import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
+import { parseDirective } from "../../usecases/directive.js"
+import {
+  addJob,
+  loadJobs,
+  parseScheduleArg,
+  removeJob,
+  type ScheduledJob,
+} from "../../usecases/schedule.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
 const newConversationId = (): ConversationId =>
@@ -175,6 +183,269 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":db":
       void ctx.run(applyDb(store, store.status().cwd, arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)))
       return
+    case ":spawn": {
+      // Fire a named agent role from the live session: :spawn <agent> <folder> <task>
+      const parts = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (parts.length < 3) {
+        store.pushBlock({
+          kind: "info",
+          text: "usage: :spawn <agent> <folder> <task>  (see :agents for roles)",
+        })
+        return
+      }
+      const [agent, folder, ...rest] = parts
+      ctx.spawnAgent(agent!, folder!, rest.join(" "))
+      return
+    }
+    case ":agents": {
+      const sub = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (sub[0] === "add") {
+        if (sub[1] === undefined) {
+          store.pushBlock({
+            kind: "info",
+            text: "usage: :agents add github:owner/repo[/path][@ref]",
+          })
+          return
+        }
+        ctx.importAgents(sub[1])
+        return
+      }
+      if (ctx.roles.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text: "no agent roles defined — add .efferent/agents/<name>.md, or :agents add github:owner/repo/path",
+        })
+        return
+      }
+      store.pushBlock({
+        kind: "info",
+        text:
+          "agent roles:\n" +
+          ctx.roles.map((r) => `  ${r.name} — ${r.description}`).join("\n") +
+          "\nfire one with :spawn <agent> <folder> <task>",
+      })
+      return
+    }
+    case ":stop": {
+      const running = ctx.listFleet()
+      if (arg === undefined || arg.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text:
+            running.length === 0
+              ? "no agents running"
+              : "running agents:\n" +
+                running.map((e) => `  ${e.id}: ${e.title} (${e.folder})`).join("\n") +
+                "\nstop one with :stop <id>",
+        })
+        return
+      }
+      const id = Number(arg)
+      if (!Number.isInteger(id)) {
+        store.pushBlock({ kind: "info", text: "usage: :stop <id> (run :stop for running ids)" })
+        return
+      }
+      ctx.stopAgent(id)
+      store.pushBlock({ kind: "info", text: `stopping agent ${id}…` })
+      return
+    }
+    case ":fleet": {
+      // The orchestration cockpit snapshot: the standing goal (P4), the live
+      // fired agents (P3/fleet), and this workspace's scheduled jobs (P5) — the
+      // three persistent orchestration concerns, in one readout. (The header's
+      // ◆ N agents chip tracks the live fleet continuously via the event pump;
+      // :tree shows the full run tree.)
+      const d = ctx.getDirective()
+      const fired = ctx.listFleet()
+      void ctx.run(
+        loadJobs().pipe(
+          Effect.flatMap((jobs) =>
+            Effect.sync(() => {
+              const mine = jobs.filter((j) => j.cwd === store.status().cwd)
+              const lines: Array<string> = ["── fleet ──"]
+              lines.push(
+                d === undefined
+                  ? "directive: none (:goal <objective> to set)"
+                  : `directive: ${d.objective}${d.criteria !== undefined ? ` — done when ${d.criteria}` : ""}`,
+              )
+              lines.push(
+                fired.length === 0
+                  ? "running agents: none (:spawn <agent> <folder> <task> to fire one)"
+                  : `running agents: ${fired.map((f) => `#${f.id} ${f.title} (${f.folder})`).join(", ")}`,
+              )
+              lines.push(
+                mine.length === 0
+                  ? "scheduled: none (:schedule add …)"
+                  : `scheduled: ${mine.map((j) => `${j.cron} → ${j.prompt}`).join(" · ")}`,
+              )
+              lines.push("verbs: :spawn · :stop <id> · :goal · :verify · :schedule · :tree · :agents · :tools")
+              store.pushBlock({ kind: "info", text: lines.join("\n") })
+            }),
+          ),
+        ),
+      )
+      return
+    }
+    case ":schedule": {
+      const a = arg ?? ""
+      if (a.startsWith("add")) {
+        const parsed = parseScheduleArg(a.replace(/^add\s+/, ""))
+        if (parsed === undefined) {
+          store.pushBlock({
+            kind: "info",
+            text: "usage: :schedule add <cron> :: <folder> :: <prompt> [:: <agent>]  (e.g. :schedule add 0 9 * * 1 :: . :: review open PRs)",
+          })
+          return
+        }
+        const job: ScheduledJob = {
+          id: crypto.randomUUID(),
+          cron: parsed.cron,
+          cwd: store.status().cwd,
+          folder: parsed.folder,
+          prompt: parsed.prompt,
+          ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+          createdAt: Date.now(),
+        }
+        void ctx.run(
+          addJob(job).pipe(
+            Effect.flatMap(() =>
+              Effect.sync(() =>
+                store.pushBlock({
+                  kind: "info",
+                  text: `scheduled (${job.cron}): ${job.prompt}${job.agent !== undefined ? ` [${job.agent}]` : ""} — fires while efferent is open. :schedule to list · :schedule rm ${job.id.slice(0, 8)} to drop.`,
+                }),
+              ),
+            ),
+          ),
+        )
+        return
+      }
+      if (a.startsWith("rm") || a.startsWith("remove")) {
+        const id = a.replace(/^(rm|remove)\s+/, "").trim()
+        if (id.length === 0) {
+          store.pushBlock({ kind: "info", text: "usage: :schedule rm <id>" })
+          return
+        }
+        void ctx.run(
+          loadJobs().pipe(
+            Effect.flatMap((jobs) => {
+              const match = jobs.find((j) => j.id === id || j.id.startsWith(id))
+              if (match === undefined) {
+                return Effect.sync(() =>
+                  store.pushBlock({ kind: "info", text: `no scheduled job '${id}'` }),
+                )
+              }
+              return removeJob(match.id).pipe(
+                Effect.flatMap(() =>
+                  Effect.sync(() =>
+                    store.pushBlock({ kind: "info", text: `removed scheduled job: ${match.prompt}` }),
+                  ),
+                ),
+              )
+            }),
+          ),
+        )
+        return
+      }
+      void ctx.run(
+        loadJobs().pipe(
+          Effect.flatMap((jobs) =>
+            Effect.sync(() => {
+              const mine = jobs.filter((j) => j.cwd === store.status().cwd)
+              store.pushBlock({
+                kind: "info",
+                text:
+                  mine.length === 0
+                    ? "no scheduled jobs — :schedule add <cron> :: <folder> :: <prompt>"
+                    : "scheduled jobs (this workspace):\n" +
+                      mine
+                        .map(
+                          (j) =>
+                            `  ${j.id.slice(0, 8)}  ${j.cron}  ${j.folder}  ${j.prompt}${j.agent !== undefined ? ` [${j.agent}]` : ""}`,
+                        )
+                        .join("\n"),
+              })
+            }),
+          ),
+        ),
+      )
+      return
+    }
+    case ":tools": {
+      const sub = arg === undefined ? [] : arg.split(/\s+/).filter((t) => t.length > 0)
+      if (sub[0] === "add") {
+        if (sub[1] === undefined) {
+          store.pushBlock({ kind: "info", text: "usage: :tools add github:owner/repo[/path][@ref]" })
+          return
+        }
+        ctx.importTools(sub[1])
+        return
+      }
+      if (ctx.tools.length === 0) {
+        store.pushBlock({
+          kind: "info",
+          text: "no custom tools — add .efferent/tools/<name>.md, or :tools add github:owner/repo/path",
+        })
+        return
+      }
+      store.pushBlock({
+        kind: "info",
+        text:
+          "custom tools (run_tool):\n" +
+          ctx.tools
+            .map((t) => `  ${t.name}(${t.params.map((p) => p.name).join(", ")}) — ${t.description}`)
+            .join("\n"),
+      })
+      return
+    }
+    case ":goal": {
+      if (arg === undefined || arg.length === 0) {
+        const d = ctx.getDirective()
+        store.pushBlock({
+          kind: "info",
+          text:
+            d === undefined
+              ? "no directive set — :goal <objective> [:: done-when criteria]"
+              : `directive: ${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""} (:verify to check · :goal clear to drop)`,
+        })
+        return
+      }
+      if (arg.trim() === "clear") {
+        ctx.setDirective(undefined)
+        store.pushBlock({ kind: "info", text: "directive cleared" })
+        return
+      }
+      const d = parseDirective(arg)
+      if (d === undefined) {
+        store.pushBlock({ kind: "info", text: "usage: :goal <objective> [:: done-when criteria]" })
+        return
+      }
+      ctx.setDirective(d)
+      store.pushBlock({
+        kind: "info",
+        text: `directive set — pursued every turn until :verify confirms it.\n${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""}`,
+      })
+      return
+    }
+    case ":verify": {
+      const d = ctx.getDirective()
+      const adhoc = arg !== undefined && arg.length > 0
+      const objective = adhoc ? arg! : d?.objective
+      if (objective === undefined) {
+        store.pushBlock({
+          kind: "info",
+          text: "nothing to verify — set a goal (:goal <objective>) or :verify <objective>",
+        })
+        return
+      }
+      const criteria = adhoc ? undefined : d?.criteria
+      const task =
+        `Verify whether this objective is genuinely met:\n${objective}` +
+        (criteria !== undefined ? `\nAcceptance: ${criteria}` : "") +
+        `\n\nRead the workspace, check it independently, and report MET / NOT MET / INCONCLUSIVE with concrete evidence.`
+      ctx.spawnAgent("verifier", ".", task)
+      return
+    }
     case ":traces":
       void ctx.run(openConversationTraces(store, store.run.getConversationId()))
       return

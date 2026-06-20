@@ -99,7 +99,7 @@ drill-down → click a trace → native Tempo waterfall
   (`agent.prompt.*`, `gen_ai.request.model`, `gen_ai.usage.*`, `gen_ai.cost_usd`,
   `gen_ai.cache_hit_ratio`), plus **`agent.tool.<name>`** (name, ok, `args_summary`),
   **`agent.subagent <label>`** (node/depth/folder), and the helper spans
-  `agent.approval.judge:<tool>` / `agent.headroom.digest` / `agent.title`. Eval runs add
+  `agent.approval.judge:<tool>` / `agent.compaction.digest` / `agent.title`. Eval runs add
   `eval.run → eval.suite → eval.case → eval.task` + `eval.scorer:*`
   (`resource.eval.run_id` on every eval span).
 - Metrics: `gen_ai_tokens_total`, `gen_ai_calls_total`, **`gen_ai_cost_usd_total`**,

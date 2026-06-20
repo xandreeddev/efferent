@@ -12,7 +12,7 @@ import { processSpans } from "./trace/process.js"
 import { renderRuns } from "./trace/report.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
-import { headroomDigestEval } from "./suites/headroomDigest.eval.js"
+import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
 import { judgeApprovalEval } from "./suites/judgeApproval.eval.js"
 import { repoTasksEval } from "./suites/repoTasks.eval.js"
 import { sessionTitleEval } from "./suites/sessionTitle.eval.js"
@@ -28,7 +28,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   coderEditEval,
   wholeTaskEval,
   judgeApprovalEval,
-  headroomDigestEval,
+  compactionDigestEval,
   sessionTitleEval,
   repoTasksEval,
 ]

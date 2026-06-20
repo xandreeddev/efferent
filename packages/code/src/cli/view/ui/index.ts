@@ -2,7 +2,7 @@
  *  borders, surfaces, glyphs, and markers. Everything else composes these. */
 export { Pane } from "./Pane.js"
 export { Logo, type LogoVariant } from "./Logo.js"
-export { Modal, MODAL_WIDTH, MODAL_RULE } from "./Modal.js"
+export { Sheet, SHEET_WIDTH, SHEET_RULE } from "./Sheet.js"
 export { SelectBody, SELECT_MAX_ROWS } from "./SelectBody.js"
 export { PromptBody } from "./PromptBody.js"
 export { ThemePreview } from "./ThemePreview.js"

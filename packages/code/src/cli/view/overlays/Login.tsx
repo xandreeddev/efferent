@@ -1,4 +1,5 @@
-import { createMemo, Match, Switch } from "solid-js"
+import { createMemo, Match, Show, Switch } from "solid-js"
+import type { Overlay as OverlayState, TuiContext } from "../../state/store.js"
 import type { SelectState } from "../../presentation/selectBox.js"
 import type { LoginFlow } from "../../presentation/loginFlow.js"
 import { SelectList } from "./SelectList.js"
@@ -30,12 +31,14 @@ const stepView = (flow: LoginFlow): StepView => {
 }
 
 /**
- * The `:login` overlay: a select step (auth method / provider) renders the shared
+ * The `:login` flow — a **borderless inline** sheet in the bottom chrome (agy: no
+ * floating modal). A select step (auth method / provider) renders the shared
  * `SelectList`; a text step (API key / OAuth redirect / local URL) renders the
- * `PromptBox`. The pure `LoginFlow` state machine (`tui/loginFlow.ts`) drives
- * every transition; this is just its view.
+ * `PromptBox`. Reads the active login overlay from the store (keyed `Show` so it
+ * never reads `.flow` off another overlay); the pure `LoginFlow` state machine
+ * drives every transition, keys come from `keys/overlay.ts`.
  */
-export const Login = (props: { flow: LoginFlow }) => {
+const LoginFlowView = (props: { flow: LoginFlow }) => {
   const view = createMemo(() => stepView(props.flow))
   return (
     <Switch>
@@ -50,4 +53,12 @@ export const Login = (props: { flow: LoginFlow }) => {
       </Match>
     </Switch>
   )
+}
+
+export const Login = (props: { ctx: TuiContext }) => {
+  const flow = createMemo((): LoginFlow | undefined => {
+    const o: OverlayState = props.ctx.store.overlay()
+    return o.kind === "login" ? o.flow : undefined
+  })
+  return <Show when={flow()}>{(f) => <LoginFlowView flow={f()} />}</Show>
 }

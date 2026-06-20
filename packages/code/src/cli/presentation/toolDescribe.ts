@@ -55,6 +55,18 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       const n = Array.isArray(a.steps) ? a.steps.length : 0
       return `Plan(${n} step${n === 1 ? "" : "s"})`
     }
+    // Fleet comms — surfaced as readable events so inter-agent traffic is visible
+    // in the rail as it happens (a message to a peer, a note on the blackboard).
+    case "send_message":
+      return `Message(${truncate(str(a.content) ?? "", 44)})`
+    case "blackboard_post":
+      return `Note(${truncate(str(a.note) ?? "", 44)})`
+    case "blackboard_read":
+      return "Board(read)"
+    case "run_tool":
+      return `Tool(${str(a.name) ?? "?"})`
+    case "schedule":
+      return `Schedule(${truncate(str(a.cron) ?? "", 20)})`
     default:
       return toolName
   }
@@ -159,6 +171,16 @@ export const describeToolResult = (
     }
     case "read_skill":
       return "loaded"
+    case "send_message":
+      return r.delivered === false ? "not running" : "delivered"
+    case "blackboard_post":
+      return "posted"
+    case "blackboard_read": {
+      const n = Array.isArray(r.notes) ? r.notes.length : undefined
+      return n !== undefined ? `${n} note${n === 1 ? "" : "s"}` : "read"
+    }
+    case "schedule":
+      return "scheduled"
     case "update_plan": {
       const total = num(r.total)
       const done = num(r.done)

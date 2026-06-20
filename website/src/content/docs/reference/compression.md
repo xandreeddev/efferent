@@ -1,13 +1,13 @@
 ---
-title: Compression & Headroom
-description: The CompressionPolicy type, the Compression combinators, and the Headroom default tactics.
+title: Compression & Compaction
+description: The CompressionPolicy type, the Compression combinators, and the Compaction default tactics.
 sidebar:
-  label: Compression & Headroom
+  label: Compression & Compaction
   order: 4
 ---
 
-From `@xandreed/sdk-core` — `entities/Compression.ts` (types + combinators) and `usecases/headroom.ts`
-(the default tactics). Concepts: [context headroom](/docs/concepts/headroom/).
+From `@xandreed/sdk-core` — `entities/Compression.ts` (types + combinators) and `usecases/compaction.ts`
+(the default tactics). Concepts: [context compaction](/docs/concepts/compaction/).
 
 ## Types
 
@@ -50,12 +50,12 @@ Compression.pipeline(...steps: TailCompressor[])               // run in sequenc
 Compression.when(pred: (b: CompressionBudget) => boolean, step) // apply step only when pred holds
 ```
 
-## `Headroom` default tactics
+## `Compaction` default tactics
 
 ```ts
-Headroom.default()                 // CompressionPolicy — { tail: Headroom.toolResults() } (the SDK default)
-Headroom.toolResults()             // TailCompressor — append-time structure-aware clip + optional fast digest
-Headroom.keepRecentToolResults(n)  // ContextCompressor — keep the last n tool-result messages full, elide older
+Compaction.default()                 // CompressionPolicy — { tail: Compaction.toolResults() } (the SDK default)
+Compaction.toolResults()             // TailCompressor — append-time structure-aware clip + optional fast digest
+Compaction.keepRecentToolResults(n)  // ContextCompressor — keep the last n tool-result messages full, elide older
 ```
 
 :::caution
