@@ -48,20 +48,32 @@ fiber handle (so `:stop` is `Fiber.interrupt`), its display title, and its folde
 persistent `:tree` is the durable view; the supervisor is just the live handle set. The header's
 `◆ N agents` chip reads the same live fleet via the event pump.
 
+## Non-blocking by construction
+
+Both spawn paths return without waiting on the work: a model's `run_agent` forks the child as a
+supervised background fiber and hands back `{ nodeId, name, status: "running" }` at once; a human
+`:spawn` fires a detached agent the same way. So a coordinator spawns its whole team in parallel and
+never freezes — it gathers results with **`wait_for_agents`** (which parks only the caller, wakes on
+a child finishing *or* a message *or* a timeout) and is reachable the entire time. The full message
+protocol — channels, the on-the-wire shape, drain timing, completion routing, and the guarantees —
+is its own page: **[agent messaging](/docs/concepts/agent-messaging/)**.
+
 ## The bus: mailboxes + a blackboard
 
-Coordination is two channels, both `Ref`-backed (`usecases/agentBus.ts`):
+Coordination is `Ref`-backed (`usecases/agentBus.ts`):
 
-- **Mailboxes** — a per-agent inbox keyed by context-node id. `send_message` posts to one; the
-  recipient's loop **drains it at its next turn boundary** (a driver `onTransformContext` hook)
-  and folds the messages in as attributed `[inbox …]` user turns. A mailbox exists only while
-  its agent is running (`markRunning` on spawn, `markDone` on every exit), so a message to a
-  finished agent fails fast.
+- **Mailboxes** — a per-agent inbox keyed by context-node id. `send_message` (or a human pairing in
+  a preview) posts to one; the recipient's loop **drains it at its next turn boundary** (a driver
+  `onTransformContext` hook) and folds the messages in as attributed `[inbox …]` user turns. A
+  mailbox exists only while its agent is running (`markRunning` on spawn, `complete`/`markDone` on
+  every exit), so a message to a finished agent fails fast.
 - **Blackboard** — a shared scratchpad every agent in the turn's fleet reads and writes, so
   parallel siblings coordinate without addressing each other.
+- **Completion + supervision** — the bus also holds each run's fiber (so `interruptAll` tears the
+  fleet down on Esc/exit) and a completion latch; when a child finishes it posts the outcome to its
+  parent's mailbox + the blackboard and keeps a terminal result for a later `snapshot`.
 
-The human messaging a *running* agent uses the very same mailbox (the node-preview composer posts
-to it). It's all in-process — no transport, no serialization.
+It's all in-process — no transport, no serialization.
 
 ## The seat
 

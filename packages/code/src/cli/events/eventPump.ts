@@ -9,6 +9,7 @@ import {
   toolArtifacts,
 } from "../presentation/toolDescribe.js"
 import { formatTokens } from "../presentation/statusBar.js"
+import { openApproval } from "../presentation/approvalView.js"
 import {
   onAgentEnd as treeAgentEnd,
   onSubAgentEndKeyed as treeSubAgentEndKeyed,
@@ -58,7 +59,8 @@ export const makeEventReducer = (
   const toolTreeIds = new Map<string, number[]>() // matchKey → FIFO of tree node ids
   const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
   const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
-  const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of preview pill ids
+  const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of node-log pill ids
+  const toolNodeId = new Map<string, string>() // matchKey → the node a logged tool pill belongs to
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
   // One live "Running N agents…" rail block per fan-out burst: rows keyed by
   // node id, updated in place (Claude-style), reset when the parent's next
@@ -159,19 +161,21 @@ export const makeEventReducer = (
           enqueue(toolTreeIds, matchKey(event), id)
           return { ...p, tree }
         })
-        // Top-level tools get a compact chat pill; sub-agent inner tools live
-        // only in the tree — unless their node's session is open in the
-        // preview, where they stream as live pills.
+        // Top-level tools get a compact chat pill on the lead rail; sub-agent
+        // inner tools always stream into that node's live log (so opening its
+        // pane — now or later — shows the whole run, not just events after you
+        // looked), plus the tree.
         if (event.nodeId === undefined && subAgentDepth === 0) {
           toolSeq++
           const sid = `t${toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
-        } else if (watchedNode(event.nodeId)) {
+        } else if (event.nodeId !== undefined) {
           toolSeq++
-          const pid = `pv${toolSeq}`
+          const pid = `nl${toolSeq}`
           enqueue(previewToolIds, matchKey(event), pid)
-          store.appendPreviewBlock({ kind: "tool", id: pid, toolName: label, state: "running" })
+          toolNodeId.set(matchKey(event), event.nodeId)
+          store.appendNodeLog(event.nodeId, { kind: "tool", id: pid, toolName: label, state: "running" })
         }
         if (event.nodeId !== undefined) {
           touchAgentRow(event.nodeId, (r) => ({
@@ -204,8 +208,10 @@ export const makeEventReducer = (
           })
         }
         const pid = dequeue(previewToolIds, matchKey(event))
-        if (pid !== undefined) {
-          store.patchPreviewTool(pid, {
+        const pnode = toolNodeId.get(matchKey(event))
+        if (pid !== undefined && pnode !== undefined) {
+          toolNodeId.delete(matchKey(event))
+          store.patchNodeLogTool(pnode, pid, {
             state: event.ok ? "ok" : "error",
             ...(detail !== undefined ? { detail } : {}),
             ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
@@ -229,6 +235,11 @@ export const makeEventReducer = (
         // already persisted, and waiting for turn end would make a running
         // agent unreachable mid-turn.
         opts.refreshNav?.()
+        // Seed the node's live log with the task it was given — so its pane
+        // opens onto "what it was asked", then streams its work under it.
+        if (event.nodeId !== undefined && event.task.trim().length > 0) {
+          store.appendNodeLog(event.nodeId, { kind: "user", text: event.task })
+        }
         // This run's session is on-screen (the human resumed it from the
         // preview, or is watching the node the agent spawned into): its
         // events stream into the preview, and the parent rail gets no Task
@@ -292,8 +303,15 @@ export const makeEventReducer = (
         // composes with the row close instead of short-circuiting it.
         const ownTreeId = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
         if (event.nodeId !== undefined) subTreeByNode.delete(event.nodeId)
-        if (watchedNode(event.nodeId) && !event.ok && event.summary.trim().length > 0) {
-          store.appendPreviewBlock({ kind: "error", text: event.summary })
+        // Log the run's conclusion into its own live log (its pane shows it),
+        // whether or not that pane is open right now.
+        if (event.nodeId !== undefined && event.summary.trim().length > 0) {
+          store.appendNodeLog(
+            event.nodeId,
+            event.ok
+              ? { kind: "assistant", text: event.summary }
+              : { kind: "error", text: event.summary },
+          )
         }
         if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
           // Human-driven resume (no rail presence) — close its tree node only.
@@ -399,12 +417,14 @@ export const makeEventReducer = (
               accumulateRoleSpend(s, "main", u.inputTokens + u.outputTokens),
             )
           }
-          if (watchedNode(event.nodeId)) {
+          // Always stream the narration into the node's live log (its pane reads
+          // it), regardless of whether that pane is open right now.
+          if (event.nodeId !== undefined) {
             if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
-              store.appendPreviewBlock({ kind: "reasoning", text: event.reasoning })
+              store.appendNodeLog(event.nodeId, { kind: "reasoning", text: event.reasoning })
             }
             if (event.text.trim().length > 0) {
-              store.appendPreviewBlock({ kind: "assistant", text: event.text })
+              store.appendNodeLog(event.nodeId, { kind: "assistant", text: event.text })
             }
           }
           return
@@ -441,6 +461,29 @@ export const makeEventReducer = (
 
       case "error":
         store.pushBlock({ kind: "error", text: event.message })
+        return
+
+      case "approval_needed": {
+        // Remote-client path: the daemon parked on a bash approval — render the
+        // sheet. The key handler answers via `ctx.resolveApproval` → `approve`.
+        // (In-process never emits this; it uses `makeTuiApproval` directly.)
+        const hint = {
+          ...(event.reason !== undefined ? { reason: event.reason } : {}),
+          ...(event.folder !== undefined ? { folder: event.folder } : {}),
+        }
+        store.setOverlay({
+          kind: "approval",
+          state: openApproval(
+            { tool: event.tool, summary: event.summary, cwd: event.cwd, ruleKey: event.ruleKey },
+            hint,
+          ),
+        })
+        return
+      }
+
+      case "approval_resolved":
+        // Some client answered — clear a stale sheet here.
+        if (store.overlay().kind === "approval") store.closeOverlay()
         return
     }
   }

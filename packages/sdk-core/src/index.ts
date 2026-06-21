@@ -1,10 +1,12 @@
 // Entities
 export * from "./entities/AgentContext.js"
 export * from "./entities/AgentDefinition.js"
+export * from "./entities/AgentEvent.js"
 export * from "./entities/AgentHooks.js"
 export * from "./entities/Compression.js"
 export * from "./entities/Conversation.js"
 export * from "./entities/Database.js"
+export * from "./entities/Directive.js"
 export * from "./entities/Model.js"
 export * from "./entities/Scope.js"
 export * from "./entities/Skill.js"
@@ -27,6 +29,7 @@ export * from "./ports/SettingsStore.js"
 export * from "./ports/StoreSwitch.js"
 export * from "./ports/UtilityLlm.js"
 export * from "./ports/WebSearch.js"
+export * from "./ports/Workspace.js"
 
 // Prompts
 export * from "./prompts/title.js"

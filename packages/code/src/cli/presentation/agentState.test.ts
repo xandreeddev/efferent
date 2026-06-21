@@ -82,14 +82,26 @@ describe("agentState — the live state machine", () => {
     expect(fleetLabel(s)).toBe("3 agents · a, b +1")
   })
 
-  test("agent_end and error settle to idle; idle has no fleet residue", () => {
-    const s = run([
+  test("agent_end settles the ROOT to idle but keeps a still-running background fleet", () => {
+    // Spawning is non-blocking: the root turn can end while its agent keeps
+    // working in the background, so agent_end must NOT wipe the fleet — only the
+    // agent's own subagent_end removes it.
+    const afterEnd = run([
       { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
       { e: { type: "agent_end", finalText: "done", messages: [] } },
     ])
-    expect(s.phase).toBe("idle")
-    expect(s.fleet).toEqual([])
-    expect(fleetLabel(s)).toBeUndefined()
+    expect(afterEnd.phase).toBe("idle")
+    expect(afterEnd.fleet).toEqual([{ nodeId: "1", name: "a" }])
+    expect(fleetLabel(afterEnd)).toBe("1 agent · a")
+
+    // When that agent finishes, the fleet drains and the chip clears.
+    const afterDrain = run([
+      { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
+      { e: { type: "agent_end", finalText: "done", messages: [] } },
+      { e: { type: "subagent_end", name: "a", nodeId: "1", ok: true, summary: "s", filesChanged: [] } },
+    ])
+    expect(afterDrain.fleet).toEqual([])
+    expect(fleetLabel(afterDrain)).toBeUndefined()
     expect(agentStateLabel(idleAgentState)).toBe("idle")
   })
 

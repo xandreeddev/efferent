@@ -43,6 +43,7 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   spawnAgent: () => {},
   stopAgent: () => {},
   listFleet: () => [],
+  liveAgents: () => [],
   importAgents: () => {},
   importTools: () => {},
   getDirective: () => undefined,
@@ -129,6 +130,37 @@ test("activity pane shows the execution tree, stats header, and sections", async
     expect(frame).toContain("1 turn") // stats meta line (turn count)
     expect(frame).toContain("skills") // foldable section
     expect(frame).toContain("instructions") // foldable section
+  } finally {
+    renderer.destroy()
+  }
+})
+
+test("selecting an agent opens it as the right pane beside the orchestrator (the split)", async () => {
+  const store = newStore()
+  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
+    width: 160,
+    height: 30,
+  })
+  try {
+    const nodeId = "11111111-1111-1111-1111-111111111111"
+    // The lead conversation on the left…
+    store.pushBlock({ kind: "user", text: "lead question" })
+    // …and a selected agent opens on the right, showing its LIVE LOG (the pump
+    // accumulates this per node, so swapping to it shows its full state).
+    store.appendNodeLog(nodeId, { kind: "user", text: "audit the adapters layer" })
+    store.setNodePreview({
+      nodeId,
+      title: "agent: adapters",
+      blocks: [],
+      savedCollapsed: new Set(),
+    })
+
+    const frame = await waitForFrame(
+      (f) => f.includes("lead question") && f.includes("audit the adapters layer"),
+    )
+    expect(frame).toContain("lead question") // orchestrator (left pane) still shown
+    expect(frame).toContain("agent: adapters") // the agent (right pane) title
+    expect(frame).toContain("audit the adapters layer") // the agent's log (right pane body)
   } finally {
     renderer.destroy()
   }

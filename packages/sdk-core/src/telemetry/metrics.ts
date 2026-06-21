@@ -11,44 +11,60 @@ import type { TokenUsage } from "../ports/LlmInfo.js"
  * verdict — never per-request ids).
  */
 
-const tokensTotal = Metric.counter("gen_ai_tokens_total", {
+/**
+ * The metric names, in one place — so the recorder (below) and any in-process
+ * reader (the daemon's `readWorkspaceMetrics`, which folds `Metric.snapshot` by
+ * name + tags into the live dashboard) can't drift apart.
+ */
+export const METRIC_NAMES = {
+  tokens: "gen_ai_tokens_total",
+  calls: "gen_ai_calls_total",
+  cost: "gen_ai_cost_usd_total",
+  errors: "agent_errors_total",
+  turns: "agent_turns_total",
+  turnLatency: "agent_turn_latency_ms",
+  toolCalls: "agent_tool_calls_total",
+  approvalVerdicts: "approval_verdicts_total",
+} as const
+
+const tokensTotal = Metric.counter(METRIC_NAMES.tokens, {
   description: "LLM tokens billed (tags: role, model, type=input|output|cache).",
   incremental: true,
 })
 
-const callsTotal = Metric.counter("gen_ai_calls_total", {
+const callsTotal = Metric.counter(METRIC_NAMES.calls, {
   description: "LLM generate calls (tags: role, provider, model).",
   incremental: true,
 })
 
-const costUsdTotal = Metric.counter("gen_ai_cost_usd_total", {
+const costUsdTotal = Metric.counter(METRIC_NAMES.cost, {
   description: "Estimated LLM spend in USD (tags: role, provider, model).",
   incremental: true,
   bigint: false,
 })
 
-const errorsTotal = Metric.counter("agent_errors_total", {
+const errorsTotal = Metric.counter(METRIC_NAMES.errors, {
   description: "Agent failures (tags: kind=turn|tool|llm, error).",
   incremental: true,
 })
 
-const turnsTotal = Metric.counter("agent_turns_total", {
+const turnsTotal = Metric.counter(METRIC_NAMES.turns, {
   description: "Agent-loop turns executed.",
   incremental: true,
 })
 
 const turnLatencyMs = Metric.histogram(
-  "agent_turn_latency_ms",
+  METRIC_NAMES.turnLatency,
   MetricBoundaries.exponential({ start: 50, factor: 2, count: 12 }),
   "Agent-loop turn wall time (ms).",
 )
 
-const toolCallsTotal = Metric.counter("agent_tool_calls_total", {
+const toolCallsTotal = Metric.counter(METRIC_NAMES.toolCalls, {
   description: "Tool calls resolved (tags: tool, ok).",
   incremental: true,
 })
 
-const approvalVerdictsTotal = Metric.counter("approval_verdicts_total", {
+const approvalVerdictsTotal = Metric.counter(METRIC_NAMES.approvalVerdicts, {
   description: "Auto-approval judge verdicts (tags: verdict).",
   incremental: true,
 })

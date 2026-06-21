@@ -72,6 +72,7 @@ const harness = (): Harness => {
       spawnAgent: () => {},
       stopAgent: () => {},
       listFleet: () => [],
+      liveAgents: () => [],
       importAgents: () => {},
       importTools: () => {},
       getDirective: () => undefined,
@@ -327,30 +328,42 @@ test("v on the side pane cycles sessions→activity: preventDefault'd, focus nev
 
 // --- node-session preview (the :tree Enter overlay) --------------------------
 
+// Opening an agent now mirrors the real openNodePreview: it sets the right-pane
+// preview and focuses the composer (so you can message the agent). It does NOT
+// touch the left orchestrator's blocks or folds — the two panes are independent.
 const openPreview = (h: Harness): void => {
-  h.store.setCollapsed(new Set(["turn:0"]))
   h.store.setNodePreview({
     nodeId: "node-1",
     title: "agent: adapters",
     blocks: [{ kind: "info", text: "agent adapters · spawned · seed: task" }],
     savedCollapsed: h.store.collapsed(),
   })
-  h.store.setCollapsed(new Set())
-  h.store.setFocus("conversation")
-  h.store.setMode("normal")
+  h.store.setFocus("input")
+  h.store.setMode("insert")
 }
 
-test("q closes the preview: overlay dropped, folds restored, focus back to side", () => {
+test("the agent pane is independent of the orchestrator (left rail untouched while open)", () => {
   const h = harness()
   h.store.setBlocks([{ kind: "user", text: "live rail" }])
+  h.store.setCollapsed(new Set(["turn:0"]))
   openPreview(h)
-  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["info"]) // overlay shows
+  // The left pane (viewBlocks) still shows the orchestrator; folds untouched.
+  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["user"])
+  expect([...h.store.collapsed()]).toEqual(["turn:0"])
+  expect(h.store.nodePreview()).toBeDefined()
+})
+
+test("q closes the agent pane from a read-only pane; orchestrator left intact", () => {
+  const h = harness()
+  h.store.setBlocks([{ kind: "user", text: "live rail" }])
+  h.store.setCollapsed(new Set(["turn:0"]))
+  openPreview(h)
+  h.store.setFocus("side") // q is a NORMAL-mode key; the composer owns its own q
   dispatch(h.ctx, key("q"))
   expect(h.store.nodePreview()).toBeUndefined()
-  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["user"]) // live rail back
-  expect([...h.store.collapsed()]).toEqual(["turn:0"]) // folds restored
   expect(h.store.focus()).toBe("side")
-  expect(h.scroll.at(-1)).toBe("bottom")
+  expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["user"]) // left untouched
+  expect([...h.store.collapsed()]).toEqual(["turn:0"]) // folds untouched
 })
 
 test("Esc (idle, no search) closes the preview; Esc while busy interrupts and keeps it", () => {

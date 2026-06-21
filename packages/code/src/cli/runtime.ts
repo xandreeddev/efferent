@@ -217,6 +217,10 @@ export const runTuiModeSolid = (
           void Runtime.runPromise(rt)(submit(text))
         },
         interrupt: () => {
+          // Esc cancels EVERYTHING in flight: the root turn AND every background
+          // fleet agent (spawning is non-blocking, so the fleet are daemons the
+          // root fiber no longer encloses — interrupt them explicitly, no orphans).
+          Runtime.runFork(rt)(scopeRuntime.bus.interruptAll())
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
@@ -231,6 +235,12 @@ export const runTuiModeSolid = (
         },
         listFleet: () =>
           fleet.list().map((e) => ({ id: e.id, title: e.title, folder: e.folder })),
+        liveAgents: () =>
+          // Synchronous read of the bus's running map (pure Ref.get). Drop the
+          // root session's own mailbox key — it's the human, not a fleet agent.
+          Runtime.runSync(rt)(scopeRuntime.bus.listRunning()).filter(
+            (a) => a.nodeId !== store.run.getConversationId(),
+          ),
         getDirective: () => directiveRef.current,
         setDirective: (d) => {
           directiveRef.current = d
@@ -335,6 +345,11 @@ export const runTuiModeSolid = (
       //     the forgotten one. No-op when no login is in flight.
       yield* Effect.addFinalizer(() => stopOAuthSession(store).pipe(Effect.ignore))
 
+      // 6d. Background fleet agents are daemons (non-blocking spawning) — they'd
+      //     keep Bun alive past exit. Interrupt the whole fleet on every teardown
+      //     path so the process can quit cleanly. No-op when nothing is running.
+      yield* Effect.addFinalizer(() => scopeRuntime.bus.interruptAll().pipe(Effect.ignore))
+
       // 7. Drain the agent event queue into the signal store (scoped fiber).
       yield* Effect.forkScoped(runEventPump(eventQueue, reduce))
 
@@ -343,7 +358,9 @@ export const runTuiModeSolid = (
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.sync(() => {
-            if (store.busy()) store.tickSpinner()
+            // Animate while the root turn runs OR a background fleet is working
+            // (the root can be idle while its agents keep going).
+            if (store.busy() || store.agentState().fleet.length > 0) store.tickSpinner()
           }).pipe(Effect.delay("120 millis")),
         ),
       )

@@ -10,6 +10,7 @@ import {
   ContextTreeStore,
   FileSystem,
   Http,
+  RunContextRef,
   Shell,
   WebSearch,
 } from "@xandreed/sdk-core"
@@ -225,5 +226,74 @@ describe("ScopeRuntime.resumeNode", () => {
     expect(entry.node.returnSummary).toBe("resumed and done")
     // the follow-up was appended to the SAME node (original + follow-up)
     expect(entry.messages.filter((m) => m.role === "user").length).toBe(2)
+  })
+})
+
+// --- run_agent (the model tool) is non-blocking; wait_for_agents gathers ------
+
+describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () => {
+  // The whole point of the fix: spawning must NOT block the caller on the
+  // subtree (that was the "parent hangs" bug). run_agent returns a running
+  // handle at once; the work happens in a background fiber; the caller collects
+  // it later with wait_for_agents — which never freezes anyone.
+  test("run_agent returns { status: 'running' } immediately; wait_for_agents returns the finished result", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      // The erased toolkit (Record<string, Tool.Any>) types handle's params as
+      // `never`; call it through a loose signature (runtime decodes the args).
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const spawned = yield* call("run_agent", {
+        name: "worker",
+        folder: "pkg",
+        task: "do the thing",
+      })
+      const handle = spawned.result as { nodeId: string; name: string; status: string }
+      // Gather it — wait_for_agents blocks only this fiber, interruptibly, and
+      // returns when the agent finishes (the fake model ends turn 0).
+      const gathered = yield* call("wait_for_agents", {
+        nodeIds: [handle.nodeId],
+        timeoutSeconds: 5,
+      })
+      return { handle, gathered: gathered.result as {
+        agents: ReadonlyArray<{ status: string; summary?: string; name: string }>
+        allDone: boolean
+      } }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "run_agent HUNG" }),
+      ) as unknown as Effect.Effect<{
+        handle: { nodeId: string; name: string; status: string }
+        agents?: never
+        gathered: {
+          agents: ReadonlyArray<{ status: string; summary?: string; name: string }>
+          allDone: boolean
+        }
+      }>,
+    )
+
+    // The spawn call did not wait for the work — it returned a running handle.
+    expect(result.handle.status).toBe("running")
+    expect(result.handle.name).toBe("worker")
+    // The gather collected the finished agent's outcome.
+    expect(result.gathered.allDone).toBe(true)
+    expect(result.gathered.agents).toHaveLength(1)
+    expect(result.gathered.agents[0]?.status).toBe("ok")
+    expect(result.gathered.agents[0]?.summary).toBe("resumed and done")
   })
 })

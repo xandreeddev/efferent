@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 
 /**
  * Human approval for consequential tool actions (today: bash). The port is the
@@ -18,20 +18,33 @@ import { Context, Effect, Layer } from "effect"
  * same turn instead of dying or blindly retrying — the same recovery path as
  * `OutOfScope` and every other returned failure.
  */
-export interface ApprovalRequest {
+// A Schema (not a bare interface): the daemon's `Workspace` protocol carries a
+// pending approval to every client and an answer back, so the request/decision
+// must serialize. The `.Type`s are structurally identical to the old
+// interfaces, so every existing consumer is unchanged.
+export const ApprovalRequest = Schema.Struct({
   /** The asking tool — `"Bash"` today. */
-  readonly tool: string
+  tool: Schema.String,
   /** What will run, verbatim (the command). */
-  readonly summary: string
+  summary: Schema.String,
   /** Where it will run. */
-  readonly cwd: string
+  cwd: Schema.String,
   /** The rule this request matches (see `bashRuleKey`) — what session/project allows key on. */
-  readonly ruleKey: string
-}
+  ruleKey: Schema.String,
+})
+export type ApprovalRequest = typeof ApprovalRequest.Type
 
-export type ApprovalDecision =
-  | { readonly kind: "allow"; readonly scope: "once" | "session" | "project" }
-  | { readonly kind: "deny"; readonly reason?: string }
+export const ApprovalDecision = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("allow"),
+    scope: Schema.Literal("once", "session", "project"),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("deny"),
+    reason: Schema.optional(Schema.String),
+  }),
+)
+export type ApprovalDecision = typeof ApprovalDecision.Type
 
 export class Approval extends Context.Tag("@xandreed/sdk-core/Approval")<
   Approval,
