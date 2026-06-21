@@ -3,6 +3,7 @@ import { AgentEvent } from "../entities/AgentEvent.js"
 import { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ContextNodeId } from "../entities/AgentContext.js"
 import { Directive } from "../entities/Directive.js"
+import { Settings } from "../entities/Settings.js"
 import { ApprovalDecision, ApprovalRequest } from "./Approval.js"
 
 /**
@@ -150,6 +151,13 @@ export const FleetMessage = Schema.Struct({
 })
 export type FleetMessage = typeof FleetMessage.Type
 
+/** A partial settings update — the dashboard's "config defaults" panel posts
+ *  this; the daemon merges it into its live Settings + persists it (the daemon
+ *  owns its config, no file-editing behind its back). `model` here sets the
+ *  DEFAULT new fleets inherit — never a running fleet (use `setFleetModel`). */
+export const SettingsPatch = Schema.partial(Settings)
+export type SettingsPatch = typeof SettingsPatch.Type
+
 /** Per-role token + cost totals (cumulative since the daemon started). */
 export const RoleTokens = Schema.Struct({
   input: Schema.Number,
@@ -243,6 +251,14 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
     readonly messages: (
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<FleetMessage>, WorkspaceError>
+    /** The daemon's current settings (the dashboard's config view reads this). */
+    readonly getSettings: () => Effect.Effect<Settings, WorkspaceError>
+    /** Merge a partial settings update into the daemon's live config + persist
+     *  it — effective on the next turn, no restart (the daemon is the source of
+     *  truth for its config). */
+    readonly updateSettings: (
+      patch: SettingsPatch,
+    ) => Effect.Effect<Settings, WorkspaceError>
     readonly getDirective: () => Effect.Effect<
       Directive | undefined,
       WorkspaceError

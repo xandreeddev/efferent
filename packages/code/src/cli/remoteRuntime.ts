@@ -93,8 +93,23 @@ export const runTuiModeRemote = (
           }).pipe(Effect.zipRight(Effect.never)),
         ),
       )
+      // --fleet <id> pins which coordinator we attach to (the dashboard's
+      // "attach" action copies exactly this); else the daemon's active/first root.
+      const requestedFleet =
+        input.fleetId !== undefined
+          ? snap0.sessions.find((s) => s.kind === "root" && (s.id as string) === input.fleetId)?.id
+          : undefined
+      if (input.fleetId !== undefined && requestedFleet === undefined) {
+        yield* Effect.sync(() =>
+          process.stderr.write(
+            `efferent: no fleet ${input.fleetId} on this daemon — attaching to the active one\n`,
+          ),
+        )
+      }
       const rootSessionId =
-        snap0.activeSessionId ?? snap0.sessions.find((s) => s.kind === "root")?.id
+        requestedFleet ??
+        snap0.activeSessionId ??
+        snap0.sessions.find((s) => s.kind === "root")?.id
       if (rootSessionId === undefined) {
         yield* Effect.sync(() => {
           process.stderr.write("efferent: the daemon has no root session\n")

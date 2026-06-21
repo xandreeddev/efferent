@@ -114,13 +114,17 @@ export const fakeEnvLayersNoConv = (modelText?: string) =>
     Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
     Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
     Layer.succeed(UtilityLlm, UtilityLlm.of({ complete: () => Effect.die("unused") } as never)),
-    Layer.succeed(
+    // Stateful so updateSettings round-trips (the config-through-API path).
+    Layer.effect(
       SettingsStore,
-      SettingsStore.of({
-        get: () => Effect.succeed(DefaultSettings),
-        global: () => Effect.succeed(DefaultSettings),
-        update: () => Effect.succeed(DefaultSettings),
-        load: () => Effect.succeed(DefaultSettings),
+      Effect.gen(function* () {
+        const ref = yield* Ref.make(DefaultSettings)
+        return SettingsStore.of({
+          get: () => Ref.get(ref),
+          global: () => Ref.get(ref),
+          update: (f) => Ref.updateAndGet(ref, f),
+          load: () => Ref.get(ref),
+        })
       }),
     ),
     fakeAuthStore,

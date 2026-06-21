@@ -8,6 +8,8 @@ import {
   Directive,
   FleetMessage,
   ImportResult,
+  Settings,
+  SettingsPatch,
   SessionState,
   SessionSummary,
   SpawnRequest,
@@ -204,6 +206,26 @@ export const workspaceRouter = (
           contentType: "text/event-stream",
           headers: { "cache-control": "no-cache", connection: "keep-alive" },
         })
+      }),
+    ),
+    // (split: `HttpRouter.pipe` accepts at most ~20 steps, so the route table
+    // is chained as two pipes.)
+  ).pipe(
+    HttpRouter.get(
+      "/settings",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const s = yield* ws.getSettings()
+        return yield* HttpServerResponse.schemaJson(Settings)(s)
+      }),
+    ),
+    HttpRouter.post(
+      "/settings",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const patch = yield* HttpServerRequest.schemaBodyJson(SettingsPatch)
+        const s = yield* ws.updateSettings(patch)
+        return yield* HttpServerResponse.schemaJson(Settings)(s)
       }),
     ),
     HttpRouter.get(
