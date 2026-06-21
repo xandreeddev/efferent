@@ -9,6 +9,7 @@ import {
   WebSearch,
   type AgentDefinition,
   type Scope,
+  type Memory,
   type Skill,
 } from "@xandreed/sdk-core"
 import { LanguageModel } from "@effect/ai"
@@ -38,6 +39,7 @@ import {
 export interface DaemonModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope
@@ -54,6 +56,7 @@ export const runDaemonMode = (
   Effect.gen(function* () {
     const runtime = buildScopeRuntime(input.rootScope, {
       skills: input.skills,
+      memory: input.memory,
       agents: input.agents,
       tools: input.tools,
       allowBash: input.allowBash,

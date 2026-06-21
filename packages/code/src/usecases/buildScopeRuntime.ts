@@ -31,6 +31,7 @@ import {
   type TokenPool,
   Failure,
   toFailure,
+  type Memory,
   type Skill,
   type AgentDefinition,
   ConversationId,
@@ -141,6 +142,13 @@ export const STEP_STOP_NOTE =
 
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
+  /**
+   * Durable project-knowledge records (`.efferent/memory/*.md`) — the index is
+   * injected into the prompt, bodies are lazy-loaded via `read_memory`, and new
+   * records are written via `remember`. Required like `skills`/`agents` — pass
+   * `[]` when there are none. Shared across the root and every sub-agent.
+   */
+  readonly memory: ReadonlyArray<Memory>
   /**
    * Predefined agent ROLES (`.efferent/agents/*.md`) selectable by name via
    * `run_agent({ agent })` and the TUI `:spawn`. Required like `skills` —
@@ -688,6 +696,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       // Give a coordinator (a role with run_agent) the roster so it can name its
       // specialists; leaf workers ignore it.
       agents: opts.agents,
+      // The project-knowledge index rides into every sub-agent too — they read
+      // the distilled rationale and can record new decisions via `remember`.
+      memory: opts.memory,
     })
     const parentPrompt = args.runContext.prompt
     const childPrompt: Prompt | undefined =
@@ -1045,7 +1056,7 @@ const buildGenericHandlers = <R>(
   bus: AgentBus,
 ) =>
   Effect.gen(function* () {
-    const base = yield* makeCodingHandlers(binding, opts.skills)
+    const base = yield* makeCodingHandlers(binding, opts.skills, opts.memory)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
     const http = yield* Http
