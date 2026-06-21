@@ -12,13 +12,32 @@ const role = (name: string): AgentDefinition => ({
 describe("rootSystemPrompt", () => {
   it("delegates coding to the coordinator when the role is present", () => {
     const p = rootSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).toContain("# Delegating coding work")
+    expect(p).toContain("# Triage and dispatch")
     expect(p).toContain('run_agent({ agent: "coordinator"')
   })
 
-  it("omits the delegation section when no coordinator is loaded", () => {
+  it("dispatches deep research to the research-coordinator when the role is present", () => {
+    const p = rootSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
+    expect(p).toContain("# Triage and dispatch")
+    expect(p).toContain('run_agent({ agent: "research-coordinator"')
+  })
+
+  it("offers both branches when both leads are loaded", () => {
+    const p = rootSystemPrompt(
+      "/w",
+      new Date(0),
+      [],
+      [],
+      [role("coordinator"), role("research-coordinator")],
+      [],
+    )
+    expect(p).toContain('run_agent({ agent: "coordinator"')
+    expect(p).toContain('run_agent({ agent: "research-coordinator"')
+  })
+
+  it("omits the dispatch section when no lead role is loaded", () => {
     const p = rootSystemPrompt("/w", new Date(0), [], [], [], [])
-    expect(p).not.toContain("# Delegating coding work")
+    expect(p).not.toContain("# Triage and dispatch")
   })
 })
 
