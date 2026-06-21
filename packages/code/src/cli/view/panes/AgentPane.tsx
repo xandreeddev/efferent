@@ -1,5 +1,9 @@
 import { createMemo, For, Show } from "solid-js"
-import { buildConversation } from "../../presentation/conversation.js"
+import {
+  buildConversation,
+  reconcileItems,
+  type ConversationItem,
+} from "../../presentation/conversation.js"
 import { glyph, tokens } from "../../state/theme.js"
 import { BodyItemView } from "./Conversation.js"
 import type { TuiContext } from "../../state/store.js"
@@ -23,10 +27,10 @@ export const AgentPane = (props: { ctx: TuiContext }) => {
   const title = () => preview()?.title ?? "agent"
   // The agent's live log (accumulated by the event pump, seeded from persistence
   // on open) — so swapping to it shows its full state, and a running one streams.
-  const items = createMemo(() => {
+  const items = createMemo<ConversationItem[]>((prev) => {
     const id = preview()?.nodeId
-    return buildConversation(id !== undefined ? [...store.nodeLog(id)] : [])
-  })
+    return reconcileItems(prev, buildConversation(id !== undefined ? [...store.nodeLog(id)] : []))
+  }, [])
   // Live = this node is in the running fleet (the header tracks it the same way).
   const running = () => {
     const id = preview()?.nodeId
