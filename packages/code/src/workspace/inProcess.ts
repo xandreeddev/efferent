@@ -169,6 +169,9 @@ export const makeInProcessWorkspace = (
         agents: deps.agents,
         tools: deps.tools,
         allowBash: deps.allowBash ?? true,
+        // Mirror inter-agent messages onto the ledger as `board_note` events —
+        // the dashboard's "messages flying" stream is then just the SSE stream.
+        onBusEvent: publish,
       },
       baseHooks,
     )
@@ -649,6 +652,14 @@ export const makeInProcessWorkspace = (
             now: Date.now(),
           })
         }),
+
+      messages: (limit) =>
+        scopeRuntime.bus.boardRead().pipe(
+          Effect.map((board) => {
+            const tail = limit !== undefined ? board.slice(-limit) : board
+            return tail.map((n) => ({ from: n.from, content: n.note, at: n.at }))
+          }),
+        ),
 
       getDirective: () => Ref.get(directiveRef),
       setDirective: (d) => Ref.set(directiveRef, d),

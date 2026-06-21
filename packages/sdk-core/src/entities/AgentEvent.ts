@@ -119,5 +119,14 @@ export const AgentEvent = Schema.Union(
     type: Schema.Literal("approval_resolved"),
     sessionId: Schema.optional(Schema.String),
   }),
+  // An inter-agent message hit the bus (blackboard post, a direct inbox message,
+  // or a completion note) — the "messages flying" stream the control dashboard
+  // tails. Rides the ledger so it replays like any event.
+  Schema.Struct({
+    type: Schema.Literal("board_note"),
+    from: Schema.String,
+    note: Schema.String,
+    at: Schema.Number,
+  }),
 )
 export type AgentEvent = typeof AgentEvent.Type

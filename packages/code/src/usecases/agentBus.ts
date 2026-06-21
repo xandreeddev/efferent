@@ -1,4 +1,5 @@
 import { Deferred, Effect, Fiber, Ref } from "effect"
+import type { AgentEvent } from "@xandreed/sdk-core"
 
 /**
  * The in-memory agent **comms + supervision bus** — the spine of the async
@@ -170,12 +171,19 @@ const shortKey = (nodeId: string): string => nodeId.slice(0, 8)
  * Synchronous constructor (mirrors `makeFolderLocks`) so `buildScopeRuntime`
  * can build one without being an Effect; the methods are Effects over the Ref.
  */
-export const makeAgentBus = (): AgentBus => {
+export const makeAgentBus = (
+  /** Optional sink: every inter-agent message (board post, inbox message,
+   *  completion note) is also emitted as a `board_note` `AgentEvent` so the
+   *  daemon's event ledger carries the "messages flying" stream. */
+  onEvent?: (event: AgentEvent) => Effect.Effect<void>,
+): AgentBus => {
   const ref = Ref.unsafeMake<BusState>({
     running: new Map(),
     done: new Map(),
     board: [],
   })
+  const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
+    onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
 
   const statusOf = (s: BusState, nodeId: string): AgentRunStatus =>
     s.running.has(nodeId) ? "running" : s.done.get(nodeId)?.status ?? "running"
@@ -278,13 +286,12 @@ export const makeAgentBus = (): AgentBus => {
             yield* Deferred.succeed(parent.wake, undefined).pipe(Effect.ignore)
           }
         }
+        const at = Date.now()
         yield* Ref.update(ref, (s) => ({
           ...s,
-          board: [
-            ...s.board,
-            { from: entry.label, note: line, at: Date.now() },
-          ].slice(-MAX_BOARD),
+          board: [...s.board, { from: entry.label, note: line, at }].slice(-MAX_BOARD),
         }))
+        yield* emit(entry.label, line, at)
       }),
 
     markDone: (nodeId) =>
@@ -364,6 +371,7 @@ export const makeAgentBus = (): AgentBus => {
         if (entry.wake !== undefined) {
           yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
         }
+        yield* emit(msg.from, msg.content, msg.at)
         return true
       }),
 
@@ -377,7 +385,9 @@ export const makeAgentBus = (): AgentBus => {
       }),
 
     boardPost: (note) =>
-      Ref.update(ref, (s) => ({ ...s, board: [...s.board, note].slice(-MAX_BOARD) })),
+      Ref.update(ref, (s) => ({ ...s, board: [...s.board, note].slice(-MAX_BOARD) })).pipe(
+        Effect.zipRight(emit(note.from, note.note, note.at)),
+      ),
 
     boardRead: () => Ref.get(ref).pipe(Effect.map((s) => s.board)),
 

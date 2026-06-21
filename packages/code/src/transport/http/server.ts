@@ -6,6 +6,7 @@ import {
   AuthStore,
   CreateFleetRequest,
   Directive,
+  FleetMessage,
   ImportResult,
   SessionState,
   SessionSummary,
@@ -94,6 +95,17 @@ export const workspaceRouter = (
         const ws = yield* Workspace
         const m = yield* ws.metrics()
         return yield* HttpServerResponse.schemaJson(WorkspaceMetrics)(m)
+      }),
+    ),
+    HttpRouter.get(
+      "/messages",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const { limit } = yield* HttpServerRequest.schemaSearchParams(
+          Schema.Struct({ limit: Schema.optional(Schema.NumberFromString) }),
+        )
+        const msgs = yield* ws.messages(limit)
+        return yield* HttpServerResponse.schemaJson(Schema.Array(FleetMessage))(msgs)
       }),
     ),
     HttpRouter.post(
