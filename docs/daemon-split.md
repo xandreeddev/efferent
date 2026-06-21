@@ -48,7 +48,23 @@
    `spawn` → `scopeRuntime.spawnAgent` + fleet, `getDirective`/`setDirective`, `importAgents/Tools`.
    The UI-free distillation of `submit.ts`/`spawnAgent.ts`/the `runtime.ts` directive closure.
 
-**Next — re-point the TUI through the Workspace port (locally, no wire), then Phase (b).**
+10. **SSE codec** (`packages/code/src/transport/http/sse.ts` + `.test.ts`, 8 tests): the wire framing
+    — `encodeSeqEvent` (`id:<seq>\nevent:agent_event\ndata:<JSON>\n\n`), `encodeResync`/`encodeNamed`/
+    `encodeHeartbeat`, a chunk-tolerant `makeSseParser` (CRLF, multi-line `data:`, leading-space strip,
+    `:`-comment skip, frames split across chunk boundaries), and `frameToSeqEvent` (Schema-validated
+    decode). The ONLY place the SSE byte format lives; server + client both build on it. (Phase b.)
+
+**Next — finish Phase (b): the HTTP server + client wiring.**
+- `transport/http/server.ts`: `HttpRouter` mapping the endpoint table to the in-process Workspace;
+  `GET /sessions/:id/events` → `HttpServerResponse.stream` over `ledger.stream` mapped through
+  `encodeSeqEvent` (+ `encodeHeartbeat` via `Stream.merge`, + `encodeResync` when `hasGap(since)`),
+  served by `BunHttpServer.layer({ port, hostname: "127.0.0.1" })`. Bodies via
+  `HttpServerRequest.schemaBodyJson` against the protocol Schemas. `daemon-serve` mode in `main.ts`.
+- `transport/http/client.ts`: an `HttpClient` (`FetchHttpClient`) + `makeSseParser`/`frameToSeqEvent`
+  → `Stream<SeqEvent>` the remote Workspace consumes. Smoke test: fake model, `/health`, `POST /send`,
+  SSE round-trip to `agent_end`.
+
+**Then — re-point the TUI through the Workspace port (locally, no wire), Phase (c).**
 - `runtime.ts`: build the in-process Workspace; `TuiContext` delegates (`submit`→`send`,
   `interrupt`→`interrupt`, `spawnAgent`→`spawn`, `get/setDirective`, etc.); the event pump drains
   `ledger.stream(rootSessionId)` (reuse `makeEventReducer` verbatim) instead of the `eventQueue`.
