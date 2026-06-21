@@ -141,6 +141,36 @@ export const CreateFleetRequest = Schema.Struct({
 })
 export type CreateFleetRequest = typeof CreateFleetRequest.Type
 
+/** Per-role token + cost totals (cumulative since the daemon started). */
+export const RoleTokens = Schema.Struct({
+  input: Schema.Number,
+  output: Schema.Number,
+  cache: Schema.Number,
+  costUsd: Schema.Number,
+})
+export type RoleTokens = typeof RoleTokens.Type
+
+/**
+ * Live workspace metrics for the dashboard — self-contained (read from the
+ * process-global Effect metric registry + the bus, no Grafana). Cumulative
+ * since the daemon started, except `messagesPerMin` (a 60s rate).
+ */
+export const WorkspaceMetrics = Schema.Struct({
+  tokensByRole: Schema.Record({ key: Schema.String, value: RoleTokens }),
+  costUsdTotal: Schema.Number,
+  agentsRunning: Schema.Number,
+  agentsDone: Schema.Number,
+  fleets: Schema.Number,
+  turns: Schema.Number,
+  toolCallsOk: Schema.Number,
+  toolCallsFail: Schema.Number,
+  errors: Schema.Number,
+  approvalsPrompted: Schema.Number,
+  messagesPerMin: Schema.Number,
+  uptimeMs: Schema.Number,
+})
+export type WorkspaceMetrics = typeof WorkspaceMetrics.Type
+
 /**
  * One tagged error for the whole port — a `Schema.TaggedError` so it crosses a
  * transport as a JSON body and decodes back to a typed failure on the client.
@@ -197,6 +227,8 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
       id: SessionId,
       decision: ApprovalDecision,
     ) => Effect.Effect<void, WorkspaceError>
+    /** Live in-daemon metrics for the control dashboard (no Grafana needed). */
+    readonly metrics: () => Effect.Effect<WorkspaceMetrics, WorkspaceError>
     readonly getDirective: () => Effect.Effect<
       Directive | undefined,
       WorkspaceError

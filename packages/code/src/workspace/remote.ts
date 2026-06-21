@@ -33,6 +33,7 @@ export const makeRemoteWorkspace = (
       snapshot: () => withClient(t.snapshot()),
       listSessions: () => withClient(t.listSessions()),
       getState: (id, since) => withClient(t.getState(id, since)),
+      metrics: () => withClient(t.metrics()),
       send: (id, prompt) => withClient(t.send(id, prompt)),
       interrupt: (id) => withClient(t.interrupt(id)),
       stop: (id) => withClient(t.stop(id)),

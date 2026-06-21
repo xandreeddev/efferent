@@ -12,6 +12,7 @@ import {
   SessionSummary,
   SpawnRequest,
   WorkspaceError,
+  WorkspaceMetrics,
   WorkspaceSnapshot,
   type ApprovalDecision,
   type Directive,
@@ -50,6 +51,7 @@ export interface HttpTransport {
     id: SessionId,
     since?: number,
   ) => Effect.Effect<SessionState, WorkspaceError, HttpClient.HttpClient>
+  readonly metrics: () => Effect.Effect<WorkspaceMetrics, WorkspaceError, HttpClient.HttpClient>
   readonly send: (
     id: SessionId,
     prompt: string,
@@ -126,6 +128,7 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
   return {
     snapshot: () => getJson("/snapshot", WorkspaceSnapshot),
     listSessions: () => getJson("/sessions", Schema.Array(SessionSummary)),
+    metrics: () => getJson("/metrics", WorkspaceMetrics),
     getState: (id, since) =>
       getJson(
         `/sessions/${id}/state${since !== undefined ? `?since=${since}` : ""}`,
