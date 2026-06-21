@@ -379,10 +379,15 @@ const root = Command.make(
           // never import it. If the native renderer can't start (e.g. its
           // platform lib is missing), surface a clear error and exit non-zero
           // rather than crashing with a defect.
-          const { runTuiModeSolid } = yield* Effect.promise(
-            () => import("./cli/runtime.js"),
-          )
-          yield* runTuiModeSolid(tuiInput).pipe(
+          //
+          // EFFERENT_REMOTE flips the TUI to a thin client that attaches to the
+          // per-workspace daemon over HTTP/SSE (auto-spawning it if absent); the
+          // default stays the in-process driver.
+          const remote = (process.env.EFFERENT_REMOTE ?? "").trim().length > 0
+          const runTui = remote
+            ? (yield* Effect.promise(() => import("./cli/remoteRuntime.js"))).runTuiModeRemote
+            : (yield* Effect.promise(() => import("./cli/runtime.js"))).runTuiModeSolid
+          yield* runTui(tuiInput).pipe(
             Effect.catchAllDefect((defect) =>
               Effect.sync(() => {
                 process.stderr.write(
