@@ -23,6 +23,7 @@ import {
 } from "@xandreed/sdk-core"
 import { makeInProcessWorkspace } from "../../workspace/inProcess.js"
 import { makeFleetSupervisor } from "../../cli/state/fleet.js"
+import { fakeAuthStore } from "../../workspace/fakeAppEnv.js"
 import { workspaceRouter } from "./server.js"
 import { makeHttpTransport } from "./client.js"
 
@@ -138,6 +139,7 @@ const identity = { pid: 4321, workspace: "/tmp/ws", version: "test" }
 // App over a real test server; layerTest also yields an HttpClient pointed at it.
 const ServerLive = HttpServer.serve()(workspaceRouter(identity)).pipe(
   Layer.provide(workspaceLayer),
+  Layer.provide(fakeAuthStore),
   Layer.provideMerge(BunHttpServer.layerTest),
 )
 
