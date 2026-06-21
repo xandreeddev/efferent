@@ -9,6 +9,7 @@ import {
   UtilityLlm,
   WebSearch,
   ContextNodeId,
+  generateSessionTitle,
   renderDirectiveSection,
   resumeAgent,
   runAgent,
@@ -159,6 +160,9 @@ export const makeInProcessWorkspace = (
 
     const runStates = yield* Ref.make(new Map<string, RunState>())
     const directiveRef = yield* Ref.make<Directive | undefined>(undefined)
+    // Set when a root turn starts on an empty history — its completion names the
+    // session on the fast tier (parity with the in-process driver's submit).
+    let firstExchangePending = false
 
     const getRun = (key: string): Effect.Effect<RunState> =>
       Ref.get(runStates).pipe(
@@ -184,6 +188,22 @@ export const makeInProcessWorkspace = (
           fiber: undefined,
           queue: [...s.queue, ...leftover.filter((m) => m.from === "you").map((m) => m.content)],
         }))
+        // First exchange just landed → name the session on the fast tier,
+        // off the critical path (best-effort daemon; a missing key never surfaces).
+        if (key === rootKey && firstExchangePending) {
+          firstExchangePending = false
+          const titleEffect = Effect.gen(function* () {
+            const history = yield* conv.list(rootCid)
+            const res = yield* generateSessionTitle(history)
+            if (res.usage !== undefined) {
+              yield* publish({ type: "helper_usage", role: "fast", usage: res.usage })
+            }
+            if (res.title.length > 0) yield* conv.setTitle(rootCid, res.title)
+          }).pipe(Effect.ignore)
+          yield* Effect.sync(() => {
+            Runtime.runFork(rt)(titleEffect)
+          })
+        }
         const next = yield* Ref.modify(runStates, (m) => {
           const s = m.get(key)
           if (s === undefined || s.queue.length === 0) return [undefined, m]
@@ -197,6 +217,9 @@ export const makeInProcessWorkspace = (
 
     const startRootTurn = (text: string): Effect.Effect<void> =>
       Effect.gen(function* () {
+        // Empty history before this turn ⇒ first exchange ⇒ title it on finish.
+        firstExchangePending =
+          (yield* conv.listActive(rootCid).pipe(Effect.orElseSucceed(() => []))).length === 0
         const base = coderPrompt(
           deps.cwd,
           new Date(),
