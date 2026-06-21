@@ -39,6 +39,7 @@ import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
 import { runDaemonMode } from "./modes/daemon.js"
+import { runDaemonServe } from "./server/daemon.js"
 import { stderrLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
@@ -112,10 +113,11 @@ const modeOption = Options.choice("mode", [
   "json",
   "rpc",
   "daemon",
+  "daemon-serve",
 ]).pipe(
   Options.withDefault("auto" as const),
   Options.withDescription(
-    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print. 'daemon' runs the cron scheduler headlessly.",
+    "Output mode. 'auto' picks: stdin-piped → print, prompt arg → print, TTY → tui, else print. 'daemon' runs the cron scheduler headlessly; 'daemon-serve' runs the persistent per-workspace Workspace daemon (HTTP/SSE) that TUI/web clients attach to.",
   ),
 )
 
@@ -142,7 +144,7 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
-type Mode = "tui" | "print" | "json" | "rpc" | "daemon"
+type Mode = "tui" | "print" | "json" | "rpc" | "daemon" | "daemon-serve"
 
 const resolveMode = (
   modeFlag: "auto" | Mode,
@@ -202,7 +204,7 @@ const root = Command.make(
       // For non-RPC/TUI modes, if stdin is piped and no prompt arg,
       // swallow stdin as the prompt. RPC needs stdin for its protocol;
       // TUI needs stdin for keystrokes.
-      const skipStdin = mode === "rpc" || mode === "tui"
+      const skipStdin = mode === "rpc" || mode === "tui" || mode === "daemon-serve"
       const piped =
         skipStdin || promptArgValue !== undefined
           ? undefined
@@ -341,6 +343,22 @@ const root = Command.make(
             agents,
             tools,
             rootScope,
+            allowBash: effectiveAllowBash,
+          }).pipe(Effect.provide(stderrLoggerLayer))
+          return
+        case "daemon-serve":
+          // The persistent per-workspace Workspace daemon (HTTP/SSE). Boots
+          // credential-less on purpose — clients add a provider in-session and
+          // the router resolves the key per request from auth.json — so a long-
+          // lived daemon survives logins/logouts. Serves until interrupted.
+          yield* runDaemonServe({
+            workspace,
+            skills,
+            agents,
+            tools,
+            rootScope,
+            instructionFiles,
+            version: packageJson.version,
             allowBash: effectiveAllowBash,
           }).pipe(Effect.provide(stderrLoggerLayer))
           return
