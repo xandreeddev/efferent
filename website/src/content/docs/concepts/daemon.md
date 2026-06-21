@@ -10,8 +10,9 @@ The agent doesn't have to live inside the terminal UI. efferent can run it as a
 **persistent, per-workspace daemon** — like a tmux server — with the TUI (and, later,
 a web UI) as **thin clients** that attach, stream events, and steer the same live
 sessions. Close the UI and the daemon (and any running fleet) keeps going; reattach and
-the view comes back. It's **opt-in** today behind `EFFERENT_REMOTE=1`; the in-process
-TUI is still the default.
+the view comes back. This is now the **default**: `efferent` attaches to (or spawns) the
+workspace daemon. The legacy in-process driver remains a one-flag fallback —
+`EFFERENT_LOCAL=1 efferent` — while the daemon path soaks.
 
 ## Why
 
@@ -96,9 +97,9 @@ answer. Login stays client-side (the browser + credentials are the human's machi
 
 ## Lifecycle
 
-`efferent` (with `EFFERENT_REMOTE=1`) reads a discovery file
-(`~/.efferent/daemon-<workspaceHash>.json`), attaches to a healthy daemon if one is
-registered, and otherwise spawns a detached `--mode daemon-serve` and polls until it's up —
-all transparent. The daemon boots **credential-less** on purpose: you log in from any
+`efferent` reads a discovery file (`~/.efferent/daemon-<workspaceHash>.json`), attaches to a
+healthy daemon if one is registered, and otherwise spawns a detached `--mode daemon-serve`
+and polls until it's up — all transparent. (`EFFERENT_LOCAL=1` runs the legacy in-process
+driver instead.) The daemon boots **credential-less** on purpose: you log in from any
 attached client and the router resolves the key per request, so a long-lived daemon survives
 logins and logouts.

@@ -92,18 +92,19 @@
     session both receive a single run's stream.
 20. **Docs** (`website/src/content/docs/concepts/daemon.md` + nav): the public "daemon / attach" page.
 
-**Done: phases (a)–(f) — the daemon split is built, tested (24 new tests), and smoke-verified, opt-in
-behind `EFFERENT_REMOTE`.**
+**Done: phases (a)–(f) + the reversible half of (g) — the daemon split is built, tested (26 new
+tests), and smoke-verified. The TUI default is now the daemon/remote path; `EFFERENT_LOCAL=1` runs
+the legacy in-process driver as a fallback (one-line revert in `main.ts`).**
 
-**Remaining — Phase (g) cutover, deliberately validation-gated (NOT done blind):** flipping the TUI
-default to remote and DELETING the in-process `runtime.ts` wiring + the `rpc.ts` shim is irreversible
-and the remote TUI path (which mounts OpenTUI) can't be unit-tested here — it needs a manual session
-(`EFFERENT_REMOTE=1 efferent` in a real terminal: attach, send, spawn a fleet, detach/reattach, kill
-the daemon mid-turn and confirm auto-resume, approve a bash command). Do that first, fix what it
-surfaces, THEN flip the default + delete the legacy path. Also follow-ups: wire the remote TUI's
-post-login to `POST /auth/reload`; `POST /shutdown` + `efferent daemon {status,stop}`; fold
-`generateSessionTitle` + auto-handoff into the adapter's `finishTurn`; per-agent-session ledgers +
-seat-switching across sessions; the cron tick inside the daemon.
+**Remaining — the IRREVERSIBLE half of (g), deliberately gated:** DELETING the in-process
+`runtime.ts`/`submit.ts`/`spawnAgent.ts`/client `approval.ts` + the `rpc.ts` shim. The remote TUI
+mounts OpenTUI and can't be unit-tested here, so the delete waits on a manual soak: run `efferent` in
+a real terminal (attach, send, spawn a fleet, detach/reattach, kill the daemon mid-turn → confirm
+auto-resume, approve a bash command); if anything misbehaves, `EFFERENT_LOCAL=1` is the escape hatch
+while it's fixed. Per the parent CLAUDE.md, any RELEASE of this default flip is outward-facing and
+needs explicit sign-off. Smaller follow-ups: wire the remote TUI's post-login to `POST /auth/reload`;
+an `efferent daemon {status,stop}` CLI + `:daemon` command; fold auto-handoff into the adapter's
+`finishTurn`; per-agent-session ledgers + seat-switching; the cron tick inside the daemon.
 
 ## Why
 

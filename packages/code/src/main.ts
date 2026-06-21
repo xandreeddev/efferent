@@ -380,13 +380,17 @@ const root = Command.make(
           // platform lib is missing), surface a clear error and exit non-zero
           // rather than crashing with a defect.
           //
-          // EFFERENT_REMOTE flips the TUI to a thin client that attaches to the
-          // per-workspace daemon over HTTP/SSE (auto-spawning it if absent); the
-          // default stays the in-process driver.
-          const remote = (process.env.EFFERENT_REMOTE ?? "").trim().length > 0
-          const runTui = remote
-            ? (yield* Effect.promise(() => import("./cli/remoteRuntime.js"))).runTuiModeRemote
-            : (yield* Effect.promise(() => import("./cli/runtime.js"))).runTuiModeSolid
+          // The TUI is now a thin client that attaches to the per-workspace
+          // daemon over HTTP/SSE (auto-spawning it if absent) — the tmux-style
+          // default. The legacy in-process driver remains a one-flag fallback
+          // (`EFFERENT_LOCAL=1`) until the remote path has soaked; it is NOT
+          // deleted (that final cleanup is gated on a manual attach/detach/
+          // restore validation — see docs/daemon-split.md). `EFFERENT_REMOTE`
+          // stays accepted as an explicit opt-in alias for the default.
+          const local = (process.env.EFFERENT_LOCAL ?? "").trim().length > 0
+          const runTui = local
+            ? (yield* Effect.promise(() => import("./cli/runtime.js"))).runTuiModeSolid
+            : (yield* Effect.promise(() => import("./cli/remoteRuntime.js"))).runTuiModeRemote
           yield* runTui(tuiInput).pipe(
             Effect.catchAllDefect((defect) =>
               Effect.sync(() => {
