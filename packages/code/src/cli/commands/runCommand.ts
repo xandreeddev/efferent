@@ -257,6 +257,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       // :tree shows the full run tree.)
       const d = ctx.getDirective()
       const fired = ctx.listFleet()
+      // The whole live fleet from the bus — model-spawned background agents
+      // included, not just `:spawn`-fired ones.
+      const live = ctx.liveAgents()
       void ctx.run(
         loadJobs().pipe(
           Effect.flatMap((jobs) =>
@@ -269,10 +272,13 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
                   : `directive: ${d.objective}${d.criteria !== undefined ? ` — done when ${d.criteria}` : ""}`,
               )
               lines.push(
-                fired.length === 0
-                  ? "running agents: none (:spawn <agent> <folder> <task> to fire one)"
-                  : `running agents: ${fired.map((f) => `#${f.id} ${f.title} (${f.folder})`).join(", ")}`,
+                live.length === 0
+                  ? "running agents: none (ask for coding work, or :spawn <agent> <folder> <task>)"
+                  : `running agents (${live.length}): ${live.map((a) => a.label).join(", ")}`,
               )
+              if (fired.length > 0) {
+                lines.push(`  fired (:stop <id>): ${fired.map((f) => `#${f.id} ${f.title}`).join(", ")}`)
+              }
               lines.push(
                 mine.length === 0
                   ? "scheduled: none (:schedule add …)"

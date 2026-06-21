@@ -79,7 +79,9 @@ ${lines}
 
 const subAgentsSection = `
 # Sub-agents
-You can offload focused, localized work to a sub-agent with run_agent({ folder, task }). It runs scoped to that folder — it reads anywhere, but writes and runs bash only inside it — in its own fresh, persisted context, and returns a one-line summary, the files it changed, and a node id. Prefer it when a change is localized to one area (a package or directory): it keeps your own context focused. Independent tasks in different folders can be spawned together in one turn — they run in parallel (same-folder spawns queue). For work where one folder depends on another, spawn in dependency order (the dependency first, then its consumer). A folder's SCOPE.md (if present) is injected as standing context for any sub-agent that runs there.
+You can offload focused, localized work to a sub-agent with run_agent({ folder, task }). It runs scoped to that folder — it reads anywhere, but writes and runs bash only inside it — in its own fresh, persisted context. Prefer it when a change is localized to one area (a package or directory): it keeps your own context focused. A folder's SCOPE.md (if present) is injected as standing context for any sub-agent that runs there.
+
+**Spawning is non-blocking.** run_agent returns IMMEDIATELY with { nodeId, name, status: "running" } — the sub-agent works in the BACKGROUND, you do NOT wait inside the call. So you never freeze, and you can fire several at once: spawn independent tasks (different folders) together in one turn and they run in parallel (same-folder spawns queue). For coupled work, spawn in dependency order. To get a sub-agent's result, call **wait_for_agents** — it blocks no one and returns each agent's status (running/ok/error) with finished ones' summary + files, plus any messages sent to you; loop it until they're done. You'll also get each completion in your inbox at a turn boundary if you don't wait. Hold the nodeId — you pass it to wait_for_agents, send_message, or seedFromNode.
 
 **Routing: one agent = one piece of work.** Default to a FRESH spawn for every new task — even in the same folder. Fresh context is cheaper and more focused; resuming re-feeds the node's entire history on every turn and mixes unrelated work into one context. Reuse a node only when the new task is a direct follow-up on that node's own output, and pick the cheapest seed that carries enough context: seedMode "handoff" (PREFER) seeds a fresh node with a generated brief of the source's work — continuity without the history; "resume" continues the node verbatim — only when the exact file contents already in its context matter; "branch" copies the full history into a new node — for retrying or diverging when verbatim context is needed but the original must stay intact. Anything the sub-agent needs that you already know, write into the task itself. Never route a task to an old node just because the folder matches.
 
@@ -88,10 +90,11 @@ All sub-agents in a turn share one token budget: a BudgetExhausted failure means
 
 const coordinationSection = `
 # Coordination
-When several agents work at once, coordinate through the shared bus instead of guessing:
-- blackboard_post({ note }) / blackboard_read({ limit? }) — a shared scratchpad every agent in the fleet reads and writes. Post findings, decisions, and warnings; read it before and during work so siblings don't duplicate or clobber each other.
-- send_message({ to, content }) — message a specific RUNNING agent by its run_agent nodeId; it reads the message at its next turn. Use it for a direct hand-off or a question to a sibling you spawned.
-Messages addressed to YOU arrive automatically at the start of a turn, marked "[inbox · message from …]" — read and act on them.
+The fleet runs like a team: agents work in parallel, in the background, and coordinate instead of guessing. Nobody blocks anyone — an agent that needs another's output keeps working and reconciles over the bus.
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather results without blocking: returns as soon as a watched agent finishes, someone messages you, or it times out, with each agent's status + finished summaries + your inbox. Loop it until your agents are done. Omit nodeIds to watch everyone you spawned.
+- blackboard_post({ note }) / blackboard_read({ limit? }) — a shared scratchpad every agent in the fleet reads and writes. Post findings, decisions, and warnings (e.g. an API contract the frontend needs); read it before and during work so siblings don't duplicate or clobber each other.
+- send_message({ to, content }) — message a specific RUNNING agent by its run_agent nodeId; it reads the message at its next turn. Use it to steer, unblock, or ask a sibling something.
+Messages addressed to YOU — from the human, the root, or a sibling — arrive automatically at the start of a turn (and in wait_for_agents), marked "[inbox · message from …]". You are ALWAYS reachable this way: read them and act, whether it's a status request, an alignment check, or a changed deliverable.
 `
 
 interface RenderScopeSystemPromptArgs {
@@ -140,7 +143,8 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - ls({ path?, recursive? }) — list anywhere.
 - search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
-- run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work (see Sub-agents).
+- run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work; returns immediately, the agent runs in the background (see Sub-agents).
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather spawned agents' results without blocking (see Coordination).
 - send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron).
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
@@ -209,6 +213,7 @@ ${systemSection}
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
 - run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather the results of agents you spawned without blocking (see Coordination).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
@@ -236,7 +241,7 @@ const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string
 # Delegating coding work
 For any non-trivial coding or implementation task — anything beyond a quick read or a one-line edit — hand it to the coordinator instead of doing it yourself:
   run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task, with everything you already know>" })
-The coordinator drives a team: it plans, delegates each piece to an implementer, validates the result with the architect (a read-only reviewer in a fresh context), and reports back. You stay the user's point of contact — relay the coordinator's progress and final result. The user can jump into the coordinator or any team member to steer.
+This returns immediately — the coordinator works in the background. It leads a team: it plans, staffs the right specialists for the work (frontend, backend, qa, product, plus a read-only architect to validate), coordinates them, and reports back. You can simply tell the user it's underway and let them watch/steer, or call wait_for_agents to relay its result when it's done — either way you don't block. You stay the user's point of contact: the user (and you, via send_message) can reach the coordinator or any teammate at any time for status, alignment, or to change the deliverable.
 Do small things yourself: answer questions, read/grep/inspect the workspace, a single-file edit. Reach for the coordinator when the work is multi-file, multi-step, or benefits from review.
 `
 }
@@ -295,6 +300,7 @@ ${systemSection}
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
 - run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Delegating coding work / Agent roles below).
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather the results of agents you spawned without blocking (see Coordination).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due.

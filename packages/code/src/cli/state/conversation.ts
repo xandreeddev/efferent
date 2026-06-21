@@ -74,17 +74,30 @@ export interface ConversationSlice {
   ) => void
   /** Replace the entire block list — used by resume / build-a-new-session. */
   readonly setBlocks: (next: ScrollbackBlock[]) => void
-  /** Active node-session preview overlaying the conversation pane, if any. */
+  /** Which agent (context-node) is open in the RIGHT pane, if any. */
   readonly nodePreview: Accessor<NodePreview | undefined>
   readonly setNodePreview: (p: NodePreview | undefined) => void
-  /** Append a live block to the open preview (no-op when none is open) —
-   *  how a resumed node's run streams into the session view. */
-  readonly appendPreviewBlock: (block: ScrollbackBlock) => void
-  /** Patch a tool pill inside the open preview by id (no-op when none). */
-  readonly patchPreviewTool: (
+  /**
+   * The per-agent **live log** — every sub-agent's rail blocks, keyed by node id,
+   * accumulated by the event pump as the agent works (NOT just while its pane is
+   * open). The right pane (`AgentPane`) renders the current preview's log, so
+   * swapping to any agent — running or finished — shows its full state, and a
+   * running one keeps streaming. The durable record is still the context tree;
+   * this is the live, in-memory view of "what each teammate is doing".
+   */
+  readonly nodeLog: (nodeId: string) => ReadonlyArray<ScrollbackBlock>
+  /** Append a block to a node's live log. */
+  readonly appendNodeLog: (nodeId: string, block: ScrollbackBlock) => void
+  /** Patch a tool pill inside a node's live log by id. */
+  readonly patchNodeLogTool: (
+    nodeId: string,
     id: string,
     patch: Partial<Extract<ScrollbackBlock, { kind: "tool" }>>,
   ) => void
+  /** Seed a node's log from persisted history — only when it has no live log yet
+   *  (a finished/prior-session node the pump never streamed). Never clobbers a
+   *  live log. */
+  readonly seedNodeLog: (nodeId: string, blocks: ReadonlyArray<ScrollbackBlock>) => void
   /**
    * What the conversation pane currently shows: the preview overlay when one is
    * open, else the live blocks. Every conversation-pane *reader* (view, fold
@@ -113,6 +126,7 @@ export const createConversationSlice = (): ConversationSlice => {
   const [convCursor, setConvCursorSig] = createSignal(0)
   const [search, setSearchSig] = createSignal<SearchState | undefined>(undefined)
   const [nodePreview, setNodePreviewSig] = createSignal<NodePreview | undefined>(undefined)
+  const [nodeLogs, setNodeLogs] = createSignal<ReadonlyMap<string, ScrollbackBlock[]>>(new Map())
   const [searchPane, setSearchPaneSig] = createSignal<"conversation" | "side">("conversation")
   const convScroller: { current?: ConvScroller } = {}
   const inputControl: { current?: InputControl } = {}
@@ -135,24 +149,42 @@ export const createConversationSlice = (): ConversationSlice => {
     setBlocks: (next) => setBlocksSig(next),
     nodePreview,
     setNodePreview: (p) => setNodePreviewSig(p),
-    appendPreviewBlock: (block) =>
-      setNodePreviewSig((p) => (p === undefined ? p : { ...p, blocks: [...p.blocks, block] })),
-    patchPreviewTool: (id, patch) =>
-      setNodePreviewSig((p) =>
-        p === undefined
-          ? p
-          : {
-              ...p,
-              blocks: p.blocks.map((b) =>
-                b.kind === "tool" && b.id === id ? { ...b, ...patch } : b,
-              ),
-            },
-      ),
-    viewBlocks: () => nodePreview()?.blocks ?? blocks(),
+    nodeLog: (nodeId) => nodeLogs().get(nodeId) ?? [],
+    appendNodeLog: (nodeId, block) =>
+      setNodeLogs((m) => {
+        const next = new Map(m)
+        next.set(nodeId, [...(m.get(nodeId) ?? []), block])
+        return next
+      }),
+    patchNodeLogTool: (nodeId, id, patch) =>
+      setNodeLogs((m) => {
+        const cur = m.get(nodeId)
+        if (cur === undefined) return m
+        const next = new Map(m)
+        next.set(
+          nodeId,
+          cur.map((b) => (b.kind === "tool" && b.id === id ? { ...b, ...patch } : b)),
+        )
+        return next
+      }),
+    seedNodeLog: (nodeId, blocks) =>
+      setNodeLogs((m) => {
+        if ((m.get(nodeId)?.length ?? 0) > 0) return m // never clobber a live log
+        const next = new Map(m)
+        next.set(nodeId, [...blocks])
+        return next
+      }),
+    // The LEFT pane always shows the orchestrator (the lead conversation). A
+    // selected agent no longer overlays it — it opens as the RIGHT pane
+    // (`AgentPane`, reading `nodePreview().blocks` directly), so the two are
+    // visible side by side. `viewBlocks` therefore feeds the left pane + its
+    // cursor/search, which always operate on the lead.
+    viewBlocks: () => blocks(),
     clear: () => {
       setBlocksSig([])
       setSearchSig(undefined)
       setNodePreviewSig(undefined)
+      setNodeLogs(new Map())
     },
     search,
     setSearch: (next) => setSearchSig(next),

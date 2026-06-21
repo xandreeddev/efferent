@@ -21,13 +21,22 @@ const fmtElapsed = (ms: number): string => {
 export const Header = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const st = () => store.agentState()
-  const running = () => st().phase !== "idle"
+  // An agent is paused waiting for the human to answer a bash approval — the one
+  // state that LOOKS like a hang but isn't. Surface it loudly so it's obvious
+  // the agent is waiting on YOU (the sheet is in the bottom chrome).
+  const approvalPending = () => store.overlay().kind === "approval"
+  const phaseActive = () => st().phase !== "idle"
+  const fleetRunning = () => st().fleet.length > 0
+  // "Working" covers the async case too: the lead turn can be idle while the
+  // background fleet keeps going — so don't read "idle" when agents are live.
+  const active = () => phaseActive() || fleetRunning()
+  const label = () => (phaseActive() ? agentStateLabel(st()) : "fleet working")
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
   const elapsed = () => {
     // The spinner signal doubles as the clock tick — it advances while busy,
     // which is exactly when the elapsed readout needs to move.
     void store.spinner()
-    return st().since > 0 ? fmtElapsed(Date.now() - st().since) : ""
+    return phaseActive() && st().since > 0 ? fmtElapsed(Date.now() - st().since) : ""
   }
   const fleet = () => fleetLabel(st())
 
@@ -37,17 +46,26 @@ export const Header = (props: { ctx: TuiContext }) => {
         {`${glyph.wordmark}efferent`}
       </text>
       <Show
-        when={running()}
-        fallback={<text fg={tokens.text.dim} flexShrink={0}>{`  ${glyph.idleDot} idle`}</text>}
+        when={!approvalPending()}
+        fallback={
+          <text fg={tokens.state.error} wrapMode="none" flexShrink={0}>
+            {`  ${glyph.idleDot} approval needed — answer below`}
+          </text>
+        }
       >
-        <text fg={tokens.state.running} flexShrink={0}>{`  ${spin()} `}</text>
-        <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
-          {agentStateLabel(st())}
-        </text>
-        <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{` ${elapsed()}`}</text>
-      </Show>
-      <Show when={fleet()}>
-        <text fg={tokens.accent.side} wrapMode="none">{`  ${glyph.fleet} ${fleet()}`}</text>
+        <Show
+          when={active()}
+          fallback={<text fg={tokens.text.dim} flexShrink={0}>{`  ${glyph.idleDot} idle`}</text>}
+        >
+          <text fg={tokens.state.running} flexShrink={0}>{`  ${spin()} `}</text>
+          <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
+            {label()}
+          </text>
+          <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>{` ${elapsed()}`}</text>
+        </Show>
+        <Show when={fleet()}>
+          <text fg={tokens.accent.side} wrapMode="none">{`  ${glyph.fleet} ${fleet()}`}</text>
+        </Show>
       </Show>
     </box>
   )

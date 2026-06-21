@@ -21,4 +21,8 @@ export interface TuiModeInput {
   readonly rootScope: Scope
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly resumeConversationId?: string
+  /** Attach to a specific fleet's coordinator (the `--fleet <id>` flag / the
+   *  dashboard's "attach" action). Remote driver only; absent ⇒ the daemon's
+   *  active/first root. */
+  readonly fleetId?: string
 }

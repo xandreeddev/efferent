@@ -7,10 +7,9 @@ stop being interchangeable bare `string`/`number`.
 **Status:** Phase 1 shipped (branch `brand/contextnodeid-reclaim`, commit
 `7ff61bc`). Phases 2–4 are unstarted — pick up here if/when it's worth it.
 
-This is the *execution* view. The exhaustive field-by-field inventory of every
-brandable primitive lives in [`branded-types-plan.md`](./branded-types-plan.md)
-(the original, more maximalist plan). Where the two disagree, **this doc wins** —
-it reconciles that plan against a construction/decode audit (see "Deltas" below).
+This is the *execution* view. The original field-by-field inventory (a more maximalist plan) is archived and no longer maintained.
+**This doc is authoritative** — it reconciles that plan against a construction/decode audit
+(see "Deltas" below), and where the two disagree this doc wins.
 
 ## Why brand at all
 
@@ -131,9 +130,9 @@ a property test that `parseModel ∘ formatModel` round-trips.
 
 ---
 
-## Deltas from `branded-types-plan.md`
+## Deltas from the original plan
 
-The original plan is a thorough *what/where* map but predates a construction
+The archived original plan was a thorough *what/where* map but predated a construction
 audit. This roadmap changes:
 
 - **Adds Phase 1** (the `ContextNodeId` reclaim) — the original missed the

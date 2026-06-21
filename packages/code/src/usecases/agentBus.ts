@@ -1,20 +1,32 @@
-import { Effect, Ref } from "effect"
+import { Deferred, Effect, Fiber, Ref } from "effect"
+import type { AgentEvent } from "@xandreed/sdk-core"
 
 /**
- * Phase 3 — the in-memory agent comms bus. Two channels, both Effect `Ref`s
- * (no IPC; the whole fleet is fibers in one runtime — see the execution model):
+ * The in-memory agent **comms + supervision bus** — the spine of the async
+ * fleet. The whole fleet is fibers in one runtime (no IPC), so the bus is plain
+ * Effect state over a `Ref`; what it carries is everything the fleet needs to
+ * run like a team of people rather than a blocking call tree:
  *
- *  - **Mailboxes** — a per-agent inbox keyed by context-node id. `send_message`
- *    posts to one; the recipient's loop drains it at its next turn boundary (a
- *    driver `onTransformContext` hook) and folds the messages into context. A
- *    mailbox exists only while its agent is RUNNING, so a message to a finished
- *    agent fails fast (its result is already in `:tree`).
- *  - **Blackboard** — a shared scratchpad every agent can `post`/`read`, so
+ *  - **Mailboxes** — a per-agent inbox keyed by its context-node id (the root
+ *    conversation uses its own id as a key). `send_message`, a human pairing in
+ *    a preview, and a child's completion all `post` here; the recipient drains
+ *    it at its next turn boundary (the loop's `onTransformContext` hook) and
+ *    folds the messages into context. A post also fulfils the recipient's
+ *    **wake** latch, so an agent parked in `wait_for_agents` returns at once
+ *    instead of sleeping out its timeout — you can always reach a busy agent.
+ *  - **Blackboard** — a shared scratchpad every agent `post`s/`read`s, so
  *    parallel siblings see each other's findings without direct addressing.
+ *  - **Supervision** — each running agent registers its **fiber** (so `:stop`
+ *    and teardown can interrupt it) and a **completion** `Deferred` (so a parent
+ *    can await it without polling). When it finishes the bus keeps a small
+ *    terminal **result** record (status + summary + files) so a gather can read
+ *    a just-finished agent's outcome even after its mailbox is gone.
  *
- * Persistence is deliberately out of scope for v1 (a turn's subtree is
- * ephemeral); the durable record stays the context tree. Bounded only by the
- * shared token budget + a blackboard cap — a strict ping-pong cap is deferred.
+ * Nothing blocks structurally: spawning forks a fiber and returns immediately;
+ * gathering (`awaitChange`) races completions against the waiter's own inbox and
+ * a timeout, all interruptible. The durable record stays the context tree; this
+ * is the live layer the TUI and the agents tap to see who's running and say
+ * what to whom.
  */
 
 export interface InboxMessage {
@@ -30,75 +42,401 @@ export interface BoardNote {
   readonly at: number
 }
 
+/** Live status of an agent the bus knows about. */
+export type AgentRunStatus = "running" | "ok" | "error"
+
+/** The terminal outcome of a finished run — what a gather reports to a parent. */
+export interface AgentResultRecord {
+  readonly status: "ok" | "error"
+  readonly summary: string
+  readonly filesChanged: ReadonlyArray<string>
+}
+
+/** A point-in-time view of one agent for a status query / gather. */
+export interface AgentSnapshot {
+  readonly nodeId: string
+  readonly label: string
+  readonly status: AgentRunStatus
+  readonly summary?: string
+  readonly filesChanged?: ReadonlyArray<string>
+}
+
+/** Options for registering a running agent. */
+export interface MarkRunningOpts {
+  /** The bus key of the agent (or root) that spawned this one — its completion
+   *  message is delivered there, and `childrenOf(parentKey)` finds it. */
+  readonly parentKey?: string | null
+}
+
 export interface AgentBus {
-  /** Register a live mailbox for a running agent (called as its run starts). */
-  readonly markRunning: (nodeId: string, label: string) => Effect.Effect<void>
-  /** Tear down the mailbox when the run ends (delivered-but-unread are dropped). */
+  /**
+   * Register (or re-affirm) a live mailbox + completion latch for a running
+   * agent. Idempotent: a second call keeps the existing completion `Deferred`
+   * (so a parent that already grabbed it still gets fulfilled), only refreshing
+   * the label/parent. The handler pre-registers a child before forking so a
+   * sibling can address it the instant `run_agent` returns its id.
+   */
+  readonly markRunning: (
+    nodeId: string,
+    label: string,
+    opts?: MarkRunningOpts,
+  ) => Effect.Effect<void>
+  /** Record the agent's running fiber, so `:stop` / teardown can interrupt it. */
+  readonly setFiber: (
+    nodeId: string,
+    fiber: Fiber.RuntimeFiber<unknown, unknown>,
+  ) => Effect.Effect<void>
+  /**
+   * Close a run with its outcome: keep a terminal result record, fulfil the
+   * completion latch (waiters wake), deliver a completion message to the parent's
+   * inbox + the blackboard, then tear the mailbox down. The single "this agent
+   * finished" path.
+   */
+  readonly complete: (
+    nodeId: string,
+    result: AgentResultRecord,
+  ) => Effect.Effect<void>
+  /** Tear down a mailbox with no result (interrupt path); fulfils the latch so a
+   *  parent waiting on it never hangs. */
   readonly markDone: (nodeId: string) => Effect.Effect<void>
   readonly isRunning: (nodeId: string) => Effect.Effect<boolean>
   /** Running agents with mailboxes, for addressing + the cockpit. */
   readonly listRunning: () => Effect.Effect<ReadonlyArray<{ nodeId: string; label: string }>>
-  /** Post to an agent's inbox. Returns false when the target isn't running. */
+  /** Node ids of the agents `parentKey` spawned that are still running. */
+  readonly childrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
+  /** Interrupt one running agent's fiber. False when it isn't running / has no fiber. */
+  readonly interrupt: (nodeId: string) => Effect.Effect<boolean>
+  /** Interrupt every running agent (Esc / process teardown — no orphans). */
+  readonly interruptAll: () => Effect.Effect<void>
+  /** Post to an agent's inbox + wake it. Returns false when the target isn't running. */
   readonly post: (nodeId: string, msg: InboxMessage) => Effect.Effect<boolean>
   /** Take + clear a mailbox (the recipient drains it at a turn boundary). */
   readonly drain: (nodeId: string) => Effect.Effect<ReadonlyArray<InboxMessage>>
   readonly boardPost: (note: BoardNote) => Effect.Effect<void>
   readonly boardRead: () => Effect.Effect<ReadonlyArray<BoardNote>>
+  /** A status view of the given agents (or all known, running + recently done). */
+  readonly snapshot: (
+    nodeIds?: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<AgentSnapshot>>
+  /**
+   * Block (interruptibly) until something the waiter cares about happens: any
+   * watched agent finishes, a message lands in the waiter's own inbox, or the
+   * timeout elapses — whichever first. Returns immediately if a watched agent is
+   * already finished or the waiter already has mail. The non-blocking gather
+   * primitive behind `wait_for_agents`.
+   */
+  readonly awaitChange: (opts: {
+    readonly waiterKey: string
+    readonly watch: ReadonlyArray<string>
+    readonly timeoutMs: number
+  }) => Effect.Effect<void>
+}
+
+interface AgentEntry {
+  readonly label: string
+  readonly parentKey: string | null
+  readonly inbox: ReadonlyArray<InboxMessage>
+  /** Fulfilled exactly once when the run finishes (complete/markDone). */
+  readonly completion: Deferred.Deferred<void>
+  /** Set while the agent is parked in awaitChange; a post fulfils it to wake it. */
+  readonly wake: Deferred.Deferred<void> | undefined
+  readonly fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined
+}
+
+interface DoneEntry {
+  readonly label: string
+  readonly parentKey: string | null
+  readonly status: "ok" | "error"
+  readonly summary: string
+  readonly filesChanged: ReadonlyArray<string>
 }
 
 interface BusState {
-  readonly mailboxes: ReadonlyMap<string, ReadonlyArray<InboxMessage>>
-  readonly running: ReadonlyMap<string, string>
+  readonly running: ReadonlyMap<string, AgentEntry>
+  readonly done: ReadonlyMap<string, DoneEntry>
   readonly board: ReadonlyArray<BoardNote>
 }
 
 /** Keep the blackboard bounded — oldest notes fall off (the agent re-reads). */
 const MAX_BOARD = 200
+/** Keep recently-finished results bounded — a gather reads them, then they age out. */
+const MAX_DONE = 200
+
+const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`)
+
+/** A short, stable label for an agent in a completion/board message. */
+const shortKey = (nodeId: string): string => nodeId.slice(0, 8)
 
 /**
  * Synchronous constructor (mirrors `makeFolderLocks`) so `buildScopeRuntime`
  * can build one without being an Effect; the methods are Effects over the Ref.
  */
-export const makeAgentBus = (): AgentBus => {
+export const makeAgentBus = (
+  /** Optional sink: every inter-agent message (board post, inbox message,
+   *  completion note) is also emitted as a `board_note` `AgentEvent` so the
+   *  daemon's event ledger carries the "messages flying" stream. */
+  onEvent?: (event: AgentEvent) => Effect.Effect<void>,
+): AgentBus => {
   const ref = Ref.unsafeMake<BusState>({
-    mailboxes: new Map(),
     running: new Map(),
+    done: new Map(),
     board: [],
   })
+  const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
+    onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
+
+  const statusOf = (s: BusState, nodeId: string): AgentRunStatus =>
+    s.running.has(nodeId) ? "running" : s.done.get(nodeId)?.status ?? "running"
+
+  const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot => {
+    const run = s.running.get(nodeId)
+    if (run !== undefined) return { nodeId, label: run.label, status: "running" }
+    const fin = s.done.get(nodeId)
+    if (fin !== undefined) {
+      return {
+        nodeId,
+        label: fin.label,
+        status: fin.status,
+        summary: fin.summary,
+        filesChanged: fin.filesChanged,
+      }
+    }
+    return { nodeId, label: shortKey(nodeId), status: "running" }
+  }
+
   return {
-    markRunning: (nodeId, label) =>
-      Ref.update(ref, (s) => ({ ...s, running: new Map(s.running).set(nodeId, label) })),
-    markDone: (nodeId) =>
-      Ref.update(ref, (s) => {
-        const running = new Map(s.running)
-        running.delete(nodeId)
-        const mailboxes = new Map(s.mailboxes)
-        mailboxes.delete(nodeId)
-        return { ...s, running, mailboxes }
+    markRunning: (nodeId, label, opts) =>
+      Effect.gen(function* () {
+        const completion = yield* Deferred.make<void>()
+        yield* Ref.update(ref, (s) => {
+          const existing = s.running.get(nodeId)
+          const running = new Map(s.running)
+          running.set(nodeId, {
+            label,
+            parentKey: opts?.parentKey ?? existing?.parentKey ?? null,
+            inbox: existing?.inbox ?? [],
+            // Keep an existing completion latch so a parent that already awaits
+            // it is still woken; only the first registration creates one.
+            completion: existing?.completion ?? completion,
+            wake: existing?.wake,
+            fiber: existing?.fiber,
+          })
+          return { ...s, running }
+        })
       }),
+
+    setFiber: (nodeId, fiber) =>
+      Ref.update(ref, (s) => {
+        const e = s.running.get(nodeId)
+        if (e === undefined) return s
+        const running = new Map(s.running)
+        running.set(nodeId, { ...e, fiber })
+        return { ...s, running }
+      }),
+
+    complete: (nodeId, result) =>
+      Effect.gen(function* () {
+        const entry = yield* Ref.modify(ref, (s) => {
+          const e = s.running.get(nodeId)
+          const running = new Map(s.running)
+          running.delete(nodeId)
+          const done = new Map(s.done)
+          done.set(nodeId, {
+            label: e?.label ?? shortKey(nodeId),
+            parentKey: e?.parentKey ?? null,
+            status: result.status,
+            summary: result.summary,
+            filesChanged: result.filesChanged,
+          })
+          // Bound the done map — drop the oldest insertions.
+          while (done.size > MAX_DONE) {
+            const oldest = done.keys().next().value
+            if (oldest === undefined) break
+            done.delete(oldest)
+          }
+          return [e, { ...s, running, done }]
+        })
+        if (entry === undefined) return
+        // Wake anyone awaiting this run (parent gather) and its own park latch.
+        yield* Deferred.succeed(entry.completion, undefined).pipe(Effect.ignore)
+        if (entry.wake !== undefined) {
+          yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
+        }
+        // Deliver the outcome to the parent's inbox + the blackboard, so a parent
+        // not actively waiting still picks it up at its next turn, and siblings
+        // see it on the board. Best-effort: a finished/absent parent just drops it.
+        const line = `${result.status === "ok" ? "finished" : "failed"}: ${clip(result.summary, 600)}`
+        if (entry.parentKey !== null && entry.parentKey.length > 0) {
+          const at = Date.now()
+          yield* Ref.update(ref, (s) => {
+            const p = s.running.get(entry.parentKey as string)
+            if (p === undefined) return s
+            const running = new Map(s.running)
+            running.set(entry.parentKey as string, {
+              ...p,
+              inbox: [...p.inbox, { from: `agent ${shortKey(nodeId)} (${entry.label})`, content: line, at }],
+            })
+            return { ...s, running }
+          })
+          // Wake a parent parked in awaitChange.
+          const parent = yield* Ref.get(ref).pipe(
+            Effect.map((s) => s.running.get(entry.parentKey as string)),
+          )
+          if (parent?.wake !== undefined) {
+            yield* Deferred.succeed(parent.wake, undefined).pipe(Effect.ignore)
+          }
+        }
+        const at = Date.now()
+        yield* Ref.update(ref, (s) => ({
+          ...s,
+          board: [...s.board, { from: entry.label, note: line, at }].slice(-MAX_BOARD),
+        }))
+        yield* emit(entry.label, line, at)
+      }),
+
+    markDone: (nodeId) =>
+      Effect.gen(function* () {
+        const entry = yield* Ref.modify(ref, (s) => {
+          const e = s.running.get(nodeId)
+          if (e === undefined) return [undefined, s]
+          const running = new Map(s.running)
+          running.delete(nodeId)
+          return [e, { ...s, running }]
+        })
+        if (entry === undefined) return
+        yield* Deferred.succeed(entry.completion, undefined).pipe(Effect.ignore)
+        if (entry.wake !== undefined) {
+          yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
+        }
+      }),
+
     isRunning: (nodeId) => Ref.get(ref).pipe(Effect.map((s) => s.running.has(nodeId))),
+
     listRunning: () =>
       Ref.get(ref).pipe(
-        Effect.map((s) => [...s.running.entries()].map(([nodeId, label]) => ({ nodeId, label }))),
+        Effect.map((s) =>
+          [...s.running.entries()].map(([nodeId, e]) => ({ nodeId, label: e.label })),
+        ),
       ),
-    post: (nodeId, msg) =>
-      Ref.modify(ref, (s) => {
-        if (!s.running.has(nodeId)) return [false, s]
-        const prev = s.mailboxes.get(nodeId) ?? []
-        const mailboxes = new Map(s.mailboxes).set(nodeId, [...prev, msg])
-        return [true, { ...s, mailboxes }]
+
+    childrenOf: (parentKey) =>
+      Ref.get(ref).pipe(
+        Effect.map((s) => {
+          const running = [...s.running.entries()]
+            .filter(([, e]) => e.parentKey === parentKey)
+            .map(([nodeId]) => nodeId)
+          // Finished children too, so a gather's "watch all I spawned" default
+          // still reports an agent that completed before the parent looked.
+          const done = [...s.done.entries()]
+            .filter(([, e]) => e.parentKey === parentKey)
+            .map(([nodeId]) => nodeId)
+          return [...new Set([...running, ...done])]
+        }),
+      ),
+
+    interrupt: (nodeId) =>
+      Effect.gen(function* () {
+        const fiber = yield* Ref.get(ref).pipe(
+          Effect.map((s) => s.running.get(nodeId)?.fiber),
+        )
+        if (fiber === undefined) return false
+        yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
+        return true
       }),
+
+    interruptAll: () =>
+      Effect.gen(function* () {
+        const fibers = yield* Ref.get(ref).pipe(
+          Effect.map((s) =>
+            [...s.running.values()]
+              .map((e) => e.fiber)
+              .filter((f): f is Fiber.RuntimeFiber<unknown, unknown> => f !== undefined),
+          ),
+        )
+        yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
+          discard: true,
+        })
+      }),
+
+    post: (nodeId, msg) =>
+      Effect.gen(function* () {
+        const entry = yield* Ref.modify(ref, (s) => {
+          const e = s.running.get(nodeId)
+          if (e === undefined) return [undefined, s]
+          const running = new Map(s.running)
+          running.set(nodeId, { ...e, inbox: [...e.inbox, msg] })
+          return [e, { ...s, running }]
+        })
+        if (entry === undefined) return false
+        if (entry.wake !== undefined) {
+          yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
+        }
+        yield* emit(msg.from, msg.content, msg.at)
+        return true
+      }),
+
     drain: (nodeId) =>
       Ref.modify(ref, (s) => {
-        const msgs = s.mailboxes.get(nodeId) ?? []
-        if (msgs.length === 0) return [msgs, s]
-        const mailboxes = new Map(s.mailboxes)
-        mailboxes.delete(nodeId)
-        return [msgs, { ...s, mailboxes }]
+        const e = s.running.get(nodeId)
+        if (e === undefined || e.inbox.length === 0) return [[], s]
+        const running = new Map(s.running)
+        running.set(nodeId, { ...e, inbox: [] })
+        return [e.inbox, { ...s, running }]
       }),
+
     boardPost: (note) =>
-      Ref.update(ref, (s) => ({ ...s, board: [...s.board, note].slice(-MAX_BOARD) })),
+      Ref.update(ref, (s) => ({ ...s, board: [...s.board, note].slice(-MAX_BOARD) })).pipe(
+        Effect.zipRight(emit(note.from, note.note, note.at)),
+      ),
+
     boardRead: () => Ref.get(ref).pipe(Effect.map((s) => s.board)),
+
+    snapshot: (nodeIds) =>
+      Ref.get(ref).pipe(
+        Effect.map((s) => {
+          const ids =
+            nodeIds !== undefined && nodeIds.length > 0
+              ? nodeIds
+              : [...new Set([...s.running.keys(), ...s.done.keys()])]
+          return ids.map((id) => snapshotOne(s, id))
+        }),
+      ),
+
+    awaitChange: ({ waiterKey, watch, timeoutMs }) =>
+      Effect.gen(function* () {
+        const s0 = yield* Ref.get(ref)
+        // Already-finished watched agent, or mail already waiting → return now.
+        const someDone = watch.some((id) => statusOf(s0, id) !== "running")
+        const haveMail = (s0.running.get(waiterKey)?.inbox.length ?? 0) > 0
+        if (someDone || haveMail) return
+
+        // Park: set the waiter's wake latch, race it against the watched
+        // completions and a timeout, then clear the latch on every exit path.
+        const wake = yield* Deferred.make<void>()
+        yield* Ref.update(ref, (s) => {
+          const e = s.running.get(waiterKey)
+          if (e === undefined) return s
+          const running = new Map(s.running)
+          running.set(waiterKey, { ...e, wake })
+          return { ...s, running }
+        })
+        const clearWake = Ref.update(ref, (s) => {
+          const e = s.running.get(waiterKey)
+          if (e === undefined || e.wake !== wake) return s
+          const running = new Map(s.running)
+          running.set(waiterKey, { ...e, wake: undefined })
+          return { ...s, running }
+        })
+        const completions = watch
+          .map((id) => s0.running.get(id)?.completion)
+          .filter((d): d is Deferred.Deferred<void> => d !== undefined)
+          .map((d) => Deferred.await(d))
+        yield* Effect.raceAll([
+          Deferred.await(wake),
+          Effect.sleep(`${Math.max(0, timeoutMs)} millis`),
+          ...completions,
+        ]).pipe(Effect.ensuring(clearWake))
+      }),
   }
 }
 

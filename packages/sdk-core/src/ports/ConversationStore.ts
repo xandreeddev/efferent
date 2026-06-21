@@ -85,7 +85,38 @@ export class ConversationStore extends Context.Tag(
         readonly createdAt: number
         readonly firstPrompt?: string
         readonly title?: string
+        /** The fleet's pinned model (`"<provider>:<modelId>"`), if set — so a
+         *  restarted daemon rebuilds each fleet on its own model. */
+        readonly model?: string
       }>,
+      ConversationStoreError
+    >
+    /** Pin a conversation's (fleet's) model — the per-fleet config that survives
+     *  restart and shields a running fleet from a global-default change. */
+    readonly setModel: (
+      id: ConversationId,
+      model: string,
+    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
+    /**
+     * Mark a turn **in flight** for a session: the daemon sets this to the user
+     * prompt when a turn starts and clears it on completion. A restarted daemon
+     * reads non-null markers (via {@link listPending}) to auto-resume a turn
+     * interrupted by a crash. Best-effort — a marker failure never breaks a run.
+     */
+    readonly markPending: (
+      id: ConversationId,
+      prompt: string,
+    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
+    /** Clear the in-flight marker for a session (on turn completion). */
+    readonly clearPending: (
+      id: ConversationId,
+    ) => Effect.Effect<void, ConversationStoreError>
+    /** Sessions in `workspaceDir` with an unfinished turn — the crash-recovery
+     *  list a restarted daemon walks to auto-resume interrupted turns. */
+    readonly listPending: (
+      workspaceDir: string,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly id: ConversationId; readonly prompt: string }>,
       ConversationStoreError
     >
   }
