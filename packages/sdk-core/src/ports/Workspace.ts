@@ -141,6 +141,15 @@ export const CreateFleetRequest = Schema.Struct({
 })
 export type CreateFleetRequest = typeof CreateFleetRequest.Type
 
+/** One inter-agent message for the dashboard's "messages flying" view —
+ *  a blackboard post, a direct inbox message, or a completion note. */
+export const FleetMessage = Schema.Struct({
+  from: Schema.String,
+  content: Schema.String,
+  at: Schema.Number,
+})
+export type FleetMessage = typeof FleetMessage.Type
+
 /** Per-role token + cost totals (cumulative since the daemon started). */
 export const RoleTokens = Schema.Struct({
   input: Schema.Number,
@@ -229,6 +238,11 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
     ) => Effect.Effect<void, WorkspaceError>
     /** Live in-daemon metrics for the control dashboard (no Grafana needed). */
     readonly metrics: () => Effect.Effect<WorkspaceMetrics, WorkspaceError>
+    /** Recent inter-agent messages (the blackboard tail) — seeds the dashboard's
+     *  "messages flying" view before it tails the `board_note` event stream. */
+    readonly messages: (
+      limit?: number,
+    ) => Effect.Effect<ReadonlyArray<FleetMessage>, WorkspaceError>
     readonly getDirective: () => Effect.Effect<
       Directive | undefined,
       WorkspaceError

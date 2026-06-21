@@ -6,6 +6,7 @@ import {
 import { Effect, Option, Schema, Stream } from "effect"
 import {
   type CreateFleetRequest,
+  FleetMessage,
   ImportResult,
   SessionId,
   SessionState,
@@ -52,6 +53,9 @@ export interface HttpTransport {
     since?: number,
   ) => Effect.Effect<SessionState, WorkspaceError, HttpClient.HttpClient>
   readonly metrics: () => Effect.Effect<WorkspaceMetrics, WorkspaceError, HttpClient.HttpClient>
+  readonly messages: (
+    limit?: number,
+  ) => Effect.Effect<ReadonlyArray<FleetMessage>, WorkspaceError, HttpClient.HttpClient>
   readonly send: (
     id: SessionId,
     prompt: string,
@@ -129,6 +133,11 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
     snapshot: () => getJson("/snapshot", WorkspaceSnapshot),
     listSessions: () => getJson("/sessions", Schema.Array(SessionSummary)),
     metrics: () => getJson("/metrics", WorkspaceMetrics),
+    messages: (limit) =>
+      getJson(
+        `/messages${limit !== undefined ? `?limit=${limit}` : ""}`,
+        Schema.Array(FleetMessage),
+      ),
     getState: (id, since) =>
       getJson(
         `/sessions/${id}/state${since !== undefined ? `?since=${since}` : ""}`,

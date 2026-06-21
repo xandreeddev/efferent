@@ -34,6 +34,7 @@ import {
   type Skill,
   type AgentDefinition,
   ConversationId,
+  type AgentEvent,
   type RunContext,
 } from "@xandreed/sdk-core"
 import { renderScopeSystemPrompt } from "../prompts/coder.js"
@@ -158,6 +159,10 @@ export interface BuildScopeRuntimeOptions {
   readonly maxDepth?: number
   /** Allow the `bash` tool. Default true. */
   readonly allowBash?: boolean
+  /** Optional sink for inter-agent messages — the daemon passes its ledger
+   *  `publish` so blackboard/inbox/completion notes ride the event stream as
+   *  `board_note` events (the "messages flying" firehose). */
+  readonly onBusEvent?: (event: AgentEvent) => Effect.Effect<void>
 }
 
 const clip = (s: string, n: number): string =>
@@ -1263,7 +1268,8 @@ export const buildScopeRuntime = <R = never>(
   const locks = makeFolderLocks()
   // One comms bus per runtime: per-agent mailboxes + a shared blackboard, drawn
   // on by send_message / blackboard_* and drained into each agent's context.
-  const bus = makeAgentBus()
+  // The daemon's `onBusEvent` sink mirrors messages onto the event ledger.
+  const bus = makeAgentBus(opts.onBusEvent)
   const handlerLayer = genericToolkit.toLayer(
     buildGenericHandlers(binding, opts, hooks, locks, bus),
   ) as ScopeRuntime["handlerLayer"]
