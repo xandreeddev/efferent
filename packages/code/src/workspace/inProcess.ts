@@ -47,6 +47,7 @@ import { join } from "node:path"
 import { formatFullError, inspectError } from "../cli/util/errorFormat.js"
 import { makeEventLedger, type EventLedger } from "./eventLedger.js"
 import { makeServerApproval } from "./serverApproval.js"
+import { readWorkspaceMetrics } from "./metrics.js"
 
 /**
  * The **in-process Workspace** — the authoritative owner of live agent state,
@@ -146,6 +147,7 @@ export const makeInProcessWorkspace = (
     const settingsStore = yield* SettingsStore
     const fs = yield* FileSystem
     const http = yield* Http
+    const startedAt = Date.now()
 
     // One ledger for the workspace stream; the bus's baseHooks + every run
     // publish here, and any number of clients tail it via `subscribe`.
@@ -636,6 +638,17 @@ export const makeInProcessWorkspace = (
           : deps.resolveApproval !== undefined
             ? Effect.sync(() => deps.resolveApproval!(decision))
             : Effect.void,
+
+      metrics: () =>
+        Effect.gen(function* () {
+          const fleetCount = (yield* Ref.get(fleets)).size
+          return yield* readWorkspaceMetrics({
+            bus: scopeRuntime.bus,
+            fleets: fleetCount,
+            startedAt,
+            now: Date.now(),
+          })
+        }),
 
       getDirective: () => Ref.get(directiveRef),
       setDirective: (d) => Ref.set(directiveRef, d),

@@ -11,6 +11,7 @@ import {
   SessionSummary,
   SpawnRequest,
   Workspace,
+  WorkspaceMetrics,
   WorkspaceSnapshot,
   type SessionId,
 } from "@xandreed/sdk-core"
@@ -85,6 +86,14 @@ export const workspaceRouter = (
         const ws = yield* Workspace
         const sessions = yield* ws.listSessions()
         return yield* HttpServerResponse.schemaJson(Schema.Array(SessionSummary))(sessions)
+      }),
+    ),
+    HttpRouter.get(
+      "/metrics",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const m = yield* ws.metrics()
+        return yield* HttpServerResponse.schemaJson(WorkspaceMetrics)(m)
       }),
     ),
     HttpRouter.post(
