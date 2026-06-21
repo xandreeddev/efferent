@@ -80,6 +80,10 @@ export interface HttpTransport {
   readonly importTools: (
     spec: string,
   ) => Effect.Effect<ImportResult, WorkspaceError, HttpClient.HttpClient>
+  /** Tell the daemon to reload its AuthStore (after a client-side login). */
+  readonly reloadAuth: () => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
+  /** Ask the daemon to shut down gracefully. */
+  readonly shutdown: () => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
 }
 
 /** Build a transport client for a base URL (`""` with a pre-pointed test client,
@@ -144,5 +148,7 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
     setDirective: (d) => postVoid("/directive", { directive: d ?? null }),
     importAgents: (spec) => postJson("/agents/import", { spec }, ImportResult),
     importTools: (spec) => postJson("/tools/import", { spec }, ImportResult),
+    reloadAuth: () => postVoid("/auth/reload"),
+    shutdown: () => postVoid("/shutdown"),
   }
 }

@@ -73,4 +73,45 @@ describe("daemon serve", () => {
     expect(result.workspace).toBe(workspace)
     expect(result.removedAfterTeardown).toBe(true)
   })
+
+  test("POST /shutdown stops the daemon gracefully and removes the discovery file", async () => {
+    const workspace = "/tmp/ws-daemon-shutdown"
+    const removed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const ws = yield* makeInProcessWorkspace({
+          rootConversationId: FAKE_ROOT_CID as never,
+          rootScope: fakeRootScope,
+          cwd: workspace,
+          skills: [],
+          agents: [],
+          tools: [],
+          instructionFiles: [],
+          approvalLayer: ApprovalAllowAllLive,
+          fleet: makeFleetSupervisor(),
+        })
+        yield* Effect.forkScoped(serveWorkspaceProgram(ws, { workspace, version: "v" }))
+        let info = yield* readDiscovery(workspace)
+        let spins = 0
+        while (info === undefined && spins < 300) {
+          yield* Effect.sleep("20 millis")
+          info = yield* readDiscovery(workspace)
+          spins += 1
+        }
+        if (info === undefined) return false
+        yield* Effect.promise(() =>
+          fetch(`http://127.0.0.1:${info!.port}/shutdown`, { method: "POST" }),
+        )
+        // The daemon answers 204, then tears down ~100ms later → discovery gone.
+        let after = yield* readDiscovery(workspace)
+        let s2 = 0
+        while (after !== undefined && s2 < 300) {
+          yield* Effect.sleep("20 millis")
+          after = yield* readDiscovery(workspace)
+          s2 += 1
+        }
+        return after === undefined
+      }).pipe(Effect.scoped, Effect.provide(fakeEnvLayers(FAKE_ROOT_CID))),
+    )
+    expect(removed).toBe(true)
+  })
 })

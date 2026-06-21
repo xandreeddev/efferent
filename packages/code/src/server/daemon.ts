@@ -1,6 +1,6 @@
 import { HttpServer } from "@effect/platform"
 import { BunHttpServer } from "@effect/platform-bun"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Layer } from "effect"
 import {
   type AgentDefinition,
   type Scope,
@@ -53,31 +53,43 @@ const boundPort = (server: HttpServer.HttpServer, fallback: number): number => {
 export const serveWorkspaceProgram = (
   ws: ReturnType<typeof Workspace.of>,
   opts: { readonly workspace: string; readonly version: string; readonly port?: number },
-): Effect.Effect<never, never, AuthStore> =>
-  Effect.gen(function* () {
-    const server = yield* HttpServer.HttpServer
-    const port = boundPort(server, opts.port ?? 0)
-    yield* writeDiscovery({
-      port,
-      pid: process.pid,
-      version: opts.version,
-      workspace: opts.workspace,
-    })
-    yield* Effect.addFinalizer(() => removeDiscovery(opts.workspace))
-    yield* Effect.sync(() =>
-      process.stderr.write(
-        `efferent daemon: serving ${opts.workspace} on 127.0.0.1:${port}\n`,
-      ),
-    )
-    return yield* Effect.never
-  }).pipe(
-    Effect.provide(
-      HttpServer.serve()(
-        workspaceRouter({ pid: process.pid, workspace: opts.workspace, version: opts.version }),
-      ).pipe(Layer.provide(Layer.succeed(Workspace, ws))),
-    ),
-    Effect.provide(BunHttpServer.layer({ port: opts.port ?? 0, hostname: "127.0.0.1" })),
-    Effect.scoped,
+): Effect.Effect<void, never, AuthStore> =>
+  Deferred.make<void>().pipe(
+    Effect.flatMap((shutdown) => {
+      // `POST /shutdown` answers 204 then fulfils the latch a beat later (so the
+      // response flushes before the server tears down).
+      const onShutdown = Effect.forkDaemon(
+        Effect.sleep("100 millis").pipe(Effect.zipRight(Deferred.succeed(shutdown, undefined))),
+      ).pipe(Effect.asVoid)
+      const router = workspaceRouter(
+        { pid: process.pid, workspace: opts.workspace, version: opts.version },
+        { onShutdown },
+      )
+      return Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer
+        const port = boundPort(server, opts.port ?? 0)
+        yield* writeDiscovery({
+          port,
+          pid: process.pid,
+          version: opts.version,
+          workspace: opts.workspace,
+        })
+        yield* Effect.addFinalizer(() => removeDiscovery(opts.workspace))
+        yield* Effect.sync(() =>
+          process.stderr.write(
+            `efferent daemon: serving ${opts.workspace} on 127.0.0.1:${port}\n`,
+          ),
+        )
+        // Serve until POST /shutdown (or interruption) fulfils the latch.
+        yield* Deferred.await(shutdown)
+      }).pipe(
+        Effect.provide(
+          HttpServer.serve()(router).pipe(Layer.provide(Layer.succeed(Workspace, ws))),
+        ),
+        Effect.provide(BunHttpServer.layer({ port: opts.port ?? 0, hostname: "127.0.0.1" })),
+        Effect.scoped,
+      )
+    }),
   )
 
 /**
