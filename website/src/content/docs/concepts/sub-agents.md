@@ -12,13 +12,15 @@ per-scope tools, not special prompt instructions.
 ## `run_agent`
 
 ```
-run_agent({ name, folder, task, seedFromNode?, seedMode? })
+run_agent({ name, folder, task, seedFromNode?, seedMode?, agent? })
 ```
 
-Spawns a sub-agent scoped to `folder` — its writes and bash are confined there by the sandbox. It returns
-`{ summary, filesChanged, nodeId }` to the parent; `failureMode: "return"` means a failed spawn is data,
-not a dead turn. The toolkit is **static**: the same tools at every depth, so sub-agents can spawn
-sub-agents.
+Spawns a sub-agent scoped to `folder` — its writes and bash are confined there by the sandbox — and runs
+it in the **background**, returning `{ nodeId, name, status: "running" }` to the parent **immediately**:
+the spawner never blocks on the subtree. The result is collected later with `wait_for_agents` (or arrives
+in the parent's inbox when the child finishes) — see [agent messaging](/docs/concepts/agent-messaging/).
+`failureMode: "return"` means a failed spawn is data, not a dead turn. The toolkit is **static**: the same
+tools at every depth, so sub-agents can spawn sub-agents.
 
 ## Every spawn persists
 
@@ -39,9 +41,10 @@ column is a small descriptor (`task` | `selection` | `handoff`). That tree is wh
 - **Token budget** — a single shared pool (`subAgentTokenBudget`, default 1M, `0` = off) is drawn down by
   every sub-agent in a turn's subtree; a drained pool refuses new spawns (`BudgetExhausted`) and stops
   running ones at their next turn boundary, stamping partial results as partial.
-- **Parallelism** — a turn's tool calls resolve concurrently, so multiple `run_agent` calls in one turn
-  run in parallel. Disjoint folders are write-safe by construction; same-folder spawns serialize on a
-  per-folder lock. Esc interrupts the whole subtree — structured concurrency, no orphans.
+- **Parallelism** — spawning is non-blocking, so multiple `run_agent` calls in one turn each fork-and-return
+  at once and the whole fleet runs in parallel. Disjoint folders are write-safe by construction; same-folder
+  spawns serialize on a per-folder lock. Since the fleet are background fibers, Esc interrupts the root *and*
+  the whole fleet (`bus.interruptAll`), and a runtime finalizer does the same on exit — no orphans.
 
 ## Ambient folder context
 

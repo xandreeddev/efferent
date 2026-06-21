@@ -16,6 +16,7 @@ import {
   type UtilityLlm,
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
+import { inboxToMessages } from "../../usecases/agentBus.js"
 import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../../prompts/coder.js"
 import { type Directive, renderDirectiveSection } from "../../usecases/directive.js"
@@ -110,6 +111,15 @@ export const makeSubmit = (
         return
       }
 
+      // The node has finished — typing resumes it in place, which owns a turn
+      // (flips busy). If a turn is already running, don't start a second one on
+      // the shared busy flag; queue the intent as a note instead.
+      if (store.busy()) {
+        store.setInput("")
+        store.setNote("a turn is running — wait for it, or message a running agent")
+        return
+      }
+
       store.setNodePreview({
         ...preview,
         blocks: [...preview.blocks, { kind: "user", text }],
@@ -194,22 +204,37 @@ export const makeSubmit = (
         return
       }
 
-      // Busy → queue it for after the current turn. The pending queue is now
-      // shown as a `▸ …` list above the input (and the status hint flips to
-      // `↑ to edit queued`), so no transient toast is needed.
-      if (store.busy()) {
-        store.run.enqueue(text)
-        store.setInput("")
-        return
-      }
-
-      // An open node-session preview routes the message to that sub-agent.
+      // An open node-session preview routes the message to whoever you're
+      // paired with — checked BEFORE the busy gate, so you can talk to a
+      // teammate while the root (or anyone else) is mid-turn.
       const preview = store.nodePreview()
       if (preview !== undefined) {
         const decoded = Schema.decodeUnknownOption(ContextNodeId)(preview.nodeId)
         if (decoded._tag === "Some") {
           return yield* submitToNode(preview, decoded.value, text)
         }
+      }
+
+      // Busy and not paired with anyone? Deliver to the RUNNING root agent's
+      // mailbox — it reads it at its next step (no freeze, no waiting for the
+      // turn to end). You can always reach the agent you started. Only when the
+      // root has no live mailbox (between turns) does it fall back to the queue.
+      if (store.busy()) {
+        const cid = store.run.getConversationId()
+        const at = yield* Clock.currentTimeMillis
+        const delivered = yield* scopeRuntime.bus.post(cid, { from: "you", content: text, at })
+        store.setInput("")
+        if (delivered) {
+          store.pushBlock({ kind: "user", text })
+          store.pushBlock({
+            kind: "info",
+            text: "delivered to the running agent — it reads this at its next step",
+          })
+          store.convScroller.current?.scrollToBottom()
+        } else {
+          store.run.enqueue(text)
+        }
+        return
       }
 
       // Rail rhythm (opt-in, `:set autoCollapse on`): every turn existing
@@ -261,6 +286,13 @@ export const makeSubmit = (
       // Reset busy + drain one queued message. Runs on success, failure, AND
       // interruption (Esc) via `ensuring`, so the loop never gets stuck.
       const finishTurn = Effect.gen(function* () {
+        // Tear down the root's live mailbox. A message the human sent after the
+        // loop's last turn boundary (so the loop never drained it) is requeued
+        // here so it isn't lost; agent completion notes are not — they're in
+        // :tree and each agent's preview.
+        const leftover = yield* scopeRuntime.bus.drain(cid)
+        yield* scopeRuntime.bus.markDone(cid)
+        for (const m of leftover) if (m.from === "you") store.run.enqueue(m.content)
         const next = store.run.dequeue()
         store.setBusy(false)
         store.setNote(undefined)
@@ -323,11 +355,22 @@ export const makeSubmit = (
       const directiveText = renderDirectiveSection(getDirective())
       const prompt =
         directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
+      // Give the root an inbox like every other agent: a message sent to it
+      // mid-turn (busy → bus.post(cid)) is folded in at the next turn boundary,
+      // so the human can steer the lead without waiting for the turn to end.
+      const rootHooks: AgentHooks<never> = {
+        ...baseHooks,
+        onTransformContext: (messages) =>
+          Effect.gen(function* () {
+            const inbox = yield* scopeRuntime.bus.drain(cid)
+            return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
+          }),
+      }
       const runEffect = runAgent(
         coderAgentConfig(rootScope, scopeRuntime, prompt),
         cid,
         text,
-        baseHooks,
+        rootHooks,
         cwd,
       ).pipe(
         Effect.provide(scopeRuntime.handlerLayer),
@@ -355,6 +398,8 @@ export const makeSubmit = (
         Effect.ensuring(finishTurn),
       )
 
+      // Open the root's mailbox just before the run starts; finishTurn closes it.
+      yield* scopeRuntime.bus.markRunning(cid, "you")
       const fiber = yield* Effect.forkDaemon(runEffect)
       store.run.setFiber(fiber)
     }).pipe(

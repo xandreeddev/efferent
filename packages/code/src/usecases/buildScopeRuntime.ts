@@ -191,7 +191,11 @@ const RunAgentTool = Tool.make("run_agent", {
   description:
     "Spawn a sub-agent to do focused work scoped to a folder. It reads anywhere but " +
     "writes/runs bash only inside that folder, runs in its own persisted context, and " +
-    "returns { summary, filesChanged, nodeId }. Prefer it when a change is localized to one " +
+    "works in the BACKGROUND: this call returns { nodeId, name, status: \"running\" } " +
+    "IMMEDIATELY — it does NOT wait for the agent to finish, so you never block and can " +
+    "spawn several at once (they run in parallel). To get a spawned agent's result, call " +
+    "wait_for_agents (or you'll receive its completion in your inbox at a turn boundary). " +
+    "You can send_message it while it runs. Prefer it when a change is localized to one " +
     "area; it keeps your own context focused. Be explicit in 'task' — the sub-agent starts " +
     "fresh unless you resume/branch a node. DEFAULT TO A FRESH SPAWN: one agent = one piece " +
     "of work; a new task gets a new agent even in the same folder (fresh context is cheaper " +
@@ -236,12 +240,67 @@ const RunAgentTool = Tool.make("run_agent", {
     }),
   },
   success: Schema.Struct({
-    summary: Schema.String,
-    filesChanged: Schema.Array(Schema.String),
     // The spawned node's id — a real `ContextNodeId`, so the tool's output
     // schema encodes/validates it as a branded UUID (the model later feeds it
-    // back as `seedFromNode`, which is decoded at that boundary).
+    // back as `seedFromNode` / `wait_for_agents` / `send_message`, decoded at
+    // those boundaries).
     nodeId: ContextNodeId,
+    /** The agent's display name (echoed back so you can refer to it). */
+    name: Schema.String,
+    /** Always "running" — the work happens in the background; gather its result
+     *  with wait_for_agents. */
+    status: Schema.Literal("running"),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
+ * The non-blocking **gather** tool. A coordinator spawns its fleet (each
+ * `run_agent` returns immediately) and then calls this to wait for results
+ * WITHOUT freezing: it blocks only the caller's own fiber, interruptibly, and
+ * returns the moment any watched agent finishes, a message lands in the caller's
+ * inbox (a human or sibling reaching it), or the timeout elapses. The result is
+ * a full snapshot — every watched agent's status (and the summary/files of
+ * finished ones) plus the caller's freshly-drained inbox and the blackboard tail
+ * — so the caller can react incrementally (validate a finished piece, answer a
+ * question, re-plan) and call it again. No agent ever blocks another.
+ */
+const WaitForAgentsTool = Tool.make("wait_for_agents", {
+  description:
+    "Wait (without blocking anyone else) for sub-agents you spawned to make progress, then read " +
+    "their status. Returns as soon as any watched agent finishes, someone messages you, or the " +
+    "timeout passes — whichever first. Use it after spawning a fleet with run_agent to collect " +
+    "results: it gives each agent's status (running/ok/error) with the summary + files of finished " +
+    "ones, plus any messages sent to you and recent blackboard notes. Loop it until your agents are " +
+    "all done. Omit 'nodeIds' to watch every agent you spawned.",
+  parameters: {
+    nodeIds: Schema.optional(Schema.Array(Schema.String)).annotations({
+      description:
+        "The run_agent nodeIds to watch. Omit to watch all agents you spawned this session.",
+    }),
+    timeoutSeconds: Schema.optional(Schema.Number).annotations({
+      description: "Max seconds to wait before returning a status snapshot anyway (default 60, max 300).",
+    }),
+  },
+  success: Schema.Struct({
+    agents: Schema.Array(
+      Schema.Struct({
+        nodeId: Schema.String,
+        name: Schema.String,
+        status: Schema.Literal("running", "ok", "error"),
+        summary: Schema.optional(Schema.String),
+        filesChanged: Schema.optional(Schema.Array(Schema.String)),
+      }),
+    ),
+    /** Messages sent to you since your last turn (from the human or siblings). */
+    messages: Schema.Array(Schema.Struct({ from: Schema.String, content: Schema.String })),
+    /** Recent blackboard notes. */
+    notes: Schema.Array(Schema.Struct({ from: Schema.String, note: Schema.String })),
+    /** True when the wait ended on the timeout (agents may still be running). */
+    timedOut: Schema.Boolean,
+    /** True when every watched agent has finished. */
+    allDone: Schema.Boolean,
   }),
   failure: Failure,
   failureMode: "return",
@@ -356,13 +415,15 @@ const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
   ["send_message", SendMessageTool],
   ["blackboard_post", BlackboardPostTool],
   ["blackboard_read", BlackboardReadTool],
+  ["wait_for_agents", WaitForAgentsTool],
   ["run_tool", RunToolTool],
   ["schedule", ScheduleTool],
 ]
 
-/** The toolkit is static: base coding tools + comms/run_tool + the `run_agent` tool.
- *  (Declarative tools are dispatched through the single `run_tool`, so the
- *  toolkit shape doesn't vary with which tool files are present.) */
+/** The toolkit is static: base coding tools + comms/run_tool + the `run_agent`
+ *  + `wait_for_agents` tools. (Declarative tools are dispatched through the
+ *  single `run_tool`, so the toolkit shape doesn't vary with which tool files
+ *  are present.) */
 const genericToolkit = Toolkit.make(
   ...([
     ...baseToolDefs,
@@ -580,9 +641,15 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
         ...(args.parentNodeId !== null ? { parentNodeId: args.parentNodeId } : {}),
       })
     }
+    // The bus key of whoever spawned this run — its node, else the root
+    // conversation. The completion message + a parent's `wait_for_agents` /
+    // `childrenOf` are routed by it. (`run_agent` pre-registers with the same
+    // key before forking; this re-affirms idempotently.)
+    const parentKey: string | null =
+      args.parentNodeId ?? args.rootConversationId ?? null
     // Register a live mailbox so siblings/the human can message this run; torn
     // down on every exit path (success, failure, interrupt) by the ensuring below.
-    yield* args.bus.markRunning(nodeId, label)
+    yield* args.bus.markRunning(nodeId, label, { parentKey })
     const budgetStopRef = yield* Ref.make(false)
     const innerHooks = makeInnerHooks(
       hooks,
@@ -748,6 +815,11 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
           ...(hasUsage ? { usage } : {}),
         })
       }
+      // Deliver the outcome to the bus: wakes a parent's `wait_for_agents`,
+      // drops a completion message in the parent's inbox + the blackboard, and
+      // records the terminal result for a later snapshot. (`markDone` below is
+      // then a no-op — `complete` already removed the running entry.)
+      yield* args.bus.complete(nodeId, { status: "ok", summary, filesChanged: files })
       return { summary, filesChanged: files, nodeId }
     }
 
@@ -770,10 +842,23 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
         ...(hasUsage ? { usage } : {}),
       })
     }
+    yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
     return yield* Effect.fail(f)
   })).pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
 
-/** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent. */
+/** The model's `run_agent` result: the work happens in the background, so the
+ *  call returns the spawned node's handle, never its outcome. */
+interface SpawnHandle {
+  readonly nodeId: ContextNodeId
+  readonly name: string
+  readonly status: "running"
+}
+
+/** The `run_agent` handler: spawn / resume / branch a folder-scoped sub-agent,
+ *  in the BACKGROUND. Each branch builds the run, then `launch` forks it as a
+ *  supervised fiber and returns its handle immediately — the spawner never
+ *  blocks on the subtree (that's what kept a parent "hung" while its fleet
+ *  worked). The result is gathered later via `wait_for_agents` / the inbox. */
 const makeRunAgentHandler =
   <R>(
     store: ContextTreeStore["Type"],
@@ -783,15 +868,39 @@ const makeRunAgentHandler =
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
-  ) =>
-  (params: {
-    readonly name: string
-    readonly folder: string
-    readonly task: string
-    readonly seedFromNode?: string
-    readonly seedMode?: "resume" | "branch" | "handoff"
-    readonly agent?: string
-  }) =>
+  ) => {
+    // Fork a built run as a background fiber and return its handle. Pre-registers
+    // the child on the bus (so a sibling can address it the instant we return)
+    // and records its fiber (so `:stop` / teardown can interrupt it). The run
+    // itself records its return + completion on every exit path, so a failure is
+    // already captured there — swallow it from the daemon to avoid an unhandled
+    // fiber error.
+    const launch = (spawnArgs: RunSpawnedArgs<R>) =>
+      Effect.gen(function* () {
+        const label = spawnArgs.title ?? (basename(spawnArgs.folder) || spawnArgs.folder)
+        const parentKey: string | null =
+          spawnArgs.parentNodeId ?? spawnArgs.rootConversationId ?? null
+        yield* bus.markRunning(spawnArgs.nodeId, label, { parentKey })
+        const fiber = yield* Effect.forkDaemon(
+          runSpawnedAgent(spawnArgs).pipe(Effect.catchAll(() => Effect.void), Effect.asVoid),
+        )
+        yield* bus.setFiber(spawnArgs.nodeId, fiber)
+        const handle: SpawnHandle = {
+          nodeId: spawnArgs.nodeId,
+          name: label,
+          status: "running",
+        }
+        return handle
+      })
+
+    return (params: {
+      readonly name: string
+      readonly folder: string
+      readonly task: string
+      readonly seedFromNode?: string
+      readonly seedMode?: "resume" | "branch" | "handoff"
+      readonly agent?: string
+    }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
       const maxDepth = opts.maxDepth ?? 2
@@ -839,7 +948,7 @@ const makeRunAgentHandler =
         if (seedMode === "resume") {
           yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
-          return yield* runSpawnedAgent({
+          return yield* launch({
             store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
@@ -876,7 +985,7 @@ const makeRunAgentHandler =
               : { kind: "selection", sourceNodeId: nodeId, turnCount: sourceMsgs.length },
           seedMessages,
         })
-        return yield* runSpawnedAgent({
+        return yield* launch({
           store, shell, locks, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
@@ -902,7 +1011,7 @@ const makeRunAgentHandler =
         seed: { kind: "task", preview: clip(task, 80) },
         seedMessages,
       })
-      return yield* runSpawnedAgent({
+      return yield* launch({
         store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
@@ -914,6 +1023,7 @@ const makeRunAgentHandler =
         ...(rc.toolResultMaxChars !== undefined ? { toolResultMaxChars: rc.toolResultMaxChars } : {}),
       })
     }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+  }
 
 /**
  * Build the generic handler record for a `ScopeBinding`: the base coding
@@ -1080,12 +1190,51 @@ const buildGenericHandlers = <R>(
         return { notes: picked.map((n) => ({ from: n.from, note: n.note })) }
       })
 
+    // The non-blocking gather: park (interruptibly) until a watched agent
+    // finishes / someone messages me / the timeout, then report a full snapshot
+    // + my drained inbox + the board. The waiter's bus key is its own node (the
+    // key its children registered as `parentKey`), else the root conversation.
+    const wait_for_agents = (params: {
+      readonly nodeIds?: ReadonlyArray<string>
+      readonly timeoutSeconds?: number
+    }) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const waiterKey = rc.parentNodeId ?? rc.rootConversationId ?? "root"
+        const requested = (params.nodeIds ?? [])
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+        const watch =
+          requested.length > 0 ? requested : yield* bus.childrenOf(waiterKey)
+        const timeoutMs =
+          Math.min(300, Math.max(1, Math.floor(params.timeoutSeconds ?? 60))) * 1000
+        yield* bus.awaitChange({ waiterKey, watch, timeoutMs })
+        const snaps = yield* bus.snapshot(watch.length > 0 ? watch : undefined)
+        const inbox = yield* bus.drain(waiterKey)
+        const board = yield* bus.boardRead()
+        const allDone = snaps.length > 0 && snaps.every((s) => s.status !== "running")
+        return {
+          agents: snaps.map((s) => ({
+            nodeId: s.nodeId,
+            name: s.label,
+            status: s.status,
+            ...(s.summary !== undefined ? { summary: s.summary } : {}),
+            ...(s.filesChanged !== undefined ? { filesChanged: s.filesChanged } : {}),
+          })),
+          messages: inbox.map((m) => ({ from: m.from, content: m.content })),
+          notes: board.slice(-20).map((n) => ({ from: n.from, note: n.note })),
+          timedOut: !allDone && inbox.length === 0,
+          allDone,
+        }
+      })
+
     return {
       ...base,
       run_agent,
       send_message,
       blackboard_post,
       blackboard_read,
+      wait_for_agents,
       run_tool,
       schedule,
     } as never

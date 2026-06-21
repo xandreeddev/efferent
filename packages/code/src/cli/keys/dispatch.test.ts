@@ -72,6 +72,7 @@ const harness = (): Harness => {
       spawnAgent: () => {},
       stopAgent: () => {},
       listFleet: () => [],
+      liveAgents: () => [],
       importAgents: () => {},
       importTools: () => {},
       getDirective: () => undefined,

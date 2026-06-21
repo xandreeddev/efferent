@@ -74,6 +74,10 @@ export interface TuiContext {
     readonly title: string
     readonly folder: string
   }>
+  /** Every agent the bus knows is running right now — the WHOLE live fleet,
+   *  including model-spawned background agents (not just `:spawn`-fired ones).
+   *  For the `:fleet` cockpit. Excludes the root session's own mailbox key. */
+  readonly liveAgents: () => ReadonlyArray<{ readonly nodeId: string; readonly label: string }>
   /** Import agent-definition files from GitHub into `.efferent/agents/`
    *  (`:agents add github:owner/repo[/path][@ref]`). Applies on next launch. */
   readonly importAgents: (spec: string) => void
