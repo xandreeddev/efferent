@@ -10,6 +10,7 @@ import {
   WebSearch,
   ContextNodeId,
   renderDirectiveSection,
+  resumeAgent,
   runAgent,
   SettingsStore,
   Workspace,
@@ -239,6 +240,57 @@ export const makeInProcessWorkspace = (
         yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
       })
 
+    // Re-drive an in-flight root turn after a crash (restorability) — the
+    // persisted history already ends with the prompt the turn was answering, so
+    // `resumeAgent` continues over it without appending a new prompt.
+    const startResumeTurn = (): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const base = coderPrompt(
+          deps.cwd,
+          new Date(),
+          deps.skills,
+          deps.instructionFiles,
+          deps.agents,
+          deps.tools,
+        )
+        const directive = yield* Ref.get(directiveRef)
+        const directiveText = renderDirectiveSection(directive)
+        const prompt =
+          directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
+        const rootHooks: AgentHooks<never> = {
+          ...baseHooks,
+          onTransformContext: (messages) =>
+            Effect.gen(function* () {
+              const inbox = yield* scopeRuntime.bus.drain(rootKey)
+              return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
+            }),
+        }
+        const runEffect = resumeAgent(
+          coderAgentConfig(deps.rootScope, scopeRuntime, prompt),
+          rootCid,
+          rootHooks,
+          deps.cwd,
+        ).pipe(
+          Effect.provide(scopeRuntime.handlerLayer),
+          Effect.provide(deps.approvalLayer),
+          Effect.catchAll((err) =>
+            Effect.logError(inspectError(err)).pipe(
+              Effect.zipRight(publish({ type: "error", message: formatFullError(err) })),
+            ),
+          ),
+          Effect.catchAllDefect((d) =>
+            Effect.logError(`resume crashed: ${String(d)}`).pipe(
+              Effect.zipRight(publish({ type: "error", message: `resume crashed: ${String(d)}` })),
+            ),
+          ),
+          Effect.asVoid,
+          Effect.ensuring(finishTurn(rootKey)),
+        ) as Effect.Effect<void, never, WorkspaceRunServices>
+        yield* scopeRuntime.bus.markRunning(rootKey, "you")
+        const fiber = Runtime.runFork(rt)(runEffect)
+        yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
+      })
+
     // Resume a finished agent node in place (the human-driven seedMode:"resume").
     const startNodeResume = (
       nodeId: ContextNodeId,
@@ -460,6 +512,17 @@ export const makeInProcessWorkspace = (
           Effect.provideService(Http, http),
         ),
     })
+
+    // Restorability: if this conversation had a turn in flight when a prior
+    // daemon died, re-drive it once. Clear the marker FIRST so a crash mid-
+    // resume can't loop it (the plan's retry cap, at its simplest).
+    const pending = yield* conv
+      .listPending(deps.cwd)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<{ id: ConversationId; prompt: string }>))
+    if (pending.some((p) => p.id === rootCid)) {
+      yield* conv.clearPending(rootCid).pipe(Effect.ignore)
+      yield* startResumeTurn()
+    }
 
     return service
   })

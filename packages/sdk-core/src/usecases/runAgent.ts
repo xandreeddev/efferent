@@ -127,3 +127,90 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
 
     return result
   })
+
+/**
+ * **Resume** an in-flight turn after a crash — re-drive the loop over the
+ * persisted history WITHOUT appending a new user prompt (it's already the tail
+ * the interrupted turn was answering). The daemon's restorability path: on
+ * restart, every conversation with a pending marker is re-driven through this.
+ *
+ * Idempotency rides on incremental persistence — tool *results* already landed
+ * are in the record, so the model continues past them; only work strictly
+ * mid-tool-call re-attempts (bounded by the same step/budget caps). Clears the
+ * pending marker on completion. Returns undefined when there's nothing to
+ * resume (no active messages).
+ */
+export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
+  config: AgentConfig<Tools>,
+  conversationId: ConversationId,
+  extraHooks?: AgentHooks<R>,
+  workspaceDir?: string,
+) =>
+  Effect.gen(function* () {
+    const store = yield* ConversationStore
+    const settingsStore = yield* SettingsStore
+    const settings = yield* settingsStore.get()
+
+    yield* store.ensure(conversationId, workspaceDir)
+
+    const checkpoint = yield* store.getLatestCheckpoint(conversationId)
+    const active = yield* store.listActive(conversationId)
+    // Nothing to resume (e.g. the marker outlived its messages) — clear + bail.
+    if (active.length === 0) {
+      yield* store.clearPending(conversationId).pipe(Effect.ignore)
+      return undefined
+    }
+    const prefix: ReadonlyArray<AgentMessage> =
+      checkpoint !== undefined ? [handoffToMessage(checkpoint.summary)] : []
+
+    const tokenPool = yield* makeTokenPool(
+      settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
+    )
+    const toolResultMaxChars =
+      settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
+
+    const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(
+        Effect.orDie,
+        Effect.asVoid,
+      )
+
+    const result = yield* runAgentLoop({
+      system: config.prompt.text,
+      messages: [...prefix, ...active],
+      toolkit: config.toolkit,
+      maxSteps: settings.maxSteps,
+      onTail: persistTail,
+      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+      ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
+    }).pipe(
+      Effect.locally(RunContextRef, {
+        rootConversationId: conversationId,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool,
+        prompt: config.prompt,
+        ...(settings.subAgentMaxSteps !== undefined
+          ? { subAgentMaxSteps: settings.subAgentMaxSteps }
+          : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+        ...(config.compression !== undefined ? { compression: config.compression } : {}),
+      }),
+      Effect.tapErrorCause(() =>
+        Effect.annotateCurrentSpan({ error: true }).pipe(
+          Effect.zipRight(recordError("run", "failed")),
+        ),
+      ),
+      Effect.withSpan(runSpanName(), {
+        attributes: {
+          ...agentSpanAttributes("run", conversationId),
+          "agent.model": settings.model,
+          "agent.prompt": "[resume in-flight turn]",
+        },
+      }),
+      Effect.annotateLogs({ conversationId }),
+    )
+
+    yield* store.clearPending(conversationId).pipe(Effect.ignore)
+    return result
+  })
