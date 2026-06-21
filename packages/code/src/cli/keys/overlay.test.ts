@@ -24,6 +24,7 @@ const newStore = (): TuiStore =>
 
 const ctxOf = (store: TuiStore): TuiContext => ({
   store,
+  variant: "master",
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},

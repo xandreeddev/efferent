@@ -55,6 +55,7 @@ const harness = (): Harness => {
     copied: 0,
     ctx: {
       store,
+      variant: "master",
       run: () => Promise.resolve(undefined as never),
       submit: () => {},
       interrupt: () => {},

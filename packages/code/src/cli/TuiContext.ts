@@ -56,6 +56,14 @@ export interface TuiContext {
   readonly submit: (text: string) => void
   readonly interrupt: () => void
   readonly exit: () => void
+  /**
+   * Which bin's chrome this TUI wears — `"master"` (the `efferent` assistant:
+   * full chrome + the cross-session fleet tree) or `"code"` (the focused coder:
+   * a `code` wordmark + the fleet tree scoped to the one working session).
+   * Static for the process's life; the view reads it for the header wordmark
+   * and tree scope (see `TuiModeInput.variant`).
+   */
+  readonly variant: "master" | "code"
   /** The loaded agent ROLES (`.efferent/agents/*.md`) — for `:agents` + `:spawn`. */
   readonly roles: ReadonlyArray<AgentDefinition>
   /** The loaded declarative tools (`.efferent/tools/*.md`) — for `:tools`. */

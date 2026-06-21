@@ -161,9 +161,14 @@ export const runTuiModeSolid = (
         yield* openConversationPicker(store, input.cwd)
       }
 
+      // The bin's chrome variant — `code` scopes the fleet tree to the single
+      // working session (no cross-session rows); `master` shows them all.
+      const variant = input.variant ?? "master"
+      const navOpts = { activeOnly: variant === "code" }
+
       // The navigator (agents half of the side pane) is always visible now —
       // seed it at boot so prior sessions/sub-agents show without `:tree`.
-      yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
+      yield* refreshNav(store, cid, navOpts).pipe(Effect.catchAll(() => Effect.void))
 
       // Interactive bash approval: the agent fiber suspends on the Approval
       // port; the modal's keys answer through `ctx.resolveApproval`.
@@ -204,7 +209,7 @@ export const runTuiModeSolid = (
         // can change via the sessions view, so resolve the id per call).
         refreshNav: () => {
           Runtime.runFork(rt)(
-            refreshNav(store, store.run.getConversationId()).pipe(
+            refreshNav(store, store.run.getConversationId(), navOpts).pipe(
               Effect.catchAll(() => Effect.void),
             ),
           )
@@ -215,6 +220,9 @@ export const runTuiModeSolid = (
       const exitDeferred = yield* Deferred.make<void>()
       const ctx: TuiContext = {
         store,
+        // The bin's chrome variant (`code` forces this driver + "code"); the
+        // remote driver is always "master". Default "master" if unset.
+        variant: input.variant ?? "master",
         run: (program) => Runtime.runPromise(rt)(program),
         submit: (text) => {
           void Runtime.runPromise(rt)(submit(text))

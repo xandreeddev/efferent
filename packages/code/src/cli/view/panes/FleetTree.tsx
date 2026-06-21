@@ -19,6 +19,10 @@ import { NodeDetail } from "./side/NodeDetail.js"
 export const FleetTree = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const focused = () => store.focus() === "tree"
+  // `master` spans the workspace's sessions → their agents; `code` is scoped to
+  // the one working session, so its subtitle names the single-fleet focus.
+  const subtitle = () =>
+    props.ctx.variant === "code" ? "  · this session's agents" : "  · sessions → agents"
 
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0}>
@@ -27,7 +31,7 @@ export const FleetTree = (props: { ctx: TuiContext }) => {
           {`${focused() ? glyph.pointer : " "} fleet`}
         </text>
         <text fg={tokens.text.dim} wrapMode="none">
-          {"  · sessions → agents"}
+          {subtitle()}
         </text>
       </box>
       {/* Tree on top (holds the cursor); the detail mirrors the cursor below,

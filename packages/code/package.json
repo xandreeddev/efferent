@@ -8,7 +8,8 @@
   "bin": {
     "efferent": "dist/efferent.js",
     "eff": "dist/efferent.js",
-    "e": "dist/efferent.js"
+    "e": "dist/efferent.js",
+    "code": "dist/code.js"
   },
   "files": ["dist"],
   "engines": {
