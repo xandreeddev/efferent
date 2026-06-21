@@ -69,7 +69,7 @@ const stubTree = Layer.succeed(
   }),
 )
 
-const stubConv = (rootCid: string) =>
+export const stubConv = (rootCid: string) =>
   Layer.effect(
     ConversationStore,
     Effect.gen(function* () {
@@ -92,8 +92,9 @@ const stubConv = (rootCid: string) =>
     }),
   )
 
-/** The merged stub ports (FS/Shell/Http/WebSearch/UtilityLlm/Settings/model/tree/conv). */
-export const fakeEnvLayers = (rootCid: string, modelText?: string) =>
+/** Stub ports MINUS the ConversationStore — so a test can supply its own conv
+ *  (e.g. one with a pending in-flight marker for the resume path). */
+export const fakeEnvLayersNoConv = (modelText?: string) =>
   Layer.mergeAll(
     Layer.succeed(
       FileSystem,
@@ -122,8 +123,11 @@ export const fakeEnvLayers = (rootCid: string, modelText?: string) =>
     ),
     fakeModel(modelText),
     stubTree,
-    stubConv(rootCid),
   )
+
+/** The merged stub ports (FS/Shell/Http/WebSearch/UtilityLlm/Settings/model/tree/conv). */
+export const fakeEnvLayers = (rootCid: string, modelText?: string) =>
+  Layer.merge(fakeEnvLayersNoConv(modelText), stubConv(rootCid))
 
 /** The in-process Workspace over the fake env. */
 export const fakeWorkspaceLayer = (rootCid: string, modelText?: string) =>
