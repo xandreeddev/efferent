@@ -293,7 +293,7 @@ const ToolGroupView = (props: {
   )
 }
 
-const BodyItemView = (props: { item: BodyItem; collapsed: Set<string>; hl?: Hl | undefined }) => {
+export const BodyItemView = (props: { item: BodyItem; collapsed: Set<string>; hl?: Hl | undefined }) => {
   const item = props.item
   if (item.kind === "toolGroup") {
     return <ToolGroupView item={item} collapsed={props.collapsed} hl={props.hl} />
@@ -472,11 +472,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             their own spinners, so this only shows between calls. Hidden while
             a node preview overlays the rail (its run isn't this view's). */}
         <Show
-          when={
-            store.busy() &&
-            store.nodePreview() === undefined &&
-            store.agentState().phase === "thinking"
-          }
+          when={store.busy() && store.agentState().phase === "thinking"}
         >
           <box marginTop={1} flexDirection="row">
             <text fg={tokens.state.running} flexShrink={0}>

@@ -98,27 +98,28 @@ describe("eventPump — the plan mirrors the top-level agent's update_plan calls
   })
 })
 
-describe("eventPump — preview streaming is read live, not captured at spawn", () => {
-  const previewBlocks = (store: TuiStore): string[] =>
-    (store.nodePreview()?.blocks ?? []).map((b) => b.kind)
+describe("eventPump — a node's live log accumulates from the start (open any time, see it all)", () => {
+  const logKinds = (store: TuiStore, id: string): string[] =>
+    [...store.nodeLog(id)].map((b) => b.kind)
 
-  test("a preview opened MID-RUN starts receiving the node's events", () => {
+  test("events accumulate in the node's log whether or not its pane is open", () => {
     const store = newStore()
     const reduce = makeEventReducer(store)
     reduce({ type: "turn_start", turnIndex: 0 })
-    // Spawn with NO preview open — the old captured flag stayed unset forever.
-    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" })
+    // Spawn with NO pane open — the log STILL captures the task + the tool, so a
+    // later open shows the whole run (this is what fixed "I lose state on swap").
+    reduce({ type: "subagent_start", name: "cli", task: "do it", nodeId: "n1" })
     reduce({ type: "tool_call_start", turnIndex: 0, id: "a", toolName: "ls", args: {}, nodeId: "n1" })
-    expect(previewBlocks(store)).toEqual([]) // nothing open yet
-    // The human opens the node's session while it runs.
+    expect(logKinds(store, "n1")).toEqual(["user", "tool"]) // task + tool, no pane
+    // Open the pane later; more events keep landing in the same log.
     store.setNodePreview({ nodeId: "n1", title: "agent: cli", blocks: [], savedCollapsed: new Set() })
     reduce({ type: "tool_call_start", turnIndex: 0, id: "b", toolName: "read_file", args: { path: "p" }, nodeId: "n1" })
     reduce({ type: "assistant_message", turnIndex: 0, text: "done", nodeId: "n1" })
-    expect(previewBlocks(store)).toEqual(["tool", "assistant"])
-    // Ends keep pairing: the pill opened in the preview resolves there.
+    expect(logKinds(store, "n1")).toEqual(["user", "tool", "tool", "assistant"])
+    // Ends keep pairing: the second tool pill resolves in place.
     reduce({ type: "tool_call_end", turnIndex: 0, id: "b", toolName: "read_file", ok: true, result: {}, nodeId: "n1" })
-    const pill = store.nodePreview()!.blocks.find((b) => b.kind === "tool") as { state: string }
-    expect(pill.state).toBe("ok")
+    const pills = [...store.nodeLog("n1")].filter((b) => b.kind === "tool") as Array<{ state: string }>
+    expect(pills[1]!.state).toBe("ok")
   })
 
   test("an ok end lands the returned summary on the agents-block row", () => {
@@ -141,15 +142,15 @@ describe("eventPump — preview streaming is read live, not captured at spawn", 
     expect(agents.agents[0]!.summary).toBe("Layers respected; two leaks found.")
   })
 
-  test("a watched node that ALSO has a grouped-block row gets both closed on end", () => {
+  test("a failed run lands the error in its node log AND closes the grouped-block row", () => {
     const store = newStore()
     const reduce = makeEventReducer(store)
     reduce({ type: "turn_start", turnIndex: 0 })
-    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" }) // unwatched → agents block row
-    store.setNodePreview({ nodeId: "n1", title: "agent: cli", blocks: [], savedCollapsed: new Set() })
+    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" }) // agents block row
     reduce({ type: "subagent_end", name: "cli", ok: false, summary: "boom", filesChanged: [], nodeId: "n1" })
-    // The failure lands in the preview AND the grouped row closes as error.
-    expect(previewBlocks(store)).toContain("error")
+    // The failure is in the node's own log (its pane shows it) regardless of
+    // whether the pane is open, AND the grouped row closes as error.
+    expect(logKinds(store, "n1")).toContain("error")
     const agents = store.blocks().find((b) => b.kind === "agents") as { agents: ReadonlyArray<{ status: string }> }
     expect(agents.agents[0]!.status).toBe("error")
   })
