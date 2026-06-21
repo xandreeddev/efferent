@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { Effect } from "effect"
 import { WorkspaceError } from "@xandreed/sdk-core"
 import { readDiscovery, type DiscoveryInfo } from "./discovery.js"
@@ -19,18 +20,28 @@ export const probeHealth = (baseUrl: string): Effect.Effect<boolean> =>
   ).pipe(Effect.orElseSucceed(() => false))
 
 /** Spawn a detached `daemon-serve` for `workspace` that outlives this client.
- *  Bun subprocess + `.unref()` so the client can exit while the daemon runs. */
-export const spawnDetachedDaemon = (workspace: string): Effect.Effect<void> =>
-  Effect.sync(() => {
-    const entry = process.argv[1] ?? "efferent"
-    const proc = Bun.spawn([process.execPath, entry, "--mode", "daemon-serve", "--cwd", workspace], {
-      cwd: workspace,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      env: process.env,
-    })
-    proc.unref()
+ *  Bun subprocess + `.unref()` so the client can exit while the daemon runs.
+ *  Wrapped in `Effect.try` so a spawn failure (e.g. a missing `cwd`, which Bun
+ *  surfaces as a cryptic `posix_spawn` ENOENT) is a typed `WorkspaceError` the
+ *  client's attach handler reports cleanly — NOT an Effect defect that escapes
+ *  into the unrelated "native renderer" catch-all. */
+export const spawnDetachedDaemon = (workspace: string): Effect.Effect<void, WorkspaceError> =>
+  Effect.try({
+    try: () => {
+      const entry = process.argv[1] ?? "efferent"
+      const proc = Bun.spawn([process.execPath, entry, "--mode", "daemon-serve", "--cwd", workspace], {
+        cwd: workspace,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        env: process.env,
+      })
+      proc.unref()
+    },
+    catch: (e) =>
+      new WorkspaceError({
+        message: `could not start the daemon process: ${e instanceof Error ? e.message : String(e)}`,
+      }),
   })
 
 /**
@@ -41,7 +52,7 @@ export const spawnDetachedDaemon = (workspace: string): Effect.Effect<void> =>
 export const attachOrSpawn = (
   workspace: string,
   opts: {
-    readonly spawnDaemon?: (workspace: string) => Effect.Effect<void>
+    readonly spawnDaemon?: (workspace: string) => Effect.Effect<void, WorkspaceError>
     readonly timeoutMs?: number
     readonly pollMs?: number
   } = {},
@@ -53,9 +64,19 @@ export const attachOrSpawn = (
       return { baseUrl: baseUrlOf(existing) }
     }
 
-    // Absent or stale (health failed) → spawn one and wait for it to register.
-    const spawn = opts.spawnDaemon ?? spawnDetachedDaemon
-    yield* spawn(workspace)
+    // No healthy daemon → spawn one and wait for it to register. The real
+    // detached spawn must serve a directory that exists — Bun.spawn's `cwd`
+    // ENOENTs cryptically otherwise (and that defect used to surface as a
+    // misleading "native renderer" error) — so when we're about to use it, fail
+    // early with a message that names the cause. An injected spawn (tests /
+    // embedding) owns its own requirements, so the guard is scoped to the default.
+    const spawn = opts.spawnDaemon
+    if (spawn === undefined && !existsSync(workspace)) {
+      return yield* Effect.fail(
+        new WorkspaceError({ message: `workspace directory does not exist: ${workspace}` }),
+      )
+    }
+    yield* (spawn ?? spawnDetachedDaemon)(workspace)
 
     const pollMs = opts.pollMs ?? 100
     const timeoutMs = opts.timeoutMs ?? 10_000
