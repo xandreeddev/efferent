@@ -9,21 +9,24 @@ import { AgentEvent } from "@xandreed/sdk-core"
 export { AgentEvent }
 
 /**
- * Wire the agent loop's hooks to a queue. Modes consume the queue.
- * `extraBeforeTool` lets the caller layer additional `onBeforeToolCall`
- * logic (e.g. safety prompts) on top of plain event emission.
+ * Wire the agent loop's hooks to a **publish** sink — the single point every
+ * `AgentEvent` flows through. `makeEventHooks` (Queue sink, for the legacy
+ * single-consumer modes) and the daemon's per-session `EventLedger` (PubSub
+ * fan-out) both build on this, so the event-construction logic lives once.
+ * `extraBeforeTool` lets the caller layer additional `onBeforeToolCall` logic
+ * (e.g. safety prompts) on top of plain emission.
  */
-export const makeEventHooks = <R = never>(
-  queue: Queue.Queue<AgentEvent>,
+export const makeAgentEventHooks = <R = never>(
+  publish: (event: AgentEvent) => Effect.Effect<void>,
   extraBeforeTool?: AgentHooks<R>["onBeforeToolCall"],
 ): AgentHooks<R> => ({
   onTurnStart: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "turn_start",
       turnIndex: event.turnIndex,
-    }).pipe(Effect.asVoid),
+    }),
   onAssistantMessage: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "assistant_message",
       turnIndex: event.turnIndex,
       text: event.text,
@@ -32,11 +35,11 @@ export const makeEventHooks = <R = never>(
         : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
       ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
-    }).pipe(Effect.asVoid),
+    }),
   onBeforeToolCall: extraBeforeTool
     ? (event) =>
         Effect.gen(function* () {
-          yield* Queue.offer(queue, {
+          yield* publish({
             type: "tool_call_start",
             turnIndex: event.turnIndex,
             id: event.toolCallId,
@@ -47,7 +50,7 @@ export const makeEventHooks = <R = never>(
           return yield* extraBeforeTool(event)
         })
     : (event) =>
-        Queue.offer(queue, {
+        publish({
           type: "tool_call_start",
           turnIndex: event.turnIndex,
           id: event.toolCallId,
@@ -56,7 +59,7 @@ export const makeEventHooks = <R = never>(
           ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
         }).pipe(Effect.as({ action: "continue" as const })),
   onAfterToolCall: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "tool_call_end",
       turnIndex: event.turnIndex,
       id: event.toolCallId,
@@ -64,17 +67,17 @@ export const makeEventHooks = <R = never>(
       ok: event.ok,
       result: event.result,
       ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
-    }).pipe(Effect.asVoid),
+    }),
   onSubAgentStart: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "subagent_start",
       name: event.name,
       task: event.task,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
       ...(event.parentNodeId !== undefined ? { parentNodeId: event.parentNodeId } : {}),
-    }).pipe(Effect.asVoid),
+    }),
   onSubAgentEnd: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "subagent_end",
       name: event.name,
       ok: event.ok,
@@ -82,22 +85,35 @@ export const makeEventHooks = <R = never>(
       filesChanged: event.filesChanged,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
-    }).pipe(Effect.asVoid),
+    }),
   onSkillLoad: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "skill_load",
       name: event.name,
-    }).pipe(Effect.asVoid),
+    }),
   onHelperUsage: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "helper_usage",
       role: event.role,
       usage: event.usage,
-    }).pipe(Effect.asVoid),
+    }),
   onAgentEnd: (event) =>
-    Queue.offer(queue, {
+    publish({
       type: "agent_end",
       finalText: event.finalText,
       messages: event.messages,
-    }).pipe(Effect.asVoid),
+    }),
 })
+
+/**
+ * Wire the agent loop's hooks to a queue. Modes consume the queue. A thin
+ * adapter over {@link makeAgentEventHooks} with a Queue sink.
+ */
+export const makeEventHooks = <R = never>(
+  queue: Queue.Queue<AgentEvent>,
+  extraBeforeTool?: AgentHooks<R>["onBeforeToolCall"],
+): AgentHooks<R> =>
+  makeAgentEventHooks<R>(
+    (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+    extraBeforeTool,
+  )
