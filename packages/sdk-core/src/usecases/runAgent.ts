@@ -50,6 +50,21 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
     const userMsg: AgentMessage = { role: "user", content: userPrompt }
     yield* store.append(conversationId, userMsg)
 
+    // Mark the turn in flight (best-effort): a daemon restart reads this to
+    // auto-resume a turn interrupted by a crash. Cleared on completion below.
+    yield* store.markPending(conversationId, userPrompt).pipe(Effect.ignore)
+
+    // Persist each turn's tail the moment it lands (incremental persistence) —
+    // so the session is restorable to its last completed turn, and a mid-run
+    // nav/state read sees real history, not just what's in memory. A persist
+    // failure is a defect (can't safely continue without durable history),
+    // mirroring the old end-of-run append's failure semantics.
+    const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(
+        Effect.orDie,
+        Effect.asVoid,
+      )
+
     // One shared spend pool for every sub-agent this turn may spawn — fresh
     // per top-level run, so a prior turn's spend never starves this one.
     const tokenPool = yield* makeTokenPool(
@@ -64,6 +79,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       messages: [...prefix, ...active, userMsg],
       toolkit: config.toolkit,
       maxSteps: settings.maxSteps,
+      onTail: persistTail,
       ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
     }).pipe(
@@ -104,12 +120,10 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       Effect.annotateLogs({ conversationId }),
     )
 
-    // Persist exactly what the loop appended (model responses + any synthetic
-    // correctives it injected) — reported explicitly by the loop, never
-    // reconstructed by index arithmetic on the transformable buffer.
-    for (const m of result.newTail) {
-      yield* store.append(conversationId, m)
-    }
+    // The loop already persisted each turn's tail as it landed (via
+    // `onTail` → `persistTail`), so there's no end-of-run bulk append. Clear
+    // the in-flight marker now that the turn completed (best-effort).
+    yield* store.clearPending(conversationId).pipe(Effect.ignore)
 
     return result
   })

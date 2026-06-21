@@ -269,6 +269,53 @@ export const SqliteConversationStoreLive = Layer.effect(
           }
           return results
         }),
+
+      markPending: (conversationId, prompt) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ readonly id: string }>`SELECT id FROM conversations WHERE id = ${conversationId}`,
+            "Failed to look up conversation",
+          )
+          if (rows.length === 0) {
+            return yield* Effect.fail(new ConversationNotFound({ id: conversationId }))
+          }
+          yield* wrapSql(
+            sql`UPDATE conversations SET pending_prompt = ${prompt} WHERE id = ${conversationId}`,
+            "Failed to mark pending turn",
+          )
+        }),
+
+      clearPending: (conversationId) =>
+        wrapSql(
+          sql`UPDATE conversations SET pending_prompt = NULL WHERE id = ${conversationId}`,
+          "Failed to clear pending turn",
+        ).pipe(Effect.asVoid),
+
+      listPending: (workspaceDir) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ readonly id: string; readonly pending_prompt: string | null }>`
+              SELECT id, pending_prompt FROM conversations
+              WHERE workspace_dir = ${workspaceDir} AND pending_prompt IS NOT NULL
+              ORDER BY created_at DESC
+            `,
+            "Failed to list pending turns",
+          )
+          const results: { id: ConversationId; prompt: string }[] = []
+          for (const r of rows) {
+            const id = yield* Schema.decodeUnknown(ConversationId)(r.id).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ConversationStoreError({
+                    cause,
+                    message: "Failed to decode conversation UUID",
+                  }),
+              ),
+            )
+            results.push({ id, prompt: r.pending_prompt ?? "" })
+          }
+          return results
+        }),
     })
 
     return store

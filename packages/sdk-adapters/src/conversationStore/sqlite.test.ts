@@ -5,6 +5,7 @@ import { type AgentMessage, ConversationStore } from "@xandreed/sdk-core"
 import { SqliteConversationStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0005 from "../database/migrations-sqlite/0005_conversation_title.js"
+import sqlite0007 from "../database/migrations-sqlite/0007_pending_turn.js"
 
 // Exercises the real SQLite store + the position/checkpoint fold contract on a
 // fresh in-memory db (no Postgres, no Docker). `provideMerge` exposes the
@@ -22,6 +23,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ConversationStore>): Promise<A> =
     Effect.gen(function* () {
       yield* sqlite0001 // create the schema on this connection
       yield* sqlite0005 // + the conversations.title column
+      yield* sqlite0007 // + the conversations.pending_prompt (in-flight) column
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -127,6 +129,40 @@ describe("SqliteConversationStore", () => {
         yield* sqlite0001
         const store = yield* ConversationStore
         yield* store.append("00000000-0000-0000-0000-000000000000" as never, user("x"))
+      }).pipe(Effect.provide(Live)),
+    )
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("in-flight marker: markPending then listPending surfaces it; clearPending removes it", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const a = yield* store.create("/tmp/ws-pending")
+        const b = yield* store.create("/tmp/ws-pending")
+        yield* store.append(a, user("do the thing"))
+        yield* store.markPending(a, "do the thing")
+        const afterMark = yield* store.listPending("/tmp/ws-pending")
+        yield* store.clearPending(a)
+        const afterClear = yield* store.listPending("/tmp/ws-pending")
+        return { a, b, afterMark, afterClear }
+      }),
+    )
+    // Only the marked conversation is listed, carrying its prompt.
+    expect(result.afterMark).toHaveLength(1)
+    expect(result.afterMark[0]!.id).toBe(result.a)
+    expect(result.afterMark[0]!.prompt).toBe("do the thing")
+    // Cleared → no longer pending.
+    expect(result.afterClear).toHaveLength(0)
+  })
+
+  test("markPending on a missing conversation fails with ConversationNotFound", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        yield* sqlite0001
+        yield* sqlite0007
+        const store = yield* ConversationStore
+        yield* store.markPending("00000000-0000-0000-0000-000000000000" as never, "x")
       }).pipe(Effect.provide(Live)),
     )
     expect(exit._tag).toBe("Failure")
