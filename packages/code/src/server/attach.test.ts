@@ -39,7 +39,7 @@ describe("attach-or-spawn", () => {
         })
         // The injected "spawn" starts a real in-process daemon (no subprocess),
         // capturing its fiber so we can stop it after the assertions.
-        let daemonFiber: Fiber.RuntimeFiber<never> | undefined
+        let daemonFiber: Fiber.RuntimeFiber<void, never> | undefined
         const spawnDaemon = () =>
           Effect.forkDaemon(
             serveWorkspaceProgram(ws, { workspace, version: "test" }).pipe(

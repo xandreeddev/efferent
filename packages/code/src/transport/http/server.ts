@@ -57,9 +57,13 @@ const sessionParam = Effect.gen(function* () {
 /**
  * The Workspace HTTP router. Requires `Workspace` (provided by the daemon's
  * in-process adapter). The endpoints mirror the port; `GET /sessions/:id/events`
- * is the SSE stream.
+ * is the SSE stream. `opts.onShutdown` (when given) runs on `POST /shutdown` —
+ * the daemon passes a trigger that tears itself down.
  */
-export const workspaceRouter = (identity: DaemonIdentity) =>
+export const workspaceRouter = (
+  identity: DaemonIdentity,
+  opts: { readonly onShutdown?: Effect.Effect<void> } = {},
+) =>
   HttpRouter.empty.pipe(
     HttpRouter.get(
       "/health",
@@ -204,6 +208,15 @@ export const workspaceRouter = (identity: DaemonIdentity) =>
       "/auth/reload",
       Effect.gen(function* () {
         yield* (yield* AuthStore).init(identity.workspace)
+        return noContent
+      }),
+    ),
+    // Graceful stop: answer 204 first, then trigger teardown (the daemon removes
+    // its discovery file + exits). A no-op when no trigger is wired.
+    HttpRouter.post(
+      "/shutdown",
+      Effect.gen(function* () {
+        if (opts.onShutdown !== undefined) yield* opts.onShutdown
         return noContent
       }),
     ),
