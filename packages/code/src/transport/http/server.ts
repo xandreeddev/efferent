@@ -4,6 +4,7 @@ import { Effect, Layer, Schema, Stream } from "effect"
 import {
   ApprovalDecision,
   AuthStore,
+  CreateFleetRequest,
   Directive,
   ImportResult,
   SessionState,
@@ -35,6 +36,7 @@ export interface DaemonIdentity {
 }
 
 const SendBody = Schema.Struct({ prompt: Schema.String })
+const ModelBody = Schema.Struct({ model: Schema.String })
 const ImportBody = Schema.Struct({ spec: Schema.String })
 const DirectiveBody = Schema.Struct({ directive: Schema.NullOr(Directive) })
 const SinceParams = Schema.Struct({ since: Schema.optional(Schema.NumberFromString) })
@@ -92,6 +94,25 @@ export const workspaceRouter = (
         const req = yield* HttpServerRequest.schemaBodyJson(SpawnRequest)
         const id = yield* ws.spawn(req)
         return yield* json(id)
+      }),
+    ),
+    HttpRouter.post(
+      "/fleets",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const req = yield* HttpServerRequest.schemaBodyJson(CreateFleetRequest)
+        const id = yield* ws.createFleet(req)
+        return yield* json(id)
+      }),
+    ),
+    HttpRouter.post(
+      "/sessions/:id/model",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        const id = yield* sessionParam
+        const { model } = yield* HttpServerRequest.schemaBodyJson(ModelBody)
+        yield* ws.setFleetModel(id, model)
+        return noContent
       }),
     ),
     HttpRouter.get(

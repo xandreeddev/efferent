@@ -5,6 +5,7 @@ import {
 } from "@effect/platform"
 import { Effect, Option, Schema, Stream } from "effect"
 import {
+  type CreateFleetRequest,
   ImportResult,
   SessionId,
   SessionState,
@@ -58,6 +59,13 @@ export interface HttpTransport {
   readonly spawn: (
     req: SpawnRequest,
   ) => Effect.Effect<SessionId, WorkspaceError, HttpClient.HttpClient>
+  readonly createFleet: (
+    req: CreateFleetRequest,
+  ) => Effect.Effect<SessionId, WorkspaceError, HttpClient.HttpClient>
+  readonly setFleetModel: (
+    id: SessionId,
+    model: string,
+  ) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
   readonly approve: (
     id: SessionId,
     decision: ApprovalDecision,
@@ -127,6 +135,8 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
     interrupt: (id) => postVoid(`/sessions/${id}/interrupt`),
     stop: (id) => postVoid(`/sessions/${id}/stop`),
     spawn: (req) => postJson("/sessions", req, SessionId),
+    createFleet: (req) => postJson("/fleets", req, SessionId),
+    setFleetModel: (id, model) => postVoid(`/sessions/${id}/model`, { model }),
     approve: (id, decision) => postVoid(`/sessions/${id}/approve`, decision),
     subscribe: (id, since) => {
       const parser = makeSseParser()

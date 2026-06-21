@@ -85,6 +85,7 @@ export const stubConv = (rootCid: string) =>
         listCheckpoints: () => Effect.succeed([]),
         checkpoint: () => Effect.void,
         setTitle: () => Effect.void,
+        setModel: () => Effect.void,
         listByWorkspace: () => Effect.succeed([]),
         markPending: () => Effect.void,
         clearPending: () => Effect.void,
@@ -151,7 +152,7 @@ export const fakeWorkspaceLayer = (rootCid: string, modelText?: string) =>
   Layer.effect(
     Workspace,
     makeInProcessWorkspace({
-      rootConversationId: rootCid as never,
+      roots: [{ cid: rootCid as never }],
       rootScope: fakeRootScope,
       cwd: "/tmp/ws",
       skills: [],

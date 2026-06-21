@@ -9,6 +9,7 @@ import {
   UtilityLlm,
   WebSearch,
   ContextNodeId,
+  ConversationId,
   generateSessionTitle,
   renderDirectiveSection,
   resumeAgent,
@@ -22,7 +23,6 @@ import {
   sessionNodeId,
   type AgentDefinition,
   type Approval,
-  type ConversationId,
   type Directive,
   type Scope,
   type Skill,
@@ -50,23 +50,24 @@ import { makeServerApproval } from "./serverApproval.js"
 
 /**
  * The **in-process Workspace** — the authoritative owner of live agent state,
- * and the impl the daemon hosts (the HTTP/SSE transport just exposes it). It
- * wraps the real `buildScopeRuntime` + its comms bus + the fleet + a per-
- * workspace `EventLedger` (the PubSub fan-out + reconnect cache that replaces
- * the single `makeEventHooks` queue), plus the directive, and forks agent runs
- * on a captured runtime so a `send` returns immediately while the turn streams.
+ * and the impl the daemon hosts (the HTTP/SSE transport just exposes it).
  *
- * This is the UI-free distillation of `cli/actions/submit.ts` + `spawnAgent.ts`
- * + the directive closure in `runtime.ts`: the run-fork / busy / mailbox /
- * queue logic moves here; the client keeps the presentation (it rebuilds the
- * rail by reducing `subscribe`'s event stream / `getState`'s persisted log).
+ * Control-plane model: the daemon is the cluster; each **fleet** is a root
+ * coordinator conversation + its sub-agent subtree (a "deployment"); each agent
+ * is a context node (a "pod"). The adapter hosts **N fleets** over one shared
+ * `buildScopeRuntime` (one bus + one folder-locks map + one event ledger — these
+ * MUST be workspace-wide: the blackboard is cross-fleet and two fleets writing a
+ * folder serialize). Only the per-fleet run state (busy/fiber/queue, first-
+ * exchange, pinned model) is per-fleet.
  *
- * Scope note (phase a): one ledger per workspace carries the whole stream
- * (root + sub-agent events, each stamped with its `nodeId`), exactly like
- * today's single queue — clients demux by `nodeId`. Per-agent-session ledgers
- * are a later refinement. Approval still resolves client-side (the in-process
- * TUI calls its own modal); `approve` routes through an optional resolver until
- * the server-side approval round-trip (phase e) lands.
+ * Per-fleet **model pinning** is the config-safety mechanism: each fleet pins its
+ * chat model (seeded from `settings.model`), threaded onto the run via
+ * `runAgent(modelOverride)` → `RunContext.modelOverride` → the router. Changing
+ * the global default never touches a running fleet.
+ *
+ * One ledger carries the whole workspace stream (root + sub-agent events, each
+ * stamped with its `nodeId`); `subscribe` returns it (clients demux). Approval is
+ * the built-in server approval unless the caller overrides (tests/allow-all).
  */
 export type WorkspaceRunServices =
   | FileSystem
@@ -79,8 +80,17 @@ export type WorkspaceRunServices =
   | UtilityLlm
   | LanguageModel.LanguageModel
 
+/** A fleet to seed at build (the daemon passes the workspace's conversations). */
+export interface FleetSeed {
+  readonly cid: ConversationId
+  readonly model?: string
+  readonly title?: string
+}
+
 export interface InProcessWorkspaceDeps {
-  readonly rootConversationId: ConversationId
+  /** The fleets (root coordinators) to host at build — from `conv.listByWorkspace`
+   *  in the daemon, or explicit in tests. `createFleet` adds more. */
+  readonly roots: ReadonlyArray<FleetSeed>
   readonly rootScope: Scope
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
@@ -88,9 +98,7 @@ export interface InProcessWorkspaceDeps {
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
   /** Override the bash-approval layer (e.g. allow-all in tests). When omitted,
-   *  the adapter uses its built-in **server approval** — the daemon-safe path
-   *  that parks the fiber, publishes `approval_needed` to clients, and is
-   *  answered by `approve`. */
+   *  the adapter uses its built-in **server approval**. */
   readonly approvalLayer?: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
   /** Live registry of detached fired agents (`:stop` / counts). */
   readonly fleet: FleetSupervisor
@@ -101,11 +109,22 @@ export interface InProcessWorkspaceDeps {
   readonly allowBash?: boolean
 }
 
-/** Per-session run state owned by the daemon (was the TUI's run handle). */
+/** Per-session run state (busy/fiber/queue), keyed by session key. */
 interface RunState {
   readonly busy: boolean
   readonly fiber: Fiber.RuntimeFiber<void, never> | undefined
   readonly queue: ReadonlyArray<string>
+}
+
+/** Per-fleet record — the live coordinator set the daemon hosts. */
+interface FleetState {
+  readonly rootCid: ConversationId
+  /** Pinned chat model (`"<provider>:<modelId>"`); undefined ⇒ global default. */
+  readonly model: string | undefined
+  readonly title: string | undefined
+  /** Title-on-first-exchange flag (was a module boolean; now per fleet). */
+  readonly firstExchangePending: boolean
+  readonly lastTouched: number
 }
 
 const wsError = (message: string): WorkspaceError => new WorkspaceError({ message })
@@ -115,7 +134,7 @@ export type InProcessWorkspace = ReturnType<typeof Workspace.of>
 /**
  * Build the in-process Workspace service. Requires the agent-run services in
  * context (the daemon's `AppLive` provides a superset); captures the runtime so
- * `send`/`spawn` fork detached daemon fibers.
+ * `send`/`spawn`/`createFleet` fork detached daemon fibers.
  */
 export const makeInProcessWorkspace = (
   deps: InProcessWorkspaceDeps,
@@ -125,12 +144,8 @@ export const makeInProcessWorkspace = (
     const conv = yield* ConversationStore
     const tree = yield* ContextTreeStore
     const settingsStore = yield* SettingsStore
-    // Captured so the import methods (R = FileSystem | Http) stay R=never on the port.
     const fs = yield* FileSystem
     const http = yield* Http
-
-    const rootCid = deps.rootConversationId
-    const rootKey = rootCid as string
 
     // One ledger for the workspace stream; the bus's baseHooks + every run
     // publish here, and any number of clients tail it via `subscribe`.
@@ -138,14 +153,12 @@ export const makeInProcessWorkspace = (
     const publish = (event: AgentEvent): Effect.Effect<void> =>
       ledger.publish(event).pipe(Effect.asVoid)
 
-    // The scope runtime, built with baseHooks that publish to the ledger — so a
-    // sub-agent's events (stamped with its nodeId) reach every client too.
-    // Approval: the built-in server approval (parks + publishes `approval_needed`
-    // + resolved by `approve`) unless the caller overrides (tests/allow-all).
+    // Approval: the built-in server approval unless overridden (tests/allow-all).
     const serverApproval = makeServerApproval(publish)
     const usingServerApproval = deps.approvalLayer === undefined
     const approvalLayer = deps.approvalLayer ?? serverApproval.layer
 
+    // One shared scope runtime (bus + folder-locks + ledger) for ALL fleets.
     const baseHooks = makeAgentEventHooks(publish)
     const scopeRuntime = buildScopeRuntime(
       deps.rootScope,
@@ -160,9 +173,41 @@ export const makeInProcessWorkspace = (
 
     const runStates = yield* Ref.make(new Map<string, RunState>())
     const directiveRef = yield* Ref.make<Directive | undefined>(undefined)
-    // Set when a root turn starts on an empty history — its completion names the
-    // session on the fast tier (parity with the in-process driver's submit).
-    let firstExchangePending = false
+
+    // The live fleet set, seeded from deps.roots, grown by createFleet.
+    const fleets = yield* Ref.make(
+      new Map<string, FleetState>(
+        deps.roots.map((r) => [
+          r.cid as string,
+          {
+            rootCid: r.cid,
+            model: r.model,
+            title: r.title,
+            firstExchangePending: false,
+            lastTouched: 0,
+          },
+        ]),
+      ),
+    )
+    const getFleet = (key: string): Effect.Effect<FleetState | undefined> =>
+      Ref.get(fleets).pipe(Effect.map((m) => m.get(key)))
+    const isFleetRoot = (key: string): Effect.Effect<boolean> =>
+      Ref.get(fleets).pipe(Effect.map((m) => m.has(key)))
+    const updateFleet = (key: string, f: (s: FleetState) => FleetState): Effect.Effect<void> =>
+      Ref.update(fleets, (m) => {
+        const s = m.get(key)
+        if (s === undefined) return m
+        const nm = new Map(m)
+        nm.set(key, f(s))
+        return nm
+      })
+    /** The most-recently-touched fleet (a default seat when no `--fleet`). */
+    const mostRecentFleet = (): Effect.Effect<FleetState | undefined> =>
+      Ref.get(fleets).pipe(
+        Effect.map((m) =>
+          [...m.values()].sort((a, b) => b.lastTouched - a.lastTouched)[0],
+        ),
+      )
 
     const getRun = (key: string): Effect.Effect<RunState> =>
       Ref.get(runStates).pipe(
@@ -175,12 +220,34 @@ export const makeInProcessWorkspace = (
         return next
       })
 
-    // --- the run-fork (UI-free `submit`) ------------------------------------
+    // --- the run-fork (UI-free `submit`), per fleet -------------------------
+
+    const buildRootPrompt = () =>
+      Effect.gen(function* () {
+        const base = coderPrompt(
+          deps.cwd,
+          new Date(),
+          deps.skills,
+          deps.instructionFiles,
+          deps.agents,
+          deps.tools,
+        )
+        const directive = yield* Ref.get(directiveRef)
+        const directiveText = renderDirectiveSection(directive)
+        return directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
+      })
+
+    const rootHooksFor = (rootKey: string): AgentHooks<never> => ({
+      ...baseHooks,
+      onTransformContext: (messages) =>
+        Effect.gen(function* () {
+          const inbox = yield* scopeRuntime.bus.drain(rootKey)
+          return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
+        }),
+    })
 
     const finishTurn = (key: string): Effect.Effect<void> =>
       Effect.gen(function* () {
-        // Tear down the live mailbox; requeue a human message that landed after
-        // the loop's last turn boundary (so it isn't lost), drop agent notes.
         const leftover = yield* scopeRuntime.bus.drain(key)
         yield* scopeRuntime.bus.markDone(key)
         yield* setRun(key, (s) => ({
@@ -188,17 +255,18 @@ export const makeInProcessWorkspace = (
           fiber: undefined,
           queue: [...s.queue, ...leftover.filter((m) => m.from === "you").map((m) => m.content)],
         }))
-        // First exchange just landed → name the session on the fast tier,
-        // off the critical path (best-effort daemon; a missing key never surfaces).
-        if (key === rootKey && firstExchangePending) {
-          firstExchangePending = false
+        // First exchange just landed → name THIS fleet on the fast tier.
+        const fleet = yield* getFleet(key)
+        if (fleet !== undefined && fleet.firstExchangePending) {
+          yield* updateFleet(key, (s) => ({ ...s, firstExchangePending: false }))
+          const cid = fleet.rootCid
           const titleEffect = Effect.gen(function* () {
-            const history = yield* conv.list(rootCid)
+            const history = yield* conv.list(cid)
             const res = yield* generateSessionTitle(history)
             if (res.usage !== undefined) {
               yield* publish({ type: "helper_usage", role: "fast", usage: res.usage })
             }
-            if (res.title.length > 0) yield* conv.setTitle(rootCid, res.title)
+            if (res.title.length > 0) yield* conv.setTitle(cid, res.title)
           }).pipe(Effect.ignore)
           yield* Effect.sync(() => {
             Runtime.runFork(rt)(titleEffect)
@@ -212,44 +280,27 @@ export const makeInProcessWorkspace = (
           nm.set(key, { ...s, queue: rest })
           return [head, nm]
         })
-        if (next !== undefined) yield* startRootTurn(next)
+        if (next !== undefined && fleet !== undefined) yield* startRootTurn(fleet.rootCid, next)
       })
 
-    const startRootTurn = (text: string): Effect.Effect<void> =>
+    const startRootTurn = (rootCid: ConversationId, text: string): Effect.Effect<void> =>
       Effect.gen(function* () {
-        // Empty history before this turn ⇒ first exchange ⇒ title it on finish.
-        firstExchangePending =
-          (yield* conv.listActive(rootCid).pipe(Effect.orElseSucceed(() => []))).length === 0
-        const base = coderPrompt(
-          deps.cwd,
-          new Date(),
-          deps.skills,
-          deps.instructionFiles,
-          deps.agents,
-          deps.tools,
-        )
-        const directive = yield* Ref.get(directiveRef)
-        const directiveText = renderDirectiveSection(directive)
-        const prompt =
-          directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
-
-        // The root gets a mailbox like any agent: a message sent mid-turn is
-        // drained + folded in at the next turn boundary.
-        const rootHooks: AgentHooks<never> = {
-          ...baseHooks,
-          onTransformContext: (messages) =>
-            Effect.gen(function* () {
-              const inbox = yield* scopeRuntime.bus.drain(rootKey)
-              return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
-            }),
-        }
-
+        const rootKey = rootCid as string
+        const empty = (yield* conv.listActive(rootCid).pipe(Effect.orElseSucceed(() => []))).length === 0
+        yield* updateFleet(rootKey, (s) => ({
+          ...s,
+          firstExchangePending: empty,
+          lastTouched: Date.now(),
+        }))
+        const model = (yield* getFleet(rootKey))?.model
+        const prompt = yield* buildRootPrompt()
         const runEffect = runAgent(
           coderAgentConfig(deps.rootScope, scopeRuntime, prompt),
           rootCid,
           text,
-          rootHooks,
+          rootHooksFor(rootKey),
           deps.cwd,
+          model,
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.provide(approvalLayer),
@@ -266,42 +317,23 @@ export const makeInProcessWorkspace = (
           Effect.asVoid,
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
-
         yield* scopeRuntime.bus.markRunning(rootKey, "you")
         const fiber = Runtime.runFork(rt)(runEffect)
         yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
       })
 
-    // Re-drive an in-flight root turn after a crash (restorability) — the
-    // persisted history already ends with the prompt the turn was answering, so
-    // `resumeAgent` continues over it without appending a new prompt.
-    const startResumeTurn = (): Effect.Effect<void> =>
+    // Re-drive an in-flight fleet turn after a crash (restorability).
+    const startResumeTurn = (rootCid: ConversationId): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const base = coderPrompt(
-          deps.cwd,
-          new Date(),
-          deps.skills,
-          deps.instructionFiles,
-          deps.agents,
-          deps.tools,
-        )
-        const directive = yield* Ref.get(directiveRef)
-        const directiveText = renderDirectiveSection(directive)
-        const prompt =
-          directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
-        const rootHooks: AgentHooks<never> = {
-          ...baseHooks,
-          onTransformContext: (messages) =>
-            Effect.gen(function* () {
-              const inbox = yield* scopeRuntime.bus.drain(rootKey)
-              return inbox.length === 0 ? messages : [...messages, ...inboxToMessages(inbox)]
-            }),
-        }
+        const rootKey = rootCid as string
+        const model = (yield* getFleet(rootKey))?.model
+        const prompt = yield* buildRootPrompt()
         const runEffect = resumeAgent(
           coderAgentConfig(deps.rootScope, scopeRuntime, prompt),
           rootCid,
-          rootHooks,
+          rootHooksFor(rootKey),
           deps.cwd,
+          model,
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.provide(approvalLayer),
@@ -359,31 +391,59 @@ export const makeInProcessWorkspace = (
         yield* setRun(nodeId, (s) => ({ ...s, busy: true, fiber }))
       })
 
-    // --- session summaries ---------------------------------------------------
+    // --- session summaries (all fleets) -------------------------------------
 
-    const rootSummary = (busy: boolean): SessionSummary => ({
-      id: conversationSessionId(rootCid),
+    const rootSummary = (fleet: FleetState, busy: boolean): SessionSummary => ({
+      id: conversationSessionId(fleet.rootCid),
       kind: "root",
+      ...(fleet.title !== undefined ? { title: fleet.title } : {}),
       folder: deps.cwd,
       status: busy ? "running" : "idle",
       parentId: null,
+      ...(fleet.model !== undefined ? { model: fleet.model } : {}),
     })
 
     const listSummaries = (): Effect.Effect<ReadonlyArray<SessionSummary>, WorkspaceError> =>
       Effect.gen(function* () {
-        const rootBusy = (yield* getRun(rootKey)).busy
-        const nodes = yield* tree
-          .listTree(rootCid)
-          .pipe(Effect.mapError((e) => wsError(e.message)))
-        const nodeSummaries: SessionSummary[] = nodes.map((n) => ({
-          id: nodeSessionId(n.id),
-          kind: "agent",
-          ...(n.title !== undefined ? { title: n.title } : {}),
-          folder: n.folder,
-          status: n.status,
-          parentId: n.parentId !== null ? nodeSessionId(n.parentId) : conversationSessionId(rootCid),
-        }))
-        return [rootSummary(rootBusy), ...nodeSummaries]
+        const fleetList = [...(yield* Ref.get(fleets)).values()]
+        const out: SessionSummary[] = []
+        for (const fleet of fleetList) {
+          const rootKey = fleet.rootCid as string
+          const busy = (yield* getRun(rootKey)).busy
+          out.push(rootSummary(fleet, busy))
+          const nodes = yield* tree
+            .listTree(fleet.rootCid)
+            .pipe(Effect.mapError((e) => wsError(e.message)))
+          for (const n of nodes) {
+            out.push({
+              id: nodeSessionId(n.id),
+              kind: "agent",
+              ...(n.title !== undefined ? { title: n.title } : {}),
+              folder: n.folder,
+              status: n.status,
+              parentId:
+                n.parentId !== null ? nodeSessionId(n.parentId) : conversationSessionId(fleet.rootCid),
+            })
+          }
+        }
+        return out
+      })
+
+    /** Collect a fleet's running descendant keys (BFS via the bus), for a
+     *  fleet-scoped interrupt that cancels only THAT deployment. */
+    const fleetSubtree = (rootKey: string): Effect.Effect<ReadonlyArray<string>> =>
+      Effect.gen(function* () {
+        const seen = new Set<string>()
+        let frontier = [rootKey]
+        while (frontier.length > 0) {
+          const next: string[] = []
+          for (const k of frontier) {
+            const kids = yield* scopeRuntime.bus.childrenOf(k)
+            for (const c of kids) if (!seen.has(c)) { seen.add(c); next.push(c) }
+          }
+          frontier = next
+        }
+        return [...seen]
       })
 
     // --- the Workspace service ----------------------------------------------
@@ -393,10 +453,11 @@ export const makeInProcessWorkspace = (
         Effect.gen(function* () {
           const sessions = yield* listSummaries()
           const directive = yield* Ref.get(directiveRef)
+          const recent = yield* mostRecentFleet()
           return {
             sessions,
             directive: directive ?? null,
-            activeSessionId: conversationSessionId(rootCid),
+            activeSessionId: recent !== undefined ? conversationSessionId(recent.rootCid) : null,
           } satisfies WorkspaceSnapshot
         }),
 
@@ -405,11 +466,12 @@ export const makeInProcessWorkspace = (
       getState: (id) =>
         Effect.gen(function* () {
           const sessions = yield* listSummaries()
-          const session = sessions.find((s) => s.id === id) ?? rootSummary(false)
+          const session = sessions.find((s) => s.id === id)
           const cursor = yield* ledger.latestSeq
           const busy = (yield* getRun(id as string)).busy
+          const kind = session?.kind ?? "root"
           const log =
-            session.kind === "root"
+            kind === "root"
               ? yield* conv
                   .listActive(sessionConversationId(id))
                   .pipe(Effect.mapError((e) => wsError(e.message)))
@@ -419,8 +481,15 @@ export const makeInProcessWorkspace = (
           const pendingApproval = usingServerApproval
             ? serverApproval.pendingFor(id as string) ?? null
             : null
+          const fallback: SessionSummary = {
+            id,
+            kind: "root",
+            folder: deps.cwd,
+            status: busy ? "running" : "idle",
+            parentId: null,
+          }
           return {
-            session,
+            session: session ?? fallback,
             log,
             busy,
             pendingApproval,
@@ -430,11 +499,7 @@ export const makeInProcessWorkspace = (
 
       send: (id, prompt) =>
         Effect.gen(function* () {
-          const sessions = yield* listSummaries()
-          const session = sessions.find((s) => s.id === id)
           const key = id as string
-          // A live session (root or agent) reads a mid-turn message from its
-          // mailbox; only an idle one starts/resumes a turn.
           const running = yield* scopeRuntime.bus.isRunning(key)
           if (running) {
             const at = yield* Clock.currentTimeMillis
@@ -442,12 +507,11 @@ export const makeInProcessWorkspace = (
             return
           }
           if ((yield* getRun(key)).busy) {
-            // Busy but no live mailbox (between turns) → queue it.
             yield* setRun(key, (s) => ({ ...s, queue: [...s.queue, prompt] }))
             return
           }
-          if (session === undefined || session.kind === "root") {
-            yield* startRootTurn(prompt)
+          if (yield* isFleetRoot(key)) {
+            yield* startRootTurn(sessionConversationId(id), prompt)
           } else {
             yield* startNodeResume(sessionNodeId(id), prompt)
           }
@@ -456,9 +520,16 @@ export const makeInProcessWorkspace = (
       interrupt: (id) =>
         Effect.gen(function* () {
           const key = id as string
-          // Root interrupt cancels the whole fleet too (Esc semantics).
-          if (key === rootKey) yield* scopeRuntime.bus.interruptAll()
-          else yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
+          if (yield* isFleetRoot(key)) {
+            // Cancel only THIS fleet's subtree (not interruptAll — that would
+            // kill every fleet; reserved for daemon shutdown).
+            const subtree = yield* fleetSubtree(key)
+            yield* Effect.forEach(subtree, (k) => scopeRuntime.bus.interrupt(k).pipe(Effect.asVoid), {
+              discard: true,
+            })
+          } else {
+            yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
+          }
           const fiber = (yield* getRun(key)).fiber
           if (fiber !== undefined) yield* Fiber.interrupt(fiber)
         }),
@@ -466,10 +537,16 @@ export const makeInProcessWorkspace = (
       spawn: (req) =>
         Effect.gen(function* () {
           const settings = yield* settingsStore.get()
+          // Spawn an agent under the most-recent fleet (the active deployment).
+          const recent = yield* mostRecentFleet()
+          if (recent === undefined) {
+            return yield* Effect.fail(wsError("no fleet to spawn into — create one first"))
+          }
+          const fleetCid = recent.rootCid
           const id = deps.fleet.nextId()
           const runEffect = scopeRuntime
             .spawnAgent({
-              rootConversationId: rootCid,
+              rootConversationId: fleetCid,
               folder: req.folder,
               task: req.task,
               ...(req.title !== undefined ? { title: req.title } : {}),
@@ -502,10 +579,43 @@ export const makeInProcessWorkspace = (
             folder: req.folder,
             agent: req.agent ?? "coder",
           })
-          // The fresh node id isn't known synchronously (spawnAgent creates it
-          // inside the fiber); return the root for now — clients discover the
-          // node via the next `subagent_start` event / `snapshot`.
-          return conversationSessionId(rootCid)
+          // The fresh node id isn't known synchronously — return the fleet root;
+          // clients discover the node via the next `subagent_start` / `snapshot`.
+          return conversationSessionId(fleetCid)
+        }),
+
+      createFleet: (req) =>
+        Effect.gen(function* () {
+          const settings = yield* settingsStore.get()
+          const cid = yield* conv
+            .create(deps.cwd)
+            .pipe(Effect.mapError((e) => wsError(e.message)))
+          const model = req.model ?? settings.model
+          if (model !== undefined && model.length > 0) {
+            yield* conv.setModel(cid, model).pipe(Effect.mapError((e) => wsError(e.message)))
+          }
+          yield* Ref.update(fleets, (m) => {
+            const nm = new Map(m)
+            nm.set(cid as string, {
+              rootCid: cid,
+              model,
+              title: req.title,
+              firstExchangePending: false,
+              lastTouched: Date.now(),
+            })
+            return nm
+          })
+          if (req.task !== undefined && req.task.length > 0) {
+            yield* startRootTurn(cid, req.task)
+          }
+          return conversationSessionId(cid)
+        }),
+
+      setFleetModel: (id, model) =>
+        Effect.gen(function* () {
+          const cid = sessionConversationId(id)
+          yield* conv.setModel(cid, model).pipe(Effect.mapError((e) => wsError(e.message)))
+          yield* updateFleet(id as string, (s) => ({ ...s, model }))
         }),
 
       stop: (id) =>
@@ -546,15 +656,29 @@ export const makeInProcessWorkspace = (
         ),
     })
 
-    // Restorability: if this conversation had a turn in flight when a prior
-    // daemon died, re-drive it once. Clear the marker FIRST so a crash mid-
-    // resume can't loop it (the plan's retry cap, at its simplest).
+    // Restorability: re-drive EVERY fleet that had a turn in flight when a prior
+    // daemon died. Clear each marker FIRST so a crash mid-resume can't loop it.
     const pending = yield* conv
       .listPending(deps.cwd)
       .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<{ id: ConversationId; prompt: string }>))
-    if (pending.some((p) => p.id === rootCid)) {
-      yield* conv.clearPending(rootCid).pipe(Effect.ignore)
-      yield* startResumeTurn()
+    for (const p of pending) {
+      const key = p.id as string
+      // Seed a fleet for it if the daemon didn't already (best-effort decode).
+      if (!(yield* isFleetRoot(key))) {
+        yield* Ref.update(fleets, (m) => {
+          const nm = new Map(m)
+          nm.set(key, {
+            rootCid: p.id,
+            model: undefined,
+            title: undefined,
+            firstExchangePending: false,
+            lastTouched: 0,
+          })
+          return nm
+        })
+      }
+      yield* conv.clearPending(p.id).pipe(Effect.ignore)
+      yield* startResumeTurn(p.id)
     }
 
     return service

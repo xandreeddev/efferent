@@ -73,6 +73,9 @@ export const SessionSummary = Schema.Struct({
   status: SessionStatus,
   /** The enclosing session, or null for a root / top-level agent. */
   parentId: Schema.NullOr(SessionId),
+  /** A fleet root's pinned chat model (`"<provider>:<modelId>"`), if set — the
+   *  dashboard shows it per fleet (like a deployment's image). Root-only. */
+  model: Schema.optional(Schema.String),
 })
 export type SessionSummary = typeof SessionSummary.Type
 
@@ -125,6 +128,20 @@ export const ImportResult = Schema.Struct({
 export type ImportResult = typeof ImportResult.Type
 
 /**
+ * Create a new **fleet** — a fresh root/coordinator conversation working a task.
+ * The k8s-deployment unit: `model` pins the fleet's chat model (defaults to the
+ * global `settings.model`), so changing the global default never touches a
+ * running fleet. `task` (when given) starts the first turn immediately.
+ */
+export const CreateFleetRequest = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  folder: Schema.String,
+  task: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+})
+export type CreateFleetRequest = typeof CreateFleetRequest.Type
+
+/**
  * One tagged error for the whole port — a `Schema.TaggedError` so it crosses a
  * transport as a JSON body and decodes back to a typed failure on the client.
  */
@@ -152,10 +169,23 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
       id: SessionId,
       prompt: string,
     ) => Effect.Effect<void, WorkspaceError>
+    /** Interrupt a session: a fleet root cancels its whole subtree; an agent
+     *  cancels just that node. */
     readonly interrupt: (id: SessionId) => Effect.Effect<void, WorkspaceError>
     readonly spawn: (
       req: SpawnRequest,
     ) => Effect.Effect<SessionId, WorkspaceError>
+    /** Create a new fleet (root coordinator) — the dashboard "spawn fleet" + the
+     *  coder "new fleet". Returns the fleet's root `SessionId`. */
+    readonly createFleet: (
+      req: CreateFleetRequest,
+    ) => Effect.Effect<SessionId, WorkspaceError>
+    /** Pin (or change) a fleet's chat model — the per-fleet config that shields a
+     *  running fleet from a global-default change. */
+    readonly setFleetModel: (
+      id: SessionId,
+      model: string,
+    ) => Effect.Effect<void, WorkspaceError>
     readonly stop: (id: SessionId) => Effect.Effect<void, WorkspaceError>
     /** Live event stream for a session; replays from `since` then tails. */
     readonly subscribe: (

@@ -234,11 +234,12 @@ export const SqliteConversationStoreLive = Layer.effect(
       listByWorkspace: (workspaceDir) =>
         Effect.gen(function* () {
           const rows = yield* wrapSql(
-            sql<{ readonly id: string; readonly created_at: number; readonly title: string | null; readonly first_prompt: string | null }>`
+            sql<{ readonly id: string; readonly created_at: number; readonly title: string | null; readonly model: string | null; readonly first_prompt: string | null }>`
               SELECT
                 c.id,
                 c.created_at,
                 c.title,
+                c.model,
                 (SELECT json_extract(content, '$.content')
                  FROM messages
                  WHERE conversation_id = c.id AND role = 'user'
@@ -249,7 +250,7 @@ export const SqliteConversationStoreLive = Layer.effect(
             `,
             "Failed to list conversations by workspace",
           )
-          const results: { id: ConversationId; createdAt: number; firstPrompt?: string; title?: string }[] = []
+          const results: { id: ConversationId; createdAt: number; firstPrompt?: string; title?: string; model?: string }[] = []
           for (const r of rows) {
             const id = yield* Schema.decodeUnknown(ConversationId)(r.id).pipe(
               Effect.mapError(
@@ -265,9 +266,25 @@ export const SqliteConversationStoreLive = Layer.effect(
               createdAt: Number(r.created_at),
               ...(r.first_prompt !== null ? { firstPrompt: r.first_prompt } : {}),
               ...(r.title !== null ? { title: r.title } : {}),
+              ...(r.model !== null ? { model: r.model } : {}),
             })
           }
           return results
+        }),
+
+      setModel: (conversationId, model) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{ readonly id: string }>`SELECT id FROM conversations WHERE id = ${conversationId}`,
+            "Failed to look up conversation",
+          )
+          if (rows.length === 0) {
+            return yield* Effect.fail(new ConversationNotFound({ id: conversationId }))
+          }
+          yield* wrapSql(
+            sql`UPDATE conversations SET model = ${model} WHERE id = ${conversationId}`,
+            "Failed to set conversation model",
+          )
         }),
 
       markPending: (conversationId, prompt) =>
