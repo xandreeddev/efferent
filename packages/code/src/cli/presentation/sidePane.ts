@@ -540,23 +540,27 @@ export const treeRows = (
    *  and count are identical, so cursor-mapping callers may omit it. */
   activeNodeId?: string,
 ): ReadonlyArray<TreeRowData> => {
-  // The active session is the tree's depth-0 anchor — the ROOT AGENT. Its
-  // sub-agents rail beneath it, and Enter on it is "back to the root" (close
-  // any open node preview; the composer feeds it again).
-  const active = projection.sessions?.find((s) => s.active)
-  const root = {
-    id: active?.id ?? "root",
-    label: active?.label ?? "(current session)",
-    active: true,
-  }
+  // The fleet tree: every workspace session is a depth-0 root, the active one
+  // marked, with its persisted agent subtree railed beneath it. `treeNodes` is
+  // scoped to the ACTIVE session, so only the active root grows children today
+  // (other sessions show as folded roots); `adoptAll` nests those nodes under
+  // the active root regardless of `rootConversationId`. With no sessions loaded
+  // yet we fall back to a single synthetic root for the current session.
+  const sessions = projection.sessions ?? []
+  const roots =
+    sessions.length > 0
+      ? sessions
+      : [{ id: "root", label: "(current session)", active: true }]
+  // Restrict `adoptAll` to the single-active-root shape — with multiple
+  // conversation roots, nodes are matched by `rootConversationId` so they
+  // don't all pile under the first session.
+  const adoptAll = sessions.filter((s) => s.active).length === 1 && sessions.length === 1
   return buildNavRows(
-    [root],
+    roots,
     projection.treeNodes ?? [],
     nav.treeCollapsed,
     projection.treeWorkspaceRef,
-    // treeNodes is already scoped to the active session — every node belongs
-    // under the root regardless of whether the sessions list has loaded yet.
-    { adoptAll: true, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
+    { adoptAll, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
   )
 }
 

@@ -45,6 +45,8 @@ export const glyph = {
   queued: "▸",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
+  /** Breadcrumb separator above the chat pane (`assistant ▸ <agent folder>`). */
+  crumb: "▸",
   /** "add a new item" marker for manager rows (db connections). Plain ASCII so it
    *  renders in every terminal font (the fullwidth ＋ U+FF0B tofu'd on some). */
   add: "+",

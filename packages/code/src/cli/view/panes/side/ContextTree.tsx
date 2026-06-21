@@ -125,9 +125,8 @@ const renderNode = (d: () => TreeNodeDisplay) => {
 export const ContextTreeView = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const sp = () => store.sidePane()
-  // Owns the cursor only when the side pane is focused AND the agents view
-  // holds the keys (in the split layout activity may hold them).
-  const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
+  // Owns the cursor only when the fleet-tree pane is focused.
+  const focused = () => store.focus() === "tree"
   // The SHARED flatten (root-agent anchor + this session's nodes) — must match
   // the keymap's `treeRows` exactly or the cursor and the pixels disagree
   // (the active-node id is display-only, so the keymap omitting it is fine).

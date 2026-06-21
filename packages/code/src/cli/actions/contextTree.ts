@@ -14,7 +14,7 @@ import { withSeedMarkers } from "../presentation/nodePreview.js"
 import { treeRows } from "../presentation/sidePane.js"
 import type { TuiStore } from "../state/store.js"
 import { replayBlocks } from "./replay.js"
-import { applyResume, conversationLabel, conversationTitle, openContextView, resumeConversation } from "./session.js"
+import { applyResume, conversationLabel, conversationTitle } from "./session.js"
 import { type AppServices } from "../TuiContext.js"
 
 /**
@@ -66,19 +66,17 @@ export const refreshNav = (store: TuiStore, activeCid: ConversationId): Effect.E
   Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid))
 
 /**
- * Switch the side pane to the context-tree viewer, loading the persisted
- * sub-agent nodes. **Focus-free** — the `v` view cycle uses this directly;
- * `toggleTree` layers the `:tree` command's focus choreography on top.
+ * Refresh the fleet tree and land the cursor on the FIRST agent node (not the
+ * active-session row at the top — `↵` on a node jumps the chat into it, the
+ * point of the tree, while `↵` on the session row returns to the assistant).
+ * The view is pinned to "tree" (it drives the cursor/fold reducers).
  */
 export const openTreeView = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     yield* loadAgentTree(store, cid)
+    yield* loadSessions(store, cid)
     yield* Effect.sync(() =>
       store.setNav((n) => {
-        // Land the cursor on the FIRST agent node, not the active-session row at
-        // the top — Enter on a node opens it (the whole point of :tree), while
-        // Enter on the session row just refocuses the lead. Defaulting to the
-        // node is why selecting an agent is now one Enter, not two.
         const withView = { ...n, view: "tree" as const }
         const rows = treeRows(withView, store.projection())
         const firstNode = rows.findIndex((r) => r.display.kind === "node")
@@ -87,79 +85,21 @@ export const openTreeView = (store: TuiStore, cid: ConversationId): Effect.Effec
     )
   })
 
-/** Switch the side pane to the sessions list. Focus-free (the `v` cycle). */
-export const openSessionsView = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
+/**
+ * `:tree` / `:sessions` — focus the always-visible fleet tree (the chat-first
+ * layout shows it on the right at all times; these commands just move focus to
+ * it after a fresh load). The old four cycled side views are gone — this is the
+ * single tree pane.
+ */
+export const focusFleetTree = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
-    yield* loadSessions(store, cid)
-    yield* Effect.sync(() =>
-      store.setNav((n) => ({ ...n, view: "sessions", sessionsCursor: 0 })),
-    )
-  })
-
-/** `:sessions` — toggle the workspace sessions list. Mirrors `toggleTree`. */
-export const toggleSessions = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
-  Effect.gen(function* () {
-    const opening = store.sidePane().view !== "sessions"
-    if (opening) {
-      yield* openSessionsView(store, cid)
-      yield* Effect.sync(() => {
-        store.setFocus("side")
-        store.setMode("normal")
-      })
-      return
-    }
+    yield* openTreeView(store, cid)
     yield* Effect.sync(() =>
       batch(() => {
-        store.setNav((n) => ({ ...n, view: "stack", sessionsCursor: 0 }))
-        if (store.focus() === "side") {
-          store.setFocus("input")
-          store.setMode("insert")
-        }
-      }),
-    )
-  })
-
-/**
- * `:tree` — toggle the context-tree viewer. Opening loads the persisted
- * sub-agent nodes for the current conversation and focuses the side pane;
- * closing returns to the Activity dashboard (and the input, if the side held
- * focus). Mirrors `toggleContext`.
- */
-export const toggleTree = (store: TuiStore, cid: ConversationId): Effect.Effect<void, never, AppServices> =>
-  Effect.gen(function* () {
-    const opening = store.sidePane().view !== "tree"
-    if (opening) {
-      yield* openTreeView(store, cid)
-      yield* Effect.sync(() => {
-        store.setFocus("side")
+        store.setFocus("tree")
         store.setMode("normal")
-      })
-      return
-    }
-    yield* Effect.sync(() =>
-      batch(() => {
-        store.setNav((n) => ({ ...n, view: "stack", treeCursor: 0 }))
-        if (store.focus() === "side") {
-          store.setFocus("input")
-          store.setMode("insert")
-        }
       }),
     )
-  })
-
-/**
- * `v` — the side-view cycle: activity → context → agents → sessions → activity.
- * Loads each view's data on entry but **never moves focus or mode** — the
- * close-to-input behaviour belongs to the typed toggles, not the cycle (it's
- * what made `v` on the last view dump the keypress into the textarea).
- */
-export const cycleSideView = (store: TuiStore, cid: ConversationId) =>
-  Effect.gen(function* () {
-    const view = store.sidePane().view
-    if (view === "stack") yield* openContextView(store, cid)
-    else if (view === "context") yield* openTreeView(store, cid)
-    else if (view === "tree") yield* openSessionsView(store, cid)
-    else yield* Effect.sync(() => store.setNav((n) => ({ ...n, view: "stack" })))
   })
 
 /**
@@ -228,48 +168,20 @@ export const openNodePreview = (
     )
   })
 
-/** Close the agent (right) pane: back to the tree picker, orchestrator untouched. */
+/**
+ * Close the agent (right) jump-in: re-point the LEFT chat back to the
+ * assistant. Focus moves to the fleet tree so you can pick another teammate;
+ * the assistant's rail (and its folds) is left exactly as it was.
+ */
 export const closeNodePreview = (store: TuiStore): void => {
   const p = store.nodePreview()
   if (p === undefined) return
   batch(() => {
     store.setNodePreview(undefined)
-    // Return to the agents panel so you can pick another teammate; the left
-    // orchestrator (and its folds) is left exactly as it was.
-    store.setFocus("side")
+    store.setFocus("tree")
     store.setMode("normal")
   })
 }
-
-/**
- * `↵` on a conversation row — make that conversation the **active session**
- * (the one the input feeds): resume it into the rail, then reload the
- * navigator so the active mark moves. Focus stays on the navigator so the
- * user can keep hopping between sessions; `i` drops to the input to type.
- * Refused mid-turn — swapping the live conversation under a running agent
- * would orphan its appends.
- */
-export const switchToConversation = (store: TuiStore, target: ConversationId) =>
-  Effect.gen(function* () {
-    if (store.busy()) {
-      yield* Effect.sync(() => store.toast("can't switch sessions while a turn is running"))
-      return
-    }
-    if (store.run.getConversationId() === target) {
-      yield* Effect.sync(() => store.toast("already the active session"))
-      return
-    }
-    yield* Effect.sync(() => closeNodePreview(store))
-    yield* resumeConversation(store, target)
-    // resume resets the side nav — restore the SESSIONS view (where the swap
-    // came from) with fresh data so the active mark moves and hopping goes on.
-    yield* refreshNav(store, target)
-    yield* Effect.sync(() => {
-      store.setNav((n) => ({ ...n, view: "sessions" }))
-      store.setFocus("side")
-      store.setMode("normal")
-    })
-  })
 
 /**
  * `c` on an agent node — **continue from here**: materialize the node's full
