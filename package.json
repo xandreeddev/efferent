@@ -8,6 +8,8 @@
     "dev": "bun --hot packages/code/src/main.ts",
     "start": "bun packages/code/src/main.ts",
     "start:fresh": "EFFERENT_HOME=$(mktemp -d) bun packages/code/src/main.ts",
+    "code": "bun packages/code/src/code.ts",
+    "code:dev": "bun --hot packages/code/src/code.ts",
     "social": "bun packages/social/src/main.ts",
     "social:dev": "bun --hot packages/social/src/main.ts",
     "build": "bun run scripts/build.ts",

@@ -40,10 +40,17 @@ export const Header = (props: { ctx: TuiContext }) => {
   }
   const fleet = () => fleetLabel(st())
 
+  // The wordmark brands the bin: the master assistant is `▌efferent`; the
+  // focused coder appends ` ⟩ code` so the two are unmistakable at a glance.
+  const wordmark = () =>
+    props.ctx.variant === "code"
+      ? `${glyph.wordmark}efferent ${glyph.codeBrand} code`
+      : `${glyph.wordmark}efferent`
+
   return (
     <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.conversation} flexShrink={0}>
-        {`${glyph.wordmark}efferent`}
+        {wordmark()}
       </text>
       <Show
         when={!approvalPending()}

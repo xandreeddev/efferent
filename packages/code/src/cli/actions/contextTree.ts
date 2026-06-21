@@ -40,8 +40,18 @@ export const loadAgentTree = (store: TuiStore, activeCid: ConversationId): Effec
 /**
  * Load the workspace's conversations into the `sessions` view: every session
  * sharing this path, the active one marked — Enter there swaps between them.
+ *
+ * `opts.activeOnly` (the `code` bin's single-fleet chrome) restricts the list
+ * to the ONE active session — no cross-session rows, so the fleet tree shows
+ * only the working session and its agent subtree. The `treeRows` flattener
+ * already collapses a single-active-session list to one root via its `adoptAll`
+ * path, so this is the only change "code" needs for tree scope.
  */
-export const loadSessions = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
+export const loadSessions = (
+  store: TuiStore,
+  activeCid: ConversationId,
+  opts: { readonly activeOnly?: boolean } = {},
+): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cs = yield* ConversationStore
     const list = yield* cs
@@ -49,21 +59,29 @@ export const loadSessions = (store: TuiStore, activeCid: ConversationId): Effect
       .pipe(Effect.catchAll(() => Effect.succeed([])))
     // The active conversation may be brand-new (no messages persisted yet) and
     // absent from listByWorkspace — show it anyway, labelled as current.
-    const sessions: NavConversation[] = list.map((c) => ({
+    const all: NavConversation[] = list.map((c) => ({
       id: c.id,
       label: conversationLabel(c),
       title: conversationTitle(c),
       active: c.id === activeCid,
     }))
+    // `code` chrome: keep only the active session (single-fleet focus). If it
+    // isn't persisted yet, fall through to the synthetic "(current session)".
+    const sessions = opts.activeOnly === true ? all.filter((c) => c.active) : all
     if (!sessions.some((c) => c.active)) {
       sessions.unshift({ id: activeCid, label: "(current session)", active: true })
     }
     yield* Effect.sync(() => store.setProjection((p) => ({ ...p, sessions })))
   })
 
-/** Refresh both navigator data sets (boot + every turn end). */
-export const refreshNav = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
-  Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid))
+/** Refresh both navigator data sets (boot + every turn end). `opts.activeOnly`
+ *  scopes the sessions list to the active one (the `code` bin's single fleet). */
+export const refreshNav = (
+  store: TuiStore,
+  activeCid: ConversationId,
+  opts: { readonly activeOnly?: boolean } = {},
+): Effect.Effect<void, never, AppServices> =>
+  Effect.zipRight(loadAgentTree(store, activeCid), loadSessions(store, activeCid, opts))
 
 /**
  * Refresh the fleet tree and land the cursor on the FIRST agent node (not the

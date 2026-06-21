@@ -31,6 +31,7 @@ const newStore = (): TuiStore =>
 
 const fakeCtx = (store: TuiStore): TuiContext => ({
   store,
+  variant: "master",
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},

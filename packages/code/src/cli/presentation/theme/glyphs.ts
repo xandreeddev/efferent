@@ -71,6 +71,9 @@ export const glyph = {
   wordmark: "▌",
   idleDot: "○",
   fleet: "◆",
+  /** The `code` bin's header suffix (`▌efferent ⟩ code`) — the angle bracket that
+   *  brands the focused single-fleet coder apart from the master assistant. */
+  codeBrand: "⟩",
   /** Animated spinner frames for running tree nodes. */
   spinner: SPINNER_FRAMES,
 } as const
