@@ -243,7 +243,15 @@ const Block = (props: { block: ScrollbackBlock; hl?: Hl | undefined }) => {
         </box>
       )
     case "error":
-      return <HlText text={`  ${b.text}`} fg={tokens.error} hl={props.hl} />
+      // A failed turn must be LOUD on the rail (it used to be a quiet indented
+      // line that read as silence): a red ● marker + the message in the error
+      // colour, with the blank-line rhythm every block gets.
+      return (
+        <box flexDirection="row">
+          <text fg={tokens.error} flexShrink={0}>{`${glyph.railDot} `}</text>
+          <HlText text={b.text} fg={tokens.error} hl={props.hl} />
+        </box>
+      )
     case "user":
       return <HlText text={b.text} fg={tokens.text.user} hl={props.hl} />
     case "checkpoint":
@@ -314,7 +322,7 @@ export const Conversation = (props: { ctx: TuiContext }) => {
     (prev) => reconcileItems(prev, buildConversation(store.viewBlocks())),
     [],
   )
-  const focused = () => store.focus() === "conversation"
+  const focused = () => store.focus() === "chat"
   // Solid assigns this during render (before onMount), so the scroller can be
   // registered for the keymap to drive.
   let sb!: ScrollBoxRenderable

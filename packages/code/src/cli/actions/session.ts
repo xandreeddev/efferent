@@ -290,7 +290,7 @@ export const toggleContext = (store: TuiStore, cid: ConversationId) =>
     if (opening) {
       yield* openContextView(store, cid)
       yield* Effect.sync(() => {
-        store.setFocus("side")
+        store.setFocus("tree")
         store.setMode("normal")
       })
       return
@@ -298,7 +298,7 @@ export const toggleContext = (store: TuiStore, cid: ConversationId) =>
     yield* Effect.sync(() =>
       batch(() => {
         store.setNav((n) => ({ ...n, view: "stack" }))
-        if (store.focus() === "side") {
+        if (store.focus() === "tree") {
           store.setFocus("input")
           store.setMode("insert")
         }

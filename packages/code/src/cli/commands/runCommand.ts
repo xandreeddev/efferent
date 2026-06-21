@@ -5,12 +5,10 @@ import { emptyStats } from "../presentation/sidePane.js"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
 import type { TuiContext } from "../state/store.js"
 import {
-  buildFromSelection,
   openResumeBrowser,
   resumeConversation,
-  toggleContext,
 } from "../actions/session.js"
-import { refreshNav, toggleSessions, toggleTree } from "../actions/contextTree.js"
+import { focusFleetTree, refreshNav } from "../actions/contextTree.js"
 import { runHandoff } from "../actions/handoff.js"
 import { openModelPicker } from "../actions/model.js"
 import { applyTheme, openThemePicker } from "../actions/theme.js"
@@ -95,17 +93,20 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":keys":
       store.setOverlay({ kind: "shortcuts" })
       return
-    case ":context":
-      void ctx.run(toggleContext(store, store.run.getConversationId()))
-      return
+    // The fleet tree is always visible on the right now; `:tree`/`:sessions`
+    // (and the legacy `:context`) just move focus to it. The old context-
+    // curation viewer + `:build` are deferred (their side-view + key handler
+    // were removed in the chat-first collapse).
     case ":tree":
-      void ctx.run(toggleTree(store, store.run.getConversationId()))
-      return
     case ":sessions":
-      void ctx.run(toggleSessions(store, store.run.getConversationId()))
+    case ":context":
+      void ctx.run(focusFleetTree(store, store.run.getConversationId()))
       return
     case ":build":
-      void ctx.run(buildFromSelection(store, store.status().cwd))
+      store.pushBlock({
+        kind: "info",
+        text: "context curation (:context/:build) is deferred — the fleet tree is on the right (Tab to focus)",
+      })
       return
     case ":browse":
       // The agy tabbed resume browser: one tab per DB connection, each listing

@@ -115,6 +115,9 @@ export const runTuiModeSolid = (
       //    the stats' context window + session start.
       const sidePane: SidePaneState = {
         ...emptySidePane,
+        // Chat-first: the right pane is always the fleet tree, so pin the side
+        // nav's view to "tree" from boot (it drives the tree cursor/folds).
+        view: "tree",
         skillsLoaded: input.skills.map((s) => s.name),
         instructions: input.instructionFiles.map((f) => ({ path: f.path, scope: f.path })),
         stats: { ...emptyStats, startedAt: Date.now(), contextWindow: meta.contextWindow },

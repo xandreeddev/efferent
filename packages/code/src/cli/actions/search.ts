@@ -75,7 +75,7 @@ const runConversationSearch = (store: TuiStore, query: string, q: string): void 
     index: hits.length - 1,
     hits,
   })
-  store.setFocus("conversation")
+  store.setFocus("chat")
   store.setMode("normal")
   revealAndScroll(store)
 }
@@ -127,7 +127,7 @@ const runSideSearch = (store: TuiStore, query: string, q: string): void => {
   }
   const index = matchIds.length - 1
   store.setSearch({ query, pane: "side", matchIds, index })
-  store.setFocus("side")
+  store.setFocus("tree")
   store.setMode("normal")
   setCursor(Number(matchIds[index]))
 }
