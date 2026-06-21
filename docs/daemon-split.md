@@ -426,3 +426,54 @@ Branch `feat/agent-daemon` (or continue `feat/agent-roles-fleet`). Commits autho
 `Xand Reed <xandreed@proton.me>`; messages end `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 Commit per phase; push only when asked. After it works, add a live `website/` concept page
 ("daemon / attach", tmux-style split) + update the runtime concept.
+
+---
+
+# Control plane (built on top — the daemon as observable infra)
+
+The daemon split landed invisible plumbing. The **control plane** makes it a deliberate, observable
+infrastructure layer. The mental model is k8s: **daemon = cluster**, **fleet = deployment** (a root
+coordinator conversation + its sub-agent subtree), **agent = pod** (a context-tree node), **coder
+TUI / web chat = on-demand clients** you attach to a fleet's coordinator. Several clients share one
+daemon and can each attach to a different fleet. Built as 5 phases (all on `wip2`, 620 tests green):
+
+1. **Multi-fleet adapter + per-fleet model pinning + restorability** (`d394b49`). `inProcess.ts`
+   hosts **N fleets** over one shared `scopeRuntime`/bus/ledger (the blackboard + folder-locks MUST
+   be workspace-wide); only per-fleet run state (busy/fiber/queue, first-exchange, pinned model) is
+   per-fleet. Fleets are seeded from `deps.roots` and grown by `createFleet`. **Per-fleet model
+   pinning** is the config-safety fix: `runAgent(modelOverride)` → `RunContext.modelOverride` (the
+   router already prefers it) + a `conversations.model` column (pg `0012` / sqlite `0008`); each fleet
+   pins its chat model (default `settings.model`), so a global-default change never touches a running
+   fleet. New port methods `createFleet`/`setFleetModel`; `interrupt(fleetRoot)` cancels only that
+   fleet's subtree (BFS over `bus.childrenOf`, not `interruptAll`). The daemon seeds fleets from
+   `listByWorkspace`, reconciles stranded `running` nodes across ALL fleets, and auto-resumes every
+   pending fleet.
+2. **Self-contained in-daemon metrics** (`c5278fd`). `workspace/metrics.ts:readWorkspaceMetrics`
+   folds `Metric.snapshot` (the process-global registry, populated by every `Metric.update`
+   regardless of OTLP) by name + tags into per-role tokens + cost + RED, plus running/done agent
+   counts + a 60s messages-per-minute rate from the bus. `metrics()` port method +
+   `RoleTokens`/`WorkspaceMetrics` Schemas + `GET /metrics`. `METRIC_NAMES` is the single source the
+   recorder + reader share. No Grafana needed.
+3. **Messages-flying firehose** (`24869e3`). A `board_note` `AgentEvent` variant +
+   `makeAgentBus(onEvent?)`: blackboard posts, inbox messages, and completion notes all emit a
+   `board_note` through the sink the adapter wires to its ledger `publish` — so the dashboard's
+   "messages flying" stream IS the SSE stream (replay for free). `messages(limit?)` + `FleetMessage`
+   seed a freshly-attached dashboard before it tails.
+4. **k9s-style control dashboard TUI** (`322c65a`, `cli/dashboard/`). A thin remote client (sibling of
+   `remoteRuntime`): a metrics strip, the fleets → agents tree (git-graph rails + fold), and the
+   messages stream, with operator keys (`↵`/`a` attach — copies `efferent --fleet <id>` via OSC52, `n`
+   new fleet, `s` stop agent, `i` interrupt fleet, `D` shutdown, `q` quit). Pure `dashboardView.ts`
+   model is unit-tested; the OpenTUI mount is smoke-tested via `efferent daemon`.
+5. **`daemon` command group + config-through-API + `--fleet`** (`2a920ad`). `efferent daemon`
+   boots-or-attaches + opens the dashboard (`-v`/`--logs` tails the daemon log); `daemon serve` is the
+   headless server (today's `--mode daemon-serve`, dual-accepted as the auto-spawn target); `daemon
+   status`/`stop`. `getSettings`/`updateSettings(SettingsPatch)` let a client configure the daemon
+   over the API (the daemon owns + persists its config — no file-editing behind its back);
+   `updateSettings({model})` changes only the DEFAULT new fleets inherit. `efferent --fleet <id>` pins
+   which coordinator the coder attaches to.
+
+**Honest limits / deferred:** the in-flight marker is per fleet-root, so a mid-flight **sub-agent**
+(pod) is reconciled to `error` (partial work kept) rather than individually re-driven — per-node
+markers are a noted follow-on. Per-fleet **directive** persistence is deferred (directive stays a
+workspace-wide in-memory Ref). Full in-dashboard **onboarding** is deferred — the dashboard shows a
+no-credential banner and you onboard via the coder (`efferent` → `:login`).
