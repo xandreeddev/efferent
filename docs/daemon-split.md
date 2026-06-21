@@ -34,29 +34,33 @@
    `PubSub`; `publish`, `latestSeq`, `hasGap(since)` (→ resync), `replay(since)`, and
    `stream(since)` (subscribe-then-snapshot, seam-deduped — exactly-once, in order). This is the
    plan's "highest-risk correctness" piece, landed with tests first as recommended.
+8. **Publish-based hooks** (`packages/code/src/events.ts`): `makeAgentEventHooks(publish, …)` is the
+   single event-construction point; `makeEventHooks(queue, …)` is now a thin Queue adapter over it,
+   and the in-process Workspace builds hooks that publish to the `EventLedger`.
+9. **In-process Workspace adapter** (`packages/code/src/workspace/inProcess.ts` + `.test.ts`, 2 tests
+   driven by a fake `LanguageModel`): `makeInProcessWorkspace(deps)` — the authoritative owner. It
+   builds one `buildScopeRuntime` (baseHooks → ledger), owns the ledger + a directive `Ref` + a
+   per-session run state (busy/fiber/queue), and forks runs on a captured runtime so `send` returns
+   immediately while the turn streams. Implements all 13 `Workspace` methods: `send` (root → `runAgent`
+   with rootHooks draining the bus inbox; busy → `bus.post` else queue; `finishTurn` requeues human
+   msgs + drains the next), `send(node)` → `resumeNode`/`bus.post`, `subscribe` → `ledger.stream`,
+   `getState`/`snapshot`/`listSessions` (root + `ContextTreeStore.listTree` nodes), `interrupt`/`stop`,
+   `spawn` → `scopeRuntime.spawnAgent` + fleet, `getDirective`/`setDirective`, `importAgents/Tools`.
+   The UI-free distillation of `submit.ts`/`spawnAgent.ts`/the `runtime.ts` directive closure.
 
-**Next — the in-process Workspace adapter (`packages/code/src/workspace/inProcess.ts`) + TUI re-point.**
-This is the plan's flagged "biggest chunk": untangle `actions/submit.ts`'s UI-store writes from its
-run-forking. The seam:
-- `submit.ts` today does (a) UI writes (`store.pushBlock`, `setBusy`, agentState) and (b) the
-  run-fork (`runAgent` + `coderAgentConfig(rootScope, scopeRuntime, prompt)` provided
-  `scopeRuntime.handlerLayer` + `approvalLayer`, `rootHooks` draining `bus`, `markRunning`/`drain`/
-  `markDone`, busy→`bus.post(cid)` else queue, `finishTurn`). The adapter owns (b); the client keeps
-  (a) by reducing the event stream.
-- The adapter wraps one `buildScopeRuntime` (`runtime.ts:104`) + its `bus` + the `FleetSupervisor` +
-  **one `EventLedger` per session** (replacing the single `eventQueue`) + a directive `Ref` + the
-  approval ledger (moved from `cli/approval.ts`) + a `Map<SessionId, Fiber>`. Hooks publish to the
-  session's ledger via a `makeEventHooks`-shaped adapter that calls `ledger.publish` instead of
-  `Queue.offer`. `send`←submit body; `send(node)`←`submitToNode`/`resumeNode`; `interrupt`←
-  `bus.interrupt`+fiber; `spawn`←`scopeRuntime.spawnAgent`+`fleet`; `stop`←fiber interrupt;
-  `subscribe`←`ledger.stream`; `getState`/`snapshot`←`ContextTreeStore.listTree` + `bus` +
-  `projectHistory(ConversationStore.listActive)` + directive Ref; `approve`←the moved ledger.
-- Then re-point `runtime.ts`: build the in-process Workspace, `TuiContext` delegates to it, the pump
-  drains `ledger.stream(rootSessionId)` (reuse `makeEventReducer` verbatim) instead of the Queue.
-  Keep behavior identical (no wire yet). Verify with a **fake `LanguageModel`** layer (check
-  `agentLoop`/`runAgent` tests for an existing scripted-model fake to reuse).
-
-Then Phase (b): `transport/http/{server,client}.ts` + `daemon-serve` mode, exposing the same adapter.
+**Next — re-point the TUI through the Workspace port (locally, no wire), then Phase (b).**
+- `runtime.ts`: build the in-process Workspace; `TuiContext` delegates (`submit`→`send`,
+  `interrupt`→`interrupt`, `spawnAgent`→`spawn`, `get/setDirective`, etc.); the event pump drains
+  `ledger.stream(rootSessionId)` (reuse `makeEventReducer` verbatim) instead of the `eventQueue`.
+  The client keeps presentation (it pushes the user line optimistically on send + reduces the event
+  stream; the rail's user message has no `AgentEvent` today). Behavior identical. **Caveat:** the
+  current `submit.ts` also runs `generateSessionTitle` (first exchange) + auto-handoff at turn end —
+  fold these into the adapter's `finishTurn` (they're server-side concerns) or keep them client-side
+  during the re-point. Approval stays client-side (`makeTuiApproval`) wired via `deps.resolveApproval`
+  until phase (e).
+- Then Phase (b): `transport/http/{server,client}.ts` (`HttpRouter` + SSE; `BunHttpServer`) +
+  `daemon-serve` mode, exposing this same adapter; SSE framing maps `ledger.stream` → `id:<seq>` frames
+  with `hasGap`→`resync`.
 
 ## Why
 
