@@ -77,6 +77,7 @@ const build = () =>
     rootScope: fakeRootScope,
     cwd: "/tmp/ws",
     skills: [],
+    memory: [],
     agents: [],
     tools: [],
     instructionFiles: [],

@@ -103,7 +103,7 @@ export const runTuiModeSolid = (
       const baseHooks = makeEventHooks(eventQueue)
       const scopeRuntime = buildScopeRuntime(
         input.rootScope,
-        { skills: input.skills, agents: input.agents, tools: input.tools, allowBash: true },
+        { skills: input.skills, memory: input.memory, agents: input.agents, tools: input.tools, allowBash: true },
         baseHooks,
       )
 
@@ -182,6 +182,7 @@ export const runTuiModeSolid = (
         rootScope: input.rootScope,
         cwd: input.cwd,
         skills: input.skills,
+        memory: input.memory,
         agents: input.agents,
         tools: input.tools,
         instructionFiles: input.instructionFiles,

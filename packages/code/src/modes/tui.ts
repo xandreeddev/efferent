@@ -1,4 +1,4 @@
-import type { AgentDefinition, Scope, Skill } from "@xandreed/sdk-core"
+import type { AgentDefinition, Memory, Scope, Skill } from "@xandreed/sdk-core"
 import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import type { ToolDefinition } from "../usecases/loadTools.js"
 
@@ -16,6 +16,7 @@ import type { ToolDefinition } from "../usecases/loadTools.js"
 export interface TuiModeInput {
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly rootScope: Scope

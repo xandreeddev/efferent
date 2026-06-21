@@ -12,6 +12,7 @@ import {
   type AgentHooks,
   type Approval,
   type Scope,
+  type Memory,
   type Skill,
   type UtilityLlm,
 } from "@xandreed/sdk-core"
@@ -55,6 +56,7 @@ export interface SubmitDeps {
   readonly rootScope: Scope
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
@@ -77,7 +79,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, agents, tools, instructionFiles, approvalLayer, getDirective } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, memory, agents, tools, instructionFiles, approvalLayer, getDirective } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -347,7 +349,7 @@ export const makeSubmit = (
       })
 
       // Append the session's standing goal (if any) so it rides every turn.
-      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools)
+      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools, undefined, memory)
       const directiveText = renderDirectiveSection(getDirective())
       const prompt =
         directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base

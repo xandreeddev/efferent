@@ -127,6 +127,7 @@ const workspaceLayer = Layer.effect(
     rootScope,
     cwd: "/tmp/ws",
     skills: [],
+    memory: [],
     agents: [],
     tools: [],
     instructionFiles: [],

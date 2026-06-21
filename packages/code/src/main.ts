@@ -32,6 +32,7 @@ import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
 import { withBuiltinAgents } from "./usecases/directive.js"
 import { loadAgents } from "./usecases/loadAgents.js"
+import { loadMemory } from "./usecases/loadMemory.js"
 import { loadSkills } from "./usecases/loadSkills.js"
 import { loadTools } from "./usecases/loadTools.js"
 
@@ -222,16 +223,26 @@ const readStdinIfPiped = (): Promise<string | undefined> =>
 const discoverWorkspace = (workspace: string) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(workspace, homedir())
+    const memory = yield* loadMemory(workspace, homedir())
     const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
     const tools = yield* loadTools(workspace, homedir())
     const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
-    const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
+    const root = rootPrompt(
+      workspace,
+      new Date(),
+      skills,
+      instructionFiles,
+      agents,
+      tools,
+      undefined,
+      memory,
+    )
     const rootScope: Scope = yield* discoverScopeTree(workspace, (_children, body) =>
       body !== undefined && body.trim().length > 0
         ? `${root.text}\n\n# Project scope\n\n${body}`
         : root.text,
     )
-    return { skills, agents, tools, instructionFiles, rootScope }
+    return { skills, memory, agents, tools, instructionFiles, rootScope }
   })
 
 const root = Command.make(
@@ -282,7 +293,7 @@ const root = Command.make(
 
       // Discover skills / agent roles / declarative tools / instruction files /
       // scope tree (the same picture `daemon serve` builds — shared helper).
-      const { skills, agents, tools, instructionFiles, rootScope } =
+      const { skills, memory, agents, tools, instructionFiles, rootScope } =
         yield* discoverWorkspace(workspace)
 
       // Load settings + bind the workspace so AuthStore can read a local-tier
@@ -322,6 +333,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -344,6 +356,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -356,6 +369,7 @@ const root = Command.make(
           yield* runRpcMode({
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -369,6 +383,7 @@ const root = Command.make(
           yield* runDaemonMode({
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -383,6 +398,7 @@ const root = Command.make(
           yield* runDaemonServe({
             workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -405,6 +421,7 @@ const root = Command.make(
           const tuiInput = {
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -530,7 +547,7 @@ const daemonServeCommand = Command.make(
     Effect.gen(function* () {
       const workspace = resolveCwd(cwd)
       yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
-      const { skills, agents, tools, instructionFiles, rootScope } =
+      const { skills, memory, agents, tools, instructionFiles, rootScope } =
         yield* discoverWorkspace(workspace)
       const settingsStore = yield* SettingsStore
       const settings = yield* settingsStore.load(workspace, homedir())
@@ -538,6 +555,7 @@ const daemonServeCommand = Command.make(
       yield* runDaemonServe({
         workspace,
         skills,
+        memory,
         agents,
         tools,
         rootScope,

@@ -160,6 +160,7 @@ export const fakeWorkspaceLayer = (rootCid: string, modelText?: string) =>
       rootScope: fakeRootScope,
       cwd: "/tmp/ws",
       skills: [],
+      memory: [],
       agents: [],
       tools: [],
       instructionFiles: [],
