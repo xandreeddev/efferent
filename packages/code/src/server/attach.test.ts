@@ -6,7 +6,7 @@ import { Effect, Fiber } from "effect"
 import { ApprovalAllowAllLive } from "@xandreed/sdk-core"
 import { makeInProcessWorkspace } from "../workspace/inProcess.js"
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
-import { fakeEnvLayers, fakeRootScope, FAKE_ROOT_CID } from "../workspace/fakeAppEnv.js"
+import { fakeAuthStore, fakeEnvLayers, fakeRootScope, FAKE_ROOT_CID } from "../workspace/fakeAppEnv.js"
 import { serveWorkspaceProgram } from "./daemon.js"
 import { attachOrSpawn, probeHealth } from "./attach.js"
 import { readDiscovery } from "./discovery.js"
@@ -41,7 +41,11 @@ describe("attach-or-spawn", () => {
         // capturing its fiber so we can stop it after the assertions.
         let daemonFiber: Fiber.RuntimeFiber<never> | undefined
         const spawnDaemon = () =>
-          Effect.forkDaemon(serveWorkspaceProgram(ws, { workspace, version: "test" })).pipe(
+          Effect.forkDaemon(
+            serveWorkspaceProgram(ws, { workspace, version: "test" }).pipe(
+              Effect.provide(fakeAuthStore),
+            ),
+          ).pipe(
             Effect.tap((f) => Effect.sync(() => { daemonFiber = f })),
             Effect.asVoid,
           )
@@ -76,7 +80,11 @@ describe("attach-or-spawn", () => {
           approvalLayer: ApprovalAllowAllLive,
           fleet: makeFleetSupervisor(),
         })
-        yield* Effect.forkScoped(serveWorkspaceProgram(ws, { workspace, version: "test" }))
+        yield* Effect.forkScoped(
+          serveWorkspaceProgram(ws, { workspace, version: "test" }).pipe(
+            Effect.provide(fakeAuthStore),
+          ),
+        )
         // Wait until the daemon is registered + healthy BEFORE attaching, so the
         // reuse path (not the spawn path) is what's under test.
         let spawnCalls = 0

@@ -5,6 +5,7 @@ import {
   type AgentDefinition,
   type Scope,
   type Skill,
+  AuthStore,
   ContextTreeStore,
   ConversationStore,
   Workspace,
@@ -52,7 +53,7 @@ const boundPort = (server: HttpServer.HttpServer, fallback: number): number => {
 export const serveWorkspaceProgram = (
   ws: ReturnType<typeof Workspace.of>,
   opts: { readonly workspace: string; readonly version: string; readonly port?: number },
-): Effect.Effect<never> =>
+): Effect.Effect<never, never, AuthStore> =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer
     const port = boundPort(server, opts.port ?? 0)
@@ -86,7 +87,7 @@ export const serveWorkspaceProgram = (
  */
 export const runDaemonServe = (
   input: DaemonServeInput,
-): Effect.Effect<void, never, WorkspaceRunServices> =>
+): Effect.Effect<void, never, WorkspaceRunServices | AuthStore> =>
   Effect.gen(function* () {
     const conv = yield* ConversationStore
     const tree = yield* ContextTreeStore

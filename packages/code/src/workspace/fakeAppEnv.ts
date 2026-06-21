@@ -8,6 +8,7 @@ import {
   type ContextNodeId,
   type Scope,
   ApprovalAllowAllLive,
+  AuthStore,
   ContextTreeStore,
   ConversationStore,
   DefaultSettings,
@@ -121,9 +122,25 @@ export const fakeEnvLayersNoConv = (modelText?: string) =>
         load: () => Effect.succeed(DefaultSettings),
       }),
     ),
+    fakeAuthStore,
     fakeModel(modelText),
     stubTree,
   )
+
+/** A no-op AuthStore (the daemon router's /auth/reload needs it; tests never log in). */
+export const fakeAuthStore = Layer.succeed(
+  AuthStore,
+  AuthStore.of({
+    init: () => Effect.void,
+    all: Effect.succeed({}),
+    get: () => Effect.succeed(undefined),
+    resolveKey: () => Effect.succeed(undefined),
+    setApiKey: () => Effect.void,
+    setOAuth: () => Effect.void,
+    setLocal: () => Effect.void,
+    remove: () => Effect.void,
+  } as never),
+)
 
 /** The merged stub ports (FS/Shell/Http/WebSearch/UtilityLlm/Settings/model/tree/conv). */
 export const fakeEnvLayers = (rootCid: string, modelText?: string) =>
@@ -153,5 +170,6 @@ export const fakeServerLive = (rootCid: string, modelText?: string) =>
     workspaceRouter({ pid: 1234, workspace: "/tmp/ws", version: "test" }),
   ).pipe(
     Layer.provide(fakeWorkspaceLayer(rootCid, modelText)),
+    Layer.provide(fakeAuthStore),
     Layer.provideMerge(BunHttpServer.layerTest),
   )

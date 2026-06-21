@@ -3,6 +3,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 import { Effect, Layer, Schema, Stream } from "effect"
 import {
   ApprovalDecision,
+  AuthStore,
   Directive,
   ImportResult,
   SessionState,
@@ -196,6 +197,16 @@ export const workspaceRouter = (identity: DaemonIdentity) =>
         return yield* HttpServerResponse.schemaJson(ImportResult)(res)
       }),
     ),
+    // OAuth/API-key login happens CLIENT-side (browser + auth.json are the
+    // human's machine); this tells the daemon to reload the AuthStore so a
+    // mid-session login is picked up without a restart.
+    HttpRouter.post(
+      "/auth/reload",
+      Effect.gen(function* () {
+        yield* (yield* AuthStore).init(identity.workspace)
+        return noContent
+      }),
+    ),
   )
 
 /**
@@ -206,7 +217,7 @@ export const workspaceRouter = (identity: DaemonIdentity) =>
 export const serveWorkspaceHttp = (opts: {
   readonly identity: DaemonIdentity
   readonly port: number
-}): Layer.Layer<never, never, Workspace> =>
+}): Layer.Layer<never, never, Workspace | AuthStore> =>
   HttpServer.serve()(workspaceRouter(opts.identity)).pipe(
     Layer.provide(BunHttpServer.layer({ port: opts.port, hostname: "127.0.0.1" })),
-  ) as Layer.Layer<never, never, Workspace>
+  ) as Layer.Layer<never, never, Workspace | AuthStore>
