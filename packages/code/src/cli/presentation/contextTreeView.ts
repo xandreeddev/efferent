@@ -1,5 +1,5 @@
 import { basename } from "node:path"
-import type { AgentContextNode } from "@xandreed/sdk-core"
+import { type AgentContextNode, type NodeKind, nodeKind } from "@xandreed/sdk-core"
 import { glyph } from "./theme/index.js"
 import { formatTokens } from "./statusBar.js"
 
@@ -15,6 +15,13 @@ import { formatTokens } from "./statusBar.js"
 
 export interface TreeNodeDisplay {
   readonly kind: "node"
+  /**
+   * The SESSION → FLEET → AGENT tier this node occupies — `fleet` for a
+   * top-level task/coordinator under a session, `agent` for a worker beneath a
+   * fleet (derived via `nodeKind`, so legacy rows without the column still
+   * classify). Lets the view label/glyph the two tiers distinctly.
+   */
+  readonly tier: NodeKind
   /** Row label: the spawner-given title, else the scope dir basename. */
   readonly label: string
   /** Scope dir basename — shown dim after a title so the scope stays visible. */
@@ -169,6 +176,7 @@ export const buildNavRows = (
       head: depth === 0,
       display: {
         kind: "node",
+        tier: nodeKind(node),
         label: node.title ?? (basename(node.folder) || node.folder),
         folder: basename(node.folder) || node.folder,
         status: node.status,

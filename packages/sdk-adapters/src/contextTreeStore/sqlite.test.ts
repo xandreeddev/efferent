@@ -12,6 +12,7 @@ import sqlite0002 from "../database/migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "../database/migrations-sqlite/0003_workspace_ref.js"
 import sqlite0004 from "../database/migrations-sqlite/0004_seed_count.js"
 import sqlite0006 from "../database/migrations-sqlite/0006_node_title.js"
+import sqlite0009 from "../database/migrations-sqlite/0009_node_kind.js"
 
 // Exercises the REAL SQLite context-tree store (the unit suites elsewhere use
 // the in-memory store, which never touches SQL). A fresh in-memory db per run;
@@ -31,6 +32,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ContextTreeStore>): Promise<A> =>
       yield* sqlite0003 // + workspace_ref staleness stamp
       yield* sqlite0004 // + seed_message_count boundary stamp
       yield* sqlite0006 // + the spawner-given display title
+      yield* sqlite0009 // + the explicit fleet/agent node kind
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )
@@ -85,6 +87,27 @@ describe("SqliteContextTreeStore", () => {
     )
     expect(result.titled.title).toBe("audit state layer")
     expect(result.untitled.title).toBeUndefined()
+  })
+
+  test("spawn stamps the SESSION→FLEET→AGENT kind: a root is a fleet, a child an agent", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* ContextTreeStore
+        const root = yield* spawnRoot("/root", [user("a")])
+        const child = yield* store.spawn({
+          parentId: root,
+          rootConversationId: null,
+          edgeKind: "spawned",
+          folder: "/root/child",
+          displayRoot: "/tmp/ws",
+          seed: { kind: "task" },
+          seedMessages: [user("b")],
+        })
+        return { root: yield* store.get(root), child: yield* store.get(child) }
+      }),
+    )
+    expect(result.root.kind).toBe("fleet")
+    expect(result.child.kind).toBe("agent")
   })
 
   test("append grows the node's history in order", async () => {
