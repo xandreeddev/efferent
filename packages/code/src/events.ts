@@ -1,85 +1,12 @@
 import { Effect, Queue } from "effect"
-import type {
-  AgentHooks,
-  AgentMessage,
-  TokenUsage,
-} from "@xandreed/sdk-core"
+import type { AgentHooks } from "@xandreed/sdk-core"
 
-/**
- * Mode-agnostic event vocabulary the loop emits via hooks. Each mode
- * (tui / print / json / rpc) subscribes to the same queue and renders
- * accordingly.
- */
-export type AgentEvent =
-  // Internal drain sentinel: offered by a mode AFTER its run completes so the
-  // consumer fiber exits its loop having rendered everything before it —
-  // deterministic, no sleep, no interruption racing a half-rendered event.
-  // Never serialized to stdout/stderr/RPC.
-  | { readonly type: "flush" }
-  | { readonly type: "turn_start"; readonly turnIndex: number }
-  | {
-      readonly type: "assistant_message"
-      readonly turnIndex: number
-      readonly text: string
-      readonly reasoning?: string
-      readonly usage?: TokenUsage
-      /** Set for sub-agent narration: the run's context-tree node id. Carries a
-       *  core `ContextNodeId` deliberately widened to `string` — `AgentEvent` is
-       *  the cross-mode WIRE vocabulary (serialized to JSONL in json mode), so the
-       *  brand stays in the domain and the transport stays a plain string. */
-      readonly nodeId?: string
-    }
-  | {
-      readonly type: "tool_call_start"
-      readonly turnIndex: number
-      /** Provider tool-call id — pairs start↔end exactly (two same-named calls in
-       *  one turn share a name but not an id). May be empty (provider omitted it). */
-      readonly id: string
-      readonly toolName: string
-      readonly args: unknown
-      /** Set for sub-agent inner calls: the run's context-tree node id. */
-      readonly nodeId?: string
-    }
-  | {
-      readonly type: "tool_call_end"
-      readonly turnIndex: number
-      readonly id: string
-      readonly toolName: string
-      readonly ok: boolean
-      readonly result: unknown
-      /** Set for sub-agent inner calls: the run's context-tree node id. */
-      readonly nodeId?: string
-    }
-  | {
-      readonly type: "subagent_start"
-      readonly name: string
-      readonly task: string
-      readonly nodeId?: string
-      /** The parent node's id — nests this run under its enclosing sub-agent. */
-      readonly parentNodeId?: string
-    }
-  | {
-      readonly type: "subagent_end"
-      readonly name: string
-      readonly nodeId?: string
-      readonly ok: boolean
-      readonly summary: string
-      readonly filesChanged: ReadonlyArray<string>
-      readonly usage?: { readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number }
-    }
-  | { readonly type: "skill_load"; readonly name: string }
-  | {
-      /** A fast-tier helper call ran inside the loop (e.g. a compaction middle-summary or session title). */
-      readonly type: "helper_usage"
-      readonly role: "fast"
-      readonly usage: TokenUsage
-    }
-  | {
-      readonly type: "agent_end"
-      readonly finalText: string
-      readonly messages: ReadonlyArray<AgentMessage>
-    }
-  | { readonly type: "error"; readonly message: string }
+// The `AgentEvent` union now lives in `@xandreed/sdk-core` as a `Schema.Union`
+// (`entities/AgentEvent.ts`) — both the loop's hooks and the daemon's HTTP/SSE
+// wire need it. Re-exported here so the loop side (`makeEventHooks` + every
+// `import … from "../../events.js"` consumer) is unchanged.
+import { AgentEvent } from "@xandreed/sdk-core"
+export { AgentEvent }
 
 /**
  * Wire the agent loop's hooks to a queue. Modes consume the queue.

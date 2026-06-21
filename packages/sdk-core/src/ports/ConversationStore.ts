@@ -88,5 +88,27 @@ export class ConversationStore extends Context.Tag(
       }>,
       ConversationStoreError
     >
+    /**
+     * Mark a turn **in flight** for a session: the daemon sets this to the user
+     * prompt when a turn starts and clears it on completion. A restarted daemon
+     * reads non-null markers (via {@link listPending}) to auto-resume a turn
+     * interrupted by a crash. Best-effort — a marker failure never breaks a run.
+     */
+    readonly markPending: (
+      id: ConversationId,
+      prompt: string,
+    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
+    /** Clear the in-flight marker for a session (on turn completion). */
+    readonly clearPending: (
+      id: ConversationId,
+    ) => Effect.Effect<void, ConversationStoreError>
+    /** Sessions in `workspaceDir` with an unfinished turn — the crash-recovery
+     *  list a restarted daemon walks to auto-resume interrupted turns. */
+    readonly listPending: (
+      workspaceDir: string,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly id: ConversationId; readonly prompt: string }>,
+      ConversationStoreError
+    >
   }
 >() {}

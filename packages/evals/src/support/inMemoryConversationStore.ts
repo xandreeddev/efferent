@@ -28,6 +28,7 @@ interface Conv {
   readonly createdAt: number
   readonly workspaceDir?: string
   readonly title?: string
+  readonly pendingPrompt?: string
   readonly messages: ReadonlyArray<Stored>
   readonly checkpoints: ReadonlyArray<Checkpoint>
 }
@@ -176,6 +177,38 @@ export const InMemoryConversationStoreLive = Layer.effect(
                   ...(conv.title !== undefined ? { title: conv.title } : {}),
                 }
               }),
+          ),
+        ),
+
+      markPending: (id, prompt) =>
+        Effect.gen(function* () {
+          const conv = yield* getConv(id)
+          if (conv === undefined) {
+            return yield* Effect.fail(new ConversationNotFound({ id }))
+          }
+          yield* Ref.update(ref, (m) => {
+            const next = new Map(m)
+            next.set(id, { ...conv, pendingPrompt: prompt })
+            return next
+          })
+        }),
+
+      clearPending: (id) =>
+        Ref.update(ref, (m) => {
+          const conv = m.get(id)
+          if (conv === undefined) return m
+          const next = new Map(m)
+          const { pendingPrompt: _drop, ...rest } = conv
+          next.set(id, rest)
+          return next
+        }),
+
+      listPending: (workspaceDir) =>
+        Ref.get(ref).pipe(
+          Effect.map((m) =>
+            [...m.entries()]
+              .filter(([, conv]) => conv.workspaceDir === workspaceDir && conv.pendingPrompt !== undefined)
+              .map(([id, conv]) => ({ id: id as ConversationId, prompt: conv.pendingPrompt ?? "" })),
           ),
         ),
     })

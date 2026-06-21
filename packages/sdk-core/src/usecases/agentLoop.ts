@@ -64,6 +64,17 @@ export interface RunAgentLoopInput<
    * value here overrides both — handy for direct/test callers.
    */
   readonly compression?: CompressionPolicy
+  /**
+   * Persist each turn's appended messages the moment they land (incremental
+   * persistence) instead of the caller bulk-appending `newTail` at the very
+   * end — so a session is restorable to its last completed turn after a crash.
+   * Called with the SAME messages accumulated into `newTail` (model responses
+   * AND synthetic correctives), per turn, in order. When omitted, the caller
+   * persists `newTail` itself (the direct/eval/test path is unchanged).
+   */
+  readonly onTail?: (
+    messages: ReadonlyArray<AgentMessage>,
+  ) => Effect.Effect<void, never, R>
 }
 
 /** Tool calls resolved concurrently per step (interruption-safe via Effect). */
@@ -333,6 +344,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         }
         messages = [...messages, corrective]
         newTail.push(corrective)
+        if (input.onTail) yield* input.onTail([corrective])
         turnIndex++
         continue
       }
@@ -361,6 +373,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       totalCache += usage.cacheReadTokens
       messages = [...messages, ...tail]
       newTail.push(...tail)
+      if (input.onTail) yield* input.onTail(tail)
 
       const text = res.text
       if (text.length > 0) finalText = text
