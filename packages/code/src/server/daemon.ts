@@ -5,7 +5,6 @@ import {
   type AgentDefinition,
   type Scope,
   type Skill,
-  ApprovalAllowAllLive,
   ContextTreeStore,
   ConversationStore,
   Workspace,
@@ -130,7 +129,10 @@ export const runDaemonServe = (
       agents: input.agents,
       tools: input.tools,
       instructionFiles: input.instructionFiles,
-      approvalLayer: ApprovalAllowAllLive,
+      // No approvalLayer override → the adapter's built-in SERVER approval:
+      // bash parks the fiber + publishes `approval_needed` to clients, answered
+      // by a client's `POST /approve`. (The judge still auto-allows in-workspace
+      // work; only out-of-bounds commands prompt.)
       fleet: makeFleetSupervisor(),
       allowBash: input.allowBash ?? true,
     })

@@ -100,5 +100,24 @@ export const AgentEvent = Schema.Union(
     type: Schema.Literal("error"),
     message: Schema.String,
   }),
+  // The agent is parked on a bash-approval request — the daemon publishes this
+  // so every attached client renders the sheet; a client answers with
+  // `Workspace.approve` (POST /approve). `sessionId` is the asking session.
+  Schema.Struct({
+    type: Schema.Literal("approval_needed"),
+    sessionId: Schema.optional(Schema.String),
+    tool: Schema.String,
+    summary: Schema.String,
+    cwd: Schema.String,
+    ruleKey: Schema.String,
+    reason: Schema.optional(Schema.String),
+    folder: Schema.optional(Schema.String),
+  }),
+  // The pending approval was answered (by some client) — clears stale sheets
+  // on every other client.
+  Schema.Struct({
+    type: Schema.Literal("approval_resolved"),
+    sessionId: Schema.optional(Schema.String),
+  }),
 )
 export type AgentEvent = typeof AgentEvent.Type
