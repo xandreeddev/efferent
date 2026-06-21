@@ -96,7 +96,10 @@ export const reduceAgentState = (
     }
     case "agent_end":
     case "error":
-      return { ...idleAgentState, since: now }
+      // The ROOT turn ended — but its fleet runs on in the background (spawning
+      // is non-blocking now), so keep the live members; each drains itself out
+      // on its own subagent_end. Only the root's phase goes idle.
+      return { ...idleAgentState, since: now, fleet: s.fleet }
     default:
       return s
   }

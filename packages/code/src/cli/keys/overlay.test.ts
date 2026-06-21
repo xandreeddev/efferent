@@ -35,6 +35,7 @@ const ctxOf = (store: TuiStore): TuiContext => ({
   spawnAgent: () => {},
   stopAgent: () => {},
   listFleet: () => [],
+  liveAgents: () => [],
   importAgents: () => {},
   importTools: () => {},
   getDirective: () => undefined,

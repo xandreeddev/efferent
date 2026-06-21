@@ -47,6 +47,7 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/compaction", label: "Context compaction" },
       { slug: "concepts/sub-agents", label: "Sub-agents" },
       { slug: "concepts/fleet", label: "The fleet" },
+      { slug: "concepts/agent-messaging", label: "Agent messaging" },
       { slug: "concepts/skills", label: "Skills" },
       { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/evals", label: "Evals" },
