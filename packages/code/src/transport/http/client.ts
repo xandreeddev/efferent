@@ -12,6 +12,8 @@ import {
   SessionState,
   SessionSummary,
   SpawnRequest,
+  Settings,
+  type SettingsPatch,
   WorkspaceError,
   WorkspaceMetrics,
   WorkspaceSnapshot,
@@ -56,6 +58,10 @@ export interface HttpTransport {
   readonly messages: (
     limit?: number,
   ) => Effect.Effect<ReadonlyArray<FleetMessage>, WorkspaceError, HttpClient.HttpClient>
+  readonly getSettings: () => Effect.Effect<Settings, WorkspaceError, HttpClient.HttpClient>
+  readonly updateSettings: (
+    patch: SettingsPatch,
+  ) => Effect.Effect<Settings, WorkspaceError, HttpClient.HttpClient>
   readonly send: (
     id: SessionId,
     prompt: string,
@@ -138,6 +144,8 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
         `/messages${limit !== undefined ? `?limit=${limit}` : ""}`,
         Schema.Array(FleetMessage),
       ),
+    getSettings: () => getJson("/settings", Settings),
+    updateSettings: (patch) => postJson("/settings", patch, Settings),
     getState: (id, since) =>
       getJson(
         `/sessions/${id}/state${since !== undefined ? `?since=${since}` : ""}`,

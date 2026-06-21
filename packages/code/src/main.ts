@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { FetchHttpClient } from "@effect/platform"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import {
   AuthStore,
   SettingsStore,
@@ -40,6 +40,8 @@ import { runJsonMode } from "./modes/json.js"
 import { runRpcMode } from "./modes/rpc.js"
 import { runDaemonMode } from "./modes/daemon.js"
 import { runDaemonServe } from "./server/daemon.js"
+import { readDiscovery } from "./server/discovery.js"
+import { probeHealth } from "./server/attach.js"
 import { stderrLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
@@ -137,6 +139,13 @@ const resumeOption = Options.text("resume").pipe(
   Options.withDescription("Resume an existing conversation by id (UUID)."),
 )
 
+const fleetOption = Options.text("fleet").pipe(
+  Options.optional,
+  Options.withDescription(
+    "Attach the coder TUI to a specific fleet's coordinator (a root session id). " +
+      "With several fleets and no --fleet, the daemon's active fleet is used.",
+  ),
+)
 const cwdOption = Options.text("cwd").pipe(
   Options.optional,
   Options.withDescription(
@@ -174,6 +183,27 @@ const readStdinIfPiped = (): Promise<string | undefined> =>
     stdin.on("error", () => resolve(undefined))
   })
 
+/**
+ * Discover the workspace's skills / agent roles / declarative tools / instruction
+ * files / scope tree — shared by the coder modes and `daemon serve` so both build
+ * the agent from the same picture. Requires the app services (the caller provides
+ * `AppLive`).
+ */
+const discoverWorkspace = (workspace: string) =>
+  Effect.gen(function* () {
+    const skills = yield* loadSkills(workspace, homedir())
+    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
+    const tools = yield* loadTools(workspace, homedir())
+    const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
+    const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
+    const rootScope: Scope = yield* discoverScopeTree(workspace, (_children, body) =>
+      body !== undefined && body.trim().length > 0
+        ? `${root.text}\n\n# Project scope\n\n${body}`
+        : root.text,
+    )
+    return { skills, agents, tools, instructionFiles, rootScope }
+  })
+
 const root = Command.make(
   "efferent",
   {
@@ -183,8 +213,9 @@ const root = Command.make(
     allowBash: allowBashOption,
     resume: resumeOption,
     cwd: cwdOption,
+    fleet: fleetOption,
   },
-  ({ prompt, mode, print, allowBash, resume, cwd }) =>
+  ({ prompt, mode, print, allowBash, resume, cwd, fleet }) =>
     Effect.gen(function* () {
       const workspace =
         resume._tag === "Some" || cwd._tag === "Some"
@@ -218,18 +249,10 @@ const root = Command.make(
         effectivePrompt !== undefined,
       )
 
-      // Discover skills once at startup. `.efferent/skills/*.md` walked from
-      // cwd → parents → ~/.efferent/skills. Closer-to-cwd shadows farther.
-      // Failures fall back to an empty list — never breaks the agent.
-      const skills = yield* loadSkills(workspace, homedir())
-
-      // Discover agent ROLES the same way: `.efferent/agents/*.md` walked from
-      // cwd → parents → ~/.efferent/agents. Selectable via `run_agent({ agent })`
-      // and the TUI `:spawn`. Empty when none — never breaks the agent.
-      const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
-
-      // Discover declarative tools (`.efferent/tools/*.md`), callable via run_tool.
-      const tools = yield* loadTools(workspace, homedir())
+      // Discover skills / agent roles / declarative tools / instruction files /
+      // scope tree (the same picture `daemon serve` builds — shared helper).
+      const { skills, agents, tools, instructionFiles, rootScope } =
+        yield* discoverWorkspace(workspace)
 
       // Load settings + bind the workspace so AuthStore can read a local-tier
       // credential (`<cwd>/.efferent/auth.json`); no-op in the EFFERENT_HOME sandbox.
@@ -237,31 +260,6 @@ const root = Command.make(
       const settings = yield* settingsStore.load(workspace, homedir())
       yield* (yield* AuthStore).init(workspace)
       const effectiveAllowBash = allowBash || settings.allowBash
-
-      // Auto-inject AGENT.md / AGENT.local.md from the ancestor chain
-      // (root → workspace → home). Per-file 4k char cap; total 12k char
-      // cap; dedupe by normalized content. Returns [] when none.
-      const instructionFiles = yield* discoverInstructionFiles(
-        workspace,
-        homedir(),
-      )
-
-      // Discover the scope tree from SCOPE.md files. The root is always
-      // present (its prompt = the generic root prompt, which delegates real
-      // coding to the coordinator-led team, plus any root SCOPE.md body); each
-      // child SCOPE.md becomes a nested, write-confined sub-scope. With no
-      // SCOPE.md anywhere, the root has no children and behaves exactly
-      // like a plain workspace-wide agent.
-      const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
-      const rootScope: Scope = yield* discoverScopeTree(
-        workspace,
-        (_children, body) => {
-          const base = root.text
-          return body !== undefined && body.trim().length > 0
-            ? `${base}\n\n# Project scope\n\n${body}`
-            : base
-        },
-      )
 
       // Non-interactive modes can't run the in-app `:login` flow, so they need
       // a credential already in ~/.efferent/auth.json (written by a prior TUI
@@ -373,6 +371,7 @@ const root = Command.make(
             rootScope,
             instructionFiles,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
+            ...(fleet._tag === "Some" ? { fleetId: fleet.value } : {}),
           }
           // The TUI (OpenTUI + SolidJS), loaded lazily so the native
           // @opentui/core FFI lib is touched ONLY on this path — print/json/rpc
@@ -472,7 +471,126 @@ const seedDbUrlFromConfig = (workspaceDir: string): void => {
 // the JSON at bundle time, so the published artifact reports its real version.
 import packageJson from "../package.json" with { type: "json" }
 
-const cli = Command.run(root, {
+/* ------------------------------------------------------------------ */
+/* `daemon` command group — the control plane (cluster) operations      */
+/* ------------------------------------------------------------------ */
+
+const resolveCwd = (cwd: Option.Option<string>): string =>
+  Option.getOrElse(cwd, () => process.cwd())
+
+const daemonLogPath = (): string =>
+  join(process.env.EFFERENT_HOME ?? join(homedir(), ".efferent"), "efferent.log")
+
+// `efferent daemon serve` — the headless, detached server (today's
+// `--mode daemon-serve`, kept dual-accepted as the auto-spawn target).
+const daemonServeCommand = Command.make(
+  "serve",
+  { cwd: cwdOption, allowBash: allowBashOption },
+  ({ cwd, allowBash }) =>
+    Effect.gen(function* () {
+      const workspace = resolveCwd(cwd)
+      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
+      const { skills, agents, tools, instructionFiles, rootScope } =
+        yield* discoverWorkspace(workspace)
+      const settingsStore = yield* SettingsStore
+      const settings = yield* settingsStore.load(workspace, homedir())
+      yield* (yield* AuthStore).init(workspace)
+      yield* runDaemonServe({
+        workspace,
+        skills,
+        agents,
+        tools,
+        rootScope,
+        instructionFiles,
+        version: packageJson.version,
+        allowBash: allowBash || settings.allowBash,
+      }).pipe(Effect.provide(stderrLoggerLayer))
+    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+)
+
+// `efferent daemon status` — is a daemon running for this workspace + healthy?
+const daemonStatusCommand = Command.make("status", { cwd: cwdOption }, ({ cwd }) =>
+  Effect.gen(function* () {
+    const workspace = resolveCwd(cwd)
+    const info = yield* readDiscovery(workspace)
+    if (info === undefined) {
+      yield* Effect.sync(() => process.stdout.write(`no daemon running for ${workspace}\n`))
+      return
+    }
+    const healthy = yield* probeHealth(`http://127.0.0.1:${info.port}`)
+    yield* Effect.sync(() =>
+      process.stdout.write(
+        `daemon pid ${info.pid} · 127.0.0.1:${info.port} · ${healthy ? "healthy" : "unreachable"}\n`,
+      ),
+    )
+  }),
+)
+
+// `efferent daemon stop` — graceful shutdown via the daemon's /shutdown.
+const daemonStopCommand = Command.make("stop", { cwd: cwdOption }, ({ cwd }) =>
+  Effect.gen(function* () {
+    const workspace = resolveCwd(cwd)
+    const info = yield* readDiscovery(workspace)
+    if (info === undefined) {
+      yield* Effect.sync(() => process.stdout.write(`no daemon to stop for ${workspace}\n`))
+      return
+    }
+    yield* Effect.tryPromise(() =>
+      fetch(`http://127.0.0.1:${info.port}/shutdown`, { method: "POST" }),
+    ).pipe(Effect.ignore)
+    yield* Effect.sync(() => process.stdout.write("shutdown requested\n"))
+  }),
+)
+
+const logsOption = Options.boolean("logs").pipe(
+  Options.withAlias("v"),
+  Options.withDescription("Stream the daemon log to the screen instead of opening the dashboard."),
+)
+
+// `efferent daemon` — boot-or-attach the daemon + open the k9s-style control
+// dashboard (`-v`/`--logs` tails the daemon log instead).
+const daemonCommand = Command.make(
+  "daemon",
+  { cwd: cwdOption, logs: logsOption },
+  ({ cwd, logs }) =>
+    Effect.gen(function* () {
+      const workspace = resolveCwd(cwd)
+      if (logs) {
+        const logPath = daemonLogPath()
+        yield* Effect.sync(() =>
+          process.stdout.write(`tailing ${logPath} (Ctrl-C to stop)\n`),
+        )
+        yield* Effect.promise(() =>
+          Bun.spawn(["tail", "-n", "200", "-f", logPath], {
+            stdout: "inherit",
+            stderr: "inherit",
+          }).exited,
+        )
+        return
+      }
+      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
+      // The dashboard is the TUI's sibling — loaded lazily so @opentui/core's
+      // native FFI is touched only on this path.
+      const { runDashboard } = yield* Effect.promise(
+        () => import("./cli/dashboard/runtime.js"),
+      )
+      yield* runDashboard({ cwd: workspace }).pipe(
+        Effect.catchAllDefect((d) =>
+          Effect.sync(() => {
+            process.stderr.write(
+              `efferent: the dashboard failed to start (${String(d)}). ` +
+                `It needs @opentui/core's native library for this platform.\n`,
+            )
+            process.exitCode = 1
+          }),
+        ),
+      )
+    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+).pipe(
+  Command.withSubcommands([daemonServeCommand, daemonStatusCommand, daemonStopCommand]),
+)
+
+const cli = Command.run(root.pipe(Command.withSubcommands([daemonCommand])), {
   name: "efferent",
   version: packageJson.version,
 })

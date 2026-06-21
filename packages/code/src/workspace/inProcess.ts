@@ -661,6 +661,13 @@ export const makeInProcessWorkspace = (
           }),
         ),
 
+      getSettings: () => settingsStore.get(),
+      updateSettings: (patch) =>
+        // The decoded partial only carries the keys the client sent, so the
+        // spread overrides exactly those; the cast drops the pessimistic
+        // `| undefined` the partial schema's type adds.
+        settingsStore.update((curr) => ({ ...curr, ...patch }) as typeof curr),
+
       getDirective: () => Ref.get(directiveRef),
       setDirective: (d) => Ref.set(directiveRef, d),
 
