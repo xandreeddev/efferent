@@ -37,6 +37,8 @@ export const makeRemoteWorkspace = (
       interrupt: (id) => withClient(t.interrupt(id)),
       stop: (id) => withClient(t.stop(id)),
       spawn: (req) => withClient(t.spawn(req)),
+      createFleet: (req) => withClient(t.createFleet(req)),
+      setFleetModel: (id, model) => withClient(t.setFleetModel(id, model)),
       approve: (id, decision) => withClient(t.approve(id, decision)),
       subscribe: (id, since) =>
         t.subscribe(id, since).pipe(Stream.provideService(HttpClient.HttpClient, client)),

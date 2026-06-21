@@ -26,7 +26,7 @@ describe("daemon serve", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: FAKE_ROOT_CID as never,
+          roots: [{ cid: FAKE_ROOT_CID as never }],
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],
@@ -79,7 +79,7 @@ describe("daemon serve", () => {
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: FAKE_ROOT_CID as never,
+          roots: [{ cid: FAKE_ROOT_CID as never }],
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],

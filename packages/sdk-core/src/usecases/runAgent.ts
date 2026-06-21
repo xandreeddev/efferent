@@ -30,6 +30,11 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
   userPrompt: string,
   extraHooks?: AgentHooks<R>,
   workspaceDir?: string,
+  /** Per-fleet pinned main model (`"<provider>:<modelId>"`), seeded onto
+   *  `RunContext.modelOverride` so the router uses THIS fleet's model rather than
+   *  the global default — the structural fix for "changing the default breaks a
+   *  running fleet". Absent ⇒ the session's main model. */
+  modelOverride?: string,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -99,6 +104,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         // The agent's compression policy rides RunContext so the whole sub-agent
         // subtree inherits it; the loop falls back to Compaction.default() when absent.
         ...(config.compression !== undefined ? { compression: config.compression } : {}),
+        ...(modelOverride !== undefined ? { modelOverride } : {}),
       }),
       // A failed run marks its span errored (the conversation drill-down lists
       // failed messages; RED reads `agent_errors_total{kind="run"}`), then
@@ -145,6 +151,8 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
   conversationId: ConversationId,
   extraHooks?: AgentHooks<R>,
   workspaceDir?: string,
+  /** Per-fleet pinned main model (see {@link runAgent}). */
+  modelOverride?: string,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -195,6 +203,7 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
           : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
         ...(config.compression !== undefined ? { compression: config.compression } : {}),
+        ...(modelOverride !== undefined ? { modelOverride } : {}),
       }),
       Effect.tapErrorCause(() =>
         Effect.annotateCurrentSpan({ error: true }).pipe(

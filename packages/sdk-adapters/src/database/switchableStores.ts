@@ -102,6 +102,7 @@ export const SwitchableStoresLive: Layer.Layer<
       listActive: (id) => withConv((s) => s.listActive(id)),
       setTitle: (id, title) => withConv((s) => s.setTitle(id, title)),
       listByWorkspace: (dir) => withConv((s) => s.listByWorkspace(dir)),
+      setModel: (id, model) => withConv((s) => s.setModel(id, model)),
       markPending: (id, prompt) => withConv((s) => s.markPending(id, prompt)),
       clearPending: (id) => withConv((s) => s.clearPending(id)),
       listPending: (dir) => withConv((s) => s.listPending(dir)),

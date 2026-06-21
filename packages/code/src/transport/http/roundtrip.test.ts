@@ -80,6 +80,7 @@ const stubConv = Layer.effect(
       listCheckpoints: () => Effect.succeed([]),
       checkpoint: () => Effect.void,
       setTitle: () => Effect.void,
+      setModel: () => Effect.void,
       listByWorkspace: () => Effect.succeed([]),
       markPending: () => Effect.void,
       clearPending: () => Effect.void,
@@ -122,7 +123,7 @@ const stubPorts = Layer.mergeAll(
 const workspaceLayer = Layer.effect(
   Workspace,
   makeInProcessWorkspace({
-    rootConversationId: ROOT_CID as never,
+    roots: [{ cid: ROOT_CID as never }],
     rootScope,
     cwd: "/tmp/ws",
     skills: [],

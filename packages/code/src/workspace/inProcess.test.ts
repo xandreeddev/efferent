@@ -118,6 +118,7 @@ const stubConv = () =>
         listCheckpoints: () => Effect.succeed([]),
         checkpoint: () => Effect.void,
         setTitle: () => Effect.void,
+        setModel: () => Effect.void,
         listByWorkspace: () => Effect.succeed([]),
         markPending: (_id, prompt) => Ref.set(pending, prompt),
         clearPending: () => Ref.set(pending, undefined),
@@ -131,7 +132,7 @@ describe("in-process Workspace", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: ROOT_CID as never,
+          roots: [{ cid: ROOT_CID as never }],
           rootScope,
           cwd: "/tmp/ws",
           skills: [],
@@ -185,7 +186,7 @@ describe("in-process Workspace", () => {
     const directive = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: ROOT_CID as never,
+          roots: [{ cid: ROOT_CID as never }],
           rootScope,
           cwd: "/tmp/ws",
           skills: [],

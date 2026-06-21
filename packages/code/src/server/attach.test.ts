@@ -27,7 +27,7 @@ describe("attach-or-spawn", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: FAKE_ROOT_CID as never,
+          roots: [{ cid: FAKE_ROOT_CID as never }],
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],
@@ -70,7 +70,7 @@ describe("attach-or-spawn", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: FAKE_ROOT_CID as never,
+          roots: [{ cid: FAKE_ROOT_CID as never }],
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],

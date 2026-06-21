@@ -104,38 +104,48 @@ export const runDaemonServe = (
     const conv = yield* ConversationStore
     const tree = yield* ContextTreeStore
 
-    // Reuse the workspace's most recent conversation (continuity across
-    // restarts), else start a fresh one.
+    // The workspace's conversations ARE its fleets. Seed every one (with its
+    // pinned model); if the workspace has none yet, start a fresh fleet so a
+    // client always has a coordinator to attach to.
     const existing = yield* conv
       .listByWorkspace(input.workspace)
       .pipe(Effect.orElseSucceed(() => []))
-    const rootCid =
-      existing.length > 0 ? existing[0]!.id : yield* conv.create(input.workspace).pipe(Effect.orDie)
+    const roots =
+      existing.length > 0
+        ? existing.map((c) => ({
+            cid: c.id,
+            ...(c.model !== undefined ? { model: c.model } : {}),
+            ...(c.title !== undefined ? { title: c.title } : {}),
+          }))
+        : [{ cid: yield* conv.create(input.workspace).pipe(Effect.orDie) }]
 
-    // Reconcile: flip any node this conversation left `running` (a prior crash)
-    // to `error`, so the tree is honest after a restart. Best-effort.
-    yield* tree
-      .listTree(rootCid)
-      .pipe(
-        Effect.flatMap((nodes) =>
-          Effect.forEach(
-            nodes.filter((n) => n.status === "running"),
-            (n) =>
-              tree
-                .recordReturn(n.id, {
-                  status: "error",
-                  summary: "[daemon restarted — this run was interrupted]",
-                  filesChanged: [],
-                })
-                .pipe(Effect.ignore),
-            { discard: true },
+    // Reconcile: flip any node left `running` by a prior crash (across ALL
+    // fleets) to `error`, so the tree is honest after a restart. Best-effort.
+    yield* Effect.forEach(
+      roots,
+      (r) =>
+        tree.listTree(r.cid).pipe(
+          Effect.flatMap((nodes) =>
+            Effect.forEach(
+              nodes.filter((n) => n.status === "running"),
+              (n) =>
+                tree
+                  .recordReturn(n.id, {
+                    status: "error",
+                    summary: "[daemon restarted — this run was interrupted]",
+                    filesChanged: [],
+                  })
+                  .pipe(Effect.ignore),
+              { discard: true },
+            ),
           ),
+          Effect.ignore,
         ),
-        Effect.ignore,
-      )
+      { discard: true },
+    )
 
     const ws = yield* makeInProcessWorkspace({
-      rootConversationId: rootCid,
+      roots,
       rootScope: input.rootScope,
       cwd: input.workspace,
       skills: input.skills,

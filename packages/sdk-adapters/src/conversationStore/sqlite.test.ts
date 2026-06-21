@@ -6,6 +6,7 @@ import { SqliteConversationStoreLive } from "./sqlite.js"
 import sqlite0001 from "../database/migrations-sqlite/0001_init.js"
 import sqlite0005 from "../database/migrations-sqlite/0005_conversation_title.js"
 import sqlite0007 from "../database/migrations-sqlite/0007_pending_turn.js"
+import sqlite0008 from "../database/migrations-sqlite/0008_conversation_model.js"
 
 // Exercises the real SQLite store + the position/checkpoint fold contract on a
 // fresh in-memory db (no Postgres, no Docker). `provideMerge` exposes the
@@ -24,6 +25,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ConversationStore>): Promise<A> =
       yield* sqlite0001 // create the schema on this connection
       yield* sqlite0005 // + the conversations.title column
       yield* sqlite0007 // + the conversations.pending_prompt (in-flight) column
+      yield* sqlite0008 // + the conversations.model (per-fleet pin) column
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )

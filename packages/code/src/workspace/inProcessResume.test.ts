@@ -38,6 +38,7 @@ describe("in-process Workspace — auto-resume in-flight turn", () => {
           listCheckpoints: () => Effect.succeed([]),
           checkpoint: () => Effect.void,
           setTitle: () => Effect.fail(new ConversationNotFound({ id: FAKE_ROOT_CID as never })),
+          setModel: () => Effect.void,
           listByWorkspace: () => Effect.succeed([]),
           markPending: (_id, p) => Ref.set(pending, p),
           clearPending: () =>
@@ -57,7 +58,7 @@ describe("in-process Workspace — auto-resume in-flight turn", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const ws = yield* makeInProcessWorkspace({
-          rootConversationId: FAKE_ROOT_CID as never,
+          roots: [{ cid: FAKE_ROOT_CID as never }],
           rootScope: fakeRootScope,
           cwd: "/tmp/ws",
           skills: [],

@@ -85,9 +85,18 @@ export class ConversationStore extends Context.Tag(
         readonly createdAt: number
         readonly firstPrompt?: string
         readonly title?: string
+        /** The fleet's pinned model (`"<provider>:<modelId>"`), if set — so a
+         *  restarted daemon rebuilds each fleet on its own model. */
+        readonly model?: string
       }>,
       ConversationStoreError
     >
+    /** Pin a conversation's (fleet's) model — the per-fleet config that survives
+     *  restart and shields a running fleet from a global-default change. */
+    readonly setModel: (
+      id: ConversationId,
+      model: string,
+    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
     /**
      * Mark a turn **in flight** for a session: the daemon sets this to the user
      * prompt when a turn starts and clears it on completion. A restarted daemon
