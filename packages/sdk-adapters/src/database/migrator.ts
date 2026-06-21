@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 import * as Migrator from "@effect/sql/Migrator"
@@ -7,6 +6,8 @@ import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import { Cause, Config, Duration, Effect, Layer, Option, Redacted } from "effect"
 import { connFromUrl, type DatabaseConn } from "@xandreed/sdk-core"
+
+import { resolveConfigRoots } from "../configRoots.js"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -49,7 +50,12 @@ import sqlite0008 from "./migrations-sqlite/0008_conversation_model.js"
  * no `.ts` files read off disk at runtime.
  */
 
-const defaultSqlitePath = () => join(homedir(), ".efferent", "efferent.db")
+// The zero-config DB lives beside auth.json/config.json in the GLOBAL config
+// root — which honours `EFFERENT_HOME` (`$EFFERENT_HOME/.efferent`), so a
+// sandbox / `start:fresh` run is truly hermetic instead of falling back to the
+// real `~/.efferent/efferent.db`. (cwd only affects the local tier, irrelevant
+// for the global default.)
+const defaultSqlitePath = () => join(resolveConfigRoots(process.cwd()).global, "efferent.db")
 
 type DbTarget =
   | { readonly kind: "postgres" }
