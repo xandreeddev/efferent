@@ -70,29 +70,40 @@
     server (`BunHttpServer.layerTest`) + a fake model — `snapshot`, `send`, SSE stream to `agent_end`,
     `getState`. Proves the wire end-to-end.
 
-**Next — Phase (c): remote Workspace adapter + TUI re-point.**
-- `workspace/remote.ts`: wrap `makeHttpTransport(baseUrl)` into a `Workspace` service (provide a
-  `FetchHttpClient`; map the transport's `HttpClient`-requiring effects to `R=never` by providing the
-  client). `subscribe` → the SSE `Stream<SeqEvent>`.
-- TUI re-point (`runtime.ts`): build the Workspace (in-process for daemonless/CI, remote behind
-  `EFFERENT_REMOTE`), `TuiContext` delegates, the pump drains `ws.subscribe(rootId).stream` through
-  `makeEventReducer`. Client pushes the user line optimistically; approval stays client-side
-  (`deps.resolveApproval`) until phase e. Caveat: fold `generateSessionTitle` + auto-handoff into the
-  adapter's `finishTurn` (server-side) during the re-point.
-- `daemon-serve` mode (`main.ts`): `AppLive` + in-process Workspace + `serveWorkspaceHttp`. Then
-  Phase (d): discovery file + auto-spawn + restorability (`listPending` auto-resume) + `resync`.
-- `runtime.ts`: build the in-process Workspace; `TuiContext` delegates (`submit`→`send`,
-  `interrupt`→`interrupt`, `spawnAgent`→`spawn`, `get/setDirective`, etc.); the event pump drains
-  `ledger.stream(rootSessionId)` (reuse `makeEventReducer` verbatim) instead of the `eventQueue`.
-  The client keeps presentation (it pushes the user line optimistically on send + reduces the event
-  stream; the rail's user message has no `AgentEvent` today). Behavior identical. **Caveat:** the
-  current `submit.ts` also runs `generateSessionTitle` (first exchange) + auto-handoff at turn end —
-  fold these into the adapter's `finishTurn` (they're server-side concerns) or keep them client-side
-  during the re-point. Approval stays client-side (`makeTuiApproval`) wired via `deps.resolveApproval`
-  until phase (e).
-- Then Phase (b): `transport/http/{server,client}.ts` (`HttpRouter` + SSE; `BunHttpServer`) +
-  `daemon-serve` mode, exposing this same adapter; SSE framing maps `ledger.stream` → `id:<seq>` frames
-  with `hasGap`→`resync`.
+14. **Remote Workspace adapter** (`workspace/remote.ts`): `makeRemoteWorkspace(baseUrl)` wraps the
+    HTTP transport into a `Workspace` service (captures `HttpClient`, re-provides per call → R=never);
+    `RemoteWorkspaceLive` builds a `FetchHttpClient`. `remote.test.ts` drives a turn + directive over
+    the wire. `workspace/fakeAppEnv.ts` consolidates the test fakes (stub ports + scripted model +
+    in-process Workspace + a real loopback server via `BunHttpServer.layerTest`).
+15. **Remote TUI driver** (`cli/remoteRuntime.ts`, behind `EFFERENT_REMOTE`): attaches to the daemon,
+    reuses the whole view + store + `makeEventReducer`; `ctx.submit`→`ws.send` (optimistic user line),
+    pump drains `ws.subscribe` with a reconnect/resync loop, rail seeded from `getState.log` via
+    `applyContext`. The in-process `runtime.ts` is byte-for-byte untouched.
+16. **daemon-serve + discovery + attach** (`server/{daemon,discovery,attach}.ts`): `runDaemonServe`
+    serves the in-process Workspace on an ephemeral 127.0.0.1 port + writes/removes the discovery file
+    + reconciles stranded `running` nodes; `attachOrSpawn` finds a healthy daemon or spawns a detached
+    one. Smoke-verified: `--mode daemon-serve` boots through the real `AppLive` + serves `/health`.
+17. **Restorability — auto-resume** (`resumeAgent` in core + the adapter's build-time check): a turn
+    in flight at crash time is re-driven over persisted history (marker cleared first to bound retries).
+18. **Approval round-trip** (`workspace/serverApproval.ts` + the `approval_needed`/`approval_resolved`
+    events + `POST /approve` + `POST /auth/reload`): the daemon parks + publishes the request, a client
+    answers, stale sheets clear; login stays client-side then `/auth/reload`.
+19. **Multi-client fan-out test** (`transport/http/multiClient.test.ts`): two SSE subscribers on one
+    session both receive a single run's stream.
+20. **Docs** (`website/src/content/docs/concepts/daemon.md` + nav): the public "daemon / attach" page.
+
+**Done: phases (a)–(f) — the daemon split is built, tested (24 new tests), and smoke-verified, opt-in
+behind `EFFERENT_REMOTE`.**
+
+**Remaining — Phase (g) cutover, deliberately validation-gated (NOT done blind):** flipping the TUI
+default to remote and DELETING the in-process `runtime.ts` wiring + the `rpc.ts` shim is irreversible
+and the remote TUI path (which mounts OpenTUI) can't be unit-tested here — it needs a manual session
+(`EFFERENT_REMOTE=1 efferent` in a real terminal: attach, send, spawn a fleet, detach/reattach, kill
+the daemon mid-turn and confirm auto-resume, approve a bash command). Do that first, fix what it
+surfaces, THEN flip the default + delete the legacy path. Also follow-ups: wire the remote TUI's
+post-login to `POST /auth/reload`; `POST /shutdown` + `efferent daemon {status,stop}`; fold
+`generateSessionTitle` + auto-handoff into the adapter's `finishTurn`; per-agent-session ledgers +
+seat-switching across sessions; the cron tick inside the daemon.
 
 ## Why
 
