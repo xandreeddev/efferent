@@ -231,18 +231,37 @@ ${actionsSection}
 ${renderInstructionsSection(instructionFiles)}`
 
 /**
- * The `# Delegating coding work` section for the generic root. Emitted only when
- * a `coordinator` role is in the roster (so the root never points at a role that
- * isn't loaded) — directs non-trivial coding to the coordinator-led team.
+ * The `# Triage and dispatch` section for the generic root — the assistant's
+ * core decision: do it myself, dispatch a coding fleet (`coordinator`), or
+ * dispatch a research fleet (`research-coordinator`). Each delegation branch is
+ * emitted only when its lead role is in the roster (so the root never points at
+ * a role that isn't loaded); if neither lead is present the whole section is
+ * omitted. Prompt-only — no code logic decides routing, the model does.
  */
 const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string => {
-  if (!agents.some((a) => a.name === "coordinator")) return ""
-  return `
-# Delegating coding work
-For any non-trivial coding or implementation task — anything beyond a quick read or a one-line edit — hand it to the coordinator instead of doing it yourself:
+  const hasCoordinator = agents.some((a) => a.name === "coordinator")
+  const hasResearch = agents.some((a) => a.name === "research-coordinator")
+  if (!hasCoordinator && !hasResearch) return ""
+
+  const codingBranch = hasCoordinator
+    ? `- **Coding / implementation** (multi-file, multi-step, or review-worthy — beyond a quick read or one-line edit) → hand it to the coordinator:
   run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task, with everything you already know>" })
-This returns immediately — the coordinator works in the background. It leads a team: it plans, staffs the right specialists for the work (frontend, backend, qa, product, plus a read-only architect to validate), coordinates them, and reports back. You can simply tell the user it's underway and let them watch/steer, or call wait_for_agents to relay its result when it's done — either way you don't block. You stay the user's point of contact: the user (and you, via send_message) can reach the coordinator or any teammate at any time for status, alignment, or to change the deliverable.
-Do small things yourself: answer questions, read/grep/inspect the workspace, a single-file edit. Reach for the coordinator when the work is multi-file, multi-step, or benefits from review.
+  It leads a team — plans, staffs specialists (frontend/backend/qa/product) plus a read-only architect to validate, and reports back.`
+    : ""
+  const researchBranch = hasResearch
+    ? `- **Deep research** ("research X", "compare libraries/options", "investigate Y across the web", anything wanting multiple sources synthesized) → hand it to the research-coordinator:
+  run_agent({ agent: "research-coordinator", folder: "<cwd, or the relevant dir>", task: "<the full question, with any scope/constraints you know>" })
+  It breaks the question into angles, fans out web-research sub-agents in parallel, synthesizes a sourced answer, and reports back.`
+    : ""
+  const branches = [codingBranch, researchBranch].filter((b) => b.length > 0).join("\n")
+
+  return `
+# Triage and dispatch
+You're the user's point of contact. Triage every request and pick the cheapest path that serves it:
+- **Do it yourself** for small things — answering a question, reading/grepping/inspecting the workspace, a single-file edit, light fact-finding you can settle in one or two searches. Don't spin up a fleet for what a direct reply handles.
+${branches}
+A dispatched lead runs in the BACKGROUND: run_agent returns immediately with a { nodeId, name }. Reply briefly — "on it — spawned <name>, jump in to watch" — and surface that node so the user can jump into the fleet and watch or steer it. Then either let them follow it or call wait_for_agents to relay the result when it lands — either way you don't block. You stay reachable as their point of contact: the user (and you, via send_message) can reach the lead or any teammate at any time for status, alignment, or a changed deliverable.
+When the request is ambiguous (a vague ask that could be a quick answer or a deep dig), lean on whether it needs multiple sources/files synthesized — if it does, dispatch; if not, just do it.
 `
 }
 
@@ -267,7 +286,7 @@ export const rootPrompt = (
 /**
  * The generic root agent: a coding-and-engineering assistant that does small
  * things directly but **delegates real coding to the coordinator-led team**
- * (see `# Delegating coding work`). Same toolkit as the coder (base + run_agent
+ * (see `# Triage and dispatch`). Same toolkit as the coder (base + run_agent
  * + comms) — only the identity + delegation policy differ. Used for the root
  * scope; folder-scoped coders still use {@link coderPrompt}.
  */
@@ -279,7 +298,7 @@ export const rootSystemPrompt = (
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
 ): string =>
-  `You are a coding-and-engineering assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace. You help directly with quick things — answering questions, reading and searching code, small edits — but for real implementation work you don't code alone: you coordinate a team (see "Delegating coding work" below). If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
+  `You are a personal engineering assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace. You help directly with quick things — answering questions, reading and searching code, small edits, light fact-finding — but you don't take on big jobs alone: you triage each request and dispatch a coding or research team for the heavy work (see "Triage and dispatch" below). If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
 IMPORTANT: Never generate or guess URLs unless you are confident they are for helping the user with programming. You may use URLs the user provides in their messages or in local files.
 
@@ -299,7 +318,7 @@ ${systemSection}
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
-- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Delegating coding work / Agent roles below).
+- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Triage and dispatch / Agent roles below).
 - wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather the results of agents you spawned without blocking (see Coordination).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
