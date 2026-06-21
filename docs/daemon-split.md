@@ -54,17 +54,33 @@
     `:`-comment skip, frames split across chunk boundaries), and `frameToSeqEvent` (Schema-validated
     decode). The ONLY place the SSE byte format lives; server + client both build on it. (Phase b.)
 
-**Next — finish Phase (b): the HTTP server + client wiring.**
-- `transport/http/server.ts`: `HttpRouter` mapping the endpoint table to the in-process Workspace;
-  `GET /sessions/:id/events` → `HttpServerResponse.stream` over `ledger.stream` mapped through
-  `encodeSeqEvent` (+ `encodeHeartbeat` via `Stream.merge`, + `encodeResync` when `hasGap(since)`),
-  served by `BunHttpServer.layer({ port, hostname: "127.0.0.1" })`. Bodies via
-  `HttpServerRequest.schemaBodyJson` against the protocol Schemas. `daemon-serve` mode in `main.ts`.
-- `transport/http/client.ts`: an `HttpClient` (`FetchHttpClient`) + `makeSseParser`/`frameToSeqEvent`
-  → `Stream<SeqEvent>` the remote Workspace consumes. Smoke test: fake model, `/health`, `POST /send`,
-  SSE round-trip to `agent_end`.
+11. **HTTP server** (`packages/code/src/transport/http/server.ts`): `workspaceRouter(identity)` maps
+    the endpoint table to the `Workspace` Tag (`/health`, `/snapshot`, `/sessions` GET+POST,
+    `/sessions/:id/{state,send,interrupt,stop,approve}`, `/sessions/:id/events` SSE,
+    `/directive` GET+POST, `/agents|tools/import`); bodies via `HttpServerRequest.schemaBodyJson`,
+    responses via `HttpServerResponse.schemaJson`, SSE via `HttpServerResponse.stream` over
+    `ledger.stream` + a 15s heartbeat merge. `serveWorkspaceHttp({identity, port})` =
+    `HttpServer.serve()(router)` over `BunHttpServer.layer({hostname:"127.0.0.1"})`. The ONLY HTTP
+    server code. (`resync` on `hasGap` is deferred to phase d's restart path.)
+12. **HTTP client** (`packages/code/src/transport/http/client.ts`): `makeHttpTransport(baseUrl)` →
+    a `HttpTransport` of `Workspace`-shaped calls over `HttpClient` (every method maps wire failures
+    to `WorkspaceError`); `subscribe` streams the SSE bytes through `makeSseParser`/`frameToSeqEvent`
+    → `Stream<SeqEvent>`. The remote adapter (phase c) is a thin wrapper over this.
+13. **Round-trip smoke test** (`transport/http/roundtrip.test.ts`, 2 tests): over a REAL loopback
+    server (`BunHttpServer.layerTest`) + a fake model — `snapshot`, `send`, SSE stream to `agent_end`,
+    `getState`. Proves the wire end-to-end.
 
-**Then — re-point the TUI through the Workspace port (locally, no wire), Phase (c).**
+**Next — Phase (c): remote Workspace adapter + TUI re-point.**
+- `workspace/remote.ts`: wrap `makeHttpTransport(baseUrl)` into a `Workspace` service (provide a
+  `FetchHttpClient`; map the transport's `HttpClient`-requiring effects to `R=never` by providing the
+  client). `subscribe` → the SSE `Stream<SeqEvent>`.
+- TUI re-point (`runtime.ts`): build the Workspace (in-process for daemonless/CI, remote behind
+  `EFFERENT_REMOTE`), `TuiContext` delegates, the pump drains `ws.subscribe(rootId).stream` through
+  `makeEventReducer`. Client pushes the user line optimistically; approval stays client-side
+  (`deps.resolveApproval`) until phase e. Caveat: fold `generateSessionTitle` + auto-handoff into the
+  adapter's `finishTurn` (server-side) during the re-point.
+- `daemon-serve` mode (`main.ts`): `AppLive` + in-process Workspace + `serveWorkspaceHttp`. Then
+  Phase (d): discovery file + auto-spawn + restorability (`listPending` auto-resume) + `resync`.
 - `runtime.ts`: build the in-process Workspace; `TuiContext` delegates (`submit`→`send`,
   `interrupt`→`interrupt`, `spawnAgent`→`spawn`, `get/setDirective`, etc.); the event pump drains
   `ledger.stream(rootSessionId)` (reuse `makeEventReducer` verbatim) instead of the `eventQueue`.
