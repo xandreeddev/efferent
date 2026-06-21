@@ -535,8 +535,22 @@ import packageJson from "../package.json" with { type: "json" }
 const resolveCwd = (cwd: Option.Option<string>): string =>
   Option.getOrElse(cwd, () => process.cwd())
 
-const daemonLogPath = (): string =>
-  join(process.env.EFFERENT_HOME ?? join(homedir(), ".efferent"), "efferent.log")
+// Print the daemon's running/health status for a workspace. Shared by
+// `efferent daemon status` and bare `efferent daemon`.
+const printDaemonStatus = (workspace: string) =>
+  Effect.gen(function* () {
+    const info = yield* readDiscovery(workspace)
+    if (info === undefined) {
+      yield* Effect.sync(() => process.stdout.write(`no daemon running for ${workspace}\n`))
+      return
+    }
+    const healthy = yield* probeHealth(`http://127.0.0.1:${info.port}`)
+    yield* Effect.sync(() =>
+      process.stdout.write(
+        `daemon pid ${info.pid} · 127.0.0.1:${info.port} · ${healthy ? "healthy" : "unreachable"}\n`,
+      ),
+    )
+  })
 
 // `efferent daemon serve` — the headless, detached server (today's
 // `--mode daemon-serve`, kept dual-accepted as the auto-spawn target).
@@ -568,20 +582,7 @@ const daemonServeCommand = Command.make(
 
 // `efferent daemon status` — is a daemon running for this workspace + healthy?
 const daemonStatusCommand = Command.make("status", { cwd: cwdOption }, ({ cwd }) =>
-  Effect.gen(function* () {
-    const workspace = resolveCwd(cwd)
-    const info = yield* readDiscovery(workspace)
-    if (info === undefined) {
-      yield* Effect.sync(() => process.stdout.write(`no daemon running for ${workspace}\n`))
-      return
-    }
-    const healthy = yield* probeHealth(`http://127.0.0.1:${info.port}`)
-    yield* Effect.sync(() =>
-      process.stdout.write(
-        `daemon pid ${info.pid} · 127.0.0.1:${info.port} · ${healthy ? "healthy" : "unreachable"}\n`,
-      ),
-    )
-  }),
+  printDaemonStatus(resolveCwd(cwd)),
 )
 
 // `efferent daemon stop` — graceful shutdown via the daemon's /shutdown.
@@ -600,50 +601,12 @@ const daemonStopCommand = Command.make("stop", { cwd: cwdOption }, ({ cwd }) =>
   }),
 )
 
-const logsOption = Options.boolean("logs").pipe(
-  Options.withAlias("v"),
-  Options.withDescription("Stream the daemon log to the screen instead of opening the dashboard."),
-)
-
-// `efferent daemon` — boot-or-attach the daemon + open the k9s-style control
-// dashboard (`-v`/`--logs` tails the daemon log instead).
-const daemonCommand = Command.make(
-  "daemon",
-  { cwd: cwdOption, logs: logsOption },
-  ({ cwd, logs }) =>
-    Effect.gen(function* () {
-      const workspace = resolveCwd(cwd)
-      if (logs) {
-        const logPath = daemonLogPath()
-        yield* Effect.sync(() =>
-          process.stdout.write(`tailing ${logPath} (Ctrl-C to stop)\n`),
-        )
-        yield* Effect.promise(() =>
-          Bun.spawn(["tail", "-n", "200", "-f", logPath], {
-            stdout: "inherit",
-            stderr: "inherit",
-          }).exited,
-        )
-        return
-      }
-      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
-      // The dashboard is the TUI's sibling — loaded lazily so @opentui/core's
-      // native FFI is touched only on this path.
-      const { runDashboard } = yield* Effect.promise(
-        () => import("./cli/dashboard/runtime.js"),
-      )
-      yield* runDashboard({ cwd: workspace }).pipe(
-        Effect.catchAllDefect((d) =>
-          Effect.sync(() => {
-            process.stderr.write(
-              `efferent: the dashboard failed to start (${String(d)}). ` +
-                `It needs @opentui/core's native library for this platform.\n`,
-            )
-            process.exitCode = 1
-          }),
-        ),
-      )
-    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+// `efferent daemon` (no subcommand) — print the daemon's status for this
+// workspace (same output as `efferent daemon status`). The chat-first TUI's
+// fleet-tree pane replaced the old k9s-style control dashboard, so there is no
+// longer a dashboard to open here.
+const daemonCommand = Command.make("daemon", { cwd: cwdOption }, ({ cwd }) =>
+  printDaemonStatus(resolveCwd(cwd)),
 ).pipe(
   Command.withSubcommands([daemonServeCommand, daemonStatusCommand, daemonStopCommand]),
 )
