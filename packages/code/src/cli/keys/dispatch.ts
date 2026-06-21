@@ -717,29 +717,18 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // Esc → interrupt a running turn.
-  if (key.name === "escape" && store.busy()) {
+  // Esc → cancel everything in flight. NOT just `busy`: spawning is non-blocking,
+  // so the lead turn can be idle (`busy === false`) while a background fleet is
+  // still working. Treat a live fleet as "in flight" too, so Esc tears the fleet
+  // down (interrupt → root fiber + bus.interruptAll) instead of falling through
+  // to focus/preview navigation — the "Esc went to the wrong place" bug.
+  if (key.name === "escape" && (store.busy() || store.agentState().fleet.length > 0)) {
     ctx.interrupt()
     return
   }
 
-  // Esc (idle) closes an open node-session preview — but an active search is
-  // finer-grained and clears first (the pane handlers below own that), and a
-  // busy Esc stays an interrupt (above). `q` closes regardless of busy.
-  if (
-    key.name === "escape" &&
-    store.nodePreview() !== undefined &&
-    store.focus() !== "input" &&
-    store.search() === undefined
-  ) {
-    closeNodePreview(store)
-    return
-  }
-
-  // Esc in the idle input — the modifier-free way OUT of the composer, for
-  // vi hands and tmux users alike (Ctrl-H never arrives in legacy terminals).
-  // On a `:`/`/` line it cancels the command first (vim cmdline behavior);
-  // on a message it leaves the draft intact and drops to NORMAL.
+  // Esc on a `:`/`/` command line in the composer cancels the command first
+  // (vim cmdline behavior) — before it could close the agent pane.
   if (key.name === "escape" && store.focus() === "input") {
     const text = store.input()
     if (text.startsWith(":") || text.startsWith("/")) {
@@ -747,6 +736,29 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
       store.setPaletteIndex(0)
       return
     }
+  }
+
+  // Esc clears an active search first — finer-grained than closing a pane, and
+  // it works from any focus (a `/` search is typed in the composer, so focus is
+  // often the input when it's live).
+  if (key.name === "escape" && store.search() !== undefined) {
+    store.setSearch(undefined)
+    return
+  }
+
+  // Esc closes the open agent (right) pane — from ANY focus, including the
+  // composer (opening an agent focuses the composer so you can message it), since
+  // it's the prominent thing on screen. A busy/fleet Esc stays an interrupt
+  // (above). `q` closes it too, from the read-only panes.
+  if (key.name === "escape" && store.nodePreview() !== undefined) {
+    closeNodePreview(store)
+    return
+  }
+
+  // Esc in the idle input (no agent pane) — the modifier-free way OUT of the
+  // composer, for vi hands and tmux users alike (Ctrl-H never arrives in legacy
+  // terminals). Leaves the draft intact and drops to NORMAL on the orchestrator.
+  if (key.name === "escape" && store.focus() === "input") {
     store.setFocus("conversation")
     store.setMode("normal")
     store.setConvCursor(rowToEnd(convNav(store).rows))

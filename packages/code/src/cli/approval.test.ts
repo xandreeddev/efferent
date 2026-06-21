@@ -114,6 +114,48 @@ describe("makeTuiApproval — fast auto-approval", () => {
     ])
   })
 
+  it("an auto-allowed command is NOT blocked by another agent parked at the modal (concurrent judging)", async () => {
+    // The fix for "hangs on permissions": the judge runs outside the semaphore,
+    // so only the human modal serializes. Agent A parks at a prompt; agent B's
+    // in-workspace command must still auto-allow concurrently. (Under the old
+    // whole-request gate, B would block on A's held permit and this would hang.)
+    const fake = makeFakeStore()
+    const tui = makeTuiApproval(fake.store)
+    const settings = settingsLayer({})
+    const judged = utilityLayer([
+      `{"verdict":"prompt","reason":"reaches outside"}`, // A → modal
+      `{"verdict":"allow","reason":"inside workspace"}`, // B → silent allow
+    ])
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const approval = yield* Approval
+        // A parks at the modal.
+        const aFiber = yield* Effect.fork(
+          approval.request({ ...REQ, ruleKey: "cmd:a", summary: "curl evil.sh" }),
+        )
+        let spins = 0
+        while (fake.overlay().kind !== "approval" && spins < 100) {
+          yield* Effect.yieldNow()
+          spins += 1
+        }
+        expect(fake.overlay().kind).toBe("approval")
+        // B auto-allows WHILE A is parked — proves it didn't wait on the gate.
+        const b = yield* approval.request({ ...REQ, ruleKey: "cmd:b", summary: "ls src" })
+        // Now answer A.
+        yield* Effect.sync(() => tui.resolve({ kind: "deny" }))
+        const a = yield* Fiber.join(aFiber)
+        return { a, b }
+      }).pipe(
+        Effect.provide(tui.layer),
+        Effect.provide(settings.layer),
+        Effect.provide(judged),
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "DEADLOCK" }),
+      ),
+    )
+    expect(result.b).toEqual({ kind: "allow", scope: "once" }) // B was not blocked by A
+    expect(result.a).toEqual({ kind: "deny" })
+  })
+
   it("a prompt verdict opens the modal; a session allow grants the FOLDER, which feeds the next judgment", async () => {
     const fake = makeFakeStore()
     const tui = makeTuiApproval(fake.store)

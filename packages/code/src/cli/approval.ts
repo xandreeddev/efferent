@@ -74,51 +74,78 @@ export const makeTuiApproval = (store: TuiStore): TuiApproval => {
     Effect.gen(function* () {
       const settingsStore = yield* SettingsStore
       const utility = yield* UtilityLlm
-      return Approval.of({
-        request: (req) =>
-          gate.withPermits(1)(
-            Effect.gen(function* () {
-              const settings = yield* settingsStore.get()
-              if (settings.approvedBashRules?.includes(req.ruleKey) === true) {
-                return { kind: "allow", scope: "once" } as const
-              }
-              if ((yield* Ref.get(sessionRules)).has(req.ruleKey)) {
-                return { kind: "allow", scope: "once" } as const
-              }
+      // Is this request already covered by a standing grant (a rule, or a
+      // granted folder)? Checked up-front AND again once a queued waiter wins the
+      // human-prompt permit — so one "allow for session/project" answer silently
+      // clears every other agent queued behind it for the same rule/folder.
+      const coveredNow = (req: ApprovalRequest, folder: string | undefined) =>
+        Effect.gen(function* () {
+          const settings = yield* settingsStore.get()
+          if (settings.approvedBashRules?.includes(req.ruleKey) === true) return true
+          if ((yield* Ref.get(sessionRules)).has(req.ruleKey)) return true
+          if (folder !== undefined) {
+            if (settings.approvedFolders?.includes(folder) === true) return true
+            if ((yield* Ref.get(sessionFolders)).has(folder)) return true
+          }
+          return false
+        })
 
-              // The fast judge — default ON; opening efferent in a cwd is the
-              // standing grant on that folder.
-              let hint: ApprovalHint | undefined
-              if (settings.autoApprove !== false) {
-                const permitted = [
-                  req.cwd,
-                  ...(settings.approvedFolders ?? []),
-                  ...(yield* Ref.get(sessionFolders)),
-                ]
-                const outcome = yield* judgeApproval(req, permitted).pipe(
-                  Effect.provideService(UtilityLlm, utility),
-                )
-                if (outcome.usage !== undefined) {
-                  const billed = outcome.usage.inputTokens + outcome.usage.outputTokens
-                  store.setStats((s) => accumulateRoleSpend(s, "fast", billed))
-                }
-                if (outcome.verdict === "allow") {
-                  store.pushBlock({
-                    kind: "info",
-                    text: `fast approved: ${clip(req.summary, 80)}${
-                      outcome.reason !== undefined ? ` — ${outcome.reason}` : ""
-                    }`,
-                  })
+      return Approval.of({
+        // NOTE: the LLM judge runs OUTSIDE the semaphore — concurrent agents are
+        // judged in parallel, and an auto-allowed command never waits on anyone.
+        // Only the human modal serializes (one sheet at a time). This is what
+        // stops a bash-heavy fleet from queueing every command behind one judge
+        // call (the "hangs on permissions" symptom).
+        request: (req) =>
+          Effect.gen(function* () {
+            const settings = yield* settingsStore.get()
+            if (yield* coveredNow(req, undefined)) {
+              return { kind: "allow", scope: "once" } as const
+            }
+
+            // The fast judge — default ON; opening efferent in a cwd is the
+            // standing grant on that folder. Runs unserialized.
+            let hint: ApprovalHint | undefined
+            if (settings.autoApprove !== false) {
+              const permitted = [
+                req.cwd,
+                ...(settings.approvedFolders ?? []),
+                ...(yield* Ref.get(sessionFolders)),
+              ]
+              const outcome = yield* judgeApproval(req, permitted).pipe(
+                Effect.provideService(UtilityLlm, utility),
+              )
+              if (outcome.usage !== undefined) {
+                const billed = outcome.usage.inputTokens + outcome.usage.outputTokens
+                store.setStats((s) => accumulateRoleSpend(s, "fast", billed))
+              }
+              if (outcome.verdict === "allow") {
+                store.pushBlock({
+                  kind: "info",
+                  text: `fast approved: ${clip(req.summary, 80)}${
+                    outcome.reason !== undefined ? ` — ${outcome.reason}` : ""
+                  }`,
+                })
+                return { kind: "allow", scope: "once" } as const
+              }
+              hint = {
+                ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+                ...(outcome.folder !== undefined ? { folder: outcome.folder } : {}),
+              }
+            }
+
+            // Only the human prompt is serialized — one modal at a time. A waiter
+            // that wins the permit re-checks the ledgers first, so a grant made
+            // by the queue ahead of it answers this one without a second prompt.
+            const grantedFolder = hint?.folder
+            const decision = yield* gate.withPermits(1)(
+              Effect.gen(function* () {
+                if (yield* coveredNow(req, grantedFolder)) {
                   return { kind: "allow", scope: "once" } as const
                 }
-                hint = {
-                  ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-                  ...(outcome.folder !== undefined ? { folder: outcome.folder } : {}),
-                }
-              }
-
-              const decision = yield* ask(req, hint)
-              const grantedFolder = hint?.folder
+                return yield* ask(req, hint)
+              }),
+            )
               if (decision.kind === "allow" && decision.scope === "session") {
                 yield* grantedFolder !== undefined
                   ? Ref.update(sessionFolders, (s) => new Set([...s, grantedFolder]))
@@ -139,7 +166,6 @@ export const makeTuiApproval = (store: TuiStore): TuiApproval => {
               }
               return decision
             }),
-          ),
       })
     }),
   )

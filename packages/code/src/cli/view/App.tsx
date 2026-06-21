@@ -2,8 +2,10 @@ import { Show } from "solid-js"
 import { useKeyboard, usePaste } from "@opentui/solid"
 import { dispatch } from "../keys/dispatch.js"
 import { pasteIntoOverlay } from "../keys/overlay.js"
+import { tokens } from "../state/theme.js"
 import { Header } from "./chrome/Header.js"
 import { Conversation } from "./panes/Conversation.js"
+import { AgentPane } from "./panes/AgentPane.js"
 import { Side } from "./panes/side/Side.js"
 import { InputBox } from "./panes/Input.js"
 import { QueuedMessages } from "./panes/QueuedMessages.js"
@@ -20,12 +22,13 @@ import { Onboarding } from "./overlays/OnboardingView.js"
 import type { TuiContext } from "../state/store.js"
 
 /**
- * Root of the Solid/OpenTUI TUI (agy direction). One **borderless message
- * region** fills the space under the header: it shows the conversation, or — when
- * a contextual panel is focused (`:activity`/`:context`/`:tree`/`:sessions`, or
- * `v`) — that panel in its place. Below it the agy bottom chrome: the pending
- * queue, the input fence, the `:` / `/` contextual menus, and the two-zone status
- * bar. No bordered panes, no sidebar, no floating modals.
+ * Root of the Solid/OpenTUI TUI. The message region is a **two-pane split**: the
+ * **orchestrator** (the lead conversation) is always the left pane, and when you
+ * select a teammate — or open a contextual panel (`:activity`/`:context`/`:tree`/
+ * `:sessions`) — it opens as the **right pane**, 50/50, so you watch an agent
+ * work without losing the lead. With nothing selected the orchestrator fills the
+ * width. Below it the bottom chrome: the pending queue, the input fence, the `:`
+ * / `/` contextual menus, and the two-zone status bar. No floating modals.
  */
 export const App = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
@@ -44,11 +47,15 @@ export const App = (props: { ctx: TuiContext }) => {
   })
 
   // The shortcuts reference card (~30 rows) hands the whole message region over
-  // to itself; the short `:` command palette is not an overlay. Otherwise the
-  // region shows the conversation, or the contextual panel when it's focused.
+  // to itself. Otherwise the orchestrator (left) is always shown; the right pane
+  // opens for a selected agent (a node preview) or a focused contextual panel.
   const hidePanes = () => store.overlay().kind === "shortcuts"
-  const showConv = () => !hidePanes() && store.focus() !== "side"
-  const showSide = () => !hidePanes() && store.focus() === "side"
+  const rightPane = (): "none" | "agent" | "side" => {
+    if (hidePanes()) return "none"
+    if (store.nodePreview() !== undefined) return "agent"
+    if (store.focus() === "side") return "side"
+    return "none"
+  }
 
   // Onboarding is a full-screen takeover (agy-style): while it's open we render
   // ONLY it — no panes/chrome behind it. That lets the onboarding be genuinely
@@ -60,14 +67,22 @@ export const App = (props: { ctx: TuiContext }) => {
     <box flexDirection="column" flexGrow={1}>
       <Show when={!onboarding()} fallback={<Onboarding ctx={props.ctx} />}>
         <Header ctx={props.ctx} />
-        {/* The single borderless message region: the conversation, or the
-            contextual panel (activity/context/agents/sessions) in its place. */}
-        <box flexDirection="column" flexGrow={1} minHeight={0}>
-          <Show when={showConv()}>
-            <Conversation ctx={props.ctx} />
+        {/* The two-pane message region: orchestrator left (always, unless the
+            shortcuts card takes over), the selected agent or contextual panel
+            right — 50/50 via flexBasis:0 + equal grow, a thin divider between. */}
+        <box flexDirection="row" flexGrow={1} minHeight={0}>
+          <Show when={!hidePanes()}>
+            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column">
+              <Conversation ctx={props.ctx} />
+            </box>
           </Show>
-          <Show when={showSide()}>
-            <Side ctx={props.ctx} />
+          <Show when={rightPane() !== "none"}>
+            <box width={1} flexShrink={0} backgroundColor={tokens.text.dim} />
+            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column" paddingLeft={1}>
+              <Show when={rightPane() === "agent"} fallback={<Side ctx={props.ctx} />}>
+                <AgentPane ctx={props.ctx} />
+              </Show>
+            </box>
           </Show>
         </box>
         {/* agy bottom chrome: the pending queue sits above the input fence; the

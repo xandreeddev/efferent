@@ -101,10 +101,9 @@ export const makeSubmit = (
       if (live) {
         const at = yield* Clock.currentTimeMillis
         yield* scopeRuntime.bus.post(nodeId, { from: "you", content: text, at })
-        store.setNodePreview({
-          ...preview,
-          blocks: [...preview.blocks, { kind: "user", text }],
-        })
+        // Show the sent line in the agent's pane immediately (its log); the agent
+        // reads it at its next turn boundary.
+        store.appendNodeLog(nodeId, { kind: "user", text })
         store.setInput("")
         store.setNote(`delivered to running agent ${folder} — it reads at its next turn`)
         store.convScroller.current?.scrollToBottom()
@@ -120,10 +119,7 @@ export const makeSubmit = (
         return
       }
 
-      store.setNodePreview({
-        ...preview,
-        blocks: [...preview.blocks, { kind: "user", text }],
-      })
+      store.appendNodeLog(nodeId, { kind: "user", text })
       store.setInput("")
       store.setBusy(true)
       store.setNote(`working in agent ${folder}…`)

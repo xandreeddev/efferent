@@ -74,7 +74,16 @@ export const openTreeView = (store: TuiStore, cid: ConversationId): Effect.Effec
   Effect.gen(function* () {
     yield* loadAgentTree(store, cid)
     yield* Effect.sync(() =>
-      store.setNav((n) => ({ ...n, view: "tree", treeCursor: 0 })),
+      store.setNav((n) => {
+        // Land the cursor on the FIRST agent node, not the active-session row at
+        // the top — Enter on a node opens it (the whole point of :tree), while
+        // Enter on the session row just refocuses the lead. Defaulting to the
+        // node is why selecting an agent is now one Enter, not two.
+        const withView = { ...n, view: "tree" as const }
+        const rows = treeRows(withView, store.projection())
+        const firstNode = rows.findIndex((r) => r.display.kind === "node")
+        return { ...withView, treeCursor: firstNode >= 0 ? firstNode : 0 }
+      }),
     )
   })
 
@@ -198,39 +207,37 @@ export const openNodePreview = (
     ]
     yield* Effect.sync(() =>
       batch(() => {
-        const prior = store.nodePreview()
+        // The agent (right) pane reads the node's LIVE LOG (the pump accumulates
+        // it as the agent works). Seed it from persisted history only when the
+        // pump never streamed this node (a finished / prior-session node) —
+        // seedNodeLog never clobbers a live log, so a running agent keeps its
+        // richer streamed log.
+        store.seedNodeLog(nodeId, blocks)
         store.setNodePreview({
           nodeId,
           title: `agent: ${name}`,
           blocks,
-          // Swapping preview→preview must keep the ORIGINAL live fold set.
-          savedCollapsed: prior?.savedCollapsed ?? store.collapsed(),
+          savedCollapsed: store.collapsed(),
         })
-        store.setCollapsed(new Set())
         if (!focus) return
-        store.setConvCursor(0)
-        if (store.search()?.pane === "conversation") store.setSearch(undefined)
-        store.setFocus("conversation")
-        store.setMode("normal")
-        // Land on the node's LATEST work (same as opening a conversation) —
-        // the header/seed markers are still there for gg readers.
-        store.convScroller.current?.scrollToBottom()
+        // Focus the composer so you can message this agent immediately (typing
+        // routes to its mailbox via submitToNode); the orchestrator stays left.
+        store.setFocus("input")
+        store.setMode("insert")
       }),
     )
   })
 
-/** Drop the preview overlay: restore the live rail, folds, and side focus. */
+/** Close the agent (right) pane: back to the tree picker, orchestrator untouched. */
 export const closeNodePreview = (store: TuiStore): void => {
   const p = store.nodePreview()
   if (p === undefined) return
   batch(() => {
     store.setNodePreview(undefined)
-    store.setCollapsed(new Set(p.savedCollapsed))
-    if (store.search()?.pane === "conversation") store.setSearch(undefined)
-    store.setConvCursor(0)
+    // Return to the agents panel so you can pick another teammate; the left
+    // orchestrator (and its folds) is left exactly as it was.
     store.setFocus("side")
     store.setMode("normal")
-    store.convScroller.current?.scrollToBottom()
   })
 }
 
