@@ -45,6 +45,7 @@ import { makeAgentEventHooks, type AgentEvent } from "../events.js"
 import { join } from "node:path"
 import { formatFullError, inspectError } from "../cli/util/errorFormat.js"
 import { makeEventLedger, type EventLedger } from "./eventLedger.js"
+import { makeServerApproval } from "./serverApproval.js"
 
 /**
  * The **in-process Workspace** — the authoritative owner of live agent state,
@@ -85,13 +86,15 @@ export interface InProcessWorkspaceDeps {
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
-  /** The interactive bash-approval layer, provided to each run (as `submit` did). */
-  readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
+  /** Override the bash-approval layer (e.g. allow-all in tests). When omitted,
+   *  the adapter uses its built-in **server approval** — the daemon-safe path
+   *  that parks the fiber, publishes `approval_needed` to clients, and is
+   *  answered by `approve`. */
+  readonly approvalLayer?: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
   /** Live registry of detached fired agents (`:stop` / counts). */
   readonly fleet: FleetSupervisor
-  /** Resolve a pending bash approval (the client's modal answer). Until the
-   *  server-side approval round-trip (phase e), the in-process TUI passes its
-   *  `makeTuiApproval.resolve` here so `approve` is honoured. */
+  /** With an `approvalLayer` override that resolves client-side, this honours
+   *  `approve`. Ignored when the built-in server approval is active. */
   readonly resolveApproval?: (decision: ApprovalDecision) => void
   /** Allow the bash tool (default true, as the TUI does). */
   readonly allowBash?: boolean
@@ -136,6 +139,12 @@ export const makeInProcessWorkspace = (
 
     // The scope runtime, built with baseHooks that publish to the ledger — so a
     // sub-agent's events (stamped with its nodeId) reach every client too.
+    // Approval: the built-in server approval (parks + publishes `approval_needed`
+    // + resolved by `approve`) unless the caller overrides (tests/allow-all).
+    const serverApproval = makeServerApproval(publish)
+    const usingServerApproval = deps.approvalLayer === undefined
+    const approvalLayer = deps.approvalLayer ?? serverApproval.layer
+
     const baseHooks = makeAgentEventHooks(publish)
     const scopeRuntime = buildScopeRuntime(
       deps.rootScope,
@@ -220,7 +229,7 @@ export const makeInProcessWorkspace = (
           deps.cwd,
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
-          Effect.provide(deps.approvalLayer),
+          Effect.provide(approvalLayer),
           Effect.catchAll((err) =>
             Effect.logError(inspectError(err)).pipe(
               Effect.zipRight(publish({ type: "error", message: formatFullError(err) })),
@@ -272,7 +281,7 @@ export const makeInProcessWorkspace = (
           deps.cwd,
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
-          Effect.provide(deps.approvalLayer),
+          Effect.provide(approvalLayer),
           Effect.catchAll((err) =>
             Effect.logError(inspectError(err)).pipe(
               Effect.zipRight(publish({ type: "error", message: formatFullError(err) })),
@@ -310,7 +319,7 @@ export const makeInProcessWorkspace = (
               : {}),
           })
           .pipe(
-            Effect.provide(deps.approvalLayer),
+            Effect.provide(approvalLayer),
             Effect.catchAll((f) =>
               publish({
                 type: "error",
@@ -384,11 +393,14 @@ export const makeInProcessWorkspace = (
               : yield* tree
                   .listMessages(sessionNodeId(id))
                   .pipe(Effect.mapError((e) => wsError(e.message)))
+          const pendingApproval = usingServerApproval
+            ? serverApproval.pendingFor(id as string) ?? null
+            : null
           return {
             session,
             log,
             busy,
-            pendingApproval: null,
+            pendingApproval,
             cursor,
           } satisfies SessionState
         }),
@@ -447,7 +459,7 @@ export const makeInProcessWorkspace = (
                 : {}),
             })
             .pipe(
-              Effect.provide(deps.approvalLayer),
+              Effect.provide(approvalLayer),
               Effect.catchAll((f) =>
                 publish({
                   type: "error",
@@ -486,13 +498,11 @@ export const makeInProcessWorkspace = (
       },
 
       approve: (_id, decision) =>
-        deps.resolveApproval !== undefined
-          ? Effect.sync(() => deps.resolveApproval!(decision))
-          : Effect.fail(
-              wsError(
-                "approval round-trip is not wired in the in-process adapter (the client resolves approvals directly until phase e)",
-              ),
-            ),
+        usingServerApproval
+          ? serverApproval.resolve(decision)
+          : deps.resolveApproval !== undefined
+            ? Effect.sync(() => deps.resolveApproval!(decision))
+            : Effect.void,
 
       getDirective: () => Ref.get(directiveRef),
       setDirective: (d) => Ref.set(directiveRef, d),
