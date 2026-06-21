@@ -81,6 +81,9 @@ const renderConversation = (d: () => TreeConversationDisplay) => {
 const renderNode = (d: () => TreeNodeDisplay) => {
   const v = d()
   const meta = [
+    // The fleet tier (a top-level task/coordinator) reads distinctly from a
+    // worker agent; the agent tier is the unmarked default, so only tag fleets.
+    v.tier === "fleet" ? "fleet" : undefined,
     v.edgeKind !== "spawned" ? v.edgeKind : undefined,
     v.seedKind !== "task" ? `seed:${v.seedKind}` : undefined,
     v.filesCount > 0 ? `${v.filesCount}f` : undefined,
