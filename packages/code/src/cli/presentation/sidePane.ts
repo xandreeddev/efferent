@@ -165,7 +165,8 @@ export interface SidePaneProjection {
   readonly context?: ReadonlyArray<ContextSegment>
   /** The ACTIVE session's persisted agent-context nodes; shown when view==="tree". */
   readonly treeNodes?: ReadonlyArray<AgentContextNode>
-  /** Workspace conversations (active one marked); shown when view==="sessions". */
+  /** The active session as the fleet tree's (single, always-expanded) root —
+   *  one row, the current conversation; feeds the root label/`◀ active` tag. */
   readonly sessions?: ReadonlyArray<NavConversation>
   /** Workspace git HEAD at tree-load time — nodes stamped with another ref are stale. */
   readonly treeWorkspaceRef?: string
@@ -179,9 +180,9 @@ export interface SidePaneProjection {
  * compute rows, but only ever *write* nav.
  */
 export interface SidePaneNav {
-  /** Which view the side pane shows: live activity, the context viewer, the
-   *  active session's agent tree, or the workspace sessions list. */
-  readonly view: "stack" | "context" | "tree" | "sessions"
+  /** Which view the side pane shows: live activity, the context viewer, or the
+   *  current session's fleet tree (the always-visible right pane). */
+  readonly view: "stack" | "context" | "tree"
   /** Context-tree cursor: index into the navigable rows. */
   readonly contextCursor: number
   /** Folded context-tree segment/turn ids. */
@@ -198,8 +199,6 @@ export interface SidePaneNav {
   readonly treeCursor: number
   /** Folded context-tree node ids ("tree:<id>"). */
   readonly treeCollapsed: ReadonlySet<string>
-  /** Sessions (`:sessions`) cursor: index into the conversations list. */
-  readonly sessionsCursor: number
 }
 
 /** The merged view both halves compose to — what the components read (the side
@@ -225,7 +224,6 @@ export const emptyNav: SidePaneNav = {
   stackCursor: 0,
   treeCursor: 0,
   treeCollapsed: new Set(),
-  sessionsCursor: 0,
 }
 
 export const emptySidePane: SidePaneState = { ...emptyProjection, ...emptyNav }
@@ -257,7 +255,6 @@ export const splitSidePane = (
     stackCursor: s.stackCursor,
     treeCursor: s.treeCursor,
     treeCollapsed: s.treeCollapsed,
-    sessionsCursor: s.sessionsCursor,
   },
 })
 
@@ -488,36 +485,36 @@ export const treeRows = (
    *  carries the `◀ active` tag instead of the root. Display-only: row order
    *  and count are identical, so cursor-mapping callers may omit it. */
   activeNodeId?: string,
+  /** The root's own turn is running — stamps the live `rootRunning` glyph on
+   *  the active root row. Display-only, so cursor-mapping callers may omit it. */
+  rootRunning?: boolean,
 ): ReadonlyArray<TreeRowData> => {
-  // The fleet tree: every workspace session is a depth-0 root, the active one
-  // marked, with its persisted agent subtree railed beneath it. `treeNodes` is
-  // scoped to the ACTIVE session, so only the active root grows children today
-  // (other sessions show as folded roots); `adoptAll` nests those nodes under
-  // the active root regardless of `rootConversationId`. With no sessions loaded
-  // yet we fall back to a single synthetic root for the current session.
+  // The fleet tree shows ONLY the current session: a single always-expanded
+  // root (the active session) with its persisted agent subtree railed beneath.
+  // `loadSessions(activeOnly)` keeps `sessions` to the one active row, so
+  // `adoptAll` nests every node under it regardless of `rootConversationId`
+  // (the remote/daemon nodes carry the root conversation id either way). With
+  // no session loaded yet we fall back to one synthetic root.
   const sessions = projection.sessions ?? []
   const roots =
     sessions.length > 0
       ? sessions
       : [{ id: "root", label: "(current session)", active: true }]
-  // Restrict `adoptAll` to the single-active-root shape — with multiple
-  // conversation roots, nodes are matched by `rootConversationId` so they
-  // don't all pile under the first session.
+  // `adoptAll` only when there's exactly one (active) root — otherwise nodes
+  // are matched by `rootConversationId` so they don't pile under the first.
   const adoptAll = sessions.filter((s) => s.active).length === 1 && sessions.length === 1
   return buildNavRows(
     roots,
     projection.treeNodes ?? [],
     nav.treeCollapsed,
     projection.treeWorkspaceRef,
-    { adoptAll, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
+    {
+      adoptAll,
+      ...(activeNodeId !== undefined ? { activeNodeId } : {}),
+      ...(rootRunning !== undefined ? { rootRunning } : {}),
+    },
   )
 }
-
-// --- sessions (`:sessions`) view navigation: a flat list, index cursor ---
-
-export const sessionsRows = (
-  projection: SidePaneProjection,
-): ReadonlyArray<NavConversation> => projection.sessions ?? []
 
 /** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
 export const treeParagraph = (
