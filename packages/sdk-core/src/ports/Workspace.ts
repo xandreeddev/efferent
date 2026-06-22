@@ -99,6 +99,16 @@ export type SeqEvent = typeof SeqEvent.Type
 export const SessionState = Schema.Struct({
   session: SessionSummary,
   log: Schema.Array(AgentMessage),
+  /**
+   * The **absolute position** of `log[0]` in the conversation (0 when nothing
+   * is folded; `latestCheckpoint.messagePosition + 1` after a handoff narrows
+   * the window). Positions are contiguous + immutable, so the client derives
+   * each message's absolute position as `logBaseOffset + index` and keys its
+   * rail blocks on it — the same key the live event stream carries, so a
+   * replayed/re-projected message reconciles instead of duplicating. `optional`
+   * so a stale daemon still decodes (client reads `?? 0`).
+   */
+  logBaseOffset: Schema.optional(Schema.Number),
   busy: Schema.Boolean,
   /**
    * Messages typed while this session was busy, awaiting their turn — the

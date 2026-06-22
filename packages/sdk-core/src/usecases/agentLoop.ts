@@ -74,7 +74,7 @@ export interface RunAgentLoopInput<
    */
   readonly onTail?: (
     messages: ReadonlyArray<AgentMessage>,
-  ) => Effect.Effect<void, never, R>
+  ) => Effect.Effect<ReadonlyArray<number>, never, R>
 }
 
 /** Tool calls resolved concurrently per step (interruption-safe via Effect). */
@@ -373,7 +373,17 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       totalCache += usage.cacheReadTokens
       messages = [...messages, ...tail]
       newTail.push(...tail)
-      if (input.onTail) yield* input.onTail(tail)
+      // Persist the tail (assigning store positions) BEFORE the hooks fire, so
+      // the assistant message's durable position is known when we emit its
+      // event — the UI keys the rail block on it. `onTail` returns the assigned
+      // positions aligned with `tail`; the assistant message is `tail`'s lone
+      // `role:"assistant"` entry.
+      const tailPositions = input.onTail ? yield* input.onTail(tail) : undefined
+      const assistantTailIdx = tail.findIndex((m) => m.role === "assistant")
+      const assistantPosition =
+        tailPositions !== undefined && assistantTailIdx >= 0
+          ? tailPositions[assistantTailIdx]
+          : undefined
 
       const text = res.text
       if (text.length > 0) finalText = text
@@ -391,6 +401,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           reasoning,
           toolCalls,
           usage: extractUsage(res.usage, content),
+          ...(assistantPosition !== undefined ? { position: assistantPosition } : {}),
         })
       }
       if (hooks?.onBeforeToolCall) {
