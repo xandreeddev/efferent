@@ -328,11 +328,19 @@ export const makeEventReducer = (
         const isTopLevel =
           event.nodeId !== undefined && parentByNode.get(event.nodeId) === undefined
         if (event.nodeId !== undefined) parentByNode.delete(event.nodeId)
-        if (isTopLevel && event.ok && event.summary.trim().length > 0) {
-          store.pushBlock({
-            kind: "assistant",
-            text: `**${event.name}** finished${filesDetail !== undefined ? ` · ${filesDetail}` : ""}:\n\n${event.summary.trim()}`,
-          })
+        // ONLY a top-level lead's outcome reaches the chat — it's what the user
+        // dispatched, so its result (or failure) is part of the conversation.
+        // Deeper specialists' failures stay in the tree (✗) + the log, never a
+        // red block in the chat.
+        if (isTopLevel && event.summary.trim().length > 0) {
+          store.pushBlock(
+            event.ok
+              ? {
+                  kind: "assistant",
+                  text: `**${event.name}** finished${filesDetail !== undefined ? ` · ${filesDetail}` : ""}:\n\n${event.summary.trim()}`,
+                }
+              : { kind: "error", text: `**${event.name}** failed: ${event.summary.trim()}` },
+          )
           store.convScroller.current?.scrollToBottom()
         }
         if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
@@ -346,23 +354,20 @@ export const makeEventReducer = (
           return
         }
         if (event.nodeId !== undefined && agentRows.has(event.nodeId)) {
-          // Close the row in the grouped block. The ok summary — the run's
-          // actual return value, what the parent model received — lands on the
-          // row's sub-line (truncated; ↵ on the node shows the full session).
-          // A failure is always loud (error block below).
+          // Close the row in the grouped block. The summary — the run's actual
+          // return value, what the parent model received — lands on the row's
+          // sub-line (truncated; ↵ on the node shows the full session), and a
+          // failure shows as a ✗ glyph on the row + in the fleet tree. We do NOT
+          // push a red block here: a specialist failing is the lead's concern,
+          // not chat noise (only the top-level lead's outcome surfaces, above).
           touchAgentRow(event.nodeId, ({ currentTool: _t, ...r }) => ({
             ...r,
             status: event.ok ? "ok" : "error",
-            ...(event.ok && event.summary.trim().length > 0
-              ? { summary: event.summary.trim() }
-              : {}),
+            ...(event.summary.trim().length > 0 ? { summary: event.summary.trim() } : {}),
             ...(event.usage !== undefined && r.tokens === 0
               ? { tokens: event.usage.inputTokens + event.usage.outputTokens }
               : {}),
           }))
-          if (!event.ok && event.summary.trim().length > 0) {
-            store.pushBlock({ kind: "error", text: `${event.name}: ${event.summary}` })
-          }
           if (ownTreeId !== undefined) {
             store.setProjection((p) => ({
               ...p,

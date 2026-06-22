@@ -164,19 +164,23 @@ export const makeSubmit = (
         })
         .pipe(
           Effect.provide(approvalLayer),
+          // Talking to an agent is fleet plumbing, not the main conversation — a
+          // resume hiccup (a vanished node, a transient failure) goes to the LOG
+          // + a transient toast, never a red block in the chat. The detail lands
+          // in the agent's own pane (its nodeLog) and `efferent.log`.
           Effect.catchAll((f) => {
             const msg = f.message !== undefined ? `${f.error}: ${f.message}` : f.error
             return Effect.logError(msg).pipe(
-              Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+              Effect.zipRight(Effect.sync(() => store.toast(`agent ${folder}: ${f.error}`))),
             )
           }),
           // A DEFECT (untyped die) skips catchAll — without this it killed the
-          // fiber with no log, no error block, and a cleared spinner: the exact
-          // "sent a message and it got stuck" shape. Surface it like any error.
+          // fiber with no log and a cleared spinner: the "sent a message and it
+          // got stuck" shape. Log it + toast, same as any resume failure.
           Effect.catchAllDefect((d) => {
             const msg = `node resume crashed: ${String(d)}`
             return Effect.logError(msg).pipe(
-              Effect.zipRight(Queue.offer(eventQueue, { type: "error", message: msg })),
+              Effect.zipRight(Effect.sync(() => store.toast(`agent ${folder}: run crashed`))),
             )
           }),
           Effect.asVoid,
