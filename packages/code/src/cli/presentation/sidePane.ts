@@ -173,6 +173,22 @@ export interface SidePaneProjection {
 }
 
 /**
+ * **TreeData** — the fleet tree's source data (the active session's persisted
+ * agent-context nodes + the session-root row + the staleness ref). A distinct
+ * entity because it's written only at refresh boundaries (`refreshNav`), NOT on
+ * every execution-tree event — so the L2 slice can hold it in its OWN signal,
+ * letting the fleet tree re-derive only when the fleet actually changes (not on
+ * every tool call). The pure flatteners read exactly these three fields off a
+ * `SidePaneProjection`, so a value of this shape (merged with `emptyProjection`)
+ * satisfies them without a signature change.
+ */
+export interface TreeData {
+  readonly treeNodes?: ReadonlyArray<AgentContextNode>
+  readonly sessions?: ReadonlyArray<NavConversation>
+  readonly treeWorkspaceRef?: string
+}
+
+/**
  * **Nav** — *where the cursor is / what's folded or selected*. Written only by
  * keystrokes (the `keys/` dispatch). Carries no tree/stats/files, so a nav write
  * can't clobber the live projection. The reducers below take `(nav, projection)`

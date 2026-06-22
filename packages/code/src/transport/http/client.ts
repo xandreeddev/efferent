@@ -67,6 +67,7 @@ export interface HttpTransport {
     prompt: string,
   ) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
   readonly interrupt: (id: SessionId) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
+  readonly clearQueue: (id: SessionId) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
   readonly stop: (id: SessionId) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
   readonly spawn: (
     req: SpawnRequest,
@@ -153,6 +154,7 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
       ),
     send: (id, prompt) => postVoid(`/sessions/${id}/send`, { prompt }),
     interrupt: (id) => postVoid(`/sessions/${id}/interrupt`),
+    clearQueue: (id) => postVoid(`/sessions/${id}/clear-queue`),
     stop: (id) => postVoid(`/sessions/${id}/stop`),
     spawn: (req) => postJson("/sessions", req, SessionId),
     createFleet: (req) => postJson("/fleets", req, SessionId),

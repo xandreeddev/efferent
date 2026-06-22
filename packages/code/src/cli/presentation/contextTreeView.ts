@@ -266,6 +266,50 @@ export const buildNavRows = (
   return rows
 }
 
+/**
+ * A row's display-affecting signature — every field the view paints, flattened
+ * to a string. Two rows with the same `key` AND signature are visually
+ * identical, so {@link reconcileTreeRows} can keep the OLD object reference and
+ * let the reference-keyed `<For>` skip re-rendering it.
+ */
+const rowSignature = (r: TreeRowData): string => {
+  const d = r.display
+  const base = `${r.depth}|${r.rail.prefix}|${r.rail.connector}|${r.foldId ?? ""}|${r.head ? 1 : 0}`
+  return d.kind === "conversation"
+    ? `c|${base}|${d.label}|${d.active ? 1 : 0}|${d.nodeCount}|${d.folded ? 1 : 0}|${d.hasChildren ? 1 : 0}|${d.rootRunning ? 1 : 0}`
+    : `n|${base}|${d.tier}|${d.label}|${d.folder}|${d.status}|${d.edgeKind}|${d.seedKind}|${d.summary ?? ""}|${d.filesCount}|${d.tokens ?? ""}|${d.stale ? 1 : 0}|${d.active ? 1 : 0}|${d.folded ? 1 : 0}|${d.hasChildren ? 1 : 0}`
+}
+
+/**
+ * Reconcile a freshly-built row list against the previous one (the fleet tree's
+ * counterpart of `conversation.ts`'s `reconcileItems`): a row unchanged since
+ * the last build keeps its old reference, so the reference-keyed `<For>` skips
+ * it; only genuinely-changed rows get a new reference and re-render. When the
+ * whole list is unchanged (same keys, same signatures, same order) the PREVIOUS
+ * array is returned verbatim — so the common case (a tool event that doesn't
+ * touch the fleet) produces zero tree re-render. Used as a `createMemo` reducer:
+ * `createMemo((prev) => reconcileTreeRows(prev, treeRows(...)), [])`.
+ */
+export const reconcileTreeRows = (
+  prev: ReadonlyArray<TreeRowData>,
+  next: ReadonlyArray<TreeRowData>,
+): ReadonlyArray<TreeRowData> => {
+  if (prev.length === 0) return next
+  const byKey = new Map(prev.map((r) => [r.key, r] as const))
+  let changed = prev.length !== next.length
+  const out = next.map((r, i) => {
+    const old = byKey.get(r.key)
+    if (old !== undefined && rowSignature(old) === rowSignature(r)) {
+      // Order shift alone (same row, new index) still needs the fresh list.
+      if (prev[i] !== old) changed = true
+      return old
+    }
+    changed = true
+    return r
+  })
+  return changed ? out : prev
+}
+
 /** The old node-only `:tree` flatten — `buildNavRows` with no conversations. */
 export const buildTreeRowsData = (
   nodes: ReadonlyArray<AgentContextNode>,

@@ -29,8 +29,8 @@ export const loadAgentTree = (store: TuiStore, activeCid: ConversationId): Effec
     const nodes = yield* cts.listTree(activeCid).pipe(Effect.catchAll(() => Effect.succeed([])))
     const head = yield* getWorkspaceRef(store.status().cwd)
     yield* Effect.sync(() =>
-      store.setProjection((p) => ({
-        ...p,
+      store.setTreeData((d) => ({
+        ...d,
         treeNodes: nodes,
         ...(head !== undefined ? { treeWorkspaceRef: head } : {}),
       })),
@@ -71,7 +71,7 @@ export const loadSessions = (
     if (!sessions.some((c) => c.active)) {
       sessions.unshift({ id: activeCid, label: "(current session)", active: true })
     }
-    yield* Effect.sync(() => store.setProjection((p) => ({ ...p, sessions })))
+    yield* Effect.sync(() => store.setTreeData((d) => ({ ...d, sessions })))
   })
 
 /** Refresh both navigator data sets (boot + every turn end + on each sub-agent

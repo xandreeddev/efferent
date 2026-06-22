@@ -121,12 +121,26 @@ export const InputBox = (props: { ctx: TuiContext }) => {
   // matching what Enter will run — see `InputFence`/`composerMode`.
   const mode = () => composerMode(store.input())
 
+  // The terminal caret blinks on the terminal's own clock — but OpenTUI
+  // re-emits it on every render frame, and while a turn runs the renderer paints
+  // frequently (the animated loader + the 120ms spinner tick), each re-emit
+  // resetting the blink → the caret FLICKERS instead of blinking steadily. So
+  // hide it while the agent is working AND the composer is empty: there's
+  // nothing to type yet, and an empty blinking caret is pure noise then. The
+  // moment you start composing (input non-empty) — or the turn ends — it's back.
+  // Focus is unchanged, so queuing a message mid-turn still works; only the
+  // caret's visibility follows. When idle, no frames disturb it → steady blink.
+  const active = () =>
+    store.agentState().phase !== "idle" || store.agentState().fleet.length > 0
+  const showCaret = () => !active() || store.input().length > 0
+
   return (
     <InputFence focused={focused()} mode={mode()} suffix={suffix()}>
       <textarea
         ref={ref}
         height={rows()}
         flexGrow={1}
+        showCursor={showCaret()}
         keyBindings={KEY_BINDINGS}
         // Blank while a menu/overlay owns input (a picker is open below) — agy
         // shows a clean empty `>` there, not the resting "Message…" hint.

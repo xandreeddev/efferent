@@ -37,4 +37,16 @@ describe("the reactive queued-message mirror", () => {
     s.run.newConversation(cid)
     expect(s.queued()).toEqual([])
   })
+
+  test("setQueue replaces the whole queue (the remote driver's daemon mirror)", () => {
+    const s = slice()
+    s.run.enqueue("stale")
+    s.run.setQueue(["a", "b", "c"])
+    expect(s.queued()).toEqual(["a", "b", "c"])
+    // A subsequent dequeue/pop operates on the mirrored contents.
+    expect(s.run.dequeue()).toBe("a")
+    expect(s.queued()).toEqual(["b", "c"])
+    s.run.setQueue([])
+    expect(s.queued()).toEqual([])
+  })
 })

@@ -131,7 +131,9 @@ export const makeSubmit = (
       const settings = yield* (yield* SettingsStore).get()
 
       const finishTurn = Effect.gen(function* () {
-        const next = store.run.dequeue()
+        // Take everything available (agy) — see the root finishTurn.
+        const drained = store.run.dequeueAll()
+        const next = drained.length > 0 ? drained.join("\n\n") : undefined
         store.setBusy(false)
         store.setNote(undefined)
         // Esc interrupts skip agent_end — settle the state machine here too.
@@ -217,25 +219,16 @@ export const makeSubmit = (
         }
       }
 
-      // Busy and not paired with anyone? Deliver to the RUNNING root agent's
-      // mailbox — it reads it at its next step (no freeze, no waiting for the
-      // turn to end). You can always reach the agent you started. Only when the
-      // root has no live mailbox (between turns) does it fall back to the queue.
+      // Busy and not paired with anyone? Hold the message as a pending `▸` entry
+      // above the input (agy-style): it runs as the NEXT turn when the current
+      // one finishes (`finishTurn` dequeues it), drained serially in order. We
+      // deliberately do NOT inject it into the running turn — clean, ordered
+      // turns, no surprise mid-thought steering. `↑` on an empty composer pulls
+      // the last one back to edit. (Sub-agent RESULTS still auto-deliver to the
+      // root via its mailbox + `onTransformContext` — a separate path, untouched.)
       if (store.busy()) {
-        const cid = store.run.getConversationId()
-        const at = yield* Clock.currentTimeMillis
-        const delivered = yield* scopeRuntime.bus.post(cid, { from: "you", content: text, at })
+        store.run.enqueue(text)
         store.setInput("")
-        if (delivered) {
-          store.pushBlock({ kind: "user", text })
-          store.pushBlock({
-            kind: "info",
-            text: "delivered to the running agent — it reads this at its next step",
-          })
-          store.convScroller.current?.scrollToBottom()
-        } else {
-          store.run.enqueue(text)
-        }
         return
       }
 
@@ -274,10 +267,7 @@ export const makeSubmit = (
           ]),
         }))
       }
-      store.setProjection((p) => ({
-        ...p,
-        tree: onRunStart(p.tree, subjectLine(text), Date.now()).tree,
-      }))
+      store.setTree((t) => onRunStart(t, subjectLine(text), Date.now()).tree)
       store.setBusy(true)
       // The header owns "what is the agent doing" from here — thinking until
       // the loop's first event says otherwise.
@@ -295,7 +285,12 @@ export const makeSubmit = (
         const leftover = yield* scopeRuntime.bus.drain(cid)
         yield* scopeRuntime.bus.markDone(cid)
         for (const m of leftover) if (m.from === "you") store.run.enqueue(m.content)
-        const next = store.run.dequeue()
+        // Take EVERYTHING available (agy): drain the whole pending queue into the
+        // next turn at once — not one-per-turn, which left later messages waiting
+        // in the `▸` list across several turns ("only one drains, the rest hang").
+        // All pending entries clear immediately and run together as one turn.
+        const drained = store.run.dequeueAll()
+        const next = drained.length > 0 ? drained.join("\n\n") : undefined
         store.setBusy(false)
         store.setNote(undefined)
         // Esc interrupts skip agent_end — settle the state machine here too.
@@ -303,7 +298,7 @@ export const makeSubmit = (
         store.run.setFiber(undefined)
         // Seal the Activity run container (closes any still-open descendants
         // too — an interrupt skips their end events).
-        store.setProjection((p) => ({ ...p, tree: onRunEnd(p.tree, true, Date.now()) }))
+        store.setTree((t) => onRunEnd(t, true, Date.now()))
         // The session's first exchange just landed: name it on the fast
         // helper tier, off the critical path. Best-effort daemon — a missing
         // credential / provider hiccup must never surface here.
