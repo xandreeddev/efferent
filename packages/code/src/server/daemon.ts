@@ -4,6 +4,7 @@ import { Deferred, Effect, Layer } from "effect"
 import {
   type AgentDefinition,
   type Scope,
+  type Memory,
   type Skill,
   AuthStore,
   ContextTreeStore,
@@ -29,6 +30,7 @@ import { removeDiscovery, writeDiscovery } from "./discovery.js"
 export interface DaemonServeInput {
   readonly workspace: string
   readonly skills: ReadonlyArray<Skill>
+  readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
@@ -149,6 +151,7 @@ export const runDaemonServe = (
       rootScope: input.rootScope,
       cwd: input.workspace,
       skills: input.skills,
+      memory: input.memory,
       agents: input.agents,
       tools: input.tools,
       instructionFiles: input.instructionFiles,

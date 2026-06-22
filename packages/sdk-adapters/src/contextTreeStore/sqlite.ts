@@ -35,6 +35,7 @@ interface MessageRow {
 interface NodeRow {
   readonly id: string
   readonly parent_id: string | null
+  readonly kind: string | null
   readonly root_conversation_id: string | null
   readonly edge_kind: string
   readonly folder: string
@@ -68,6 +69,7 @@ const decodeNode = (row: NodeRow) => {
   const raw = {
     id: row.id,
     parentId: row.parent_id,
+    ...(row.kind !== null && row.kind !== undefined ? { kind: row.kind } : {}),
     rootConversationId: row.root_conversation_id,
     edgeKind: row.edge_kind,
     folder: row.folder,
@@ -147,15 +149,18 @@ export const SqliteContextTreeStoreLive = Layer.effect(
         Effect.gen(function* () {
           const id = crypto.randomUUID()
           const createdAt = Date.now()
+          // SESSION → FLEET → AGENT: a parentless node is a top-level fleet
+          // (task/coordinator), a child is a worker agent.
+          const kind = input.parentId === null ? "fleet" : "agent"
           yield* wrapSql(
             sql`
               INSERT INTO context_nodes (
-                id, parent_id, root_conversation_id, edge_kind, folder, display_root, title,
+                id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
                 seed, status, return_summary, files_changed, usage, workspace_ref,
                 seed_message_count, created_at, ended_at
               )
               VALUES (
-                ${id}, ${input.parentId ?? null}, ${input.rootConversationId ?? null},
+                ${id}, ${input.parentId ?? null}, ${kind}, ${input.rootConversationId ?? null},
                 ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
                 ${JSON.stringify(input.seed)}, 'running', ${null}, '[]', ${null}, ${null},
                 ${input.seedMessages.length}, ${createdAt}, ${null}
@@ -219,7 +224,7 @@ export const SqliteContextTreeStoreLive = Layer.effect(
         Effect.gen(function* () {
           const rows = yield* wrapSql(
             sql<NodeRow>`
-              SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root, title,
+              SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
                      seed, status, return_summary, files_changed, usage, workspace_ref,
                      seed_message_count, created_at, ended_at
               FROM context_nodes WHERE id = ${id}
@@ -237,13 +242,13 @@ export const SqliteContextTreeStoreLive = Layer.effect(
           const rows = yield* wrapSql(
             rootConversationId === null
               ? sql<NodeRow>`
-                  SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root, title,
+                  SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
                          seed, status, return_summary, files_changed, usage, workspace_ref,
                          seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id IS NULL ORDER BY created_at ASC
                 `
               : sql<NodeRow>`
-                  SELECT id, parent_id, root_conversation_id, edge_kind, folder, display_root, title,
+                  SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
                          seed, status, return_summary, files_changed, usage, workspace_ref,
                          seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id = ${rootConversationId} ORDER BY created_at ASC

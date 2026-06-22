@@ -31,6 +31,7 @@ import {
   type TokenPool,
   Failure,
   toFailure,
+  type Memory,
   type Skill,
   type AgentDefinition,
   ConversationId,
@@ -47,7 +48,7 @@ import { getScopePromptBody } from "./discoverScopeTree.js"
 import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
 import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
-import { addJob, parseCron, type ScheduledJob } from "./schedule.js"
+import { addJob, loadJobs, parseCron, removeJob, type ScheduledJob } from "./schedule.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 
 /**
@@ -141,6 +142,13 @@ export const STEP_STOP_NOTE =
 
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
+  /**
+   * Durable project-knowledge records (`.efferent/memory/*.md`) — the index is
+   * injected into the prompt, bodies are lazy-loaded via `read_memory`, and new
+   * records are written via `remember`. Required like `skills`/`agents` — pass
+   * `[]` when there are none. Shared across the root and every sub-agent.
+   */
+  readonly memory: ReadonlyArray<Memory>
   /**
    * Predefined agent ROLES (`.efferent/agents/*.md`) selectable by name via
    * `run_agent({ agent })` and the TUI `:spawn`. Required like `skills` —
@@ -390,6 +398,11 @@ const RunToolTool = Tool.make("run_tool", {
  * defer its own work or set up recurring checks, not just the human via
  * `:schedule`. The job fires as a fresh agent run in this workspace while
  * efferent (or its daemon) is open.
+ *
+ * Deferred follow-ups (larger changes, NOT done here): a fired-job → session
+ * notification (surface a scheduled run's start/finish in the originating
+ * session), and a run-outcome ledger (persist each fire's result so the
+ * assistant can review history beyond `lastRunMs`).
  */
 const ScheduleTool = Tool.make("schedule", {
   description:
@@ -415,6 +428,53 @@ const ScheduleTool = Tool.make("schedule", {
   failureMode: "return",
 })
 
+/** One scheduled-job row in `list_scheduled_jobs` (mirrors the `:schedule` list). */
+const ScheduledJobView = Schema.Struct({
+  id: Schema.String,
+  cron: Schema.String,
+  task: Schema.String,
+  folder: Schema.String,
+  agent: Schema.optional(Schema.String),
+  lastRunMs: Schema.optional(Schema.Number),
+})
+
+/**
+ * List the scheduled jobs for THIS workspace — the same cron list `:schedule`
+ * shows and `schedule` writes to. Lets the assistant review what it (or the
+ * human) has queued before adding or cancelling a job.
+ */
+const ListScheduledJobsTool = Tool.make("list_scheduled_jobs", {
+  description:
+    "List the scheduled (cron) jobs for this workspace — id, cron expression, task, folder, and last run time. " +
+    "Use it to review what's queued before scheduling more work or cancelling a job. " +
+    "Optionally narrow to a folder (relative to the workspace root).",
+  parameters: {
+    folder: Schema.optional(Schema.String).annotations({
+      description: "Only return jobs scoped to this folder (relative to the workspace root).",
+    }),
+  },
+  success: Schema.Struct({ jobs: Schema.Array(ScheduledJobView) }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
+ * Cancel a scheduled job by its id (from `list_scheduled_jobs` or the id a
+ * `schedule` call returned). Removes it from the cron list so it never fires
+ * again; `found: false` if no job with that id exists.
+ */
+const CancelScheduledJobTool = Tool.make("cancel_scheduled_job", {
+  description:
+    "Cancel a scheduled (cron) job by its id — the id from list_scheduled_jobs or the one a schedule call returned. " +
+    "Removes it from the workspace's cron list so it won't fire again.",
+  parameters: {
+    id: Schema.String.annotations({ description: "The job id to cancel." }),
+  },
+  success: Schema.Struct({ id: Schema.String, found: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 /** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
   ["send_message", SendMessageTool],
@@ -423,6 +483,8 @@ const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
   ["wait_for_agents", WaitForAgentsTool],
   ["run_tool", RunToolTool],
   ["schedule", ScheduleTool],
+  ["list_scheduled_jobs", ListScheduledJobsTool],
+  ["cancel_scheduled_job", CancelScheduledJobTool],
 ]
 
 /** The toolkit is static: base coding tools + comms/run_tool + the `run_agent`
@@ -688,6 +750,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
       // Give a coordinator (a role with run_agent) the roster so it can name its
       // specialists; leaf workers ignore it.
       agents: opts.agents,
+      // The project-knowledge index rides into every sub-agent too — they read
+      // the distilled rationale and can record new decisions via `remember`.
+      memory: opts.memory,
     })
     const parentPrompt = args.runContext.prompt
     const childPrompt: Prompt | undefined =
@@ -1045,7 +1110,7 @@ const buildGenericHandlers = <R>(
   bus: AgentBus,
 ) =>
   Effect.gen(function* () {
-    const base = yield* makeCodingHandlers(binding, opts.skills)
+    const base = yield* makeCodingHandlers(binding, opts.skills, opts.memory)
     const store = yield* ContextTreeStore
     const shell = yield* Shell
     const http = yield* Http
@@ -1081,6 +1146,35 @@ const buildGenericHandlers = <R>(
         }
         yield* addJob(job).pipe(Effect.provideService(FileSystem, fs))
         return { id: job.id, cron: job.cron }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    // List this workspace's scheduled jobs (the same cron list :schedule reads).
+    // Jobs are filtered to this workspace's cwd, then optionally to a folder.
+    const list_scheduled_jobs = (params: { readonly folder?: string }) =>
+      Effect.gen(function* () {
+        const jobs = yield* loadJobs().pipe(Effect.provideService(FileSystem, fs))
+        const folder =
+          params.folder !== undefined && params.folder.length > 0 ? params.folder : undefined
+        const mine = jobs.filter(
+          (j) => j.cwd === binding.displayRoot && (folder === undefined || j.folder === folder),
+        )
+        return {
+          jobs: mine.map((j) => ({
+            id: j.id,
+            cron: j.cron,
+            task: j.prompt,
+            folder: j.folder,
+            ...(j.agent !== undefined ? { agent: j.agent } : {}),
+            ...(j.lastRunMs !== undefined ? { lastRunMs: j.lastRunMs } : {}),
+          })),
+        }
+      }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
+
+    // Cancel a scheduled job by id. `found:false` when no such job exists.
+    const cancel_scheduled_job = (params: { readonly id: string }) =>
+      Effect.gen(function* () {
+        const found = yield* removeJob(params.id).pipe(Effect.provideService(FileSystem, fs))
+        return { id: params.id, found }
       }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e))))
 
     // Declarative tools dispatcher: look up the named def, substitute escaped
@@ -1242,6 +1336,8 @@ const buildGenericHandlers = <R>(
       wait_for_agents,
       run_tool,
       schedule,
+      list_scheduled_jobs,
+      cancel_scheduled_job,
     } as never
   })
 

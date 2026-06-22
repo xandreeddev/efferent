@@ -25,6 +25,7 @@ import {
   type Approval,
   type Directive,
   type Scope,
+  type Memory,
   type Skill,
   type AgentHooks,
   type ApprovalDecision,
@@ -95,6 +96,7 @@ export interface InProcessWorkspaceDeps {
   readonly rootScope: Scope
   readonly cwd: string
   readonly skills: ReadonlyArray<Skill>
+  readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
   readonly instructionFiles: ReadonlyArray<InstructionFile>
@@ -166,6 +168,7 @@ export const makeInProcessWorkspace = (
       deps.rootScope,
       {
         skills: deps.skills,
+        memory: deps.memory,
         agents: deps.agents,
         tools: deps.tools,
         allowBash: deps.allowBash ?? true,
@@ -236,6 +239,8 @@ export const makeInProcessWorkspace = (
           deps.instructionFiles,
           deps.agents,
           deps.tools,
+          undefined,
+          deps.memory,
         )
         const directive = yield* Ref.get(directiveRef)
         const directiveText = renderDirectiveSection(directive)

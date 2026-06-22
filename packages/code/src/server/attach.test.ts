@@ -31,6 +31,7 @@ describe("attach-or-spawn", () => {
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],
+          memory: [],
           agents: [],
           tools: [],
           instructionFiles: [],
@@ -65,6 +66,18 @@ describe("attach-or-spawn", () => {
     expect(result.healthy).toBe(true)
   })
 
+  test("a missing workspace dir fails with a clear typed error (not a spawn defect)", async () => {
+    const missing = join(tmpdir(), "eff-does-not-exist-zzz")
+    const exit = await Effect.runPromiseExit(
+      // No injected spawn → the real detached-spawn guard applies.
+      attachOrSpawn(missing).pipe(Effect.scoped, Effect.provide(fakeEnvLayers(FAKE_ROOT_CID))),
+    )
+    expect(exit._tag).toBe("Failure")
+    if (exit._tag === "Failure") {
+      expect(JSON.stringify(exit.cause)).toContain("workspace directory does not exist")
+    }
+  })
+
   test("a second attach reuses the already-running daemon (no re-spawn)", async () => {
     const workspace = "/tmp/ws-attach-2"
     const result = await Effect.runPromise(
@@ -74,6 +87,7 @@ describe("attach-or-spawn", () => {
           rootScope: fakeRootScope,
           cwd: workspace,
           skills: [],
+          memory: [],
           agents: [],
           tools: [],
           instructionFiles: [],

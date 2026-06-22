@@ -32,6 +32,7 @@ import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js
 import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
 import { withBuiltinAgents } from "./usecases/directive.js"
 import { loadAgents } from "./usecases/loadAgents.js"
+import { loadMemory } from "./usecases/loadMemory.js"
 import { loadSkills } from "./usecases/loadSkills.js"
 import { loadTools } from "./usecases/loadTools.js"
 
@@ -153,6 +154,36 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
+const codeOption = Options.boolean("code").pipe(
+  Options.withDescription(
+    "Launch the focused single-fleet coder TUI (the `code` bin): in-process " +
+      "Workspace + a `code`-branded header + a tree scoped to the one working " +
+      "session. Implied when invoked as `code`.",
+  ),
+)
+
+/**
+ * Whether to run the focused `code` experience (vs the `efferent` master
+ * assistant). The PRIMARY signal is the `--code` flag, which the installed
+ * `code` bin's shim (`dist/code.js`) always injects — Bun resolves a symlinked
+ * bin's `argv[1]` to the bundle path, so name-sniffing alone can't catch a
+ * `code` invocation, hence the shim. The argv[1] basename check below is a
+ * belt-and-suspenders for the dev/source path (`bun …/src/code.ts`).
+ *
+ * TODO(release): the bin name `code` collides with the VS Code CLI (`code .`).
+ * Confirm the published name before cutting a release.
+ *
+ * The `code` path forces the IN-PROCESS TUI driver (regardless of
+ * EFFERENT_LOCAL) with `variant: "code"`; everything else runs the
+ * `efferent`/`eff` master variant ("master").
+ */
+const invokedAsCode = (): boolean => {
+  const argv1 = process.argv[1]
+  if (argv1 === undefined) return false
+  const base = argv1.split(/[\\/]/).pop() ?? ""
+  return base === "code" || base === "code.js" || base === "code.ts"
+}
+
 type Mode = "tui" | "print" | "json" | "rpc" | "daemon" | "daemon-serve"
 
 const resolveMode = (
@@ -192,16 +223,26 @@ const readStdinIfPiped = (): Promise<string | undefined> =>
 const discoverWorkspace = (workspace: string) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(workspace, homedir())
+    const memory = yield* loadMemory(workspace, homedir())
     const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
     const tools = yield* loadTools(workspace, homedir())
     const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
-    const root = rootPrompt(workspace, new Date(), skills, instructionFiles, agents, tools)
+    const root = rootPrompt(
+      workspace,
+      new Date(),
+      skills,
+      instructionFiles,
+      agents,
+      tools,
+      undefined,
+      memory,
+    )
     const rootScope: Scope = yield* discoverScopeTree(workspace, (_children, body) =>
       body !== undefined && body.trim().length > 0
         ? `${root.text}\n\n# Project scope\n\n${body}`
         : root.text,
     )
-    return { skills, agents, tools, instructionFiles, rootScope }
+    return { skills, memory, agents, tools, instructionFiles, rootScope }
   })
 
 const root = Command.make(
@@ -214,8 +255,9 @@ const root = Command.make(
     resume: resumeOption,
     cwd: cwdOption,
     fleet: fleetOption,
+    code: codeOption,
   },
-  ({ prompt, mode, print, allowBash, resume, cwd, fleet }) =>
+  ({ prompt, mode, print, allowBash, resume, cwd, fleet, code }) =>
     Effect.gen(function* () {
       const workspace =
         resume._tag === "Some" || cwd._tag === "Some"
@@ -251,7 +293,7 @@ const root = Command.make(
 
       // Discover skills / agent roles / declarative tools / instruction files /
       // scope tree (the same picture `daemon serve` builds — shared helper).
-      const { skills, agents, tools, instructionFiles, rootScope } =
+      const { skills, memory, agents, tools, instructionFiles, rootScope } =
         yield* discoverWorkspace(workspace)
 
       // Load settings + bind the workspace so AuthStore can read a local-tier
@@ -291,6 +333,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -313,6 +356,7 @@ const root = Command.make(
             prompt: effectivePrompt,
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -325,6 +369,7 @@ const root = Command.make(
           yield* runRpcMode({
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -338,6 +383,7 @@ const root = Command.make(
           yield* runDaemonMode({
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -352,6 +398,7 @@ const root = Command.make(
           yield* runDaemonServe({
             workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
@@ -361,15 +408,25 @@ const root = Command.make(
           }).pipe(Effect.provide(stderrLoggerLayer))
           return
         case "tui": {
+          // The `code` experience: invoked as the `code` bin, or `--code`. It is
+          // the focused single-fleet coder — a `code`-branded header and a fleet
+          // tree scoped to the one working session. It ALWAYS runs the in-process
+          // driver (its own in-memory Workspace, same path EFFERENT_LOCAL=1 uses),
+          // independent of the daemon, and carries `variant: "code"`. The default
+          // `efferent`/`eff` invocation is the master assistant (`variant:
+          // "master"`, the remote daemon driver).
+          const codeMode = code || invokedAsCode()
           // The startup conversation picker now lives *inside* the TUI (it's an
           // overlay over the live agent), so we only pass an explicit --resume.
           const tuiInput = {
             cwd: workspace,
             skills,
+            memory,
             agents,
             tools,
             rootScope,
             instructionFiles,
+            variant: codeMode ? ("code" as const) : ("master" as const),
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
             ...(fleet._tag === "Some" ? { fleetId: fleet.value } : {}),
           }
@@ -379,14 +436,14 @@ const root = Command.make(
           // platform lib is missing), surface a clear error and exit non-zero
           // rather than crashing with a defect.
           //
-          // The TUI is now a thin client that attaches to the per-workspace
-          // daemon over HTTP/SSE (auto-spawning it if absent) — the tmux-style
-          // default. The legacy in-process driver remains a one-flag fallback
-          // (`EFFERENT_LOCAL=1`) until the remote path has soaked; it is NOT
-          // deleted (that final cleanup is gated on a manual attach/detach/
-          // restore validation — see docs/daemon-split.md). `EFFERENT_REMOTE`
-          // stays accepted as an explicit opt-in alias for the default.
-          const local = (process.env.EFFERENT_LOCAL ?? "").trim().length > 0
+          // The default `efferent` TUI is a thin client that attaches to the
+          // per-workspace daemon over HTTP/SSE (auto-spawning it if absent) — the
+          // tmux-style default. The in-process driver is the `code` bin's backend
+          // AND the legacy `EFFERENT_LOCAL=1` fallback until the remote path has
+          // soaked; it is NOT deleted (that final cleanup is gated on a manual
+          // attach/detach/restore validation — see docs/daemon-split.md).
+          // `EFFERENT_REMOTE` stays accepted as an explicit opt-in alias.
+          const local = codeMode || (process.env.EFFERENT_LOCAL ?? "").trim().length > 0
           const runTui = local
             ? (yield* Effect.promise(() => import("./cli/runtime.js"))).runTuiModeSolid
             : (yield* Effect.promise(() => import("./cli/remoteRuntime.js"))).runTuiModeRemote
@@ -478,8 +535,22 @@ import packageJson from "../package.json" with { type: "json" }
 const resolveCwd = (cwd: Option.Option<string>): string =>
   Option.getOrElse(cwd, () => process.cwd())
 
-const daemonLogPath = (): string =>
-  join(process.env.EFFERENT_HOME ?? join(homedir(), ".efferent"), "efferent.log")
+// Print the daemon's running/health status for a workspace. Shared by
+// `efferent daemon status` and bare `efferent daemon`.
+const printDaemonStatus = (workspace: string) =>
+  Effect.gen(function* () {
+    const info = yield* readDiscovery(workspace)
+    if (info === undefined) {
+      yield* Effect.sync(() => process.stdout.write(`no daemon running for ${workspace}\n`))
+      return
+    }
+    const healthy = yield* probeHealth(`http://127.0.0.1:${info.port}`)
+    yield* Effect.sync(() =>
+      process.stdout.write(
+        `daemon pid ${info.pid} · 127.0.0.1:${info.port} · ${healthy ? "healthy" : "unreachable"}\n`,
+      ),
+    )
+  })
 
 // `efferent daemon serve` — the headless, detached server (today's
 // `--mode daemon-serve`, kept dual-accepted as the auto-spawn target).
@@ -490,7 +561,7 @@ const daemonServeCommand = Command.make(
     Effect.gen(function* () {
       const workspace = resolveCwd(cwd)
       yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
-      const { skills, agents, tools, instructionFiles, rootScope } =
+      const { skills, memory, agents, tools, instructionFiles, rootScope } =
         yield* discoverWorkspace(workspace)
       const settingsStore = yield* SettingsStore
       const settings = yield* settingsStore.load(workspace, homedir())
@@ -498,6 +569,7 @@ const daemonServeCommand = Command.make(
       yield* runDaemonServe({
         workspace,
         skills,
+        memory,
         agents,
         tools,
         rootScope,
@@ -510,20 +582,7 @@ const daemonServeCommand = Command.make(
 
 // `efferent daemon status` — is a daemon running for this workspace + healthy?
 const daemonStatusCommand = Command.make("status", { cwd: cwdOption }, ({ cwd }) =>
-  Effect.gen(function* () {
-    const workspace = resolveCwd(cwd)
-    const info = yield* readDiscovery(workspace)
-    if (info === undefined) {
-      yield* Effect.sync(() => process.stdout.write(`no daemon running for ${workspace}\n`))
-      return
-    }
-    const healthy = yield* probeHealth(`http://127.0.0.1:${info.port}`)
-    yield* Effect.sync(() =>
-      process.stdout.write(
-        `daemon pid ${info.pid} · 127.0.0.1:${info.port} · ${healthy ? "healthy" : "unreachable"}\n`,
-      ),
-    )
-  }),
+  printDaemonStatus(resolveCwd(cwd)),
 )
 
 // `efferent daemon stop` — graceful shutdown via the daemon's /shutdown.
@@ -542,50 +601,12 @@ const daemonStopCommand = Command.make("stop", { cwd: cwdOption }, ({ cwd }) =>
   }),
 )
 
-const logsOption = Options.boolean("logs").pipe(
-  Options.withAlias("v"),
-  Options.withDescription("Stream the daemon log to the screen instead of opening the dashboard."),
-)
-
-// `efferent daemon` — boot-or-attach the daemon + open the k9s-style control
-// dashboard (`-v`/`--logs` tails the daemon log instead).
-const daemonCommand = Command.make(
-  "daemon",
-  { cwd: cwdOption, logs: logsOption },
-  ({ cwd, logs }) =>
-    Effect.gen(function* () {
-      const workspace = resolveCwd(cwd)
-      if (logs) {
-        const logPath = daemonLogPath()
-        yield* Effect.sync(() =>
-          process.stdout.write(`tailing ${logPath} (Ctrl-C to stop)\n`),
-        )
-        yield* Effect.promise(() =>
-          Bun.spawn(["tail", "-n", "200", "-f", logPath], {
-            stdout: "inherit",
-            stderr: "inherit",
-          }).exited,
-        )
-        return
-      }
-      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
-      // The dashboard is the TUI's sibling — loaded lazily so @opentui/core's
-      // native FFI is touched only on this path.
-      const { runDashboard } = yield* Effect.promise(
-        () => import("./cli/dashboard/runtime.js"),
-      )
-      yield* runDashboard({ cwd: workspace }).pipe(
-        Effect.catchAllDefect((d) =>
-          Effect.sync(() => {
-            process.stderr.write(
-              `efferent: the dashboard failed to start (${String(d)}). ` +
-                `It needs @opentui/core's native library for this platform.\n`,
-            )
-            process.exitCode = 1
-          }),
-        ),
-      )
-    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+// `efferent daemon` (no subcommand) — print the daemon's status for this
+// workspace (same output as `efferent daemon status`). The chat-first TUI's
+// fleet-tree pane replaced the old k9s-style control dashboard, so there is no
+// longer a dashboard to open here.
+const daemonCommand = Command.make("daemon", { cwd: cwdOption }, ({ cwd }) =>
+  printDaemonStatus(resolveCwd(cwd)),
 ).pipe(
   Command.withSubcommands([daemonServeCommand, daemonStatusCommand, daemonStopCommand]),
 )

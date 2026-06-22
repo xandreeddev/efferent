@@ -45,6 +45,8 @@ export const glyph = {
   queued: "▸",
   /** "◀ active" tag marking the current selection in a list. */
   activeTag: "◀",
+  /** Breadcrumb separator above the chat pane (`assistant ▸ <agent folder>`). */
+  crumb: "▸",
   /** "add a new item" marker for manager rows (db connections). Plain ASCII so it
    *  renders in every terminal font (the fullwidth ＋ U+FF0B tofu'd on some). */
   add: "+",
@@ -69,6 +71,9 @@ export const glyph = {
   wordmark: "▌",
   idleDot: "○",
   fleet: "◆",
+  /** The `code` bin's header suffix (`▌efferent ⟩ code`) — the angle bracket that
+   *  brands the focused single-fleet coder apart from the master assistant. */
+  codeBrand: "⟩",
   /** Animated spinner frames for running tree nodes. */
   spinner: SPINNER_FRAMES,
 } as const

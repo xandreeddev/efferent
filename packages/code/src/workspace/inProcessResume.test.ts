@@ -62,6 +62,7 @@ describe("in-process Workspace — auto-resume in-flight turn", () => {
           rootScope: fakeRootScope,
           cwd: "/tmp/ws",
           skills: [],
+          memory: [],
           agents: [],
           tools: [],
           instructionFiles: [],

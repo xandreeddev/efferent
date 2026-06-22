@@ -68,6 +68,7 @@ export const makeStubCtx = (opts: {
 
   return {
     store,
+    variant: "master",
     run: opts.run,
     submit: () => {},
     interrupt: () => {},

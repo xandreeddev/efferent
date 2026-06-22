@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
-import type { AgentDefinition } from "@xandreed/sdk-core"
-import { renderScopeSystemPrompt, rootSystemPrompt } from "./coder.js"
+import type { AgentDefinition, Memory } from "@xandreed/sdk-core"
+import { coderSystemPrompt, renderScopeSystemPrompt, rootSystemPrompt } from "./coder.js"
 
 const role = (name: string): AgentDefinition => ({
   name,
@@ -9,16 +9,42 @@ const role = (name: string): AgentDefinition => ({
   sourcePath: "<test>",
 })
 
+const mem = (name: string, title: string, summary = ""): Memory => ({
+  name,
+  title,
+  summary,
+  sourcePath: `/w/.efferent/memory/${name}.md`,
+})
+
 describe("rootSystemPrompt", () => {
   it("delegates coding to the coordinator when the role is present", () => {
     const p = rootSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).toContain("# Delegating coding work")
+    expect(p).toContain("# Triage and dispatch")
     expect(p).toContain('run_agent({ agent: "coordinator"')
   })
 
-  it("omits the delegation section when no coordinator is loaded", () => {
+  it("dispatches deep research to the research-coordinator when the role is present", () => {
+    const p = rootSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
+    expect(p).toContain("# Triage and dispatch")
+    expect(p).toContain('run_agent({ agent: "research-coordinator"')
+  })
+
+  it("offers both branches when both leads are loaded", () => {
+    const p = rootSystemPrompt(
+      "/w",
+      new Date(0),
+      [],
+      [],
+      [role("coordinator"), role("research-coordinator")],
+      [],
+    )
+    expect(p).toContain('run_agent({ agent: "coordinator"')
+    expect(p).toContain('run_agent({ agent: "research-coordinator"')
+  })
+
+  it("omits the dispatch section when no lead role is loaded", () => {
     const p = rootSystemPrompt("/w", new Date(0), [], [], [], [])
-    expect(p).not.toContain("# Delegating coding work")
+    expect(p).not.toContain("# Triage and dispatch")
   })
 })
 
@@ -46,5 +72,58 @@ describe("renderScopeSystemPrompt", () => {
       now: new Date(0),
     })
     expect(p).not.toContain("# Agent roles")
+  })
+
+  it("injects the project-knowledge index when memory is present", () => {
+    const p = renderScopeSystemPrompt({
+      name: "implementer",
+      rootDir: "/w/pkg",
+      displayRoot: "/w",
+      body: "do the piece",
+      now: new Date(0),
+      memory: [mem("router-policy", "Per-request provider routing", "why we resolve keys per turn")],
+    })
+    expect(p).toContain("# Project knowledge")
+    expect(p).toContain("- router-policy: Per-request provider routing — why we resolve keys per turn")
+    expect(p).toContain("read_memory({ name })")
+    expect(p).toContain("remember(")
+  })
+
+  it("omits the project-knowledge section when there is no memory", () => {
+    const p = renderScopeSystemPrompt({
+      name: "implementer",
+      rootDir: "/w/pkg",
+      displayRoot: "/w",
+      body: "do the piece",
+      now: new Date(0),
+    })
+    expect(p).not.toContain("# Project knowledge")
+    expect(p).not.toContain("read_memory({ name })")
+  })
+})
+
+describe("memory in the coder prompt", () => {
+  it("lists each record's name + title + summary and points at read_memory/remember", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [], [
+      mem("adr-effect-services", "Services as Context.Tag + Layer", "ports & adapters from day 1"),
+      mem("gotcha-gemini-tools", "Gemini needs a param on every tool"),
+    ])
+    expect(p).toContain("# Project knowledge")
+    expect(p).toContain(
+      "- adr-effect-services: Services as Context.Tag + Layer — ports & adapters from day 1",
+    )
+    // No summary ⇒ no trailing em-dash clause.
+    expect(p).toContain("- gotcha-gemini-tools: Gemini needs a param on every tool")
+    expect(p).not.toContain("Gemini needs a param on every tool — ")
+    expect(p).toContain("read_memory({ name })")
+    expect(p).toContain("remember({ title, content })")
+  })
+
+  it("still offers `remember` but no index/read_memory when there is no memory", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [], [])
+    expect(p).not.toContain("# Project knowledge")
+    expect(p).not.toContain("read_memory({ name })")
+    // `remember` is always available — recording knowledge needs no prior records.
+    expect(p).toContain("remember({ title, content })")
   })
 })

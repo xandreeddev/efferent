@@ -1,4 +1,4 @@
-import type { AgentDefinition, Prompt, Skill } from "@xandreed/sdk-core"
+import type { AgentDefinition, Memory, Prompt, Skill } from "@xandreed/sdk-core"
 import {
   type InstructionFile,
   renderInstructionsSection,
@@ -48,6 +48,19 @@ const renderSkillsSection = (skills: ReadonlyArray<Skill>): string => {
   return `
 # Skills
 The following named procedures are available. Each is a short markdown document with steps for handling a specific kind of task. Read one with 'read_skill({ name })' when its name and description suggest it applies — then follow the steps.
+
+${lines}
+`
+}
+
+const renderMemorySection = (memory: ReadonlyArray<Memory>): string => {
+  if (memory.length === 0) return ""
+  const lines = memory
+    .map((m) => `- ${m.name}: ${m.title}${m.summary.length > 0 ? ` — ${m.summary}` : ""}`)
+    .join("\n")
+  return `
+# Project knowledge
+This workspace keeps a durable, curated knowledge layer — decisions, conventions, and gotchas distilled by past sessions, so you can read the code fresh yet keep the *why*. This is an INDEX (title + summary); read a record's full body with 'read_memory({ name })' when its summary looks relevant. When you make a real decision or learn something non-obvious that future sessions would re-derive, record it with 'remember({ title, content })' — keep entries small and curated, one topic each, not a dump.
 
 ${lines}
 `
@@ -109,6 +122,12 @@ interface RenderScopeSystemPromptArgs {
    * ⇒ no roster section (a leaf worker doesn't need it).
    */
   readonly agents?: ReadonlyArray<AgentDefinition>
+  /**
+   * Durable project-knowledge index (`.efferent/memory/*.md`), so a sub-agent
+   * reads the distilled rationale and can record new decisions. Absent ⇒ no
+   * Project-knowledge section.
+   */
+  readonly memory?: ReadonlyArray<Memory>
 }
 
 /**
@@ -147,8 +166,8 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 - wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather spawned agents' results without blocking (see Coordination).
 - send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron).
-- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.
-${subAgentsSection}${renderAgentsSection(args.agents ?? [])}${coordinationSection}
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.${(args.memory ?? []).length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below).\n- remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer." : ""}
+${subAgentsSection}${renderAgentsSection(args.agents ?? [])}${renderMemorySection(args.memory ?? [])}${coordinationSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - When a file is named or its path is known, read it directly with 'read_file' — don't grep/glob/ls to locate it first.
@@ -177,11 +196,12 @@ export const coderPrompt = (
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
   variant?: string,
+  memory: ReadonlyArray<Memory> = [],
 ): Prompt => ({
   name: "coder",
   version: CODER_PROMPT_VERSION,
   variant,
-  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools),
+  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools, memory),
 })
 
 export const coderSystemPrompt = (
@@ -191,6 +211,7 @@ export const coderSystemPrompt = (
   instructionFiles: ReadonlyArray<InstructionFile> = [],
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
+  memory: ReadonlyArray<Memory> = [],
 ): string =>
   `You are a coding assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there. If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
@@ -217,8 +238,9 @@ ${systemSection}
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
-- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
-${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${memory.length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below)." : ""}
+- remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer (see Project knowledge).${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
+${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}
 ${doingTasksSection}
 
 ${toneSection}
@@ -231,18 +253,37 @@ ${actionsSection}
 ${renderInstructionsSection(instructionFiles)}`
 
 /**
- * The `# Delegating coding work` section for the generic root. Emitted only when
- * a `coordinator` role is in the roster (so the root never points at a role that
- * isn't loaded) — directs non-trivial coding to the coordinator-led team.
+ * The `# Triage and dispatch` section for the generic root — the assistant's
+ * core decision: do it myself, dispatch a coding fleet (`coordinator`), or
+ * dispatch a research fleet (`research-coordinator`). Each delegation branch is
+ * emitted only when its lead role is in the roster (so the root never points at
+ * a role that isn't loaded); if neither lead is present the whole section is
+ * omitted. Prompt-only — no code logic decides routing, the model does.
  */
 const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string => {
-  if (!agents.some((a) => a.name === "coordinator")) return ""
-  return `
-# Delegating coding work
-For any non-trivial coding or implementation task — anything beyond a quick read or a one-line edit — hand it to the coordinator instead of doing it yourself:
+  const hasCoordinator = agents.some((a) => a.name === "coordinator")
+  const hasResearch = agents.some((a) => a.name === "research-coordinator")
+  if (!hasCoordinator && !hasResearch) return ""
+
+  const codingBranch = hasCoordinator
+    ? `- **Coding / implementation** (multi-file, multi-step, or review-worthy — beyond a quick read or one-line edit) → hand it to the coordinator:
   run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task, with everything you already know>" })
-This returns immediately — the coordinator works in the background. It leads a team: it plans, staffs the right specialists for the work (frontend, backend, qa, product, plus a read-only architect to validate), coordinates them, and reports back. You can simply tell the user it's underway and let them watch/steer, or call wait_for_agents to relay its result when it's done — either way you don't block. You stay the user's point of contact: the user (and you, via send_message) can reach the coordinator or any teammate at any time for status, alignment, or to change the deliverable.
-Do small things yourself: answer questions, read/grep/inspect the workspace, a single-file edit. Reach for the coordinator when the work is multi-file, multi-step, or benefits from review.
+  It leads a team — plans, staffs specialists (frontend/backend/qa/product) plus a read-only architect to validate, and reports back.`
+    : ""
+  const researchBranch = hasResearch
+    ? `- **Deep research** ("research X", "compare libraries/options", "investigate Y across the web", anything wanting multiple sources synthesized) → hand it to the research-coordinator:
+  run_agent({ agent: "research-coordinator", folder: "<cwd, or the relevant dir>", task: "<the full question, with any scope/constraints you know>" })
+  It breaks the question into angles, fans out web-research sub-agents in parallel, synthesizes a sourced answer, and reports back.`
+    : ""
+  const branches = [codingBranch, researchBranch].filter((b) => b.length > 0).join("\n")
+
+  return `
+# Triage and dispatch
+You're the user's point of contact. Triage every request and pick the cheapest path that serves it:
+- **Do it yourself** for small things — answering a question, reading/grepping/inspecting the workspace, a single-file edit, light fact-finding you can settle in one or two searches. Don't spin up a fleet for what a direct reply handles.
+${branches}
+A dispatched lead runs in the BACKGROUND: run_agent returns immediately with a { nodeId, name }. Reply briefly — "on it — spawned <name>, jump in to watch" — and surface that node so the user can jump into the fleet and watch or steer it. Then either let them follow it or call wait_for_agents to relay the result when it lands — either way you don't block. You stay reachable as their point of contact: the user (and you, via send_message) can reach the lead or any teammate at any time for status, alignment, or a changed deliverable.
+When the request is ambiguous (a vague ask that could be a quick answer or a deep dig), lean on whether it needs multiple sources/files synthesized — if it does, dispatch; if not, just do it.
 `
 }
 
@@ -257,17 +298,18 @@ export const rootPrompt = (
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
   variant?: string,
+  memory: ReadonlyArray<Memory> = [],
 ): Prompt => ({
   name: "root",
   version: ROOT_PROMPT_VERSION,
   variant,
-  text: rootSystemPrompt(cwd, now, skills, instructionFiles, agents, tools),
+  text: rootSystemPrompt(cwd, now, skills, instructionFiles, agents, tools, memory),
 })
 
 /**
  * The generic root agent: a coding-and-engineering assistant that does small
  * things directly but **delegates real coding to the coordinator-led team**
- * (see `# Delegating coding work`). Same toolkit as the coder (base + run_agent
+ * (see `# Triage and dispatch`). Same toolkit as the coder (base + run_agent
  * + comms) — only the identity + delegation policy differ. Used for the root
  * scope; folder-scoped coders still use {@link coderPrompt}.
  */
@@ -278,8 +320,9 @@ export const rootSystemPrompt = (
   instructionFiles: ReadonlyArray<InstructionFile> = [],
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
+  memory: ReadonlyArray<Memory> = [],
 ): string =>
-  `You are a coding-and-engineering assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace. You help directly with quick things — answering questions, reading and searching code, small edits — but for real implementation work you don't code alone: you coordinate a team (see "Delegating coding work" below). If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
+  `You are a personal engineering assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace. You help directly with quick things — answering questions, reading and searching code, small edits, light fact-finding — but you don't take on big jobs alone: you triage each request and dispatch a coding or research team for the heavy work (see "Triage and dispatch" below). If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
 IMPORTANT: Never generate or guess URLs unless you are confident they are for helping the user with programming. You may use URLs the user provides in their messages or in local files.
 
@@ -299,13 +342,14 @@ ${systemSection}
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
-- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Delegating coding work / Agent roles below).
+- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused work; pass 'agent' to run a predefined role (see Triage and dispatch / Agent roles below).
 - wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather the results of agents you spawned without blocking (see Coordination).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due.
-- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
-${renderSkillsSection(skills)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationSection(agents)}
+- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${memory.length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below)." : ""}
+- remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer (see Project knowledge).${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
+${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationSection(agents)}
 ${doingTasksSection}
 
 ${toneSection}

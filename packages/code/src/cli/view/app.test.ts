@@ -1,8 +1,7 @@
 import { test, expect } from "bun:test"
 import { testRender } from "@opentui/solid"
-import type { AgentMessage, ConversationId } from "@xandreed/sdk-core"
+import type { ConversationId } from "@xandreed/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
-import { buildContextView } from "../presentation/contextView.js"
 import { openSelect } from "../presentation/selectBox.js"
 import { openLogin } from "../presentation/loginFlow.js"
 import { openSettings } from "../presentation/settingsView.js"
@@ -11,12 +10,6 @@ import { createTuiStore, type TuiContext, type TuiStore } from "../state/store.j
 import { makeEventReducer } from "../events/eventPump.js"
 
 const cid = "00000000-0000-0000-0000-000000000000" as unknown as ConversationId
-
-const user = (text: string): AgentMessage => ({ role: "user", content: text })
-const assistant = (text: string): AgentMessage => ({
-  role: "assistant",
-  content: [{ type: "text", text }],
-})
 
 const newStore = (): TuiStore =>
   createTuiStore({
@@ -32,6 +25,7 @@ const newStore = (): TuiStore =>
 
 const fakeCtx = (store: TuiStore): TuiContext => ({
   store,
+  variant: "master",
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
@@ -95,47 +89,30 @@ test("conversation rail renders a user turn, assistant prose, and a tool pill", 
   }
 })
 
-test("activity pane shows the execution tree, stats header, and sections", async () => {
+test("the fleet tree is always visible on the right, showing the workspace sessions", async () => {
   const store = newStore()
-  // agy: the contextual panel fills the message region only when focused
-  // (no default sidebar) — focus it to see the activity view.
-  store.setFocus("side")
+  // Chat-first: the fleet tree replaces the four cycled side views and renders
+  // on the right at all times — no focus needed to see it.
+  store.setNav((n) => ({ ...n, view: "tree" }))
+  store.setProjection((p) => ({
+    ...p,
+    sessions: [{ id: cid as unknown as string, label: "the parser session", active: true }],
+  }))
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
-    width: 110,
+    width: 120,
     height: 32,
   })
   try {
-    const reduce = makeEventReducer(store)
-    reduce({ type: "turn_start", turnIndex: 0 })
-    reduce({
-      type: "tool_call_start",
-      turnIndex: 0,
-      id: "call_x",
-      toolName: "read_file",
-      args: { path: "x.ts" },
-    })
-    reduce({
-      type: "assistant_message",
-      turnIndex: 0,
-      text: "done",
-      usage: { inputTokens: 5000, outputTokens: 340, totalTokens: 5340, cacheReadTokens: 0 },
-    })
-    reduce({ type: "tool_call_end", turnIndex: 0, id: "call_x", toolName: "read_file", ok: true, result: { content: "y" } })
-    reduce({ type: "agent_end", finalText: "done", messages: [] })
-
-    const frame = await waitForFrame((f) => f.includes("activity") && f.includes("turn 1"))
-    expect(frame).toContain("activity") // side pane title
-    expect(frame).toContain("ctx ") // stats gauge label
-    expect(frame).toContain("turn 1") // execution-tree turn node
-    expect(frame).toContain("1 turn") // stats meta line (turn count)
-    expect(frame).toContain("skills") // foldable section
-    expect(frame).toContain("instructions") // foldable section
+    const frame = await waitForFrame((f) => f.includes("fleet") && f.includes("the parser session"))
+    expect(frame).toContain("fleet") // the fleet-tree pane title
+    expect(frame).toContain("the parser session") // a workspace session row
+    expect(frame).toContain("active") // the live session's ◀ active tag
   } finally {
     renderer.destroy()
   }
 })
 
-test("selecting an agent opens it as the right pane beside the orchestrator (the split)", async () => {
+test("jumping into an agent re-points the LEFT chat to that agent's session (breadcrumb + log)", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 160,
@@ -143,10 +120,11 @@ test("selecting an agent opens it as the right pane beside the orchestrator (the
   })
   try {
     const nodeId = "11111111-1111-1111-1111-111111111111"
-    // The lead conversation on the left…
+    // The assistant's lead conversation…
     store.pushBlock({ kind: "user", text: "lead question" })
-    // …and a selected agent opens on the right, showing its LIVE LOG (the pump
-    // accumulates this per node, so swapping to it shows its full state).
+    // …then jump into an agent (the tree's ↵): the LEFT chat now shows the
+    // agent's LIVE LOG (the pump accumulates it per node) instead of the
+    // assistant rail, and the breadcrumb says where we are.
     store.appendNodeLog(nodeId, { kind: "user", text: "audit the adapters layer" })
     store.setNodePreview({
       nodeId,
@@ -156,11 +134,11 @@ test("selecting an agent opens it as the right pane beside the orchestrator (the
     })
 
     const frame = await waitForFrame(
-      (f) => f.includes("lead question") && f.includes("audit the adapters layer"),
+      (f) => f.includes("audit the adapters layer") && f.includes("assistant"),
     )
-    expect(frame).toContain("lead question") // orchestrator (left pane) still shown
-    expect(frame).toContain("agent: adapters") // the agent (right pane) title
-    expect(frame).toContain("audit the adapters layer") // the agent's log (right pane body)
+    expect(frame).toContain("assistant") // the breadcrumb (assistant ▸ adapters)
+    expect(frame).toContain("adapters") // the jumped-into agent folder
+    expect(frame).toContain("audit the adapters layer") // the agent's log on the LEFT
   } finally {
     renderer.destroy()
   }
@@ -233,55 +211,9 @@ test("a provider 401 renders as a compact, actionable rail block (no token, no f
   }
 })
 
-test("the side pane switches to the context viewer and renders the turn tree", async () => {
-  const store = newStore()
-  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
-    width: 160,
-    height: 30,
-  })
-  try {
-    // Build context segments and flip the side pane into the context view —
-    // exactly what `toggleContext` does after fetching records.
-    const segs = buildContextView([user("fix the parser"), assistant("done")], [])
-    store.setProjection((p) => ({ ...p, context: segs }))
-    store.setNav((n) => ({ ...n, view: "context", contextCollapsed: new Set(), contextCursor: 0 }))
-    store.setFocus("side")
-
-    const frame = await waitForFrame((f) => f.includes("context") && f.includes("fix the parser"))
-    expect(frame).toContain("context") // pane title + header
-    expect(frame).toContain("loaded context") // the loaded-segment row
-    expect(frame).toContain("fix the parser") // a turn subject
-    expect(frame).toContain("○") // the unselected pick marker
-  } finally {
-    renderer.destroy()
-  }
-})
-
-test("selecting a turn in the context viewer shows the ◉ marker and a count", async () => {
-  const store = newStore()
-  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
-    width: 160,
-    height: 30,
-  })
-  try {
-    const segs = buildContextView([user("turn one"), assistant("a"), user("turn two"), assistant("b")], [])
-    store.setProjection((p) => ({ ...p, context: segs }))
-    store.setNav((n) => ({
-      ...n,
-      view: "context",
-      contextCollapsed: new Set(),
-      contextSelected: new Set([1]),
-      contextCursor: 0,
-    }))
-    store.setFocus("side")
-
-    const frame = await waitForFrame((f) => f.includes("◉") && f.includes("1 selected"))
-    expect(frame).toContain("◉")
-    expect(frame).toContain("1 selected")
-  } finally {
-    renderer.destroy()
-  }
-})
+// (The context-viewer side-pane tests were removed with the chat-first
+//  collapse — the four cycled side views are gone; context curation is
+//  deferred. The fleet tree is covered by its own test above.)
 
 test("an open select picker renders inline (agy borderless menu) with its options + hints", async () => {
   const store = newStore()

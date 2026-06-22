@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 import * as Migrator from "@effect/sql/Migrator"
@@ -7,6 +6,8 @@ import { PgClient, PgMigrator } from "@effect/sql-pg"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import { Cause, Config, Duration, Effect, Layer, Option, Redacted } from "effect"
 import { connFromUrl, type DatabaseConn } from "@xandreed/sdk-core"
+
+import { resolveConfigRoots } from "../configRoots.js"
 
 import { PostgresConversationStoreLive } from "../conversationStore/postgres.js"
 import { SqliteConversationStoreLive } from "../conversationStore/sqlite.js"
@@ -25,6 +26,7 @@ import pg0009 from "./migrations/0009_conversation_title.js"
 import pg0010 from "./migrations/0010_node_title.js"
 import pg0011 from "./migrations/0011_pending_turn.js"
 import pg0012 from "./migrations/0012_conversation_model.js"
+import pg0013 from "./migrations/0013_node_kind.js"
 import sqlite0001 from "./migrations-sqlite/0001_init.js"
 import sqlite0002 from "./migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "./migrations-sqlite/0003_workspace_ref.js"
@@ -33,6 +35,7 @@ import sqlite0005 from "./migrations-sqlite/0005_conversation_title.js"
 import sqlite0006 from "./migrations-sqlite/0006_node_title.js"
 import sqlite0007 from "./migrations-sqlite/0007_pending_turn.js"
 import sqlite0008 from "./migrations-sqlite/0008_conversation_model.js"
+import sqlite0009 from "./migrations-sqlite/0009_node_kind.js"
 
 /**
  * Database layer + ConversationStore, selected at runtime from a single
@@ -49,7 +52,12 @@ import sqlite0008 from "./migrations-sqlite/0008_conversation_model.js"
  * no `.ts` files read off disk at runtime.
  */
 
-const defaultSqlitePath = () => join(homedir(), ".efferent", "efferent.db")
+// The zero-config DB lives beside auth.json/config.json in the GLOBAL config
+// root — which honours `EFFERENT_HOME` (`$EFFERENT_HOME/.efferent`), so a
+// sandbox / `start:fresh` run is truly hermetic instead of falling back to the
+// real `~/.efferent/efferent.db`. (cwd only affects the local tier, irrelevant
+// for the global default.)
+const defaultSqlitePath = () => join(resolveConfigRoots(process.cwd()).global, "efferent.db")
 
 type DbTarget =
   | { readonly kind: "postgres" }
@@ -126,6 +134,7 @@ const pgLoader = Migrator.fromRecord({
   "0010_node_title": pg0010,
   "0011_pending_turn": pg0011,
   "0012_conversation_model": pg0012,
+  "0013_node_kind": pg0013,
 })
 
 const sqliteLoader = Migrator.fromRecord({
@@ -137,6 +146,7 @@ const sqliteLoader = Migrator.fromRecord({
   "0006_node_title": sqlite0006,
   "0007_pending_turn": sqlite0007,
   "0008_conversation_model": sqlite0008,
+  "0009_node_kind": sqlite0009,
 })
 
 /** Postgres client + migrator (only built when EFFERENT_DB_URL is set). */

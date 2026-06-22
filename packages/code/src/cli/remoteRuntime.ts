@@ -173,6 +173,9 @@ export const runTuiModeRemote = (
       const exitDeferred = yield* Deferred.make<void>()
       const ctx: TuiContext = {
         store,
+        // The remote driver backs the `efferent` master assistant — always the
+        // full-chrome "master" variant (`code` runs the in-process driver).
+        variant: input.variant ?? "master",
         run: (program) => Runtime.runPromise(rt)(program),
         submit: (text) => {
           // Optimistic user line (the daemon persists it but emits no user event).

@@ -47,7 +47,7 @@ test("runSearch matches rows (turn head + body), lands on the last match, focuse
   // assistant body row (b:3), not the whole turn.
   expect(s.matchIds).toEqual(["turn:0", "b:3"])
   expect(s.index).toBe(1) // most recent match
-  expect(store.focus()).toBe("conversation")
+  expect(store.focus()).toBe("chat")
   expect(seen).toEqual(["b:3"])
 })
 
@@ -115,27 +115,26 @@ test("runSearch with no hit keeps an empty search so the status line can report 
   })
 })
 
-test("runSearch on the side pane matches Activity rows and moves the stack cursor", () => {
+test("runSearch on the fleet tree matches a workspace session row and moves the tree cursor", () => {
   const store = newStore()
-  store.setSearchPane("side")
+  store.setSearchPane("side") // the tree maps to the "side" search pane
+  store.setNav((n) => ({ ...n, view: "tree" }))
+  // The fleet tree lists every workspace session as a root (the active one
+  // marked) — search matches a session row by its label.
   store.setProjection((p) => ({
     ...p,
-    tree: {
-      roots: [
-        { id: 1, kind: "turn", label: "edit lexer.ts", status: "ok", startedAt: 0, endedAt: 0, children: [] },
-        { id: 2, kind: "turn", label: "edit parser.ts", status: "ok", startedAt: 0, endedAt: 0, children: [] },
-      ],
-      openPath: [],
-      nextId: 3,
-    },
+    sessions: [
+      { id: "a", label: "edit lexer.ts", active: true },
+      { id: "b", label: "edit parser.ts", active: false },
+    ],
   }))
   runSearch(store, "parser")
   const s = store.search()
-  if (s === undefined) throw new Error("expected a side search")
+  if (s === undefined) throw new Error("expected a fleet-tree search")
   expect(s.pane).toBe("side")
-  expect(s.matchIds).toEqual(["1"]) // row index 1 — the "edit parser.ts" node
-  expect(store.focus()).toBe("side")
-  expect(store.nav().stackCursor).toBe(1) // cursor jumped to the match
+  expect(s.matchIds).toEqual(["1"]) // row index 1 — the "edit parser.ts" session
+  expect(store.focus()).toBe("tree")
+  expect(store.nav().treeCursor).toBe(1) // cursor jumped to the match
 })
 
 test("clearSearch drops the search; clear() also drops it", () => {
