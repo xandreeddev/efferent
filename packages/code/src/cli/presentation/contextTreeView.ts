@@ -53,6 +53,10 @@ export interface TreeConversationDisplay {
   readonly nodeCount: number
   readonly folded: boolean
   readonly hasChildren: boolean
+  /** The orchestrator (this root's own turn) is running right now — the view
+   *  shows a live running glyph so the lead's status reads at a glance, next to
+   *  its fleet's per-agent status. Only ever true for the active root. */
+  readonly rootRunning: boolean
 }
 
 export type TreeRowDisplay = TreeNodeDisplay | TreeConversationDisplay
@@ -153,6 +157,9 @@ export const buildNavRows = (
      *  theirs — "active" means "where a typed message goes", and only one
      *  row can claim that. */
     readonly activeNodeId?: string
+    /** The active root's own turn is in flight — stamps `rootRunning` on the
+     *  active conversation row so the lead shows a live running glyph. */
+    readonly rootRunning?: boolean
   } = {},
 ): ReadonlyArray<TreeRowData> => {
   const byParent = childrenByParent(nodes)
@@ -222,13 +229,17 @@ export const buildNavRows = (
     return n
   }
 
+  // A lone session root (the always-expanded current-session fleet pane) is
+  // NOT foldable — folding the only root would hide the whole fleet. With
+  // multiple roots (legacy multi-session shape) each stays foldable.
+  const single = conversations.length === 1
   for (const conv of conversations) {
     const agentRoots =
       opts.adoptAll === true
         ? (byParent.get(null) ?? [])
         : (byParent.get(null) ?? []).filter((r) => r.rootConversationId === conv.id)
     const hasChildren = agentRoots.length > 0
-    const foldId = hasChildren ? `tree:conv:${conv.id}` : undefined
+    const foldId = !single && hasChildren ? `tree:conv:${conv.id}` : undefined
     const folded = foldId !== undefined && collapsed.has(foldId)
     rows.push({
       key: `tree-row:conv:${conv.id}`,
@@ -245,6 +256,7 @@ export const buildNavRows = (
         nodeCount: countSubtree(agentRoots),
         folded,
         hasChildren,
+        rootRunning: conv.active && opts.rootRunning === true,
       },
     })
     if (!folded) {

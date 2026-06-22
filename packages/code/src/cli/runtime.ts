@@ -161,13 +161,15 @@ export const runTuiModeSolid = (
         yield* openConversationPicker(store, input.cwd)
       }
 
-      // The bin's chrome variant — `code` scopes the fleet tree to the single
-      // working session (no cross-session rows); `master` shows them all.
+      // The bin's chrome variant (presentation only). The fleet pane is
+      // current-session-only in BOTH bins now — one always-expanded root (the
+      // working session) and its agent subtree; other sessions live in the
+      // `:browse`/resume picker, not this always-visible pane.
       const variant = input.variant ?? "master"
-      const navOpts = { activeOnly: variant === "code" }
+      const navOpts = { activeOnly: true }
 
-      // The navigator (agents half of the side pane) is always visible now —
-      // seed it at boot so prior sessions/sub-agents show without `:tree`.
+      // The fleet tree is always visible — seed it at boot so the current
+      // session's sub-agents show without `:tree`.
       yield* refreshNav(store, cid, navOpts).pipe(Effect.catchAll(() => Effect.void))
 
       // Interactive bash approval: the agent fiber suspends on the Approval

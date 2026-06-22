@@ -26,6 +26,7 @@ import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { stopOAuthSession } from "./actions/login.js"
 import { applyContext } from "./actions/session.js"
+import { refreshNav } from "./actions/contextTree.js"
 import { makeEventReducer } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
 import { setTheme } from "./state/theme.js"
@@ -168,7 +169,30 @@ export const runTuiModeRemote = (
         text: "attached to daemon · type to chat (↵ sends) · : for commands · ? for keys",
       })
 
-      const reduce = makeEventReducer(store, { refreshNav: refreshSnapshot })
+      // Seed the always-visible fleet tree from the SHARED store (the client
+      // process has `ContextTreeStore`/`ConversationStore` in `AppServices` and
+      // already reads them for `openNodePreview`). The daemon stamps every
+      // spawn's node with `rootConversationId === rootCid`, so `listTree(rootCid)`
+      // returns the daemon's fleet — current-session-only, always expanded.
+      yield* refreshNav(store, rootCid, { activeOnly: true }).pipe(
+        Effect.catchAll(() => Effect.void),
+      )
+      const refreshFleet = (): void => {
+        void Runtime.runPromise(rt)(
+          refreshNav(store, rootCid, { activeOnly: true }).pipe(Effect.catchAll(() => Effect.void)),
+        )
+      }
+
+      // Each sub-agent start/end (and turn end) refreshes BOTH the snapshot
+      // cache (the `:fleet`/`liveAgents` views) and the fleet tree (the right
+      // pane) — so a running fleet appears and flips status live on the daemon
+      // path exactly as it does in-process.
+      const reduce = makeEventReducer(store, {
+        refreshNav: () => {
+          refreshSnapshot()
+          refreshFleet()
+        },
+      })
 
       const exitDeferred = yield* Deferred.make<void>()
       const ctx: TuiContext = {

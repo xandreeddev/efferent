@@ -19,10 +19,9 @@ import { NodeDetail } from "./side/NodeDetail.js"
 export const FleetTree = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const focused = () => store.focus() === "tree"
-  // `master` spans the workspace's sessions → their agents; `code` is scoped to
-  // the one working session, so its subtitle names the single-fleet focus.
-  const subtitle = () =>
-    props.ctx.variant === "code" ? "  · this session's agents" : "  · sessions → agents"
+  // One pane, both bins: the current session's fleet (coordinator → agents →
+  // sub-agents), always expanded, live status. No multi-session list, no tabs.
+  const subtitle = () => "  · this session's fleet"
 
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0}>

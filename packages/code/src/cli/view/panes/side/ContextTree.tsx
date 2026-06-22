@@ -29,6 +29,9 @@ const statusColor = (s: Status): string =>
  */
 const Row = (props: { row: TreeRowData; active: boolean }) => {
   const d = () => props.row.display
+  // A row carries a fold caret iff it is foldable (has a `foldId`); the lone
+  // always-expanded session root has none, so it shows no caret.
+  const foldable = () => props.row.foldId !== undefined
   return (
     <box
       flexDirection="row"
@@ -52,19 +55,26 @@ const Row = (props: { row: TreeRowData; active: boolean }) => {
       </Show>
       <Show
         when={d().kind === "node"}
-        fallback={renderConversation(() => d() as TreeConversationDisplay)}
+        fallback={renderConversation(() => d() as TreeConversationDisplay, foldable())}
       >
-        {renderNode(() => d() as TreeNodeDisplay)}
+        {renderNode(() => d() as TreeNodeDisplay, foldable())}
       </Show>
     </box>
   )
 }
 
-const renderConversation = (d: () => TreeConversationDisplay) => {
+const renderConversation = (d: () => TreeConversationDisplay, foldable: boolean) => {
   const v = d()
   return (
     <>
-      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${foldable ? foldCaret(v.folded) : " "} `}</text>
+      {/* The orchestrator's own live status: a running ● while its turn is in
+          flight (next to the fleet's per-agent glyphs), a dim ● when idle. */}
+      <text
+        fg={v.rootRunning ? tokens.state.running : tokens.text.dim}
+        wrapMode="none"
+        flexShrink={0}
+      >{`${glyph.railDot} `}</text>
       <text fg={v.active ? tokens.text.default : tokens.text.muted} wrapMode="none">
         {v.label}
       </text>
@@ -78,7 +88,7 @@ const renderConversation = (d: () => TreeConversationDisplay) => {
   )
 }
 
-const renderNode = (d: () => TreeNodeDisplay) => {
+const renderNode = (d: () => TreeNodeDisplay, foldable: boolean) => {
   const v = d()
   const meta = [
     // The fleet tier (a top-level task/coordinator) reads distinctly from a
@@ -93,7 +103,7 @@ const renderNode = (d: () => TreeNodeDisplay) => {
     .join(" · ")
   return (
     <>
-      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${v.hasChildren ? foldCaret(v.folded) : " "} `}</text>
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${foldable ? foldCaret(v.folded) : " "} `}</text>
       <text fg={statusColor(v.status)} wrapMode="none" flexShrink={0}>{`${statusGlyph(v.status)} `}</text>
       <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
         {v.label}
@@ -133,7 +143,7 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
   // The SHARED flatten (root-agent anchor + this session's nodes) — must match
   // the keymap's `treeRows` exactly or the cursor and the pixels disagree
   // (the active-node id is display-only, so the keymap omitting it is fine).
-  const rows = () => treeRows(sp(), sp(), store.nodePreview()?.nodeId)
+  const rows = () => treeRows(sp(), sp(), store.nodePreview()?.nodeId, store.busy())
   const cursor = () => sp().treeCursor
 
   let sb!: ScrollBoxRenderable
