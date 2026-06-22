@@ -356,12 +356,13 @@ const inputKey = (ctx: TuiContext, key: Key): boolean => {
     return true
   }
 
-  // `?` on an EMPTY composer opens the shortcuts overlay (agy "? for shortcuts");
-  // with any text typed it inserts normally.
-  if (key.name === "?" && text.length === 0) {
-    store.setOverlay({ kind: "shortcuts" })
-    return claim()
-  }
+  // NOTE: `?` is NOT special in INSERT — it must always type, or any message
+  // with a question mark ("hi?", "what's up?") silently fails to send. (The old
+  // "`?` on an empty composer opens shortcuts" affordance keyed off the input
+  // MIRROR, which lags the textarea: a `?` typed before the mirror caught up
+  // read as empty and popped the shortcuts overlay instead of inserting — the
+  // "I type and nothing sends / I don't see my message" bug.) Shortcuts open
+  // from NORMAL mode (`?`, see below) and via `:shortcuts`/`:keys`.
 
   const isCommand = text.startsWith(":")
   const isSearch = text.startsWith("/") && text.length > 1
