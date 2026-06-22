@@ -62,6 +62,11 @@ export const makeEventReducer = (
   const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of node-log pill ids
   const toolNodeId = new Map<string, string>() // matchKey → the node a logged tool pill belongs to
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
+  // node id → its parentNodeId. A root-spawned LEAD has no parent node
+  // (undefined) — that's how we tell a top-level lead (whose result we surface
+  // into the chat when it finishes, since the async orchestrator has long since
+  // gone idle) from a coordinator's own specialists (parent = the coordinator).
+  const parentByNode = new Map<string, string | undefined>()
   // One live "Running N agents…" rail block per fan-out burst: rows keyed by
   // node id, updated in place (Claude-style), reset when the parent's next
   // turn starts. Replaces the old one-Task-pill-per-spawn rail.
@@ -231,6 +236,8 @@ export const makeEventReducer = (
 
       case "subagent_start": {
         subAgentDepth++
+        // Remember who spawned this node (undefined parent = a root-spawned lead).
+        if (event.nodeId !== undefined) parentByNode.set(event.nodeId, event.parentNodeId)
         // Surface the freshly-spawned node in the agents navigator NOW — it's
         // already persisted, and waiting for turn end would make a running
         // agent unreachable mid-turn.
@@ -312,6 +319,21 @@ export const makeEventReducer = (
               ? { kind: "assistant", text: event.summary }
               : { kind: "error", text: event.summary },
           )
+        }
+        // A TOP-LEVEL lead (root-spawned, no parent node) just finished. The
+        // async orchestrator said "on it" and went idle turns ago, so its result
+        // would never reach the conversation on its own — surface it in the chat
+        // rail directly (the "report back when done" the user expects). Deeper
+        // specialists stay folded inside their lead's subtree (parent is set).
+        const isTopLevel =
+          event.nodeId !== undefined && parentByNode.get(event.nodeId) === undefined
+        if (event.nodeId !== undefined) parentByNode.delete(event.nodeId)
+        if (isTopLevel && event.ok && event.summary.trim().length > 0) {
+          store.pushBlock({
+            kind: "assistant",
+            text: `**${event.name}** finished${filesDetail !== undefined ? ` · ${filesDetail}` : ""}:\n\n${event.summary.trim()}`,
+          })
+          store.convScroller.current?.scrollToBottom()
         }
         if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
           // Human-driven resume (no rail presence) — close its tree node only.

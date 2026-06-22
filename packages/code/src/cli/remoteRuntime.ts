@@ -14,6 +14,7 @@ import {
   StoreSwitch,
   connLabel,
   sessionConversationId,
+  SessionId,
   type Directive,
   type SessionSummary,
   type WorkspaceSnapshot,
@@ -202,6 +203,31 @@ export const runTuiModeRemote = (
         variant: input.variant ?? "master",
         run: (program) => Runtime.runPromise(rt)(program),
         submit: (text) => {
+          // Jumped into an agent? Route the message to THAT node's session — the
+          // daemon delivers to a running node's mailbox or resumes a finished one
+          // (Workspace.send handles both). The composer is paired with the agent,
+          // so the optimistic line goes into ITS log (AgentPane shows nodeLog),
+          // not the root rail — and its reply streams back tagged with the node id.
+          const preview = store.nodePreview()
+          if (preview !== undefined) {
+            const sid = Schema.decodeUnknownOption(SessionId)(preview.nodeId)
+            if (sid._tag === "Some") {
+              store.appendNodeLog(preview.nodeId, { kind: "user", text })
+              store.setInput("")
+              store.convScroller.current?.scrollToBottom()
+              void Runtime.runPromise(rt)(
+                ws.send(sid.value, text).pipe(
+                  Effect.tap(() => Effect.sync(refreshFleet)),
+                  Effect.catchAll((e) =>
+                    Effect.sync(() =>
+                      store.appendNodeLog(preview.nodeId, { kind: "error", text: e.message }),
+                    ),
+                  ),
+                ),
+              )
+              return
+            }
+          }
           // Optimistic user line (the daemon persists it but emits no user event).
           store.pushBlock({ kind: "user", text })
           store.setInput("")
