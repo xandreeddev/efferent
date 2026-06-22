@@ -35,10 +35,17 @@ export class ConversationStore extends Context.Tag(
       id: ConversationId,
       workspaceDir?: string,
     ) => Effect.Effect<void, ConversationStoreError>
+    /**
+     * Append a message and return the **absolute position** it was assigned
+     * (`COALESCE(MAX(position)+1, 0)`, monotonic + immutable per conversation).
+     * The position is the durable identity the UI keys conversation blocks on,
+     * so a live-streamed block and the later DB-projected block of the same
+     * message reconcile to one entry instead of duplicating.
+     */
     readonly append: (
       id: ConversationId,
       msg: AgentMessage,
-    ) => Effect.Effect<void, ConversationStoreError | ConversationNotFound>
+    ) => Effect.Effect<number, ConversationStoreError | ConversationNotFound>
     readonly list: (
       id: ConversationId,
     ) => Effect.Effect<

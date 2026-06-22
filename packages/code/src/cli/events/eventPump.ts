@@ -2,7 +2,7 @@ import { Effect, Queue } from "effect"
 import { batch } from "solid-js"
 import type { AgentEvent } from "../../events.js"
 import { reduceAgentState } from "../presentation/agentState.js"
-import type { AgentRunRow } from "../presentation/conversation.js"
+import { messageKey, type AgentRunRow } from "../presentation/conversation.js"
 import {
   describeToolCall,
   describeToolResult,
@@ -134,6 +134,23 @@ export const makeEventReducer = (
         agentRows.clear()
         store.setTree((t) => treeTurnStart(t, event.turnIndex, now))
         return
+
+      case "user_message": {
+        // The user's prompt for a turn, flowing through the keyed stream (the
+        // daemon emits it now — no client-side queue-diff reconstruction). On
+        // the root rail it reconciles with any optimistic line by position; a
+        // sub-agent's seed/user line streams into that node's live log.
+        if (event.nodeId !== undefined) {
+          store.appendNodeLog(event.nodeId, { kind: "user", text: event.text })
+          return
+        }
+        if (event.position !== undefined) {
+          store.resolveOptimisticUser(event.position, event.text)
+        } else {
+          store.pushBlock({ kind: "user", text: event.text })
+        }
+        return
+      }
 
       case "tool_call_start": {
         // The plan tool's arguments ARE the session plan — mirror them into
@@ -443,11 +460,23 @@ export const makeEventReducer = (
           }
           return
         }
+        // Key the rail blocks on the message's absolute position so a replay or
+        // a DB re-projection of this same message upserts in place — the dup
+        // fix. (Absent only on the eval/direct path, which has no pump.)
+        const pos = event.position
         if (event.reasoning !== undefined && event.reasoning.trim().length > 0) {
-          store.pushBlock({ kind: "reasoning", text: event.reasoning })
+          store.pushBlock(
+            pos !== undefined
+              ? { kind: "reasoning", text: event.reasoning, key: messageKey(pos, "r", 0) }
+              : { kind: "reasoning", text: event.reasoning },
+          )
         }
         if (event.text.trim().length > 0) {
-          store.pushBlock({ kind: "assistant", text: event.text })
+          store.pushBlock(
+            pos !== undefined
+              ? { kind: "assistant", text: event.text, key: messageKey(pos, "a", 0) }
+              : { kind: "assistant", text: event.text },
+          )
         }
         if (event.usage !== undefined) {
           const u = event.usage

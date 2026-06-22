@@ -25,6 +25,14 @@ export const makeAgentEventHooks = <R = never>(
       type: "turn_start",
       turnIndex: event.turnIndex,
     }),
+  onUserMessage: (event) =>
+    publish({
+      type: "user_message",
+      turnIndex: event.turnIndex,
+      text: event.text,
+      ...(event.position !== undefined ? { position: event.position } : {}),
+      ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
+    }),
   onAssistantMessage: (event) =>
     publish({
       type: "assistant_message",
@@ -34,6 +42,7 @@ export const makeAgentEventHooks = <R = never>(
         ? { reasoning: event.reasoning }
         : {}),
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
+      ...(event.position !== undefined ? { position: event.position } : {}),
       ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
     }),
   onBeforeToolCall: extraBeforeTool

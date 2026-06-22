@@ -23,9 +23,15 @@ import type { NavRow } from "./paneNav.js"
 export type ToolPillState = "running" | "ok" | "error"
 
 export type ScrollbackBlock =
-  | { readonly kind: "user"; readonly text: string; readonly msgIndex?: number }
-  | { readonly kind: "assistant"; readonly text: string; readonly msgIndex?: number }
-  | { readonly kind: "reasoning"; readonly text: string; readonly msgIndex?: number }
+  // `key` is the block's STABLE IDENTITY for the conversation cache (state layer):
+  // a message's `m:p<position>` (or an `opt:<n>` optimistic placeholder, later
+  // reconciled to its position). The live event pump and the DB projection stamp
+  // the SAME key for the same message, so a streamed block and the later
+  // re-projected block upsert to ONE entry instead of duplicating. Tool/`agents`
+  // blocks key on their own `id`; `info`/`error`/`checkpoint` are keyless (append).
+  | { readonly kind: "user"; readonly text: string; readonly msgIndex?: number; readonly key?: string }
+  | { readonly kind: "assistant"; readonly text: string; readonly msgIndex?: number; readonly key?: string }
+  | { readonly kind: "reasoning"; readonly text: string; readonly msgIndex?: number; readonly key?: string }
   | {
       readonly kind: "tool"
       readonly id: string
@@ -97,6 +103,17 @@ export type ConversationItem =
     }
   | { readonly kind: "loose"; readonly body: ReadonlyArray<BodyItem> }
   | { readonly kind: "checkpoint"; readonly id: string; readonly text: string }
+
+/**
+ * The conversation-cache key for a MESSAGE block at absolute store `position`.
+ * Both the live event pump and the DB projection compute this from the message's
+ * durable position, so the same logical message gets one stable key regardless
+ * of which writer produced it (or how many times). `kind` separates the parts of
+ * one assistant message — `u`ser line, `a`ssistant text, `r`easoning — and `ord`
+ * disambiguates repeated parts of the same kind within a message.
+ */
+export const messageKey = (position: number, kind: "u" | "a" | "r", ord = 0): string =>
+  `m:p${position}:${kind}${ord}`
 
 /** Stable id for a block: tools keep their own id, others key on position. */
 const idOf = (block: ScrollbackBlock, index: number): string =>

@@ -53,7 +53,14 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       checkpoint !== undefined ? [handoffToMessage(checkpoint.summary)] : []
 
     const userMsg: AgentMessage = { role: "user", content: userPrompt }
-    yield* store.append(conversationId, userMsg)
+    const userPosition = yield* store.append(conversationId, userMsg)
+    // Emit the user message through the hook stream the moment it's persisted,
+    // carrying its absolute position — so the rail's user line rides the same
+    // keyed event stream as everything else (no client-side reconstruction) and
+    // reconciles with any optimistic line by position.
+    if (extraHooks?.onUserMessage) {
+      yield* extraHooks.onUserMessage({ turnIndex: 0, text: userPrompt, position: userPosition })
+    }
 
     // Mark the turn in flight (best-effort): a daemon restart reads this to
     // auto-resume a turn interrupted by a crash. Cleared on completion below.
@@ -65,10 +72,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
     // failure is a defect (can't safely continue without durable history),
     // mirroring the old end-of-run append's failure semantics.
     const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(
-        Effect.orDie,
-        Effect.asVoid,
-      )
+      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(Effect.orDie)
 
     // One shared spend pool for every sub-agent this turn may spawn — fresh
     // per top-level run, so a prior turn's spend never starves this one.
@@ -178,10 +182,7 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
       settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
 
     const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(
-        Effect.orDie,
-        Effect.asVoid,
-      )
+      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(Effect.orDie)
 
     const result = yield* runAgentLoop({
       system: config.prompt.text,

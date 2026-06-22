@@ -161,17 +161,17 @@ export const runTuiModeRemote = (
       }
 
       // Seed the rail from the daemon's persisted log (DB rebuild on attach).
+      // `logBaseOffset` makes the projected blocks' keys absolute (handoff-safe)
+      // so they line up with the live event stream that carries true positions.
       const state0 = yield* ws.getState(rootSessionId).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
       let cursor = state0?.cursor ?? 0
-      // The daemon's pending queue as last mirrored — diffed in `refreshQueue` so
-      // a drained prompt (its turn now running) surfaces as a rail user line. The
-      // daemon emits no user event; the rail is otherwise rebuilt only on
-      // attach/reconnect, so without this a queued prompt's own line would vanish
-      // until the next resync. Seeded from the attach state (rail already rebuilt
-      // from the log there, so no push for those).
-      let lastQueue: ReadonlyArray<string> = state0?.queue ?? []
       if (state0 !== undefined) {
-        yield* Effect.sync(() => applyContext(store, rootCid, state0.log, [], { collapseContext: false }))
+        yield* Effect.sync(() =>
+          applyContext(store, rootCid, state0.log, [], {
+            collapseContext: false,
+            baseOffset: state0.logBaseOffset ?? 0,
+          }),
+        )
         yield* Effect.sync(() => store.run.setQueue(state0.queue ?? []))
       }
       store.pushBlock({
@@ -194,31 +194,15 @@ export const runTuiModeRemote = (
       }
       // Mirror the daemon's authoritative pending queue into the reactive signal
       // so the `▸` list above the input matches what will actually run. Called at
-      // boot and at each turn boundary (the reducer hook) — the moments the
-      // daemon's queue changes (drain on turn-end; an optimistic local add on
-      // submit covers the gap until the next mirror).
+      // boot and at each turn boundary (the reducer hook). The drained prompt's
+      // OWN rail line no longer needs reconstructing here — the daemon emits a
+      // `user_message` event when it starts the turn, which flows through the
+      // keyed pump like any message (the old queue-diff `lastQueue` heuristic is
+      // gone).
       const refreshQueue = (): void => {
         void Runtime.runPromise(rt)(
           ws.getState(rootSessionId).pipe(
-            Effect.tap((st) =>
-              Effect.sync(() => {
-                const next = st.queue ?? []
-                // Front items gone and the rest a clean suffix ⇒ the daemon
-                // drained them and started their turns. Surface each as a rail
-                // user line (the line the idle path pushes optimistically), then
-                // mirror the remaining queue. A non-suffix change (reorder, a
-                // fresh enqueue) just reconciles, no spurious lines.
-                const removed = lastQueue.length - next.length
-                if (removed > 0 && lastQueue.slice(removed).every((v, i) => v === next[i])) {
-                  for (const text of lastQueue.slice(0, removed)) {
-                    store.pushBlock({ kind: "user", text })
-                  }
-                  store.convScroller.current?.scrollToBottom()
-                }
-                store.run.setQueue(next)
-                lastQueue = next
-              }),
-            ),
+            Effect.tap((st) => Effect.sync(() => store.run.setQueue(st.queue ?? []))),
             Effect.catchAll(() => Effect.void),
           ),
         )
@@ -290,11 +274,13 @@ export const runTuiModeRemote = (
             )
             return
           }
-          // Idle → the turn starts now: optimistic user line (the daemon persists
-          // it but emits no user event), then optimistically flip the state
-          // machine to "submitted" so the next keystroke-fast message sees us busy
-          // (the stream's first event reconciles the real phase a beat later).
-          store.pushBlock({ kind: "user", text })
+          // Idle → the turn starts now: optimistic user line, then optimistically
+          // flip the state machine to "submitted" so the next keystroke-fast
+          // message sees us busy (the stream's first event reconciles the real
+          // phase a beat later). The daemon persists the message and emits a
+          // `user_message` event with its position, which reconciles onto this
+          // optimistic placeholder by key — no double line.
+          store.pushOptimisticUser(text)
           store.setInput("")
           store.setAgentState(submittedAgentState(Date.now()))
           store.convScroller.current?.scrollToBottom()
@@ -312,9 +298,7 @@ export const runTuiModeRemote = (
         clearQueue: () => {
           // The daemon owns the authoritative queue — tell it to drop the pending
           // messages, and clear the local mirror immediately so the `▸` list goes
-          // away without waiting for the next refresh. Keep `lastQueue` in sync so
-          // the drained-prompt diff doesn't later surface them as rail lines.
-          lastQueue = []
+          // away without waiting for the next refresh.
           store.run.setQueue([])
           void Runtime.runPromise(rt)(ws.clearQueue(rootSessionId).pipe(Effect.ignore))
         },
@@ -437,16 +421,18 @@ export const runTuiModeRemote = (
             .pipe(
               Stream.runForEach((se) =>
                 Effect.sync(() => {
+                  // Strictly exclusive cursor: drop any event at/before the last
+                  // applied seq (a reconnect overlap / replay). The keyed cache
+                  // already makes a re-applied message idempotent, but this keeps
+                  // the protocol honest and avoids redundant work.
+                  if (se.seq <= cursor) return
                   cursor = se.seq
                   batch(() => reduce(se.event))
                   // The daemon owns the pending queue; it drains the whole thing
-                  // at a turn boundary (finishTurn → startRootTurn for the
-                  // combined next turn). The reducer's `refreshNav` hook only
-                  // fires on sub-agent events, so a PLAIN turn never refreshed
-                  // the queue — the `▸` list hung even though the daemon drained.
-                  // A new turn starting (or the run ending) is exactly when the
-                  // daemon's queue changed: mirror it (clear `▸`) and surface the
-                  // drained prompts as rail lines (`refreshQueue` does both).
+                  // at a turn boundary. A new turn starting (or the run ending) is
+                  // when the daemon's queue changed: mirror it (clear `▸`). The
+                  // drained prompt's own rail line now arrives as a `user_message`
+                  // event, so this only mirrors the queue.
                   if (se.event.type === "turn_start" || se.event.type === "agent_end") {
                     refreshQueue()
                   }
@@ -459,15 +445,24 @@ export const runTuiModeRemote = (
           const st = yield* ws.getState(rootSessionId).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
           if (st !== undefined) {
             cursor = st.cursor
-            yield* Effect.sync(() =>
-              applyContext(store, rootCid, st.log, [], { collapseContext: false }),
-            )
-            // Resync rebuilt the rail from the full log (drained prompts included),
-            // so re-baseline the queue mirror without re-pushing them.
-            yield* Effect.sync(() => {
-              store.run.setQueue(st.queue ?? [])
-              lastQueue = st.queue ?? []
-            })
+            // Only rebuild the rail from the DB when IDLE. A mid-turn resync
+            // would project a snapshot that lags the streaming tail, and a
+            // blind replace would drop the in-flight blocks the user is
+            // watching. While a turn streams we tail-only: the cursor reset +
+            // re-subscribe replays the gap from the ledger, and the keyed cache
+            // makes any overlap idempotent. When idle, `reconcile` merges by key
+            // (keeping any live suffix), with `logBaseOffset` keeping keys
+            // absolute.
+            if (store.agentState().phase === "idle") {
+              yield* Effect.sync(() =>
+                applyContext(store, rootCid, st.log, [], {
+                  collapseContext: false,
+                  baseOffset: st.logBaseOffset ?? 0,
+                  reconcile: true,
+                }),
+              )
+            }
+            yield* Effect.sync(() => store.run.setQueue(st.queue ?? []))
           }
         }
       })

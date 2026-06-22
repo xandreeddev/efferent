@@ -37,12 +37,30 @@ export const AgentEvent = Schema.Union(
     type: Schema.Literal("turn_start"),
     turnIndex: Schema.Number,
   }),
+  // The user's prompt for a turn — emitted by the loop right after it persists
+  // the message, so the rail's user line flows through the SAME keyed stream as
+  // everything else (the daemon used to emit no user event, which forced a
+  // fragile queue-diff reconstruction client-side). `position` is the message's
+  // absolute store position — the rail keys the user block on it so an optimistic
+  // line and this authoritative one reconcile to one entry.
+  Schema.Struct({
+    type: Schema.Literal("user_message"),
+    turnIndex: Schema.Number,
+    text: Schema.String,
+    position: Schema.optional(Schema.Number),
+    /** Set for a sub-agent's seed/user message: the run's context-tree node id. */
+    nodeId: Schema.optional(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("assistant_message"),
     turnIndex: Schema.Number,
     text: Schema.String,
     reasoning: Schema.optional(Schema.String),
     usage: Schema.optional(TokenUsage),
+    /** The assistant message's absolute store position — the rail keys its
+     *  text/reasoning blocks on it so a replayed/re-projected message upserts
+     *  in place instead of duplicating. Absent on the eval/direct path. */
+    position: Schema.optional(Schema.Number),
     /** Set for sub-agent narration: the run's context-tree node id. */
     nodeId: Schema.optional(Schema.String),
   }),
