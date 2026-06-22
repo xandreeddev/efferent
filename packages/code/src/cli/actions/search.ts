@@ -1,7 +1,6 @@
 import { buildConversation, buildConversationRows, searchConversation } from "../presentation/conversation.js"
 import {
   buildStackRowsData,
-  sessionsRows,
   stackRowText,
   treeRows,
 } from "../presentation/sidePane.js"
@@ -88,12 +87,6 @@ const sideView = (store: TuiStore): { texts: string[]; setCursor: (i: number) =>
     return {
       texts: rows.map(treeRowText),
       setCursor: (i) => store.setNav((n) => ({ ...n, treeCursor: i })),
-    }
-  }
-  if (store.sidePane().view === "sessions") {
-    return {
-      texts: sessionsRows(store.projection()).map((r) => r.label),
-      setCursor: (i) => store.setNav((n) => ({ ...n, sessionsCursor: i })),
     }
   }
   if (store.sidePane().view === "stack") {

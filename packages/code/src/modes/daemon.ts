@@ -63,15 +63,15 @@ export const runDaemonMode = (
     })
     const cs = yield* ConversationStore
 
-    process.stderr.write(
-      `efferent daemon: scheduler running for ${input.cwd} (Ctrl-C to stop)\n`,
-    )
+    yield* Effect.logInfo(`scheduler running for ${input.cwd} (Ctrl-C to stop)`)
 
     const fire = (job: { id: string; folder: string; prompt: string; agent?: string }, nowMs: number) =>
       Effect.gen(function* () {
         const cid = yield* cs.create(input.cwd).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
         if (cid === undefined) return
-        process.stderr.write(`[${new Date(nowMs).toISOString()}] fire: ${job.prompt}\n`)
+        yield* Effect.logInfo(`fire: ${job.prompt}`).pipe(
+          Effect.annotateLogs("scheduled_at", new Date(nowMs).toISOString()),
+        )
         yield* runtime
           .spawnAgent({
             rootConversationId: cid,
@@ -82,15 +82,11 @@ export const runDaemonMode = (
           })
           .pipe(
             Effect.provide(ApprovalAllowAllLive),
-            Effect.tap((r) =>
-              Effect.sync(() => process.stderr.write(`  done: ${r.summary.slice(0, 200)}\n`)),
-            ),
+            Effect.tap((r) => Effect.logInfo(`scheduled job done: ${r.summary.slice(0, 200)}`)),
             Effect.catchAll((e) =>
-              Effect.sync(() => process.stderr.write(`  failed: ${e.error}: ${e.message ?? ""}\n`)),
+              Effect.logError(`scheduled job failed: ${e.error}: ${e.message ?? ""}`),
             ),
-            Effect.catchAllDefect((d) =>
-              Effect.sync(() => process.stderr.write(`  crashed: ${String(d)}\n`)),
-            ),
+            Effect.catchAllDefect((d) => Effect.logError(`scheduled job crashed: ${String(d)}`)),
           )
       })
 

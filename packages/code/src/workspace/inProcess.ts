@@ -1,4 +1,4 @@
-import { Clock, Effect, Fiber, Layer, Ref, Runtime, Stream } from "effect"
+import { Clock, Effect, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
 import type { LanguageModel } from "@effect/ai"
 import {
   ContextTreeStore,
@@ -154,8 +154,23 @@ export const makeInProcessWorkspace = (
     // One ledger for the workspace stream; the bus's baseHooks + every run
     // publish here, and any number of clients tail it via `subscribe`.
     const ledger: EventLedger = yield* makeEventLedger()
+    // Set once `startResumeTurn` exists: when a TOP-LEVEL lead finishes, this
+    // nudges the orchestrator to resume and report the result (see below). It's
+    // a forward reference because publish is the single event chokepoint but
+    // the resume primitive is defined much later — both are only ever CALLED at
+    // runtime, by when the binding is set.
+    let onTopLevelDone: (nodeId: string) => Effect.Effect<void> = () => Effect.void
     const publish = (event: AgentEvent): Effect.Effect<void> =>
-      ledger.publish(event).pipe(Effect.asVoid)
+      ledger
+        .publish(event)
+        .pipe(
+          Effect.zipRight(
+            event.type === "subagent_end" && event.nodeId !== undefined
+              ? onTopLevelDone(event.nodeId)
+              : Effect.void,
+          ),
+          Effect.asVoid,
+        )
 
     // Approval: the built-in server approval unless overridden (tests/allow-all).
     const serverApproval = makeServerApproval(publish)
@@ -181,6 +196,9 @@ export const makeInProcessWorkspace = (
 
     const runStates = yield* Ref.make(new Map<string, RunState>())
     const directiveRef = yield* Ref.make<Directive | undefined>(undefined)
+    // Roots with an auto-delivery resume in flight — guards two near-simultaneous
+    // top-level completions from each kicking off a resume turn.
+    const autoDelivering = yield* Ref.make(new Set<string>())
 
     // The live fleet set, seeded from deps.roots, grown by createFleet.
     const fleets = yield* Ref.make(
@@ -364,6 +382,43 @@ export const makeInProcessWorkspace = (
         const fiber = Runtime.runFork(rt)(runEffect)
         yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
       })
+
+    // The async "report back when done": when a TOP-LEVEL lead (spawned by the
+    // root, so `parentId === null`) finishes and its root has NO turn running,
+    // resume the orchestrator. Its inbox-draining hook folds in the completion
+    // the bus delivered, so it reports the result to the user in its own voice —
+    // exactly what happens when the human pokes it, but automatic. A BUSY root
+    // needs no nudge: it folds the completion in at its own next boundary.
+    // Deeper specialists (parentId set) are the lead's concern, never surfaced.
+    onTopLevelDone = (nodeId: string): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
+        if (decoded._tag === "None") return
+        const node = yield* tree.get(decoded.value).pipe(Effect.option)
+        if (
+          node._tag === "None" ||
+          node.value.parentId !== null ||
+          node.value.rootConversationId === null
+        ) {
+          return
+        }
+        const rootCid = node.value.rootConversationId
+        const rootKey = rootCid as string
+        if ((yield* getRun(rootKey)).busy) return
+        const claimed = yield* Ref.modify(autoDelivering, (s) =>
+          s.has(rootKey) ? [false, s] : [true, new Set(s).add(rootKey)],
+        )
+        if (!claimed) return
+        yield* startResumeTurn(rootCid).pipe(
+          Effect.ensuring(
+            Ref.update(autoDelivering, (s) => {
+              const ns = new Set(s)
+              ns.delete(rootKey)
+              return ns
+            }),
+          ),
+        )
+      }).pipe(Effect.forkDaemon, Effect.asVoid)
 
     // Resume a finished agent node in place (the human-driven seedMode:"resume").
     const startNodeResume = (

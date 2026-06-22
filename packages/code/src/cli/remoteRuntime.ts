@@ -14,6 +14,7 @@ import {
   StoreSwitch,
   connLabel,
   sessionConversationId,
+  SessionId,
   type Directive,
   type SessionSummary,
   type WorkspaceSnapshot,
@@ -26,6 +27,7 @@ import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { stopOAuthSession } from "./actions/login.js"
 import { applyContext } from "./actions/session.js"
+import { refreshNav } from "./actions/contextTree.js"
 import { makeEventReducer } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
 import { setTheme } from "./state/theme.js"
@@ -168,7 +170,30 @@ export const runTuiModeRemote = (
         text: "attached to daemon · type to chat (↵ sends) · : for commands · ? for keys",
       })
 
-      const reduce = makeEventReducer(store, { refreshNav: refreshSnapshot })
+      // Seed the always-visible fleet tree from the SHARED store (the client
+      // process has `ContextTreeStore`/`ConversationStore` in `AppServices` and
+      // already reads them for `openNodePreview`). The daemon stamps every
+      // spawn's node with `rootConversationId === rootCid`, so `listTree(rootCid)`
+      // returns the daemon's fleet — current-session-only, always expanded.
+      yield* refreshNav(store, rootCid, { activeOnly: true }).pipe(
+        Effect.catchAll(() => Effect.void),
+      )
+      const refreshFleet = (): void => {
+        void Runtime.runPromise(rt)(
+          refreshNav(store, rootCid, { activeOnly: true }).pipe(Effect.catchAll(() => Effect.void)),
+        )
+      }
+
+      // Each sub-agent start/end (and turn end) refreshes BOTH the snapshot
+      // cache (the `:fleet`/`liveAgents` views) and the fleet tree (the right
+      // pane) — so a running fleet appears and flips status live on the daemon
+      // path exactly as it does in-process.
+      const reduce = makeEventReducer(store, {
+        refreshNav: () => {
+          refreshSnapshot()
+          refreshFleet()
+        },
+      })
 
       const exitDeferred = yield* Deferred.make<void>()
       const ctx: TuiContext = {
@@ -178,6 +203,29 @@ export const runTuiModeRemote = (
         variant: input.variant ?? "master",
         run: (program) => Runtime.runPromise(rt)(program),
         submit: (text) => {
+          // Jumped into an agent? Route the message to THAT node's session — the
+          // daemon delivers to a running node's mailbox or resumes a finished one
+          // (Workspace.send handles both). The composer is paired with the agent,
+          // so the optimistic line goes into ITS log (AgentPane shows nodeLog),
+          // not the root rail — and its reply streams back tagged with the node id.
+          const preview = store.nodePreview()
+          if (preview !== undefined) {
+            const sid = Schema.decodeUnknownOption(SessionId)(preview.nodeId)
+            if (sid._tag === "Some") {
+              store.appendNodeLog(preview.nodeId, { kind: "user", text })
+              store.setInput("")
+              store.convScroller.current?.scrollToBottom()
+              void Runtime.runPromise(rt)(
+                ws.send(sid.value, text).pipe(
+                  Effect.tap(() => Effect.sync(refreshFleet)),
+                  // Fleet plumbing — a delivery hiccup is a transient toast (the
+                  // daemon already logged it to efferent.log), not a chat block.
+                  Effect.catchAll((e) => Effect.sync(() => store.toast(`agent: ${e.message}`))),
+                ),
+              )
+              return
+            }
+          }
           // Optimistic user line (the daemon persists it but emits no user event).
           store.pushBlock({ kind: "user", text })
           store.setInput("")

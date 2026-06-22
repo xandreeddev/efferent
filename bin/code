@@ -1,2 +1,5 @@
 #!/usr/bin/env bash
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/code/src/main.ts" "$@"
+# Dev launcher for the CODER (the published `code` bin). Runs the built bundle's
+# code shim (injects --code, in-process driver). Works from any workspace dir;
+# rebuild after source edits with `bun run build`.
+exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/code/dist/code.js" "$@"

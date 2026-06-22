@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import {
@@ -127,6 +127,16 @@ const readAuthFile = (efferentDir: string): AuthData => {
   }
 }
 
+/** Last-modified time (ms) of a tier's auth file, 0 if absent — the change
+ *  signal that tells a long-lived process to re-read it. */
+const authMtime = (efferentDir: string): number => {
+  try {
+    return statSync(authFileIn(efferentDir)).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 const writeAuthFile = (efferentDir: string, data: AuthData): void => {
   mkdirSync(efferentDir, { recursive: true })
   const p = authFileIn(efferentDir)
@@ -180,6 +190,44 @@ export const LocalAuthStoreLive = Layer.effect(
     })
     yield* recompute
 
+    // Re-read auth.json when it changed on disk since we last loaded it. The
+    // credential store is read from an in-memory Ref, but a long-lived process
+    // — the per-workspace DAEMON — would otherwise never see a credential the
+    // CLIENT added with `:login` (a separate process writing the same file), so
+    // its agents (web search, every provider call) ran on stale auth until a
+    // daemon restart. Gated on mtime: a `statSync` per read, re-parse only on a
+    // real change. Cheap, and makes "logged in" mean logged in everywhere.
+    const lastMtimeRef = yield* Ref.make({
+      global: authMtime(initialRoots.global),
+      local:
+        initialRoots.single || initialRoots.local === undefined
+          ? 0
+          : authMtime(initialRoots.local),
+    })
+    const syncFromDisk = Effect.gen(function* () {
+      const roots = yield* Ref.get(rootsRef)
+      const gm = authMtime(roots.global)
+      const lm = roots.single || roots.local === undefined ? 0 : authMtime(roots.local)
+      const last = yield* Ref.get(lastMtimeRef)
+      if (gm === last.global && lm === last.local) return
+      yield* Ref.set(globalRef, readAuthFile(roots.global))
+      yield* Ref.set(
+        localRef,
+        roots.single || roots.local === undefined ? {} : readAuthFile(roots.local),
+      )
+      yield* Ref.set(lastMtimeRef, { global: gm, local: lm })
+      yield* recompute
+    })
+    // Our own writes bump the mtime; record it so the next read doesn't re-parse
+    // a file we just authored (an external change still wins).
+    const noteOwnWrite = Effect.gen(function* () {
+      const roots = yield* Ref.get(rootsRef)
+      yield* Ref.set(lastMtimeRef, {
+        global: authMtime(roots.global),
+        local: roots.single || roots.local === undefined ? 0 : authMtime(roots.local),
+      })
+    })
+
     const tierRefFor = (roots: ConfigRoots, scope: ConfigScope) =>
       roots.single || scope === "global" ? globalRef : localRef
 
@@ -199,6 +247,7 @@ export const LocalAuthStoreLive = Layer.effect(
         yield* Ref.set(tref, next)
         if (!roots.single && (scope === "local")) yield* Effect.sync(() => ensureLocalGitignore(dir))
         yield* recompute
+        yield* noteOwnWrite
       })
 
     const set = (provider: Provider, cred: Credential, scope: ConfigScope = "global") =>
@@ -225,14 +274,16 @@ export const LocalAuthStoreLive = Layer.effect(
             roots.single || roots.local === undefined ? {} : readAuthFile(roots.local),
           )
           yield* recompute
+          yield* noteOwnWrite
         }),
 
-      all: Ref.get(ref),
+      all: syncFromDisk.pipe(Effect.zipRight(Ref.get(ref))),
 
-      get: (p) => Ref.get(ref).pipe(Effect.map((d) => d[p])),
+      get: (p) => syncFromDisk.pipe(Effect.zipRight(Ref.get(ref)), Effect.map((d) => d[p])),
 
       resolveKey: (p) =>
-        Ref.get(ref).pipe(
+        syncFromDisk.pipe(
+          Effect.zipRight(Ref.get(ref)),
           Effect.flatMap((d) => {
             const cred = d[p]
             if (cred === undefined) return Effect.succeed(undefined)

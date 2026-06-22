@@ -93,19 +93,22 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":keys":
       store.setOverlay({ kind: "shortcuts" })
       return
-    // The fleet tree is always visible on the right now; `:tree`/`:sessions`
-    // (and the legacy `:context`) just move focus to it. The old context-
-    // curation viewer + `:build` are deferred (their side-view + key handler
-    // were removed in the chat-first collapse).
+    // ONE always-visible pane: the current session's fleet. `:tree` just moves
+    // focus to it (Tab does too). (`:fleet` is the orchestration text summary.)
     case ":tree":
-    case ":sessions":
-    case ":context":
       void ctx.run(focusFleetTree(store, store.run.getConversationId()))
       return
+    case ":sessions":
+      store.pushBlock({
+        kind: "info",
+        text: "the fleet pane shows the CURRENT session only — switch sessions with :browse / :resume",
+      })
+      return
+    case ":context":
     case ":build":
       store.pushBlock({
         kind: "info",
-        text: "context curation (:context/:build) is deferred — the fleet tree is on the right (Tab to focus)",
+        text: "context curation (:context/:build) is deferred — the current session's fleet is on the right (Tab to focus)",
       })
       return
     case ":browse":

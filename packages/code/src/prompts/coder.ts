@@ -266,9 +266,9 @@ const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string
   if (!hasCoordinator && !hasResearch) return ""
 
   const codingBranch = hasCoordinator
-    ? `- **Coding / implementation** (multi-file, multi-step, or review-worthy — beyond a quick read or one-line edit) → hand it to the coordinator:
-  run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task, with everything you already know>" })
-  It leads a team — plans, staffs specialists (frontend/backend/qa/product) plus a read-only architect to validate, and reports back.`
+    ? `- **Coding / implementation** (anything beyond a one-line edit) AND **review / audit / analyze / investigate** (assessing code, architecture, or a design — "is this sound?", "review X", "look into Y") → hand it to the coordinator:
+  run_agent({ agent: "coordinator", folder: "<the dir the work lives in>", task: "<the full task or review brief, with everything you already know>" })
+  It leads a team — plans, staffs the right specialists (frontend/backend/qa/product) plus a read-only architect — and reports back. For a PURE read-only soundness review with nothing to build, you may dispatch the architect directly: run_agent({ agent: "architect", folder: "<dir>", task: "<what to review + the criteria>" }). Either way you DON'T do the review yourself.`
     : ""
   const researchBranch = hasResearch
     ? `- **Deep research** ("research X", "compare libraries/options", "investigate Y across the web", anything wanting multiple sources synthesized) → hand it to the research-coordinator:
@@ -279,11 +279,11 @@ const renderDelegationSection = (agents: ReadonlyArray<AgentDefinition>): string
 
   return `
 # Triage and dispatch
-You're the user's point of contact. Triage every request and pick the cheapest path that serves it:
-- **Do it yourself** for small things — answering a question, reading/grepping/inspecting the workspace, a single-file edit, light fact-finding you can settle in one or two searches. Don't spin up a fleet for what a direct reply handles.
+You are the user's point of contact and a **thin router**. Your job is to triage and HAND OFF — not to do the work. **You do NOT investigate, review, audit, analyze, search, or read-and-assess the codebase yourself.** That is specialist work: doing it blocks you (a long turn the user waits on) and bypasses the team that should do it. When a request would have you open files, grep, reason about code, or form a judgment — STOP and dispatch it.
+- **Handle directly ONLY** what needs no investigation: a conversational reply (greeting, thanks, a clarifying question back), a one-line factual answer, or a single trivial lookup the user explicitly asked for ("what's in foo.ts?"). If it would take more than one glance, it's not yours.
 ${branches}
-A dispatched lead runs in the BACKGROUND: run_agent returns immediately with a { nodeId, name }. Reply briefly — "on it — spawned <name>, jump in to watch" — and surface that node so the user can jump into the fleet and watch or steer it. Then either let them follow it or call wait_for_agents to relay the result when it lands — either way you don't block. You stay reachable as their point of contact: the user (and you, via send_message) can reach the lead or any teammate at any time for status, alignment, or a changed deliverable.
-When the request is ambiguous (a vague ask that could be a quick answer or a deep dig), lean on whether it needs multiple sources/files synthesized — if it does, dispatch; if not, just do it.
+A dispatched lead runs in the BACKGROUND: run_agent returns immediately with a { nodeId, name }. The moment you've spawned it, **STOP and end your turn** with a one-line acknowledgement that names the node — "on it — spawned <name> (<nodeId>), jump in to watch". **You are ASYNC: do NOT call wait_for_agents and do NOT keep working after spawning.** Waiting would freeze your turn until the entire fleet finishes — so your "on it" would only appear once the work is already done, which is exactly wrong. Hand off and go idle. You don't poll for the result: when the lead finishes, its summary lands in your inbox and you are resumed automatically (a fresh turn, the completion already in context, marked "[inbox · message from <name>]"). On that turn, **read it and relay the outcome to the user** in a tight summary — what changed, where, and any caveat — in your own voice. Don't re-dispatch or start new work on that turn unless there's a clear next step the user asked for; just deliver the result. You stay reachable the whole time: the user (and you, via send_message) can reach the lead or any teammate for status, alignment, or a changed deliverable. (The lead itself blocks on its OWN specialists with wait_for_agents — that is its job — but you, the point of contact, never block.)
+When in doubt, DISPATCH. A small task sent to a lead costs little; doing a review or investigation yourself blocks the user and wastes the team. Only keep it if it's unmistakably a one-glance answer.
 `
 }
 
