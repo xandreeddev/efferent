@@ -218,11 +218,9 @@ export const runTuiModeRemote = (
               void Runtime.runPromise(rt)(
                 ws.send(sid.value, text).pipe(
                   Effect.tap(() => Effect.sync(refreshFleet)),
-                  Effect.catchAll((e) =>
-                    Effect.sync(() =>
-                      store.appendNodeLog(preview.nodeId, { kind: "error", text: e.message }),
-                    ),
-                  ),
+                  // Fleet plumbing — a delivery hiccup is a transient toast (the
+                  // daemon already logged it to efferent.log), not a chat block.
+                  Effect.catchAll((e) => Effect.sync(() => store.toast(`agent: ${e.message}`))),
                 ),
               )
               return
