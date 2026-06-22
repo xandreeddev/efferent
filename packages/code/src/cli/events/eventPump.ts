@@ -68,7 +68,6 @@ export const makeEventReducer = (
   // turn starts. Replaces the old one-Task-pill-per-spawn rail.
   const agentRows = new Map<string, AgentRunRow>()
   let agentsBlockId: string | undefined
-  let subAgentDepth = 0
   let toolSeq = 0
 
   // The id pairs a start with its end; empty/absent → fall back to the name.
@@ -154,13 +153,12 @@ export const makeEventReducer = (
 
       case "tool_call_start": {
         // The plan tool's arguments ARE the session plan — mirror them into
-        // the store when the top-level agent calls it (a sub-agent's plan
-        // stays node-local; its session preview shows the calls).
-        if (
-          event.toolName === "update_plan" &&
-          event.nodeId === undefined &&
-          subAgentDepth === 0
-        ) {
+        // the store when the ROOT agent calls it (a sub-agent's plan stays
+        // node-local; its session preview shows the calls). Keyed off the
+        // event's own `nodeId` (undefined ⇒ root), NOT an ambient depth counter:
+        // in the async fleet the root runs CONCURRENTLY with background agents,
+        // so "a sub-agent is running somewhere" must not gate the root's plan.
+        if (event.toolName === "update_plan" && event.nodeId === undefined) {
           const steps = parsePlanSteps(event.args)
           if (steps !== undefined) store.setProjection((p) => ({ ...p, plan: steps }))
         }
@@ -179,11 +177,12 @@ export const makeEventReducer = (
           enqueue(toolTreeIds, matchKey(event), id)
           return tree
         })
-        // Top-level tools get a compact chat pill on the lead rail; sub-agent
-        // inner tools always stream into that node's live log (so opening its
-        // pane — now or later — shows the whole run, not just events after you
-        // looked), plus the tree.
-        if (event.nodeId === undefined && subAgentDepth === 0) {
+        // Root tools get a compact chat pill on the lead rail; sub-agent inner
+        // tools always stream into that node's live log (so opening its pane —
+        // now or later — shows the whole run, not just events after you looked),
+        // plus the tree. Routed by the event's own `nodeId` (undefined ⇒ root),
+        // so a root tool call still gets its rail pill while a fleet runs.
+        if (event.nodeId === undefined) {
           toolSeq++
           const sid = `t${toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
@@ -245,7 +244,6 @@ export const makeEventReducer = (
       }
 
       case "subagent_start": {
-        subAgentDepth++
         // Surface the freshly-spawned node in the agents navigator NOW — it's
         // already persisted, and waiting for turn end would make a running
         // agent unreachable mid-turn.
@@ -315,7 +313,6 @@ export const makeEventReducer = (
       }
 
       case "subagent_end": {
-        subAgentDepth = Math.max(0, subAgentDepth - 1)
         // Status glyph / summary / tokens just landed on the persisted node.
         opts.refreshNav?.()
         const filesDetail =
@@ -430,11 +427,15 @@ export const makeEventReducer = (
         return
 
       case "assistant_message": {
-        // Sub-agent narration (depth > 0, forwarded by the inner hooks) never
-        // lands on the parent rail and never counts toward the conversation
-        // gauge (node usage is tracked on its tree node) — it streams into
-        // the preview when that node's session is open, else tree-only.
-        if (event.nodeId !== undefined || subAgentDepth > 0) {
+        // Sub-agent narration (it carries a `nodeId`, stamped by the inner
+        // hooks) never lands on the parent rail and never counts toward the
+        // conversation gauge (node usage lives on its tree node) — it streams
+        // into the preview when that node's session is open, else tree-only.
+        // Discriminate ONLY on the event's `nodeId`: in the async fleet the root
+        // orchestrator (no nodeId) emits turns WHILE background agents run, so an
+        // ambient depth counter would wrongly swallow the root's own narration
+        // mid-fleet and then make it "pop" all at once on the next resync.
+        if (event.nodeId !== undefined) {
           if (event.nodeId !== undefined && event.usage !== undefined) {
             const u = event.usage
             touchAgentRow(event.nodeId, (r) => ({
