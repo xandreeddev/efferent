@@ -169,6 +169,15 @@ export interface ApplyContextOpts {
   readonly focusInput?: boolean
   /** Fold all context-viewer turns (resume). Build passes false. */
   readonly collapseContext?: boolean
+  /** Absolute store position of `history[0]` — threads into `projectHistory`
+   *  so the rail's message-block keys are absolute (handoff-safe) and match the
+   *  live event stream. 0 for a full record; `logBaseOffset` for a remote
+   *  windowed log. Default 0. */
+  readonly baseOffset?: number
+  /** Merge the projection onto the live cache by key instead of a blind replace
+   *  — the reconnect-resync path, so a streaming tail isn't dropped. Default
+   *  false (a true document swap clears + rebuilds). */
+  readonly reconcile?: boolean
 }
 
 /**
@@ -188,9 +197,10 @@ export const applyContext = (
 ): void => {
   const segments = buildContextView(history, checkpoints)
   const stats = statsFrom(store.sidePane(), history)
-  const proj = projectHistory(history, checkpoints)
+  const proj = projectHistory(history, checkpoints, opts.baseOffset ?? 0)
   store.run.newConversation(target)
-  store.setBlocks(proj.blocks)
+  if (opts.reconcile === true) store.reconcile(proj.blocks)
+  else store.setBlocks(proj.blocks)
   // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
   const collapsed = (opts.collapseContext ?? true) ? new Set(turnIdsOf(segments)) : new Set<string>()
   const switched = switchedSidePane(store.projection(), segments, collapsed, stats, proj)
