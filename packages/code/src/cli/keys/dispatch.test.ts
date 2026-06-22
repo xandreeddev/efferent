@@ -1,5 +1,4 @@
 import { test, expect } from "bun:test"
-import { Effect } from "effect"
 import type { ConversationId } from "@xandreed/sdk-core"
 import { emptySidePane, emptyStats } from "../presentation/sidePane.js"
 import { emptyHistory, pushPrompt } from "../presentation/promptHistory.js"
@@ -56,6 +55,7 @@ const harness = (): Harness => {
     copied: 0,
     ctx: {
       store,
+      variant: "master",
       run: () => Promise.resolve(undefined as never),
       submit: () => {},
       interrupt: () => {},
@@ -84,7 +84,7 @@ const harness = (): Harness => {
 
 test("conversation pane: j/k scroll a line, Ctrl-D/U a half page (the viewport)", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   dispatch(h.ctx, key("j"))
   dispatch(h.ctx, key("k"))
   dispatch(h.ctx, key("d", { ctrl: true }))
@@ -92,9 +92,9 @@ test("conversation pane: j/k scroll a line, Ctrl-D/U a half page (the viewport)"
   expect(h.scroll).toEqual(["by:1", "by:-1", "by:10", "by:-10"])
 })
 
-test("conversation pane: {}/[] move the fold cursor, gg/G hit the ends, Tab folds it", () => {
+test("conversation pane: {}/[] move the fold cursor, gg/G hit the ends, Enter folds it", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   h.store.setBlocks([
     { kind: "user", text: "a" },
     { kind: "assistant", text: "b" },
@@ -111,13 +111,14 @@ test("conversation pane: {}/[] move the fold cursor, gg/G hit the ends, Tab fold
   expect(h.store.convCursor()).toBe(1)
   dispatch(h.ctx, key("]")) // message step → next head (turn:2)
   expect(h.store.convCursor()).toBe(2)
-  dispatch(h.ctx, key("tab")) // fold the unit under the cursor
+  // Tab is the global focus cycle now; the chat folds with ↵/h/l.
+  dispatch(h.ctx, key("return")) // fold the unit under the cursor
   expect([...h.store.collapsed()]).toEqual(["turn:2"])
 })
 
 test("conversation pane: Z folds all turns, then unfolds them", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   h.store.setBlocks([
     { kind: "user", text: "a" },
     { kind: "assistant", text: "b" },
@@ -132,7 +133,7 @@ test("conversation pane: Z folds all turns, then unfolds them", () => {
 
 test("plain z is unbound on a read-only pane (only Z folds all)", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   dispatch(h.ctx, key("z"))
   expect([...h.store.collapsed()]).toEqual([])
 })
@@ -150,7 +151,7 @@ test("Ctrl-C arms first, quits on the second press", () => {
 
 test("y copies the selection on a read-only pane, not in the input", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   dispatch(h.ctx, key("y"))
   expect(h.copied).toBe(1)
   h.store.setFocus("input")
@@ -161,7 +162,7 @@ test("y copies the selection on a read-only pane, not in the input", () => {
 test("Ctrl-h/j/k/l move pane focus and set the mode", () => {
   const h = harness()
   dispatch(h.ctx, key("h", { ctrl: true }))
-  expect(h.store.focus()).toBe("conversation")
+  expect(h.store.focus()).toBe("chat")
   expect(h.store.mode()).toBe("normal")
   dispatch(h.ctx, key("j", { ctrl: true }))
   expect(h.store.focus()).toBe("input")
@@ -265,14 +266,14 @@ test("? on an empty composer opens the shortcuts overlay", () => {
 
 test("? in a read-only pane opens the shortcuts overlay", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   dispatch(h.ctx, key("?"))
   expect(h.store.overlay().kind).toBe("shortcuts")
 })
 
-test("conversation pane: Tab folds the ENCLOSING turn from a body row", () => {
+test("conversation pane: Enter folds the ENCLOSING turn from a body row", () => {
   const h = harness()
-  h.store.setFocus("conversation")
+  h.store.setFocus("chat")
   h.store.setBlocks([
     { kind: "user", text: "do it" },
     { kind: "assistant", text: "sure" },
@@ -280,7 +281,8 @@ test("conversation pane: Tab folds the ENCLOSING turn from a body row", () => {
   // rows: 0 turn:0(head, foldId) · 1 b:1 (assistant body, no foldId)
   dispatch(h.ctx, key("g", { shift: true })) // G → last row (the body line)
   expect(h.store.convCursor()).toBe(1)
-  dispatch(h.ctx, key("tab")) // fold from the body row → folds turn:0
+  // Tab is the global focus cycle now; the chat folds with ↵/h/l.
+  dispatch(h.ctx, key("return")) // fold from the body row → folds turn:0
   expect([...h.store.collapsed()]).toEqual(["turn:0"])
   // cursor parked on the (now folded) head
   expect(h.store.convCursor()).toBe(0)
@@ -295,34 +297,21 @@ test("Ctrl-Shift-C copies the selection (and does NOT arm quit)", () => {
   expect(h.store.blocks().some((b) => b.kind === "info")).toBe(false)
 })
 
-test("v on the side pane cycles sessions→activity: preventDefault'd, focus never moves", async () => {
-  // The original bug: `v` from the last view routed through a toggle whose
-  // close branch refocused the input — the keypress then fell through to the
-  // textarea as a literal "v". The cycle must stay on the side pane.
-  // (sessions→stack is the cycle's only service-free branch, so the test can
-  // run the dispatched effect for real.)
+test("Tab cycles the three focus targets: chat → tree → input", () => {
+  // The chat-first focus model: Tab from chat goes to the fleet tree (NORMAL),
+  // from tree (or input) lands on the composer (INSERT). preventDefault'd so no
+  // stray Tab reaches the textarea.
   const h = harness()
-  h.store.setFocus("side")
+  h.store.setFocus("chat")
   h.store.setMode("normal")
-  h.store.setNav((n) => ({ ...n, view: "sessions" }))
   let prevented = 0
-  const ran: Array<Promise<unknown>> = []
-  const ctx: TuiContext = {
-    ...h.ctx,
-    // Run the dispatched effect for real — the tree→stack branch is pure.
-    run: (eff) => {
-      const p = Effect.runPromise(eff as Effect.Effect<never>)
-      ran.push(p)
-      return p
-    },
-  }
-  dispatch(ctx, { ...key("v"), preventDefault: () => void (prevented += 1) })
-  await Promise.all(ran)
+  dispatch(h.ctx, { ...key("tab"), preventDefault: () => void (prevented += 1) })
   expect(prevented).toBe(1)
-  expect(ran.length).toBe(1)
-  expect(h.store.sidePane().view).toBe("stack")
-  expect(h.store.focus()).toBe("side")
+  expect(h.store.focus()).toBe("tree")
   expect(h.store.mode()).toBe("normal")
+  dispatch(h.ctx, { ...key("tab"), preventDefault: () => void (prevented += 1) })
+  expect(h.store.focus()).toBe("input")
+  expect(h.store.mode()).toBe("insert")
   expect(h.store.input()).toBe("") // no stray character reached the buffer
 })
 
@@ -358,10 +347,10 @@ test("q closes the agent pane from a read-only pane; orchestrator left intact", 
   h.store.setBlocks([{ kind: "user", text: "live rail" }])
   h.store.setCollapsed(new Set(["turn:0"]))
   openPreview(h)
-  h.store.setFocus("side") // q is a NORMAL-mode key; the composer owns its own q
+  h.store.setFocus("tree") // q is a NORMAL-mode key; the composer owns its own q
   dispatch(h.ctx, key("q"))
   expect(h.store.nodePreview()).toBeUndefined()
-  expect(h.store.focus()).toBe("side")
+  expect(h.store.focus()).toBe("tree")
   expect(h.store.viewBlocks().map((b) => b.kind)).toEqual(["user"]) // left untouched
   expect([...h.store.collapsed()]).toEqual(["turn:0"]) // folds untouched
 })

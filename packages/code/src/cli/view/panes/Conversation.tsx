@@ -6,11 +6,13 @@ import {
   buildConversationRows,
   conversationItemId,
   isRenderableDiff,
+  reconcileItems,
   splitByMatch,
   toolGroupExpanded,
   toolGroupState,
   toolGroupSummary,
   type BodyItem,
+  type ConversationItem,
   type ScrollbackBlock,
   type ToolBlock,
 } from "../../presentation/conversation.js"
@@ -241,7 +243,15 @@ const Block = (props: { block: ScrollbackBlock; hl?: Hl | undefined }) => {
         </box>
       )
     case "error":
-      return <HlText text={`  ${b.text}`} fg={tokens.error} hl={props.hl} />
+      // A failed turn must be LOUD on the rail (it used to be a quiet indented
+      // line that read as silence): a red ● marker + the message in the error
+      // colour, with the blank-line rhythm every block gets.
+      return (
+        <box flexDirection="row">
+          <text fg={tokens.error} flexShrink={0}>{`${glyph.railDot} `}</text>
+          <HlText text={b.text} fg={tokens.error} hl={props.hl} />
+        </box>
+      )
     case "user":
       return <HlText text={b.text} fg={tokens.text.user} hl={props.hl} />
     case "checkpoint":
@@ -304,9 +314,15 @@ export const BodyItemView = (props: { item: BodyItem; collapsed: Set<string>; hl
 export const Conversation = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   // `viewBlocks` overlays an open node-session preview; writers (the event
-  // pump) keep appending to the live `blocks` underneath.
-  const items = createMemo(() => buildConversation(store.viewBlocks()))
-  const focused = () => store.focus() === "conversation"
+  // pump) keep appending to the live `blocks` underneath. Reconcile each fresh
+  // build against the previous one so unchanged rows keep their object identity
+  // — the reference-keyed `<For>` then reuses them instead of re-rendering the
+  // whole markdown/diff/tree-sitter rail on every streamed event (the slow caret).
+  const items = createMemo<ConversationItem[]>(
+    (prev) => reconcileItems(prev, buildConversation(store.viewBlocks())),
+    [],
+  )
+  const focused = () => store.focus() === "chat"
   // Solid assigns this during render (before onMount), so the scroller can be
   // registered for the keymap to drive.
   let sb!: ScrollBoxRenderable

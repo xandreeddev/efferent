@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "@xandreed/sdk-core"
+import { BUILTIN_RESEARCH_AGENTS } from "./researchAgents.js"
 import { BUILTIN_TEAM_AGENTS } from "./teamAgents.js"
 
 // The `Directive` type + its pure `parseDirective`/`renderDirectiveSection`
@@ -28,7 +29,11 @@ export const VERIFIER_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-const BUILTINS: ReadonlyArray<AgentDefinition> = [VERIFIER_AGENT, ...BUILTIN_TEAM_AGENTS]
+const BUILTINS: ReadonlyArray<AgentDefinition> = [
+  VERIFIER_AGENT,
+  ...BUILTIN_TEAM_AGENTS,
+  ...BUILTIN_RESEARCH_AGENTS,
+]
 
 /**
  * Merge the built-in roles into the loaded ones. A workspace/home file role of

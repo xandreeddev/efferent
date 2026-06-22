@@ -4,6 +4,7 @@ import {
   buildConversation,
   buildConversationRows,
   foldIdsByKind,
+  reconcileItems,
   searchConversation,
   splitByMatch,
   toolGroupExpanded,
@@ -88,6 +89,53 @@ describe("buildConversation — turn/tool-group structure", () => {
     const b = buildConversation(updated)
     expect((a[0] as { id: string }).id).toBe("turn:0")
     expect((b[0] as { id: string }).id).toBe("turn:0")
+  })
+})
+
+describe("reconcileItems — identity preservation for <For> reuse", () => {
+  // Two turns, the first with a tool group, the second with just prose.
+  const twoTurns = (): ScrollbackBlock[] => [
+    { kind: "user", text: "first" },
+    { kind: "assistant", text: "a1" },
+    tool("1", "read a"),
+    tool("2", "edit b"),
+    { kind: "user", text: "second" },
+    { kind: "assistant", text: "a2" },
+  ]
+
+  test("an empty previous build passes the fresh items through unchanged", () => {
+    const next = buildConversation(twoTurns())
+    const out = reconcileItems([], next)
+    expect(out).toEqual(next) // same content…
+    expect(out[0]).toBe(next[0]) // …and the item refs themselves are preserved
+  })
+
+  test("a wholly unchanged rebuild reuses every item reference", () => {
+    const prev = buildConversation(twoTurns())
+    const next = buildConversation(twoTurns()) // fresh objects, equal content
+    const out = reconcileItems(prev, next)
+    expect(out[0]).toBe(prev[0])
+    expect(out[1]).toBe(prev[1])
+  })
+
+  test("only the changed turn gets a new ref; its unchanged body items are reused", () => {
+    const prev = buildConversation(twoTurns())
+    // Finish tool "2" (same id, new detail) → turn:0 changes, turn:4 does not.
+    const changed = twoTurns()
+    changed[3] = { kind: "tool", id: "2", toolName: "edit b", state: "ok", detail: "+1/-0" }
+    const out = reconcileItems(prev, buildConversation(changed))
+
+    // The untouched second turn keeps its reference (── no re-render).
+    expect(out[1]).toBe(prev[1])
+    // The first turn is rebuilt (its tool group moved)…
+    expect(out[0]).not.toBe(prev[0])
+    // …but its unchanged assistant-prose body item is reused, while the changed
+    // tool group is a fresh ref — so the inner <For> only re-renders the group.
+    const a = prev[0]
+    const b = out[0]
+    if (a?.kind !== "turn" || b?.kind !== "turn") throw new Error("expected turns")
+    expect(b.body[0]).toBe(a.body[0]) // assistant prose reused
+    expect(b.body[1]).not.toBe(a.body[1]) // tool group rebuilt
   })
 })
 

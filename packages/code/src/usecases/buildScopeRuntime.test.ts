@@ -29,7 +29,7 @@ const rootScope: Scope = {
 
 describe("buildScopeRuntime", () => {
   test("toolkit is the generic set: base coding tools + run_agent, no delegate_to_*", () => {
-    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [], allowBash: true })
+    const { toolkit } = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [], allowBash: true })
     const names = Object.keys(toolkit.tools)
     expect(names).toContain("run_agent")
     expect(names).toContain("read_file")
@@ -56,8 +56,8 @@ describe("buildScopeRuntime", () => {
         },
       ],
     }
-    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
-    const b = Object.keys(buildScopeRuntime(withChild, { skills: [], agents: [], tools: [] }).toolkit.tools).sort()
+    const a = Object.keys(buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] }).toolkit.tools).sort()
+    const b = Object.keys(buildScopeRuntime(withChild, { skills: [], memory: [], agents: [], tools: [] }).toolkit.tools).sort()
     expect(b).toEqual(a)
   })
 })
@@ -191,7 +191,7 @@ const stubPorts = Layer.mergeAll(
 describe("ScopeRuntime.resumeNode", () => {
   test("resumes a finished node in place: appends the task, re-runs, records the return", async () => {
     const { entries, layer } = stubTreeStore()
-    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] })
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
 
     const program = Effect.gen(function* () {
       const store = yield* ContextTreeStore
@@ -238,7 +238,7 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
   // it later with wait_for_agents — which never freezes anyone.
   test("run_agent returns { status: 'running' } immediately; wait_for_agents returns the finished result", async () => {
     const { layer } = stubTreeStore()
-    const rt = buildScopeRuntime(rootScope, { skills: [], agents: [], tools: [] })
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
 
     const program = Effect.gen(function* () {
       const tk = yield* rt.toolkit
@@ -295,5 +295,107 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
     expect(result.gathered.agents).toHaveLength(1)
     expect(result.gathered.agents[0]?.status).toBe("ok")
     expect(result.gathered.agents[0]?.summary).toBe("resumed and done")
+  })
+})
+
+describe("schedule management tools — schedule / list_scheduled_jobs / cancel_scheduled_job", () => {
+  // A tiny stateful FileSystem backing cron.json, so the schedule trio
+  // round-trips through the real loadJobs/addJob/removeJob (which read/write it).
+  const fsBackedPorts = () => {
+    const files = new Map<string, string>()
+    const fsLayer = Layer.succeed(
+      FileSystem,
+      FileSystem.of({
+        read: (path: string) =>
+          files.has(path)
+            ? Effect.succeed({ content: files.get(path)! })
+            : Effect.fail({ _tag: "FileNotFound" }),
+        write: (path: string, content: string) => Effect.sync(() => void files.set(path, content)),
+        list: () => Effect.succeed([]),
+        glob: () => Effect.succeed([]),
+      } as never),
+    )
+    return Layer.mergeAll(
+      fsLayer,
+      Layer.succeed(Shell, Shell.of({ exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }) } as never)),
+      Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
+      Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
+      ApprovalAllowAllLive,
+      doneModel,
+    )
+  }
+
+  test("a scheduled job is listed, then cancelled (found); a bad cron is a returned failure", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+
+      const scheduled = yield* call("schedule", {
+        cron: "0 9 * * 1",
+        task: "weekly review",
+        folder: "pkg",
+      })
+      const id = (scheduled.result as { id: string }).id
+
+      const listed = yield* call("list_scheduled_jobs", {})
+      const jobs = (listed.result as { jobs: ReadonlyArray<{ id: string; task: string; folder: string; cron: string }> }).jobs
+
+      // Folder filter narrows correctly: a non-matching folder yields none.
+      const filteredOut = yield* call("list_scheduled_jobs", { folder: "other" })
+      const noneJobs = (filteredOut.result as { jobs: ReadonlyArray<unknown> }).jobs
+
+      const cancelled = yield* call("cancel_scheduled_job", { id })
+      const cancelMiss = yield* call("cancel_scheduled_job", { id: "nope" })
+      const afterCancel = yield* call("list_scheduled_jobs", {})
+
+      // A malformed cron is returned to the model as data, not thrown.
+      const bad = yield* call("schedule", { cron: "not a cron", task: "x" })
+
+      return {
+        id,
+        jobs,
+        noneJobs,
+        cancelled: cancelled.result as { id: string; found: boolean },
+        cancelMiss: cancelMiss.result as { found: boolean },
+        afterCancel: (afterCancel.result as { jobs: ReadonlyArray<unknown> }).jobs,
+        bad: bad.result as { error?: string; isFailure?: boolean },
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, fsBackedPorts())),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const r = await Effect.runPromise(program as unknown as Effect.Effect<{
+      id: string
+      jobs: ReadonlyArray<{ id: string; task: string; folder: string; cron: string }>
+      noneJobs: ReadonlyArray<unknown>
+      cancelled: { id: string; found: boolean }
+      cancelMiss: { found: boolean }
+      afterCancel: ReadonlyArray<unknown>
+      bad: { error?: string; isFailure?: boolean }
+    }>)
+
+    expect(r.jobs).toHaveLength(1)
+    expect(r.jobs[0]?.id).toBe(r.id)
+    expect(r.jobs[0]?.task).toBe("weekly review")
+    expect(r.jobs[0]?.folder).toBe("pkg")
+    expect(r.jobs[0]?.cron).toBe("0 9 * * 1")
+    expect(r.noneJobs).toHaveLength(0)
+    expect(r.cancelled).toEqual({ id: r.id, found: true })
+    expect(r.cancelMiss.found).toBe(false)
+    expect(r.afterCancel).toHaveLength(0)
+    // failureMode:"return" surfaces the bad-cron failure as a tool result.
+    expect(r.bad.isFailure ?? r.bad.error).toBeTruthy()
   })
 })

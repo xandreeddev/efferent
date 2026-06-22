@@ -2,11 +2,11 @@ import { Show } from "solid-js"
 import { useKeyboard, usePaste } from "@opentui/solid"
 import { dispatch } from "../keys/dispatch.js"
 import { pasteIntoOverlay } from "../keys/overlay.js"
-import { tokens } from "../state/theme.js"
+import { focusAccent, glyph, tokens } from "../state/theme.js"
 import { Header } from "./chrome/Header.js"
 import { Conversation } from "./panes/Conversation.js"
 import { AgentPane } from "./panes/AgentPane.js"
-import { Side } from "./panes/side/Side.js"
+import { FleetTree } from "./panes/FleetTree.js"
 import { InputBox } from "./panes/Input.js"
 import { QueuedMessages } from "./panes/QueuedMessages.js"
 import { SlashPalette } from "./chrome/SlashPalette.js"
@@ -22,13 +22,17 @@ import { Onboarding } from "./overlays/OnboardingView.js"
 import type { TuiContext } from "../state/store.js"
 
 /**
- * Root of the Solid/OpenTUI TUI. The message region is a **two-pane split**: the
- * **orchestrator** (the lead conversation) is always the left pane, and when you
- * select a teammate — or open a contextual panel (`:activity`/`:context`/`:tree`/
- * `:sessions`) — it opens as the **right pane**, 50/50, so you watch an agent
- * work without losing the lead. With nothing selected the orchestrator fills the
- * width. Below it the bottom chrome: the pending queue, the input fence, the `:`
- * / `/` contextual menus, and the two-zone status bar. No floating modals.
+ * Root of the Solid/OpenTUI TUI — **chat-first**. The message region is a fixed
+ * two-pane split: the **chat** on the LEFT (the assistant's conversation rail,
+ * or — when you jump into an agent from the tree — that agent's live session via
+ * `AgentPane`) and the always-visible **fleet tree** on the RIGHT (the
+ * workspace's sessions and their sub-agent subtrees with status glyphs). A
+ * breadcrumb above the chat says where it points (`assistant` or `assistant ▸
+ * <agent folder>`). Exactly three focus targets — input / chat / tree — cycled
+ * with `Tab` (Ctrl-h/j/k/l + Ctrl-arrows alias); the focused pane's title/edge
+ * brightens to its accent and the others dim. Below the region the bottom
+ * chrome: the pending queue, the input fence, the `:`/`/` contextual menus, and
+ * the two-zone status bar. No floating modals.
  */
 export const App = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
@@ -47,14 +51,16 @@ export const App = (props: { ctx: TuiContext }) => {
   })
 
   // The shortcuts reference card (~30 rows) hands the whole message region over
-  // to itself. Otherwise the orchestrator (left) is always shown; the right pane
-  // opens for a selected agent (a node preview) or a focused contextual panel.
+  // to itself. Otherwise the chat (left) + the fleet tree (right) are always
+  // both shown — the fleet tree replaces the old four cycled side views.
   const hidePanes = () => store.overlay().kind === "shortcuts"
-  const rightPane = (): "none" | "agent" | "side" => {
-    if (hidePanes()) return "none"
-    if (store.nodePreview() !== undefined) return "agent"
-    if (store.focus() === "side") return "side"
-    return "none"
+  // The LEFT pane: the assistant's conversation, or — when you've jumped into an
+  // agent from the tree — that agent's live session.
+  const leftIsAgent = () => store.nodePreview() !== undefined
+  // Breadcrumb: where the chat currently points. `agent: <folder>` → `<folder>`.
+  const crumb = () => {
+    const p = store.nodePreview()
+    return p === undefined ? "assistant" : `assistant ${glyph.crumb} ${p.title.replace(/^agent: /, "")}`
   }
 
   // Onboarding is a full-screen takeover (agy-style): while it's open we render
@@ -67,24 +73,42 @@ export const App = (props: { ctx: TuiContext }) => {
     <box flexDirection="column" flexGrow={1}>
       <Show when={!onboarding()} fallback={<Onboarding ctx={props.ctx} />}>
         <Header ctx={props.ctx} />
-        {/* The two-pane message region: orchestrator left (always, unless the
-            shortcuts card takes over), the selected agent or contextual panel
-            right — 50/50 via flexBasis:0 + equal grow, a thin divider between. */}
-        <box flexDirection="row" flexGrow={1} minHeight={0}>
-          <Show when={!hidePanes()}>
+        {/* The chat-first split: the chat (assistant OR a jumped-into agent) on
+            the left, the always-visible fleet tree on the right — 50/50 via
+            flexBasis:0 + equal grow, a thin divider tinted to the focused side's
+            accent. The shortcuts card takes over the whole region when open. */}
+        <Show when={!hidePanes()}>
+          <box flexDirection="row" flexGrow={1} minHeight={0}>
             <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column">
-              <Conversation ctx={props.ctx} />
-            </box>
-          </Show>
-          <Show when={rightPane() !== "none"}>
-            <box width={1} flexShrink={0} backgroundColor={tokens.text.dim} />
-            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column" paddingLeft={1}>
-              <Show when={rightPane() === "agent"} fallback={<Side ctx={props.ctx} />}>
+              {/* Breadcrumb: the chat's accent when chat-focused, dim otherwise. */}
+              <box flexDirection="row" flexShrink={0}>
+                <text
+                  fg={store.focus() === "chat" ? focusAccent("chat") : tokens.text.dim}
+                  wrapMode="none"
+                >
+                  {crumb()}
+                </text>
+              </box>
+              <Show when={leftIsAgent()} fallback={<Conversation ctx={props.ctx} />}>
                 <AgentPane ctx={props.ctx} />
               </Show>
             </box>
-          </Show>
-        </box>
+            <box
+              width={1}
+              flexShrink={0}
+              backgroundColor={
+                store.focus() === "tree"
+                  ? focusAccent("tree")
+                  : store.focus() === "chat"
+                    ? focusAccent("chat")
+                    : tokens.text.dim
+              }
+            />
+            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column" paddingLeft={1}>
+              <FleetTree ctx={props.ctx} />
+            </box>
+          </box>
+        </Show>
         {/* agy bottom chrome: the pending queue sits above the input fence; the
             `:` command menu + `/` search drop BELOW it (contextual menus), and
             the two-zone status bar anchors the very bottom. Keybind discovery

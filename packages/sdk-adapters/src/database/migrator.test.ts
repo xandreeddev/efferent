@@ -13,6 +13,21 @@ describe("parseDbTarget — EFFERENT_DB_URL interpretation", () => {
     expect(parseDbTarget("   ")).toEqual(parseDbTarget(undefined))
   })
 
+  it("unset + EFFERENT_HOME set → SQLite under the sandbox (hermetic), not real ~/.efferent", () => {
+    const saved = process.env.EFFERENT_HOME
+    try {
+      process.env.EFFERENT_HOME = "/tmp/eff-sandbox-xyz"
+      const t = parseDbTarget(undefined)
+      expect(t.kind).toBe("sqlite")
+      if (t.kind === "sqlite") {
+        expect(t.filename).toBe("/tmp/eff-sandbox-xyz/.efferent/efferent.db")
+      }
+    } finally {
+      if (saved === undefined) delete process.env.EFFERENT_HOME
+      else process.env.EFFERENT_HOME = saved
+    }
+  })
+
   it("postgres:// → Postgres", () => {
     expect(parseDbTarget("postgres://agent:agent@localhost:5434/agent")).toEqual({
       kind: "postgres",

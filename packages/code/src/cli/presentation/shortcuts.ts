@@ -17,13 +17,13 @@ export interface ShortcutGroup {
 
 export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
   {
-    title: "regions",
+    title: "focus",
     rows: [
-      { keys: "^h / ^k", label: "the conversation" },
-      { keys: "^l", label: "the panel (activity/agents/sessions)" },
+      { keys: "⇥", label: "cycle input → chat → tree" },
+      { keys: "^h / ^k", label: "the chat" },
+      { keys: "^l", label: "the fleet tree" },
       { keys: "^j", label: "the composer" },
-      { keys: "w", label: "cycle regions (NORMAL)" },
-      { keys: "v", label: "cycle panel views" },
+      { keys: "w", label: "cycle focus (NORMAL alias)" },
     ],
   },
   {
@@ -38,29 +38,24 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
     ],
   },
   {
-    title: "conversation",
+    title: "chat",
     rows: [
       { keys: "j/k · ↑↓", label: "scroll a line" },
       { keys: "^d / ^u", label: "half page" },
       { keys: "{ } / [ ]", label: "paragraph / message" },
       { keys: "gg / G", label: "top / bottom" },
-      { keys: "⇥ / ↵", label: "fold the unit" },
+      { keys: "↵ / h l", label: "fold the unit" },
       { keys: "Z", label: "fold all" },
       { keys: "y", label: "yank the selection" },
     ],
   },
   {
-    title: "panel · context",
+    title: "fleet tree",
     rows: [
-      { keys: "Space", label: "pick a turn" },
-      { keys: "b", label: "build a session from picks" },
-    ],
-  },
-  {
-    title: "panel · agents",
-    rows: [
-      { keys: "↵", label: "open / preview a node" },
-      { keys: "c", label: "fork into a new session" },
+      { keys: "j/k · { } [ ]", label: "move the cursor" },
+      { keys: "h l / ← →", label: "fold a node" },
+      { keys: "↵", label: "jump the chat into a node (root row → back)" },
+      { keys: "c", label: "fork a node into a new session" },
       { keys: "d", label: "drop a node" },
     ],
   },

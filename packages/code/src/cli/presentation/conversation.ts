@@ -191,6 +191,132 @@ export const buildConversation = (
   return items
 }
 
+/* ------------------------------------------------------------------ *
+ * Identity-preserving reconcile — the conversation render hot path.
+ *
+ * `buildConversation` allocates fresh item objects on every call, so feeding its
+ * output straight into a reference-keyed `<For>` recreates EVERY row on every
+ * streamed event (re-parsing all markdown + re-running all diff/tree-sitter
+ * highlighting for the whole history) — the cause of the sluggish caret while a
+ * turn streams. `reconcileItems` diffs a fresh build against the previous one by
+ * stable key and RETURNS THE PRIOR OBJECT REFERENCE for any unchanged item, so
+ * `<For>` skips those rows; a changed turn is rebuilt but reuses its unchanged
+ * body items, so the inner `<For>` only re-renders the block that actually moved.
+ * ------------------------------------------------------------------ */
+
+/** Stable reconcile key per item: turns/checkpoints own an id; a loose run has
+ *  none, so key it on its first body item (content-stable; the list is append-only). */
+const itemKey = (it: ConversationItem): string =>
+  it.kind === "loose" ? `loose:${it.body[0]?.id ?? "∅"}` : it.id
+
+/** Value-equality of two blocks (cheap ref short-circuit first), comparing only
+ *  the fields the rail actually renders. */
+const blockEqual = (a: ScrollbackBlock, b: ScrollbackBlock): boolean => {
+  if (a === b) return true
+  if (a.kind !== b.kind) return false
+  switch (a.kind) {
+    case "tool": {
+      const t = b as Extract<ScrollbackBlock, { kind: "tool" }>
+      return (
+        a.id === t.id &&
+        a.toolName === t.toolName &&
+        a.state === t.state &&
+        a.detail === t.detail &&
+        a.diff === t.diff &&
+        a.output === t.output
+      )
+    }
+    case "agents": {
+      const t = b as Extract<ScrollbackBlock, { kind: "agents" }>
+      return (
+        a.id === t.id &&
+        a.agents.length === t.agents.length &&
+        a.agents.every((x, i) => {
+          const y = t.agents[i]!
+          return (
+            x.nodeId === y.nodeId &&
+            x.name === y.name &&
+            x.status === y.status &&
+            x.toolUses === y.toolUses &&
+            x.tokens === y.tokens &&
+            x.currentTool === y.currentTool &&
+            x.summary === y.summary
+          )
+        })
+      )
+    }
+    default: {
+      // user / assistant / reasoning / info / error / checkpoint — text only.
+      const t = b as Extract<ScrollbackBlock, { kind: "info" }>
+      return a.text === t.text
+    }
+  }
+}
+
+const bodyItemEqual = (a: BodyItem, b: BodyItem): boolean => {
+  if (a === b) return true
+  if (a.kind !== b.kind || a.id !== b.id) return false
+  if (a.kind === "toolGroup" && b.kind === "toolGroup") {
+    return a.tools.length === b.tools.length && a.tools.every((t, i) => blockEqual(t, b.tools[i]!))
+  }
+  return a.kind === "block" && b.kind === "block" && blockEqual(a.block, b.block)
+}
+
+const bodyEqual = (a: ReadonlyArray<BodyItem>, b: ReadonlyArray<BodyItem>): boolean =>
+  a.length === b.length && a.every((x, i) => bodyItemEqual(x, b[i]!))
+
+const itemEqual = (a: ConversationItem, b: ConversationItem): boolean => {
+  if (a === b) return true
+  if (a.kind !== b.kind) return false
+  if (a.kind === "checkpoint" && b.kind === "checkpoint") return a.id === b.id && a.text === b.text
+  if (a.kind === "turn" && b.kind === "turn") {
+    return (
+      a.id === b.id &&
+      a.subject === b.subject &&
+      a.text === b.text &&
+      a.steps === b.steps &&
+      bodyEqual(a.body, b.body)
+    )
+  }
+  return a.kind === "loose" && b.kind === "loose" && bodyEqual(a.body, b.body)
+}
+
+/** Reuse unchanged body-item references inside a turn/loose that DID change, so
+ *  the inner `<For>` only re-renders the body items that actually moved. */
+const reconcileBody = (
+  prev: ReadonlyArray<BodyItem>,
+  next: ReadonlyArray<BodyItem>,
+): ReadonlyArray<BodyItem> => {
+  const byId = new Map(prev.map((b) => [b.id, b] as const))
+  return next.map((b) => {
+    const old = byId.get(b.id)
+    return old !== undefined && bodyItemEqual(old, b) ? old : b
+  })
+}
+
+/**
+ * Reconcile a fresh `buildConversation` result against the previous one: an item
+ * unchanged since last build keeps its old reference (so the reference-keyed
+ * `<For>` skips it); a changed turn/loose is rebuilt but reuses its unchanged
+ * body items. Use as a `createMemo` reducer:
+ * `createMemo((prev) => reconcileItems(prev, buildConversation(blocks())), [])`.
+ */
+export const reconcileItems = (
+  prev: ReadonlyArray<ConversationItem>,
+  next: ReadonlyArray<ConversationItem>,
+): ConversationItem[] => {
+  if (prev.length === 0) return [...next]
+  const byKey = new Map(prev.map((it) => [itemKey(it), it] as const))
+  return next.map((it) => {
+    const old = byKey.get(itemKey(it))
+    if (old === undefined) return it
+    if (itemEqual(old, it)) return old
+    if (it.kind === "turn" && old.kind === "turn") return { ...it, body: reconcileBody(old.body, it.body) }
+    if (it.kind === "loose" && old.kind === "loose") return { ...it, body: reconcileBody(old.body, it.body) }
+    return it
+  })
+}
+
 /**
  * The DOM/scroll id of a top-level item. Turns and checkpoints carry their own
  * stable id; loose runs (no own id) key on render position, so this MUST be

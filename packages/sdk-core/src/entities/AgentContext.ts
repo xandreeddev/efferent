@@ -44,6 +44,20 @@ export type EdgeKind = typeof EdgeKind.Type
 export const ContextNodeStatus = Schema.Literal("running", "ok", "error")
 export type ContextNodeStatus = typeof ContextNodeStatus.Type
 
+/**
+ * The tier a context node occupies, making the SESSION → FLEET → AGENT model
+ * explicit instead of implied by `parentId`:
+ * - `fleet` — a top-level node under a session (`parentId === null`): a task /
+ *   coordinator the session dispatched.
+ * - `agent` — a deeper worker node (`parentId` set) within a fleet.
+ *
+ * A session itself is a `conversations` row, not a context node. The column is
+ * nullable on rows created before it existed; {@link nodeKind} derives the tier
+ * from `parentId` when `kind` is absent.
+ */
+export const NodeKind = Schema.Literal("fleet", "agent")
+export type NodeKind = typeof NodeKind.Type
+
 /** Cumulative token usage for a node's run — mirrors `AgentSubAgentEndEvent.usage`. */
 export const ContextUsage = Schema.Struct({
   inputTokens: Schema.Number,
@@ -63,6 +77,13 @@ export const AgentContextNode = Schema.Struct({
   id: ContextNodeId,
   /** null = a root node (spawned directly by the human or top-level agent). */
   parentId: Schema.NullOr(ContextNodeId),
+  /**
+   * The node's tier in the SESSION → FLEET → AGENT model — `fleet` for a
+   * top-level node under a session, `agent` for a deeper worker. Absent on rows
+   * created before the column existed; use {@link nodeKind} to read it (which
+   * derives the tier from `parentId` when this is undefined).
+   */
+  kind: Schema.optional(NodeKind),
   /** The human conversation this whole tree hangs off — browse scoping. */
   rootConversationId: Schema.NullOr(ConversationId),
   edgeKind: EdgeKind,
@@ -100,3 +121,14 @@ export const AgentContextNode = Schema.Struct({
   endedAt: Schema.optional(Schema.Number),
 })
 export type AgentContextNode = typeof AgentContextNode.Type
+
+/**
+ * The node's tier, derived: the explicit `kind` if present, else inferred from
+ * `parentId` (a root node is a `fleet`, a child is an `agent`). The single
+ * source of truth every reader should use — never branch on `parentId`
+ * directly, so the rule stays in one place.
+ */
+export const nodeKind = (node: {
+  readonly kind?: NodeKind | undefined
+  readonly parentId: ContextNodeId | null
+}): NodeKind => node.kind ?? (node.parentId === null ? "fleet" : "agent")

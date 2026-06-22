@@ -81,6 +81,9 @@ const renderConversation = (d: () => TreeConversationDisplay) => {
 const renderNode = (d: () => TreeNodeDisplay) => {
   const v = d()
   const meta = [
+    // The fleet tier (a top-level task/coordinator) reads distinctly from a
+    // worker agent; the agent tier is the unmarked default, so only tag fleets.
+    v.tier === "fleet" ? "fleet" : undefined,
     v.edgeKind !== "spawned" ? v.edgeKind : undefined,
     v.seedKind !== "task" ? `seed:${v.seedKind}` : undefined,
     v.filesCount > 0 ? `${v.filesCount}f` : undefined,
@@ -125,9 +128,8 @@ const renderNode = (d: () => TreeNodeDisplay) => {
 export const ContextTreeView = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
   const sp = () => store.sidePane()
-  // Owns the cursor only when the side pane is focused AND the agents view
-  // holds the keys (in the split layout activity may hold them).
-  const focused = () => store.focus() === "side" && store.sidePane().view === "tree"
+  // Owns the cursor only when the fleet-tree pane is focused.
+  const focused = () => store.focus() === "tree"
   // The SHARED flatten (root-agent anchor + this session's nodes) — must match
   // the keymap's `treeRows` exactly or the cursor and the pixels disagree
   // (the active-node id is display-only, so the keymap omitting it is fine).

@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test"
 import { Arbitrary, FastCheck as fc, Schema } from "effect"
 import { Failure } from "@xandreed/sdk-core"
-import { normalizeEdits, parseGrepFlags, PlanStep, truncateOutput, unifiedDiff } from "./codingToolkit.js"
+import {
+  firstLine,
+  normalizeEdits,
+  parseGrepFlags,
+  PlanStep,
+  slugify,
+  truncateOutput,
+  unifiedDiff,
+} from "./codingToolkit.js"
 
 describe("normalizeEdits", () => {
   it("passes the canonical edits array through unchanged", () => {
@@ -42,6 +50,37 @@ describe("normalizeEdits", () => {
   it("returns no edits when neither shape is present", () => {
     expect(normalizeEdits({})).toEqual([])
     expect(normalizeEdits({ edits: [] })).toEqual([])
+  })
+})
+
+describe("slugify — memory filename stems", () => {
+  it("lowercases and collapses non-alphanumerics to single hyphens", () => {
+    expect(slugify("Why we route per-request, not per-layer")).toBe(
+      "why-we-route-per-request-not-per-layer",
+    )
+  })
+
+  it("trims leading/trailing hyphens", () => {
+    expect(slugify("  -- Edge case! -- ")).toBe("edge-case")
+  })
+
+  it("falls back to 'memory' when nothing usable remains", () => {
+    expect(slugify("!!!")).toBe("memory")
+    expect(slugify("")).toBe("memory")
+  })
+
+  it("caps the stem length", () => {
+    expect(slugify("a".repeat(200)).length).toBeLessThanOrEqual(60)
+  })
+})
+
+describe("firstLine — default memory summary", () => {
+  it("returns the first non-empty trimmed line", () => {
+    expect(firstLine("\n\n  the decision  \nmore detail")).toBe("the decision")
+  })
+
+  it("returns empty string for all-blank content", () => {
+    expect(firstLine("\n   \n")).toBe("")
   })
 })
 

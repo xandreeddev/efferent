@@ -48,6 +48,11 @@ describe("withBuiltinAgents", () => {
     expect(names).toContain("architect")
     expect(names).toContain("implementer")
   })
+  it("adds the built-in research team when absent", () => {
+    const names = withBuiltinAgents([]).map((a) => a.name)
+    expect(names).toContain("research-coordinator")
+    expect(names).toContain("researcher")
+  })
   it("lets a workspace file role of the same name win", () => {
     const custom = { name: "verifier", description: "mine", body: "custom", sourcePath: "/x.md" }
     const merged = withBuiltinAgents([custom])

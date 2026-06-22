@@ -63,3 +63,17 @@ export const tokens: Tokens = new Proxy({} as Tokens, {
 // covers both `glyph` and `tokens`.
 export { glyph, BRAND }
 export type { PaneKind, Theme, Tokens }
+
+/**
+ * The accent colour of a focusable pane. The token palette names the three
+ * accents by their historic pane keys (`conversation`/`side`/`input`); the
+ * chat-first layout maps its focus targets onto them — chat ← conversation
+ * accent, tree ← side accent, input ← input accent — so a focused pane's
+ * edge/title can brighten without every theme file changing its token names.
+ */
+export const focusAccent = (focus: "chat" | "tree" | "input"): string =>
+  focus === "chat"
+    ? tokens.accent.conversation
+    : focus === "tree"
+      ? tokens.accent.side
+      : tokens.accent.input

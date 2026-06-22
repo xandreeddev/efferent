@@ -1,17 +1,4 @@
 import {
-  sideCursorMove,
-  sideCursorToEnd,
-  sideCursorToHead,
-  sideCursorToTop,
-  sideCurrentRow,
-  sideToggleNode,
-  sideToggleSelect,
-  stackCurrentRow,
-  stackFold,
-  stackMessage,
-  stackParagraph,
-  stackToEnd,
-  stackToTop,
   treeCurrentRow,
   treeFold,
   treeMessage,
@@ -23,22 +10,12 @@ import { buildConversation, buildConversationRows, foldIdsByKind } from "../pres
 import { clampCursor, enclosingFoldId, rowIndexOfKey, rowToEnd, rowToTop, stepHead, stepRow } from "../presentation/paneNav.js"
 import { computePalette } from "../presentation/slashPalette.js"
 import { historyNext, historyPrev } from "../presentation/promptHistory.js"
-import type { ConversationId } from "@xandreed/sdk-core"
-import { buildFromSelection } from "../actions/session.js"
 import {
   closeNodePreview,
   continueFromNode,
-  cycleSideView,
   dropNode,
   openNodePreview,
-  switchToConversation,
 } from "../actions/contextTree.js"
-import {
-  sessionsCurrentRow,
-  sessionsMove,
-  sessionsToEnd,
-  sessionsToTop,
-} from "../presentation/sidePane.js"
 import { clearSearch, cycleSearch, runSearch } from "../actions/search.js"
 import { editLastQueued } from "../actions/submit.js"
 import { runCommand } from "../commands/runCommand.js"
@@ -84,6 +61,22 @@ const convNav = (store: TuiStore) => {
 }
 
 /**
+ * Focus the LEFT chat pane (NORMAL) and land the fold cursor on the newest unit
+ * (bottom, where sticky-scroll sits) so re-entering shows the cursor on-screen.
+ */
+const focusChat = (store: TuiStore): void => {
+  store.setFocus("chat")
+  store.setMode("normal")
+  store.setConvCursor(rowToEnd(convNav(store).rows))
+}
+
+/** Focus the RIGHT fleet-tree pane (NORMAL). */
+const focusTree = (store: TuiStore): void => {
+  store.setFocus("tree")
+  store.setMode("normal")
+}
+
+/**
  * Move the conversation fold cursor to `next` and scroll that row into view —
  * **imperatively**, only on a motion keypress. (Scrolling reactively on the
  * cursor signal would also fire as content streams, fighting the scrollbox's
@@ -101,8 +94,9 @@ const moveConvCursor = (store: TuiStore, next: number): void => {
  * Conversation-pane navigation (NORMAL). Two decoupled things, vim-style:
  * `j/k`·↑/↓ scroll a line, Ctrl-D/U a half page, PgUp/PgDn a page (the viewport);
  * `{`/`}` step the fold cursor by paragraph, `[`/`]` by message, gg/G to the
- * first/last unit (the cursor — the view scrolls it into view). Tab/Enter/h/l·←→
- * fold the unit under the cursor; `Z` folds/unfolds all. While a search is
+ * first/last unit (the cursor — the view scrolls it into view). Enter/h/l·←→
+ * fold the unit under the cursor (Tab is the global focus cycle); `Z` folds/
+ * unfolds all. While a search is
  * active, n/N cycle matches and Esc clears it. Returns true iff it consumed the
  * key.
  */
@@ -177,7 +171,8 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
     case "pageup":
       scr?.scrollBy(-page)
       return true
-    case "tab":
+    // Tab is the universal focus cycle (claimed globally before this handler),
+    // so the chat folds with `h`/`l`/←/→/↵ — not Tab.
     case "h":
     case "l":
     case "left":
@@ -217,177 +212,17 @@ const conversationKey = (ctx: TuiContext, key: Key): boolean => {
 }
 
 /**
- * Context-viewer navigation when the side pane is focused (NORMAL). Mirrors the
- * `view === "context"` branch of the old `navKeys.ts`, driving the pure
- * `tui/sidePane.ts` reducers: j/k·↑/↓ move the cursor, gg/G jump, Tab/h/l·←/→
- * fold the row, Space selects a turn/handoff, Enter folds a collapsible row, b
- * builds a session from the picks. Returns true iff it consumed the key.
- */
-const sideContextKey = (ctx: TuiContext, key: Key): boolean => {
-  const { store } = ctx
-
-  // `G` (lowercased name + shift) → bottom; `g` arms a `gg` two-stroke.
-  if (key.name === "g" && key.shift) {
-    store.setGPending(false)
-    store.setNav((n) => sideCursorToEnd(n, store.projection()))
-    return true
-  }
-  if (key.name === "g" && !key.ctrl && !key.meta) {
-    if (store.gPending()) {
-      store.setGPending(false)
-      store.setNav(sideCursorToTop)
-    } else {
-      store.setGPending(true)
-    }
-    return true
-  }
-  store.setGPending(false)
-
-  // Active search: n next · N prev · Esc clears.
-  if (searchNavKey(store, key)) return true
-
-  // `{`/`}` paragraph step (one row) · `[`/`]` message step (segment/turn head).
-  const bracket = bracketMotion(key)
-  if (bracket === "paragraph-prev") {
-    store.setNav((n) => sideCursorMove(n, store.projection(), -1))
-    return true
-  }
-  if (bracket === "paragraph-next") {
-    store.setNav((n) => sideCursorMove(n, store.projection(), 1))
-    return true
-  }
-  if (bracket === "message-prev") {
-    store.setNav((n) => sideCursorToHead(n, store.projection(), -1))
-    return true
-  }
-  if (bracket === "message-next") {
-    store.setNav((n) => sideCursorToHead(n, store.projection(), 1))
-    return true
-  }
-
-  switch (key.name) {
-    case "j":
-    case "down":
-      store.setNav((n) => sideCursorMove(n, store.projection(), 1))
-      return true
-    case "k":
-    case "up":
-      store.setNav((n) => sideCursorMove(n, store.projection(), -1))
-      return true
-    case "tab":
-    case "h":
-    case "l":
-    case "left":
-    case "right":
-      store.setNav((n) => sideToggleNode(n, store.projection()))
-      return true
-    case "return": {
-      // Enter folds a collapsible row; jumping the conversation cursor to a
-      // message row arrives with the conversation-pane vim cursor in Phase E.
-      const row = sideCurrentRow(store.nav(), store.projection())
-      if (row?.collapsible === true) store.setNav((n) => sideToggleNode(n, store.projection()))
-      return true
-    }
-    case "space":
-      store.setNav((n) => sideToggleSelect(n, store.projection()))
-      return true
-    case "b":
-      void ctx.run(buildFromSelection(store, store.status().cwd))
-      return true
-    case "i":
-      store.setFocus("input")
-      store.setMode("insert")
-      return true
-    default:
-      return false
-  }
-}
-
-/**
- * Activity (stack) view navigation when the side pane is focused (NORMAL). The
- * same motion vocabulary as the context viewer minus select/build: j/k·`{}` step
- * one row, `[]` jumps the prev/next tree-root or section head, gg/G jump to the
- * ends, Tab/Enter/h/l·←/→ fold the container/section under the cursor, i drops to
- * the input. Returns true iff it consumed the key.
- */
-const sideStackKey = (ctx: TuiContext, key: Key): boolean => {
-  const { store } = ctx
-
-  if (key.name === "g" && key.shift) {
-    store.setGPending(false)
-    store.setNav((n) => stackToEnd(n, store.projection()))
-    return true
-  }
-  if (key.name === "g" && !key.ctrl && !key.meta) {
-    if (store.gPending()) {
-      store.setGPending(false)
-      store.setNav(stackToTop)
-    } else {
-      store.setGPending(true)
-    }
-    return true
-  }
-  store.setGPending(false)
-
-  // Active search: n next · N prev · Esc clears.
-  if (searchNavKey(store, key)) return true
-
-  const bracket = bracketMotion(key)
-  if (bracket === "paragraph-prev") {
-    store.setNav((n) => stackParagraph(n, store.projection(), -1))
-    return true
-  }
-  if (bracket === "paragraph-next") {
-    store.setNav((n) => stackParagraph(n, store.projection(), 1))
-    return true
-  }
-  if (bracket === "message-prev") {
-    store.setNav((n) => stackMessage(n, store.projection(), -1))
-    return true
-  }
-  if (bracket === "message-next") {
-    store.setNav((n) => stackMessage(n, store.projection(), 1))
-    return true
-  }
-
-  switch (key.name) {
-    case "j":
-    case "down":
-      store.setNav((n) => stackParagraph(n, store.projection(), 1))
-      return true
-    case "k":
-    case "up":
-      store.setNav((n) => stackParagraph(n, store.projection(), -1))
-      return true
-    case "tab":
-    case "h":
-    case "l":
-    case "left":
-    case "right":
-      store.setNav((n) => stackFold(n, store.projection()))
-      return true
-    case "return": {
-      const row = stackCurrentRow(store.nav(), store.projection())
-      if (row?.foldId !== undefined) store.setNav((n) => stackFold(n, store.projection()))
-      return true
-    }
-    case "i":
-      store.setFocus("input")
-      store.setMode("insert")
-      return true
-    default:
-      return false
-  }
-}
-
-/**
- * Context-tree (`:tree`) navigation when the side pane is focused (NORMAL). A
- * read-only browse of the persistent branching agent-context tree: j/k·`{}` step
- * one node, `[]` jumps forest roots, gg/G jump to the ends, Tab/Enter/h/l·←/→
- * fold the node under the cursor, i drops to the input. Returns true iff it
+ * Fleet-tree navigation when the tree pane is focused (NORMAL). The single
+ * tree handler of the chat-first layout — a browse of the workspace's sessions
+ * and their persistent agent subtrees: j/k·`{}` step one node, `[]` jumps
+ * forest roots, gg/G jump to the ends, h/l·←/→ fold the node under the cursor
+ * (Tab is the global focus cycle), `↵` jumps the LEFT chat into a node's session
+ * (open its preview) or,
+ * on the active row, returns the chat to the assistant, `c` forks a node into a
+ * new session, `d` drops a node, `i` drops to the input. Returns true iff it
  * consumed the key.
  */
-const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
+const treeKey = (ctx: TuiContext, key: Key): boolean => {
   const { store } = ctx
 
   if (key.name === "g" && key.shift) {
@@ -435,7 +270,8 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
     case "up":
       store.setNav((n) => treeParagraph(n, store.projection(), -1))
       return true
-    case "tab":
+    // Tab is the universal focus cycle (claimed globally), so a tree node folds
+    // with `h`/`l`/←/→ — not Tab.
     case "h":
     case "l":
     case "left":
@@ -443,17 +279,17 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       store.setNav((n) => treeFold(n, store.projection()))
       return true
     case "return": {
-      // Enter opens the node's session as a conversation-pane preview (Enter
-      // again on the same node closes it). Enter on the ROOT row (the active
-      // session anchoring the tree) is "back to the root agent": close any
-      // open preview so the live rail shows and the composer feeds the root
-      // again. Folding stays on Tab/h/l/←/→.
+      // Enter on an AGENT node re-points the LEFT chat to that node's session
+      // (open its preview; Enter again on the same node returns to the
+      // assistant). Enter on a CONVERSATION (root / active) row returns the
+      // chat to the assistant: close any open preview so the live rail shows
+      // and the composer feeds the root again. Folding stays on Tab/h/l/←/→.
       const row = treeCurrentRow(store.nav(), store.projection())
       if (row === undefined) return true
       if (row.display.kind === "conversation") {
         if (store.nodePreview() !== undefined) closeNodePreview(store)
         else {
-          store.setFocus("conversation")
+          store.setFocus("chat")
           store.setMode("normal")
         }
         return true
@@ -486,72 +322,6 @@ const sideTreeKey = (ctx: TuiContext, key: Key): boolean => {
       ) {
         void ctx.run(dropNode(store, store.run.getConversationId(), row.display.nodeId))
       }
-      return true
-    }
-    case "i":
-      store.setFocus("input")
-      store.setMode("insert")
-      return true
-    default:
-      return false
-  }
-}
-
-/**
- * Sessions-list navigation when the side pane is focused (NORMAL): a flat list
- * of the workspace's conversations. `j/k`·`{}`·↑↓ move, `gg`/`G` jump, `↵`
- * makes the row the ACTIVE session (on the already-active row it closes an
- * open agent preview — "back to the parent's rail"), `i` drops to the input.
- */
-const sideSessionsKey = (ctx: TuiContext, key: Key): boolean => {
-  const { store } = ctx
-
-  if (key.name === "g" && key.shift) {
-    store.setGPending(false)
-    store.setNav((n) => sessionsToEnd(n, store.projection()))
-    return true
-  }
-  if (key.name === "g" && !key.ctrl && !key.meta) {
-    if (store.gPending()) {
-      store.setGPending(false)
-      store.setNav(sessionsToTop)
-    } else {
-      store.setGPending(true)
-    }
-    return true
-  }
-  store.setGPending(false)
-
-  if (searchNavKey(store, key)) return true
-
-  const bracket = bracketMotion(key)
-  if (bracket === "paragraph-prev" || bracket === "message-prev") {
-    store.setNav((n) => sessionsMove(n, store.projection(), -1))
-    return true
-  }
-  if (bracket === "paragraph-next" || bracket === "message-next") {
-    store.setNav((n) => sessionsMove(n, store.projection(), 1))
-    return true
-  }
-
-  switch (key.name) {
-    case "j":
-    case "down":
-      store.setNav((n) => sessionsMove(n, store.projection(), 1))
-      return true
-    case "k":
-    case "up":
-      store.setNav((n) => sessionsMove(n, store.projection(), -1))
-      return true
-    case "return": {
-      const row = sessionsCurrentRow(store.nav(), store.projection())
-      if (row === undefined) return true
-      if (row.active) {
-        if (store.nodePreview() !== undefined) closeNodePreview(store)
-        else store.toast("already the active session")
-        return true
-      }
-      void ctx.run(switchToConversation(store, row.id as ConversationId))
       return true
     }
     case "i":
@@ -757,27 +527,42 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
 
   // Esc in the idle input (no agent pane) — the modifier-free way OUT of the
   // composer, for vi hands and tmux users alike (Ctrl-H never arrives in legacy
-  // terminals). Leaves the draft intact and drops to NORMAL on the orchestrator.
+  // terminals). Leaves the draft intact and drops to NORMAL on the chat.
   if (key.name === "escape" && store.focus() === "input") {
-    store.setFocus("conversation")
-    store.setMode("normal")
-    store.setConvCursor(rowToEnd(convNav(store).rows))
+    focusChat(store)
     return
   }
 
-  // Pane focus: conversation (h/k) · side (l) · input (j). Read-only panes get
-  // NORMAL, the input gets INSERT.
+  // `Tab` (primary) cycles the three focus targets from ANY pane: input → chat →
+  // tree → input. NORMAL for the read-only chat/tree panes, INSERT for the input.
+  // The one exception: while the `:` command palette is open in the composer, Tab
+  // COMPLETES the highlighted command (owned by `inputKey` below) — so it only
+  // cycles when the palette isn't up.
+  if (key.name === "tab" && !key.ctrl && !key.meta && !key.shift) {
+    const buf = store.input()
+    const paletteOpen =
+      store.focus() === "input" && buf.startsWith(":") && !buf.includes(" ") && !buf.includes("\n")
+    if (!paletteOpen) {
+      key.preventDefault?.()
+      const f = store.focus()
+      if (f === "input") focusChat(store)
+      else if (f === "chat") focusTree(store)
+      else {
+        store.setFocus("input")
+        store.setMode("insert")
+      }
+      return
+    }
+  }
+
+  // Pane focus aliases: chat (Ctrl-h/k/↑) · tree (Ctrl-l/→) · input (Ctrl-j/↓).
+  // Read-only panes get NORMAL, the input gets INSERT.
   if (key.ctrl && (key.name === "h" || key.name === "k" || key.name === "up")) {
-    store.setFocus("conversation")
-    store.setMode("normal")
-    // Land the fold cursor on the newest unit (bottom, where sticky-scroll sits)
-    // so re-entering the pane shows the cursor on-screen, not off at the top.
-    store.setConvCursor(rowToEnd(convNav(store).rows))
+    focusChat(store)
     return
   }
   if (key.ctrl && (key.name === "l" || key.name === "right")) {
-    store.setFocus("side")
-    store.setMode("normal")
+    focusTree(store)
     return
   }
   if (key.ctrl && (key.name === "j" || key.name === "down")) {
@@ -788,9 +573,9 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
 
   // `/` in a read-only pane opens a search FOR that pane: remember which pane,
   // drop to the input, and seed the buffer with "/" so the user just types the
-  // query (submit routes via `searchPane`).
+  // query (submit routes via `searchPane`; the tree maps to the "side" search).
   if (key.name === "/" && !key.ctrl && !key.meta && store.focus() !== "input") {
-    store.setSearchPane(store.focus() === "side" ? "side" : "conversation")
+    store.setSearchPane(store.focus() === "tree" ? "side" : "conversation")
     store.setFocus("input")
     store.setMode("insert")
     store.inputControl.current?.seed("/")
@@ -807,9 +592,8 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // `w` in NORMAL cycles panes (conversation → side → input) — the
-  // modifier-free counterpart to Ctrl-hjkl for terminals that eat the ctrl
-  // encodings, and the visible path for non-vi users (it's in the nav row).
+  // `w` in NORMAL is a modifier-free alias for the Tab cycle (chat → tree →
+  // input) — for terminals that eat the Ctrl encodings, and a familiar vi path.
   if (
     key.name === "w" &&
     !key.ctrl &&
@@ -817,10 +601,8 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     !key.shift &&
     store.focus() !== "input"
   ) {
-    if (store.focus() === "conversation") {
-      store.setFocus("side")
-      store.setMode("normal")
-    } else {
+    if (store.focus() === "chat") focusTree(store)
+    else {
       store.setFocus("input")
       store.setMode("insert")
     }
@@ -834,20 +616,6 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // `v` cycles the side views (activity → context → agents → sessions) from
-  // ANY pane in NORMAL — and FOCUSES the side pane, so the next j/k/↵ drive
-  // the view you just swapped to instead of leaking into the conversation.
-  // (Focus moves to a read-only pane, never the input — so the original
-  // v-into-the-textarea bug class can't recur; `preventDefault` insures
-  // against sync fallthrough regardless.)
-  if (key.name === "v" && !key.ctrl && !key.meta && !key.shift && store.focus() !== "input") {
-    key.preventDefault?.()
-    store.setFocus("side")
-    store.setMode("normal")
-    void ctx.run(cycleSideView(store, store.run.getConversationId()))
-    return
-  }
-
   // Input pane (INSERT): palette nav/complete/run + prompt-history recall, claimed
   // before the textarea (via preventDefault) so the right keys reach the command
   // line instead of inserting a newline / moving the cursor.
@@ -855,52 +623,13 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // Side pane, context viewer: cursor / fold / select / build.
-  if (
-    !key.ctrl &&
-    !key.meta &&
-    store.focus() === "side" &&
-    store.sidePane().view === "context" &&
-    sideContextKey(ctx, key)
-  ) {
+  // Fleet-tree pane: cursor / fold / jump-into-node over the persistent tree.
+  if (!key.ctrl && !key.meta && store.focus() === "tree" && treeKey(ctx, key)) {
     return
   }
 
-  // Side pane, Activity view: cursor / fold over the live execution dashboard.
-  if (
-    !key.ctrl &&
-    !key.meta &&
-    store.focus() === "side" &&
-    store.sidePane().view === "stack" &&
-    sideStackKey(ctx, key)
-  ) {
-    return
-  }
-
-  // Side pane, context-tree view: cursor / fold over the persistent agent tree.
-  if (
-    !key.ctrl &&
-    !key.meta &&
-    store.focus() === "side" &&
-    store.sidePane().view === "tree" &&
-    sideTreeKey(ctx, key)
-  ) {
-    return
-  }
-
-  // Side pane, sessions list: cursor / switch the active session.
-  if (
-    !key.ctrl &&
-    !key.meta &&
-    store.focus() === "side" &&
-    store.sidePane().view === "sessions" &&
-    sideSessionsKey(ctx, key)
-  ) {
-    return
-  }
-
-  // Conversation pane: scroll / fold-all / search nav (Ctrl-D/U allowed here).
-  if (!key.meta && store.focus() === "conversation" && conversationKey(ctx, key)) {
+  // Chat pane: scroll / fold-all / search nav (Ctrl-D/U allowed here).
+  if (!key.meta && store.focus() === "chat" && conversationKey(ctx, key)) {
     return
   }
 

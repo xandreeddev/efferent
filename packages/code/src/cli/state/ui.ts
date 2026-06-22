@@ -1,7 +1,7 @@
 import { createSignal, type Accessor } from "solid-js"
 import { emptyHistory, type PromptHistory } from "../presentation/promptHistory.js"
 
-export type FocusPane = "conversation" | "side" | "input"
+export type FocusPane = "chat" | "tree" | "input"
 export type UiMode = "insert" | "normal" | "visual"
 
 /**

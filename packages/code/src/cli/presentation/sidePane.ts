@@ -277,44 +277,6 @@ export const contextRows = (
     nav.contextHandoffSelected,
   )
 
-export const sideCursorMove = (
-  nav: SidePaneNav,
-  projection: SidePaneProjection,
-  delta: number,
-): SidePaneNav => {
-  const n = contextRows(nav, projection).length
-  if (n === 0) return nav
-  return { ...nav, contextCursor: clamp(nav.contextCursor + delta, 0, n - 1) }
-}
-export const sideCursorToTop = (nav: SidePaneNav): SidePaneNav => ({
-  ...nav,
-  contextCursor: 0,
-})
-export const sideCursorToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
-  const n = contextRows(nav, projection).length
-  return { ...nav, contextCursor: Math.max(0, n - 1) }
-}
-/** `[`/`]` — jump the context cursor to the prev/next head (a segment or turn row). */
-export const sideCursorToHead = (
-  nav: SidePaneNav,
-  projection: SidePaneProjection,
-  dir: 1 | -1,
-): SidePaneNav => {
-  const heads = contextRows(nav, projection).map((r) => ({
-    head: r.kind === "segment" || r.kind === "turn",
-  }))
-  return { ...nav, contextCursor: stepHead(heads, nav.contextCursor, dir) }
-}
-/** Fold/unfold the segment under the cursor (no-op on non-collapsible rows). */
-export const sideToggleNode = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => {
-  const rows = contextRows(nav, projection)
-  const row = rows[clamp(nav.contextCursor, 0, Math.max(0, rows.length - 1))]
-  if (row === undefined || !row.collapsible || row.groupId === undefined) return nav
-  const next = new Set(nav.contextCollapsed)
-  if (next.has(row.groupId)) next.delete(row.groupId)
-  else next.add(row.groupId)
-  return { ...nav, contextCollapsed: next }
-}
 /** The row under the cursor (for the driver's Enter = jump-or-fold decision). */
 export const sideCurrentRow = (
   nav: SidePaneNav,
@@ -511,24 +473,11 @@ export const stackMessage = (
   projection: SidePaneProjection,
   dir: 1 | -1,
 ): SidePaneNav => ({ ...nav, stackCursor: stepHead(stackRows(nav, projection), nav.stackCursor, dir) })
-export const stackToTop = (nav: SidePaneNav): SidePaneNav => ({ ...nav, stackCursor: rowToTop() })
-export const stackToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
-  ...nav,
-  stackCursor: rowToEnd(stackRows(nav, projection)),
-})
 /** `⇥`/`↵` — fold the tree container / section under the cursor (no-op on leaves). */
 export const stackFold = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
   ...nav,
   stackCollapsed: foldAt(stackRows(nav, projection), nav.stackCursor, nav.stackCollapsed),
 })
-/** The row under the cursor (for the driver's `↵` fold-or-noop decision). */
-export const stackCurrentRow = (
-  nav: SidePaneNav,
-  projection: SidePaneProjection,
-): StackRowData | undefined => {
-  const rows = stackRows(nav, projection)
-  return rows[clampCursor(rows.length, nav.stackCursor)]
-}
 
 // --- context-tree (`:tree`) view navigation (pure; rows re-derived each call) ---
 
@@ -540,23 +489,27 @@ export const treeRows = (
    *  and count are identical, so cursor-mapping callers may omit it. */
   activeNodeId?: string,
 ): ReadonlyArray<TreeRowData> => {
-  // The active session is the tree's depth-0 anchor — the ROOT AGENT. Its
-  // sub-agents rail beneath it, and Enter on it is "back to the root" (close
-  // any open node preview; the composer feeds it again).
-  const active = projection.sessions?.find((s) => s.active)
-  const root = {
-    id: active?.id ?? "root",
-    label: active?.label ?? "(current session)",
-    active: true,
-  }
+  // The fleet tree: every workspace session is a depth-0 root, the active one
+  // marked, with its persisted agent subtree railed beneath it. `treeNodes` is
+  // scoped to the ACTIVE session, so only the active root grows children today
+  // (other sessions show as folded roots); `adoptAll` nests those nodes under
+  // the active root regardless of `rootConversationId`. With no sessions loaded
+  // yet we fall back to a single synthetic root for the current session.
+  const sessions = projection.sessions ?? []
+  const roots =
+    sessions.length > 0
+      ? sessions
+      : [{ id: "root", label: "(current session)", active: true }]
+  // Restrict `adoptAll` to the single-active-root shape — with multiple
+  // conversation roots, nodes are matched by `rootConversationId` so they
+  // don't all pile under the first session.
+  const adoptAll = sessions.filter((s) => s.active).length === 1 && sessions.length === 1
   return buildNavRows(
-    [root],
+    roots,
     projection.treeNodes ?? [],
     nav.treeCollapsed,
     projection.treeWorkspaceRef,
-    // treeNodes is already scoped to the active session — every node belongs
-    // under the root regardless of whether the sessions list has loaded yet.
-    { adoptAll: true, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
+    { adoptAll, ...(activeNodeId !== undefined ? { activeNodeId } : {}) },
   )
 }
 
@@ -565,26 +518,6 @@ export const treeRows = (
 export const sessionsRows = (
   projection: SidePaneProjection,
 ): ReadonlyArray<NavConversation> => projection.sessions ?? []
-
-export const sessionsMove = (
-  nav: SidePaneNav,
-  projection: SidePaneProjection,
-  delta: number,
-): SidePaneNav => ({
-  ...nav,
-  sessionsCursor: clamp(nav.sessionsCursor + delta, 0, Math.max(0, sessionsRows(projection).length - 1)),
-})
-export const sessionsToTop = (nav: SidePaneNav): SidePaneNav => ({ ...nav, sessionsCursor: 0 })
-export const sessionsToEnd = (nav: SidePaneNav, projection: SidePaneProjection): SidePaneNav => ({
-  ...nav,
-  sessionsCursor: Math.max(0, sessionsRows(projection).length - 1),
-})
-/** The conversation under the sessions cursor, or undefined on an empty list. */
-export const sessionsCurrentRow = (
-  nav: SidePaneNav,
-  projection: SidePaneProjection,
-): NavConversation | undefined =>
-  sessionsRows(projection)[clamp(nav.sessionsCursor, 0, Math.max(0, sessionsRows(projection).length - 1))]
 
 /** `{`/`}` (and plain `j`/`k`, one row per node) — paragraph step. */
 export const treeParagraph = (

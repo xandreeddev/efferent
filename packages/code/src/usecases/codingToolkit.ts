@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import {
+  type Memory,
   type Skill,
   Approval,
   bashRuleKey,
@@ -49,6 +50,24 @@ const stripFrontmatter = (content: string): string => {
   if (closeIndex === -1) return content
   return afterFirstFence.slice(closeIndex + 4).replace(/^\n+/, "")
 }
+
+/**
+ * Slugify a memory title/name into a safe `.md` filename stem: lowercased,
+ * non-alphanumerics collapsed to single hyphens, trimmed. Falls back to
+ * "memory" when nothing usable remains (e.g. an all-punctuation title).
+ */
+export const slugify = (s: string): string => {
+  const slug = s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+  return slug.length > 0 ? slug : "memory"
+}
+
+/** The first non-empty line of a block, trimmed — used as a memory's default summary. */
+export const firstLine = (s: string): string =>
+  s.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? ""
 
 /**
  * Accept either the canonical `edits: [{ oldText, newText }]` array or the
@@ -563,6 +582,59 @@ export const ReadSkill = Tool.make("read_skill", {
   failureMode: "return",
 })
 
+export const ReadMemory = Tool.make("read_memory", {
+  description:
+    "Read the full body of a named project-knowledge record (a durable note capturing an architecture decision, convention, or gotcha). Use when a record's title/summary in the prompt's Memory section looks relevant to the task — the index is intentionally terse, the body has the detail.",
+  parameters: {
+    name: Schema.String.annotations({
+      description:
+        "Memory name (the slug shown in the system prompt's Memory section).",
+    }),
+  },
+  success: Schema.Struct({
+    name: Schema.String,
+    title: Schema.String,
+    sourcePath: Schema.String,
+    body: Schema.String,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const Remember = Tool.make("remember", {
+  description:
+    "Record durable project knowledge — an architecture decision, a convention, a gotcha worth keeping — into the workspace's `.efferent/memory/`. Use it the moment a decision is made or a non-obvious fact is learned, so future sessions read the distilled rationale instead of re-deriving it. Writes a markdown record (title + summary + your content); if a record with the same name already exists it APPENDS a timestamped entry (ADR-style log) rather than overwriting. Keep records small and curated — one topic each — not a dump of everything.",
+  parameters: {
+    title: Schema.String.annotations({
+      description:
+        "Short human-readable title for the record (e.g. 'Why we route per-request, not per-layer').",
+    }),
+    content: Schema.String.annotations({
+      description:
+        "The knowledge itself, as markdown. State the decision/fact and the WHY — the rationale is the point.",
+    }),
+    name: Schema.optional(
+      Schema.String.annotations({
+        description:
+          "Optional slug for the file (`.efferent/memory/<name>.md`). Defaults to a slug of the title. Reuse an existing name to append a follow-up entry to that record.",
+      }),
+    ),
+    summary: Schema.optional(
+      Schema.String.annotations({
+        description:
+          "Optional one-line index summary. Defaults to the first line of `content`.",
+      }),
+    ),
+  },
+  success: Schema.Struct({
+    name: Schema.String,
+    path: Schema.String,
+    created: Schema.Boolean,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const WebFetch = Tool.make("web_fetch", {
   description:
     "Fetch a URL over HTTP(S) and return its content as readable text (HTML is reduced to text). Use for documentation, references, or pages the user links.",
@@ -654,6 +726,8 @@ export const codingToolkit = Toolkit.make(
   Glob,
   Ls,
   ReadSkill,
+  ReadMemory,
+  Remember,
   WebFetch,
   WebSearchTool,
   UpdatePlan,
@@ -688,6 +762,7 @@ export interface ScopeBinding {
 export const makeCodingHandlers = (
   binding: ScopeBinding,
   skills: ReadonlyArray<Skill> = [],
+  memory: ReadonlyArray<Memory> = [],
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
@@ -697,6 +772,7 @@ export const makeCodingHandlers = (
     const approval = yield* Approval
     const { rootDir, displayRoot, enforceWrite, allowBash } = binding
     const skillByName = new Map(skills.map((s) => [s.name, s] as const))
+    const memoryByName = new Map(memory.map((m) => [m.name, m] as const))
 
     const rejectIfOutOfScope = (abs: string) =>
       enforceWrite && !isWithinScope(abs, rootDir)
@@ -932,6 +1008,60 @@ export const makeCodingHandlers = (
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
+      read_memory: ({ name }) =>
+        Effect.gen(function* () {
+          const record = memoryByName.get(name)
+          if (record === undefined) {
+            return yield* Effect.fail({
+              error: "UnknownMemory",
+              message: `No memory named '${name}'. Available: ${
+                [...memoryByName.keys()].join(", ") || "(none)"
+              }`,
+            })
+          }
+          const read = yield* fs.read(record.sourcePath)
+          return {
+            name: record.name,
+            title: record.title,
+            sourcePath: record.sourcePath,
+            body: stripFrontmatter(read.content),
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      // Durable knowledge → `<workspace>/.efferent/memory/<slug>.md`. Anchored on
+      // displayRoot (the workspace root) so the layer is shared across the root
+      // and every sub-agent, regardless of scope. Append-not-clobber: an existing
+      // record gains a timestamped ADR-style entry; a new one is created with
+      // frontmatter (title + summary). Serialized on the write gate.
+      remember: ({ title, content, name, summary }) =>
+        writeGate.withPermits(1)(Effect.gen(function* () {
+          const slug = slugify(
+            name !== undefined && name.trim().length > 0 ? name : title,
+          )
+          const abs = resolve(displayRoot, ".efferent/memory", `${slug}.md`)
+          const trimmedSummary =
+            summary !== undefined && summary.trim().length > 0
+              ? summary.trim()
+              : firstLine(content)
+          const stamp = new Date().toISOString()
+          const exists = yield* fs.exists(abs)
+          if (exists) {
+            const before = yield* fs.read(abs)
+            const entry = `\n## ${stamp} — ${title}\n\n${content.trim()}\n`
+            yield* fs.write(abs, `${before.content.replace(/\n+$/, "")}\n${entry}`)
+          } else {
+            const doc =
+              `---\ntitle: ${title}\nsummary: ${trimmedSummary}\n---\n\n` +
+              `# ${title}\n\n## ${stamp}\n\n${content.trim()}\n`
+            yield* fs.write(abs, doc)
+          }
+          return {
+            name: slug,
+            path: displayPath(displayRoot, abs),
+            created: !exists,
+          }
+        })).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
       // Pure echo: the plan IS the call's arguments — the UI reads them off
       // the event stream / persisted history; nothing to store here.
       update_plan: ({ steps }) =>
@@ -957,7 +1087,7 @@ export const makeCodingHandlers = (
 export const codingToolkitLayer = (
   cwd: string,
   skills: ReadonlyArray<Skill> = [],
-  options: { readonly allowBash?: boolean } = {},
+  options: { readonly allowBash?: boolean; readonly memory?: ReadonlyArray<Memory> } = {},
 ) =>
   codingToolkit.toLayer(
     makeCodingHandlers(
@@ -968,5 +1098,6 @@ export const codingToolkitLayer = (
         allowBash: options.allowBash ?? true,
       },
       skills,
+      options.memory ?? [],
     ),
   )
