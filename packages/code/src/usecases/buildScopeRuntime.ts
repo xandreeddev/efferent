@@ -523,6 +523,19 @@ export const roleToolEntries = (
 }
 
 /**
+ * Whether a spawned agent can WRITE — it has `write_file`/`edit_file` in its
+ * effective toolkit. A role with no allowlist gets the full coding tools (which
+ * include writes); a role allowlist that names neither write tool is read-only
+ * (a coordinator, researcher, architect). Drives the folder lock: only writers
+ * serialize on a folder, so a read-only parent never holds the lock its
+ * same-folder children need (the `wait_for_agents` deadlock — see `runSpawnedAgent`).
+ */
+export const agentWrites = (def: AgentDefinition | undefined): boolean => {
+  if (def?.tools === undefined) return true
+  return def.tools.some((t) => t === "write_file" || t === "edit_file")
+}
+
+/**
  * Resolve a requested role name against the loaded definitions. Absent/blank ⇒
  * no role (generic spawn). A named-but-unknown agent fails with a model-facing
  * `UnknownAgent` (it lists what's available) rather than silently degrading —
@@ -688,10 +701,18 @@ interface RunSpawnedArgs<R> {
  * events fire inside the lock, so a queued same-name run never interleaves
  * its lifecycle with the one before it.
  */
-const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
-  withFolderLock(args.locks, args.folder)(Effect.gen(function* () {
+const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
+  // The folder lock is a WRITE-WRITE mutex — two agents WRITING the same folder
+  // would race. A read-only agent (a coordinator, researcher, or architect: no
+  // write_file/edit_file in its role allowlist) neither races nor needs it, and
+  // MUST NOT hold it: a read-only coordinator that took the lock and then parked
+  // in `wait_for_agents` for its same-folder children would deadlock — the
+  // children block forever on the lock the parent holds while it waits on them.
+  // So only writers serialize on the folder; read-only fan-out runs in parallel.
+  const definition = args.definition
+  const writes = agentWrites(definition)
+  const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
-    const definition = args.definition
     const label = args.title ?? (basename(folder) || folder)
     const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
     const usageRef = yield* Ref.make<ContextUsage>({
@@ -914,7 +935,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) =>
     }
     yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
     return yield* Effect.fail(f)
-  })).pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
+  })
+  // Writers serialize on the folder; read-only runs don't take the lock (above).
+  // markDone always runs (tears the mailbox down on every exit), lock or not.
+  const run = writes ? withFolderLock(args.locks, args.folder)(body) : body
+  return run.pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
+}
 
 /** The model's `run_agent` result: the work happens in the background, so the
  *  call returns the spawned node's handle, never its outcome. */
