@@ -144,8 +144,21 @@ export const openNodePreview = (
     const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
-    const node = yield* cts.get(decoded.value)
-    const messages = yield* cts.listMessages(decoded.value)
+    // A context node is a cache of a world that keeps changing — it can be
+    // dropped or never have been persisted. Tolerate a missing one instead of
+    // crashing the whole action (which logged a raw `ContextNodeNotFound` and
+    // spammed an error block every time the preview re-fetched at turn end).
+    const fetched = yield* cts
+      .get(decoded.value)
+      .pipe(Effect.zip(cts.listMessages(decoded.value)), Effect.option)
+    if (fetched._tag === "None") {
+      yield* Effect.sync(() => {
+        if (store.nodePreview()?.nodeId === nodeId) closeNodePreview(store)
+        store.toast("that agent's session is no longer available")
+      })
+      return
+    }
+    const [node, messages] = fetched.value
     const folder = basename(node.folder) || node.folder
     const name = node.title ?? folder
     const header: ScrollbackBlock = {
@@ -218,8 +231,14 @@ export const continueFromNode = (store: TuiStore, cwd: string, nodeId: string) =
     const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
-    const node = yield* cts.get(decoded.value)
-    const messages = yield* cts.listMessages(decoded.value)
+    const fetched = yield* cts
+      .get(decoded.value)
+      .pipe(Effect.zip(cts.listMessages(decoded.value)), Effect.option)
+    if (fetched._tag === "None") {
+      yield* Effect.sync(() => store.toast("that agent's session is no longer available"))
+      return
+    }
+    const [node, messages] = fetched.value
     const cs = yield* ConversationStore
     const created = yield* cs.create(cwd).pipe(Effect.either)
     if (created._tag === "Left") {
