@@ -236,9 +236,20 @@ export const makeEventReducer = (
         // agent unreachable mid-turn.
         opts.refreshNav?.()
         // Seed the node's live log with the task it was given — so its pane
-        // opens onto "what it was asked", then streams its work under it.
+        // opens onto "what it was asked", then streams its work under it. But
+        // when a HUMAN resumed the node (the composer optimistically appended
+        // their message just before resumeNode emitted this start), that line is
+        // already the tail — appending the task again is the "double user
+        // message on attach". Skip if the last entry already shows it (the task
+        // may carry a staleness-brief prefix, so match by suffix too).
         if (event.nodeId !== undefined && event.task.trim().length > 0) {
-          store.appendNodeLog(event.nodeId, { kind: "user", text: event.task })
+          const log = store.nodeLog(event.nodeId)
+          const last = log[log.length - 1]
+          const alreadyShown =
+            last !== undefined &&
+            last.kind === "user" &&
+            (last.text === event.task || event.task.trimEnd().endsWith(last.text.trimEnd()))
+          if (!alreadyShown) store.appendNodeLog(event.nodeId, { kind: "user", text: event.task })
         }
         // This run's session is on-screen (the human resumed it from the
         // preview, or is watching the node the agent spawned into): its
@@ -304,15 +315,32 @@ export const makeEventReducer = (
         const ownTreeId = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
         if (event.nodeId !== undefined) subTreeByNode.delete(event.nodeId)
         // Log the run's conclusion into its own live log (its pane shows it),
-        // whether or not that pane is open right now.
+        // whether or not that pane is open right now. But for a leaf agent the
+        // return summary IS its final assistant message, which already streamed
+        // into the log via assistant_message — appending it again is the
+        // "double message on attach". Skip when the tail already shows it.
         if (event.nodeId !== undefined && event.summary.trim().length > 0) {
-          store.appendNodeLog(
-            event.nodeId,
-            event.ok
-              ? { kind: "assistant", text: event.summary }
-              : { kind: "error", text: event.summary },
-          )
+          const log = store.nodeLog(event.nodeId)
+          const last = log[log.length - 1]
+          const dup =
+            last !== undefined &&
+            (last.kind === "assistant" || last.kind === "error") &&
+            last.text.trim() === event.summary.trim()
+          if (!dup) {
+            store.appendNodeLog(
+              event.nodeId,
+              event.ok
+                ? { kind: "assistant", text: event.summary }
+                : { kind: "error", text: event.summary },
+            )
+          }
         }
+        // NOTE: a top-level lead's RESULT is no longer surfaced from here. The
+        // Workspace now auto-resumes the orchestrator when a top-level lead
+        // finishes (`onTopLevelDone` in inProcess.ts), so the lead's result is
+        // reported by the orchestrator IN ITS OWN VOICE (its inbox-folded turn
+        // streams as normal assistant prose). Pushing the raw summary here too
+        // would double it. Specialist outcomes stay in the tree (✗/✓) + the log.
         if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
           // Human-driven resume (no rail presence) — close its tree node only.
           if (ownTreeId !== undefined) {
@@ -324,23 +352,20 @@ export const makeEventReducer = (
           return
         }
         if (event.nodeId !== undefined && agentRows.has(event.nodeId)) {
-          // Close the row in the grouped block. The ok summary — the run's
-          // actual return value, what the parent model received — lands on the
-          // row's sub-line (truncated; ↵ on the node shows the full session).
-          // A failure is always loud (error block below).
+          // Close the row in the grouped block. The summary — the run's actual
+          // return value, what the parent model received — lands on the row's
+          // sub-line (truncated; ↵ on the node shows the full session), and a
+          // failure shows as a ✗ glyph on the row + in the fleet tree. We do NOT
+          // push a red block here: a specialist failing is the lead's concern,
+          // not chat noise (only the top-level lead's outcome surfaces, above).
           touchAgentRow(event.nodeId, ({ currentTool: _t, ...r }) => ({
             ...r,
             status: event.ok ? "ok" : "error",
-            ...(event.ok && event.summary.trim().length > 0
-              ? { summary: event.summary.trim() }
-              : {}),
+            ...(event.summary.trim().length > 0 ? { summary: event.summary.trim() } : {}),
             ...(event.usage !== undefined && r.tokens === 0
               ? { tokens: event.usage.inputTokens + event.usage.outputTokens }
               : {}),
           }))
-          if (!event.ok && event.summary.trim().length > 0) {
-            store.pushBlock({ kind: "error", text: `${event.name}: ${event.summary}` })
-          }
           if (ownTreeId !== undefined) {
             store.setProjection((p) => ({
               ...p,

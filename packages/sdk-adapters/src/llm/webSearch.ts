@@ -75,8 +75,11 @@ const resolveSearchModel = (
     if ((yield* auth.get("google")) !== undefined) {
       return { provider: "google", modelId: DEFAULT_GOOGLE_SEARCH_MODEL }
     }
-    const openai = yield* auth.get("openai")
-    if (openai?.type === "api_key") {
+    // Any OpenAI credential — api key OR subscription/OAuth. The credential TYPE
+    // must not gate selection (Google's branch above doesn't): the key/token is
+    // resolved per call by `resolveKey`, which refreshes a near-expiry OAuth
+    // token. Gating on `=== "api_key"` silently dropped OpenAI-OAuth logins.
+    if ((yield* auth.get("openai")) !== undefined) {
       return { provider: "openai", modelId: DEFAULT_OPENAI_SEARCH_MODEL }
     }
     return undefined

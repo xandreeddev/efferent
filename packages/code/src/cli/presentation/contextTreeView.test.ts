@@ -189,3 +189,44 @@ describe("buildNavRows (the navigator: conversations as roots)", () => {
     expect(rows[0]!.depth).toBe(0)
   })
 })
+
+describe("buildNavRows — single current-session root (the always-expanded fleet pane)", () => {
+  const solo = [{ id: "c1", label: "Jun 9 · fix the bug", active: true }]
+  const conv = (r: TreeRowData) => {
+    if (r.display.kind !== "conversation") throw new Error("expected a conversation row")
+    return r.display
+  }
+
+  test("the lone session root is NOT foldable (no foldId) — folding it can't hide the fleet", () => {
+    const nodes = [node("a", null, "/ws/a", 1, { rootConversationId: "c1" as never })]
+    const rows = buildNavRows(solo, nodes, new Set())
+    expect(rows[0]!.foldId).toBeUndefined() // single root: no fold caret
+    expect(conv(rows[0]!).hasChildren).toBe(true) // still knows it has agents
+  })
+
+  test("a single root stays expanded even if its (legacy) fold id is in collapsed", () => {
+    const nodes = [
+      node("a", null, "/ws/a", 1, { rootConversationId: "c1" as never }),
+      node("b", "a", "/ws/b", 2, { rootConversationId: "c1" as never }),
+    ]
+    const rows = buildNavRows(solo, nodes, new Set(["tree:conv:c1"]))
+    // root + both agents render — the collapse marker is inert for a lone root
+    expect(rows.map((r) => r.display.kind)).toEqual(["conversation", "node", "node"])
+    expect(conv(rows[0]!).folded).toBe(false)
+  })
+
+  test("rootRunning reflects the orchestrator's turn, off by default", () => {
+    const nodes = [node("a", null, "/ws/a", 1, { rootConversationId: "c1" as never })]
+    expect(conv(buildNavRows(solo, nodes, new Set(), undefined, { rootRunning: true })[0]!).rootRunning).toBe(true)
+    expect(conv(buildNavRows(solo, nodes, new Set())[0]!).rootRunning).toBe(false)
+    // The display "active" tag moves to a previewed node, but the orchestrator
+    // can still be running its turn — rootRunning stays true (it is the root's
+    // own busy state, not "where input goes").
+    const previewed = buildNavRows(solo, nodes, new Set(), undefined, {
+      rootRunning: true,
+      activeNodeId: "a",
+    })
+    expect(conv(previewed[0]!).rootRunning).toBe(true)
+    expect(conv(previewed[0]!).active).toBe(false) // tag moved to the node
+  })
+})

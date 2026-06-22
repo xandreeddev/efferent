@@ -38,14 +38,12 @@ export const loadAgentTree = (store: TuiStore, activeCid: ConversationId): Effec
   })
 
 /**
- * Load the workspace's conversations into the `sessions` view: every session
- * sharing this path, the active one marked — Enter there swaps between them.
- *
- * `opts.activeOnly` (the `code` bin's single-fleet chrome) restricts the list
- * to the ONE active session — no cross-session rows, so the fleet tree shows
- * only the working session and its agent subtree. The `treeRows` flattener
- * already collapses a single-active-session list to one root via its `adoptAll`
- * path, so this is the only change "code" needs for tree scope.
+ * Load the active session as the fleet tree's single root. The fleet pane is
+ * **current-session-only** in both bins, so this defaults to `activeOnly: true`
+ * — one root (the working session), the `treeRows` flattener nests its whole
+ * agent subtree under it (its `adoptAll` path). Other sessions are reached via
+ * the `:browse`/resume picker, not this always-visible pane. Pass
+ * `{ activeOnly: false }` for the legacy multi-session list.
  */
 export const loadSessions = (
   store: TuiStore,
@@ -65,17 +63,20 @@ export const loadSessions = (
       title: conversationTitle(c),
       active: c.id === activeCid,
     }))
-    // `code` chrome: keep only the active session (single-fleet focus). If it
-    // isn't persisted yet, fall through to the synthetic "(current session)".
-    const sessions = opts.activeOnly === true ? all.filter((c) => c.active) : all
+    // Current-session-only (the default): keep just the active session as the
+    // fleet root. If it isn't persisted yet, fall through to the synthetic
+    // "(current session)". `{ activeOnly: false }` opts into the full list.
+    const activeOnly = opts.activeOnly ?? true
+    const sessions = activeOnly ? all.filter((c) => c.active) : all
     if (!sessions.some((c) => c.active)) {
       sessions.unshift({ id: activeCid, label: "(current session)", active: true })
     }
     yield* Effect.sync(() => store.setProjection((p) => ({ ...p, sessions })))
   })
 
-/** Refresh both navigator data sets (boot + every turn end). `opts.activeOnly`
- *  scopes the sessions list to the active one (the `code` bin's single fleet). */
+/** Refresh both navigator data sets (boot + every turn end + on each sub-agent
+ *  start/end). Scopes the fleet tree to the active session by default
+ *  (current-session-only); pass `{ activeOnly: false }` for the full list. */
 export const refreshNav = (
   store: TuiStore,
   activeCid: ConversationId,
@@ -143,8 +144,21 @@ export const openNodePreview = (
     const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
-    const node = yield* cts.get(decoded.value)
-    const messages = yield* cts.listMessages(decoded.value)
+    // A context node is a cache of a world that keeps changing — it can be
+    // dropped or never have been persisted. Tolerate a missing one instead of
+    // crashing the whole action (which logged a raw `ContextNodeNotFound` and
+    // spammed an error block every time the preview re-fetched at turn end).
+    const fetched = yield* cts
+      .get(decoded.value)
+      .pipe(Effect.zip(cts.listMessages(decoded.value)), Effect.option)
+    if (fetched._tag === "None") {
+      yield* Effect.sync(() => {
+        if (store.nodePreview()?.nodeId === nodeId) closeNodePreview(store)
+        store.toast("that agent's session is no longer available")
+      })
+      return
+    }
+    const [node, messages] = fetched.value
     const folder = basename(node.folder) || node.folder
     const name = node.title ?? folder
     const header: ScrollbackBlock = {
@@ -217,8 +231,14 @@ export const continueFromNode = (store: TuiStore, cwd: string, nodeId: string) =
     const decoded = yield* Schema.decodeUnknown(ContextNodeId)(nodeId).pipe(Effect.option)
     if (decoded._tag === "None") return
     const cts = yield* ContextTreeStore
-    const node = yield* cts.get(decoded.value)
-    const messages = yield* cts.listMessages(decoded.value)
+    const fetched = yield* cts
+      .get(decoded.value)
+      .pipe(Effect.zip(cts.listMessages(decoded.value)), Effect.option)
+    if (fetched._tag === "None") {
+      yield* Effect.sync(() => store.toast("that agent's session is no longer available"))
+      return
+    }
+    const [node, messages] = fetched.value
     const cs = yield* ConversationStore
     const created = yield* cs.create(cwd).pipe(Effect.either)
     if (created._tag === "Left") {

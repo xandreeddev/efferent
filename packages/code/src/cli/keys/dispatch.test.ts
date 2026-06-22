@@ -256,12 +256,16 @@ test("↑ on an empty composer pulls the most-recent queued message back to edit
   expect(h.store.queued()).toEqual(["queued one"]) // it left the queue
 })
 
-test("? on an empty composer opens the shortcuts overlay", () => {
+test("? in the INSERT composer types — never opens shortcuts (even when empty)", () => {
+  // Regression: the old "? on an empty composer opens shortcuts" affordance
+  // keyed off the input MIRROR, which lags the textarea — a `?` typed before
+  // the mirror caught up read as empty and popped the overlay instead of
+  // inserting, so any message with a question mark silently failed to send.
   const h = harness()
   wireInput(h)
   h.store.setInput("")
   dispatch(h.ctx, key("?"))
-  expect(h.store.overlay().kind).toBe("shortcuts")
+  expect(h.store.overlay().kind).not.toBe("shortcuts")
 })
 
 test("? in a read-only pane opens the shortcuts overlay", () => {

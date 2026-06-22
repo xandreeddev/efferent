@@ -43,7 +43,7 @@ import { runDaemonMode } from "./modes/daemon.js"
 import { runDaemonServe } from "./server/daemon.js"
 import { readDiscovery } from "./server/discovery.js"
 import { probeHealth } from "./server/attach.js"
-import { stderrLoggerLayer } from "./log.js"
+import { stderrLoggerLayer, fileLoggerLayer } from "./log.js"
 
 /* ------------------------------------------------------------------ */
 /* Composition root                                                    */
@@ -388,7 +388,7 @@ const root = Command.make(
             tools,
             rootScope,
             allowBash: effectiveAllowBash,
-          }).pipe(Effect.provide(stderrLoggerLayer))
+          }).pipe(Effect.provide(fileLoggerLayer))
           return
         case "daemon-serve":
           // The persistent per-workspace Workspace daemon (HTTP/SSE). Boots
@@ -405,7 +405,7 @@ const root = Command.make(
             instructionFiles,
             version: packageJson.version,
             allowBash: effectiveAllowBash,
-          }).pipe(Effect.provide(stderrLoggerLayer))
+          }).pipe(Effect.provide(fileLoggerLayer))
           return
         case "tui": {
           // The `code` experience: invoked as the `code` bin, or `--code`. It is
