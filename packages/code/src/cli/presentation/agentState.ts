@@ -117,6 +117,15 @@ export const agentStateLabel = (s: AgentState): string => {
   }
 }
 
+/** Elapsed-time readout for the running spinner: `42s` under a minute, `1m9s`
+ *  beyond. Shared by the header bar and the bottom-chrome running loader. */
+export const formatElapsed = (ms: number): string => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m${s - m * 60}s`
+}
+
 /** The fleet chip: `2 agents · haiku, audit` (names clipped to fit). */
 export const fleetLabel = (s: AgentState, maxNames = 2): string | undefined => {
   if (s.fleet.length === 0) return undefined

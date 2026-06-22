@@ -488,12 +488,31 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // Esc → cancel everything in flight. NOT just `busy`: spawning is non-blocking,
-  // so the lead turn can be idle (`busy === false`) while a background fleet is
-  // still working. Treat a live fleet as "in flight" too, so Esc tears the fleet
-  // down (interrupt → root fiber + bus.interruptAll) instead of falling through
-  // to focus/preview navigation — the "Esc went to the wrong place" bug.
-  if (key.name === "escape" && (store.busy() || store.agentState().fleet.length > 0)) {
+  // Esc → cancel what's in flight. NOT just `busy`: the lead turn can be idle
+  // (`busy === false` — and `busy` is never set on the remote bin at all) while
+  // a turn or a background fleet runs, so gate on the live PHASE machine + fleet
+  // too. Treat all three as "in flight" so Esc tears it down instead of falling
+  // through to focus/preview navigation (the "Esc went to the wrong place" bug).
+  // Skip when the composer holds a `:`/`/` line — that Esc cancels the command
+  // (handled just below), it shouldn't interrupt the run.
+  const composingCommand =
+    store.focus() === "input" &&
+    (store.input().startsWith(":") || (store.input().startsWith("/") && store.input().length > 1))
+  const inFlight =
+    store.busy() || store.agentState().phase !== "idle" || store.agentState().fleet.length > 0
+  if (key.name === "escape" && !composingCommand && inFlight) {
+    // agy two-stage Esc: with pending messages queued, the FIRST Esc pulls them
+    // ALL back into the composer to edit/cancel (and clears the queue, so they
+    // don't ALSO run as the next turn); only the NEXT Esc — queue now empty —
+    // interrupts the running agent.
+    const pending = store.queued()
+    if (pending.length > 0) {
+      ctx.clearQueue()
+      store.inputControl.current?.seed(pending.join("\n\n"))
+      store.setFocus("input")
+      store.setMode("insert")
+      return
+    }
     ctx.interrupt()
     return
   }

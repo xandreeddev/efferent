@@ -25,6 +25,7 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
+  clearQueue: () => {},
   exit: onExit,
   copySelection: () => false,
   resolveApproval: () => {},
@@ -76,7 +77,7 @@ test(":exit / :quit invoke ctx.exit", () => {
 test(":clear also resets the side pane tree and stats", () => {
   const store = newStore()
   store.pushBlock({ kind: "user", text: "old" })
-  store.setProjection((p) => ({ ...p, tree: onToolStart(p.tree, "read x", 0).tree }))
+  store.setTree((t) => onToolStart(t, "read x", 0).tree)
   const before = store.run.getConversationId()
   runCommand(ctxOf(store), ":clear")
   expect(store.run.getConversationId()).not.toBe(before)

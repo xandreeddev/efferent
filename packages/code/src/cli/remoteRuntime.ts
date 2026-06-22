@@ -20,6 +20,7 @@ import {
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
 import type { TuiModeInput } from "../modes/tui.js"
+import { submittedAgentState } from "./presentation/agentState.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
 import { rolesChip } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
@@ -162,8 +163,16 @@ export const runTuiModeRemote = (
       // Seed the rail from the daemon's persisted log (DB rebuild on attach).
       const state0 = yield* ws.getState(rootSessionId).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
       let cursor = state0?.cursor ?? 0
+      // The daemon's pending queue as last mirrored — diffed in `refreshQueue` so
+      // a drained prompt (its turn now running) surfaces as a rail user line. The
+      // daemon emits no user event; the rail is otherwise rebuilt only on
+      // attach/reconnect, so without this a queued prompt's own line would vanish
+      // until the next resync. Seeded from the attach state (rail already rebuilt
+      // from the log there, so no push for those).
+      let lastQueue: ReadonlyArray<string> = state0?.queue ?? []
       if (state0 !== undefined) {
         yield* Effect.sync(() => applyContext(store, rootCid, state0.log, [], { collapseContext: false }))
+        yield* Effect.sync(() => store.run.setQueue(state0.queue ?? []))
       }
       store.pushBlock({
         kind: "info",
@@ -183,6 +192,37 @@ export const runTuiModeRemote = (
           refreshNav(store, rootCid, { activeOnly: true }).pipe(Effect.catchAll(() => Effect.void)),
         )
       }
+      // Mirror the daemon's authoritative pending queue into the reactive signal
+      // so the `▸` list above the input matches what will actually run. Called at
+      // boot and at each turn boundary (the reducer hook) — the moments the
+      // daemon's queue changes (drain on turn-end; an optimistic local add on
+      // submit covers the gap until the next mirror).
+      const refreshQueue = (): void => {
+        void Runtime.runPromise(rt)(
+          ws.getState(rootSessionId).pipe(
+            Effect.tap((st) =>
+              Effect.sync(() => {
+                const next = st.queue ?? []
+                // Front items gone and the rest a clean suffix ⇒ the daemon
+                // drained them and started their turns. Surface each as a rail
+                // user line (the line the idle path pushes optimistically), then
+                // mirror the remaining queue. A non-suffix change (reorder, a
+                // fresh enqueue) just reconciles, no spurious lines.
+                const removed = lastQueue.length - next.length
+                if (removed > 0 && lastQueue.slice(removed).every((v, i) => v === next[i])) {
+                  for (const text of lastQueue.slice(0, removed)) {
+                    store.pushBlock({ kind: "user", text })
+                  }
+                  store.convScroller.current?.scrollToBottom()
+                }
+                store.run.setQueue(next)
+                lastQueue = next
+              }),
+            ),
+            Effect.catchAll(() => Effect.void),
+          ),
+        )
+      }
 
       // Each sub-agent start/end (and turn end) refreshes BOTH the snapshot
       // cache (the `:fleet`/`liveAgents` views) and the fleet tree (the right
@@ -192,6 +232,7 @@ export const runTuiModeRemote = (
         refreshNav: () => {
           refreshSnapshot()
           refreshFleet()
+          refreshQueue()
         },
       })
 
@@ -226,9 +267,36 @@ export const runTuiModeRemote = (
               return
             }
           }
-          // Optimistic user line (the daemon persists it but emits no user event).
+          // A turn in flight? The daemon QUEUES this and runs it as the next turn
+          // (agy-style). Show it as a pending `▸` entry immediately (optimistic —
+          // `refreshQueue` mirrors the daemon's authoritative queue back at the
+          // next turn boundary, and the drain surfaces it as a rail line), NOT in
+          // the rail now: the rail is the record of turns that actually ran. `↑`
+          // on an empty composer pulls the last one back.
+          //
+          // We gate on the PHASE machine, not `busy()` — `busy()` isn't driven on
+          // the remote path (the reducer only feeds `agentState` from the SSE
+          // stream). Combined with the optimistic flip below, a message typed in
+          // the SSE-latency gap right after starting a turn still queues instead
+          // of racing the daemon into a second concurrent turn.
+          if (store.agentState().phase !== "idle") {
+            store.run.enqueue(text)
+            store.setInput("")
+            void Runtime.runPromise(rt)(
+              ws.send(rootSessionId, text).pipe(
+                Effect.tap(() => Effect.sync(refreshQueue)),
+                Effect.catchAll((e) => Effect.sync(() => store.toast(`queue: ${e.message}`))),
+              ),
+            )
+            return
+          }
+          // Idle → the turn starts now: optimistic user line (the daemon persists
+          // it but emits no user event), then optimistically flip the state
+          // machine to "submitted" so the next keystroke-fast message sees us busy
+          // (the stream's first event reconciles the real phase a beat later).
           store.pushBlock({ kind: "user", text })
           store.setInput("")
+          store.setAgentState(submittedAgentState(Date.now()))
           store.convScroller.current?.scrollToBottom()
           void Runtime.runPromise(rt)(
             ws.send(rootSessionId, text).pipe(
@@ -240,6 +308,15 @@ export const runTuiModeRemote = (
         },
         interrupt: () => {
           void Runtime.runPromise(rt)(ws.interrupt(rootSessionId).pipe(Effect.ignore))
+        },
+        clearQueue: () => {
+          // The daemon owns the authoritative queue — tell it to drop the pending
+          // messages, and clear the local mirror immediately so the `▸` list goes
+          // away without waiting for the next refresh. Keep `lastQueue` in sync so
+          // the drained-prompt diff doesn't later surface them as rail lines.
+          lastQueue = []
+          store.run.setQueue([])
+          void Runtime.runPromise(rt)(ws.clearQueue(rootSessionId).pipe(Effect.ignore))
         },
         roles: input.agents,
         tools: input.tools,
@@ -336,12 +413,16 @@ export const runTuiModeRemote = (
       )
       yield* Effect.addFinalizer(() => stopOAuthSession(store).pipe(Effect.ignore))
 
-      // Spinner ticker — advances while a turn or fleet is live (busy is derived
-      // from agentState here, fed by the SSE stream).
+      // Spinner ticker — advances while the agent is doing anything visible.
+      // Gate on the PHASE machine (fed by the SSE stream), NOT `busy()`: the
+      // remote/daemon path never sets `busy()`, so a `busy()` gate froze the
+      // spinner here for any plain root turn. Phase ≠ idle covers a root turn;
+      // fleet.length covers a background fleet running while the root is idle.
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.sync(() => {
-            if (store.busy() || store.agentState().fleet.length > 0) store.tickSpinner()
+            const st = store.agentState()
+            if (st.phase !== "idle" || st.fleet.length > 0) store.tickSpinner()
           }).pipe(Effect.delay("120 millis")),
         ),
       )
@@ -358,6 +439,17 @@ export const runTuiModeRemote = (
                 Effect.sync(() => {
                   cursor = se.seq
                   batch(() => reduce(se.event))
+                  // The daemon owns the pending queue; it drains the whole thing
+                  // at a turn boundary (finishTurn → startRootTurn for the
+                  // combined next turn). The reducer's `refreshNav` hook only
+                  // fires on sub-agent events, so a PLAIN turn never refreshed
+                  // the queue — the `▸` list hung even though the daemon drained.
+                  // A new turn starting (or the run ending) is exactly when the
+                  // daemon's queue changed: mirror it (clear `▸`) and surface the
+                  // drained prompts as rail lines (`refreshQueue` does both).
+                  if (se.event.type === "turn_start" || se.event.type === "agent_end") {
+                    refreshQueue()
+                  }
                 }),
               ),
               Effect.catchAll(() => Effect.void),
@@ -370,6 +462,12 @@ export const runTuiModeRemote = (
             yield* Effect.sync(() =>
               applyContext(store, rootCid, st.log, [], { collapseContext: false }),
             )
+            // Resync rebuilt the rail from the full log (drained prompts included),
+            // so re-baseline the queue mirror without re-pushing them.
+            yield* Effect.sync(() => {
+              store.run.setQueue(st.queue ?? [])
+              lastQueue = st.queue ?? []
+            })
           }
         }
       })

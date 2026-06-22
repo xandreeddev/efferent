@@ -194,7 +194,8 @@ export const applyContext = (
   // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
   const collapsed = (opts.collapseContext ?? true) ? new Set(turnIdsOf(segments)) : new Set<string>()
   const switched = switchedSidePane(store.projection(), segments, collapsed, stats, proj)
-  store.setProjection(() => switched.projection)
+  // Fan the full rebuilt projection out across the per-concern signals.
+  store.replaceProjection(switched.projection)
   store.setNav(() => switched.nav)
   if (opts.focusInput === true) {
     store.setFocus("input")

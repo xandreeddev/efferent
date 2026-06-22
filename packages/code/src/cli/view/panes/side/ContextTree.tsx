@@ -1,11 +1,12 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
-import { createEffect, For, Show } from "solid-js"
+import { createEffect, createMemo, For, Show } from "solid-js"
 import {
+  reconcileTreeRows,
   type TreeConversationDisplay,
   type TreeNodeDisplay,
   type TreeRowData,
 } from "../../../presentation/contextTreeView.js"
-import { treeRows } from "../../../presentation/sidePane.js"
+import { emptyProjection, treeRows, type SidePaneState } from "../../../presentation/sidePane.js"
 import { glyph, tokens } from "../../../state/theme.js"
 import { foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
@@ -137,14 +138,39 @@ const renderNode = (d: () => TreeNodeDisplay, foldable: boolean) => {
  */
 export const ContextTreeView = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const sp = () => store.sidePane()
   // Owns the cursor only when the fleet-tree pane is focused.
   const focused = () => store.focus() === "tree"
-  // The SHARED flatten (root-agent anchor + this session's nodes) — must match
-  // the keymap's `treeRows` exactly or the cursor and the pixels disagree
-  // (the active-node id is display-only, so the keymap omitting it is fine).
-  const rows = () => treeRows(sp(), sp(), store.nodePreview()?.nodeId, store.busy())
-  const cursor = () => sp().treeCursor
+  // The orchestrator's own turn is "running" whenever the agent phase isn't
+  // idle — gate on the PHASE machine, not `store.busy()`, which is only set on
+  // the in-process bin (so a `busy()` source froze the lead's live glyph on the
+  // remote/daemon bin). MEMOISED so it only notifies on the idle↔active FLIP
+  // (once per turn), not on every agent event — otherwise the rows memo below
+  // would re-run per event just to re-read a boolean that didn't change.
+  const rootRunning = createMemo(() => store.agentState().phase !== "idle")
+  // The fleet tree's inputs are ONLY the fleet data + nav (cursor/folds). Read
+  // the NARROW signals (`treeData()` + `nav()`), NOT the merged `sidePane()`:
+  // `sidePane`/`projection` change on EVERY execution-tree event, but the fleet
+  // doesn't — so reading them would re-derive the whole pane per tool call. With
+  // the narrow reads, this memo re-runs only when the fleet, the cursor/folds,
+  // or the root-running flip actually change. `emptyProjection` supplies the
+  // inert tree/stats fields the pure `treeRows` ignores (const → no subscription).
+  const treeState = createMemo<SidePaneState>(() => ({
+    ...emptyProjection,
+    ...store.treeData(),
+    ...store.nav(),
+  }))
+  // Memoised + reconciled: a real fleet change re-renders only the rows that
+  // actually changed; an unchanged rebuild returns the SAME array reference, so
+  // the `<For>` does nothing. Mirrors the conversation rail's `reconcileItems`.
+  const rows = createMemo<ReadonlyArray<TreeRowData>>(
+    (prev) =>
+      reconcileTreeRows(
+        prev,
+        treeRows(treeState(), treeState(), store.nodePreview()?.nodeId, rootRunning()),
+      ),
+    [],
+  )
+  const cursor = () => store.nav().treeCursor
 
   let sb!: ScrollBoxRenderable
   createEffect(() => {

@@ -1,14 +1,7 @@
 import { Show } from "solid-js"
-import { agentStateLabel, fleetLabel } from "../../presentation/agentState.js"
+import { agentStateLabel, fleetLabel, formatElapsed } from "../../presentation/agentState.js"
 import { glyph, tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
-
-const fmtElapsed = (ms: number): string => {
-  const s = Math.max(0, Math.round(ms / 1000))
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  return `${m}m${s - m * 60}s`
-}
 
 /**
  * The header bar — the agent's face. One always-visible line answering the two
@@ -36,7 +29,7 @@ export const Header = (props: { ctx: TuiContext }) => {
     // The spinner signal doubles as the clock tick — it advances while busy,
     // which is exactly when the elapsed readout needs to move.
     void store.spinner()
-    return phaseActive() && st().since > 0 ? fmtElapsed(Date.now() - st().since) : ""
+    return phaseActive() && st().since > 0 ? formatElapsed(Date.now() - st().since) : ""
   }
   const fleet = () => fleetLabel(st())
 

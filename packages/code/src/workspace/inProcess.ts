@@ -300,13 +300,16 @@ export const makeInProcessWorkspace = (
             Runtime.runFork(rt)(titleEffect)
           })
         }
+        // Take EVERYTHING available (agy): drain the whole queue into the next
+        // turn at once, not one-per-turn (which left later messages waiting
+        // across turns). Joined oldest-first into a single combined turn.
         const next = yield* Ref.modify(runStates, (m) => {
           const s = m.get(key)
           if (s === undefined || s.queue.length === 0) return [undefined, m]
-          const [head, ...rest] = s.queue
+          const combined = s.queue.join("\n\n")
           const nm = new Map(m)
-          nm.set(key, { ...s, queue: rest })
-          return [head, nm]
+          nm.set(key, { ...s, queue: [] })
+          return [combined, nm]
         })
         if (next !== undefined && fleet !== undefined) yield* startRootTurn(fleet.rootCid, next)
       })
@@ -533,7 +536,8 @@ export const makeInProcessWorkspace = (
           const sessions = yield* listSummaries()
           const session = sessions.find((s) => s.id === id)
           const cursor = yield* ledger.latestSeq
-          const busy = (yield* getRun(id as string)).busy
+          const run = yield* getRun(id as string)
+          const busy = run.busy
           const kind = session?.kind ?? "root"
           const log =
             kind === "root"
@@ -557,6 +561,7 @@ export const makeInProcessWorkspace = (
             session: session ?? fallback,
             log,
             busy,
+            queue: run.queue,
             pendingApproval,
             cursor,
           } satisfies SessionState
@@ -565,17 +570,28 @@ export const makeInProcessWorkspace = (
       send: (id, prompt) =>
         Effect.gen(function* () {
           const key = id as string
-          const running = yield* scopeRuntime.bus.isRunning(key)
-          if (running) {
-            const at = yield* Clock.currentTimeMillis
-            yield* scopeRuntime.bus.post(key, { from: "you", content: prompt, at })
-            return
+          const fleetRoot = yield* isFleetRoot(key)
+          // A sub-agent you're PAIRED with (its preview is open) and which is
+          // live: deliver to its mailbox — it reads at its next step, you keep
+          // pairing without resuming a finished node. The root never takes this
+          // path: messages to the lead QUEUE (agy-style) rather than injecting
+          // mid-turn — see below. (Sub-agent RESULTS still flow into the root via
+          // its mailbox + `onTransformContext`; that's a different, untouched path.)
+          if (!fleetRoot) {
+            const running = yield* scopeRuntime.bus.isRunning(key)
+            if (running) {
+              const at = yield* Clock.currentTimeMillis
+              yield* scopeRuntime.bus.post(key, { from: "you", content: prompt, at })
+              return
+            }
           }
+          // Busy (the root mid-turn, or any session between turns) → hold it as a
+          // pending `▸` message; the turn-end queue drain runs it as the next turn.
           if ((yield* getRun(key)).busy) {
             yield* setRun(key, (s) => ({ ...s, queue: [...s.queue, prompt] }))
             return
           }
-          if (yield* isFleetRoot(key)) {
+          if (fleetRoot) {
             yield* startRootTurn(sessionConversationId(id), prompt)
           } else {
             yield* startNodeResume(sessionNodeId(id), prompt)
@@ -598,6 +614,13 @@ export const makeInProcessWorkspace = (
           const fiber = (yield* getRun(key)).fiber
           if (fiber !== undefined) yield* Fiber.interrupt(fiber)
         }),
+
+      clearQueue: (id) =>
+        // Drop pending messages without touching the running turn (the client
+        // pulled them back into its composer to edit). Leaves `busy`/`fiber`.
+        setRun(id as string, (s) => ({ ...s, queue: [] })).pipe(
+          Effect.catchAllDefect((d) => Effect.fail(wsError(`clearQueue failed: ${String(d)}`))),
+        ),
 
       spawn: (req) =>
         Effect.gen(function* () {
