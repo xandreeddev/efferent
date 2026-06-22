@@ -14,7 +14,8 @@ import {
   Shell,
   WebSearch,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime, roleToolEntries } from "./buildScopeRuntime.js"
+import { buildScopeRuntime, roleToolEntries, agentWrites } from "./buildScopeRuntime.js"
+import { withBuiltinAgents } from "./directive.js"
 
 const rootScope: Scope = {
   name: "root",
@@ -87,6 +88,39 @@ describe("roleToolEntries (agent-role tool allowlist)", () => {
   test("run_agent is offered only when the allowlist names it (roles can opt into spawning)", () => {
     expect(roleToolEntries(def(["read_file"])).map(([n]) => n)).not.toContain("run_agent")
     expect(roleToolEntries(def(["read_file", "run_agent"])).map(([n]) => n)).toContain("run_agent")
+  })
+})
+
+describe("agentWrites — only writers take the folder lock (deadlock fix)", () => {
+  const def = (tools?: ReadonlyArray<string>) => ({
+    name: "r",
+    description: "d",
+    body: "b",
+    sourcePath: "/x.md",
+    ...(tools !== undefined ? { tools } : {}),
+  })
+
+  test("a generic spawn (no role) and a role with no allowlist can write", () => {
+    expect(agentWrites(undefined)).toBe(true)
+    expect(agentWrites(def())).toBe(true)
+  })
+
+  test("a role allowlist naming a write tool writes; one naming neither is read-only", () => {
+    expect(agentWrites(def(["read_file", "write_file"]))).toBe(true)
+    expect(agentWrites(def(["read_file", "edit_file"]))).toBe(true)
+    expect(agentWrites(def(["read_file", "grep", "search_web"]))).toBe(false)
+  })
+
+  test("the built-in leads/architect are read-only (so they never hold the folder lock while waiting); specialists write", () => {
+    const byName = new Map(withBuiltinAgents([]).map((a) => [a.name, a]))
+    // Read-only — these spawn + wait, and MUST NOT hold the lock their children need.
+    for (const name of ["coordinator", "research-coordinator", "researcher", "architect"]) {
+      expect(agentWrites(byName.get(name))).toBe(false)
+    }
+    // Writers — they serialize on the folder by construction.
+    for (const name of ["implementer", "frontend", "backend"]) {
+      expect(agentWrites(byName.get(name))).toBe(true)
+    }
   })
 })
 
