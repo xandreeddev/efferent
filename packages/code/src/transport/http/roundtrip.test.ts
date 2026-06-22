@@ -73,7 +73,7 @@ const stubConv = Layer.effect(
     return ConversationStore.of({
       create: () => Effect.succeed(ROOT_CID as never),
       ensure: () => Effect.void,
-      append: (_id, m) => Ref.update(msgs, (a) => [...a, m]),
+      append: (_id, m) => Ref.updateAndGet(msgs, (a) => [...a, m]).pipe(Effect.map((a) => a.length - 1)),
       list: () => Ref.get(msgs),
       listActive: () => Ref.get(msgs),
       getLatestCheckpoint: () => Effect.succeed(undefined),

@@ -89,8 +89,8 @@ export const PostgresConversationStoreLive = Layer.effect(
           const messageId = crypto.randomUUID()
           const createdAt = Date.now()
           const contentJson = encodeMessageContent(msg)
-          yield* wrapSql(
-            sql`
+          const inserted = yield* wrapSql(
+            sql<{ readonly position: number }>`
               INSERT INTO messages (id, conversation_id, position, role, content, created_at)
               VALUES (
                 ${messageId}::uuid,
@@ -103,9 +103,11 @@ export const PostgresConversationStoreLive = Layer.effect(
                 ${contentJson}::jsonb,
                 ${createdAt}
               )
+              RETURNING position
             `,
             "Failed to append message",
           )
+          return Number(inserted[0]?.position ?? 0)
         }),
 
       list: (conversationId) =>

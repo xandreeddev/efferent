@@ -36,10 +36,10 @@ const multiConv = Layer.effect(
       ensure: (id) =>
         Ref.update(convs, (m) => (m.has(id) ? m : new Map(m).set(id, { msgs: [] }))),
       append: (id, msg) =>
-        Ref.update(convs, (m) => {
+        Ref.updateAndGet(convs, (m) => {
           const c = m.get(id) ?? { msgs: [] }
           return new Map(m).set(id, { ...c, msgs: [...c.msgs, msg] })
-        }),
+        }).pipe(Effect.map((m) => (m.get(id)?.msgs.length ?? 1) - 1)),
       list: (id) => get(id).pipe(Effect.map((c) => c?.msgs ?? [])),
       listActive: (id) => get(id).pipe(Effect.map((c) => c?.msgs ?? [])),
       getLatestCheckpoint: () => Effect.succeed(undefined),

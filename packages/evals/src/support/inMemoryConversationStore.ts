@@ -96,6 +96,7 @@ export const InMemoryConversationStoreLive = Layer.effect(
             next.set(id, { ...conv, messages: [...conv.messages, { position, msg }] })
             return next
           })
+          return position
         }),
 
       list: (id) =>
