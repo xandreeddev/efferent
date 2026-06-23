@@ -23,6 +23,7 @@ import {
   toolArtifacts,
 } from "./toolDescribe.js"
 import {
+  messageKey,
   subjectLine,
   type AgentRunRow,
   type ScrollbackBlock,
@@ -80,6 +81,15 @@ const spawnRow = (callId: string, input: unknown): AgentRunRow => {
 export const projectHistory = (
   history: ReadonlyArray<AgentMessage>,
   checkpoints: ReadonlyArray<Checkpoint>,
+  /**
+   * The absolute store position of `history[0]` — 0 for a full record, or
+   * `latestCheckpoint.messagePosition + 1` for a post-handoff window. Positions
+   * are contiguous, so message `history[i]` sits at `baseOffset + i`; the rail's
+   * message-block keys derive from that absolute position, matching the keys the
+   * live event stream carries (which knows the true store position). Handoff-safe
+   * because an absolute position never shifts when the window narrows.
+   */
+  baseOffset = 0,
 ): HistoryProjection => {
   // ---- rail half ----
   const blocks: ScrollbackBlock[] = []
@@ -138,8 +148,13 @@ export const projectHistory = (
     // One agents block per assistant message's spawn burst (mirrors the live
     // pump, which resets the block on the parent's next turn).
     let burstBlockIdx: number | undefined
+    // This message's absolute store position + per-kind part ordinals — the
+    // basis of the cache keys, computed identically to the live event pump.
+    const pos = baseOffset + msgIdx
+    let aOrd = 0
+    let rOrd = 0
     if (msg.role === "user") {
-      blocks.push({ kind: "user", text: msg.content, msgIndex: msgIdx })
+      blocks.push({ kind: "user", text: msg.content, msgIndex: msgIdx, key: messageKey(pos, "u") })
       tree = onRunStart(tree, subjectLine(msg.content), 0).tree
       turnIdx = 0
     } else if (msg.role === "assistant") {
@@ -149,16 +164,16 @@ export const projectHistory = (
         tree = onTurnDetail(tree, `${formatTokens(usage.outputTokens)} tok`)
       }
       if (typeof msg.content === "string") {
-        blocks.push({ kind: "assistant", text: msg.content, msgIndex: msgIdx })
+        blocks.push({ kind: "assistant", text: msg.content, msgIndex: msgIdx, key: messageKey(pos, "a", aOrd++) })
       } else if (Array.isArray(msg.content)) {
         for (const part of msg.content) {
           if (part.type === "text") {
             if (part.text.trim().length > 0) {
-              blocks.push({ kind: "assistant", text: part.text, msgIndex: msgIdx })
+              blocks.push({ kind: "assistant", text: part.text, msgIndex: msgIdx, key: messageKey(pos, "a", aOrd++) })
             }
           } else if (part.type === "reasoning") {
             if (part.text.trim().length > 0) {
-              blocks.push({ kind: "reasoning", text: part.text, msgIndex: msgIdx })
+              blocks.push({ kind: "reasoning", text: part.text, msgIndex: msgIdx, key: messageKey(pos, "r", rOrd++) })
             }
           } else if (part.type === "tool-call") {
             if (part.toolName === "run_agent") {

@@ -95,6 +95,30 @@ describe("AgentBus — supervision (the async fleet)", () => {
     expect(r.running).toBe(false)
   })
 
+  it("buffers a completion for an IDLE parent and delivers it when the parent next runs (the auto-resume ping-back)", async () => {
+    const r = await run((bus) =>
+      Effect.gen(function* () {
+        // The parent ran, spawned a child, then ENDED its turn — its mailbox is
+        // torn down (the "delegate then report back" pattern).
+        yield* bus.markRunning("p", "parent")
+        yield* bus.markRunning("c", "child", { parentKey: "p" })
+        yield* bus.markDone("p")
+        // The child finishes while the parent is idle.
+        yield* bus.complete("c", { status: "ok", summary: "found the answer", filesChanged: [] })
+        const whileIdle = yield* bus.drain("p") // no live mailbox → nothing yet
+        // The daemon's onTopLevelDone auto-resume re-registers the parent's mailbox.
+        yield* bus.markRunning("p", "parent")
+        const afterResume = yield* bus.drain("p")
+        return { whileIdle, afterResume }
+      }),
+    )
+    expect(r.whileIdle).toEqual([]) // an idle parent has no mailbox to read
+    // …but the completion was buffered and surfaces on the resume — without this
+    // the auto-resumed orchestrator drains nothing and reports no fleet results.
+    expect(r.afterResume).toHaveLength(1)
+    expect(r.afterResume[0]?.content).toContain("found the answer")
+  })
+
   it("childrenOf includes both running and finished children of a parent", async () => {
     const ids = await run((bus) =>
       Effect.gen(function* () {

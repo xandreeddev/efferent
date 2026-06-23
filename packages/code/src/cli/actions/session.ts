@@ -16,6 +16,7 @@ import {
   type Checkpoint,
   type ConversationId,
 } from "@xandreed/sdk-core"
+import { emptyTree } from "../presentation/executionTree.js"
 import { openResume, type ResumeTab } from "../presentation/resumeBrowser.js"
 import {
   buildContextView,
@@ -147,6 +148,19 @@ const statsFrom = (
 
 // --- pure store mutations (given already-fetched data) ---
 
+/**
+ * Reset the rail + side-pane derivations for a fresh conversation (the shared
+ * half of `:clear`, driver-agnostic). Clears the scrollback, the execution tree,
+ * the stats gauge, and the files/plan — but NOT the conversation id: the driver
+ * owns that (a local id in-process; a new daemon fleet on the remote bin).
+ */
+export const resetConversationRail = (store: TuiStore): void => {
+  store.clear()
+  store.setTree(() => emptyTree)
+  store.setStats((s) => ({ ...emptyStats, startedAt: Date.now(), contextWindow: s.contextWindow }))
+  store.setProjection((p) => ({ ...p, filesChanged: [], plan: [] }))
+}
+
 /** Rebuild the context viewer's segments from records (folded, nothing picked). */
 export const applyContextRebuild = (
   store: TuiStore,
@@ -169,6 +183,15 @@ export interface ApplyContextOpts {
   readonly focusInput?: boolean
   /** Fold all context-viewer turns (resume). Build passes false. */
   readonly collapseContext?: boolean
+  /** Absolute store position of `history[0]` — threads into `projectHistory`
+   *  so the rail's message-block keys are absolute (handoff-safe) and match the
+   *  live event stream. 0 for a full record; `logBaseOffset` for a remote
+   *  windowed log. Default 0. */
+  readonly baseOffset?: number
+  /** Merge the projection onto the live cache by key instead of a blind replace
+   *  — the reconnect-resync path, so a streaming tail isn't dropped. Default
+   *  false (a true document swap clears + rebuilds). */
+  readonly reconcile?: boolean
 }
 
 /**
@@ -188,9 +211,10 @@ export const applyContext = (
 ): void => {
   const segments = buildContextView(history, checkpoints)
   const stats = statsFrom(store.sidePane(), history)
-  const proj = projectHistory(history, checkpoints)
+  const proj = projectHistory(history, checkpoints, opts.baseOffset ?? 0)
   store.run.newConversation(target)
-  store.setBlocks(proj.blocks)
+  if (opts.reconcile === true) store.reconcile(proj.blocks)
+  else store.setBlocks(proj.blocks)
   // stats are the single source — switchedSidePane puts them in the projection; the status bar reads them.
   const collapsed = (opts.collapseContext ?? true) ? new Set(turnIdsOf(segments)) : new Set<string>()
   const switched = switchedSidePane(store.projection(), segments, collapsed, stats, proj)

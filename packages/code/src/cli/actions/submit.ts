@@ -246,7 +246,11 @@ export const makeSubmit = (
       if (autoCollapse && prevTurns.length > 0) {
         store.setCollapsed(new Set([...store.collapsed(), ...prevTurns]))
       }
-      store.pushBlock({ kind: "user", text })
+      // Optimistic user line (shown instantly): runAgent persists the message
+      // and emits `user_message` with its position a beat later, which
+      // reconciles onto this placeholder by key — no double line, no
+      // content-hash matching.
+      store.pushOptimisticUser(text)
       store.setInput("")
       // Sending snaps the rail to the bottom even if the user had scrolled up
       // to read (which disengages sticky-follow): your own message — and the
