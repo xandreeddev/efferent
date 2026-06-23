@@ -4,7 +4,7 @@ import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
 import { batch } from "solid-js"
-import { Deferred, Effect, Runtime, Schema, Stream } from "effect"
+import { Deferred, Effect, Fiber, Runtime, Schema, Stream } from "effect"
 import { FetchHttpClient } from "@effect/platform"
 import {
   ConversationId,
@@ -27,7 +27,7 @@ import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/si
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { stopOAuthSession } from "./actions/login.js"
-import { applyContext } from "./actions/session.js"
+import { applyContext, resetConversationRail } from "./actions/session.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { makeEventReducer } from "./events/eventPump.js"
 import { createTuiStore, type AppServices, type TuiContext } from "./state/store.js"
@@ -109,18 +109,22 @@ export const runTuiModeRemote = (
           ),
         )
       }
-      const rootSessionId =
+      const initialRoot =
         requestedFleet ??
         snap0.activeSessionId ??
         snap0.sessions.find((s) => s.kind === "root")?.id
-      if (rootSessionId === undefined) {
+      if (initialRoot === undefined) {
         yield* Effect.sync(() => {
           process.stderr.write("efferent: the daemon has no root session\n")
           process.exit(1)
         })
         return
       }
-      const rootCid = sessionConversationId(rootSessionId)
+      // Mutable: `:clear` creates a NEW daemon fleet and re-points the client
+      // (the SSE pump + send/state/approve all read these), so the session a
+      // command targets can change mid-run.
+      let rootSessionId: SessionId = initialRoot
+      let rootCid: ConversationId = sessionConversationId(rootSessionId)
 
       const sidePane: SidePaneState = {
         ...emptySidePane,
@@ -221,6 +225,10 @@ export const runTuiModeRemote = (
       })
 
       const exitDeferred = yield* Deferred.make<void>()
+      // The SSE pump fiber (assigned once `pump` is defined + forked below).
+      // `:clear` interrupts it, re-points the session, and re-forks — so it's a
+      // mutable handle, not the scope-bound `forkScoped` fiber.
+      let pumpFiber: Fiber.RuntimeFiber<void, never> | undefined
       const ctx: TuiContext = {
         store,
         // The remote driver backs the `efferent` master assistant — always the
@@ -294,6 +302,43 @@ export const runTuiModeRemote = (
         },
         interrupt: () => {
           void Runtime.runPromise(rt)(ws.interrupt(rootSessionId).pipe(Effect.ignore))
+        },
+        newConversation: () => {
+          // `:clear` on the master bin = a brand-new daemon fleet, and re-point
+          // this client to it. The local rail was already reset; the daemon owns
+          // the conversation, so we MUST create a new root there and re-subscribe
+          // — otherwise the next message + the next resync just resurrect the old
+          // history. Interrupt the pump (stop the old session's stream), create
+          // the fleet, swap rootSessionId/rootCid + reset the cursor, wipe any
+          // old-session events that repainted during the round-trip, then re-fork
+          // the pump onto the new session.
+          void Runtime.runPromise(rt)(
+            Effect.gen(function* () {
+              if (pumpFiber !== undefined) yield* Fiber.interrupt(pumpFiber)
+              const created = yield* ws.createFleet({ folder: input.cwd }).pipe(Effect.either)
+              if (created._tag === "Left") {
+                yield* Effect.sync(() => store.toast(`new conversation failed: ${created.left.message}`))
+                pumpFiber = Runtime.runFork(rt)(pump) // recover on the old session
+                return
+              }
+              const newSid = created.right
+              rootSessionId = newSid
+              rootCid = sessionConversationId(newSid)
+              cursor = 0
+              yield* Effect.sync(() => {
+                resetConversationRail(store)
+                store.run.newConversation(rootCid)
+                store.pushBlock({
+                  kind: "info",
+                  text: `new conversation: ${(newSid as string).slice(0, 8)}`,
+                })
+                store.run.setQueue([])
+                store.convScroller.current?.scrollToBottom()
+              })
+              yield* refreshNav(store, rootCid, { activeOnly: true }).pipe(Effect.catchAll(() => Effect.void))
+              pumpFiber = Runtime.runFork(rt)(pump)
+            }),
+          )
         },
         clearQueue: () => {
           // The daemon owns the authoritative queue — tell it to drop the pending
@@ -466,7 +511,10 @@ export const runTuiModeRemote = (
           }
         }
       })
-      yield* Effect.forkScoped(pump)
+      // Held (not scope-bound) so `:clear` can interrupt + re-fork it onto a new
+      // session; a finalizer interrupts whatever the current fiber is on exit.
+      pumpFiber = Runtime.runFork(rt)(pump)
+      yield* Effect.addFinalizer(() => (pumpFiber !== undefined ? Fiber.interrupt(pumpFiber) : Effect.void))
 
       yield* Effect.promise(() => render(() => createComponent(App, { ctx }), renderer))
       yield* Deferred.await(exitDeferred)

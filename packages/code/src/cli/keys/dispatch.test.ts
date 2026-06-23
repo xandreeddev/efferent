@@ -59,6 +59,14 @@ const harness = (): Harness => {
       run: () => Promise.resolve(undefined as never),
       submit: () => {},
       interrupt: () => {},
+      newConversation: () => {
+        // Mirrors the in-process driver (the rail is reset by `:clear` first).
+        store.run.newConversation(crypto.randomUUID() as unknown as ConversationId)
+        store.pushBlock({
+          kind: "info",
+          text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
+        })
+      },
       clearQueue: () => {},
       exit: () => {
         h.exited = true

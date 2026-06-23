@@ -29,6 +29,7 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
+  newConversation: () => {},
   clearQueue: () => {},
   exit: () => {},
   copySelection: () => false,

@@ -16,6 +16,7 @@ import {
   type Checkpoint,
   type ConversationId,
 } from "@xandreed/sdk-core"
+import { emptyTree } from "../presentation/executionTree.js"
 import { openResume, type ResumeTab } from "../presentation/resumeBrowser.js"
 import {
   buildContextView,
@@ -146,6 +147,19 @@ const statsFrom = (
 }
 
 // --- pure store mutations (given already-fetched data) ---
+
+/**
+ * Reset the rail + side-pane derivations for a fresh conversation (the shared
+ * half of `:clear`, driver-agnostic). Clears the scrollback, the execution tree,
+ * the stats gauge, and the files/plan — but NOT the conversation id: the driver
+ * owns that (a local id in-process; a new daemon fleet on the remote bin).
+ */
+export const resetConversationRail = (store: TuiStore): void => {
+  store.clear()
+  store.setTree(() => emptyTree)
+  store.setStats((s) => ({ ...emptyStats, startedAt: Date.now(), contextWindow: s.contextWindow }))
+  store.setProjection((p) => ({ ...p, filesChanged: [], plan: [] }))
+}
 
 /** Rebuild the context viewer's segments from records (folded, nothing picked). */
 export const applyContextRebuild = (
