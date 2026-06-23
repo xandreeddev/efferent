@@ -896,6 +896,13 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         ...(hasUsage ? { usage } : {}),
         ...stamp,
       })
+      // Deliver the outcome to the bus FIRST: wakes a parent's `wait_for_agents`,
+      // delivers/buffers a completion in the parent's inbox + the blackboard, and
+      // records the terminal result. This MUST precede `onSubAgentEnd` — that
+      // event triggers the daemon's `onTopLevelDone` auto-resume, which drains the
+      // parent's inbox; deliver after, and the resume races an empty inbox.
+      // (`markDone` below is then a no-op — `complete` already removed the entry.)
+      yield* args.bus.complete(nodeId, { status: "ok", summary, filesChanged: files })
       if (hooks?.onSubAgentEnd) {
         yield* hooks.onSubAgentEnd({
           name: label,
@@ -906,11 +913,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           ...(hasUsage ? { usage } : {}),
         })
       }
-      // Deliver the outcome to the bus: wakes a parent's `wait_for_agents`,
-      // drops a completion message in the parent's inbox + the blackboard, and
-      // records the terminal result for a later snapshot. (`markDone` below is
-      // then a no-op — `complete` already removed the running entry.)
-      yield* args.bus.complete(nodeId, { status: "ok", summary, filesChanged: files })
       return { summary, filesChanged: files, nodeId }
     }
 
@@ -923,6 +925,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(hasUsage ? { usage } : {}),
       ...stamp,
     })
+    // Same ordering as the ok path: deliver to the bus before the event that
+    // triggers the auto-resume, so a parent draining its inbox sees the failure.
+    yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
     if (hooks?.onSubAgentEnd) {
       yield* hooks.onSubAgentEnd({
         name: label,
@@ -933,7 +938,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         ...(hasUsage ? { usage } : {}),
       })
     }
-    yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
     return yield* Effect.fail(f)
   })
   // Writers serialize on the folder; read-only runs don't take the lock (above).
