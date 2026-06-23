@@ -121,9 +121,10 @@ test("expanding the group (group id ∈ collapsed) reveals the individual pills"
   try {
     seedTwoToolTurn(store)
     await waitForFrame((f) => f.includes("read · edit"))
-    // Inverse polarity: a group's id in `collapsed` means EXPANDED. The first
-    // top-level pill id is `t1`, so the group id is `grp:t1`.
-    store.setCollapsed(new Set(["grp:t1"]))
+    // Inverse polarity: a group's id in `collapsed` means EXPANDED. The rail
+    // pill id is now the provider tool-call id (so it matches projectHistory and
+    // survives a resync), so the first pill is `c1` and the group id is `grp:c1`.
+    store.setCollapsed(new Set(["grp:c1"]))
     // Wait until the RAIL (not the activity tree) paints the pills.
     const conv = convRegion(
       await waitForFrame((f) => convRegion(f).includes("Read(a.ts)") && convRegion(f).includes("Edit(a.ts)")),

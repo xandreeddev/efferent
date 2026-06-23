@@ -273,6 +273,21 @@ export const projectHistory = (
     msgIdx++
   }
 
+  // Settle each fan-out block's identity to its burst's FIRST run's context-node
+  // id — the SAME key the live event pump stamps (`ag:${firstNodeId}`). At
+  // creation the id was the spawning tool-call id (the node id isn't known until
+  // the run_agent RESULT folds in, several messages later), so we re-key here,
+  // after the walk, when `agents[0].nodeId` is the real node. This lets an idle
+  // resync upsert the projected fan-out block onto the live one instead of the
+  // live block surviving as an unmatched suffix that "jumps to the end".
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]!
+    if (b.kind === "agents" && b.agents.length > 0) {
+      const firstNode = b.agents[0]!.nodeId
+      if (firstNode.length > 0) blocks[i] = { ...b, id: `ag:${firstNode}` }
+    }
+  }
+
   // Nothing stays "running" in a rebuilt tree — an interrupted tail's dangling
   // calls close as ok rather than rendering a frozen spinner forever.
   tree = onAgentEnd(tree, 0)
