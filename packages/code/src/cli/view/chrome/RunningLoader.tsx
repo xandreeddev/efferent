@@ -1,20 +1,18 @@
 import { Show } from "solid-js"
-import { agentStateLabel, formatElapsed } from "../../presentation/agentState.js"
+import { formatElapsed } from "../../presentation/agentState.js"
 import { glyph, tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 
 /**
- * The running loader (agy-style): a single spinner line that sits **directly
- * above the input fence** while a turn is in flight — `⣻  thinking 4s` — so the
- * "is it working?" cue lives where the eye already is (at the composer), not
- * only in the far-away header. It mirrors the header's live state machine
- * (spinner + phase/tool label + elapsed; `fleet working` when only the
- * background fleet runs) and is hidden when idle.
+ * The running loader — the ONE agy heartbeat, directly above the input fence
+ * while a turn is in flight: `⣻ thinking 4s`. Deliberately quiet — a spinner, a
+ * phase word, and elapsed, nothing more. It does NOT name the current tool: the
+ * conversation rail on the left already shows each tool pill live (that's the
+ * agent's status), so echoing the tool here would just be noise. `working` when
+ * only the background fleet runs (the fleet's detail lives on the right). Hidden
+ * when idle.
  *
  * Bottom-chrome rhythm (agy): **loader → pending `▸` messages → input fence**.
- * Render order in `App.tsx` puts this immediately above `QueuedMessages`, which
- * is itself above the `InputBox` — so a queued message drops between the loader
- * and the composer, exactly as agy does it.
  */
 export const RunningLoader = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
@@ -24,7 +22,8 @@ export const RunningLoader = (props: { ctx: TuiContext }) => {
   // "Working" covers the async case: the lead turn can be idle while the
   // background fleet keeps going — don't go silent then.
   const active = () => phaseActive() || fleetRunning()
-  const label = () => (phaseActive() ? agentStateLabel(st()) : "fleet working")
+  // Phase WORD only — never the tool label (the rail owns the tool).
+  const label = () => (phaseActive() ? "thinking" : "working")
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
   const elapsed = () => {
     // The spinner signal doubles as the clock tick — it advances while busy,

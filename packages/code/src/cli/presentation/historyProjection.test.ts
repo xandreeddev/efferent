@@ -115,7 +115,7 @@ describe("projectHistory — the activity tree derived from messages", () => {
     expect(sub.nodeId).toBe("node-9")
   })
 
-  test("a run_agent call's `name` labels its container and row (folder is the fallback)", () => {
+  test("a run_agent call's `name` labels its tree container; no `agents` block on the rail", () => {
     const { tree, blocks } = projectHistory(
       [
         user("audit"),
@@ -133,9 +133,8 @@ describe("projectHistory — the activity tree derived from messages", () => {
     )
     const sub = flat(tree.roots).find((n) => n.kind === "subagent")!
     expect(sub.label).toBe("run_agent → audit state layer")
-    const ag = blocks.find((b) => b.kind === "agents")
-    if (ag?.kind !== "agents") throw new Error("expected agents block")
-    expect(ag.agents[0]!.name).toBe("audit state layer")
+    // The fleet lives only in the tree — a spawn produces no conversation-rail block.
+    expect(blocks.some((b) => b.kind === "agents")).toBe(false)
   })
 
   test("a failed run_agent closes its container as error", () => {

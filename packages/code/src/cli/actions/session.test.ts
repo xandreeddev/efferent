@@ -58,7 +58,7 @@ test("replayBlocks marks an errored tool result", () => {
   expect(blocks.find((b) => b.kind === "tool")).toMatchObject({ state: "error" })
 })
 
-test("replayBlocks rebuilds run_agent bursts as an agents block carrying the returned summary", () => {
+test("replayBlocks renders a run_agent spawn as NO rail block (the fleet lives on the right)", () => {
   const spawn = (id: string, folder: string, seedMode?: string): AgentMessage => ({
     role: "assistant",
     content: [
@@ -86,19 +86,12 @@ test("replayBlocks rebuilds run_agent bursts as an agents block carrying the ret
     [user("go"), spawn("c1", "/w/pkg/tui", "handoff"), spawnResult("c1", "All layers respected.")],
     [],
   )
-  // No bare `run_agent ⎿ done` pill — the spawn renders as the agents container.
+  // The spawn shows ONLY in the fleet tree — no fan-out block, no bare pill on the rail.
+  expect(blocks.some((b) => b.kind === "agents")).toBe(false)
   expect(blocks.some((b) => b.kind === "tool")).toBe(false)
-  const ag = blocks.find((b) => b.kind === "agents")
-  expect(ag).toBeDefined()
-  if (ag?.kind !== "agents") throw new Error("expected agents block")
-  const row = ag.agents[0]!
-  expect(row.name).toBe("tui · handoff")
-  expect(row.status).toBe("ok")
-  expect(row.summary).toBe("All layers respected.")
-  expect(row.nodeId).toBe("node-1") // re-keyed from the call id by the result
 })
 
-test("replayBlocks marks a failed run_agent row and surfaces the failure", () => {
+test("replayBlocks renders a failed run_agent spawn as NO rail block (it's a ✗ in the tree)", () => {
   const blocks = replayBlocks(
     [
       {
@@ -122,10 +115,10 @@ test("replayBlocks marks a failed run_agent row and surfaces the failure", () =>
     ],
     [],
   )
-  const ag = blocks.find((b) => b.kind === "agents")
-  if (ag?.kind !== "agents") throw new Error("expected agents block")
-  expect(ag.agents[0]!.status).toBe("error")
-  expect(blocks.some((b) => b.kind === "error" && b.text === "too deep")).toBe(true)
+  // A failed spawn is the lead's concern (✗ in the tree) + the model's tool
+  // result — never a chat error block on the rail.
+  expect(blocks.some((b) => b.kind === "agents")).toBe(false)
+  expect(blocks.some((b) => b.kind === "error")).toBe(false)
 })
 
 test("replayBlocks inserts a checkpoint block at the folded position", () => {
