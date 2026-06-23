@@ -215,7 +215,10 @@ const RunAgentTool = Tool.make("run_agent", {
     "and more focused — a resume re-feeds the node's entire history every turn). Reuse a node " +
     "only when the new task is a direct follow-up on that node's OWN work: seedMode 'resume' " +
     "to continue/fix/extend what it just did (its accumulated file knowledge pays for itself), " +
-    "'branch' to retry or take an alternative direction from its context without growing it.",
+    "'branch' to retry or take an alternative direction from its context without growing it. " +
+    "Two ways to shape the sub-agent: name a predefined ROLE with 'agent', OR define one INLINE " +
+    "with 'instructions' (its persona) + optional 'tools'/'model'. Use a role when one fits, " +
+    "inline when none does, or both to add focus on top of a role.",
   parameters: {
     name: Schema.String.annotations({
       description:
@@ -250,6 +253,25 @@ const RunAgentTool = Tool.make("run_agent", {
         "as — it sets the sub-agent's system-prompt instructions, its model, and its tool allowlist. " +
         "Omit for a generic folder-scoped coder. Use a role when the task fits a specialty (e.g. " +
         "'reviewer', 'security-auditor', 'docs-writer').",
+    }),
+    instructions: Schema.optional(Schema.String).annotations({
+      description:
+        "Define a one-off sub-agent INLINE: the persona + instructions for THIS spawn — they become " +
+        "its system-prompt body (wrapped by the usual scope / write-confinement / return-contract " +
+        "scaffold). Use it to craft a task-tailored specialist when no predefined 'agent' role fits; " +
+        "combine with 'agent' to ADD focus on top of a role's instructions. Omit for a generic coder.",
+    }),
+    tools: Schema.optional(Schema.Array(Schema.String)).annotations({
+      description:
+        "Optional tool allowlist for an inline agent, e.g. ['read_file','grep','glob','ls'] for a " +
+        "read-only reviewer. Omit to grant the full base coding toolkit. Can only SUBSET the available " +
+        "tools — never grants anything that doesn't exist; include 'run_agent' only to let the inline " +
+        "agent spawn its own helpers (bounded by the depth limit). Unknown names are ignored.",
+    }),
+    model: Schema.optional(Schema.String).annotations({
+      description:
+        "Optional model override for an inline agent as '<provider>:<modelId>' (e.g. " +
+        "'anthropic:claude-opus-4-8'). Omit to inherit the session's main model; the provider must be logged in.",
     }),
   },
   success: Schema.Struct({
@@ -556,6 +578,56 @@ const resolveAgent = (
       available.length > 0 ? ` Available: ${available}.` : " No agent roles are defined."
     }`,
   })
+}
+
+/**
+ * Layer per-call INLINE overrides onto the resolved role (if any) — the
+ * dynamic-agent path. When `instructions`/`tools`/`model` are all absent this
+ * returns `base` unchanged (the named-role and generic-coder paths are
+ * untouched). Otherwise it produces an ad-hoc `AgentDefinition` fed into the
+ * SAME `definition` slot a predefined role uses, so `renderScopeSystemPrompt`'s
+ * body, {@link roleToolEntries}' allowlist, {@link agentWrites}, and the model
+ * override all reuse the existing flow verbatim.
+ *
+ * Rule: the inline `instructions` are APPENDED to the role body (role leads,
+ * refinement follows — mirrors how `scopeBody` is appended); `tools`/`model` are
+ * atomic, so the call's explicit value OVERRIDES the role's (else inherits it).
+ * Tool names are trimmed + deduped here; validity is enforced later by
+ * `roleToolEntries` (subset-only — unknown names dropped). The display title
+ * comes from the `name` param, not `definition.name`, so `"inline"` never shows.
+ */
+export const applyInlineDefinition = (
+  base: AgentDefinition | undefined,
+  inline: {
+    readonly instructions?: string | undefined
+    readonly tools?: ReadonlyArray<string> | undefined
+    readonly model?: string | undefined
+  },
+): AgentDefinition | undefined => {
+  const instr = inline.instructions?.trim()
+  const hasInstr = instr !== undefined && instr.length > 0
+  const cleanTools = inline.tools?.map((t) => t.trim()).filter((t) => t.length > 0)
+  const hasTools = cleanTools !== undefined && cleanTools.length > 0
+  const model = inline.model?.trim()
+  const hasModel = model !== undefined && model.length > 0
+  if (!hasInstr && !hasTools && !hasModel) return base
+
+  const body = [base?.body, hasInstr ? instr : undefined]
+    .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+    .join("\n\n")
+
+  return {
+    name: base?.name ?? "inline",
+    description: base?.description ?? "Inline task-tailored agent",
+    body,
+    ...(hasTools
+      ? { tools: [...new Set(cleanTools)] }
+      : base?.tools !== undefined
+        ? { tools: base.tools }
+        : {}),
+    ...(hasModel ? { model } : base?.model !== undefined ? { model: base.model } : {}),
+    sourcePath: base?.sourcePath ?? "<inline>",
+  }
 }
 
 /**
@@ -1000,6 +1072,9 @@ const makeRunAgentHandler =
       readonly seedFromNode?: string
       readonly seedMode?: "resume" | "branch" | "handoff"
       readonly agent?: string
+      readonly instructions?: string
+      readonly tools?: ReadonlyArray<string>
+      readonly model?: string
     }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
@@ -1016,7 +1091,8 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
-      const { name, folder, task, seedFromNode, seedMode, agent } = params
+      const { name, folder, task, seedFromNode, seedMode, agent, instructions, tools, model } =
+        params
       // The model-given display name; blank/absent (a stale provider replaying
       // an old-schema call) degrades to the folder basename.
       const title =
@@ -1025,7 +1101,10 @@ const makeRunAgentHandler =
       // Resolve the requested role (if any). A named-but-unknown agent is a
       // model-facing failure — silently ignoring a requested role hides a real
       // mistake (mirrors read_skill's UnknownSkill). Absent ⇒ generic spawn.
-      const definition = yield* resolveAgent(opts.agents, agent)
+      // Then layer any INLINE definition (instructions/tools/model) on top, so a
+      // task-tailored agent flows through the same `definition` slot as a role.
+      const baseDefinition = yield* resolveAgent(opts.agents, agent)
+      const definition = applyInlineDefinition(baseDefinition, { instructions, tools, model })
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
