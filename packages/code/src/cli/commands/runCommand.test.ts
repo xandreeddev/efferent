@@ -25,6 +25,15 @@ const ctxOf = (store: TuiStore, onExit: () => void = () => {}): TuiContext => ({
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
+  newConversation: () => {
+    // Mirrors the in-process driver: a fresh local id + the rail line (the rail
+    // itself is reset by `:clear` before this runs).
+    store.run.newConversation(crypto.randomUUID() as unknown as ConversationId)
+    store.pushBlock({
+      kind: "info",
+      text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
+    })
+  },
   clearQueue: () => {},
   exit: onExit,
   copySelection: () => false,
