@@ -14,7 +14,12 @@ import {
   Shell,
   WebSearch,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime, roleToolEntries, agentWrites } from "./buildScopeRuntime.js"
+import {
+  applyInlineDefinition,
+  buildScopeRuntime,
+  roleToolEntries,
+  agentWrites,
+} from "./buildScopeRuntime.js"
 import { withBuiltinAgents } from "./directive.js"
 
 const rootScope: Scope = {
@@ -121,6 +126,65 @@ describe("agentWrites — only writers take the folder lock (deadlock fix)", () 
     for (const name of ["implementer", "frontend", "backend"]) {
       expect(agentWrites(byName.get(name))).toBe(true)
     }
+  })
+})
+
+describe("applyInlineDefinition — the coordinator defines a sub-agent inline", () => {
+  const role = (body: string, tools?: ReadonlyArray<string>, model?: string) => ({
+    name: "backend",
+    description: "backend specialist",
+    body,
+    sourcePath: "/x.md",
+    ...(tools !== undefined ? { tools } : {}),
+    ...(model !== undefined ? { model } : {}),
+  })
+
+  test("all inline fields absent → returns base UNCHANGED (named-role + generic paths untouched)", () => {
+    const base = role("B", ["read_file"])
+    expect(applyInlineDefinition(base, {})).toBe(base) // same reference
+    expect(applyInlineDefinition(undefined, {})).toBeUndefined()
+  })
+
+  test("instructions only (no base) → an inline agent with that body, full toolkit, can write", () => {
+    const d = applyInlineDefinition(undefined, { instructions: "You audit migrations." })!
+    expect(d.body).toBe("You audit migrations.")
+    expect(d.tools).toBeUndefined() // no allowlist → full base coding tools…
+    expect(roleToolEntries(d).map(([n]) => n)).toContain("edit_file")
+    expect(agentWrites(d)).toBe(true)
+    expect(d.name).toBe("inline")
+  })
+
+  test("inline tools → a read-only allowlist (subset-only); roleToolEntries enforces validity", () => {
+    const d = applyInlineDefinition(undefined, {
+      instructions: "read-only reviewer",
+      tools: ["read_file", " grep ", "read_file", "made_up"], // dup + whitespace + unknown
+    })!
+    expect(d.tools).toEqual(["read_file", "grep", "made_up"]) // trimmed + deduped (validity is roleToolEntries' job)
+    expect(roleToolEntries(d).map(([n]) => n).sort()).toEqual(["grep", "read_file"]) // unknown dropped
+    expect(agentWrites(d)).toBe(false) // read-only → skips the folder lock
+  })
+
+  test("agent + instructions → COMPOSE the body (role leads, refinement follows)", () => {
+    const d = applyInlineDefinition(role("BACKEND ROLE", ["read_file"]), {
+      instructions: "Only touch the rate-limiter.",
+    })!
+    expect(d.body).toBe("BACKEND ROLE\n\nOnly touch the rate-limiter.")
+    expect(d.tools).toEqual(["read_file"]) // no inline tools → inherit the role's
+  })
+
+  test("inline tools/model OVERRIDE the role's; absent → inherit", () => {
+    const base = role("B", ["read_file"], "google:gemini-3.5-flash")
+    const overridden = applyInlineDefinition(base, { instructions: "x", tools: ["grep"], model: "anthropic:claude-opus-4-8" })!
+    expect(overridden.tools).toEqual(["grep"])
+    expect(overridden.model).toBe("anthropic:claude-opus-4-8")
+    const inherited = applyInlineDefinition(base, { instructions: "x" })!
+    expect(inherited.tools).toEqual(["read_file"])
+    expect(inherited.model).toBe("google:gemini-3.5-flash")
+  })
+
+  test("blank/whitespace inline fields are treated as absent", () => {
+    const base = role("B")
+    expect(applyInlineDefinition(base, { instructions: "   ", tools: [], model: " " })).toBe(base)
   })
 })
 
@@ -329,6 +393,45 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
     expect(result.gathered.agents).toHaveLength(1)
     expect(result.gathered.agents[0]?.status).toBe("ok")
     expect(result.gathered.agents[0]?.summary).toBe("resumed and done")
+  })
+
+  test("an INLINE agent (instructions + tools) spawns + gathers like any other — new params decode and flow through", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      // No predefined role — a one-off persona with a read-only allowlist.
+      const spawned = yield* call("run_agent", {
+        name: "secret auditor",
+        folder: "pkg",
+        task: "scan for hard-coded secrets",
+        instructions: "You audit for committed secrets. Report file:line; change nothing.",
+        tools: ["read_file", "grep", "glob", "ls"],
+      })
+      const handle = spawned.result as { nodeId: string; name: string; status: string }
+      const gathered = yield* call("wait_for_agents", { nodeIds: [handle.nodeId], timeoutSeconds: 5 })
+      return { handle, gathered: gathered.result as { agents: ReadonlyArray<{ status: string }>; allDone: boolean } }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, { rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null }),
+    )
+
+    const result = await Effect.runPromise(
+      program.pipe(Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "inline run_agent HUNG" })) as unknown as Effect.Effect<{
+        handle: { name: string; status: string }
+        gathered: { agents: ReadonlyArray<{ status: string }>; allDone: boolean }
+      }>,
+    )
+
+    expect(result.handle.status).toBe("running")
+    expect(result.handle.name).toBe("secret auditor") // display title from `name`, not "inline"
+    expect(result.gathered.allDone).toBe(true)
+    expect(result.gathered.agents[0]?.status).toBe("ok")
   })
 })
 
