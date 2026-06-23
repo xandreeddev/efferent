@@ -288,10 +288,10 @@ const treeKey = (ctx: TuiContext, key: Key): boolean => {
       if (row === undefined) return true
       if (row.display.kind === "conversation") {
         if (store.nodePreview() !== undefined) closeNodePreview(store)
-        else {
-          store.setFocus("chat")
-          store.setMode("normal")
-        }
+        // Route through focusChat so the fold cursor lands on a valid row
+        // (the newest unit). A bare setFocus left convCursor at a stale/out-of-
+        // bounds index → no row highlighted, nav/expand confusingly inert.
+        else focusChat(store)
         return true
       }
       if (store.nodePreview()?.nodeId === row.display.nodeId) {

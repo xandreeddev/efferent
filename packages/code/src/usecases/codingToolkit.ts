@@ -402,7 +402,13 @@ export const WriteFile = Tool.make("write_file", {
       description: "Full content to write. Overwrites any existing file.",
     }),
   },
-  success: Schema.Struct({ path: Schema.String, bytes: Schema.Number, lines: Schema.Number }),
+  success: Schema.Struct({
+    path: Schema.String,
+    bytes: Schema.Number,
+    lines: Schema.Number,
+    /** Old→new unified diff (a new file = all-additions) — rendered below the pill. */
+    diff: Schema.String,
+  }),
   failure: Failure,
   failureMode: "return",
 })
@@ -815,11 +821,18 @@ export const makeCodingHandlers = (
         writeGate.withPermits(1)(Effect.gen(function* () {
           const abs = resolvePath(displayRoot, path)
           yield* rejectIfOutOfScope(abs)
+          // Prior content (empty for a brand-new file) → an old→new unified diff,
+          // so write_file reads like edit_file in the rail (a new file shows as
+          // all-additions). A missing file fails the read; default to "".
+          const before = yield* fs
+            .read(abs)
+            .pipe(Effect.map((r) => r.content), Effect.orElseSucceed(() => ""))
           yield* fs.write(abs, content)
           return {
             path: displayPath(displayRoot, abs),
             bytes: new TextEncoder().encode(content).byteLength,
             lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length,
+            diff: unifiedDiff(before, content, displayPath(displayRoot, abs)),
           }
         })).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 

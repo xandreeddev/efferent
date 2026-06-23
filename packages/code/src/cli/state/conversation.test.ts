@@ -175,17 +175,16 @@ describe("cross-writer key equality — the contract the dedup rests on", () => 
     expect(tool.kind === "tool" && tool.id).toBe("call_42")
   })
 
-  test("projectHistory re-keys a fan-out block to its first run's node id (matches the live pump)", () => {
+  test("projectHistory renders a run_agent spawn as NO rail block (the fleet is on the right)", () => {
     const withSpawn: ReadonlyArray<AgentMessage> = [
       { role: "user", content: "build it" },
       { role: "assistant", content: [{ type: "tool-call", toolCallId: "call_spawn", toolName: "run_agent", input: { folder: "src", name: "backend" } }] },
       { role: "tool", content: [{ type: "tool-result", toolCallId: "call_spawn", toolName: "run_agent", output: { nodeId: "node_abc", status: "running" } }] },
     ]
     const proj = projectHistory(withSpawn, [], 0)
-    const agents = proj.blocks.find((b) => b.kind === "agents")!
-    // Live pump keys the burst `ag:${firstNodeId}`; projectHistory settles to the
-    // same once the run_agent result reveals the node id.
-    expect(agents.kind === "agents" && agents.id).toBe("ag:node_abc")
+    // The spawn surfaces only in the execution tree — no fan-out / tool block on the rail.
+    expect(proj.blocks.some((b) => b.kind === "agents")).toBe(false)
+    expect(proj.blocks.some((b) => b.kind === "tool")).toBe(false)
   })
 
   test("projectHistory stamps the SAME key the live pump computes (messageKey)", () => {
