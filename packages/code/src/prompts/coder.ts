@@ -170,6 +170,7 @@ Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for te
 ${subAgentsSection}${renderAgentsSection(args.agents ?? [])}${renderMemorySection(args.memory ?? [])}${coordinationSection}
 # Doing tasks
 - Use tools to read; do not answer from memory.
+- Before a tool call (or a short batch of them), write ONE short line on what you're about to do and why — it streams live, so the user (and your parent) can follow your reasoning between steps. Keep it to a sentence; skip it only for a single trivial read, and never turn it into a play-by-play.
 - When a file is named or its path is known, read it directly with 'read_file' — don't grep/glob/ls to locate it first.
 - Read before you write. Make minimal, targeted edits — prefer edit_file over write_file for existing files.
 - Keep changes tightly scoped to the task. Don't add speculative abstractions or unrelated cleanup. Don't create files unless the task requires it.
