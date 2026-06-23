@@ -286,8 +286,8 @@ const usageFromChunk = (chunk: Json): Response.FinishPartEncoded["usage"] => {
   }
 }
 
-/** Collect SSE deltas into Response stream parts. */
-const eventParts = () => {
+/** Collect SSE deltas into Response stream parts. Exported for the decode tests. */
+export const eventParts = () => {
   const activeToolCalls = new Map<number, { id: string; name: string; args: string }>()
 
   return (event: Json): ReadonlyArray<Response.StreamPartEncoded> => {
@@ -317,8 +317,13 @@ const eventParts = () => {
       })
     }
 
-    // Tool calls
-    const toolCalls = delta.tool_calls as ReadonlyArray<Json> | undefined
+    // Tool calls. Guard null, not just undefined: some providers (e.g. glm via
+    // opencode) send `tool_calls: null` on text-only chunks, and `!== undefined`
+    // lets null through — `for…of null` then throws "null is not an object" and
+    // kills the whole turn before any tool (or fleet spawn) runs.
+    const toolCalls = Array.isArray(delta.tool_calls)
+      ? (delta.tool_calls as ReadonlyArray<Json>)
+      : undefined
     if (toolCalls !== undefined) {
       for (const tc of toolCalls) {
         const index = typeof tc.index === "number" ? tc.index : 0
