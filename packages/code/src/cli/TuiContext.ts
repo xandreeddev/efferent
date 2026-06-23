@@ -55,6 +55,14 @@ export interface TuiContext {
   readonly run: <A, E>(program: Effect.Effect<A, E, any>) => Promise<A>
   readonly submit: (text: string) => void
   readonly interrupt: () => void
+  /**
+   * Drop every pending (queued) message — the queue the `▸` list shows. The
+   * in-process bin clears its own run-handle queue; the remote bin asks the
+   * daemon to forget its authoritative queue (and clears the local mirror). Used
+   * by the agy two-stage Esc: first Esc pulls pending messages back into the
+   * composer (this clears them so they don't ALSO run), second Esc interrupts.
+   */
+  readonly clearQueue: () => void
   readonly exit: () => void
   /**
    * Which bin's chrome this TUI wears — `"master"` (the `efferent` assistant:

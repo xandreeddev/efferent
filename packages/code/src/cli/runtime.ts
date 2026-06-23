@@ -238,6 +238,10 @@ export const runTuiModeSolid = (
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
+        clearQueue: () => {
+          // In-process owns its queue directly — drop the pending messages.
+          store.run.dequeueAll()
+        },
         roles: input.agents,
         tools: input.tools,
         spawnAgent: (agent, folder, task) => {
@@ -372,9 +376,14 @@ export const runTuiModeSolid = (
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.sync(() => {
-            // Animate while the root turn runs OR a background fleet is working
-            // (the root can be idle while its agents keep going).
-            if (store.busy() || store.agentState().fleet.length > 0) store.tickSpinner()
+            // Animate while the agent is doing anything visible: a turn in flight
+            // (phase ≠ idle) OR a background fleet still working (the root can be
+            // idle while its agents keep going). Gate on the PHASE machine, not
+            // `busy()` — `busy()` is only set on the in-process path, so a
+            // `busy()` gate freezes the spinner on the remote/daemon path where
+            // the phase is the sole live signal. Phase covers both bins.
+            const st = store.agentState()
+            if (st.phase !== "idle" || st.fleet.length > 0) store.tickSpinner()
           }).pipe(Effect.delay("120 millis")),
         ),
       )

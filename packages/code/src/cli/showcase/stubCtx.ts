@@ -72,6 +72,7 @@ export const makeStubCtx = (opts: {
     run: opts.run,
     submit: () => {},
     interrupt: () => {},
+    clearQueue: () => {},
     exit: opts.onExit,
     copySelection: () => false,
     resolveApproval: () => {},

@@ -28,6 +28,7 @@ const ctxOf = (store: TuiStore): TuiContext => ({
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
+  clearQueue: () => {},
   exit: () => {},
   copySelection: () => false,
   resolveApproval: () => {},

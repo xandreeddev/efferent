@@ -36,8 +36,17 @@ export interface RunHandle {
   newConversation(id: ConversationId): void
   enqueue(text: string): void
   dequeue(): string | undefined
+  /** Drain the ENTIRE pending queue at once, oldest-first, clearing it — the
+   *  "take everything available" turn-end drain (agy): every queued message
+   *  runs together as the next turn, rather than one-per-turn with the rest left
+   *  waiting. Empty array when nothing is queued. */
+  dequeueAll(): ReadonlyArray<string>
   /** Pull the MOST-recently queued message back off the queue (↑-to-edit). */
   popQueued(): string | undefined
+  /** Replace the whole queue. The remote (`efferent`) driver uses this to mirror
+   *  the DAEMON's authoritative pending queue into the reactive signal each state
+   *  refresh — the in-process driver owns its queue locally and never needs it. */
+  setQueue(list: ReadonlyArray<string>): void
   getBrowseList(): ReadonlyArray<BrowseEntry>
   setBrowseList(list: ReadonlyArray<BrowseEntry>): void
   getFiber(): Fiber.RuntimeFiber<void, never> | undefined
@@ -86,10 +95,20 @@ const createRunHandle = (
       onQueue([...queue])
       return v
     },
+    dequeueAll: () => {
+      const all = queue
+      queue = []
+      onQueue([])
+      return all
+    },
     popQueued: () => {
       const v = queue.pop()
       onQueue([...queue])
       return v
+    },
+    setQueue: (list) => {
+      queue = [...list]
+      onQueue([...queue])
     },
     getBrowseList: () => browseList,
     setBrowseList: (list) => {
