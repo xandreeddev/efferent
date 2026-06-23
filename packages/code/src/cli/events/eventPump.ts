@@ -183,8 +183,14 @@ export const makeEventReducer = (
         // plus the tree. Routed by the event's own `nodeId` (undefined ⇒ root),
         // so a root tool call still gets its rail pill while a fleet runs.
         if (event.nodeId === undefined) {
-          toolSeq++
-          const sid = `t${toolSeq}`
+          // Key the rail pill by the provider tool-call id — the SAME identity
+          // `projectHistory` stamps (`part.toolCallId`). So when an idle resync
+          // re-projects this turn, the projected pill upserts onto the live one
+          // instead of the live pill (an ephemeral `t<seq>`) surviving as an
+          // unmatched suffix and "jumping to the end". Counter only as a fallback
+          // when the provider omits an id (matches `matchKey`'s name fallback,
+          // and projectHistory's empty toolCallId, so the pairing stays consistent).
+          const sid = event.id.length > 0 ? event.id : `t${++toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
         } else if (event.nodeId !== undefined) {
@@ -286,10 +292,14 @@ export const makeEventReducer = (
           return
         }
         if (event.nodeId !== undefined) {
-          // One grouped block per burst; each spawn is a live row in it.
+          // One grouped block per burst; each spawn is a live row in it. Key the
+          // block by the burst's FIRST spawn's context-node id — the SAME identity
+          // `projectHistory` re-keys to (`ag:${agents[0].nodeId}`). So an idle
+          // resync upserts the projected fan-out block onto this live one instead
+          // of the live `ag<seq>` surviving as an unmatched suffix and "jumping to
+          // the end" after the fleet finishes.
           if (agentsBlockId === undefined) {
-            toolSeq++
-            agentsBlockId = `ag${toolSeq}`
+            agentsBlockId = `ag:${event.nodeId}`
             store.pushBlock({ kind: "agents", id: agentsBlockId, agents: [] })
           }
           agentRows.set(event.nodeId, {

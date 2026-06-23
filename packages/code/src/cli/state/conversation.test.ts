@@ -113,11 +113,80 @@ describe("reconcile — the resync merge preserves the live tail", () => {
   })
 })
 
+describe("reconcile — tool/agents blocks are the projection's to own", () => {
+  test("an unmatched live tool/agents block is DROPPED (no jump-to-end), the projection supplies it", () => {
+    createRoot((dispose) => {
+      const s = createConversationSlice()
+      // A finished turn as the LIVE pump built it: a message, a tool pill, a
+      // fan-out block. The live ids match what projectHistory now stamps.
+      s.pushBlock({ kind: "user", text: "go", key: messageKey(0, "u") })
+      s.pushBlock({ kind: "tool", id: "call_1", toolName: "grep(x)", state: "ok" })
+      s.pushBlock({ kind: "agents", id: "ag:node_1", agents: [] })
+      // A STALE live block under an ephemeral id the projection will never carry
+      // (the old `ag<seq>`/`t<seq>` scheme) — the bug's raw material.
+      s.pushBlock({ kind: "agents", id: "ag7", agents: [] })
+      // The DB snapshot for this idle turn: message + the two real-id blocks.
+      s.reconcile([
+        { kind: "user", text: "go", key: messageKey(0, "u") },
+        { kind: "tool", id: "call_1", toolName: "grep(x)", state: "ok" },
+        { kind: "agents", id: "ag:node_1", agents: [] },
+      ])
+      // The matched tool/agents blocks appear once, at their projection slot; the
+      // unmatched live `ag7` is gone (not appended to the end). No reorder, no dup.
+      expect(s.blocks().map((b) => (b.kind === "tool" || b.kind === "agents" ? b.id : keyOf(b)))).toEqual([
+        messageKey(0, "u"),
+        "call_1",
+        "ag:node_1",
+      ])
+      dispose()
+    })
+  })
+
+  test("an unmatched live MESSAGE tail is still kept (streaming reply not dropped)", () => {
+    createRoot((dispose) => {
+      const s = createConversationSlice()
+      s.pushBlock({ kind: "user", text: "go", key: messageKey(0, "u") })
+      s.pushBlock({ kind: "tool", id: "t9", toolName: "ls()", state: "running" }) // stale live tool
+      s.pushBlock({ kind: "assistant", text: "streaming…", key: messageKey(2, "a") }) // live tail
+      s.reconcile([{ kind: "user", text: "go", key: messageKey(0, "u") }])
+      // The live message tail survives; the unmatched live tool does not.
+      expect(s.blocks().map(keyOf)).toEqual([messageKey(0, "u"), messageKey(2, "a")])
+      dispose()
+    })
+  })
+})
+
 describe("cross-writer key equality — the contract the dedup rests on", () => {
   const history: ReadonlyArray<AgentMessage> = [
     { role: "user", content: "q" },
     { role: "assistant", content: [{ type: "text", text: "a" }] },
   ]
+
+  test("projectHistory keys a tool pill by its tool-call id (matches the live pump)", () => {
+    const withTool: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call_42", toolName: "grep", input: { pattern: "x" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call_42", toolName: "grep", output: "no matches" }] },
+    ]
+    const proj = projectHistory(withTool, [], 0)
+    const tool = proj.blocks.find((b) => b.kind === "tool")!
+    // The live pump now stamps the rail pill `event.id` (the tool-call id), so
+    // a resync upserts in place instead of appending a twin.
+    expect(tool.kind === "tool" && tool.id).toBe("call_42")
+  })
+
+  test("projectHistory re-keys a fan-out block to its first run's node id (matches the live pump)", () => {
+    const withSpawn: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "build it" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call_spawn", toolName: "run_agent", input: { folder: "src", name: "backend" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call_spawn", toolName: "run_agent", output: { nodeId: "node_abc", status: "running" } }] },
+    ]
+    const proj = projectHistory(withSpawn, [], 0)
+    const agents = proj.blocks.find((b) => b.kind === "agents")!
+    // Live pump keys the burst `ag:${firstNodeId}`; projectHistory settles to the
+    // same once the run_agent result reveals the node id.
+    expect(agents.kind === "agents" && agents.id).toBe("ag:node_abc")
+  })
 
   test("projectHistory stamps the SAME key the live pump computes (messageKey)", () => {
     const proj = projectHistory(history, [], 0)

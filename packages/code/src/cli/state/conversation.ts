@@ -252,11 +252,22 @@ export const createConversationSlice = (): ConversationSlice => {
           const id = identityOf(b)
           if (id !== undefined) nextIds.add(id)
         }
-        // Keep only the LIVE keyed blocks the snapshot doesn't represent yet
-        // (positions past the persisted frontier) — so a mid-turn resync never
+        // Keep only the LIVE keyed MESSAGE blocks the snapshot doesn't represent
+        // yet (positions past the persisted frontier) — so a mid-turn resync never
         // wipes the streaming tail. Keyless transient lines are dropped (the
-        // projection is the authoritative record).
+        // projection is the authoritative record). `tool`/`agents` blocks are
+        // NOT preserved: `projectHistory` is authoritative for them (it rebuilds
+        // every pill/fan-out block from the persisted messages with the SAME keys
+        // the live pump stamps), so an unmatched live tool/agents block here is a
+        // stale duplicate, not in-flight work. Keeping it would append it AFTER
+        // the whole projection — the "fleet block jumps to the end" bug. Dropping
+        // it lets the projection supply that block at its true DB-order slot. This
+        // is the safety net beneath the shared-identity keying: even if a parallel
+        // spawn's arrival order skews which node is "first", nothing reorders.
         const liveSuffix = cur.filter((b) => {
+          if (b.kind !== "user" && b.kind !== "assistant" && b.kind !== "reasoning") {
+            return false
+          }
           const id = identityOf(b)
           return id !== undefined && !nextIds.has(id)
         })
