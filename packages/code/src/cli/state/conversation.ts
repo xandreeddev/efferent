@@ -1,6 +1,34 @@
 import { createSignal, type Accessor } from "solid-js"
-import type { ScrollbackBlock, SearchHit } from "../presentation/conversation.js"
+import { messageKey, type ScrollbackBlock, type SearchHit } from "../presentation/conversation.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
+
+/**
+ * A block's stable cache identity, or `undefined` when it has none (transient
+ * `info`/`error`/`checkpoint`, which always append). `tool`/`agents` key on
+ * their own `id`; messages on the `key` the pump/projection stamped from their
+ * absolute position.
+ */
+const identityOf = (b: ScrollbackBlock): string | undefined => {
+  if (b.kind === "tool" || b.kind === "agents") return b.id
+  if (b.kind === "user" || b.kind === "assistant" || b.kind === "reasoning") return b.key
+  return undefined
+}
+
+/** Upsert a block into a list by {@link identityOf}: replace the existing entry
+ *  with that identity in place (preserving order), else append. A keyless block
+ *  always appends. The one operation that makes every rail writer idempotent. */
+const upsertInto = (
+  list: ReadonlyArray<ScrollbackBlock>,
+  block: ScrollbackBlock,
+): ScrollbackBlock[] => {
+  const id = identityOf(block)
+  if (id === undefined) return [...list, block]
+  const at = list.findIndex((b) => identityOf(b) === id)
+  if (at === -1) return [...list, block]
+  const next = [...list]
+  next[at] = block
+  return next
+}
 
 /**
  * A live search over one pane. For the **conversation** the matches are
@@ -60,8 +88,31 @@ export interface ConversationSlice {
   /** The conversation fold cursor: index into `buildConversationRows`. */
   readonly convCursor: Accessor<number>
   readonly setConvCursor: (next: number) => void
-  /** Append a conversation block (append-only; tools update in place by id). */
+  /**
+   * Add a block to the rail, **keyed**: a block carrying a stable identity
+   * (`tool`/`agents` `id`, or a message `key`) REPLACES the existing entry with
+   * that identity in place; a keyless block (`info`/`error`/`checkpoint`) or a
+   * new identity appends. This is the single guarantee that the same logical
+   * message can't appear twice — a replayed event, or a DB re-projection landing
+   * on top of a live block, reconciles to one entry instead of duplicating.
+   */
   readonly pushBlock: (block: ScrollbackBlock) => void
+  /**
+   * Push an OPTIMISTIC user line (idle submit) keyed `opt:<n>` and register it
+   * pending — shown instantly, before the daemon persists it. The matching
+   * authoritative `user_message` event later reconciles onto it by
+   * {@link resolveOptimisticUser} (FIFO), so the line never doubles and we never
+   * resort to unsafe content-hash matching. Returns the optimistic key.
+   */
+  readonly pushOptimisticUser: (text: string) => string
+  /**
+   * Resolve an authoritative user message (from the `user_message` event) at its
+   * absolute `position`: re-key the oldest pending optimistic line onto its
+   * `m:p<position>` key (collapsing optimistic↔authoritative), or upsert a fresh
+   * user block when none is pending (a queued message draining, or another
+   * client's send).
+   */
+  readonly resolveOptimisticUser: (position: number, text: string) => void
   /** Patch the most recent tool block with the given id. */
   readonly updateTool: (
     id: string,
@@ -72,8 +123,19 @@ export interface ConversationSlice {
     id: string,
     agents: Extract<ScrollbackBlock, { kind: "agents" }>["agents"],
   ) => void
-  /** Replace the entire block list — used by resume / build-a-new-session. */
+  /** Replace the entire block list — a true document swap (resume / build /
+   *  fork / boot / `:clear`). The incoming blocks carry keys, so events that
+   *  arrive afterwards upsert onto them. */
   readonly setBlocks: (next: ScrollbackBlock[]) => void
+  /**
+   * Merge a DB re-projection onto the live cache by key — the reconnect-resync
+   * write. Every block in `next` upserts by identity; current **keyed** blocks
+   * NOT in `next` are kept (in-flight messages the snapshot doesn't show yet, so
+   * a resync never drops the streaming tail); keyless transient lines are
+   * dropped (the projection is the authoritative record). `next` first (the
+   * persisted prefix), then the surviving live suffix.
+   */
+  readonly reconcile: (next: ScrollbackBlock[]) => void
   /** Which agent (context-node) is open in the RIGHT pane, if any. */
   readonly nodePreview: Accessor<NodePreview | undefined>
   readonly setNodePreview: (p: NodePreview | undefined) => void
@@ -131,13 +193,49 @@ export const createConversationSlice = (): ConversationSlice => {
   const convScroller: { current?: ConvScroller } = {}
   const inputControl: { current?: InputControl } = {}
 
+  // Optimistic user lines awaiting their authoritative `user_message` event,
+  // oldest first (FIFO). Non-reactive coordination state — never rendered. A
+  // monotonic counter mints unique `opt:<n>` keys so two identical-text messages
+  // stay distinct (content-hash dedup would wrongly merge them).
+  const pendingOpt: string[] = []
+  let optSeq = 0
+
   return {
     blocks,
     collapsed,
     setCollapsed: (next) => setCollapsedSig(next),
     convCursor,
     setConvCursor: (next) => setConvCursorSig(next),
-    pushBlock: (block) => setBlocksSig((bs) => [...bs, block]),
+    pushBlock: (block) => setBlocksSig((bs) => upsertInto(bs, block)),
+    pushOptimisticUser: (text) => {
+      const key = `opt:${optSeq++}`
+      pendingOpt.push(key)
+      setBlocksSig((bs) => upsertInto(bs, { kind: "user", text, key }))
+      return key
+    },
+    resolveOptimisticUser: (position, text) => {
+      const posKey = messageKey(position, "u")
+      const optKey = pendingOpt.shift()
+      setBlocksSig((bs) => {
+        // Already have this position (a replay / a resync rebuilt it): upsert.
+        if (bs.some((b) => identityOf(b) === posKey)) {
+          // Drop a now-redundant optimistic placeholder if one was pending.
+          const pruned = optKey !== undefined ? bs.filter((b) => identityOf(b) !== optKey) : bs
+          return upsertInto(pruned, { kind: "user", text, key: posKey })
+        }
+        // Re-key the pending optimistic line in place → collapses opt↔authoritative.
+        if (optKey !== undefined) {
+          const at = bs.findIndex((b) => identityOf(b) === optKey)
+          if (at !== -1) {
+            const next = [...bs]
+            next[at] = { kind: "user", text, key: posKey }
+            return next
+          }
+        }
+        // No optimistic placeholder (queued drain / another client): append fresh.
+        return upsertInto(bs, { kind: "user", text, key: posKey })
+      })
+    },
     updateTool: (id, patch) =>
       setBlocksSig((bs) =>
         bs.map((b) => (b.kind === "tool" && b.id === id ? { ...b, ...patch } : b)),
@@ -147,6 +245,23 @@ export const createConversationSlice = (): ConversationSlice => {
         bs.map((b) => (b.kind === "agents" && b.id === id ? { ...b, agents } : b)),
       ),
     setBlocks: (next) => setBlocksSig(next),
+    reconcile: (next) =>
+      setBlocksSig((cur) => {
+        const nextIds = new Set<string>()
+        for (const b of next) {
+          const id = identityOf(b)
+          if (id !== undefined) nextIds.add(id)
+        }
+        // Keep only the LIVE keyed blocks the snapshot doesn't represent yet
+        // (positions past the persisted frontier) — so a mid-turn resync never
+        // wipes the streaming tail. Keyless transient lines are dropped (the
+        // projection is the authoritative record).
+        const liveSuffix = cur.filter((b) => {
+          const id = identityOf(b)
+          return id !== undefined && !nextIds.has(id)
+        })
+        return [...next, ...liveSuffix]
+      }),
     nodePreview,
     setNodePreview: (p) => setNodePreviewSig(p),
     nodeLog: (nodeId) => nodeLogs().get(nodeId) ?? [],
@@ -185,6 +300,7 @@ export const createConversationSlice = (): ConversationSlice => {
       setSearchSig(undefined)
       setNodePreviewSig(undefined)
       setNodeLogs(new Map())
+      pendingOpt.length = 0
     },
     search,
     setSearch: (next) => setSearchSig(next),

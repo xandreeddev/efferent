@@ -155,12 +155,23 @@ interface BusState {
   readonly running: ReadonlyMap<string, AgentEntry>
   readonly done: ReadonlyMap<string, DoneEntry>
   readonly board: ReadonlyArray<BoardNote>
+  /**
+   * Completion notes for a parent that ISN'T currently running — keyed by the
+   * parent's bus key. A root that delegates and then ENDS its turn has no live
+   * mailbox when its lead later finishes, so the completion is buffered here and
+   * merged into the parent's inbox the next time it registers a mailbox
+   * (`markRunning`, including the auto-resume). Without this, an auto-resumed
+   * orchestrator drains an empty inbox and reports nothing ("no ping back").
+   */
+  readonly pending: ReadonlyMap<string, ReadonlyArray<InboxMessage>>
 }
 
 /** Keep the blackboard bounded — oldest notes fall off (the agent re-reads). */
 const MAX_BOARD = 200
 /** Keep recently-finished results bounded — a gather reads them, then they age out. */
 const MAX_DONE = 200
+/** Cap buffered completions per idle parent (a parent that never resumes). */
+const MAX_PENDING = 100
 
 const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`)
 
@@ -181,6 +192,7 @@ export const makeAgentBus = (
     running: new Map(),
     done: new Map(),
     board: [],
+    pending: new Map(),
   })
   const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
     onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
@@ -210,18 +222,25 @@ export const makeAgentBus = (
         const completion = yield* Deferred.make<void>()
         yield* Ref.update(ref, (s) => {
           const existing = s.running.get(nodeId)
+          // Merge any completions buffered while this agent was idle (a child
+          // that finished after the parent ended its turn), so the resuming
+          // turn's inbox-draining hook actually sees them.
+          const buffered = s.pending.get(nodeId) ?? []
           const running = new Map(s.running)
           running.set(nodeId, {
             label,
             parentKey: opts?.parentKey ?? existing?.parentKey ?? null,
-            inbox: existing?.inbox ?? [],
+            inbox: [...(existing?.inbox ?? []), ...buffered],
             // Keep an existing completion latch so a parent that already awaits
             // it is still woken; only the first registration creates one.
             completion: existing?.completion ?? completion,
             wake: existing?.wake,
             fiber: existing?.fiber,
           })
-          return { ...s, running }
+          if (buffered.length === 0) return { ...s, running }
+          const pending = new Map(s.pending)
+          pending.delete(nodeId)
+          return { ...s, running, pending }
         })
       }),
 
@@ -268,15 +287,23 @@ export const makeAgentBus = (
         const line = `${result.status === "ok" ? "finished" : "failed"}: ${clip(result.summary, 600)}`
         if (entry.parentKey !== null && entry.parentKey.length > 0) {
           const at = Date.now()
+          const msg = { from: `agent ${shortKey(nodeId)} (${entry.label})`, content: line, at }
           yield* Ref.update(ref, (s) => {
             const p = s.running.get(entry.parentKey as string)
-            if (p === undefined) return s
-            const running = new Map(s.running)
-            running.set(entry.parentKey as string, {
-              ...p,
-              inbox: [...p.inbox, { from: `agent ${shortKey(nodeId)} (${entry.label})`, content: line, at }],
-            })
-            return { ...s, running }
+            if (p !== undefined) {
+              // Parent is live — straight into its inbox (folded at its next turn
+              // boundary, or read by a `wait_for_agents` gather).
+              const running = new Map(s.running)
+              running.set(entry.parentKey as string, { ...p, inbox: [...p.inbox, msg] })
+              return { ...s, running }
+            }
+            // Parent is idle (it delegated then ended its turn) — buffer the
+            // completion so its next mailbox registration (the auto-resume) picks
+            // it up, instead of dropping it on the floor.
+            const cur = s.pending.get(entry.parentKey as string) ?? []
+            const pending = new Map(s.pending)
+            pending.set(entry.parentKey as string, [...cur, msg].slice(-MAX_PENDING))
+            return { ...s, pending }
           })
           // Wake a parent parked in awaitChange.
           const parent = yield* Ref.get(ref).pipe(

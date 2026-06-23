@@ -547,6 +547,18 @@ export const makeInProcessWorkspace = (
               : yield* tree
                   .listMessages(sessionNodeId(id))
                   .pipe(Effect.mapError((e) => wsError(e.message)))
+          // The absolute position of log[0]: after a handoff narrows the active
+          // window, listActive starts past the checkpoint, so the client must
+          // offset its position-derived block keys to match the live event
+          // stream (which carries true store positions). Node logs aren't folded
+          // → offset 0.
+          const checkpoint =
+            kind === "root"
+              ? yield* conv
+                  .getLatestCheckpoint(sessionConversationId(id))
+                  .pipe(Effect.mapError((e) => wsError(e.message)))
+              : undefined
+          const logBaseOffset = checkpoint !== undefined ? checkpoint.messagePosition + 1 : 0
           const pendingApproval = usingServerApproval
             ? serverApproval.pendingFor(id as string) ?? null
             : null
@@ -560,6 +572,7 @@ export const makeInProcessWorkspace = (
           return {
             session: session ?? fallback,
             log,
+            logBaseOffset,
             busy,
             queue: run.queue,
             pendingApproval,

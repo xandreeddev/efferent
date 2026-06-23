@@ -17,6 +17,18 @@ export interface AgentTurnStartEvent {
   readonly messages: ReadonlyArray<AgentMessage>
 }
 
+/** The user's prompt opening a turn — fired by the loop after the message is
+ *  persisted, carrying its absolute store `position` so the UI keys the rail's
+ *  user block on a durable, handoff-stable identity. */
+export interface AgentUserMessageEvent {
+  readonly turnIndex: number
+  readonly text: string
+  /** The message's absolute store position (the rail's block key). */
+  readonly position?: number
+  /** Set when this is a sub-agent's seed/user message. */
+  readonly subAgentNodeId?: ContextNodeId
+}
+
 export interface AgentAssistantMessageEvent {
   readonly turnIndex: number
   readonly text: string
@@ -24,6 +36,10 @@ export interface AgentAssistantMessageEvent {
   readonly reasoning?: string
   readonly toolCalls: ReadonlyArray<ToolCall>
   readonly usage?: TokenUsage
+  /** The assistant message's absolute store position — the rail's block key, so
+   *  a live block and the later DB-projected block reconcile. Absent when the
+   *  caller didn't persist (the eval/direct path provides no `onTail`). */
+  readonly position?: number
   /** Set when this message belongs to a sub-agent run: its context-tree node
    *  id — lets a consumer attribute interleaved parallel runs correctly. */
   readonly subAgentNodeId?: ContextNodeId
@@ -110,6 +126,9 @@ export interface AgentHelperUsageEvent {
  */
 export interface AgentHooks<R = never> {
   readonly onTurnStart?: (event: AgentTurnStartEvent) => Effect.Effect<void, never, R>
+  readonly onUserMessage?: (
+    event: AgentUserMessageEvent,
+  ) => Effect.Effect<void, never, R>
   readonly onAssistantMessage?: (
     event: AgentAssistantMessageEvent,
   ) => Effect.Effect<void, never, R>

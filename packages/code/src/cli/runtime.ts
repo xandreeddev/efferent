@@ -238,6 +238,16 @@ export const runTuiModeSolid = (
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
+        newConversation: () => {
+          // In-process: the conversation id is local; the next submit reads it
+          // (`store.run.getConversationId()`) and `runAgent` materialises it. The
+          // rail was already reset by `:clear`.
+          store.run.newConversation(newConversationId())
+          store.pushBlock({
+            kind: "info",
+            text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
+          })
+        },
         clearQueue: () => {
           // In-process owns its queue directly — drop the pending messages.
           store.run.dequeueAll()
