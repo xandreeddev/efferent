@@ -122,7 +122,7 @@ describe("eventPump — a node's live log accumulates from the start (open any t
     expect(pills[1]!.state).toBe("ok")
   })
 
-  test("an ok end lands the returned summary on the agents-block row", () => {
+  test("an ok end lands the returned summary in the node's log, NEVER on the rail", () => {
     const store = newStore()
     const reduce = makeEventReducer(store)
     reduce({ type: "turn_start", turnIndex: 0 })
@@ -135,23 +135,23 @@ describe("eventPump — a node's live log accumulates from the start (open any t
       filesChanged: [],
       nodeId: "n1",
     })
-    const agents = store.blocks().find((b) => b.kind === "agents") as {
-      agents: ReadonlyArray<{ status: string; summary?: string }>
-    }
-    expect(agents.agents[0]!.status).toBe("ok")
-    expect(agents.agents[0]!.summary).toBe("Layers respected; two leaks found.")
+    // The fleet lives ONLY in the right-pane tree — no `agents` block on the rail.
+    expect(store.blocks().some((b) => b.kind === "agents")).toBe(false)
+    // The summary streams into the node's own log (its preview shows it).
+    const log = [...store.nodeLog("n1")]
+    const last = log[log.length - 1]!
+    expect(last.kind).toBe("assistant")
+    expect((last as { text: string }).text).toBe("Layers respected; two leaks found.")
   })
 
-  test("a failed run lands the error in its node log AND closes the grouped-block row", () => {
+  test("a failed run lands the error in its node log, NEVER on the rail", () => {
     const store = newStore()
     const reduce = makeEventReducer(store)
     reduce({ type: "turn_start", turnIndex: 0 })
-    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" }) // agents block row
+    reduce({ type: "subagent_start", name: "cli", task: "t", nodeId: "n1" })
     reduce({ type: "subagent_end", name: "cli", ok: false, summary: "boom", filesChanged: [], nodeId: "n1" })
-    // The failure is in the node's own log (its pane shows it) regardless of
-    // whether the pane is open, AND the grouped row closes as error.
+    // The failure is in the node's own log (its pane shows it), not chat noise.
     expect(logKinds(store, "n1")).toContain("error")
-    const agents = store.blocks().find((b) => b.kind === "agents") as { agents: ReadonlyArray<{ status: string }> }
-    expect(agents.agents[0]!.status).toBe("error")
+    expect(store.blocks().some((b) => b.kind === "agents")).toBe(false)
   })
 })

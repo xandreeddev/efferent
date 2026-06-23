@@ -91,7 +91,7 @@ const seedTwoToolTurn = (store: TuiStore): void => {
   })
 }
 
-test("a turn's tool run collapses to one summary line (verbs · count · diffstat)", async () => {
+test("a turn's tools all render expanded — every pill shown, no collapsed summary", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
     width: 90,
@@ -99,40 +99,16 @@ test("a turn's tool run collapses to one summary line (verbs · count · diffsta
   })
   try {
     seedTwoToolTurn(store)
-    const conv = convRegion(await waitForFrame((f) => f.includes("read · edit")))
-    // the aggregate summary line, default-collapsed
-    expect(conv).toContain("read · edit")
-    expect(conv).toContain("(2 tools, +5 -2)")
-    // collapsed ⇒ the individual pill labels are NOT painted in the rail
-    // (they still show in the activity tree, which `convRegion` strips out)
-    expect(conv).not.toContain("Read(a.ts)")
-    expect(conv).not.toContain("Edit(a.ts)")
-  } finally {
-    renderer.destroy()
-  }
-})
-
-test("expanding the group (group id ∈ collapsed) reveals the individual pills", async () => {
-  const store = newStore()
-  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
-    width: 90,
-    height: 26,
-  })
-  try {
-    seedTwoToolTurn(store)
-    await waitForFrame((f) => f.includes("read · edit"))
-    // Inverse polarity: a group's id in `collapsed` means EXPANDED. The rail
-    // pill id is now the provider tool-call id (so it matches projectHistory and
-    // survives a resync), so the first pill is `c1` and the group id is `grp:c1`.
-    store.setCollapsed(new Set(["grp:c1"]))
-    // Wait until the RAIL (not the activity tree) paints the pills.
+    // Everything expanded by default: both tools render as their own pills in the
+    // rail (no `▸ read · edit (2 tools)` aggregation).
     const conv = convRegion(
       await waitForFrame((f) => convRegion(f).includes("Read(a.ts)") && convRegion(f).includes("Edit(a.ts)")),
     )
     expect(conv).toContain("Read(a.ts)")
     expect(conv).toContain("Edit(a.ts)")
-    // the summary header still sits above the expanded pills
-    expect(conv).toContain("read · edit")
+    // No aggregated tool-group summary line.
+    expect(conv).not.toContain("(2 tools")
+    expect(conv).not.toContain("read · edit")
   } finally {
     renderer.destroy()
   }

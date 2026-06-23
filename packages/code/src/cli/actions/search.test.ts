@@ -86,7 +86,7 @@ test("jumping to a match inside a FOLDED turn unfolds it (and parks the cursor o
   expect(store.collapsed().has("turn:0")).toBe(true)
 })
 
-test("a match inside a tool group expands the group (inverse fold polarity)", () => {
+test("a match in a tool lands on that tool's own row (tools render expanded, no group)", () => {
   const store = newStore()
   const seen: string[] = []
   store.convScroller.current = fakeScroller(seen)
@@ -97,9 +97,9 @@ test("a match inside a tool group expands the group (inverse fold polarity)", ()
   ])
 
   runSearch(store, "needle")
-  expect(store.search()?.matchIds).toEqual(["grp:t1"])
-  expect(store.collapsed().has("grp:t1")).toBe(true) // membership ⇒ expanded
-  expect(seen.at(-1)).toBe("grp:t1")
+  // No tool group to expand — the hit is the tool's own (already-expanded) row.
+  expect(store.search()?.matchIds).toEqual(["t2"])
+  expect(seen.at(-1)).toBe("t2")
 })
 
 test("runSearch with no hit keeps an empty search so the status line can report it", () => {

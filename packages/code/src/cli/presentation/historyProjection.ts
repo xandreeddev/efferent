@@ -25,7 +25,6 @@ import {
 import {
   messageKey,
   subjectLine,
-  type AgentRunRow,
   type ScrollbackBlock,
   type ToolBlock,
 } from "./conversation.js"
@@ -57,9 +56,9 @@ export interface HistoryProjection {
   readonly foldIds: ReadonlySet<string>
 }
 
-/** One spawned-agent row from a `run_agent` tool-call's input. The model-given
- *  `name` is the label; folder basename is the legacy fallback. */
-const spawnRow = (callId: string, input: unknown): AgentRunRow => {
+/** The tree-container label for a `run_agent` spawn: the model-given `name`
+ *  (with its `seedMode` suffix), folder basename as the legacy fallback. */
+const spawnName = (input: unknown): string => {
   const a = (typeof input === "object" && input !== null ? input : {}) as Record<
     string,
     unknown
@@ -69,13 +68,7 @@ const spawnRow = (callId: string, input: unknown): AgentRunRow => {
   const given = typeof a.name === "string" && a.name.trim().length > 0 ? a.name.trim() : undefined
   const seedMode = typeof a.seedMode === "string" ? a.seedMode : undefined
   const base = given ?? tail
-  return {
-    nodeId: callId,
-    name: seedMode !== undefined ? `${base} · ${seedMode}` : base,
-    status: "ok",
-    toolUses: 0,
-    tokens: 0,
-  }
+  return seedMode !== undefined ? `${base} · ${seedMode}` : base
 }
 
 export const projectHistory = (
@@ -102,24 +95,6 @@ export const projectHistory = (
       }
     }
   }
-  // Rows are keyed by the tool-call id until the result reveals the real
-  // context-node id (the row key is presentation-only either way).
-  const patchAgentRow = (
-    callId: string,
-    patch: (row: AgentRunRow) => AgentRunRow,
-  ): void => {
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      const b = blocks[i]!
-      if (b.kind !== "agents") continue
-      const at = b.agents.findIndex((a) => a.nodeId === callId)
-      if (at === -1) continue
-      const agents = [...b.agents]
-      agents[at] = patch(agents[at]!)
-      blocks[i] = { ...b, agents }
-      return
-    }
-  }
-
   // ---- activity half ----
   let tree = emptyTree
   let filesChanged: ReadonlyArray<FileChange> = []
@@ -145,9 +120,6 @@ export const projectHistory = (
 
   let msgIdx = 0
   for (const msg of history) {
-    // One agents block per assistant message's spawn burst (mirrors the live
-    // pump, which resets the block on the parent's next turn).
-    let burstBlockIdx: number | undefined
     // This message's absolute store position + per-kind part ordinals — the
     // basis of the cache keys, computed identically to the live event pump.
     const pos = baseOffset + msgIdx
@@ -177,15 +149,9 @@ export const projectHistory = (
             }
           } else if (part.type === "tool-call") {
             if (part.toolName === "run_agent") {
-              const row = spawnRow(part.toolCallId, part.input)
-              if (burstBlockIdx === undefined) {
-                burstBlockIdx = blocks.length
-                blocks.push({ kind: "agents", id: `ag:${part.toolCallId}`, agents: [row] })
-              } else {
-                const b = blocks[burstBlockIdx]! as Extract<ScrollbackBlock, { kind: "agents" }>
-                blocks[burstBlockIdx] = { ...b, agents: [...b.agents, row] }
-              }
-              const spawned = onSubAgentStartKeyed(tree, `run_agent → ${row.name}`, undefined, 0)
+              // The fleet surfaces ONLY in the tree (+ the navigator), never the
+              // conversation rail — so a spawn opens a tree container, no rail block.
+              const spawned = onSubAgentStartKeyed(tree, `run_agent → ${spawnName(part.input)}`, undefined, 0)
               tree = spawned.tree
               enqueue(matchKey(part.toolCallId, part.toolName), {
                 treeId: spawned.id,
@@ -218,29 +184,15 @@ export const projectHistory = (
       for (const part of msg.content) {
         const queued = dequeue(matchKey(part.toolCallId, part.toolName))
         if (part.toolName === "run_agent") {
+          // Close the spawn's TREE container only — the fleet never touches the
+          // rail (a failed spawn shows as ✗ in the tree, not a rail error block).
           const r = (typeof part.output === "object" && part.output !== null
             ? part.output
             : {}) as Record<string, unknown>
-          const summary = typeof r.summary === "string" ? r.summary.trim() : ""
           const nodeId = typeof r.nodeId === "string" ? r.nodeId : undefined
           // `failureMode: "return"` failures arrive as `{error, message?}`.
           const failed =
             part.isError === true || (typeof r.error === "string" && r.error.length > 0)
-          patchAgentRow(part.toolCallId, (row) => ({
-            ...row,
-            ...(nodeId !== undefined ? { nodeId } : {}),
-            status: failed ? "error" : "ok",
-            ...(!failed && summary.length > 0 ? { summary } : {}),
-          }))
-          if (failed) {
-            const why =
-              typeof r.message === "string"
-                ? r.message
-                : typeof r.error === "string"
-                  ? r.error
-                  : summary
-            if (why.length > 0) blocks.push({ kind: "error", text: why })
-          }
           if (queued !== undefined) {
             const files = Array.isArray(r.filesChanged) ? r.filesChanged.length : 0
             const detail = failed
@@ -271,21 +223,6 @@ export const projectHistory = (
     const cp = checkpoints.find((c) => c.messagePosition === msgIdx)
     if (cp !== undefined) blocks.push({ kind: "checkpoint", text: cp.summary })
     msgIdx++
-  }
-
-  // Settle each fan-out block's identity to its burst's FIRST run's context-node
-  // id — the SAME key the live event pump stamps (`ag:${firstNodeId}`). At
-  // creation the id was the spawning tool-call id (the node id isn't known until
-  // the run_agent RESULT folds in, several messages later), so we re-key here,
-  // after the walk, when `agents[0].nodeId` is the real node. This lets an idle
-  // resync upsert the projected fan-out block onto the live one instead of the
-  // live block surviving as an unmatched suffix that "jumps to the end".
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i]!
-    if (b.kind === "agents" && b.agents.length > 0) {
-      const firstNode = b.agents[0]!.nodeId
-      if (firstNode.length > 0) blocks[i] = { ...b, id: `ag:${firstNode}` }
-    }
   }
 
   // Nothing stays "running" in a rebuilt tree — an interrupted tail's dangling
