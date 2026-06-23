@@ -77,3 +77,48 @@ describe("mergeFileChange — find-or-append accumulation", () => {
     ])
   })
 })
+
+describe("richer tool summaries (the agy polish)", () => {
+  test("search_web: a real summary, not 'done' — Search(query) + N sources + the answer", () => {
+    expect(describeToolCall("search_web", { query: "effect.ts layers" })).toBe(
+      "Search(effect.ts layers)",
+    )
+    const result = {
+      answer: "Layers compose services; provide once at the edge.",
+      sources: [
+        { title: "Effect docs", url: "https://effect.website/layers" },
+        { title: "blog", url: "https://x.dev/y" },
+      ],
+    }
+    expect(describeToolResult("search_web", true, result)).toBe("2 sources")
+    const art = toolArtifacts("search_web", true, result)
+    expect(art.output).toContain("Layers compose services")
+    expect(art.output).toContain("https://effect.website/layers")
+  })
+
+  test("write_file: reads like edit_file — a diffstat summary + the diff below the pill", () => {
+    const art = toolArtifacts("write_file", true, { path: "out.ts", bytes: 10, lines: 4, diff: DIFF })
+    expect(art.diff).toBe(DIFF)
+    expect(art.fileChange).toEqual({ path: "out.ts", added: 2, removed: 1 })
+    expect(describeToolResult("write_file", true, { path: "out.ts", diff: DIFF })).toBe("+2/-1")
+  })
+
+  test("read_file: the call header carries the path; the summary the line count", () => {
+    expect(describeToolCall("read_file", { path: "src/main.ts" })).toBe("Read(src/main.ts)")
+    expect(describeToolResult("read_file", true, { path: "src/main.ts", content: "x", totalLines: 42 })).toBe(
+      "42 lines",
+    )
+  })
+
+  test("ls/glob surface a previewable output (expanded beneath the pill)", () => {
+    const ls = toolArtifacts("ls", true, {
+      entries: [
+        { path: "a.ts", type: "file" },
+        { path: "sub", type: "directory" },
+      ],
+    })
+    expect(ls.output).toBe("a.ts\nsub/")
+    const glob = toolArtifacts("glob", true, { matches: ["x.ts", "y.ts"] })
+    expect(glob.output).toBe("x.ts\ny.ts")
+  })
+})
