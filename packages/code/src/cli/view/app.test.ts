@@ -29,6 +29,7 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   run: () => Promise.resolve(undefined as never),
   submit: () => {},
   interrupt: () => {},
+  clearQueue: () => {},
   exit: () => {},
   copySelection: () => false,
   resolveApproval: () => {},
@@ -94,8 +95,8 @@ test("the fleet tree is always visible on the right, showing the workspace sessi
   // Chat-first: the fleet tree replaces the four cycled side views and renders
   // on the right at all times — no focus needed to see it.
   store.setNav((n) => ({ ...n, view: "tree" }))
-  store.setProjection((p) => ({
-    ...p,
+  store.setTreeData((d) => ({
+    ...d,
     sessions: [{ id: cid as unknown as string, label: "the parser session", active: true }],
   }))
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {

@@ -100,6 +100,13 @@ export const SessionState = Schema.Struct({
   session: SessionSummary,
   log: Schema.Array(AgentMessage),
   busy: Schema.Boolean,
+  /**
+   * Messages typed while this session was busy, awaiting their turn — the
+   * pending `▸` list the client shows above the input (agy-style queue). The
+   * daemon drains it one-per-turn as the current turn finishes. `optional` so a
+   * stale daemon that predates the field still decodes (client reads `?? []`).
+   */
+  queue: Schema.optional(Schema.Array(Schema.String)),
   pendingApproval: Schema.NullOr(ApprovalRequest),
   cursor: Schema.Number,
 })
@@ -219,6 +226,9 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
     /** Interrupt a session: a fleet root cancels its whole subtree; an agent
      *  cancels just that node. */
     readonly interrupt: (id: SessionId) => Effect.Effect<void, WorkspaceError>
+    /** Drop a session's pending (queued-while-busy) messages without touching the
+     *  running turn — the client pulls them back into its composer to edit. */
+    readonly clearQueue: (id: SessionId) => Effect.Effect<void, WorkspaceError>
     readonly spawn: (
       req: SpawnRequest,
     ) => Effect.Effect<SessionId, WorkspaceError>

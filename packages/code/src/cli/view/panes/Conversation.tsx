@@ -483,20 +483,10 @@ export const Conversation = (props: { ctx: TuiContext }) => {
             )
           }}
         </For>
-        {/* The model-latency gap is the one moment nothing on the rail moves —
-            say the agent is thinking instead of going silent. Tool pills own
-            their own spinners, so this only shows between calls. Hidden while
-            a node preview overlays the rail (its run isn't this view's). */}
-        <Show
-          when={store.busy() && store.agentState().phase === "thinking"}
-        >
-          <box marginTop={1} flexDirection="row">
-            <text fg={tokens.state.running} flexShrink={0}>
-              {`${glyph.spinner[store.spinner() % glyph.spinner.length]} `}
-            </text>
-            <text fg={tokens.text.dim}>thinking…</text>
-          </box>
-        </Show>
+        {/* The "is it working?" cue lives in the bottom-chrome running loader
+            now (agy-style, directly above the input — see `RunningLoader`), not
+            buried at the bottom of the scrollback where it could scroll out of
+            view. Tool pills still own their own in-rail spinners. */}
         <text flexShrink={0}> </text>
       </scrollbox>
     </Pane>

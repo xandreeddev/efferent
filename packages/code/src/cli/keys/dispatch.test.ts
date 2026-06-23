@@ -59,6 +59,7 @@ const harness = (): Harness => {
       run: () => Promise.resolve(undefined as never),
       submit: () => {},
       interrupt: () => {},
+      clearQueue: () => {},
       exit: () => {
         h.exited = true
       },

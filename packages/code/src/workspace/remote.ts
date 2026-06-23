@@ -37,6 +37,7 @@ export const makeRemoteWorkspace = (
       messages: (limit) => withClient(t.messages(limit)),
       send: (id, prompt) => withClient(t.send(id, prompt)),
       interrupt: (id) => withClient(t.interrupt(id)),
+      clearQueue: (id) => withClient(t.clearQueue(id)),
       stop: (id) => withClient(t.stop(id)),
       spawn: (req) => withClient(t.spawn(req)),
       createFleet: (req) => withClient(t.createFleet(req)),

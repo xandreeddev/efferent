@@ -2,7 +2,7 @@ import { basename } from "node:path"
 import { createMemo, For, Show } from "solid-js"
 import type { AgentContextNode } from "@xandreed/sdk-core"
 import { findByNodeId, type TreeNode } from "../../../presentation/executionTree.js"
-import { treeCurrentRow } from "../../../presentation/sidePane.js"
+import { emptyProjection, treeCurrentRow } from "../../../presentation/sidePane.js"
 import { formatTokens } from "../../../presentation/statusBar.js"
 import { glyph, tokens } from "../../../state/theme.js"
 import type { TuiContext } from "../../../state/store.js"
@@ -30,8 +30,15 @@ const NodeView = (props: { ctx: TuiContext; node: AgentContextNode }) => {
     return u === undefined ? undefined : `${formatTokens(u.inputTokens + u.outputTokens)} tok`
   }
   // The node's LIVE container in the Activity execution tree, while running.
-  const live = () => findByNodeId(store.sidePane().tree.roots, n().id)
-  const liveTools = () => (live()?.children ?? []).slice(-8)
+  // Memoised: the execution-tree reducers preserve node identity for unchanged
+  // subtrees (`executionTree.ts` `mapNode` returns the same ref when no child
+  // changed), so `findByNodeId` yields a STABLE reference between the events
+  // that don't touch THIS node — the memo's `===` dedup then stops propagation,
+  // and the `<For>` below doesn't re-diff on every unrelated agent event (it
+  // runs per event because `sidePane()` changes per event). Only a real change
+  // to this node's tool feed re-renders it.
+  const live = createMemo(() => findByNodeId(store.executionTree().roots, n().id))
+  const liveTools = createMemo<ReadonlyArray<TreeNode>>(() => (live()?.children ?? []).slice(-8))
   return (
     <box flexDirection="column" overflow="hidden">
       <box flexDirection="row" flexShrink={0}>
@@ -111,9 +118,12 @@ const runningToolLabel = (roots: ReadonlyArray<TreeNode>): string | undefined =>
  */
 const RootView = (props: { ctx: TuiContext; label: string }) => {
   const { store } = props.ctx
-  const sp = () => store.sidePane()
-  const stats = () => sp().stats
-  const current = () => runningToolLabel(sp().tree.roots)
+  // Narrow reads: stats (gauge/turns) + the live execution tree (current tool).
+  // RootView is the live root dashboard — it updates per event via `current`;
+  // reading `projection()` for the files count rides that same scope.
+  const stats = () => store.stats()
+  const current = () => runningToolLabel(store.executionTree().roots)
+  const filesCount = () => store.projection().filesChanged.length
   return (
     <box flexDirection="column" overflow="hidden">
       <box flexDirection="row" flexShrink={0}>
@@ -125,7 +135,7 @@ const RootView = (props: { ctx: TuiContext; label: string }) => {
         </text>
       </box>
       <text fg={tokens.text.dim} wrapMode="none">
-        {`  ctx ${formatTokens(stats().inputTokens)}/${formatTokens(stats().contextWindow)} · ${stats().turns} turn${stats().turns === 1 ? "" : "s"} · ${sp().filesChanged.length} file${sp().filesChanged.length === 1 ? "" : "s"}`}
+        {`  ctx ${formatTokens(stats().inputTokens)}/${formatTokens(stats().contextWindow)} · ${stats().turns} turn${stats().turns === 1 ? "" : "s"} · ${filesCount()} file${filesCount() === 1 ? "" : "s"}`}
       </text>
       <Show
         when={store.busy()}
@@ -145,12 +155,17 @@ const RootView = (props: { ctx: TuiContext; label: string }) => {
 
 export const NodeDetail = (props: { ctx: TuiContext }) => {
   const { store } = props.ctx
-  const row = createMemo(() => treeCurrentRow(store.nav(), store.projection()))
+  // The cursor row + node lookup depend only on the fleet data + nav — read the
+  // NARROW signals (not `projection()`/`sidePane()`, which change every event)
+  // so following the cursor doesn't re-derive per tool call. `emptyProjection`
+  // supplies the inert fields the pure `treeCurrentRow` ignores.
+  const treeState = createMemo(() => ({ ...emptyProjection, ...store.treeData() }))
+  const row = createMemo(() => treeCurrentRow(store.nav(), treeState()))
   const node = createMemo(() => {
     const r = row()
     if (r === undefined || r.display.kind !== "node") return undefined
     const id = r.display.nodeId
-    return store.sidePane().treeNodes?.find((n) => n.id === id)
+    return store.treeData().treeNodes?.find((n) => n.id === id)
   })
   return (
     <Show

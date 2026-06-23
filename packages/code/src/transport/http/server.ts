@@ -167,6 +167,14 @@ export const workspaceRouter = (
       }),
     ),
     HttpRouter.post(
+      "/sessions/:id/clear-queue",
+      Effect.gen(function* () {
+        const ws = yield* Workspace
+        yield* ws.clearQueue(yield* sessionParam)
+        return noContent
+      }),
+    ),
+    HttpRouter.post(
       "/sessions/:id/stop",
       Effect.gen(function* () {
         const ws = yield* Workspace

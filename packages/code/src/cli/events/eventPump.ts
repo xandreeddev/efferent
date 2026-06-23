@@ -19,6 +19,7 @@ import {
   onToolStartUnder as treeToolStartUnder,
   onTurnDetail as treeTurnDetail,
   onTurnStart as treeTurnStart,
+  type ExecutionTree,
 } from "../presentation/executionTree.js"
 import {
   accumulateRoleSpend,
@@ -131,7 +132,7 @@ export const makeEventReducer = (
         // spawn starts a fresh agents block.
         agentsBlockId = undefined
         agentRows.clear()
-        store.setProjection((p) => ({ ...p, tree: treeTurnStart(p.tree, event.turnIndex, now) }))
+        store.setTree((t) => treeTurnStart(t, event.turnIndex, now))
         return
 
       case "tool_call_start": {
@@ -153,13 +154,13 @@ export const makeEventReducer = (
         // (parallel fan-out interleaves events; "deepest open" lies). A
         // top-level call still lands under the open turn.
         const owner = event.nodeId !== undefined ? subTreeByNode.get(event.nodeId) : undefined
-        store.setProjection((p) => {
+        store.setTree((t) => {
           const { tree, id } =
             owner !== undefined
-              ? treeToolStartUnder(p.tree, owner, label, now)
-              : treeToolStart(p.tree, label, now)
+              ? treeToolStartUnder(t, owner, label, now)
+              : treeToolStart(t, label, now)
           enqueue(toolTreeIds, matchKey(event), id)
-          return { ...p, tree }
+          return tree
         })
         // Top-level tools get a compact chat pill on the lead rail; sub-agent
         // inner tools always stream into that node's live log (so opening its
@@ -192,10 +193,7 @@ export const makeEventReducer = (
         const detail = describeToolResult(event.toolName, event.ok, event.result)
         const nodeId = dequeue(toolTreeIds, matchKey(event))
         if (nodeId !== undefined) {
-          store.setProjection((p) => ({
-            ...p,
-            tree: treeToolEnd(p.tree, nodeId, event.ok, detail, now),
-          }))
+          store.setTree((t) => treeToolEnd(t, nodeId, event.ok, detail, now))
         }
         const artifacts = toolArtifacts(event.toolName, event.ok, event.result)
         const sid = dequeue(toolScrollIds, matchKey(event))
@@ -257,9 +255,9 @@ export const makeEventReducer = (
         // pill — the run isn't the parent conversation's doing.
         const anchor =
           event.parentNodeId !== undefined ? subTreeByNode.get(event.parentNodeId) : undefined
-        const startTree = (p: { tree: Parameters<typeof treeSubAgentStartKeyed>[0] }) => {
+        const startTree = (t: ExecutionTree): ExecutionTree => {
           const { tree, id } = treeSubAgentStartKeyed(
-            p.tree,
+            t,
             `run_agent → ${event.name}`,
             anchor,
             now,
@@ -269,7 +267,7 @@ export const makeEventReducer = (
           return tree
         }
         if (watchedNode(event.nodeId)) {
-          store.setProjection((p) => ({ ...p, tree: startTree(p) }))
+          store.setTree(startTree)
           return
         }
         if (event.nodeId !== undefined) {
@@ -287,7 +285,7 @@ export const makeEventReducer = (
             tokens: 0,
           })
           syncAgents()
-          store.setProjection((p) => ({ ...p, tree: startTree(p) }))
+          store.setTree(startTree)
           return
         }
         const label = `Task(${event.name})`
@@ -295,7 +293,7 @@ export const makeEventReducer = (
         const sid = `sa${toolSeq}`
         subAgentScrollId.set(event.name, sid)
         store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
-        store.setProjection((p) => ({ ...p, tree: startTree(p) }))
+        store.setTree(startTree)
         return
       }
 
@@ -344,10 +342,7 @@ export const makeEventReducer = (
         if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
           // Human-driven resume (no rail presence) — close its tree node only.
           if (ownTreeId !== undefined) {
-            store.setProjection((p) => ({
-              ...p,
-              tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, filesDetail, now),
-            }))
+            store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, filesDetail, now))
           }
           return
         }
@@ -367,10 +362,7 @@ export const makeEventReducer = (
               : {}),
           }))
           if (ownTreeId !== undefined) {
-            store.setProjection((p) => ({
-              ...p,
-              tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, filesDetail, now),
-            }))
+            store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, filesDetail, now))
           }
           return
         }
@@ -400,10 +392,7 @@ export const makeEventReducer = (
           event.usage !== undefined ? `${formatTokens(event.usage.inputTokens)} ctx` : undefined,
         )
         if (ownTreeId !== undefined) {
-          store.setProjection((p) => ({
-            ...p,
-            tree: treeSubAgentEndKeyed(p.tree, ownTreeId, event.ok, nodeDetail, now),
-          }))
+          store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, nodeDetail, now))
         }
         return
       }
@@ -466,16 +455,13 @@ export const makeEventReducer = (
           // Activity both read these). The per-turn `· N tok` is a separate
           // annotation on the execution tree, not a copy of the stats.
           store.setStats((s) => accumulateUsage(s, u))
-          store.setProjection((p) => ({
-            ...p,
-            tree: treeTurnDetail(p.tree, `${formatTokens(u.outputTokens)} tok`),
-          }))
+          store.setTree((t) => treeTurnDetail(t, `${formatTokens(u.outputTokens)} tok`))
         }
         return
       }
 
       case "agent_end":
-        store.setProjection((p) => ({ ...p, tree: treeAgentEnd(p.tree, now) }))
+        store.setTree((t) => treeAgentEnd(t, now))
         if (event.finalText.trim().length === 0) {
           store.pushBlock({
             kind: "info",

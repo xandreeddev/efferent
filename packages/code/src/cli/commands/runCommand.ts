@@ -73,13 +73,9 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
     case ":clear": {
       store.run.newConversation(newConversationId())
       store.clear()
-      store.setProjection((p) => ({
-        ...p,
-        tree: emptyTree,
-        filesChanged: [],
-        plan: [],
-        stats: { ...emptyStats, startedAt: Date.now(), contextWindow: p.stats.contextWindow },
-      }))
+      store.setTree(() => emptyTree)
+      store.setStats((s) => ({ ...emptyStats, startedAt: Date.now(), contextWindow: s.contextWindow }))
+      store.setProjection((p) => ({ ...p, filesChanged: [], plan: [] }))
       store.pushBlock({
         kind: "info",
         text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
