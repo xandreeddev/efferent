@@ -56,6 +56,14 @@ export interface TuiContext {
   readonly submit: (text: string) => void
   readonly interrupt: () => void
   /**
+   * Start a fresh conversation (`:clear`) — the rail is already reset by the
+   * caller; this owns the conversation identity. In-process mints a new local
+   * `ConversationId`; the remote/master bin creates a NEW daemon fleet and
+   * re-points the client (subscribe/send/state) to it, so the next message and
+   * any resync go to the new conversation rather than resurrecting the old one.
+   */
+  readonly newConversation: () => void
+  /**
    * Drop every pending (queued) message — the queue the `▸` list shows. The
    * in-process bin clears its own run-handle queue; the remote bin asks the
    * daemon to forget its authoritative queue (and clears the local mirror). Used
