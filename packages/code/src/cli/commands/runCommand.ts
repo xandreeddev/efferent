@@ -1,11 +1,10 @@
 import { Effect, Schema } from "effect"
 import { ConversationId } from "@xandreed/sdk-core"
-import { emptyTree } from "../presentation/executionTree.js"
-import { emptyStats } from "../presentation/sidePane.js"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
 import type { TuiContext } from "../state/store.js"
 import {
   openResumeBrowser,
+  resetConversationRail,
   resumeConversation,
 } from "../actions/session.js"
 import { focusFleetTree, refreshNav } from "../actions/contextTree.js"
@@ -32,8 +31,6 @@ import {
 } from "../../usecases/schedule.js"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
-const newConversationId = (): ConversationId =>
-  Effect.runSync(decodeCid(crypto.randomUUID()).pipe(Effect.orDie))
 
 /** Resolve a typed command name to a command by exact match or unique prefix. */
 const resolve = (rawName: string) => {
@@ -71,15 +68,14 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       ctx.exit()
       return
     case ":clear": {
-      store.run.newConversation(newConversationId())
-      store.clear()
-      store.setTree(() => emptyTree)
-      store.setStats((s) => ({ ...emptyStats, startedAt: Date.now(), contextWindow: s.contextWindow }))
-      store.setProjection((p) => ({ ...p, filesChanged: [], plan: [] }))
-      store.pushBlock({
-        kind: "info",
-        text: `new conversation: ${store.run.getConversationId().slice(0, 8)}`,
-      })
+      // Reset the rail (driver-agnostic), then let the driver start the new
+      // conversation + push the "new conversation: …" line: in-process mints a
+      // fresh local id; the remote/master bin creates a NEW daemon fleet and
+      // re-points the client to it (the local rail alone can't — the daemon owns
+      // the conversation, so a local-only clear would just hide history that the
+      // next message and the next resync bring right back).
+      resetConversationRail(store)
+      ctx.newConversation()
       return
     }
     case ":cwd":
