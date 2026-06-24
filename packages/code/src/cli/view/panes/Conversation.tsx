@@ -1,7 +1,6 @@
 import { pathToFiletype, type ScrollBoxRenderable } from "@opentui/core"
 import { createMemo, For, onMount, Show } from "solid-js"
 import {
-  agentSummaryPreview,
   buildConversation,
   buildConversationRows,
   conversationItemId,
@@ -17,7 +16,6 @@ import {
   type ToolBlock,
 } from "../../presentation/conversation.js"
 import { clampCursor } from "../../presentation/paneNav.js"
-import { formatTokens } from "../../presentation/statusBar.js"
 import { glyph, tokens } from "../../state/theme.js"
 import { HlText, Pane, RailLine, type Hl } from "../ui/index.js"
 import { syntaxStyle, treeSitterClient } from "../syntax.js"
@@ -102,6 +100,26 @@ const Prose = (props: { text: string; hl?: Hl | undefined }) => {
   )
 }
 
+/** Tool output (read content, bash stdout, grep, search answer, ls/glob) shown
+ *  expanded beneath the pill — capped to keep the always-expanded rail usable;
+ *  the full output is one re-read / narrower query away (the model can recover it). */
+const OUTPUT_PREVIEW_LINES = 20
+const OutputPreview = (props: { text: string; hl?: Hl | undefined }) => {
+  const lines = () => props.text.replace(/\s+$/, "").split("\n")
+  const shown = () => lines().slice(0, OUTPUT_PREVIEW_LINES)
+  const more = () => Math.max(0, lines().length - OUTPUT_PREVIEW_LINES)
+  return (
+    <box flexDirection="column" paddingLeft={2}>
+      <For each={shown()}>
+        {(l) => <HlText text={l.length > 0 ? l : " "} fg={tokens.text.dim} hl={props.hl} />}
+      </For>
+      <Show when={more() > 0}>
+        <text fg={tokens.text.muted}>{`… ${more()} more line${more() === 1 ? "" : "s"}`}</text>
+      </Show>
+    </box>
+  )
+}
+
 const ToolPill = (props: { tool: ToolBlock; hl?: Hl | undefined }) => (
   <box flexDirection="column">
     <RailLine
@@ -144,79 +162,14 @@ const ToolPill = (props: { tool: ToolBlock; hl?: Hl | undefined }) => (
         </Show>
       )}
     </Show>
+    {/* Output (read content / bash stdout / grep / search answer / ls / glob) —
+        shown expanded beneath the pill, capped. A diff-bearing tool (edit/write)
+        carries no `output`, so the two Shows never both fire. */}
+    <Show when={props.tool.output}>
+      {(output) => <OutputPreview text={output()} hl={props.hl} />}
+    </Show>
   </box>
 )
-
-/**
- * One fan-out burst's live container: `● Running N agents…` while any row
- * runs, `● Ran N agents` when done — each agent a railed row with its tool
- * count + billed tokens, a running row showing its current tool under a `⎿`.
- */
-const AgentsBlock = (props: { block: Extract<ScrollbackBlock, { kind: "agents" }> }) => {
-  const agents = () => props.block.agents
-  const running = () => agents().filter((a) => a.status === "running").length
-  const failed = () => agents().some((a) => a.status === "error")
-  const head = () =>
-    running() > 0
-      ? `Running ${agents().length} agent${agents().length === 1 ? "" : "s"}…`
-      : `Ran ${agents().length} agent${agents().length === 1 ? "" : "s"}`
-  const headColor = () =>
-    running() > 0 ? tokens.state.running : failed() ? tokens.state.error : tokens.state.ok
-  return (
-    <box flexDirection="column">
-      <box flexDirection="row">
-        <text fg={headColor()}>{`${glyph.railDot} `}</text>
-        <text fg={tokens.text.muted}>{head()}</text>
-      </box>
-      <For each={agents()}>
-        {(a, i) => (
-          <box flexDirection="column">
-            <box flexDirection="row">
-              <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
-                {`  ${i() === agents().length - 1 ? glyph.tree.corner : glyph.tree.tee} `}
-              </text>
-              <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
-                {a.name}
-              </text>
-              <text fg={tokens.text.dim} wrapMode="none">
-                {`${a.toolUses > 0 ? `  · ${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}` : ""}${a.tokens > 0 ? ` · ${formatTokens(a.tokens)} tok` : ""}`}
-              </text>
-            </box>
-            <box flexDirection="row">
-              <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
-                {`  ${i() === agents().length - 1 ? "  " : glyph.tree.vert} ${glyph.connector}  `}
-              </text>
-              {/* Done → the run's returned summary (what the parent received),
-                  truncated; the full text lives on the node (agents pane → ↵).
-                  Bare "Done" hid the deliverable entirely. */}
-              <text
-                fg={
-                  a.status === "running"
-                    ? tokens.text.dim
-                    : a.status === "error"
-                      ? tokens.state.error
-                      : a.summary !== undefined
-                        ? tokens.text.muted
-                        : tokens.state.ok
-                }
-                wrapMode="word"
-                flexShrink={1}
-              >
-                {a.status === "running"
-                  ? (a.currentTool ?? "thinking…")
-                  : a.status === "error"
-                    ? "Failed"
-                    : a.summary !== undefined
-                      ? agentSummaryPreview(a.summary)
-                      : "Done"}
-              </text>
-            </box>
-          </box>
-        )}
-      </For>
-    </box>
-  )
-}
 
 /** Render one non-tool block of the rail. Plain-text kinds route through
  *  {@link HlText} so an active search highlights matched words; markdown prose
@@ -230,7 +183,10 @@ const Block = (props: { block: ScrollbackBlock; hl?: Hl | undefined }) => {
     case "tool":
       return <ToolPill tool={b} hl={props.hl} />
     case "agents":
-      return <AgentsBlock block={b} />
+      // The fleet lives ONLY in the right-pane fleet tree now — never on the
+      // conversation rail (it was redundant + the reorder-churn source). The
+      // kind stays in the union for the cache/projection; the rail renders nothing.
+      return null
     case "info":
       // An ephemeral system note (resume/built/quit hints — never persisted).
       // A first-class rail line: ● marker in its own colour. The blank line

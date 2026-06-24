@@ -126,32 +126,14 @@ interface Indexed {
 }
 
 /**
- * Group a run of blocks into body items: consecutive tool calls of length ≥2
- * collapse into one `toolGroup` (keyed on the first member's id); everything
- * else — single tools, assistant/reasoning prose, info/error — stays inline.
+ * Lay a run of blocks out as body items — one inline `block` per block, in order.
+ * Tool calls are NOT aggregated into a collapsible `toolGroup`: the rail shows
+ * EVERYTHING EXPANDED (every pill + its result), the agy default. (The `toolGroup`
+ * type + its summary/fold machinery survive for the manual fold escape hatch and
+ * the search helpers, but `buildBody` no longer produces one.)
  */
-const buildBody = (run: ReadonlyArray<Indexed>): BodyItem[] => {
-  const out: BodyItem[] = []
-  let k = 0
-  while (k < run.length) {
-    const { block, index } = run[k]!
-    if (block.kind === "tool") {
-      let m = k + 1
-      while (m < run.length && run[m]!.block.kind === "tool") m++
-      const tools = run.slice(k, m).map((r) => r.block as ToolBlock)
-      if (tools.length >= 2) {
-        out.push({ kind: "toolGroup", id: `grp:${tools[0]!.id}`, tools })
-      } else {
-        out.push({ kind: "block", id: block.id, block })
-      }
-      k = m
-      continue
-    }
-    out.push({ kind: "block", id: idOf(block, index), block })
-    k++
-  }
-  return out
-}
+const buildBody = (run: ReadonlyArray<Indexed>): BodyItem[] =>
+  run.map(({ block, index }) => ({ kind: "block", id: idOf(block, index), block }))
 
 /** True for blocks that close a turn / loose run when scanning forward. */
 const isBoundary = (block: ScrollbackBlock): boolean =>
