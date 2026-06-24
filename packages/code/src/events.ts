@@ -44,6 +44,7 @@ export const makeAgentEventHooks = <R = never>(
       ...(event.usage !== undefined ? { usage: event.usage } : {}),
       ...(event.position !== undefined ? { position: event.position } : {}),
       ...(event.subAgentNodeId !== undefined ? { nodeId: event.subAgentNodeId } : {}),
+      ...(event.subAgentRole !== undefined ? { subAgentRole: event.subAgentRole } : {}),
     }),
   onBeforeToolCall: extraBeforeTool
     ? (event) =>
@@ -84,6 +85,7 @@ export const makeAgentEventHooks = <R = never>(
       task: event.task,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
       ...(event.parentNodeId !== undefined ? { parentNodeId: event.parentNodeId } : {}),
+      ...(event.role !== undefined ? { role: event.role } : {}),
     }),
   onSubAgentEnd: (event) =>
     publish({

@@ -4,7 +4,7 @@ import {
   contextPercent,
   formatTokens,
   gaugeSeverity,
-  rolesChip,
+  rolesReadout,
   statusHint,
 } from "./statusBar.js"
 
@@ -55,10 +55,22 @@ describe("context + cache clarity helpers", () => {
     expect(cachePercent(500, 0)).toBeUndefined()
   })
 
-  test("rolesChip shows the configured fast role's model id", () => {
-    expect(rolesChip({})).toBeUndefined()
-    expect(rolesChip({ fastModel: "google:gemini-3.5-flash" })).toBe("fast gemini-3.5-flash")
-    expect(rolesChip({ fastModel: "google:gemini-3.1-flash-lite" })).toBe("fast gemini-3.1-flash-lite")
+  test("rolesReadout lists all three roles; code/fast follow general until set", () => {
+    const base = rolesReadout({ model: "opencode:kimi-k2.6" })
+    expect(base.map((r) => r.role)).toEqual(["general", "code", "fast"])
+    // unconfigured code/fast share general's id and read as not-configured
+    expect(base).toEqual([
+      { role: "general", modelId: "kimi-k2.6", configured: true },
+      { role: "code", modelId: "kimi-k2.6", configured: false },
+      { role: "fast", modelId: "kimi-k2.6", configured: false },
+    ])
+    const set = rolesReadout({
+      model: "opencode:kimi-k2.6",
+      codeModel: "anthropic:claude-sonnet-4-5",
+      fastModel: "google:gemini-3.5-flash",
+    })
+    expect(set[1]).toEqual({ role: "code", modelId: "claude-sonnet-4-5", configured: true })
+    expect(set[2]).toEqual({ role: "fast", modelId: "gemini-3.5-flash", configured: true })
   })
 
   test("formatTokens stays stable (the gauges depend on it)", () => {

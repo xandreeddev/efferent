@@ -19,6 +19,8 @@ export { Directive, parseDirective, renderDirectiveSection } from "@xandreed/sdk
 export const VERIFIER_AGENT: AgentDefinition = {
   name: "verifier",
   description: "Strict read-only judge: decides whether a goal/directive is actually met, in a fresh context",
+  // Judging/verifying is reasoning work — runs on the general model.
+  role: "general",
   tools: ["read_file", "grep", "glob", "ls", "Bash"],
   body: `You are a strict goal VERIFIER running in a fresh context — you did not do the work, and your only job is to judge whether the stated objective is genuinely met, from evidence.
 

@@ -80,7 +80,13 @@ export const Settings = Schema.Struct({
   fastModel: Schema.optional(
     Schema.String.annotations({
       description:
-        "The FAST role: model for helper calls (tool-output summaries, auto-approval judgments, session titles), as '<provider>:<modelId>'. Sub-agents are real work and run on main. Unset → the main model.",
+        "The FAST role: model for one-shot helper calls (tool-output summaries, auto-approval judgments, session titles), as '<provider>:<modelId>'. Unset → the main model.",
+    }),
+  ),
+  codeModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "The CODE role: model the spawned coding sub-agents (the fleet) run on, as '<provider>:<modelId>'. Sub-agents never choose their own model — this is the single knob for the whole fleet. Unset → the main model.",
     }),
   ),
   toolResultMaxTokens: Schema.optional(

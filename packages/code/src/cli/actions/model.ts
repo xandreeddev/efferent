@@ -8,11 +8,15 @@ import {
   type ModelInfo,
 } from "@xandreed/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
-import { rolesChip } from "../presentation/statusBar.js"
+import { rolesReadout } from "../presentation/statusBar.js"
 import type { TuiStore } from "../state/store.js"
 
-/** The pickable non-main role (`main` is the plain `:model` path). */
-export type PickerRole = "fast"
+/** The pickable non-main roles (`main` is the plain `:model` path). */
+export type PickerRole = "fast" | "code"
+
+/** The `Settings` key backing a pickable role. */
+const roleSettingKey = (role: PickerRole): "fastModel" | "codeModel" =>
+  role === "code" ? "codeModel" : "fastModel"
 
 /**
  * Switch the active model and reflect it in the status bar + side-pane gauge.
@@ -67,7 +71,7 @@ export const applyRoleModelSelection = (
 ) =>
   Effect.gen(function* () {
     const settingsStore = yield* SettingsStore
-    const key = "fastModel"
+    const key = roleSettingKey(role)
     yield* settingsStore.update((curr) => {
       const next = { ...curr } as Record<string, unknown>
       if (chosen === null) delete next[key]
@@ -76,10 +80,10 @@ export const applyRoleModelSelection = (
     })
     const updated = yield* settingsStore.get()
     yield* Effect.sync(() => {
-      store.setStatus({ roles: rolesChip(updated) })
+      store.setStatus({ roles: rolesReadout(updated) })
       store.toast(
         chosen === null
-          ? `${role} now follows main`
+          ? `${role} now follows general`
           : `${role} → ${chosen.provider}:${chosen.modelId}`,
       )
     })
@@ -118,17 +122,20 @@ export const openModelPicker = (store: TuiStore, role?: PickerRole) =>
     }
     if (role !== undefined) {
       const settings = yield* (yield* SettingsStore).get()
-      const configured = settings.fastModel
+      const configured = role === "code" ? settings.codeModel : settings.fastModel
       const resolved = modelForRole(settings, role)
       const options: ReadonlyArray<SelectOption<ModelInfo | null>> = [
-        { value: null, label: "default (follow main)", active: configured === undefined },
+        { value: null, label: "default (follow general)", active: configured === undefined },
         ...models.map((m) => ({
           value: m as ModelInfo | null,
           label: `${m.provider}:${m.modelId}`,
           active: configured !== undefined && `${m.provider}:${m.modelId}` === resolved,
         })),
       ]
-      const title = `Select the FAST model (summaries, approvals, titles)`
+      const title =
+        role === "code"
+          ? "Select the CODE model (the coding sub-agent fleet)"
+          : "Select the FAST model (summaries, approvals, titles)"
       yield* Effect.sync(() =>
         store.setOverlay({
           kind: "select",

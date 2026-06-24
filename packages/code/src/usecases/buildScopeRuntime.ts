@@ -34,6 +34,7 @@ import {
   type Memory,
   type Skill,
   type AgentDefinition,
+  type AgentModelRole,
   ConversationId,
   type AgentEvent,
   type RunContext,
@@ -217,8 +218,10 @@ const RunAgentTool = Tool.make("run_agent", {
     "to continue/fix/extend what it just did (its accumulated file knowledge pays for itself), " +
     "'branch' to retry or take an alternative direction from its context without growing it. " +
     "Two ways to shape the sub-agent: name a predefined ROLE with 'agent', OR define one INLINE " +
-    "with 'instructions' (its persona) + optional 'tools'/'model'. Use a role when one fits, " +
-    "inline when none does, or both to add focus on top of a role.",
+    "with 'instructions' (its persona) + optional 'tools'. Use a role when one fits, inline when " +
+    "none does, or both to add focus on top of a role. You shape its prompt, tools, and model TIER " +
+    "via 'role' ('code' to write code, 'general' for research/analysis/orchestration) — but never a " +
+    "specific model; the human owns which model backs each tier.",
   parameters: {
     name: Schema.String.annotations({
       description:
@@ -232,7 +235,13 @@ const RunAgentTool = Tool.make("run_agent", {
     }),
     task: Schema.String.annotations({
       description:
-        "The focused task: what to change and any constraints. The sub-agent has no prior context unless seeded — be explicit.",
+        "The sub-agent's full brief. It sees ONLY this text, its folder, that folder's SCOPE.md, and " +
+        "the project knowledge — NOT your conversation, the user's request, your plan, or what other " +
+        "agents found. You are its only bridge to all of that, so write a COMPLETE brief, not a " +
+        "one-liner: (1) OBJECTIVE — what to do, concretely; (2) CONTEXT — the relevant background, " +
+        "constraints, and any prior findings/decisions it needs (paste them, don't reference them); " +
+        "(3) OUTPUT — what to produce or report back; (4) BOUNDARIES — what's out of scope. A vague " +
+        "task ('research X', 'fix the bug') produces vague, duplicated, or wrong work.",
     }),
     seedFromNode: Schema.optional(Schema.String).annotations({
       description:
@@ -250,9 +259,9 @@ const RunAgentTool = Tool.make("run_agent", {
     agent: Schema.optional(Schema.String).annotations({
       description:
         "Optional name of a predefined agent ROLE (from .efferent/agents/<name>.md) to run this task " +
-        "as — it sets the sub-agent's system-prompt instructions, its model, and its tool allowlist. " +
-        "Omit for a generic folder-scoped coder. Use a role when the task fits a specialty (e.g. " +
-        "'reviewer', 'security-auditor', 'docs-writer').",
+        "as — it sets the sub-agent's system-prompt instructions and its tool allowlist. Omit for a " +
+        "generic folder-scoped coder. Use a role when the task fits a specialty (e.g. 'reviewer', " +
+        "'security-auditor', 'docs-writer').",
     }),
     instructions: Schema.optional(Schema.String).annotations({
       description:
@@ -268,10 +277,13 @@ const RunAgentTool = Tool.make("run_agent", {
         "tools — never grants anything that doesn't exist; include 'run_agent' only to let the inline " +
         "agent spawn its own helpers (bounded by the depth limit). Unknown names are ignored.",
     }),
-    model: Schema.optional(Schema.String).annotations({
+    role: Schema.optional(Schema.Literal("general", "code")).annotations({
       description:
-        "Optional model override for an inline agent as '<provider>:<modelId>' (e.g. " +
-        "'anthropic:claude-opus-4-8'). Omit to inherit the session's main model; the provider must be logged in.",
+        "Which model TIER this sub-agent runs on: 'code' for WRITING CODE (the dedicated coding " +
+        "model), 'general' for research, analysis, planning, or orchestration (the general-purpose " +
+        "model). NOT a specific model — the human configures which model backs each tier. Omit to " +
+        "inherit the named role's tier, else defaults to 'general'. Pick 'code' only when the " +
+        "sub-agent will edit/write files.",
     }),
   },
   success: Schema.Struct({
@@ -581,17 +593,40 @@ const resolveAgent = (
 }
 
 /**
+ * A short, stable note reminding a freshly-spawned sub-agent of the human's
+ * overall **mission** — the structural backstop against context loss on spawn.
+ * The spawner's `task` is the detail; this is the goal that task serves, so a
+ * leaf agent never works blind even when the brief is terse. Empty when no
+ * mission is in context; a stable single message ⇒ it doesn't churn the cache.
+ */
+export const missionPreamble = (mission: string | undefined): ReadonlyArray<AgentMessage> =>
+  mission !== undefined && mission.trim().length > 0
+    ? [
+        {
+          role: "user",
+          content:
+            "[Overall mission — the human's request this whole effort serves. Your task " +
+            "below is ONE part of it; use this only as context for how your piece fits, " +
+            "then do exactly the task you were given.]\n" +
+            mission.trim(),
+        },
+      ]
+    : []
+
+/**
  * Layer per-call INLINE overrides onto the resolved role (if any) — the
- * dynamic-agent path. When `instructions`/`tools`/`model` are all absent this
+ * dynamic-agent path. When `instructions`/`tools`/`role` are all absent this
  * returns `base` unchanged (the named-role and generic-coder paths are
  * untouched). Otherwise it produces an ad-hoc `AgentDefinition` fed into the
  * SAME `definition` slot a predefined role uses, so `renderScopeSystemPrompt`'s
  * body, {@link roleToolEntries}' allowlist, {@link agentWrites}, and the model
- * override all reuse the existing flow verbatim.
+ * `role` all reuse the existing flow verbatim. A specific MODEL is deliberately
+ * NOT configurable — only the role TIER (general | code), which maps to a model
+ * the human configured.
  *
  * Rule: the inline `instructions` are APPENDED to the role body (role leads,
- * refinement follows — mirrors how `scopeBody` is appended); `tools`/`model` are
- * atomic, so the call's explicit value OVERRIDES the role's (else inherits it).
+ * refinement follows — mirrors how `scopeBody` is appended); `tools`/`role` are
+ * atomic, so the call's explicit value OVERRIDES the base's (else inherits it).
  * Tool names are trimmed + deduped here; validity is enforced later by
  * `roleToolEntries` (subset-only — unknown names dropped). The display title
  * comes from the `name` param, not `definition.name`, so `"inline"` never shows.
@@ -601,16 +636,15 @@ export const applyInlineDefinition = (
   inline: {
     readonly instructions?: string | undefined
     readonly tools?: ReadonlyArray<string> | undefined
-    readonly model?: string | undefined
+    readonly role?: AgentModelRole | undefined
   },
 ): AgentDefinition | undefined => {
   const instr = inline.instructions?.trim()
   const hasInstr = instr !== undefined && instr.length > 0
   const cleanTools = inline.tools?.map((t) => t.trim()).filter((t) => t.length > 0)
   const hasTools = cleanTools !== undefined && cleanTools.length > 0
-  const model = inline.model?.trim()
-  const hasModel = model !== undefined && model.length > 0
-  if (!hasInstr && !hasTools && !hasModel) return base
+  const role = inline.role ?? base?.role
+  if (!hasInstr && !hasTools && role === undefined) return base
 
   const body = [base?.body, hasInstr ? instr : undefined]
     .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
@@ -620,12 +654,12 @@ export const applyInlineDefinition = (
     name: base?.name ?? "inline",
     description: base?.description ?? "Inline task-tailored agent",
     body,
+    ...(role !== undefined ? { role } : {}),
     ...(hasTools
       ? { tools: [...new Set(cleanTools)] }
       : base?.tools !== undefined
         ? { tools: base.tools }
         : {}),
-    ...(hasModel ? { model } : base?.model !== undefined ? { model: base.model } : {}),
     sourcePath: base?.sourcePath ?? "<inline>",
   }
 }
@@ -646,6 +680,7 @@ export const applyInlineDefinition = (
 const makeInnerHooks = <R>(
   parent: AgentHooks<R> | undefined,
   nodeId: ContextNodeId,
+  role: AgentModelRole,
   filesRef: Ref.Ref<ReadonlyArray<string>>,
   usageRef: Ref.Ref<ContextUsage>,
   pool: TokenPool,
@@ -695,7 +730,9 @@ const makeInnerHooks = <R>(
       // shows it live when this node's session is open in the preview (the
       // pump keeps it off the parent rail; usage stays node-local).
       return parentAssistant !== undefined
-        ? parentAssistant({ ...event, subAgentNodeId: nodeId }).pipe(Effect.zipRight(track))
+        ? parentAssistant({ ...event, subAgentNodeId: nodeId, subAgentRole: role }).pipe(
+            Effect.zipRight(track),
+          )
         : track
     },
     onShouldStopAfterTurn: () =>
@@ -798,6 +835,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         name: label,
         task,
         nodeId,
+        role: definition?.role ?? "general",
         ...(args.parentNodeId !== null ? { parentNodeId: args.parentNodeId } : {}),
       })
     }
@@ -814,6 +852,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const innerHooks = makeInnerHooks(
       hooks,
       nodeId,
+      definition?.role ?? "general",
       filesRef,
       usageRef,
       args.tokenPool,
@@ -898,10 +937,23 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.compression !== undefined
         ? { compression: args.runContext.compression }
         : {}),
-      // A role that pins a model overrides the main tier for THIS run only
-      // (read by the router off RunContextRef). NOT inherited by nested generic
-      // spawns — they re-seed their own childRc without it.
-      ...(definition?.model !== undefined ? { modelOverride: definition.model } : {}),
+      // The sub-agent runs on the ROLE it was spawned as — `code` for writing
+      // code, `general` (the default) for research / analysis / orchestration.
+      // The role comes from the definition (a named role's tier, the inline
+      // `role`, or the per-spawn `role` param — resolved in applyInlineDefinition);
+      // it is NEVER a free model the model emitted. Re-seeded each spawn (not
+      // inherited) so a deeper spawn picks its own role. The router reads it off
+      // RunContextRef to resolve the role's pinned model.
+      modelRole: (definition?.role ?? "general") satisfies AgentModelRole,
+      // Carry the run's frozen role→model map + the mission down the subtree, so
+      // the fleet stays on the models pinned at run start (cache-safe) and every
+      // sub-agent can be reminded of the overall goal.
+      ...(args.runContext.pinnedModels !== undefined
+        ? { pinnedModels: args.runContext.pinnedModels }
+        : {}),
+      ...(args.runContext.mission !== undefined
+        ? { mission: args.runContext.mission }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
@@ -1074,7 +1126,7 @@ const makeRunAgentHandler =
       readonly agent?: string
       readonly instructions?: string
       readonly tools?: ReadonlyArray<string>
-      readonly model?: string
+      readonly role?: AgentModelRole
     }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
@@ -1091,7 +1143,7 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
-      const { name, folder, task, seedFromNode, seedMode, agent, instructions, tools, model } =
+      const { name, folder, task, seedFromNode, seedMode, agent, instructions, tools, role } =
         params
       // The model-given display name; blank/absent (a stale provider replaying
       // an old-schema call) degrades to the folder basename.
@@ -1101,10 +1153,11 @@ const makeRunAgentHandler =
       // Resolve the requested role (if any). A named-but-unknown agent is a
       // model-facing failure — silently ignoring a requested role hides a real
       // mistake (mirrors read_skill's UnknownSkill). Absent ⇒ generic spawn.
-      // Then layer any INLINE definition (instructions/tools/model) on top, so a
+      // Then layer any INLINE definition (instructions/tools/role) on top, so a
       // task-tailored agent flows through the same `definition` slot as a role.
+      // `role` is only the model TIER (general | code) — never a specific model.
       const baseDefinition = yield* resolveAgent(opts.agents, agent)
-      const definition = applyInlineDefinition(baseDefinition, { instructions, tools, model })
+      const definition = applyInlineDefinition(baseDefinition, { instructions, tools, role })
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -1147,10 +1200,13 @@ const makeRunAgentHandler =
         const seedMessages: ReadonlyArray<AgentMessage> =
           seedMode === "handoff"
             ? [
+                ...missionPreamble(rc.mission),
                 handoffToMessage(yield* generateHandoffBrief(sourceMsgs)),
                 { role: "user", content: taskMsg },
               ]
-            : [...sourceMsgs, { role: "user", content: taskMsg }]
+            : // branch: the source's verbatim history already carries the mission
+              // preamble from its own fresh spawn — don't double it.
+              [...sourceMsgs, { role: "user", content: taskMsg }]
         const childId = yield* store.spawn({
           parentId: nodeId,
           rootConversationId: rc.rootConversationId,
@@ -1177,9 +1233,13 @@ const makeRunAgentHandler =
         })
       }
 
-      // Fresh spawn.
+      // Fresh spawn. Seed the overall mission (if any) ahead of the task, so a
+      // leaf agent knows the goal its piece serves even when the brief is terse.
       const folderAbs = resolve(displayRoot, folder)
-      const seedMessages: ReadonlyArray<AgentMessage> = [{ role: "user", content: task }]
+      const seedMessages: ReadonlyArray<AgentMessage> = [
+        ...missionPreamble(rc.mission),
+        { role: "user", content: task },
+      ]
       const nodeId = yield* store.spawn({
         parentId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,

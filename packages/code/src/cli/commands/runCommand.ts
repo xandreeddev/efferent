@@ -121,16 +121,18 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       void ctx.run(runHandoff(store, store.run.getConversationId()))
       return
     case ":model": {
-      // `:model` configures main; `:model fast` opens the same picker for the
-      // fast helper role (leading "default (follow main)" row clears it).
+      // `:model` configures general (the main tier); `:model code` / `:model
+      // fast` open the same picker for that role (a leading "default (follow
+      // general)" row clears it back to following general).
       const role = arg?.trim().toLowerCase()
-      if (arg !== undefined && role !== "fast" && !arg.includes(":")) {
+      const pickerRole = role === "code" || role === "fast" ? role : undefined
+      if (arg !== undefined && pickerRole === undefined && !arg.includes(":")) {
         store.pushBlock({
           kind: "info",
-          text: "Usage: :model [<provider>:<modelId>]  or  :model fast  to set the helper model",
+          text: "Usage: :model [<provider>:<modelId>]  ·  :model code  (the coding fleet)  ·  :model fast  (helper calls)",
         })
       }
-      void ctx.run(openModelPicker(store, role === "fast" ? role : undefined))
+      void ctx.run(openModelPicker(store, pickerRole))
       return
     }
     case ":effort":

@@ -21,6 +21,9 @@ export type AgentPhase = "idle" | "thinking" | "tool"
 export interface FleetMember {
   readonly nodeId: string
   readonly name: string
+  /** The model tier this agent runs as (`general` | `code`) — so the status bar
+   *  can show the active tier when this agent is the focused one. */
+  readonly role?: "general" | "code"
 }
 
 export interface AgentState {
@@ -85,7 +88,11 @@ export const reduceAgentState = (
       return open === 0 ? phaseTo(next, "thinking", now) : next
     }
     case "subagent_start": {
-      const member = { nodeId: e.nodeId ?? e.name, name: e.name }
+      const member: FleetMember = {
+        nodeId: e.nodeId ?? e.name,
+        name: e.name,
+        ...(e.role !== undefined ? { role: e.role } : {}),
+      }
       return { ...s, fleet: [...s.fleet, member] }
     }
     case "subagent_end": {
