@@ -2,6 +2,7 @@ import { FiberRef } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { CompressionPolicy } from "../entities/Compression.js"
 import type { ConversationId } from "../entities/Conversation.js"
+import type { ModelRole } from "../entities/Model.js"
 import type { Prompt } from "../entities/Prompt.js"
 import type { TokenPool } from "./tokenBudget.js"
 
@@ -38,13 +39,28 @@ export interface RunContext {
    *  inherits it (the loop reads this when no `input.compression` override is
    *  given). Absent → `Compaction.default()`. */
   readonly compression?: CompressionPolicy
-  /** Per-run main-model override as `"<provider>:<modelId>"` — set by an agent
-   *  ROLE (`run_agent({ agent })`) whose definition pins a model. The router
-   *  prefers this over the global `ModelRegistry.current` for main-tier calls on
-   *  this fiber; helper tiers (fast/web-search) are unaffected. Absent ⇒ the
-   *  session's main model. NOT inherited by nested generic spawns — only set
-   *  when the spawned child's own role pins a model. */
-  readonly modelOverride?: string
+  /** The **pinned model per role**, frozen by `runAgent` at the top-level turn —
+   *  `{ general, code, fast } → "<provider>:<modelId>"`. The router resolves a
+   *  fiber's call to `pinnedModels[role]`, so a mid-run `/model` or `:set
+   *  codeModel` can NOT move the model out from under a running fleet (the
+   *  "changing the default breaks a fleet" fix, now per-role and cache-safe — a
+   *  stable selection keeps each provider's prompt-cache prefix warm). Inherited
+   *  verbatim by every spawn in the subtree. Absent ⇒ the router falls back to
+   *  the live settings / `ModelRegistry.current`. NOTE: this is the SESSION's
+   *  choice, never a per-agent one — a running agent cannot pick its own model. */
+  readonly pinnedModels?: Partial<Record<ModelRole, string>>
+  /** Which model **role** the calls on this fiber resolve to (`Model.ModelRole`).
+   *  The top-level run leaves it unset (⇒ `general`); each spawned sub-agent is
+   *  seeded with the role it was spawned as (`general` for research/analysis,
+   *  `code` for writing code). The router reads this to resolve the role's model
+   *  — it is the ONLY thing that decides a fiber's model, and nothing the model
+   *  emits can change it. */
+  readonly modelRole?: ModelRole
+  /** The human's original request for this run — the **mission**. Seeded by
+   *  `runAgent` and inherited by every spawn, so each sub-agent can be reminded
+   *  of the overall goal even when its `task` brief is terse (the structural
+   *  backstop against context loss on spawn). A short, stable line ⇒ cache-safe. */
+  readonly mission?: string
 }
 
 export const initialRunContext: RunContext = {

@@ -22,7 +22,7 @@ import {
 import type { TuiModeInput } from "../modes/tui.js"
 import { submittedAgentState } from "./presentation/agentState.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
-import { rolesChip } from "./presentation/statusBar.js"
+import { rolesReadout } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
@@ -138,7 +138,7 @@ export const runTuiModeRemote = (
           cwd: input.cwd,
           storage: connLabel(activeDb.name, activeDb.kind),
           effort,
-          roles: rolesChip(settings),
+          roles: rolesReadout(settings),
         },
         conversationId: rootCid,
         footer: `daemon ${baseUrl} · logs: tail -f ${logFilePath()}`,

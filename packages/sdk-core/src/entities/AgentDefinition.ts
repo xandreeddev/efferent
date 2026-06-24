@@ -1,3 +1,5 @@
+import type { AgentModelRole } from "./Model.js"
+
 /**
  * An `AgentDefinition` is a reusable, git-shareable agent *role* — a markdown
  * file with YAML-ish frontmatter and a free-form body that becomes the role's
@@ -6,7 +8,7 @@
  *   ---
  *   name: reviewer
  *   description: Reviews a diff for correctness bugs and cleanups
- *   model: anthropic:claude-opus-4-8     # optional — omit to inherit main
+ *   role: code                           # optional — general (default) | code
  *   tools: read_file, grep, glob, ls     # optional allowlist — omit for all base tools
  *   ---
  *   You are a meticulous code reviewer. ...
@@ -14,19 +16,23 @@
  * Discovery walks `.efferent/agents/*.md` from cwd up to home (closer-to-cwd
  * wins on name collisions), exactly like {@link Skill}. The `run_agent` tool's
  * `agent` parameter selects a definition by `name`; the role then runs with the
- * body as its scope instructions, its `tools` allowlist, and its `model`
- * override (when set). Definitions carry no executable code, so they travel as
- * plain files — checked into a repo or pulled from GitHub.
+ * body as its scope instructions, its `tools` allowlist, and its model `role`.
+ * A definition customises the agent's prompt, tools, and which model TIER it
+ * runs on (`general` | `code`) — but **never a specific model**: the human owns
+ * which models back each role, so changing a model can't break a running fleet.
+ * Definitions carry no executable code, so they travel as plain files — checked
+ * into a repo or pulled from GitHub.
  */
 export interface AgentDefinition {
   readonly name: string
   readonly description: string
   /**
-   * Model override as `"<provider>:<modelId>"` (e.g. `"anthropic:claude-opus-4-8"`).
-   * Absent ⇒ the role inherits the session's main model. The provider must be
-   * logged in, else the spawn fails per-call with the usual auth error.
+   * Which model TIER this agent runs on — `"general"` (research / analysis /
+   * orchestration) or `"code"` (writing code). Absent ⇒ `general`. Never a
+   * specific model: a definition picks a role, the human configures the role's
+   * model. A `run_agent({ role })` call overrides this per spawn.
    */
-  readonly model?: string
+  readonly role?: AgentModelRole
   /**
    * Tool-name allowlist (e.g. `["read_file", "grep", "Bash"]`). Absent ⇒ the
    * full set of base coding tools. `run_agent` is excluded unless named here.

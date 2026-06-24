@@ -63,6 +63,9 @@ export const AgentEvent = Schema.Union(
     position: Schema.optional(Schema.Number),
     /** Set for sub-agent narration: the run's context-tree node id. */
     nodeId: Schema.optional(Schema.String),
+    /** Set for sub-agent narration: the run's model role (`general` | `code`),
+     *  so its spend lands on the right tier in the ledger. */
+    subAgentRole: Schema.optional(Schema.Literal("general", "code")),
   }),
   Schema.Struct({
     type: Schema.Literal("tool_call_start"),
@@ -89,6 +92,8 @@ export const AgentEvent = Schema.Union(
     nodeId: Schema.optional(Schema.String),
     /** The parent node's id — nests this run under its enclosing sub-agent. */
     parentNodeId: Schema.optional(Schema.String),
+    /** The model role this run uses (`general` | `code`) — for the active-tier UI. */
+    role: Schema.optional(Schema.Literal("general", "code")),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent_end"),

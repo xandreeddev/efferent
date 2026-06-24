@@ -63,46 +63,74 @@ export const parseModel = (raw: string): { provider: Provider; modelId: string }
 export const DefaultModel = "google:gemini-3.5-flash"
 
 /**
- * The two model **roles** the agent runs on. One mental model, two knobs:
+ * The three model **roles** the agent runs on. One mental model, three knobs —
+ * and a running agent NEVER picks its own model: its role is structural, set by
+ * where the call originates, not by anything the model emits mid-flight.
  *
- * - `main` — all real agentic work: the root conversation AND spawned
- *            sub-agents (delegation changes the context, not the brain).
- * - `fast` — helper calls in the loop: tool-output summaries, auto-approval
- *            judgments, session titles — anything where a round-trip on main
- *            would drag the run. Unset → main.
+ * - `general` — the root conversation / orchestrator and any research /
+ *               analysis sub-agent: the general-purpose brain. The `/model`
+ *               switch sets it (persisted as `settings.model`).
+ * - `code`    — the coding sub-agents (the fleet writing code). A sub-agent
+ *               that writes code runs here; one that researches or orchestrates
+ *               runs on `general`. The spawner picks which (general | code) —
+ *               never an arbitrary model. Unset → general.
+ * - `fast`    — one-shot helper calls off the loop: tool-output summaries,
+ *               auto-approval judgments, session titles. Helper-only — never a
+ *               sub-agent's role. Unset → general.
  *
- * Roles, not model names, are the stable vocabulary: the UI labels token spend
- * by role, `:model fast` configures it, and swapping a provider never changes
- * what the roles mean. One-shot helper calls reach the fast tier through
- * `UtilityLlm.complete(prompt, { role: "fast" })`.
+ * Roles, not model names, are the stable vocabulary: the UI labels the bar and
+ * token spend by role, `:model code` / `:model fast` configure them, and
+ * swapping a provider never changes what the roles mean. Helper calls reach the
+ * fast tier through `UtilityLlm.complete(prompt, { role: "fast" })`; the loop
+ * reaches the code/general tiers by spawning a sub-agent (`RunContext.modelRole`).
  */
-export type ModelRole = "main" | "fast"
+export type ModelRole = "general" | "fast" | "code"
 
-export const MODEL_ROLES: ReadonlyArray<ModelRole> = ["main", "fast"]
+export const MODEL_ROLES: ReadonlyArray<ModelRole> = ["general", "fast", "code"]
+
+/**
+ * The roles a spawned sub-agent may run as — `general` (research / analysis /
+ * orchestration) or `code` (writing code). `fast` is helper-only, never a
+ * sub-agent's role.
+ */
+export type AgentModelRole = "general" | "code"
+
+export const AGENT_MODEL_ROLES: ReadonlyArray<AgentModelRole> = ["general", "code"]
 
 /** The settings keys backing each role (structural — avoids a Settings import cycle). */
 export interface RoleModelSettings {
   readonly model: string
   readonly fastModel?: string | undefined
+  readonly codeModel?: string | undefined
 }
 
 /**
- * Resolve a role to its `"<provider>:<modelId>"` string. Fast falls back to
- * main when unset. Pure — the single place the chain lives (router override,
+ * Resolve a role to its `"<provider>:<modelId>"` string. `fast` and `code` fall
+ * back to `general` when unset. Pure — the single place the chain lives (router,
  * utility tier, settings UI all call this instead of re-deriving it).
  */
 export const modelForRole = (settings: RoleModelSettings, role: ModelRole): string => {
   switch (role) {
-    case "main":
+    case "general":
       return settings.model
     case "fast":
       return settings.fastModel ?? settings.model
+    case "code":
+      return settings.codeModel ?? settings.model
   }
 }
 
-/** Whether the role is explicitly configured (vs falling back to main). */
-export const roleIsConfigured = (settings: RoleModelSettings, role: ModelRole): boolean =>
-  role === "main" ? true : settings.fastModel !== undefined
+/** Whether the role is explicitly configured (vs falling back to `general`). */
+export const roleIsConfigured = (settings: RoleModelSettings, role: ModelRole): boolean => {
+  switch (role) {
+    case "general":
+      return true
+    case "fast":
+      return settings.fastModel !== undefined
+    case "code":
+      return settings.codeModel !== undefined
+  }
+}
 
 /** Parse a persisted `"<provider>:<modelId>"` into a full {@link ModelSelection}. */
 export const selectionFromString = (raw: string): ModelSelection => {

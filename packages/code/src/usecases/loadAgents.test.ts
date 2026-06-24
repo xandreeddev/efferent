@@ -43,12 +43,12 @@ const run = (
 ) => Effect.runPromise(loadAgents(cwd, home).pipe(Effect.provide(fsLayer(files, opts))))
 
 describe("loadAgents", () => {
-  it("parses name/description + optional model and a comma/space tools allowlist", async () => {
+  it("parses name/description + optional role and a comma/space tools allowlist", async () => {
     const agents = await run({
       "/ws/app/.efferent/agents/reviewer.md": `---
 name: reviewer
 description: reviews diffs
-model: anthropic:claude-opus-4-8
+role: code
 tools: read_file, grep ls
 ---
 You review code.`,
@@ -57,7 +57,7 @@ You review code.`,
       {
         name: "reviewer",
         description: "reviews diffs",
-        model: "anthropic:claude-opus-4-8",
+        role: "code",
         tools: ["read_file", "grep", "ls"],
         body: "You review code.",
         sourcePath: "/ws/app/.efferent/agents/reviewer.md",
@@ -65,7 +65,21 @@ You review code.`,
     ])
   })
 
-  it("omits model/tools when absent (no nullable noise — just not present)", async () => {
+  it("ignores an unknown role value and never reads a model: field (the footgun)", async () => {
+    const agents = await run({
+      "/ws/app/.efferent/agents/r.md": `---
+name: r
+description: d
+role: wizard
+model: anthropic:claude-opus-4-8
+---
+b`,
+    })
+    expect(agents[0]?.role).toBeUndefined()
+    expect((agents[0] as { model?: string })?.model).toBeUndefined()
+  })
+
+  it("omits role/tools when absent (no nullable noise — just not present)", async () => {
     const agents = await run({
       "/ws/app/.efferent/agents/plain.md": `---
 name: plain
@@ -79,7 +93,7 @@ body`,
       body: "body",
       sourcePath: "/ws/app/.efferent/agents/plain.md",
     })
-    expect(agents[0]?.model).toBeUndefined()
+    expect(agents[0]?.role).toBeUndefined()
     expect(agents[0]?.tools).toBeUndefined()
   })
 

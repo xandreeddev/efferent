@@ -2,6 +2,7 @@ import type { Effect } from "effect"
 import type { TokenUsage } from "../ports/LlmInfo.js"
 import type { ContextNodeId } from "./AgentContext.js"
 import type { AgentMessage, ToolCall } from "./Conversation.js"
+import type { AgentModelRole } from "./Model.js"
 
 /**
  * Decision returned by `onBeforeToolCall`: either let the call proceed
@@ -43,6 +44,9 @@ export interface AgentAssistantMessageEvent {
   /** Set when this message belongs to a sub-agent run: its context-tree node
    *  id — lets a consumer attribute interleaved parallel runs correctly. */
   readonly subAgentNodeId?: ContextNodeId
+  /** The sub-agent's model role (`general` | `code`) — so its spend lands on the
+   *  right tier in the ledger. Set only for sub-agent messages. */
+  readonly subAgentRole?: AgentModelRole
 }
 
 export interface AgentBeforeToolCallEvent {
@@ -85,6 +89,9 @@ export interface AgentSubAgentStartEvent {
   readonly nodeId?: ContextNodeId
   /** The parent node's id, for nesting under an enclosing sub-agent's container. */
   readonly parentNodeId?: ContextNodeId
+  /** The model role this sub-agent runs as (`general` | `code`) — surfaced so the
+   *  UI can show the active tier when this agent is focused. */
+  readonly role?: AgentModelRole
 }
 
 export interface AgentSubAgentEndEvent {

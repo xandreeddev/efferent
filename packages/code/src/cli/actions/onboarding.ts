@@ -31,7 +31,7 @@ import {
 import { selectedValue } from "../presentation/selectBox.js"
 import { promptValue } from "../presentation/promptBox.js"
 import { type ProviderStatus } from "../presentation/loginFlow.js"
-import { rolesChip } from "../presentation/statusBar.js"
+import { rolesReadout } from "../presentation/statusBar.js"
 import { applyModelSelection } from "./model.js"
 import { applyTheme } from "./theme.js"
 import type { TuiStore } from "../state/store.js"
@@ -239,7 +239,7 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
           return { ...curr, fastModel: `${selected.provider}:${selected.modelId}` }
         }, onbScope(store))
         const nextSettings = yield* settingsStore.get()
-        yield* Effect.sync(() => store.setStatus({ roles: rolesChip(nextSettings) }))
+        yield* Effect.sync(() => store.setStatus({ roles: rolesReadout(nextSettings) }))
         yield* transitionToTheme(store, state)
         break
       }

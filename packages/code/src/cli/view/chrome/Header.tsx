@@ -19,12 +19,9 @@ export const Header = (props: { ctx: TuiContext }) => {
   const approvalPending = () => store.overlay().kind === "approval"
   const fleet = () => fleetLabel(st())
 
-  // The wordmark brands the bin: the master assistant is `▌efferent`; the
-  // focused coder appends ` ⟩ code` so the two are unmistakable at a glance.
-  const wordmark = () =>
-    props.ctx.variant === "code"
-      ? `${glyph.wordmark}efferent ${glyph.codeBrand} code`
-      : `${glyph.wordmark}efferent`
+  // Just the wordmark — no bin/variant suffix. The old ` ⟩ code` leaked an
+  // internal driver name and now collides with the `code` model role.
+  const wordmark = () => `${glyph.wordmark}efferent`
 
   return (
     <box flexDirection="row" flexShrink={0}>

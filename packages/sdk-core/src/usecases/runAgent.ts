@@ -30,11 +30,12 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
   userPrompt: string,
   extraHooks?: AgentHooks<R>,
   workspaceDir?: string,
-  /** Per-fleet pinned main model (`"<provider>:<modelId>"`), seeded onto
-   *  `RunContext.modelOverride` so the router uses THIS fleet's model rather than
-   *  the global default — the structural fix for "changing the default breaks a
-   *  running fleet". Absent ⇒ the session's main model. */
-  modelOverride?: string,
+  /** The GENERAL model to pin for this run (`"<provider>:<modelId>"`). It seeds
+   *  `RunContext.pinnedModels.general`; `code`/`fast` are pinned from settings
+   *  (falling back to it) — so the whole fleet's models are frozen at run start
+   *  and a mid-run `/model` / `:set` can't move a running fleet. Absent ⇒ the
+   *  session's main model. */
+  pinnedGeneral?: string,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -108,7 +109,17 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
         // The agent's compression policy rides RunContext so the whole sub-agent
         // subtree inherits it; the loop falls back to Compaction.default() when absent.
         ...(config.compression !== undefined ? { compression: config.compression } : {}),
-        ...(modelOverride !== undefined ? { modelOverride } : {}),
+        // Freeze all three role models at run start (the router resolves a fiber's
+        // role to its pin) so a mid-run model switch can't move a running fleet —
+        // and each provider's cache prefix stays warm.
+        pinnedModels: {
+          general: pinnedGeneral ?? settings.model,
+          code: settings.codeModel ?? pinnedGeneral ?? settings.model,
+          fast: settings.fastModel ?? pinnedGeneral ?? settings.model,
+        },
+        // The human's request — inherited by every spawn so a sub-agent can be
+        // reminded of the overall goal even when its task brief is terse.
+        mission: userPrompt,
       }),
       // A failed run marks its span errored (the conversation drill-down lists
       // failed messages; RED reads `agent_errors_total{kind="run"}`), then
@@ -155,8 +166,8 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
   conversationId: ConversationId,
   extraHooks?: AgentHooks<R>,
   workspaceDir?: string,
-  /** Per-fleet pinned main model (see {@link runAgent}). */
-  modelOverride?: string,
+  /** The GENERAL model to pin for this run (see {@link runAgent}). */
+  pinnedGeneral?: string,
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -204,7 +215,11 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
           : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
         ...(config.compression !== undefined ? { compression: config.compression } : {}),
-        ...(modelOverride !== undefined ? { modelOverride } : {}),
+        pinnedModels: {
+          general: pinnedGeneral ?? settings.model,
+          code: settings.codeModel ?? pinnedGeneral ?? settings.model,
+          fast: settings.fastModel ?? pinnedGeneral ?? settings.model,
+        },
       }),
       Effect.tapErrorCause(() =>
         Effect.annotateCurrentSpan({ error: true }).pipe(

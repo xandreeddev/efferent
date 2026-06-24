@@ -25,7 +25,7 @@ import {
 } from "@xandreed/sdk-core"
 import { DEFAULT_SUB_AGENT_MAX_STEPS } from "../../usecases/buildScopeRuntime.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
-import { rolesChip } from "../presentation/statusBar.js"
+import { rolesReadout } from "../presentation/statusBar.js"
 import { openSettings, setRowValue, type SettingsRow } from "../presentation/settingsView.js"
 import { describeActiveDatabase } from "../presentation/dbStatus.js"
 import { resumeConversation } from "./session.js"
@@ -439,7 +439,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       })
       const updated = yield* settings.get()
       yield* Effect.sync(() => {
-        store.setStatus({ roles: rolesChip(updated) })
+        store.setStatus({ roles: rolesReadout(updated) })
         store.toast(`Updated fastModel → ${value === "default" ? "default (main model)" : value}`)
         reflectRow(store, "fastModel", value === "default" ? "default (main)" : value)
       })

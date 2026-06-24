@@ -64,15 +64,16 @@ export const mergeFileChange = (
 }
 
 /** Billed tokens (input + output) accumulated per model role this session.
- *  `main` = all agentic work (the root loop AND sub-agents — delegation isn't
- *  a tier change); `fast` = helper calls (tool summaries, approval judgments,
+ *  `general` = the root loop + general (research/analysis) sub-agents; `code` =
+ *  coding sub-agents; `fast` = helper calls (tool summaries, approval judgments,
  *  session titles). The economics of a session, by which model role billed it. */
 export interface RoleSpend {
-  readonly main: number
+  readonly general: number
+  readonly code: number
   readonly fast: number
 }
 
-export const emptyRoleSpend: RoleSpend = { main: 0, fast: 0 }
+export const emptyRoleSpend: RoleSpend = { general: 0, code: 0, fast: 0 }
 
 /** At-a-glance session counters surfaced in the Activity header. */
 export interface SessionStats {
@@ -125,9 +126,9 @@ export const accumulateUsage = (s: SessionStats, u: TokenUsage): SessionStats =>
   outputTokens: s.outputTokens + u.outputTokens,
   totalTokens: s.totalTokens + u.totalTokens,
   turns: s.turns + 1,
-  // Root-loop usage is the MAIN role's spend (sub-agent usage arrives with a
-  // nodeId and is added to main by the pump via `accumulateRoleSpend`).
-  byRole: { ...s.byRole, main: s.byRole.main + u.inputTokens + u.outputTokens },
+  // Root-loop usage is the GENERAL role's spend (sub-agent usage arrives with a
+  // nodeId + its role and is added by the pump via `accumulateRoleSpend`).
+  byRole: { ...s.byRole, general: s.byRole.general + u.inputTokens + u.outputTokens },
   // A real provider count replaces any resume estimate.
   estimated: false,
 })
