@@ -30,8 +30,8 @@ const turnWithThreeTools = (): ScrollbackBlock[] => [
   tool("3", "bash c"),
 ]
 
-describe("buildConversation — turn/tool-group structure", () => {
-  test("a user-led turn carries its subject, step count, and grouped body", () => {
+describe("buildConversation — turn structure (everything expanded)", () => {
+  test("a user-led turn carries its subject, step count, and every tool as its own block", () => {
     const items = buildConversation(turnWithThreeTools())
     expect(items).toHaveLength(1)
     const turn = items[0]!
@@ -39,46 +39,24 @@ describe("buildConversation — turn/tool-group structure", () => {
     if (turn.kind !== "turn") throw new Error("expected turn")
     expect(turn.subject).toBe("do the thing")
     expect(turn.steps).toBe(4) // assistant + 3 tools (matches "· N steps")
-    // body = assistant prose, then a single tool group of the 3 tools
-    expect(turn.body).toHaveLength(2)
+    // body = assistant prose, then ONE block per tool — no collapsible group.
+    expect(turn.body).toHaveLength(4)
     expect(turn.body[0]).toEqual({
       kind: "block",
       id: "b:1",
       block: { kind: "assistant", text: "on it" },
     })
-    const group = turn.body[1]!
-    expect(group.kind).toBe("toolGroup")
-    if (group.kind !== "toolGroup") throw new Error("expected toolGroup")
-    expect(group.tools).toHaveLength(3)
+    expect(turn.body.slice(1).map((b) => b.kind)).toEqual(["block", "block", "block"])
+    expect(turn.body.slice(1).map((b) => (b as { id: string }).id)).toEqual(["1", "2", "3"])
   })
 
-  test("a run of <2 tools stays inline (no group)", () => {
-    const items = buildConversation([
-      { kind: "user", text: "one tool" },
-      tool("1", "read a"),
-    ])
+  test("consecutive tools never collapse into a group — each is its own expanded block", () => {
+    const items = buildConversation([...turnWithThreeTools(), tool("4", "grep d")])
     const turn = items[0]!
     if (turn.kind !== "turn") throw new Error("expected turn")
-    expect(turn.body).toHaveLength(1)
-    expect(turn.body[0]!.kind).toBe("block")
-  })
-
-  test("tool-group id is keyed on the first member, so streaming keeps it stable", () => {
-    const base = turnWithThreeTools()
-    const before = buildConversation(base)
-    const beforeTurn = before[0]!
-    if (beforeTurn.kind !== "turn") throw new Error("expected turn")
-    const gid = (beforeTurn.body[1] as { id: string }).id
-    expect(gid).toBe("grp:1")
-
-    // A 4th tool streams into the same turn.
-    const after = buildConversation([...base, tool("4", "grep d")])
-    const afterTurn = after[0]!
-    if (afterTurn.kind !== "turn") throw new Error("expected turn")
-    const group = afterTurn.body[1]!
-    if (group.kind !== "toolGroup") throw new Error("expected toolGroup")
-    expect(group.id).toBe("grp:1") // unchanged → fold survives
-    expect(group.tools).toHaveLength(4) // count bumped
+    // assistant + 4 tools, all plain blocks
+    expect(turn.body).toHaveLength(5)
+    expect(turn.body.every((b) => b.kind === "block")).toBe(true)
   })
 
   test("turn id is stable across an in-place tool update (same indices)", () => {
@@ -127,31 +105,33 @@ describe("reconcileItems — identity preservation for <For> reuse", () => {
 
     // The untouched second turn keeps its reference (── no re-render).
     expect(out[1]).toBe(prev[1])
-    // The first turn is rebuilt (its tool group moved)…
+    // The first turn is rebuilt (a tool block changed)…
     expect(out[0]).not.toBe(prev[0])
-    // …but its unchanged assistant-prose body item is reused, while the changed
-    // tool group is a fresh ref — so the inner <For> only re-renders the group.
+    // …but its unchanged body items are reused (assistant prose + the first tool),
+    // while only the changed tool block is a fresh ref — so the inner <For> only
+    // re-renders the one tool that moved.
     const a = prev[0]
     const b = out[0]
     if (a?.kind !== "turn" || b?.kind !== "turn") throw new Error("expected turns")
     expect(b.body[0]).toBe(a.body[0]) // assistant prose reused
-    expect(b.body[1]).not.toBe(a.body[1]) // tool group rebuilt
+    expect(b.body[1]).toBe(a.body[1]) // tool "1" unchanged, reused
+    expect(b.body[2]).not.toBe(a.body[2]) // tool "2" changed → fresh ref
   })
 })
 
 describe("foldIdsByKind", () => {
-  test("splits turn ids from tool-group ids in render order", () => {
+  test("turns are foldable; tools no longer group, so there are no group ids", () => {
     const items = buildConversation(turnWithThreeTools())
-    expect(foldIdsByKind(items)).toEqual({ turns: ["turn:0"], groups: ["grp:1"] })
+    expect(foldIdsByKind(items)).toEqual({ turns: ["turn:0"], groups: [] })
   })
 
-  test("checkpoints aren't foldable; a loose tool group is a group", () => {
+  test("checkpoints aren't foldable; loose tools don't group", () => {
     const items = buildConversation([
       { kind: "checkpoint", text: "summary" },
       tool("9", "read x"),
       tool("10", "read y"),
     ])
-    expect(foldIdsByKind(items)).toEqual({ turns: [], groups: ["grp:9"] })
+    expect(foldIdsByKind(items)).toEqual({ turns: [], groups: [] })
   })
 })
 
@@ -191,14 +171,14 @@ describe("toolGroupSummary / toolGroupState — the collapsed one-line aggregate
 })
 
 describe("buildConversationRows — the fold-cursor row list", () => {
-  test("turn header + its body rows; the header is a foldable head, bodies aren't", () => {
+  test("turn header + one row per body block; the header is the only foldable head", () => {
     const rows = buildConversationRows(buildConversation(turnWithThreeTools()), new Set())
-    expect(rows.map((r) => r.key)).toEqual(["turn:0", "b:1", "grp:1"])
-    // turn header: head + foldable; assistant block: plain; tool group: foldable
+    expect(rows.map((r) => r.key)).toEqual(["turn:0", "b:1", "1", "2", "3"])
+    // turn header: head + foldable; body rows (prose + each tool): plain, non-foldable
     expect(rows[0]).toMatchObject({ key: "turn:0", foldId: "turn:0", head: true })
     expect(rows[1]).toMatchObject({ key: "b:1", head: false })
     expect(rows[1]!.foldId).toBeUndefined()
-    expect(rows[2]).toMatchObject({ key: "grp:1", foldId: "grp:1", head: false })
+    expect(rows[2]!.foldId).toBeUndefined()
   })
 
   test("a folded turn hides its body rows (just the header remains)", () => {
@@ -215,10 +195,11 @@ describe("buildConversationRows — the fold-cursor row list", () => {
       ]),
       new Set(),
     )
-    // checkpoint head, then the loose run's single tool group (its first row a head)
+    // checkpoint head, then the loose run's tools — its first row is a head
     expect(rows.map((r) => ({ key: r.key, head: r.head ?? false }))).toEqual([
       { key: "b:0", head: true },
-      { key: "grp:9", head: true },
+      { key: "9", head: true },
+      { key: "10", head: false },
     ])
   })
 })
@@ -274,18 +255,18 @@ describe("searchConversation — row-granular hits with reveal info", () => {
     ])
   })
 
-  test("a match inside a tool group hits the group row and carries groupId", () => {
+  test("a tool match hits that tool's own row (no group), carrying its turnId", () => {
     const items = buildConversation([
       { kind: "user", text: "run checks" },
       { kind: "tool", id: "t1", toolName: "Bash(bun test)", state: "ok", output: "445 pass" },
       { kind: "tool", id: "t2", toolName: "Read(main.ts)", state: "ok", output: "the needle is here" },
     ])
-    expect(searchConversation(items, "needle")).toEqual([
-      { id: "grp:t1", turnId: "turn:0", groupId: "grp:t1" },
-    ])
-    // One hit per rendered row: both members match "a", still one group hit.
+    // Each tool is its own expanded row now — the match lands on that row.
+    expect(searchConversation(items, "needle")).toEqual([{ id: "t2", turnId: "turn:0" }])
+    // "a" occurs in both tool rows → one hit per row, in render order.
     expect(searchConversation(items, "a")).toEqual([
-      { id: "grp:t1", turnId: "turn:0", groupId: "grp:t1" },
+      { id: "t1", turnId: "turn:0" },
+      { id: "t2", turnId: "turn:0" },
     ])
   })
 

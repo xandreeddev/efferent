@@ -51,6 +51,8 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       return `Skill(${str(a.name) ?? "?"})`
     case "web_fetch":
       return `Fetch(${truncate(str(a.url) ?? "", 50)})`
+    case "search_web":
+      return `Search(${truncate(str(a.query) ?? "", 44)})`
     case "update_plan": {
       const n = Array.isArray(a.steps) ? a.steps.length : 0
       return `Plan(${n} step${n === 1 ? "" : "s"})`
@@ -145,6 +147,13 @@ export const describeToolResult = (
       return total !== undefined ? `${total} lines` : "read"
     }
     case "write_file": {
+      // Now reads like edit_file: the handler returns an old→new diff, so the
+      // summary is a diffstat and the diff renders below the pill.
+      const diff = str(r.diff)
+      if (diff !== undefined && diff.length > 0) {
+        const { added, removed } = countDiffLines(diff)
+        return `+${added}/-${removed}`
+      }
       const lines = num(r.lines)
       if (lines !== undefined) return `wrote ${lines} line${lines === 1 ? "" : "s"}`
       const bytes = num(r.bytes)
@@ -195,6 +204,15 @@ export const describeToolResult = (
       ].filter((p): p is string => p !== undefined)
       return parts.length > 0 ? parts.join(" · ") : "fetched"
     }
+    case "search_web": {
+      // Was the smoking-gun `default → "done"`: the answer/sources were never
+      // surfaced. The short line counts sources; the answer itself shows below
+      // the pill (`toolArtifacts`), in full — it's already a synthesized summary.
+      const sources = Array.isArray(r.sources) ? r.sources.length : 0
+      if (sources > 0) return `${sources} source${sources === 1 ? "" : "s"}`
+      const answer = str(r.answer)
+      return answer !== undefined && answer.trim().length > 0 ? "answered" : "no results"
+    }
     default:
       return "done"
   }
@@ -239,7 +257,45 @@ export const toolArtifacts = (
     }
     case "write_file": {
       const path = str(r.path)
+      const diff = str(r.diff)
+      if (diff !== undefined && diff.length > 0) {
+        const { added, removed } = countDiffLines(diff)
+        return path !== undefined ? { diff, fileChange: { path, added, removed } } : { diff }
+      }
       return path !== undefined ? { fileChange: { path, added: num(r.lines) ?? 0, removed: 0 } } : {}
+    }
+    case "search_web": {
+      const answer = str(r.answer)?.trim() ?? ""
+      const sources = Array.isArray(r.sources)
+        ? (r.sources as ReadonlyArray<unknown>)
+            .map((s) => (typeof s === "object" && s !== null ? (s as Record<string, unknown>) : {}))
+            .map((s) => str(s.url) ?? str(s.title))
+            .filter((u): u is string => u !== undefined)
+        : []
+      const out = [
+        answer,
+        ...(sources.length > 0 ? ["", "Sources:", ...sources.map((u) => `• ${u}`)] : []),
+      ]
+        .join("\n")
+        .trim()
+      return out.length > 0 ? { output: out } : {}
+    }
+    case "glob": {
+      const matches = Array.isArray(r.matches)
+        ? (r.matches as ReadonlyArray<unknown>).filter((m): m is string => typeof m === "string")
+        : []
+      return matches.length > 0 ? { output: matches.join("\n") } : {}
+    }
+    case "ls": {
+      const entries = Array.isArray(r.entries) ? (r.entries as ReadonlyArray<unknown>) : []
+      const lines = entries
+        .map((e) => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {}))
+        .map((e) => {
+          const p = str(e.path) ?? ""
+          return e.type === "directory" ? `${p}/` : p
+        })
+        .filter((l) => l.length > 0)
+      return lines.length > 0 ? { output: lines.join("\n") } : {}
     }
     case "Bash": {
       const stdout = str(r.stdout) ?? ""

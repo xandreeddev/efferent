@@ -2,7 +2,7 @@ import { Effect, Queue } from "effect"
 import { batch } from "solid-js"
 import type { AgentEvent } from "../../events.js"
 import { reduceAgentState } from "../presentation/agentState.js"
-import { messageKey, type AgentRunRow } from "../presentation/conversation.js"
+import { messageKey } from "../presentation/conversation.js"
 import {
   describeToolCall,
   describeToolResult,
@@ -59,15 +59,9 @@ export const makeEventReducer = (
 ): ((event: AgentEvent) => void) => {
   const toolTreeIds = new Map<string, number[]>() // matchKey → FIFO of tree node ids
   const toolScrollIds = new Map<string, string[]>() // matchKey → FIFO of scrollback pill ids
-  const subAgentScrollId = new Map<string, string>() // subagent → scrollback pill id
   const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of node-log pill ids
   const toolNodeId = new Map<string, string>() // matchKey → the node a logged tool pill belongs to
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
-  // One live "Running N agents…" rail block per fan-out burst: rows keyed by
-  // node id, updated in place (Claude-style), reset when the parent's next
-  // turn starts. Replaces the old one-Task-pill-per-spawn rail.
-  const agentRows = new Map<string, AgentRunRow>()
-  let agentsBlockId: string | undefined
   let toolSeq = 0
 
   // The id pairs a start with its end; empty/absent → fall back to the name.
@@ -101,16 +95,6 @@ export const makeEventReducer = (
   const watchedNode = (nodeId: string | undefined): boolean =>
     nodeId !== undefined && store.nodePreview()?.nodeId === nodeId
 
-  const syncAgents = (): void => {
-    if (agentsBlockId !== undefined) store.updateAgents(agentsBlockId, [...agentRows.values()])
-  }
-  const touchAgentRow = (nodeId: string, f: (row: AgentRunRow) => AgentRunRow): void => {
-    const row = agentRows.get(nodeId)
-    if (row === undefined) return
-    agentRows.set(nodeId, f(row))
-    syncAgents()
-  }
-
   return (event: AgentEvent): void => {
     const now = Date.now()
     // The live state machine reads EVERY event first — phases derive purely
@@ -127,10 +111,6 @@ export const makeEventReducer = (
     )
     switch (event.type) {
       case "turn_start":
-        // The parent moved on — the fan-out burst (if any) is over; the next
-        // spawn starts a fresh agents block.
-        agentsBlockId = undefined
-        agentRows.clear()
         store.setTree((t) => treeTurnStart(t, event.turnIndex, now))
         return
 
@@ -200,13 +180,6 @@ export const makeEventReducer = (
           toolNodeId.set(matchKey(event), event.nodeId)
           store.appendNodeLog(event.nodeId, { kind: "tool", id: pid, toolName: label, state: "running" })
         }
-        if (event.nodeId !== undefined) {
-          touchAgentRow(event.nodeId, (r) => ({
-            ...r,
-            toolUses: r.toolUses + 1,
-            currentTool: label,
-          }))
-        }
         return
       }
 
@@ -236,9 +209,6 @@ export const makeEventReducer = (
             ...(detail !== undefined ? { detail } : {}),
             ...(artifacts.diff !== undefined ? { diff: artifacts.diff } : {}),
           })
-        }
-        if (event.nodeId !== undefined) {
-          touchAgentRow(event.nodeId, ({ currentTool: _done, ...r }) => r)
         }
         // Files-changed diffstat — structured, straight off the tool result (no
         // re-parsing the human detail string). Covers sub-agent inner edits too.
@@ -287,37 +257,10 @@ export const makeEventReducer = (
           if (event.nodeId !== undefined) subTreeByNode.set(event.nodeId, id)
           return tree
         }
-        if (watchedNode(event.nodeId)) {
-          store.setTree(startTree)
-          return
-        }
-        if (event.nodeId !== undefined) {
-          // One grouped block per burst; each spawn is a live row in it. Key the
-          // block by the burst's FIRST spawn's context-node id — the SAME identity
-          // `projectHistory` re-keys to (`ag:${agents[0].nodeId}`). So an idle
-          // resync upserts the projected fan-out block onto this live one instead
-          // of the live `ag<seq>` surviving as an unmatched suffix and "jumping to
-          // the end" after the fleet finishes.
-          if (agentsBlockId === undefined) {
-            agentsBlockId = `ag:${event.nodeId}`
-            store.pushBlock({ kind: "agents", id: agentsBlockId, agents: [] })
-          }
-          agentRows.set(event.nodeId, {
-            nodeId: event.nodeId,
-            name: event.name,
-            status: "running",
-            toolUses: 0,
-            tokens: 0,
-          })
-          syncAgents()
-          store.setTree(startTree)
-          return
-        }
-        const label = `Task(${event.name})`
-        toolSeq++
-        const sid = `sa${toolSeq}`
-        subAgentScrollId.set(event.name, sid)
-        store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running", output: event.task })
+        // The fleet lives ONLY in the right-pane fleet tree now — a spawn updates
+        // the execution tree (and the navigator via refreshNav + the node's live
+        // log), never the conversation rail. No `agents` rail block, no Task pill:
+        // the rail stays the orchestrator's own voice + its own tools.
         store.setTree(startTree)
         return
       }
@@ -357,60 +300,12 @@ export const makeEventReducer = (
             )
           }
         }
-        // NOTE: a top-level lead's RESULT is no longer surfaced from here. The
-        // Workspace now auto-resumes the orchestrator when a top-level lead
-        // finishes (`onTopLevelDone` in inProcess.ts), so the lead's result is
-        // reported by the orchestrator IN ITS OWN VOICE (its inbox-folded turn
-        // streams as normal assistant prose). Pushing the raw summary here too
-        // would double it. Specialist outcomes stay in the tree (✗/✓) + the log.
-        if (event.nodeId !== undefined && watchedNode(event.nodeId) && !agentRows.has(event.nodeId)) {
-          // Human-driven resume (no rail presence) — close its tree node only.
-          if (ownTreeId !== undefined) {
-            store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, filesDetail, now))
-          }
-          return
-        }
-        if (event.nodeId !== undefined && agentRows.has(event.nodeId)) {
-          // Close the row in the grouped block. The summary — the run's actual
-          // return value, what the parent model received — lands on the row's
-          // sub-line (truncated; ↵ on the node shows the full session), and a
-          // failure shows as a ✗ glyph on the row + in the fleet tree. We do NOT
-          // push a red block here: a specialist failing is the lead's concern,
-          // not chat noise (only the top-level lead's outcome surfaces, above).
-          touchAgentRow(event.nodeId, ({ currentTool: _t, ...r }) => ({
-            ...r,
-            status: event.ok ? "ok" : "error",
-            ...(event.summary.trim().length > 0 ? { summary: event.summary.trim() } : {}),
-            ...(event.usage !== undefined && r.tokens === 0
-              ? { tokens: event.usage.inputTokens + event.usage.outputTokens }
-              : {}),
-          }))
-          if (ownTreeId !== undefined) {
-            store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, filesDetail, now))
-          }
-          return
-        }
-        const endSid = subAgentScrollId.get(event.name)
-        if (endSid !== undefined) {
-          const pillDetail = joinDetail(
-            filesDetail,
-            event.usage !== undefined
-              ? `${formatTokens(event.usage.inputTokens)} ctx · ${formatTokens(event.usage.outputTokens)} out`
-              : undefined,
-          )
-          store.updateTool(endSid, {
-            state: event.ok ? "ok" : "error",
-            ...(pillDetail !== undefined ? { detail: pillDetail } : {}),
-          })
-          subAgentScrollId.delete(event.name)
-        }
-        if (event.summary.trim().length > 0) {
-          store.pushBlock(
-            event.ok
-              ? { kind: "assistant", text: event.summary }
-              : { kind: "error", text: `${event.name}: ${event.summary}` },
-          )
-        }
+        // A sub-agent surfaces ONLY in the fleet (the tree + the navigator + its
+        // own live log) — never on the root rail. A top-level lead's result is
+        // reported by the orchestrator IN ITS OWN VOICE (the `onTopLevelDone`
+        // auto-resume folds its inbox and streams normal assistant prose); a
+        // specialist's outcome is the lead's concern (✓/✗ in the tree). So here
+        // we only close the tree node — no rail block, no Task pill.
         const nodeDetail = joinDetail(
           filesDetail,
           event.usage !== undefined ? `${formatTokens(event.usage.inputTokens)} ctx` : undefined,
@@ -446,12 +341,8 @@ export const makeEventReducer = (
         // ambient depth counter would wrongly swallow the root's own narration
         // mid-fleet and then make it "pop" all at once on the next resync.
         if (event.nodeId !== undefined) {
-          if (event.nodeId !== undefined && event.usage !== undefined) {
+          if (event.usage !== undefined) {
             const u = event.usage
-            touchAgentRow(event.nodeId, (r) => ({
-              ...r,
-              tokens: r.tokens + u.inputTokens + u.outputTokens,
-            }))
             // Sub-agents run on MAIN (delegation changes the context, not the
             // brain) — their spend lands on main's ledger. Node-local usage
             // still stays off the conversation gauge.
