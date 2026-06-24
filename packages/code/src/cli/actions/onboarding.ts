@@ -19,6 +19,7 @@ import { dirForScope, resolveConfigRoots } from "@xandreed/sdk-adapters"
 import {
   onboardingToLogin,
   onboardingToMainModel,
+  onboardingToCodeModel,
   onboardingToFastModel,
   onboardingToTheme,
   onboardingToDatabase,
@@ -106,6 +107,27 @@ const transitionToFastModel = (store: TuiStore, state: OnboardingState) =>
       store.setOverlay({
         kind: "onboarding",
         state: onboardingToFastModel(state, models, settings.fastModel),
+      })
+    })
+  })
+
+const transitionToCodeModel = (store: TuiStore, state: OnboardingState) =>
+  Effect.gen(function* () {
+    const registry = yield* ModelRegistry
+    yield* Effect.sync(() => store.toast("fetching models…"))
+    const models = yield* registry.list.pipe(
+      Effect.catchAll((e) =>
+        Effect.sync(() => {
+          store.pushBlock({ kind: "error", text: `failed to list ${e.provider} models: ${e.message}` })
+          return [] as ReadonlyArray<ModelInfo>
+        }),
+      ),
+    )
+    const settings = yield* (yield* SettingsStore).get()
+    yield* Effect.sync(() => {
+      store.setOverlay({
+        kind: "onboarding",
+        state: onboardingToCodeModel(state, models, settings.codeModel),
       })
     })
   })
@@ -225,11 +247,26 @@ export const advanceOnboardingStep = (store: TuiStore, state: OnboardingState) =
         if (selected !== undefined) {
           yield* applyModelSelection(store, selected, onbScope(store))
         }
+        yield* transitionToCodeModel(store, state)
+        break
+      }
+      case "codeModel": {
+        const selected = selectedValue(state.sel) // ModelInfo | null (null = follow general)
+        const settingsStore = yield* SettingsStore
+        yield* settingsStore.update((curr) => {
+          if (selected === null || selected === undefined) {
+            const { codeModel: _drop, ...rest } = curr
+            return rest
+          }
+          return { ...curr, codeModel: `${selected.provider}:${selected.modelId}` }
+        }, onbScope(store))
+        const nextSettings = yield* settingsStore.get()
+        yield* Effect.sync(() => store.setStatus({ roles: rolesReadout(nextSettings) }))
         yield* transitionToFastModel(store, state)
         break
       }
       case "fastModel": {
-        const selected = selectedValue(state.sel) // ModelInfo | null
+        const selected = selectedValue(state.sel) // ModelInfo | null (null = follow general)
         const settingsStore = yield* SettingsStore
         yield* settingsStore.update((curr) => {
           if (selected === null || selected === undefined) {
@@ -383,8 +420,11 @@ export const onboardingBack = (store: TuiStore, state: OnboardingState) =>
         // Back to the login step (step 2), not the scope picker.
         yield* transitionToLogin(store, state)
         break
-      case "fastModel":
+      case "codeModel":
         yield* transitionToMainModel(store, state)
+        break
+      case "fastModel":
+        yield* transitionToCodeModel(store, state)
         break
       case "theme":
         yield* transitionToFastModel(store, state)
