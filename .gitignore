@@ -6,6 +6,13 @@ coverage/
 *.log
 *.tsbuildinfo
 
+# This is a Bun workspace — bun.lock is the only lockfile. Keep foreign
+# package-manager lockfiles out so a stray `pnpm install` / `npm install`
+# can't commit one.
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
 .env
 .env.local
 .env.*.local
