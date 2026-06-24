@@ -343,11 +343,12 @@ export const makeEventReducer = (
         if (event.nodeId !== undefined) {
           if (event.usage !== undefined) {
             const u = event.usage
-            // Sub-agents run on MAIN (delegation changes the context, not the
-            // brain) — their spend lands on main's ledger. Node-local usage
-            // still stays off the conversation gauge.
+            // A sub-agent's spend lands on the role it runs as (general | code),
+            // carried on the event by the inner hooks; absent ⇒ general. Node-
+            // local usage still stays off the conversation gauge.
+            const role = event.subAgentRole ?? "general"
             store.setStats((s) =>
-              accumulateRoleSpend(s, "main", u.inputTokens + u.outputTokens),
+              accumulateRoleSpend(s, role, u.inputTokens + u.outputTokens),
             )
           }
           // Always stream the narration into the node's live log (its pane reads

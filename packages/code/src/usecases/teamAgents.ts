@@ -1,4 +1,4 @@
-import type { AgentDefinition } from "@xandreed/sdk-core"
+import type { AgentDefinition, AgentModelRole } from "@xandreed/sdk-core"
 
 /**
  * The built-in **coding team** — a coordinator-led fleet the generic root hands
@@ -56,9 +56,11 @@ const specialist = (
   name: string,
   description: string,
   body: string,
+  role: AgentModelRole = "code",
 ): AgentDefinition => ({
   name,
   description,
+  role,
   tools: [...CODING_TOOLS, ...COMMS_TOOLS],
   body,
   sourcePath: "<builtin>",
@@ -77,6 +79,8 @@ export const COORDINATOR_AGENT: AgentDefinition = {
   name: "coordinator",
   description:
     "Leads a coding team: plans the work, assembles the right specialists, coordinates them, validates with the architect, and delivers",
+  // Orchestration / planning is general-purpose work — not code-writing.
+  role: "general",
   tools: [
     "read_file",
     "grep",
@@ -99,7 +103,7 @@ Protocol:
    - product — when the requirements or acceptance criteria are unclear and need pinning down first.
    - architect — the read-only reviewer (always use it to validate before you deliver).
    - implementer — a generic coder when no specialty fits.
-   Hand each piece to a teammate: run_agent({ agent: "<role>", folder, task }). Put everything they need in 'task' — they start fresh. This returns IMMEDIATELY with a nodeId; the teammate works in the background. Spawn independent pieces (different folders) together in one turn so they run in parallel; spawn coupled pieces in dependency order. blackboard_post who owns what so parallel teammates don't collide.
+   Hand each piece to a teammate: run_agent({ agent: "<role>", folder, task }). You are their ONLY bridge to context: a teammate sees only the 'task' you write, its folder + SCOPE.md, and the project knowledge — NOT the user's request, your plan, or what other teammates found. So brief each one fully in 'task': the OBJECTIVE, the CONTEXT it needs (constraints + any decisions/findings already made — paste them), what to OUTPUT, and what's out of scope. A one-line task gets vague or duplicated work. This returns IMMEDIATELY with a nodeId; the teammate works in the background. Spawn independent pieces (different folders) together in one turn so they run in parallel; spawn coupled pieces in dependency order. blackboard_post who owns what so parallel teammates don't collide.
    When the work needs a specialist no listed role covers (a one-off auditor, a migration scribe, a perf profiler), define it INLINE instead of forcing a poor-fit role: run_agent({ folder, task, instructions: "<the persona + how to approach it>", tools?: ["read_file","grep",...] }). Give it a read-only 'tools' allowlist when it shouldn't write. Prefer a named role when one fits — inline is for the gap.
 3. COORDINATE & GATHER. After spawning, call wait_for_agents to collect progress. **It returns on the FIRST change — one teammate finishing, OR a message to you, OR the timeout — NOT when the whole team is done.** So you MUST LOOP it: call it again and again until the result's \`allDone\` field is \`true\`. **Do NOT move on to validate or deliver while any teammate's status is still "running" — one piece landing, or an inbox message, is not the whole team.** Each time it returns with allDone:false, react if useful (answer an "[inbox …]" message, send_message a teammate to steer/unblock, spawn a fix) and then call wait_for_agents AGAIN. You stay reachable throughout; never make one teammate sit idle waiting on another — let them reconcile on the blackboard.
 4. VALIDATE. Before you accept a piece, have the architect review it in a fresh context: run_agent({ agent: "architect", folder, task: "<what changed + what to check>" }), then wait_for_agents for its verdict. On NEEDS WORK / BLOCKED, send the implementer the findings (resume it or spawn a fix) and re-validate. Never sign off on your team's work without the architect.
@@ -117,6 +121,8 @@ export const ARCHITECT_AGENT: AgentDefinition = {
   name: "architect",
   description:
     "Read-only reviewer in a fresh context: judges whether a change is sound, complete, and fits the codebase",
+  // Reviewing/judging code is reasoning work — runs on the general model.
+  role: "general",
   tools: [...READONLY_TOOLS],
   body: `You are the ARCHITECT — a read-only reviewer running in a fresh context. You did NOT write this code; your only job is to judge whether the change is sound.
 
@@ -192,6 +198,8 @@ export const PRODUCT_AGENT: AgentDefinition = specialist(
 - Produce a short, concrete spec: the user-facing behaviour, the acceptance criteria, the edge cases, and what's explicitly out of scope. blackboard_post the key decisions so the whole team builds to the same target.
 - Flag ambiguities and risks early; if a decision needs the human, say so plainly in your summary.
 - Keep it tight and actionable — the coordinator and implementers act on it. Return a one-line summary of the decisions.`,
+  // Requirements / spec work is general-purpose, not code-writing.
+  "general",
 )
 
 /** The built-in coding team, merged into the loaded roles by `withBuiltinAgents`. */

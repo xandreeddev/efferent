@@ -74,10 +74,13 @@ const agentSearchPath = (cwd: string, homeDir: string): ReadonlyArray<string> =>
 }
 
 /**
- * Parse one agent `.md`. Required: `name`, `description`. Optional: `model`
- * (verbatim `"<provider>:<modelId>"`) and `tools` (a comma/space-separated
- * allowlist — the flat parser has no array support, so we split the value).
- * Returns `undefined` when the fence is missing or required keys are absent.
+ * Parse one agent `.md`. Required: `name`, `description`. Optional: `role`
+ * (`general` | `code` — the model TIER; any other value is ignored, defaulting
+ * to general) and `tools` (a comma/space-separated allowlist — the flat parser
+ * has no array support, so we split the value). A `model:` field is
+ * intentionally NOT read — a definition picks a role, never a specific model, so
+ * the human owns which models back each role. Returns `undefined` when the fence
+ * is missing or required keys are absent.
  *
  * Exported so the git-import path can validate a downloaded file before
  * writing it to disk.
@@ -91,7 +94,8 @@ export const parseAgentFile = (
   const name = fm.fields["name"]
   const description = fm.fields["description"]
   if (name === undefined || description === undefined) return undefined
-  const model = fm.fields["model"]
+  const roleRaw = fm.fields["role"]?.trim().toLowerCase()
+  const role = roleRaw === "general" || roleRaw === "code" ? roleRaw : undefined
   const toolsRaw = fm.fields["tools"]
   const tools =
     toolsRaw !== undefined
@@ -100,7 +104,7 @@ export const parseAgentFile = (
   return {
     name,
     description,
-    ...(model !== undefined && model.length > 0 ? { model } : {}),
+    ...(role !== undefined ? { role } : {}),
     ...(tools !== undefined && tools.length > 0 ? { tools } : {}),
     body: fm.body,
     sourcePath,

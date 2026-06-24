@@ -39,7 +39,7 @@ export const makeStubCtx = (opts: {
         totalTokens: 152_000,
         cacheReadTokens: 96_000,
         turns: 3,
-        byRole: { ...emptyStats.byRole, main: 152_000, fast: 1_200 },
+        byRole: { ...emptyStats.byRole, general: 152_000, code: 40_000, fast: 1_200 },
       },
     },
   })

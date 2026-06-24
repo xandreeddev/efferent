@@ -45,13 +45,16 @@ describe("role model configuration", () => {
     contextWindow: 1_000_000,
   }
 
-  test(":set fastModel persists and flips the status roles chip", async () => {
+  test(":set fastModel persists and flips the status roles readout", async () => {
     const store = newStore()
     const { ref, layer } = stubSettings()
     await run(applySetting(store, "fastModel", "google:gemini-3.5-flash"), layer)
     const s = await Effect.runPromise(Ref.get(ref))
     expect(s.fastModel).toBe("google:gemini-3.5-flash")
-    expect(store.status().roles).toBe("fast gemini-3.5-flash")
+    expect(store.status().roles?.find((r) => r.role === "fast")).toMatchObject({
+      modelId: "gemini-3.5-flash",
+      configured: true,
+    })
   })
 
   test("a bad role value is rejected with the usage hint", async () => {
@@ -74,14 +77,29 @@ describe("role model configuration", () => {
     expect(err).toBeDefined()
   })
 
-  test("the role picker's submit persists (and null = follow main again)", async () => {
+  test("the role picker's submit persists (and null = follow general again)", async () => {
     const store = newStore()
     const { ref, layer } = stubSettings()
     await run(applyRoleModelSelection(store, "fast", flash), layer)
     expect((await Effect.runPromise(Ref.get(ref))).fastModel).toBe("google:gemini-3.5-flash")
-    expect(store.status().roles).toBe("fast gemini-3.5-flash")
+    expect(store.status().roles?.find((r) => r.role === "fast")).toMatchObject({
+      modelId: "gemini-3.5-flash",
+      configured: true,
+    })
     await run(applyRoleModelSelection(store, "fast", null), layer)
     expect((await Effect.runPromise(Ref.get(ref))).fastModel).toBeUndefined()
-    expect(store.status().roles).toBeUndefined()
+    // cleared → fast follows general again (configured: false)
+    expect(store.status().roles?.find((r) => r.role === "fast")?.configured).toBe(false)
+  })
+
+  test("the code role picker persists to codeModel", async () => {
+    const store = newStore()
+    const { ref, layer } = stubSettings()
+    await run(applyRoleModelSelection(store, "code", flash), layer)
+    expect((await Effect.runPromise(Ref.get(ref))).codeModel).toBe("google:gemini-3.5-flash")
+    expect(store.status().roles?.find((r) => r.role === "code")).toMatchObject({
+      modelId: "gemini-3.5-flash",
+      configured: true,
+    })
   })
 })

@@ -94,18 +94,25 @@ describe("catalogModelsForProvider — offline picker fallback", () => {
   })
 })
 
-describe("model roles (main / fast)", () => {
+describe("model roles (general / code / fast)", () => {
   const base = { model: "google:gemini-3.5-pro" }
-  it("main is always the chat selection", () => {
-    expect(modelForRole(base, "main")).toBe("google:gemini-3.5-pro")
-    expect(roleIsConfigured(base, "main")).toBe(true)
+  it("general is always the chat selection", () => {
+    expect(modelForRole(base, "general")).toBe("google:gemini-3.5-pro")
+    expect(roleIsConfigured(base, "general")).toBe(true)
   })
-  it("fast falls back to main; explicit wins", () => {
+  it("fast falls back to general; explicit wins", () => {
     expect(modelForRole(base, "fast")).toBe("google:gemini-3.5-pro")
     expect(roleIsConfigured(base, "fast")).toBe(false)
     const set = { ...base, fastModel: "google:gemini-3.5-flash" }
     expect(modelForRole(set, "fast")).toBe("google:gemini-3.5-flash")
     expect(roleIsConfigured(set, "fast")).toBe(true)
+  })
+  it("code falls back to general; explicit wins", () => {
+    expect(modelForRole(base, "code")).toBe("google:gemini-3.5-pro")
+    expect(roleIsConfigured(base, "code")).toBe(false)
+    const set = { ...base, codeModel: "anthropic:claude-sonnet-4-5" }
+    expect(modelForRole(set, "code")).toBe("anthropic:claude-sonnet-4-5")
+    expect(roleIsConfigured(set, "code")).toBe(true)
   })
   it("selectionFromString parses + resolves the context window", () => {
     const sel = selectionFromString("openai:gpt-4o")

@@ -9,9 +9,11 @@ import {
   LlmInfo,
   llmSpanName,
   ModelRegistry,
+  modelForRole,
   recordError,
   recordLlmCall,
   responseText,
+  roleIsConfigured,
   RunContextRef,
   selectionFromString,
   SettingsStore,
@@ -75,15 +77,24 @@ export const RouterLanguageModelLive = Layer.effect(
     const settingsStore = yield* SettingsStore
     const http = yield* HttpClient.HttpClient
 
-    // The selection for THIS call: a per-fiber `RunContext.modelOverride` (set
-    // by an agent role that pins a model) wins over the global session model.
-    // Pure parse — no settings write — so the override never leaks past the
-    // fiber that set it, and the status bar (`LlmInfoLive`) keeps showing the
-    // session model. Helper tiers don't read this, so the override is main-only.
+    // The selection for THIS call is decided ENTIRELY by the fiber's role —
+    // never by anything the running model emitted (there is no per-agent model
+    // channel). The top-level run is `general`; a spawned sub-agent is `general`
+    // or `code` (its spawned role). The run pins all roles at start
+    // (`RunContext.pinnedModels`), so the router resolves this fiber's role to
+    // its pinned selection and a mid-run `/model` / `:set` can't move a running
+    // fleet — which also keeps each provider's prompt-cache prefix warm. With no
+    // pin (a helper outside a run), fall back to settings → live. Pure parse — no
+    // settings write — so the status bar (`LlmInfoLive`) keeps showing the model.
     const currentSelection = Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
-      return rc.modelOverride !== undefined
-        ? selectionFromString(rc.modelOverride)
+      const role = rc.modelRole ?? "general"
+      const pinned = rc.pinnedModels?.[role]
+      if (pinned !== undefined) return selectionFromString(pinned)
+      if (role === "general") return yield* registry.current
+      const settings = yield* settingsStore.get()
+      return roleIsConfigured(settings, role)
+        ? selectionFromString(modelForRole(settings, role))
         : yield* registry.current
     })
 
@@ -172,7 +183,7 @@ export const RouterLanguageModelLive = Layer.effect(
           ...agentSpanAttributes("llm", rc.rootConversationId),
           "gen_ai.request.model": sel.modelId,
           "gen_ai.system": sel.provider,
-          "gen_ai.role": "main",
+          "gen_ai.role": rc.modelRole ?? "general",
           "gen_ai.operation.name": "generate",
           ...(rc.prompt !== undefined
             ? {

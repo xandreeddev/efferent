@@ -19,7 +19,7 @@ export type EffortSettingKey =
  * one branch in `submitSelect`; the open/move/filter/close plumbing is shared.
  */
 export type SelectPurpose =
-  | { readonly tag: "model"; readonly role?: "fast" }
+  | { readonly tag: "model"; readonly role?: "fast" | "code" }
   | { readonly tag: "effort"; readonly key: EffortSettingKey }
   | { readonly tag: "search" }
   | { readonly tag: "theme" }

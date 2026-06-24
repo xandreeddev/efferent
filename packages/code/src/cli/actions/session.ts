@@ -140,8 +140,8 @@ const statsFrom = (
     totalTokens: cumulativeTotal,
     turns,
     // Persisted usage covers only the root loop — a rebuilt ledger is all
-    // MAIN (sub-agent/utility spend lives on nodes, not these messages).
-    byRole: { ...emptyRoleSpend, main: cumulativeTotal },
+    // GENERAL (sub-agent/utility spend lives on nodes, not these messages).
+    byRole: { ...emptyRoleSpend, general: cumulativeTotal },
     ...(estimate !== undefined ? { estimated: true } : {}),
   }
 }

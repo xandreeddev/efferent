@@ -17,6 +17,7 @@ import {
 import {
   applyInlineDefinition,
   buildScopeRuntime,
+  missionPreamble,
   roleToolEntries,
   agentWrites,
 } from "./buildScopeRuntime.js"
@@ -130,13 +131,17 @@ describe("agentWrites — only writers take the folder lock (deadlock fix)", () 
 })
 
 describe("applyInlineDefinition — the coordinator defines a sub-agent inline", () => {
-  const role = (body: string, tools?: ReadonlyArray<string>, model?: string) => ({
+  const role = (
+    body: string,
+    tools?: ReadonlyArray<string>,
+    modelRole?: "general" | "code",
+  ) => ({
     name: "backend",
     description: "backend specialist",
     body,
     sourcePath: "/x.md",
     ...(tools !== undefined ? { tools } : {}),
-    ...(model !== undefined ? { model } : {}),
+    ...(modelRole !== undefined ? { role: modelRole } : {}),
   })
 
   test("all inline fields absent → returns base UNCHANGED (named-role + generic paths untouched)", () => {
@@ -172,19 +177,42 @@ describe("applyInlineDefinition — the coordinator defines a sub-agent inline",
     expect(d.tools).toEqual(["read_file"]) // no inline tools → inherit the role's
   })
 
-  test("inline tools/model OVERRIDE the role's; absent → inherit", () => {
-    const base = role("B", ["read_file"], "google:gemini-3.5-flash")
-    const overridden = applyInlineDefinition(base, { instructions: "x", tools: ["grep"], model: "anthropic:claude-opus-4-8" })!
+  test("inline tools/role OVERRIDE the base's; absent → inherit", () => {
+    const base = role("B", ["read_file"], "general")
+    const overridden = applyInlineDefinition(base, { instructions: "x", tools: ["grep"], role: "code" })!
     expect(overridden.tools).toEqual(["grep"])
-    expect(overridden.model).toBe("anthropic:claude-opus-4-8")
+    expect(overridden.role).toBe("code")
     const inherited = applyInlineDefinition(base, { instructions: "x" })!
     expect(inherited.tools).toEqual(["read_file"])
-    expect(inherited.model).toBe("google:gemini-3.5-flash")
+    expect(inherited.role).toBe("general")
+  })
+
+  test("a role-only inline override (no instructions/tools) still re-tiers the base", () => {
+    const base = role("B", ["read_file"], "general")
+    const retiered = applyInlineDefinition(base, { role: "code" })!
+    expect(retiered.role).toBe("code")
+    expect(retiered.body).toBe("B")
   })
 
   test("blank/whitespace inline fields are treated as absent", () => {
     const base = role("B")
-    expect(applyInlineDefinition(base, { instructions: "   ", tools: [], model: " " })).toBe(base)
+    expect(applyInlineDefinition(base, { instructions: "   ", tools: [] })).toBe(base)
+  })
+})
+
+describe("missionPreamble (context-loss backstop on spawn)", () => {
+  test("empty without a mission", () => {
+    expect(missionPreamble(undefined)).toEqual([])
+    expect(missionPreamble("   ")).toEqual([])
+  })
+  test("one stable user note carrying the human's request", () => {
+    const out = missionPreamble("Ship the dark-mode toggle")
+    expect(out).toHaveLength(1)
+    expect(out[0]?.role).toBe("user")
+    const content = String(out[0]?.content)
+    expect(content).toContain("Ship the dark-mode toggle")
+    // It frames the mission as context, not as the agent's own task.
+    expect(content.toLowerCase()).toContain("mission")
   })
 })
 

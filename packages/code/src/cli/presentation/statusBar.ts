@@ -1,4 +1,4 @@
-import { parseModel } from "@xandreed/sdk-core"
+import { type ModelRole, parseModel } from "@xandreed/sdk-core"
 import { glyph } from "./theme/index.js"
 
 /**
@@ -13,24 +13,46 @@ export interface StatusState {
   readonly cwd: string
   /** Active conversation store, e.g. "sqlite" or "pg". Shown before cwd. */
   readonly storage: string
-  /** Optional thinking/reasoning effort level shown next to the model. */
+  /** Optional thinking/reasoning effort level shown next to the general model. */
   readonly effort?: string | undefined
-  /** Configured non-main roles with their ids, e.g. "fast gemini-3.1-flash-lite" — dim next to the model. */
-  readonly roles?: string | undefined
+  /** The three model roles (general · code · fast) with their resolved model ids,
+   *  shown on the status bar's second row with the active one highlighted. */
+  readonly roles?: ReadonlyArray<RoleEntry> | undefined
+}
+
+/** One model role's readout for the status bar's roles row. */
+export interface RoleEntry {
+  readonly role: ModelRole
+  /** The resolved model id (no provider prefix, for width); follows general when unconfigured. */
+  readonly modelId: string
+  /** False when the role is unconfigured and therefore follows the general model. */
+  readonly configured: boolean
 }
 
 /**
- * The status bar's roles readout: the explicitly configured fast helper role
- * with its model id (e.g. `"fast gemini-3.1-flash-lite"`), undefined when
- * everything rides on main. Ids only (no provider prefix) for width — the
- * full selection lives in `:settings`.
+ * The status bar's **roles readout** — all three roles (general · code · fast)
+ * with their resolved model ids, in display order. `code`/`fast` show the
+ * general model id (dimmed via `configured: false`) when they aren't explicitly
+ * set. Ids only (no provider prefix) for width; the full selection lives in
+ * `:settings`. The bar marks the active role and dims the followers.
  */
-export const rolesChip = (settings: {
+export const rolesReadout = (settings: {
+  readonly model: string
+  readonly codeModel?: string | undefined
   readonly fastModel?: string | undefined
-}): string | undefined => {
-  if (settings.fastModel === undefined) return undefined
-  return `fast ${parseModel(settings.fastModel).modelId}`
-}
+}): ReadonlyArray<RoleEntry> => [
+  { role: "general", modelId: parseModel(settings.model).modelId, configured: true },
+  {
+    role: "code",
+    modelId: parseModel(settings.codeModel ?? settings.model).modelId,
+    configured: settings.codeModel !== undefined,
+  },
+  {
+    role: "fast",
+    modelId: parseModel(settings.fastModel ?? settings.model).modelId,
+    configured: settings.fastModel !== undefined,
+  },
+]
 
 /**
  * The status bar's **left zone** — one contextual hint, agy-style (the right

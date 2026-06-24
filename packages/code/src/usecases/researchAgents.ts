@@ -53,6 +53,7 @@ export const RESEARCH_COORDINATOR_AGENT: AgentDefinition = {
   name: "research-coordinator",
   description:
     "Leads a deep-research task: breaks the question into angles, fans out web-research sub-agents, synthesizes a sourced answer, and reports back",
+  role: "general",
   tools: [
     "read_file",
     "grep",
@@ -85,6 +86,7 @@ export const RESEARCHER_AGENT: AgentDefinition = {
   name: "researcher",
   description:
     "Leaf research agent: investigates one angle of a question via web search/fetch (and the workspace when relevant) and returns findings with sources",
+  role: "general",
   tools: [...RESEARCH_TOOLS, ...COMMS_TOOLS],
   body: `You are a RESEARCHER on a research team. Investigate exactly the one angle the research-coordinator gave you — don't widen the scope to the whole question, and don't write any files.
 
