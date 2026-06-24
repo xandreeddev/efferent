@@ -46,7 +46,6 @@ import {
   type ScopeBinding,
 } from "./codingToolkit.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
-import { makeFolderLocks, withFolderLock, type FolderLocks } from "./folderLock.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
 import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
 import { addJob, loadJobs, parseCron, removeJob, type ScheduledJob } from "./schedule.js"
@@ -557,19 +556,6 @@ export const roleToolEntries = (
 }
 
 /**
- * Whether a spawned agent can WRITE — it has `write_file`/`edit_file` in its
- * effective toolkit. A role with no allowlist gets the full coding tools (which
- * include writes); a role allowlist that names neither write tool is read-only
- * (a coordinator, researcher, architect). Drives the folder lock: only writers
- * serialize on a folder, so a read-only parent never holds the lock its
- * same-folder children need (the `wait_for_agents` deadlock — see `runSpawnedAgent`).
- */
-export const agentWrites = (def: AgentDefinition | undefined): boolean => {
-  if (def?.tools === undefined) return true
-  return def.tools.some((t) => t === "write_file" || t === "edit_file")
-}
-
-/**
  * Resolve a requested role name against the loaded definitions. Absent/blank ⇒
  * no role (generic spawn). A named-but-unknown agent fails with a model-facing
  * `UnknownAgent` (it lists what's available) rather than silently degrading —
@@ -619,10 +605,9 @@ export const missionPreamble = (mission: string | undefined): ReadonlyArray<Agen
  * returns `base` unchanged (the named-role and generic-coder paths are
  * untouched). Otherwise it produces an ad-hoc `AgentDefinition` fed into the
  * SAME `definition` slot a predefined role uses, so `renderScopeSystemPrompt`'s
- * body, {@link roleToolEntries}' allowlist, {@link agentWrites}, and the model
- * `role` all reuse the existing flow verbatim. A specific MODEL is deliberately
- * NOT configurable — only the role TIER (general | code), which maps to a model
- * the human configured.
+ * body, {@link roleToolEntries}' allowlist, and the model `role` all reuse the
+ * existing flow verbatim. A specific MODEL is deliberately NOT configurable —
+ * only the role TIER (general | code), which maps to a model the human configured.
  *
  * Rule: the inline `instructions` are APPENDED to the role body (role leads,
  * refinement follows — mirrors how `scopeBody` is appended); `tools`/`role` are
@@ -769,7 +754,6 @@ const makeInnerHooks = <R>(
 interface RunSpawnedArgs<R> {
   readonly store: ContextTreeStore["Type"]
   readonly shell: Shell["Type"]
-  readonly locks: FolderLocks
   readonly bus: AgentBus
   readonly displayRoot: string
   readonly opts: BuildScopeRuntimeOptions
@@ -811,15 +795,7 @@ interface RunSpawnedArgs<R> {
  * its lifecycle with the one before it.
  */
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
-  // The folder lock is a WRITE-WRITE mutex — two agents WRITING the same folder
-  // would race. A read-only agent (a coordinator, researcher, or architect: no
-  // write_file/edit_file in its role allowlist) neither races nor needs it, and
-  // MUST NOT hold it: a read-only coordinator that took the lock and then parked
-  // in `wait_for_agents` for its same-folder children would deadlock — the
-  // children block forever on the lock the parent holds while it waits on them.
-  // So only writers serialize on the folder; read-only fan-out runs in parallel.
   const definition = args.definition
-  const writes = agentWrites(definition)
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = args.title ?? (basename(folder) || folder)
@@ -899,7 +875,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     // subset toolkit (what the model sees) AND a matching handler subset (from
     // the same full handler record), so the two never disagree. No role ⇒ the
     // full generic toolkit (base tools + run_agent).
-    const handlers = buildGenericHandlers(binding, opts, hooks, args.locks, args.bus)
+    const handlers = buildGenericHandlers(binding, opts, hooks, args.bus)
     const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
     const useToolkit =
       roleEntries !== undefined
@@ -1064,10 +1040,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     }
     return yield* Effect.fail(f)
   })
-  // Writers serialize on the folder; read-only runs don't take the lock (above).
-  // markDone always runs (tears the mailbox down on every exit), lock or not.
-  const run = writes ? withFolderLock(args.locks, args.folder)(body) : body
-  return run.pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
+  // No folder lock: writers are sequenced at the ORCHESTRATOR (it spawns coders
+  // one at a time and waits between them — read-only research/review fans out in
+  // parallel). A lock here held for the whole run was invisible + unrecoverable
+  // (a hung agent stranded its same-folder siblings); sequencing lives where it's
+  // observable (wait_for_agents timeouts). markDone tears the mailbox down on exit.
+  return body.pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
 }
 
 /** The model's `run_agent` result: the work happens in the background, so the
@@ -1087,7 +1065,6 @@ const makeRunAgentHandler =
   <R>(
     store: ContextTreeStore["Type"],
     shell: Shell["Type"],
-    locks: FolderLocks,
     bus: AgentBus,
     displayRoot: string,
     opts: BuildScopeRuntimeOptions,
@@ -1181,7 +1158,7 @@ const makeRunAgentHandler =
           yield* store.append(nodeId, { role: "user", content: taskMsg })
           const seedMessages = yield* store.listMessages(nodeId)
           return yield* launch({
-            store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
+            store, shell, bus, displayRoot, opts, hooks, nodeId, folder: node.folder, task, seedMessages,
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
@@ -1221,7 +1198,7 @@ const makeRunAgentHandler =
           seedMessages,
         })
         return yield* launch({
-          store, shell, locks, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
+          store, shell, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
@@ -1251,7 +1228,7 @@ const makeRunAgentHandler =
         seedMessages,
       })
       return yield* launch({
-        store, shell, locks, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
+        store, shell, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
@@ -1275,7 +1252,6 @@ const buildGenericHandlers = <R>(
   binding: ScopeBinding,
   opts: BuildScopeRuntimeOptions,
   hooks: AgentHooks<R> | undefined,
-  locks: FolderLocks,
   bus: AgentBus,
 ) =>
   Effect.gen(function* () {
@@ -1285,7 +1261,7 @@ const buildGenericHandlers = <R>(
     const http = yield* Http
     const fs = yield* FileSystem
     const approval = yield* Approval
-    const run_agent = makeRunAgentHandler(store, shell, locks, bus, binding.displayRoot, opts, hooks)
+    const run_agent = makeRunAgentHandler(store, shell, bus, binding.displayRoot, opts, hooks)
 
     // Cron as a tool: the orchestrator schedules its own follow-up / recurring
     // work. Validates the expression, writes the job to the shared cron list
@@ -1528,15 +1504,12 @@ export const buildScopeRuntime = <R = never>(
     enforceWrite: scope.enforceWrite,
     allowBash: opts.allowBash ?? true,
   }
-  // One locks map per runtime: parallel spawns into the SAME folder serialize
-  // even across subtrees (cousins included); disjoint folders fan out freely.
-  const locks = makeFolderLocks()
   // One comms bus per runtime: per-agent mailboxes + a shared blackboard, drawn
   // on by send_message / blackboard_* and drained into each agent's context.
   // The daemon's `onBusEvent` sink mirrors messages onto the event ledger.
   const bus = makeAgentBus(opts.onBusEvent)
   const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks, locks, bus),
+    buildGenericHandlers(binding, opts, hooks, bus),
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
@@ -1560,7 +1533,6 @@ export const buildScopeRuntime = <R = never>(
       return yield* runSpawnedAgent({
         store,
         shell,
-        locks,
         bus,
         displayRoot: binding.displayRoot,
         opts,
@@ -1619,7 +1591,6 @@ export const buildScopeRuntime = <R = never>(
       return yield* runSpawnedAgent({
         store,
         shell,
-        locks,
         bus,
         displayRoot: binding.displayRoot,
         opts,
