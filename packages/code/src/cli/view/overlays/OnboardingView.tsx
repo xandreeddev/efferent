@@ -267,7 +267,7 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
                     : "Welcome to the Efferent CLI. You are currently not signed in."}
                 </text>
                 <text fg={tokens.text.muted} wrapMode="word" marginBottom={1}>
-                  {"We'll set up a provider, your main + fast models, a theme, and where conversations are stored — once."}
+                  {"We'll set up a provider, your general / coding / fast models, a theme, and where conversations are stored — once."}
                 </text>
                 <SelectStep title={sel.title} state={sel} canBack={false} />
               </box>
@@ -276,12 +276,19 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
         </Show>
 
         <Show when={s().step === "login"}>
-          <OnboardingLoginView flow={loginFlowState()} stepLabel="Step 2 of 6" />
+          <OnboardingLoginView flow={loginFlowState()} stepLabel="Step 2 of 7" />
         </Show>
 
         <Show when={s().step === "mainModel"}>
           {(() => {
             const sel = (s() as Extract<OnboardingState, { step: "mainModel" }>).sel
+            return <SelectStep title={sel.title} state={sel} canBack={true} />
+          })()}
+        </Show>
+
+        <Show when={s().step === "codeModel"}>
+          {(() => {
+            const sel = (s() as Extract<OnboardingState, { step: "codeModel" }>).sel
             return <SelectStep title={sel.title} state={sel} canBack={true} />
           })()}
         </Show>
