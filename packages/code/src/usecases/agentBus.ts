@@ -179,8 +179,8 @@ const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0
 const shortKey = (nodeId: string): string => nodeId.slice(0, 8)
 
 /**
- * Synchronous constructor (mirrors `makeFolderLocks`) so `buildScopeRuntime`
- * can build one without being an Effect; the methods are Effects over the Ref.
+ * Synchronous constructor so `buildScopeRuntime` can build one without being an
+ * Effect; the methods are Effects over the Ref.
  */
 export const makeAgentBus = (
   /** Optional sink: every inter-agent message (board post, inbox message,

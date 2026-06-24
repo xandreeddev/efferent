@@ -108,7 +108,7 @@ export const StatusBar = (props: { ctx: TuiContext }) => {
             const isGeneral = () => entry.role === "general"
             return (
               <text fg={color()} wrapMode="none">
-                {`${active() ? `${glyph.idleDot} ` : "  "}${entry.role} ${entry.modelId}${
+                {`${active() ? `${glyph.railDot} ` : "  "}${entry.role} ${entry.modelId}${
                   isGeneral() && s().effort ? ` ${s().effort}` : ""
                 }`}
               </text>

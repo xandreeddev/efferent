@@ -517,6 +517,7 @@ export const overlayKey = (ctx: TuiContext, key: Key): boolean => {
     if (
       state.step === "scope" ||
       state.step === "mainModel" ||
+      state.step === "codeModel" ||
       state.step === "fastModel" ||
       state.step === "theme" ||
       state.step === "database"

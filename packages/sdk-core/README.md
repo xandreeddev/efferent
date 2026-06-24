@@ -12,7 +12,7 @@ This is the inward end of the [ports & adapters](../../README.md) architecture: 
 
 - **`entities/`** — Schema-backed types the loop manipulates: `Conversation` (the `AgentMessage` union, `Checkpoint`), `AgentContext` (context-tree nodes), `Model` (selections, roles, the generated context-window catalogue), `Settings`, `Scope`, `Skill`, `AgentHooks`. Pure values, no IO.
 - **`ports/`** — `Context.Tag` services for everything the domain needs from outside: `ConversationStore`, `ContextTreeStore`, `FileSystem`, `Shell`, `Http`, `WebSearch`, `AuthStore`, `SettingsStore`, `ModelRegistry`, `LlmInfo`, `UtilityLlm`, `Approval`, `AuthFlow`. Each port file pairs its tagged errors with the Tag.
-- **`usecases/`** — Effects over the ports: the agent loop (`runAgent.ts`, `agentLoop.ts`), the coding toolkit (`codingToolkit.ts`), prompt⇄message mapping (`promptMapping.ts`), sub-agent spawning over the context tree (`buildScopeRuntime.ts`, `runContext.ts`, `tokenBudget.ts`, `folderLock.ts`, `staleness.ts`), context management (`handoff.ts`, `compaction.ts`), approval (`autoApproval.ts`), discovery (`loadSkills.ts`, `discoverScopeTree.ts`), and helpers.
+- **`usecases/`** — Effects over the ports: the agent loop (`runAgent.ts`, `agentLoop.ts`), the coding toolkit (`codingToolkit.ts`), prompt⇄message mapping (`promptMapping.ts`), sub-agent spawning over the context tree (`buildScopeRuntime.ts`, `runContext.ts`, `tokenBudget.ts`, `staleness.ts`), context management (`handoff.ts`, `compaction.ts`), approval (`autoApproval.ts`), discovery (`loadSkills.ts`, `discoverScopeTree.ts`), and helpers.
 - **`prompts/`** — system-prompt strings/functions: `coder.ts`, `handoff.ts`, `title.ts`.
 
 ## Rules

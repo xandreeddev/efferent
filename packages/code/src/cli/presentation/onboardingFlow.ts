@@ -25,6 +25,7 @@ export type OnboardingStep =
   | "scope"
   | "login"
   | "mainModel"
+  | "codeModel"
   | "fastModel"
   | "theme"
   | "database"
@@ -53,6 +54,11 @@ export type OnboardingState =
       readonly step: "mainModel"
       readonly statuses: ReadonlyArray<ProviderStatus>
       readonly sel: SelectState<ModelInfo>
+    }
+  | {
+      readonly step: "codeModel"
+      readonly statuses: ReadonlyArray<ProviderStatus>
+      readonly sel: SelectState<ModelInfo | null>
     }
   | {
       readonly step: "fastModel"
@@ -95,7 +101,7 @@ export const startOnboarding = (
 ): OnboardingState => ({
   step: "scope",
   statuses,
-  sel: openSelect<ConfigScope>("Step 1 of 6 · Where should this setup live?", [
+  sel: openSelect<ConfigScope>("Step 1 of 7 · Where should this setup live?", [
     { value: "global", label: "This machine — every project (global)", active: (currentScope ?? "global") === "global" },
     { value: "local", label: "Just this folder (local, gitignored)", active: currentScope === "local" },
   ]),
@@ -121,7 +127,30 @@ export const onboardingToMainModel = (
   return {
     step: "mainModel",
     statuses: state.statuses,
-    sel: openSelect("Step 3 of 6 · Select your main model", options),
+    sel: openSelect("Step 3 of 7 · Select your general model (the agent you talk to)", options),
+  }
+}
+
+/** Step 4: the **coding** model — what the sub-agent fleet runs on when writing
+ *  code. Optional: a leading "default (follow general)" row keeps it on the
+ *  general model. */
+export const onboardingToCodeModel = (
+  state: OnboardingState,
+  models: ReadonlyArray<ModelInfo>,
+  activeCodeModel?: string,
+): OnboardingState => {
+  const options = [
+    { value: null, label: "default (follow general)", active: activeCodeModel === undefined },
+    ...models.map((m) => ({
+      value: m,
+      label: `${m.provider}:${m.modelId}`,
+      active: activeCodeModel !== undefined && `${m.provider}:${m.modelId}` === activeCodeModel,
+    })),
+  ]
+  return {
+    step: "codeModel",
+    statuses: state.statuses,
+    sel: openSelect("Step 4 of 7 · Select your coding model (the sub-agent fleet)", options),
   }
 }
 
@@ -131,7 +160,7 @@ export const onboardingToFastModel = (
   activeFastModel?: string,
 ): OnboardingState => {
   const options = [
-    { value: null, label: "default (follow main)", active: activeFastModel === undefined },
+    { value: null, label: "default (follow general)", active: activeFastModel === undefined },
     ...models.map((m) => ({
       value: m,
       label: `${m.provider}:${m.modelId}`,
@@ -141,7 +170,7 @@ export const onboardingToFastModel = (
   return {
     step: "fastModel",
     statuses: state.statuses,
-    sel: openSelect("Step 4 of 6 · Select your fast (helper) model", options),
+    sel: openSelect("Step 5 of 7 · Select your fast (helper) model", options),
   }
 }
 
@@ -154,7 +183,7 @@ export const onboardingToTheme = (state: OnboardingState, activeTheme: string): 
   return {
     step: "theme",
     statuses: state.statuses,
-    sel: openSelect("Step 5 of 6 · Pick a color theme", options),
+    sel: openSelect("Step 6 of 7 · Pick a color theme", options),
   }
 }
 
@@ -169,7 +198,7 @@ export const onboardingToDatabase = (
 ): OnboardingState => ({
   step: "database",
   statuses: state.statuses,
-  sel: openSelect<DbManagerItem>("Step 6 of 6 · Databases", [
+  sel: openSelect<DbManagerItem>("Step 7 of 7 · Databases", [
     // Configured connections first — the default marked, so the active store is
     // always visible at a glance.
     ...conns.map((c) => ({
@@ -211,8 +240,8 @@ export const databaseAdd = (
     adding,
     connect:
       adding === "remote"
-        ? openPrompt("Step 6 of 6 · Add a remote database", "Paste your postgres:// connection string", true)
-        : openPrompt("Step 6 of 6 · Add a local database", "Database file path", false, defaultLocalPath),
+        ? openPrompt("Step 7 of 7 · Add a remote database", "Paste your postgres:// connection string", true)
+        : openPrompt("Step 7 of 7 · Add a local database", "Database file path", false, defaultLocalPath),
   }
 }
 
@@ -242,8 +271,8 @@ export const databaseEdit = (
   editName: conn.name,
   connect:
     conn.kind === "postgres"
-      ? openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Edit the postgres:// connection string", true, conn.url)
-      : openPrompt(`Step 6 of 6 · Edit ${conn.name}`, "Database file path", false, conn.url),
+      ? openPrompt(`Step 7 of 7 · Edit ${conn.name}`, "Edit the postgres:// connection string", true, conn.url)
+      : openPrompt(`Step 7 of 7 · Edit ${conn.name}`, "Database file path", false, conn.url),
 })
 
 /** Leave the add prompt, back to the manager list (rebuilt from `conns`). */
@@ -261,6 +290,8 @@ export const onboardingMove = (state: OnboardingState, dir: "up" | "down"): Onbo
     case "login":
       return { ...state, flow: loginMove(state.flow, dir) }
     case "mainModel":
+      return { ...state, sel: moveSelect(state.sel, dir) }
+    case "codeModel":
       return { ...state, sel: moveSelect(state.sel, dir) }
     case "fastModel":
       return { ...state, sel: moveSelect(state.sel, dir) }
@@ -282,6 +313,8 @@ export const onboardingAppend = (state: OnboardingState, ch: string): Onboarding
       return { ...state, flow: loginAppend(state.flow, ch) }
     case "mainModel":
       return { ...state, sel: filterAppend(state.sel, ch) }
+    case "codeModel":
+      return { ...state, sel: filterAppend(state.sel, ch) }
     case "fastModel":
       return { ...state, sel: filterAppend(state.sel, ch) }
     case "theme":
@@ -302,6 +335,8 @@ export const onboardingBackspace = (state: OnboardingState): OnboardingState => 
     case "login":
       return { ...state, flow: loginBackspace(state.flow) }
     case "mainModel":
+      return { ...state, sel: filterBackspace(state.sel) }
+    case "codeModel":
       return { ...state, sel: filterBackspace(state.sel) }
     case "fastModel":
       return { ...state, sel: filterBackspace(state.sel) }
