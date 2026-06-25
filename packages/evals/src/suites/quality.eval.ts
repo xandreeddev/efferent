@@ -50,12 +50,21 @@ const subject = (output: ScenarioRun, expected: Expected): string => {
   return [output.finalText, fileDump].filter((s) => s.trim().length > 0).join("\n\n")
 }
 
+/** Iteration aid: `QUALITY_FILTER="bug-fix,refactor"` narrows the golden set to
+ *  scenarios whose name contains any listed substring (comma-separated). Unset ⇒
+ *  the whole set. Lets a prompt-tuning loop re-run only the affected scenarios. */
+const FILTER = process.env["QUALITY_FILTER"]?.trim()
+const SCENARIOS =
+  FILTER === undefined || FILTER.length === 0
+    ? GOLDEN
+    : GOLDEN.filter((s) => FILTER.split(",").some((f) => s.name.includes(f.trim())))
+
 export const quality = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
   name: "quality",
   description:
     "End-to-end quality scorecard: graded rubric + routing/tier correctness + efficiency over a labeled golden set.",
   threshold: 0.5,
-  data: GOLDEN.map((s) => ({
+  data: SCENARIOS.map((s) => ({
     name: s.name,
     input: { files: s.files, prompt: s.prompt, readback: s.readback ?? [] },
     expected: {
