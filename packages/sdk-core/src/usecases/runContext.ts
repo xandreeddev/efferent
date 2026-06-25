@@ -61,6 +61,15 @@ export interface RunContext {
    *  of the overall goal even when its `task` brief is terse (the structural
    *  backstop against context loss on spawn). A short, stable line ⇒ cache-safe. */
   readonly mission?: string
+  /**
+   * Whether a human is watching this run. `"interactive"` (the default/absent) —
+   * a TUI/client is attached, so an approval can park the fiber and wait for an
+   * answer. `"headless"` — an UNATTENDED run (a scheduled cron job), so nothing
+   * may block forever on a human: the headless approval records the need
+   * (`needs_human`) and denies instead of parking. Seeded by the job router on
+   * the run and inherited by every spawn (like {@link mission}), so the whole
+   * scheduled subtree knows it is unattended. */
+  readonly interactionPolicy?: "interactive" | "headless"
 }
 
 export const initialRunContext: RunContext = {

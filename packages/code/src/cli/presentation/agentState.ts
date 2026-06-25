@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../../events.js"
+import type { AgentPhase } from "@xandreed/sdk-core"
 
 /**
  * The agent's live state machine — *what is the agent doing right now*, as one
@@ -15,8 +16,14 @@ import type { AgentEvent } from "../../events.js"
  * both. Root tool counting skips `run_agent` itself (its lifetime IS the
  * fleet membership; counting it twice would pin `detail` on the spawn call
  * for minutes).
+ *
+ * The `AgentPhase` literal + its transition rules are SHARED with the daemon
+ * (`@xandreed/sdk-core` `agentPhase.ts` `reducePhase`): the daemon folds events
+ * into `SessionState.phase`, and this machine reconciles against that on
+ * (re)attach. Re-exported here so existing CLI imports of `AgentPhase` keep
+ * working off one definition.
  */
-export type AgentPhase = "idle" | "thinking" | "tool"
+export type { AgentPhase }
 
 export interface FleetMember {
   readonly nodeId: string
@@ -52,6 +59,24 @@ export const submittedAgentState = (now: number): AgentState => ({
   openToolCount: 0,
   fleet: [],
 })
+
+/**
+ * Reconcile the local machine to the daemon's **authoritative** phase (read from
+ * `SessionState.phase` on attach/resync). The fleet is tracked separately (it's
+ * seeded from the context tree by `refreshNav`), so it's preserved; we only
+ * adopt the daemon's phase and reset the root tool count, since the daemon's
+ * phase already accounts for open tools. This is what kills a phantom
+ * "thinking" — an idle daemon snaps the client back to idle even if a stale
+ * stream left it stuck thinking.
+ */
+export const agentStateForPhase = (
+  prev: AgentState,
+  phase: AgentPhase,
+  now: number,
+): AgentState =>
+  prev.phase === phase
+    ? prev
+    : { ...prev, phase, since: now, openToolCount: phase === "idle" ? 0 : prev.openToolCount }
 
 const phaseTo = (s: AgentState, phase: AgentPhase, now: number): AgentState =>
   s.phase === phase ? s : { ...s, phase, since: now }

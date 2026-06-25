@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Exit, Fiber, Layer } from "effect"
 import { LanguageModel, Toolkit } from "@effect/ai"
-import { runAgentLoop } from "@xandreed/sdk-core"
+import { runAgentLoop } from "./agentLoop.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
 
 const run = <A>(f: (bus: AgentBus) => Effect.Effect<A>): Promise<A> =>
@@ -117,6 +117,34 @@ describe("AgentBus — supervision (the async fleet)", () => {
     // the auto-resumed orchestrator drains nothing and reports no fleet results.
     expect(r.afterResume).toHaveLength(1)
     expect(r.afterResume[0]?.content).toContain("found the answer")
+  })
+
+  it("complete is a no-op for an UNKNOWN node — so the stranded-node sweeper must re-register first", async () => {
+    // The mid-session sweeper finds a node the bus no longer knows (its fiber
+    // wedged, taking its mailbox with it). `complete` alone wouldn't notify the
+    // parent — it returns early with no running entry — which is WHY the sweeper
+    // does markRunning(parentKey) THEN complete, reusing the normal delivery path.
+    const r = await run((bus) =>
+      Effect.gen(function* () {
+        yield* bus.markRunning("p", "parent")
+        // No prior markRunning("stalled") → complete finds nothing to deliver.
+        yield* bus.complete("stalled", { status: "error", summary: "lost", filesChanged: [] })
+        const inboxWithoutRegister = yield* bus.drain("p")
+        // The sweeper's actual sequence: register the absent node under its
+        // parent, THEN complete — now the failure reaches the parent's inbox.
+        yield* bus.markRunning("stalled", "worker", { parentKey: "p" })
+        yield* bus.complete("stalled", {
+          status: "error",
+          summary: "[stalled — no longer running]",
+          filesChanged: [],
+        })
+        const inboxAfterRegister = yield* bus.drain("p")
+        return { inboxWithoutRegister, inboxAfterRegister }
+      }),
+    )
+    expect(r.inboxWithoutRegister).toEqual([]) // complete on an unknown node delivered nothing
+    expect(r.inboxAfterRegister).toHaveLength(1)
+    expect(r.inboxAfterRegister[0]?.content).toContain("stalled — no longer running")
   })
 
   it("childrenOf includes both running and finished children of a parent", async () => {

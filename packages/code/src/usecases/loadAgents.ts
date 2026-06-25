@@ -1,7 +1,6 @@
 import { dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
-import { type AgentDefinition, FileSystem } from "@xandreed/sdk-core"
-import { parseFrontmatter } from "./discoverScopeTree.js"
+import { type AgentDefinition, FileSystem, parseFrontmatter } from "@xandreed/sdk-core"
 
 /**
  * Walk `cwd → parents → home` looking for `.efferent/agents/*.md` files,

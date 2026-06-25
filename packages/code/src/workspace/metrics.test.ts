@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Stream } from "effect"
-import { recordLlmCall, recordToolCall, conversationSessionId } from "@xandreed/sdk-core"
-import { makeAgentBus } from "../usecases/agentBus.js"
+import { recordLlmCall, recordToolCall, conversationSessionId, makeAgentBus } from "@xandreed/sdk-core"
 import { readWorkspaceMetrics } from "./metrics.js"
 import { FAKE_ROOT_CID, fakeServerLive } from "./fakeAppEnv.js"
 import { makeHttpTransport } from "../transport/http/client.js"

@@ -1,5 +1,5 @@
 import { Deferred, Effect, Fiber, Ref } from "effect"
-import type { AgentEvent } from "@xandreed/sdk-core"
+import type { AgentEvent } from "../entities/AgentEvent.js"
 
 /**
  * The in-memory agent **comms + supervision bus** — the spine of the async
@@ -27,7 +27,18 @@ import type { AgentEvent } from "@xandreed/sdk-core"
  * a timeout, all interruptible. The durable record stays the context tree; this
  * is the live layer the TUI and the agents tap to see who's running and say
  * what to whom.
+ *
+ * This is the core **Supervisor** — the orchestration substrate, owned by
+ * `@xandreed/sdk-core` (not the CLI driver). It is threaded as a constructed
+ * value rather than resolved from a `Context.Tag` port on purpose: it is
+ * per-session stateful and carries a per-runtime event sink (`onBusEvent`), so
+ * each driver builds its own with {@link makeAgentBus}; a process-singleton
+ * Layer would fight that. {@link Supervisor} is the name the rest of the system
+ * uses for this capability.
  */
+
+/** The core orchestration service (see the module doc). Structurally the {@link AgentBus}. */
+export type Supervisor = AgentBus
 
 export interface InboxMessage {
   /** Display label of the sender (a sibling agent, or "you" for the human). */

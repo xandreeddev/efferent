@@ -28,7 +28,7 @@ import {
   parseScheduleArg,
   removeJob,
   type ScheduledJob,
-} from "../../usecases/schedule.js"
+} from "@xandreed/sdk-core"
 
 const decodeCid = Schema.decodeUnknown(ConversationId)
 

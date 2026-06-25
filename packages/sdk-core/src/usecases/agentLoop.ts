@@ -9,6 +9,7 @@ import { RunContextRef } from "./runContext.js"
 import { DEFAULT_TOOL_RESULT_MAX_CHARS, Compaction } from "./compaction.js"
 import {
   attachUsageToAssistant,
+  ensureToolCallIds,
   extractUsage,
   responseReasoning,
   responseToAgentMessages,
@@ -352,6 +353,12 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       const res = outcome.res
 
       const content = res.content as ReadonlyArray<unknown>
+      // Mint a deterministic id for any tool call/result the provider returned
+      // WITHOUT one (Gemini does this), in place on the response content BEFORE
+      // it fans out into the persisted tail AND the emitted events — so the live
+      // pump and a later re-projection compute the SAME rail-pill key (no
+      // duplicate / jump-to-end on re-attach). A real provider id is left as-is.
+      ensureToolCallIds(content, turnIndex)
       const rawTail = responseToAgentMessages(content)
       // Moment 1 — the agent's tail compressor runs HERE, the only moment a
       // tool result enters the buffer, so the persisted history and every

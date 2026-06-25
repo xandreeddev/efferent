@@ -1,19 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, FiberRef, Layer } from "effect"
 import { LanguageModel } from "@effect/ai"
-import {
-  type AgentContextNode,
-  type ContextNodeId,
-  type AgentMessage,
-  type Scope,
-  ApprovalAllowAllLive,
-  ContextTreeStore,
-  FileSystem,
-  Http,
-  RunContextRef,
-  Shell,
-  WebSearch,
-} from "@xandreed/sdk-core"
+import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
+import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
+import type { Scope } from "../entities/Scope.js"
+import { ApprovalAllowAllLive } from "../ports/Approval.js"
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+import { FileSystem } from "../ports/FileSystem.js"
+import { Http } from "../ports/Http.js"
+import { Shell } from "../ports/Shell.js"
+import { WebSearch } from "../ports/WebSearch.js"
+import { RunContextRef, type RunContext } from "./runContext.js"
 import {
   applyInlineDefinition,
   buildScopeRuntime,
@@ -318,6 +315,97 @@ describe("ScopeRuntime.resumeNode", () => {
   })
 })
 
+// --- spawnAgent: the job router seeds mission + interactionPolicy ------------
+
+describe("ScopeRuntime.spawnAgent — mission + interactionPolicy seeding (the JobController fix)", () => {
+  // A model that captures the ambient RunContext of the run it's invoked in, so
+  // we can assert the run's own loop sees the mission + headless policy (the
+  // childRc the run executes under), then ends the turn.
+  const capturingModel = (sink: { rc?: RunContext }) =>
+    Layer.succeed(
+      LanguageModel.LanguageModel,
+      LanguageModel.LanguageModel.of({
+        generateText: () =>
+          FiberRef.get(RunContextRef).pipe(
+            Effect.tap((rc) => Effect.sync(() => void (sink.rc = rc))),
+            Effect.as({ content: [], text: "done", finishReason: "stop", usage: undefined }),
+          ),
+        generateObject: () => Effect.die("unused"),
+        streamText: () => Effect.die("unused"),
+      } as never),
+    )
+
+  const portsWith = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+    Layer.mergeAll(
+      Layer.succeed(
+        FileSystem,
+        FileSystem.of({
+          read: () => Effect.fail({ _tag: "FileNotFound" }),
+          write: () => Effect.void,
+          list: () => Effect.succeed([]),
+          glob: () => Effect.succeed([]),
+        } as never),
+      ),
+      Layer.succeed(
+        Shell,
+        Shell.of({ exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }) } as never),
+      ),
+      Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
+      Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
+      ApprovalAllowAllLive,
+      model,
+    )
+
+  test("a scheduled-style spawn seeds the mission preamble into the node AND runs headless", async () => {
+    const { entries, layer } = stubTreeStore()
+    const sink: { rc?: RunContext } = {}
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
+    const rootConvId = crypto.randomUUID() as ConversationId
+
+    const program = rt
+      .spawnAgent({
+        rootConversationId: rootConvId,
+        folder: "pkg",
+        task: "run the nightly review",
+        mission: "Keep the build green every night",
+        interactionPolicy: "headless",
+      })
+      .pipe(
+        Effect.provide(rt.handlerLayer),
+        Effect.provide(Layer.mergeAll(layer, portsWith(capturingModel(sink)))),
+        // The driver IS the root: a fresh, unseeded RunContext (depth 0).
+        Effect.locally(RunContextRef, {
+          rootConversationId: rootConvId,
+          parentNodeId: null,
+          depth: 0,
+          tokenPool: null,
+        }),
+      )
+
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "spawnAgent HUNG" }),
+      ) as unknown as Effect.Effect<{ summary: string; nodeId: ContextNodeId }>,
+    )
+
+    expect(result.summary).toBe("done")
+
+    // 1) The node's seed messages carry the mission preamble ahead of the task —
+    //    so the unattended run isn't blind to the goal it serves.
+    const entry = [...entries.values()][0]!
+    const userMsgs = entry.messages.filter((m) => m.role === "user").map((m) => String(m.content))
+    expect(userMsgs.length).toBe(2)
+    expect(userMsgs[0]?.toLowerCase()).toContain("mission")
+    expect(userMsgs[0]).toContain("Keep the build green every night")
+    expect(userMsgs[1]).toBe("run the nightly review")
+
+    // 2) The run's OWN loop executed under a RunContext carrying the mission +
+    //    the headless policy — so its approval would park-and-deny, not block.
+    expect(sink.rc?.interactionPolicy).toBe("headless")
+    expect(sink.rc?.mission).toBe("Keep the build green every night")
+  })
+})
+
 // --- run_agent (the model tool) is non-blocking; wait_for_agents gathers ------
 
 describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () => {
@@ -423,6 +511,117 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
     expect(result.handle.name).toBe("secret auditor") // display title from `name`, not "inline"
     expect(result.gathered.allDone).toBe(true)
     expect(result.gathered.agents[0]?.status).toBe("ok")
+  })
+})
+
+// --- interruption finalizer: a wedged/killed run notifies the parent ----------
+
+describe("runSpawnedAgent — interruption records an error return + notifies the parent", () => {
+  // A model that never returns — the spawned loop blocks on its first turn,
+  // so the only way the run ends is interruption (Esc / :stop / teardown).
+  const blockingModel = Layer.succeed(
+    LanguageModel.LanguageModel,
+    LanguageModel.LanguageModel.of({
+      generateText: () => Effect.never,
+      generateObject: () => Effect.die("unused"),
+      streamText: () => Effect.die("unused"),
+    } as never),
+  )
+
+  const blockingPorts = Layer.mergeAll(
+    Layer.succeed(
+      FileSystem,
+      FileSystem.of({
+        read: () => Effect.fail({ _tag: "FileNotFound" }),
+        write: () => Effect.void,
+        list: () => Effect.succeed([]),
+        glob: () => Effect.succeed([]),
+      } as never),
+    ),
+    Layer.succeed(
+      Shell,
+      Shell.of({ exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }) } as never),
+    ),
+    Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
+    Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
+    ApprovalAllowAllLive,
+    blockingModel,
+  )
+
+  test("an interrupted spawn → node status 'error' (INTERRUPTED_NOTE) + a completion in the parent's inbox", async () => {
+    const { entries, layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
+    // A real root conversation id so the spawned node's parentKey is set and
+    // bus.complete delivers the completion to the parent's mailbox.
+    const rootConvId = crypto.randomUUID() as ConversationId
+
+    const program = Effect.gen(function* () {
+      // Register the parent's live mailbox first, so the child's completion
+      // lands in it (rather than the idle-parent `pending` buffer).
+      yield* rt.bus.markRunning(rootConvId, "the lead agent", { parentKey: null })
+
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const spawned = yield* call("run_agent", {
+        name: "wedged worker",
+        folder: "pkg",
+        task: "block forever",
+      })
+      const handle = spawned.result as { nodeId: string; status: string }
+
+      // The spawn is non-blocking: it returns a running handle immediately.
+      expect(handle.status).toBe("running")
+
+      // Wait until the run is registered as running on the bus, then interrupt
+      // it (the Esc / :stop path). interrupt returns false until the fiber is set.
+      yield* Effect.gen(function* () {
+        while (!(yield* rt.bus.interrupt(handle.nodeId))) {
+          yield* Effect.sleep("10 millis")
+        }
+      }).pipe(Effect.timeout("3 seconds"))
+
+      // Poll the node until the finalizer has recorded its terminal return.
+      yield* Effect.gen(function* () {
+        while (entries.get(handle.nodeId)?.node.status === "running") {
+          yield* Effect.sleep("10 millis")
+        }
+      }).pipe(Effect.timeout("3 seconds"))
+
+      // The parent's inbox should now carry the child's completion note.
+      const inbox = yield* rt.bus.drain(rootConvId)
+      return { nodeId: handle.nodeId, inbox }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, blockingPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: rootConvId,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const { nodeId, inbox } = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "8 seconds", onTimeout: () => "interrupt test HUNG" }),
+      ) as unknown as Effect.Effect<{
+        nodeId: string
+        inbox: ReadonlyArray<{ from: string; content: string }>
+      }>,
+    )
+
+    // The DB node is no longer stuck `running` — the finalizer recorded an error.
+    const node = entries.get(nodeId)!.node
+    expect(node.status).toBe("error")
+    expect(node.returnSummary).toBe("[interrupted — run did not finish]")
+
+    // The parent was notified immediately (a "failed: …" completion line),
+    // instead of relying on the mid-session sweeper.
+    expect(inbox.length).toBeGreaterThan(0)
+    expect(inbox.some((m) => m.content.includes("[interrupted — run did not finish]"))).toBe(true)
+    expect(inbox[0]?.content.startsWith("failed:")).toBe(true)
   })
 })
 

@@ -1,6 +1,11 @@
 import type { Tool } from "@effect/ai"
-import type { AgentConfig, CompressionPolicy, Prompt, Scope } from "@xandreed/sdk-core"
-import type { ScopeRuntime } from "./buildScopeRuntime.js"
+import type {
+  AgentConfig,
+  CompressionPolicy,
+  Prompt,
+  Scope,
+  ScopeRuntime,
+} from "@xandreed/sdk-core"
 
 /**
  * Coder agent config for the **root scope**: the root's system prompt + the

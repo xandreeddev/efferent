@@ -1,6 +1,5 @@
 import { Effect, Metric } from "effect"
-import { METRIC_NAMES, type WorkspaceMetrics } from "@xandreed/sdk-core"
-import type { AgentBus } from "../usecases/agentBus.js"
+import { METRIC_NAMES, type WorkspaceMetrics, type AgentBus } from "@xandreed/sdk-core"
 
 /**
  * Self-contained in-daemon metrics — read the **process-global** Effect metric

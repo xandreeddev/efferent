@@ -1,18 +1,14 @@
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
-import {
-  type Memory,
-  type Skill,
-  Approval,
-  bashRuleKey,
-  FileSystem,
-  Http,
-  Shell,
-  WebSearch as WebSearchPort,
-  Failure,
-  toFailure,
-} from "@xandreed/sdk-core"
+import type { Memory } from "../entities/Memory.js"
+import type { Skill } from "../entities/Skill.js"
+import { Failure, toFailure } from "../entities/Failure.js"
+import { Approval, bashRuleKey } from "../ports/Approval.js"
+import { FileSystem } from "../ports/FileSystem.js"
+import { Http } from "../ports/Http.js"
+import { Shell } from "../ports/Shell.js"
+import { WebSearch as WebSearchPort } from "../ports/WebSearch.js"
 
 /**
  * The coding tools as an `@effect/ai` Toolkit. Each tool ships explicit

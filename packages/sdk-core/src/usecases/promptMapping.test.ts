@@ -5,6 +5,7 @@ import type { TokenUsage } from "../ports/LlmInfo.js"
 import {
   assistantUsage,
   attachUsageToAssistant,
+  ensureToolCallIds,
   extractUsage,
   handoffToMessage,
   recoverConversationStats,
@@ -351,5 +352,83 @@ describe("response helpers + handoffToMessage", () => {
     expect(msg.role).toBe("user")
     expect(msg.content).toContain("[System note:")
     expect((msg.content as string).endsWith("the summary")).toBe(true)
+  })
+})
+
+// ─── ensureToolCallIds — deterministic id synthesis for id-less providers ─────
+
+describe("ensureToolCallIds", () => {
+  it("leaves a non-empty provider id untouched (today's good path)", () => {
+    const content = [
+      { type: "tool-call", id: "call_abc", name: "Bash", params: { command: "ls" } },
+      { type: "tool-result", id: "call_abc", name: "Bash", result: { exitCode: 0 } },
+    ]
+    ensureToolCallIds(content, 0)
+    expect(content[0]!.id).toBe("call_abc")
+    expect(content[1]!.id).toBe("call_abc")
+  })
+
+  it("mints <turn>:<name>:<ordinal> for an id-less call AND its matching result, identically", () => {
+    // What Gemini returns: a function call with no id, and a resolved result
+    // also without one. The call and its result MUST end up with the same id
+    // (the loop pairs them by id) — so the assistant tool-call ↔ tool-result
+    // pairing stays valid.
+    const content = [
+      { type: "text", text: "running it" },
+      { type: "tool-call", id: "", name: "grep", params: { pattern: "x" } },
+      { type: "tool-result", id: "", name: "grep", result: "no matches" },
+    ]
+    ensureToolCallIds(content, 2)
+    expect(content[1]!.id).toBe("2:grep:0")
+    expect(content[2]!.id).toBe("2:grep:0") // same id → pairing intact
+  })
+
+  it("handles a missing `id` field (not just empty string)", () => {
+    const content = [{ type: "tool-call", name: "ls", params: {} }] as Array<
+      Record<string, unknown>
+    >
+    ensureToolCallIds(content, 1)
+    expect(content[0]!["id"]).toBe("1:ls:0")
+  })
+
+  it("gives parallel id-less calls in one turn distinct ids, each paired to its result", () => {
+    const content = [
+      { type: "tool-call", id: "", name: "read", params: { path: "a" } },
+      { type: "tool-call", id: "", name: "read", params: { path: "b" } },
+      { type: "tool-result", id: "", name: "read", result: "A" },
+      { type: "tool-result", id: "", name: "read", result: "B" },
+    ]
+    ensureToolCallIds(content, 0)
+    expect(content[0]!.id).toBe("0:read:0")
+    expect(content[1]!.id).toBe("0:read:1")
+    // results pair by ordinal-among-results → match their call's id in order
+    expect(content[2]!.id).toBe("0:read:0")
+    expect(content[3]!.id).toBe("0:read:1")
+  })
+
+  it("the synthesized id is the SAME across event-path and persisted-path reads", () => {
+    // The loop calls ensureToolCallIds ONCE, then reads `content` twice: via
+    // responseToolCalls (→ the emitted tool_call_start event's `id`) and via
+    // responseToAgentMessages (→ the persisted tool-call part's `toolCallId`).
+    // Both must observe the identical synthesized id — that equality is what
+    // makes the live rail pill and the re-projected pill share a key.
+    const content = [
+      { type: "tool-call", id: "", name: "edit_file", params: { path: "f" } },
+      { type: "tool-result", id: "", name: "edit_file", result: "ok" },
+    ]
+    ensureToolCallIds(content, 3)
+
+    const emittedId = responseToolCalls(content)[0]!.id // the event's `id`
+    const msgs = responseToAgentMessages(content)
+    const assistant = msgs.find((m) => m.role === "assistant")!
+    const persistedCall = (
+      assistant.content as unknown as Array<{ type: string; toolCallId?: string }>
+    ).find((p) => p.type === "tool-call")!
+    const toolMsg = msgs.find((m) => m.role === "tool")!
+    const persistedResult = (toolMsg.content as unknown as Array<{ toolCallId: string }>)[0]!
+
+    expect(emittedId).toBe("3:edit_file:0")
+    expect(persistedCall.toolCallId).toBe("3:edit_file:0")
+    expect(persistedResult.toolCallId).toBe("3:edit_file:0")
   })
 })

@@ -22,6 +22,7 @@ import {
 } from "@xandreed/sdk-core"
 import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
+import { retryableLlm } from "./retry.js"
 import {
   makeProviderLanguageModel,
   prependClaudeCode,
@@ -230,6 +231,7 @@ export const RouterLanguageModelLive = Layer.effect(
                 svc
                   .generateText(shapeOptions(sel, shouldPrepend, options))
                   .pipe(
+                    retryableLlm,
                     Effect.tap((res) => observe(sel, options, res)),
                     Effect.tapError(observeError),
                   )
@@ -249,6 +251,7 @@ export const RouterLanguageModelLive = Layer.effect(
                 svc
                   .generateObject(shapeOptions(sel, shouldPrepend, options))
                   .pipe(
+                    retryableLlm,
                     Effect.tap((res) => observe(sel, options, res)),
                     Effect.tapError(observeError),
                   )

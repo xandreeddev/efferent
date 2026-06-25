@@ -15,7 +15,7 @@ import { makeInProcessWorkspace, type WorkspaceRunServices } from "../workspace/
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
 import { workspaceRouter } from "../transport/http/server.js"
 import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
-import type { ToolDefinition } from "../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import { removeDiscovery, writeDiscovery } from "./discovery.js"
 
 /**

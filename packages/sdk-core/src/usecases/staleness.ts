@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { Shell } from "@xandreed/sdk-core"
+import { Shell } from "../ports/Shell.js"
 
 /**
  * Context **staleness**: a persisted sub-agent context is a cache of a
