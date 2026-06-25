@@ -54,3 +54,6 @@ HANDOFF.md
 # Working-note prompts (reference material, never committed)
 PROMPT.md
 prompt.md
+
+# ad-hoc eval run outputs (committed baselines live in packages/evals/baselines/)
+packages/evals/results/

@@ -1,4 +1,6 @@
+import type { SavedReport } from "../storage.js"
 import type { CaseAgg, RunAgg, SuiteAgg } from "./process.js"
+import { pairedDeltaCI } from "./significance.js"
 
 /* Inline ANSI — evals must not depend on @xandreed/code. */
 const ESC = "\x1b["
@@ -18,14 +20,36 @@ const pad = (s: string, n: number): string => (s.length >= n ? s : s + " ".repea
 const ktok = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`)
 const usd = (n: number | undefined): string => (n === undefined ? "n/a" : `$${n.toFixed(4)}`)
 
+const meanCell = (c: CaseAgg): string =>
+  c.samples > 1 ? `${scoreColor(c.mean)} ${dim(`±${c.stdev.toFixed(2)}`)}` : scoreColor(c.mean)
+
 const caseLine = (c: CaseAgg, nameW: number): string => {
   const icon = !c.ok ? red("✗") : c.mean >= 0.6 ? green("✓") : yellow("~")
   const scores = c.scores.map((s) => `${dim(s.name)}=${scoreColor(s.score)}`).join(" ")
   const cost = c.costUsd !== undefined ? ` · ${usd(c.costUsd)}` : ""
+  const n = c.samples > 1 ? `${c.samples}× · ` : ""
   return (
-    `  ${icon} ${pad(c.name, nameW)}  ${dim("mean")} ${scoreColor(c.mean)}  ${scores}` +
-    `  ${dim(`${c.steps} step${c.steps === 1 ? "" : "s"} · ${ktok(c.inputTokens)}→${ktok(c.outputTokens)} tok${cost} · ${(c.wallMs / 1000).toFixed(1)}s`)}`
+    `  ${icon} ${pad(c.name, nameW)}  ${dim("mean")} ${meanCell(c)}  ${scores}` +
+    `  ${dim(`${n}${c.steps} step${c.steps === 1 ? "" : "s"} · ${ktok(c.inputTokens)}→${ktok(c.outputTokens)} tok${cost} · ${(c.wallMs / 1000).toFixed(1)}s`)}`
   )
+}
+
+/** Align two suites' cases by name → paired per-case means (baseline, candidate). */
+const pairByName = (
+  baseCases: ReadonlyArray<CaseAgg>,
+  candCases: ReadonlyArray<CaseAgg>,
+): { base: Array<number>; cand: Array<number> } => {
+  const bm = new Map(baseCases.map((c) => [c.name, c.mean]))
+  const base: Array<number> = []
+  const cand: Array<number> = []
+  for (const c of candCases) {
+    const b = bm.get(c.name)
+    if (b !== undefined) {
+      base.push(b)
+      cand.push(c.mean)
+    }
+  }
+  return { base, cand }
 }
 
 const suiteBlock = (s: SuiteAgg): string => {
@@ -70,9 +94,56 @@ const renderComparison = (runs: ReadonlyArray<RunAgg>): string => {
       const bc = suiteCost(b)
       const cc = suiteCost(c)
       const costStr = bc !== undefined && cc !== undefined ? ` · cost ${usd(cc)} (${delta(cc - bc)})` : ""
+      const { base: bm, cand: cm } = pairByName(b.cases, c.cases)
+      const ci = pairedDeltaCI(bm, cm)
+      const verdict = ci.significant
+        ? c.mean >= b.mean
+          ? green(" ✔ sig.")
+          : red(" ✘ sig.")
+        : dim(" ~ noise")
       lines.push(
         `    ${pad(name, 16)} mean ${scoreColor(c.mean)} (${delta(c.mean - b.mean)})` +
-          ` · tok ${ktok(suiteTokens(c))} (${delta(suiteTokens(c) - suiteTokens(b))})${costStr}`,
+          ` · tok ${ktok(suiteTokens(c))} (${delta(suiteTokens(c) - suiteTokens(b))})${costStr}` +
+          ` · 95%CI [${ci.low.toFixed(2)},${ci.high.toFixed(2)}]${verdict}`,
+      )
+    }
+  }
+  return lines.join("\n")
+}
+
+/**
+ * Compare the current run against a committed BASELINE (`--compare`). For each
+ * config + suite, pairs cases by name and bootstraps the 95% CI of the mean
+ * delta — the answer to "is this change effective, or noise?". Cases the
+ * baseline lacks are skipped (a new scenario can't regress what didn't exist).
+ */
+export const renderVsBaseline = (
+  current: ReadonlyArray<RunAgg>,
+  baseline: SavedReport,
+): string => {
+  const stamp = `${baseline.ts}${baseline.gitSha !== undefined ? ` · ${baseline.gitSha}` : ""}${baseline.label !== undefined ? ` · ${baseline.label}` : ""}`
+  const lines: Array<string> = [bold(cyan(`▌ vs baseline (${stamp})`))]
+  for (const run of current) {
+    const baseRun =
+      baseline.runs.find((r) => r.configName === run.configName) ?? baseline.runs[0]
+    if (baseRun === undefined) continue
+    lines.push(dim(`  ${run.configName}:`))
+    for (const s of run.suites) {
+      const bs = baseRun.suites.find((x) => x.suite === s.suite)
+      if (bs === undefined) {
+        lines.push(`    ${pad(s.suite, 16)} ${scoreColor(s.mean)} ${dim("(new — no baseline)")}`)
+        continue
+      }
+      const { base, cand } = pairByName(bs.cases, s.cases)
+      const ci = pairedDeltaCI(base, cand)
+      const verdict = ci.significant
+        ? ci.delta >= 0
+          ? green(" ✔ better")
+          : red(" ✘ worse")
+        : dim(" ~ noise")
+      lines.push(
+        `    ${pad(s.suite, 16)} ${scoreColor(s.mean)} vs ${scoreColor(bs.mean)}` +
+          ` · Δ ${delta(ci.delta)} 95%CI [${ci.low.toFixed(2)},${ci.high.toFixed(2)}] (n=${ci.n})${verdict}`,
       )
     }
   }
