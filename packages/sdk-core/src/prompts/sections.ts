@@ -1,6 +1,12 @@
 import type { AgentDefinition } from "../entities/AgentDefinition.js"
 import type { Memory } from "../entities/Memory.js"
 
+/**
+ * Shared fleet / scope prompt sections (`subAgentsSection`, `coordinationSection`,
+ * `renderAgentsSection`, `renderMemorySection`), lifted from the CLI into the SDK
+ * so both the root coder prompt and `scopeAgent`'s spawned-sub-agent prompt render
+ * the same delegation, coordination, roster, and project-knowledge language.
+ */
 export const renderMemorySection = (memory: ReadonlyArray<Memory>): string => {
   if (memory.length === 0) return ""
   const lines = memory
