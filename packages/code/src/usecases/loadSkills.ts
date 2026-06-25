@@ -22,10 +22,10 @@ export const loadSkills = (
     for (const dir of skillSearchPath(cwd, homeDir)) {
       const entries = yield* fs
         .list(dir, { recursive: false })
-        .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<{
+        .pipe(Effect.catchAll((e) => Effect.log(`skills: skipping ${dir}: ${e}`).pipe(Effect.zipRight(Effect.succeed([] as ReadonlyArray<{
           path: string
           type: "file" | "dir"
-        }>)))
+        }>)))))
 
       for (const entry of entries) {
         if (entry.type !== "file" || !entry.path.endsWith(".md")) continue
@@ -34,7 +34,7 @@ export const loadSkills = (
           : resolve(dir, entry.path)
         const read = yield* fs
           .read(absPath)
-          .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+          .pipe(Effect.catchAll((e) => Effect.log(`skills: skipping ${absPath}: ${e}`).pipe(Effect.zipRight(Effect.succeed(undefined)))))
         if (read === undefined) continue
         const parsed = parseSkillFile(read.content, absPath)
         if (parsed === undefined) continue
