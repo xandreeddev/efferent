@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Layer } from "effect"
-import { FileSystem, FileNotFound, type Scope } from "@xandreed/sdk-core"
+import { FileSystem, FileNotFound } from "../ports/FileSystem.js"
+import type { Scope } from "../entities/Scope.js"
 import { discoverScopeTree, getScopePromptBody } from "./discoverScopeTree.js"
 
 /** In-memory FileSystem modelling per-directory listings (the bounded BFS's

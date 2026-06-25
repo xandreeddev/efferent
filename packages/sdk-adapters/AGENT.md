@@ -6,7 +6,7 @@ Concrete implementations of `@xandreed/sdk-core` ports. Side effects live here a
 
 One subfolder per concern:
 
-- `llm/` — the multi-provider model tier: `router.ts` (`RouterLanguageModelLive` — resolves provider + key **per request**), `providers.ts` (`makeProviderLanguageModel` for Google / OpenAI / Anthropic incl. OAuth + cache breakpoints; `openAiCodex.ts`, `openCode.ts`, `ollama.ts` variants), `modelRegistry.ts` (live catalogue), `utilityLlm.ts` (fast helper tier), `webSearch.ts` (provider-server-side grounding).
+- `llm/` — the multi-provider model tier: `router.ts` (`RouterLanguageModelLive` — resolves provider + key **per request**), `providers.ts` (`makeProviderLanguageModel` for Google / OpenAI / Anthropic incl. OAuth + cache breakpoints; `openAiCodex.ts`, `openCode.ts`, `ollama.ts` variants), `modelRegistry.ts` (live catalogue), `utilityLlm.ts` (fast helper tier), `webSearch.ts` (provider-server-side grounding), `retry.ts` (`retryableLlm` — exponential backoff on transient 429/5xx/transport/timeout failures, honoring `Retry-After`; wired around the router's `generateText`/`generateObject`, `utilityLlm`, and `webSearch`, so it covers every provider incl. the default Kimi/opencode gateway).
 - `auth/` — `local.ts` (`LocalAuthStoreLive`: `~/.efferent/auth.json`, atomic `0600` writes, OAuth refresh), `env.ts` (`EnvAuthStoreLive` — evals/CI only; the *only* place provider key env vars are read), `oauth/anthropic.ts` (PKCE protocol).
 - `database/` — `migrator.ts` (store selection: SQLite default, Postgres via `EFFERENT_DB_URL`), `conversationStore/` + `contextTreeStore/` (SQLite + Postgres impls), `migrations/`.
 - `settings/` — `local.ts` (project + global `config.json`).

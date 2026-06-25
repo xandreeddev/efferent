@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { Shell, ShellError, type ShellExecInput, type ShellExecResult } from "@xandreed/sdk-core"
+import { Shell, ShellError, type ShellExecInput, type ShellExecResult } from "../ports/Shell.js"
 import { buildStalenessBrief, getWorkspaceRef, stalenessNote } from "./staleness.js"
 
 /** A canned Shell: maps a command prefix to its stdout (exit 0); else exit 1. */

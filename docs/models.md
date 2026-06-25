@@ -27,7 +27,7 @@ may call a provider SDK.
 | 6 | `evals/src/framework/scorers.ts` (`llmJudge`) | **eval scoring** (LLM-as-judge) | the eval env's model layer; keys from `EnvAuthStoreLive` (the only env-var key reading in the tree) | the eval report only (out-of-app by design) |
 | 7 | eval suites running the real loop (`runCoder`, the handoff suite) | **eval tasks** | same as #1 under the eval env | eval report only |
 | 8 | `core/usecases/compaction.ts` (`compressToolResults`, called per loop step) | **compaction middle digests** — a ≤120-word summary of an oversized tool result's dropped middle, woven into the clip marker | `UtilityLlm` → **fast** (`fastModel` ?? general) — the fast role's first consumer | `byRole.fast` (via the `onHelperUsage` hook → `helper_usage` event; sub-agent loops forward to the parent ledger) |
-| 9 | `core/usecases/autoApproval.ts` (`judgeApproval`), consulted by the TUI `Approval` impl (`tui-solid/approval.ts`) | **auto-approval judgments** — classify an unmatched bash command against the permitted folders: allow silently or escalate to the modal (never bypasses a prompt; `:set autoApprove off` disables) | `UtilityLlm` → **fast** (`fastModel` ?? general) | `byRole.fast` (counted directly by the approval impl, like the title daemon) |
+| 9 | `core/usecases/autoApproval.ts` (`judgeApproval`), consulted by the TUI `Approval` impl (`cli/approval.ts`) and the unattended-cron parking approval (`workspace/headlessApproval.ts`) | **auto-approval judgments** — classify an unmatched bash command against the permitted folders: allow silently or escalate to the modal (never bypasses a prompt; `:set autoApprove off` disables). Headless, the same judge auto-approves in-scope work and parks the rest as `needs_human` | `UtilityLlm` → **fast** (`fastModel` ?? general) | `byRole.fast` (counted directly by the approval impl, like the title daemon) |
 
 ## How a selection becomes a client
 
@@ -37,7 +37,11 @@ Codex OAuth variant in `openAiCodex.ts`) / Anthropic (API key or subscription OA
 the Claude-Code system block) / OpenCode (`openCode.ts`) / Ollama (`ollama.ts`). Keys come
 from `AuthStore.resolveKey` per call (refreshing near-expiry OAuth first), so `:login`,
 `:model`, and `:set …Model` all apply on the **next run** with no rebuild — within a run
-the role models are frozen (`pinnedModels`) so a switch can't move a live fleet.
+the role models are frozen (`pinnedModels`) so a switch can't move a live fleet. Every
+connect is wrapped by `retryableLlm` (`adapters/src/llm/retry.ts`) — the router's
+`generateText`/`generateObject`, `UtilityLlm`, and web search all retry transient
+429/5xx/transport/timeout failures with `Retry-After`-aware exponential backoff (3 tries,
+1s→2s→4s jittered) before surfacing the error; permanent 4xx/decode failures never retry.
 
 ## Non-inference provider traffic
 

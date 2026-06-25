@@ -3,8 +3,8 @@ import { cronMatches, minuteBucket, parseCron, parseScheduleArg } from "./schedu
 
 const matches = (expr: string, date: Date): boolean => {
   const f = parseCron(expr)
-  if (f === undefined) throw new Error(`bad cron ${expr}`)
-  return cronMatches(f, date)
+  expect(f, `bad cron ${expr}`).toBeDefined()
+  return cronMatches(f!, date)
 }
 
 describe("parseCron", () => {

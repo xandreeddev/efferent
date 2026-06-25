@@ -15,13 +15,13 @@ import {
   type Memory,
   type Skill,
   type UtilityLlm,
+  inboxToMessages,
+  buildScopeRuntime,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
-import { inboxToMessages } from "../../usecases/agentBus.js"
 import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../../prompts/coder.js"
 import { type Directive, renderDirectiveSection } from "../../usecases/directive.js"
-import type { ToolDefinition } from "../../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import { type InstructionFile } from "../../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../../events.js"
 import { formatFullError, inspectError } from "../util/errorFormat.js"

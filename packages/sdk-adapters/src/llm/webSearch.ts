@@ -13,6 +13,7 @@ import {
   type WebSearchSource,
 } from "@xandreed/sdk-core"
 import { Config, Effect, Layer, Option } from "effect"
+import { retryableLlm } from "./retry.js"
 
 /**
  * `WebSearch` backed by a provider's **server-side** search tool — Gemini
@@ -155,10 +156,12 @@ export const WebSearchLive = Layer.effect(
                   const svc = yield* GoogleLanguageModel.make({
                     model: sel.modelId,
                   }).pipe(Effect.provideService(GoogleClient.GoogleClient, client))
-                  const res = yield* svc.generateText({
-                    prompt,
-                    toolkit: Toolkit.make(GoogleTool.GoogleSearch({})),
-                  })
+                  const res = yield* svc
+                    .generateText({
+                      prompt,
+                      toolkit: Toolkit.make(GoogleTool.GoogleSearch({})),
+                    })
+                    .pipe(retryableLlm)
                   return {
                     answer: res.text,
                     sources: extractSources(res.content),
@@ -172,10 +175,12 @@ export const WebSearchLive = Layer.effect(
                   const svc = yield* OpenAiLanguageModel.make({
                     model: sel.modelId,
                   }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client))
-                  const res = yield* svc.generateText({
-                    prompt,
-                    toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
-                  })
+                  const res = yield* svc
+                    .generateText({
+                      prompt,
+                      toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
+                    })
+                    .pipe(retryableLlm)
                   return {
                     answer: res.text,
                     sources: extractSources(res.content),

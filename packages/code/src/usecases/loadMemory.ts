@@ -1,7 +1,6 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
-import { FileSystem, type Memory } from "@xandreed/sdk-core"
-import { parseFrontmatter } from "./discoverScopeTree.js"
+import { FileSystem, parseFrontmatter, type Memory } from "@xandreed/sdk-core"
 
 /**
  * Walk `cwd → parents → home` looking for `.efferent/memory/*.md` files (the

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { createRoot } from "solid-js"
 import type { AgentMessage } from "@xandreed/sdk-core"
+import {
+  ensureToolCallIds,
+  responseToAgentMessages,
+  responseToolCalls,
+  responseToolResults,
+} from "@xandreed/sdk-core"
 import { messageKey, type ScrollbackBlock } from "../presentation/conversation.js"
 import { projectHistory } from "../presentation/historyProjection.js"
 import { createConversationSlice } from "./conversation.js"
@@ -205,5 +211,54 @@ describe("cross-writer key equality — the contract the dedup rests on", () => 
     const asst = windowed.blocks.find((b) => b.kind === "assistant")!
     expect(keyOf(user)).toBe(messageKey(4, "u"))
     expect(keyOf(asst)).toBe(messageKey(5, "a", 0))
+  })
+})
+
+describe("id-less tool calls — deterministic id keeps the rail pill stable on re-attach", () => {
+  // The live pump's rail-pill id: it uses `event.id` when non-empty, else an
+  // ephemeral per-process `t<seq>` (the bug's source). After the loop synthesizes
+  // a deterministic id at the source, `event.id` is always non-empty, so this
+  // mirrors what the pump stamps without needing the `t<seq>` branch.
+  const livePillId = (e: { id: string; toolName: string }): string =>
+    e.id.length > 0 ? e.id : "<UNSTABLE-t-seq>"
+
+  test("the loop's synthesized id reaches the persisted message AND the live event, and projectHistory recomputes the SAME rail-pill id", () => {
+    // A provider (Gemini) that returns a tool call WITHOUT an id. This is the
+    // raw response content for ONE turn (turnIndex 1 in this run).
+    const content = [
+      { type: "tool-call", id: "", name: "grep", params: { pattern: "x" } },
+      { type: "tool-result", id: "", name: "grep", result: "no matches" },
+    ]
+
+    // ── what the loop does, in order ──
+    ensureToolCallIds(content, 1)
+
+    // (a) the EVENTS the hooks emit (tool_call_start carries `event.id`)
+    const liveId = livePillId({
+      id: responseToolCalls(content)[0]!.id,
+      toolName: responseToolCalls(content)[0]!.toolName,
+    })
+    // the matching result's id rides the tool_call_end event the same way
+    const liveResultId = responseToolResults(content)[0]!.id
+
+    // (b) the PERSISTED messages (this is what lands in the store)
+    const tail = responseToAgentMessages(content)
+    const persisted: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "find x" },
+      ...(tail as ReadonlyArray<AgentMessage>),
+    ]
+
+    // ── re-attach / idle resync: project the persisted messages ──
+    const proj = projectHistory(persisted, [], 0)
+    const projectedPill = proj.blocks.find((b) => b.kind === "tool")!
+
+    // The synthesized id is one value end-to-end: event == projected pill ==
+    // the result's id (so the call/result pairing is intact). No `t<seq>`, so
+    // the re-projected pill upserts onto the live pill instead of jumping to the
+    // end / duplicating.
+    expect(liveId).toBe("1:grep:0")
+    expect(liveResultId).toBe("1:grep:0")
+    expect(projectedPill.kind === "tool" && projectedPill.id).toBe("1:grep:0")
+    expect(projectedPill.kind === "tool" && projectedPill.id).toBe(liveId)
   })
 })

@@ -1,8 +1,7 @@
 import { basename, resolve } from "node:path"
 import { Data, Effect } from "effect"
-import { FileSystem, Http } from "@xandreed/sdk-core"
+import { FileSystem, Http, parseToolFile } from "@xandreed/sdk-core"
 import { parseAgentFile } from "./loadAgents.js"
-import { parseToolFile } from "./loadTools.js"
 
 /** A git-import failed at the spec/network/listing level (per-file problems are
  *  collected in `skipped`, not thrown). */
