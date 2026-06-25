@@ -35,7 +35,7 @@ export const loadAgents = (
           : resolve(dir, entry.path)
         const read = yield* fs
           .read(absPath)
-          .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+          .pipe(Effect.catchAll((e) => Effect.log(`agent: skipping ${absPath}: ${e}`).pipe(Effect.zipRight(Effect.succeed(undefined)))))
         if (read === undefined) continue
         const parsed = parseAgentFile(read.content, absPath)
         if (parsed === undefined) continue

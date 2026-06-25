@@ -65,6 +65,17 @@ export const makeEventReducer = (
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
   let toolSeq = 0
 
+  /** Prevent unbounded growth when end events are lost (crashes, transport drops). */
+  const trimOldest = <K, V>(m: Map<K, V>, max: number): void => {
+    while (m.size > max) {
+      const first = m.keys().next().value
+      if (first !== undefined) m.delete(first)
+      else break
+    }
+  }
+  const MAX_TOOL_MAP_SIZE = 200
+  const MAX_SUBTREE_SIZE = 500
+
   // The id pairs a start with its end; empty/absent → fall back to the name.
   const matchKey = (e: { id?: string; toolName: string }): string =>
     e.id !== undefined && e.id.length > 0 ? e.id : e.toolName
@@ -156,6 +167,7 @@ export const makeEventReducer = (
               ? treeToolStartUnder(t, owner, label, now)
               : treeToolStart(t, label, now)
           enqueue(toolTreeIds, matchKey(event), id)
+          trimOldest(toolTreeIds, MAX_TOOL_MAP_SIZE)
           return tree
         })
         // Root tools get a compact chat pill on the lead rail; sub-agent inner
@@ -176,12 +188,15 @@ export const makeEventReducer = (
           // ephemeral per-process id WOULD re-introduce the jump-to-end bug).
           const sid = event.id.length > 0 ? event.id : `t${++toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
+          trimOldest(toolScrollIds, MAX_TOOL_MAP_SIZE)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
         } else if (event.nodeId !== undefined) {
           toolSeq++
           const pid = `nl${toolSeq}`
           enqueue(previewToolIds, matchKey(event), pid)
+          trimOldest(previewToolIds, MAX_TOOL_MAP_SIZE)
           toolNodeId.set(matchKey(event), event.nodeId)
+          trimOldest(toolNodeId, MAX_TOOL_MAP_SIZE)
           store.appendNodeLog(event.nodeId, { kind: "tool", id: pid, toolName: label, state: "running" })
         }
         return
@@ -258,7 +273,10 @@ export const makeEventReducer = (
             now,
             event.nodeId,
           )
-          if (event.nodeId !== undefined) subTreeByNode.set(event.nodeId, id)
+          if (event.nodeId !== undefined) {
+            subTreeByNode.set(event.nodeId, id)
+            trimOldest(subTreeByNode, MAX_SUBTREE_SIZE)
+          }
           return tree
         }
         // The fleet lives ONLY in the right-pane fleet tree now — a spawn updates

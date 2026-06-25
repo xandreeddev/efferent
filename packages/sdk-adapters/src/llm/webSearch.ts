@@ -32,7 +32,7 @@ import { retryableLlm } from "./retry.js"
  * returned tool error.
  */
 
-const DEFAULT_GOOGLE_SEARCH_MODEL = "gemini-3.5-flash"
+const DEFAULT_GOOGLE_SEARCH_MODEL = "gemini-2.0-flash"
 const DEFAULT_OPENAI_SEARCH_MODEL = "gpt-4o"
 
 interface SearchModel {

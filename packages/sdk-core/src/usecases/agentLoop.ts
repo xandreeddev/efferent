@@ -326,7 +326,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       if (outcome._tag === "malformed") {
         consecutiveMalformed++
         yield* recordError("turn", "malformed")
-        if (consecutiveMalformed > MAX_MALFORMED) return yield* Effect.fail(outcome.err)
+        if (consecutiveMalformed >= MAX_MALFORMED) return yield* Effect.fail(outcome.err)
         const desc = clip(
           String(
             (outcome.err as { readonly description?: unknown }).description ??

@@ -12,6 +12,91 @@ import { RunContextRef } from "./runContext.js"
 import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
 import type { AgentConfig } from "./agentConfig.js"
 
+interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
+  readonly config: AgentConfig<Tools>
+  readonly conversationId: ConversationId
+  readonly messages: ReadonlyArray<AgentMessage>
+  readonly extraHooks: AgentHooks<R> | undefined
+  readonly workspaceDir: string | undefined
+  readonly pinnedGeneral: string | undefined
+  /** Prompt label for the span (user prompt or "[resume in-flight turn]"). */
+  readonly promptLabel: string
+  /** Seeded onto RunContext.mission when present. */
+  readonly mission: string | undefined
+}
+
+const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
+  input: DriveLoopInput<Tools, R>,
+) =>
+  Effect.gen(function* () {
+    const store = yield* ConversationStore
+    const settingsStore = yield* SettingsStore
+    const settings = yield* settingsStore.get()
+
+    yield* store.ensure(input.conversationId, input.workspaceDir)
+
+    // One shared spend pool for every sub-agent this turn may spawn — fresh per
+    // top-level run, so a prior turn's spend never starves this one.
+    const tokenPool = yield* makeTokenPool(
+      settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
+    )
+
+    const toolResultMaxChars =
+      settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
+
+    // Persist each turn's tail the moment it lands (incremental persistence) — so
+    // the session is restorable to its last completed turn, and a mid-run nav/state
+    // read sees real history, not just memory. A persist failure is a defect (can't
+    // safely continue without durable history).
+    const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(input.conversationId, m)).pipe(Effect.orDie)
+
+    const result = yield* runAgentLoop({
+      system: input.config.prompt.text,
+      messages: input.messages,
+      toolkit: input.config.toolkit,
+      maxSteps: settings.maxSteps,
+      onTail: persistTail,
+      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+      ...(input.extraHooks !== undefined ? { hooks: input.extraHooks } : {}),
+    }).pipe(
+      Effect.locally(RunContextRef, {
+        rootConversationId: input.conversationId,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool,
+        prompt: input.config.prompt,
+        ...(settings.subAgentMaxSteps !== undefined
+          ? { subAgentMaxSteps: settings.subAgentMaxSteps }
+          : {}),
+        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+        ...(input.config.compression !== undefined ? { compression: input.config.compression } : {}),
+        pinnedModels: {
+          general: input.pinnedGeneral ?? settings.model,
+          code: settings.codeModel ?? input.pinnedGeneral ?? settings.model,
+          fast: settings.fastModel ?? input.pinnedGeneral ?? settings.model,
+        },
+        ...(input.mission !== undefined ? { mission: input.mission } : {}),
+      }),
+      Effect.tapErrorCause(() =>
+        Effect.annotateCurrentSpan({ error: true }).pipe(
+          Effect.zipRight(recordError("run", "failed")),
+        ),
+      ),
+      Effect.withSpan(runSpanName(), {
+        attributes: {
+          ...agentSpanAttributes("run", input.conversationId),
+          "agent.model": settings.model,
+          "agent.prompt": input.promptLabel.slice(0, 120),
+        },
+      }),
+      Effect.annotateLogs({ conversationId: input.conversationId }),
+    )
+
+    yield* store.clearPending(input.conversationId).pipe(Effect.ignore)
+    return result
+  })
+
 /**
  * Run the agent for one user prompt against a chosen config.
  *
@@ -44,10 +129,9 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
 
     yield* store.ensure(conversationId, workspaceDir)
 
-    // The model loads only the active window — the real messages after the
-    // latest handoff — with the handoff summary standing in for everything
-    // folded away. `prefix` is in-memory only (never persisted); the original
-    // messages stay in the store (browsable via `list`).
+    // Load only the active window — the real messages after the latest handoff —
+    // with the handoff summary standing in for everything folded away. `prefix` is
+    // in-memory only (never persisted); the originals stay in the store.
     const checkpoint = yield* store.getLatestCheckpoint(conversationId)
     const active = yield* store.listActive(conversationId)
     const prefix: ReadonlyArray<AgentMessage> =
@@ -56,97 +140,26 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
     const userMsg: AgentMessage = { role: "user", content: userPrompt }
     const userPosition = yield* store.append(conversationId, userMsg)
     // Emit the user message through the hook stream the moment it's persisted,
-    // carrying its absolute position — so the rail's user line rides the same
-    // keyed event stream as everything else (no client-side reconstruction) and
-    // reconciles with any optimistic line by position.
+    // carrying its absolute position — so the rail's user line rides the same keyed
+    // event stream as everything else and reconciles with any optimistic line.
     if (extraHooks?.onUserMessage) {
       yield* extraHooks.onUserMessage({ turnIndex: 0, text: userPrompt, position: userPosition })
     }
 
     // Mark the turn in flight (best-effort): a daemon restart reads this to
-    // auto-resume a turn interrupted by a crash. Cleared on completion below.
+    // auto-resume a turn interrupted by a crash. Cleared on completion in driveLoop.
     yield* store.markPending(conversationId, userPrompt).pipe(Effect.ignore)
 
-    // Persist each turn's tail the moment it lands (incremental persistence) —
-    // so the session is restorable to its last completed turn, and a mid-run
-    // nav/state read sees real history, not just what's in memory. A persist
-    // failure is a defect (can't safely continue without durable history),
-    // mirroring the old end-of-run append's failure semantics.
-    const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(Effect.orDie)
-
-    // One shared spend pool for every sub-agent this turn may spawn — fresh
-    // per top-level run, so a prior turn's spend never starves this one.
-    const tokenPool = yield* makeTokenPool(
-      settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
-    )
-
-    const toolResultMaxChars =
-      settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
-
-    const result = yield* runAgentLoop({
-      system: config.prompt.text,
+    return yield* driveLoop({
+      config,
+      conversationId,
       messages: [...prefix, ...active, userMsg],
-      toolkit: config.toolkit,
-      maxSteps: settings.maxSteps,
-      onTail: persistTail,
-      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
-      ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
-    }).pipe(
-      // Seed the run context so the generic `run_agent` tool tags spawned
-      // context-tree nodes with this conversation (and a null parent — top-level
-      // spawns are tree roots; each spawn re-seeds for its own children).
-      Effect.locally(RunContextRef, {
-        rootConversationId: conversationId,
-        parentNodeId: null,
-        depth: 0,
-        tokenPool,
-        prompt: config.prompt,
-        ...(settings.subAgentMaxSteps !== undefined
-          ? { subAgentMaxSteps: settings.subAgentMaxSteps }
-          : {}),
-        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
-        // The agent's compression policy rides RunContext so the whole sub-agent
-        // subtree inherits it; the loop falls back to Compaction.default() when absent.
-        ...(config.compression !== undefined ? { compression: config.compression } : {}),
-        // Freeze all three role models at run start (the router resolves a fiber's
-        // role to its pin) so a mid-run model switch can't move a running fleet —
-        // and each provider's cache prefix stays warm.
-        pinnedModels: {
-          general: pinnedGeneral ?? settings.model,
-          code: settings.codeModel ?? pinnedGeneral ?? settings.model,
-          fast: settings.fastModel ?? pinnedGeneral ?? settings.model,
-        },
-        // The human's request — inherited by every spawn so a sub-agent can be
-        // reminded of the overall goal even when its task brief is terse.
-        mission: userPrompt,
-      }),
-      // A failed run marks its span errored (the conversation drill-down lists
-      // failed messages; RED reads `agent_errors_total{kind="run"}`), then
-      // re-raises — observe-only, the caller's failure path is unchanged.
-      Effect.tapErrorCause(() =>
-        Effect.annotateCurrentSpan({ error: true }).pipe(
-          Effect.zipRight(recordError("run", "failed")),
-        ),
-      ),
-      Effect.withSpan(runSpanName(), {
-        attributes: {
-          ...agentSpanAttributes("run", conversationId),
-          "agent.model": settings.model,
-          // A short, readable anchor so the per-conversation trace list is
-          // scannable in Grafana (full prompt lives in the persisted message).
-          "agent.prompt": userPrompt.slice(0, 120),
-        },
-      }),
-      Effect.annotateLogs({ conversationId }),
-    )
-
-    // The loop already persisted each turn's tail as it landed (via
-    // `onTail` → `persistTail`), so there's no end-of-run bulk append. Clear
-    // the in-flight marker now that the turn completed (best-effort).
-    yield* store.clearPending(conversationId).pipe(Effect.ignore)
-
-    return result
+      extraHooks,
+      workspaceDir,
+      pinnedGeneral,
+      promptLabel: userPrompt,
+      mission: userPrompt,
+    })
   })
 
 /**
@@ -171,11 +184,6 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
-    const settingsStore = yield* SettingsStore
-    const settings = yield* settingsStore.get()
-
-    yield* store.ensure(conversationId, workspaceDir)
-
     const checkpoint = yield* store.getLatestCheckpoint(conversationId)
     const active = yield* store.listActive(conversationId)
     // Nothing to resume (e.g. the marker outlived its messages) — clear + bail.
@@ -186,56 +194,14 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
     const prefix: ReadonlyArray<AgentMessage> =
       checkpoint !== undefined ? [handoffToMessage(checkpoint.summary)] : []
 
-    const tokenPool = yield* makeTokenPool(
-      settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
-    )
-    const toolResultMaxChars =
-      settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
-
-    const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(conversationId, m)).pipe(Effect.orDie)
-
-    const result = yield* runAgentLoop({
-      system: config.prompt.text,
+    return yield* driveLoop({
+      config,
+      conversationId,
       messages: [...prefix, ...active],
-      toolkit: config.toolkit,
-      maxSteps: settings.maxSteps,
-      onTail: persistTail,
-      ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
-      ...(extraHooks !== undefined ? { hooks: extraHooks } : {}),
-    }).pipe(
-      Effect.locally(RunContextRef, {
-        rootConversationId: conversationId,
-        parentNodeId: null,
-        depth: 0,
-        tokenPool,
-        prompt: config.prompt,
-        ...(settings.subAgentMaxSteps !== undefined
-          ? { subAgentMaxSteps: settings.subAgentMaxSteps }
-          : {}),
-        ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
-        ...(config.compression !== undefined ? { compression: config.compression } : {}),
-        pinnedModels: {
-          general: pinnedGeneral ?? settings.model,
-          code: settings.codeModel ?? pinnedGeneral ?? settings.model,
-          fast: settings.fastModel ?? pinnedGeneral ?? settings.model,
-        },
-      }),
-      Effect.tapErrorCause(() =>
-        Effect.annotateCurrentSpan({ error: true }).pipe(
-          Effect.zipRight(recordError("run", "failed")),
-        ),
-      ),
-      Effect.withSpan(runSpanName(), {
-        attributes: {
-          ...agentSpanAttributes("run", conversationId),
-          "agent.model": settings.model,
-          "agent.prompt": "[resume in-flight turn]",
-        },
-      }),
-      Effect.annotateLogs({ conversationId }),
-    )
-
-    yield* store.clearPending(conversationId).pipe(Effect.ignore)
-    return result
+      extraHooks,
+      workspaceDir,
+      pinnedGeneral,
+      promptLabel: "[resume in-flight turn]",
+      mission: undefined,
+    })
   })
