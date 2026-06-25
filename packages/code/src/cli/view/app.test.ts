@@ -114,6 +114,45 @@ test("the fleet tree is always visible on the right, showing the workspace sessi
   }
 })
 
+test("the working plan renders always-visible in the fleet pane on update_plan", async () => {
+  const store = newStore()
+  const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {
+    width: 120,
+    height: 32,
+  })
+  try {
+    const reduce = makeEventReducer(store)
+    // A ROOT update_plan (nodeId undefined) → projection.plan → the pinned
+    // PlanSection in the fleet pane. No cursor/nav setup: the section is
+    // always-visible, which is the regression this guards.
+    reduce({
+      type: "tool_call_start",
+      turnIndex: 0,
+      id: "plan_1",
+      toolName: "update_plan",
+      args: {
+        steps: [
+          { step: "read the parser", status: "done" },
+          { step: "add the json flag", status: "active" },
+          { step: "write the tests", status: "pending" },
+        ],
+      },
+    })
+
+    const frame = await waitForFrame(
+      (f) => f.includes("plan") && f.includes("add the json flag"),
+    )
+    // Every step shows (not a cursor-gated subset), with its status glyph.
+    expect(frame).toContain("read the parser") // done
+    expect(frame).toContain("add the json flag") // active
+    expect(frame).toContain("write the tests") // pending
+    expect(frame).toContain("✓") // done glyph (glyph.ok)
+    expect(frame).toContain("○") // pending glyph (glyph.idleDot)
+  } finally {
+    renderer.destroy()
+  }
+})
+
 test("jumping into an agent re-points the LEFT chat to that agent's session (breadcrumb + log)", async () => {
   const store = newStore()
   const { waitForFrame, renderer } = await testRender(makeApp(fakeCtx(store)), {

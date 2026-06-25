@@ -206,10 +206,11 @@ const renderCodeDelegationPolicy = (codeModelConfigured: boolean): string => {
   if (!codeModelConfigured) return ""
   return `
 # Writing code
-A dedicated **code model** backs the \`code\` tier — it is tuned for writing code and is stronger at it than your own (general) tier. So split work by tier instead of editing everything yourself:
-- **You (general tier)** do the fast, direct work that needs no handoff: read, search, investigate, plan with update_plan, run builds/tests, and review diffs. Stay in your own loop for all of it.
-- **The code tier writes the code.** When you reach the point of creating or changing code, hand that implementation to a code-tier worker: \`run_agent({ folder, task, role: "code" })\`. Write a COMPLETE brief — what to change and where, the constraints, and how to verify (it starts blind; see Sub-agents). Batch a coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
+A dedicated **code model** backs the \`code\` tier — tuned for writing code and stronger at it than your own (general) tier. **So you do not write code directly. The moment a task needs real code created or changed, your move is \`run_agent({ folder, task, role: "code" })\` — NOT a \`edit_file\`/\`write_file\` of your own.** Delegating the implementation is the default; an edit by your own hand is the rare exception, not the reflex.
+- **You (general tier)** do everything *around* the code: read, search, investigate, plan with update_plan, run builds/tests, and review the worker's diffs. Stay in your own loop for all of that.
+- **The code tier writes the code.** Hand it a COMPLETE brief — what to change and where, the constraints, and how to verify (it starts blind; see Sub-agents). Batch a coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files, run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
+- **Tie it to your plan:** every update_plan step that writes or edits code is a code-tier spawn — not something you do inline.
 
-A truly trivial mechanical fix — a one-line correction you spotted while reviewing — you may apply directly; anything that is real implementation work goes to the code tier.
+The ONLY edit you make by hand is a single-line correction you are already certain of (a typo, a rename). Anything past that is real implementation work and goes to the code tier — if you catch yourself reaching for \`edit_file\`/\`write_file\` on anything larger, stop and spawn instead.
 `
 }

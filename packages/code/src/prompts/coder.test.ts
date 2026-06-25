@@ -62,6 +62,11 @@ describe("coderSystemPrompt code-delegation policy", () => {
     // The fleet "do it yourself" default is reframed to defer code-writing.
     expect(p).toContain("Do the investigating, planning, running, and reviewing yourself")
     expect(p).not.toContain("Do the work yourself by default")
+    // The tuned rule is imperative, and the broad "trivial fix" loophole is gone
+    // (narrowed to a single-line correction) so the model can't rationalise
+    // doing all the coding itself.
+    expect(p).toContain("you do not write code directly")
+    expect(p).not.toContain("trivial mechanical fix")
   })
 
   it("omits the code-delegation policy when no distinct code model is configured", () => {

@@ -124,10 +124,6 @@ const RootView = (props: { ctx: TuiContext; label: string }) => {
   const stats = () => store.stats()
   const current = () => runningToolLabel(store.executionTree().roots)
   const filesCount = () => store.projection().filesChanged.length
-  // The agent's working plan — the latest root `update_plan` checklist. It used
-  // to live in the old Activity pane; with the always-on fleet tree the root's
-  // detail is its home now (the active session is the default cursor row).
-  const plan = () => store.projection().plan
   return (
     <box flexDirection="column" overflow="hidden">
       <box flexDirection="row" flexShrink={0}>
@@ -152,31 +148,6 @@ const RootView = (props: { ctx: TuiContext; label: string }) => {
         <text fg={tokens.state.running} wrapMode="none">
           {`  ${glyph.connector} ${current() ?? "thinking…"}`}
         </text>
-      </Show>
-      {/* Working plan — ✓ done · ● active · ○ pending. Capped; the pane clips. */}
-      <Show when={plan().length > 0}>
-        <box flexDirection="column" marginTop={1} flexShrink={0} overflow="hidden">
-          <text fg={tokens.text.dim} wrapMode="none">{"  plan"}</text>
-          <For each={plan().slice(0, 8)}>
-            {(s) => (
-              <text
-                fg={
-                  s.status === "active"
-                    ? tokens.state.running
-                    : s.status === "done"
-                      ? tokens.text.dim
-                      : tokens.text.muted
-                }
-                wrapMode="none"
-              >
-                {`  ${s.status === "done" ? glyph.ok : s.status === "active" ? glyph.railDot : glyph.idleDot} ${s.step}`}
-              </text>
-            )}
-          </For>
-          <Show when={plan().length > 8}>
-            <text fg={tokens.text.dim}>{`    … ${plan().length - 8} more`}</text>
-          </Show>
-        </box>
       </Show>
     </box>
   )

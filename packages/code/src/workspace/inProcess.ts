@@ -792,6 +792,13 @@ export const makeInProcessWorkspace = (
             yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
           }
           const fiber = (yield* getRun(key)).fiber
+          // Trace whether the run fiber was actually found: a "MISSING" here means
+          // the turn isn't keyed where we looked (so Esc no-ops); "found" means the
+          // interrupt fired and any "Esc does nothing" is the in-flight work not
+          // yielding to cancellation (a provider call / bash). Pinpoints the link.
+          yield* Effect.logInfo(
+            `interrupt ${key.slice(0, 8)}: run fiber ${fiber !== undefined ? "found → interrupting" : "MISSING — nothing to interrupt"}`,
+          )
           if (fiber !== undefined) yield* Fiber.interrupt(fiber)
         }),
 
