@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "ts": "2026-06-25T23:50:56.735Z",
+  "gitSha": "c354dff3dee",
+  "label": "delegation hard-rule · code-tier routing reliable (kimi general + deepseek code)",
+  "runs": [
+    {
+      "configName": "inline",
+      "suites": [
+        {
+          "suite": "quality",
+          "mean": 0.975,
+          "passRate": 1,
+          "cases": [
+            {
+              "suite": "quality",
+              "name": "bug-fix · off-by-one in one file",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 5,
+              "stdev": 0,
+              "scores": [
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "objective",
+                  "score": 1
+                }
+              ],
+              "steps": 51,
+              "inputTokens": 345487,
+              "outputTokens": 7077,
+              "cacheReadTokens": 253879,
+              "wallMs": 145548.328035
+            },
+            {
+              "suite": "quality",
+              "name": "feature · add a small pure function to one file",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 5,
+              "stdev": 0,
+              "scores": [
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "objective",
+                  "score": 1
+                }
+              ],
+              "steps": 59,
+              "inputTokens": 413335,
+              "outputTokens": 13068,
+              "cacheReadTokens": 312727,
+              "wallMs": 255991.966794
+            },
+            {
+              "suite": "quality",
+              "name": "qa · explain a function (read-only)",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 5,
+              "stdev": 0,
+              "scores": [
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "objective",
+                  "score": 1
+                }
+              ],
+              "steps": 17,
+              "inputTokens": 134736,
+              "outputTokens": 5062,
+              "cacheReadTokens": 83968,
+              "wallMs": 94481.500254
+            },
+            {
+              "suite": "quality",
+              "name": "qa · locate a definition (read-only)",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 5,
+              "stdev": 0,
+              "scores": [
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "objective",
+                  "score": 1
+                }
+              ],
+              "steps": 12,
+              "inputTokens": 95446,
+              "outputTokens": 3392,
+              "cacheReadTokens": 53248,
+              "wallMs": 87172.611412
+            },
+            {
+              "suite": "quality",
+              "name": "refactor · rename a symbol across two files",
+              "configName": "inline",
+              "ok": true,
+              "mean": 0.875,
+              "samples": 5,
+              "stdev": 0,
+              "scores": [
+                {
+                  "name": "quality",
+                  "score": 0.5
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "objective",
+                  "score": 1
+                }
+              ],
+              "steps": 44,
+              "inputTokens": 301489,
+              "outputTokens": 7621,
+              "cacheReadTokens": 210716,
+              "wallMs": 166398.052089
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
