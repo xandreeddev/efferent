@@ -1,19 +1,19 @@
-# Build the documentation site (website/, Astro Starlight) and deploy it to
-# GitHub Pages — the project page at https://xandreeddev.github.io/efferent/.
+# Build the documentation site (packages/website/, hand-built Astro) and deploy
+# it to GitHub Pages — the project page at https://xandreeddev.github.io/efferent/.
 #
 # One-time setup: enable Pages with source "GitHub Actions"
 #   Settings → Pages → Build and deployment → Source: GitHub Actions
 #   (or: gh api -X POST /repos/xandreeddev/efferent/pages -f build_type=workflow)
 #
-# website/ is NOT a Bun workspace member (root workspaces = packages/*), so it
-# installs from its own website/bun.lock and never touches the monorepo install.
+# packages/website is a Bun workspace member, so it installs from the root
+# bun.lock — one `bun install` at the repo root resolves its deps.
 name: docs
 
 on:
   push:
     branches: [main]
     paths:
-      - "website/**"
+      - "packages/website/**"
       - "examples/**" # docs render example sources via ?raw
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -31,9 +31,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: website
     steps:
       - uses: actions/checkout@v4
 
@@ -41,18 +38,22 @@ jobs:
         with:
           bun-version: latest
 
+      # The docs site is a workspace member — install the whole workspace from
+      # the root lockfile, then build/check inside its package dir.
       - run: bun install --frozen-lockfile
 
       - run: bun run build
+        working-directory: packages/website
 
       - name: Check every internal link resolves
         run: bun run linkcheck
+        working-directory: packages/website
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: website/dist
+          path: packages/website/dist
 
   deploy:
     needs: build
