@@ -1,7 +1,6 @@
 import { dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
-import { FileSystem, type Skill } from "@xandreed/sdk-core"
-import { parseFrontmatter } from "./discoverScopeTree.js"
+import { FileSystem, parseFrontmatter, type Skill } from "@xandreed/sdk-core"
 
 /**
  * Walk `cwd → parents → home` looking for `.efferent/skills/*.md` files,

@@ -178,9 +178,46 @@ describe("in-process Workspace", () => {
     expect(result.types).toContain("agent_end")
     // The session settled idle, and the user prompt was persisted.
     expect(result.state.busy).toBe(false)
+    // The daemon-authoritative phase settled to idle too — this is what a
+    // (re)attaching client reads to clear a phantom "thinking" spinner.
+    expect(result.state.phase).toBe("idle")
     const userMsgs = result.state.log.filter((m) => m.role === "user")
     expect(userMsgs.length).toBeGreaterThanOrEqual(1)
     expect(result.state.session.kind).toBe("root")
+  })
+
+  test("getState reports the authoritative phase: idle before a turn, idle after it settles", async () => {
+    const phases = await Effect.runPromise(
+      Effect.gen(function* () {
+        const ws = yield* makeInProcessWorkspace({
+          roots: [{ cid: ROOT_CID as never }],
+          rootScope,
+          cwd: "/tmp/ws",
+          skills: [],
+          memory: [],
+          agents: [],
+          tools: [],
+          instructionFiles: [],
+          approvalLayer: ApprovalAllowAllLive,
+          fleet: makeFleetSupervisor(),
+          allowBash: true,
+        })
+        const rootId = conversationSessionId(ROOT_CID as never)
+        // A fresh session has never run → idle (not a phantom thinking).
+        const before = (yield* ws.getState(rootId)).phase
+        yield* ws.send(rootId, "hello")
+        // Let the detached turn settle.
+        let spins = 0
+        while ((yield* ws.getState(rootId)).busy && spins < 300) {
+          yield* Effect.sleep("20 millis")
+          spins += 1
+        }
+        const after = (yield* ws.getState(rootId)).phase
+        return { before, after }
+      }).pipe(Effect.provide(Layer.mergeAll(stubPorts, stubConv()))),
+    )
+    expect(phases.before).toBe("idle")
+    expect(phases.after).toBe("idle")
   })
 
   test("directive round-trips through get/setDirective", async () => {

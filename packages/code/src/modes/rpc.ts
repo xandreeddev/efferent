@@ -10,17 +10,17 @@ import {
   SettingsStore,
   Shell,
   WebSearch,
+  buildScopeRuntime,
+  discoverScopeTree,
   runAgent,
   type AgentDefinition,
   type Scope,
   type Memory,
   type Skill,
 } from "@xandreed/sdk-core"
-import type { ToolDefinition } from "../usecases/loadTools.js"
-import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
-import { discoverScopeTree } from "../usecases/discoverScopeTree.js"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 

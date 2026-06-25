@@ -3,8 +3,8 @@ import {
   SettingsStore,
   type Approval,
   type UtilityLlm,
+  type buildScopeRuntime,
 } from "@xandreed/sdk-core"
-import type { buildScopeRuntime } from "../../usecases/buildScopeRuntime.js"
 import type { AgentEvent } from "../../events.js"
 import { refreshNav } from "./contextTree.js"
 import type { FleetSupervisor } from "../state/fleet.js"

@@ -36,6 +36,29 @@ describe("RunContextRef", () => {
     expect(await Effect.runPromise(program)).toEqual(seeded)
   })
 
+  it("interactionPolicy defaults to absent (= interactive) and survives a child re-seed", async () => {
+    // Default: nothing sets it.
+    const fresh = await Effect.runPromise(FiberRef.get(RunContextRef))
+    expect(fresh.interactionPolicy).toBeUndefined()
+
+    // A headless run re-seeds a child exactly as buildScopeRuntime's childRc does
+    // (copy the parent, bump depth) — the policy must ride along verbatim, so a
+    // deep spawn of an UNATTENDED run is also unattended-aware.
+    const program = Effect.gen(function* () {
+      const root: RunContext = { ...initialRunContext, interactionPolicy: "headless" }
+      const childPolicy = yield* Effect.gen(function* () {
+        const ctx = yield* FiberRef.get(RunContextRef)
+        const child: RunContext = { ...ctx, depth: ctx.depth + 1 }
+        return yield* FiberRef.get(RunContextRef).pipe(
+          Effect.locally(RunContextRef, child),
+          Effect.map((c) => c.interactionPolicy),
+        )
+      }).pipe(Effect.locally(RunContextRef, root))
+      return childPolicy
+    })
+    expect(await Effect.runPromise(program)).toBe("headless")
+  })
+
   it("re-seeding for a child copies the SAME pool reference — grandchild spend drains the root's gate", async () => {
     const program = Effect.gen(function* () {
       const pool = yield* makeTokenPool(1000)

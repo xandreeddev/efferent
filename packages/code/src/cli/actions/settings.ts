@@ -22,8 +22,8 @@ import {
   suggestName,
   effortLevelsFor,
   effortSettingKeyFor,
+  DEFAULT_SUB_AGENT_MAX_STEPS,
 } from "@xandreed/sdk-core"
-import { DEFAULT_SUB_AGENT_MAX_STEPS } from "../../usecases/buildScopeRuntime.js"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesReadout } from "../presentation/statusBar.js"
 import { openSettings, setRowValue, type SettingsRow } from "../presentation/settingsView.js"

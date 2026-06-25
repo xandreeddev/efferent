@@ -1,27 +1,23 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
 import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
+import type { AgentAfterToolCallEvent, AgentHooks } from "../entities/AgentHooks.js"
+import { type AgentMessage, ConversationId } from "../entities/Conversation.js"
+import type { Prompt } from "../entities/Prompt.js"
+import type { Scope } from "../entities/Scope.js"
+import { Approval, bashRuleKey } from "../ports/Approval.js"
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+import { FileSystem } from "../ports/FileSystem.js"
+import { Http } from "../ports/Http.js"
+import { Shell } from "../ports/Shell.js"
+import { WebSearch } from "../ports/WebSearch.js"
+import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
+import { runAgentLoop } from "./agentLoop.js"
+import { generateHandoffBrief } from "./handoff.js"
+import { handoffToMessage } from "./promptMapping.js"
+import { RunContextRef, type RunContext } from "./runContext.js"
 import {
-  ContextNodeId,
-  type ContextUsage,
-  type AgentAfterToolCallEvent,
-  type AgentHooks,
-  type AgentMessage,
-  type Prompt,
-  type Scope,
-  Approval,
-  bashRuleKey,
-  ContextTreeStore,
-  FileSystem,
-  Http,
-  Shell,
-  WebSearch,
-  agentSpanAttributes,
-  subagentSpanName,
-  runAgentLoop,
-  generateHandoffBrief,
-  handoffToMessage,
-  RunContextRef,
   BUDGET_STOP_NOTE,
   budgetExhaustedFailure,
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
@@ -29,27 +25,30 @@ import {
   makeTokenPool,
   poolExhausted,
   type TokenPool,
-  Failure,
-  toFailure,
-  type Memory,
-  type Skill,
-  type AgentDefinition,
-  type AgentModelRole,
-  ConversationId,
-  type AgentEvent,
-  type RunContext,
-} from "@xandreed/sdk-core"
-import { renderScopeSystemPrompt } from "../prompts/coder.js"
+} from "./tokenBudget.js"
+import { Failure, toFailure } from "../entities/Failure.js"
+import type { Memory } from "../entities/Memory.js"
+import type { Skill } from "../entities/Skill.js"
+import type { AgentDefinition } from "../entities/AgentDefinition.js"
+import type { AgentModelRole } from "../entities/Model.js"
+import type { AgentEvent } from "../entities/AgentEvent.js"
+import { renderScopeSystemPrompt } from "../prompts/scopeAgent.js"
 import {
   codingToolkit,
   makeCodingHandlers,
   type ScopeBinding,
 } from "./codingToolkit.js"
-import { getScopePromptBody } from "./discoverScopeTree.js"
 import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
-import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
-import { addJob, loadJobs, parseCron, removeJob, type ScheduledJob } from "./schedule.js"
+import {
+  addJob,
+  loadJobs,
+  parseCron,
+  removeJob,
+  type ScheduledJob,
+} from "./schedule.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
+import { getScopePromptBody } from "./discoverScopeTree.js"
+import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
 
 /**
  * A runnable scope: the `@effect/ai` Toolkit (base coding tools + the generic
@@ -113,6 +112,15 @@ export interface ScopeRuntime {
     readonly budget?: number
     readonly maxSteps?: number
     readonly toolResultMaxChars?: number
+    /** The overall goal this run serves — seeded onto the run's `RunContext` and
+     *  inherited by every sub-agent (the mission backstop). The bare `spawnAgent`
+     *  never set this, so a scheduled run + its fleet worked blind; the job router
+     *  passes the job prompt here so the scheduled subtree knows the goal. */
+    readonly mission?: string
+    /** Whether a human is watching (default interactive). A scheduled job passes
+     *  `"headless"` so this run's approval parks + denies instead of blocking on
+     *  an absent human; inherited down the subtree. */
+    readonly interactionPolicy?: "interactive" | "headless"
   }) => Effect.Effect<
     { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
     Failure,
@@ -139,6 +147,12 @@ export const DEFAULT_SUB_AGENT_MAX_STEPS = 80
  *  without it the run's mid-thought last sentence reads as the deliverable. */
 export const STEP_STOP_NOTE =
   "[stopped early: the step limit was reached — this result is partial]"
+
+/** Recorded as a sub-agent's return summary when its fiber is interrupted
+ *  (Esc / `:stop` / teardown) or dies before reaching a terminal path — set by
+ *  the exit finalizer so the DB node never stays `running` and the parent is
+ *  notified immediately instead of waiting on the mid-session sweeper. */
+export const INTERRUPTED_NOTE = "[interrupted — run did not finish]"
 
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
@@ -177,18 +191,25 @@ const clip = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, n)}…`
 
 /** Parse a `run_tool` args JSON-object string into string-valued params. `{}` for
- *  empty/absent; undefined when it isn't a JSON object (a validation failure). */
-const parseToolArgs = (raw: string | undefined): Record<string, string> | undefined => {
-  if (raw === undefined || raw.trim().length === 0) return {}
-  try {
-    const v = JSON.parse(raw) as unknown
-    if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined
-    const out: Record<string, string> = {}
-    for (const [k, val] of Object.entries(v)) out[k] = typeof val === "string" ? val : String(val)
-    return out
-  } catch {
-    return undefined
-  }
+ *  empty/absent; undefined when it isn't a JSON object (a validation failure).
+ *  `JSON.parse` can throw, which core bans catching with try/catch — `Effect.try`
+ *  funnels the throw into a typed failure that `orElseSucceed(undefined)` maps to
+ *  the same "validation failure" result the catch produced. */
+const parseToolArgs = (
+  raw: string | undefined,
+): Effect.Effect<Record<string, string> | undefined> => {
+  if (raw === undefined || raw.trim().length === 0) return Effect.succeed({})
+  return Effect.try(() => JSON.parse(raw) as unknown).pipe(
+    Effect.map((v) => {
+      if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined
+      const out: Record<string, string> = {}
+      for (const [k, val] of Object.entries(v)) {
+        out[k] = typeof val === "string" ? val : String(val)
+      }
+      return out
+    }),
+    Effect.orElseSucceed(() => undefined),
+  )
 }
 
 /** Base coding tool definitions (read/write/edit/bash/grep/glob/ls/read_skill/web_fetch). */
@@ -326,7 +347,7 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
         "The run_agent nodeIds to watch. Omit to watch all agents you spawned this session.",
     }),
     timeoutSeconds: Schema.optional(Schema.Number).annotations({
-      description: "Max seconds to wait before returning a status snapshot anyway (default 60, max 300).",
+      description: "Max seconds to wait before returning a status snapshot anyway (default 10, max 300). It returns earlier the moment a watched agent finishes or a message lands, so this is just the idle ceiling.",
     }),
   },
   success: Schema.Struct({
@@ -796,6 +817,13 @@ interface RunSpawnedArgs<R> {
  */
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   const definition = args.definition
+  // Set true the moment EITHER terminal path records its return (ok / error).
+  // The exit finalizer reads it: a run that exits WITHOUT having recorded one
+  // was interrupted (Esc / :stop / teardown) or died, so the finalizer records
+  // an `error` return + notifies the parent itself — otherwise the DB node
+  // stays `running` forever and the parent is never told (markDone only tears
+  // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
+  const returnRecordedRef = Ref.unsafeMake(false)
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = args.title ?? (basename(folder) || folder)
@@ -930,6 +958,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.mission !== undefined
         ? { mission: args.runContext.mission }
         : {}),
+      // Inherited verbatim like the mission: a headless (unattended) run's whole
+      // subtree must know it's unattended, so a deep spawn's approval also parks
+      // + denies rather than blocking on a human who isn't there.
+      ...(args.runContext.interactionPolicy !== undefined
+        ? { interactionPolicy: args.runContext.interactionPolicy }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
@@ -996,6 +1030,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         ...(hasUsage ? { usage } : {}),
         ...stamp,
       })
+      // Mark the return recorded so the exit finalizer doesn't double-record it.
+      yield* Ref.set(returnRecordedRef, true)
       // Deliver the outcome to the bus FIRST: wakes a parent's `wait_for_agents`,
       // delivers/buffers a completion in the parent's inbox + the blackboard, and
       // records the terminal result. This MUST precede `onSubAgentEnd` — that
@@ -1025,6 +1061,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(hasUsage ? { usage } : {}),
       ...stamp,
     })
+    // Mark the return recorded so the exit finalizer doesn't double-record it.
+    yield* Ref.set(returnRecordedRef, true)
     // Same ordering as the ok path: deliver to the bus before the event that
     // triggers the auto-resume, so a parent draining its inbox sees the failure.
     yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
@@ -1044,8 +1082,43 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // one at a time and waits between them — read-only research/review fans out in
   // parallel). A lock here held for the whole run was invisible + unrecoverable
   // (a hung agent stranded its same-folder siblings); sequencing lives where it's
-  // observable (wait_for_agents timeouts). markDone tears the mailbox down on exit.
-  return body.pipe(Effect.ensuring(args.bus.markDone(args.nodeId)))
+  // observable (wait_for_agents timeouts).
+  //
+  // Exit finalizer (runs on EVERY exit — success, failure, interrupt, defect):
+  //  - Normal terminal paths (ok / error) already recorded the return AND
+  //    notified the parent via `bus.complete`, so `returnRecordedRef` is true:
+  //    just tear the mailbox down (markDone is a no-op — complete already
+  //    removed the running entry).
+  //  - Interrupted / died before a terminal path ⇒ the Ref is still false: the
+  //    DB node would otherwise stay `running` forever and the parent would never
+  //    hear about it (markDone only tears down the mailbox without notifying).
+  //    So record an `error` return AND `bus.complete` — mirroring the normal
+  //    error path's parent notification (inbox + blackboard + terminal record).
+  // Everything here is failure-safe (Effect.ignore / catchAll) so teardown never
+  // throws — the finalizer must always complete even mid-interruption.
+  const finalize = Effect.gen(function* () {
+    const recorded = yield* Ref.get(returnRecordedRef)
+    if (recorded) {
+      yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
+      return
+    }
+    // Interrupted / died: record an error return + notify the parent ourselves.
+    yield* args.store
+      .recordReturn(args.nodeId, {
+        status: "error",
+        summary: INTERRUPTED_NOTE,
+        filesChanged: [],
+      })
+      .pipe(Effect.ignore)
+    yield* args.bus
+      .complete(args.nodeId, {
+        status: "error",
+        summary: INTERRUPTED_NOTE,
+        filesChanged: [],
+      })
+      .pipe(Effect.ignore)
+  }).pipe(Effect.catchAll(() => Effect.void))
+  return body.pipe(Effect.onExit(() => finalize))
 }
 
 /** The model's `run_agent` result: the work happens in the background, so the
@@ -1335,7 +1408,7 @@ const buildGenericHandlers = <R>(
             message: `no custom tool '${params.name}'. Available: ${[...toolDefs.keys()].join(", ") || "(none)"}.`,
           })
         }
-        const parsedArgs = parseToolArgs(params.args)
+        const parsedArgs = yield* parseToolArgs(params.args)
         if (parsedArgs === undefined) {
           return yield* Effect.fail({
             error: "InvalidArgs",
@@ -1450,8 +1523,11 @@ const buildGenericHandlers = <R>(
           .filter((s) => s.length > 0)
         const watch =
           requested.length > 0 ? requested : yield* bus.childrenOf(waiterKey)
+        // Default 10s, not 60: awaitChange wakes the instant a child finishes or
+        // mail lands, so the timeout is only the idle floor — a 60s floor stranded
+        // a polling orchestrator for a full minute when nothing had happened yet.
         const timeoutMs =
-          Math.min(300, Math.max(1, Math.floor(params.timeoutSeconds ?? 60))) * 1000
+          Math.min(300, Math.max(1, Math.floor(params.timeoutSeconds ?? 10))) * 1000
         yield* bus.awaitChange({ waiterKey, watch, timeoutMs })
         const snaps = yield* bus.snapshot(watch.length > 0 ? watch : undefined)
         const inbox = yield* bus.drain(waiterKey)
@@ -1567,6 +1643,8 @@ export const buildScopeRuntime = <R = never>(
     budget,
     maxSteps,
     toolResultMaxChars,
+    mission,
+    interactionPolicy,
   }) =>
     Effect.gen(function* () {
       const store = yield* ContextTreeStore
@@ -1576,7 +1654,15 @@ export const buildScopeRuntime = <R = never>(
       const tokenPool = yield* makeTokenPool(budget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET)
       const cleanTitle =
         typeof title === "string" && title.trim().length > 0 ? title.trim() : undefined
-      const seedMessages: ReadonlyArray<AgentMessage> = [{ role: "user", content: task }]
+      const cleanMission =
+        typeof mission === "string" && mission.trim().length > 0 ? mission.trim() : undefined
+      // The fresh spawn seeds the overall mission ahead of the task (if any), so a
+      // scheduled run's leaf agents know the goal even when their brief is terse —
+      // mirroring the model's `run_agent` fresh-spawn path (missionPreamble).
+      const seedMessages: ReadonlyArray<AgentMessage> = [
+        ...missionPreamble(cleanMission),
+        { role: "user", content: task },
+      ]
       const nodeId = yield* store.spawn({
         parentId: null,
         rootConversationId,
@@ -1588,6 +1674,15 @@ export const buildScopeRuntime = <R = never>(
         seedMessages,
       })
       const rc = yield* FiberRef.get(RunContextRef)
+      // Seed the mission + interactionPolicy onto the run context `runSpawnedAgent`
+      // copies down its subtree (childRc inherits both verbatim). The bare driver
+      // RunContext never carried these, which is exactly why a scheduled run + its
+      // fleet ran blind AND unattended-unaware — the job router fixes it here.
+      const runContext: RunContext = {
+        ...rc,
+        ...(cleanMission !== undefined ? { mission: cleanMission } : {}),
+        ...(interactionPolicy !== undefined ? { interactionPolicy } : {}),
+      }
       return yield* runSpawnedAgent({
         store,
         shell,
@@ -1605,7 +1700,7 @@ export const buildScopeRuntime = <R = never>(
         parentNodeId: null,
         rootConversationId,
         tokenPool,
-        runContext: rc,
+        runContext,
         ...(maxSteps !== undefined ? { maxSteps } : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
       })

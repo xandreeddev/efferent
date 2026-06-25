@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { AgentDefinition, Memory } from "@xandreed/sdk-core"
-import { coderSystemPrompt, renderScopeSystemPrompt, rootSystemPrompt } from "./coder.js"
+import { renderScopeSystemPrompt } from "@xandreed/sdk-core"
+import { coderSystemPrompt } from "./coder.js"
 
 const role = (name: string): AgentDefinition => ({
   name,
@@ -16,21 +17,25 @@ const mem = (name: string, title: string, summary = ""): Memory => ({
   sourcePath: `/w/.efferent/memory/${name}.md`,
 })
 
-describe("rootSystemPrompt", () => {
-  it("delegates coding to the coordinator when the role is present", () => {
-    const p = rootSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).toContain("# Triage and dispatch")
+describe("coderSystemPrompt delegation policy", () => {
+  it("offers a coding fleet when the coordinator is present — but defaults to doing the work itself", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("# When to delegate")
     expect(p).toContain('run_agent({ agent: "coordinator"')
+    expect(p).toContain("Do the work yourself by default")
+    // The forced-delegation "thin router" mandate is gone.
+    expect(p).not.toContain("thin router")
+    expect(p).not.toContain("When in doubt, DISPATCH")
   })
 
-  it("dispatches deep research to the research-coordinator when the role is present", () => {
-    const p = rootSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
-    expect(p).toContain("# Triage and dispatch")
+  it("offers a research fleet when the research-coordinator is present", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
+    expect(p).toContain("# When to delegate")
     expect(p).toContain('run_agent({ agent: "research-coordinator"')
   })
 
-  it("offers both branches when both leads are loaded", () => {
-    const p = rootSystemPrompt(
+  it("names both leads when both are loaded", () => {
+    const p = coderSystemPrompt(
       "/w",
       new Date(0),
       [],
@@ -42,9 +47,9 @@ describe("rootSystemPrompt", () => {
     expect(p).toContain('run_agent({ agent: "research-coordinator"')
   })
 
-  it("omits the dispatch section when no lead role is loaded", () => {
-    const p = rootSystemPrompt("/w", new Date(0), [], [], [], [])
-    expect(p).not.toContain("# Triage and dispatch")
+  it("omits the delegation policy when no lead role is loaded", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [])
+    expect(p).not.toContain("# When to delegate")
   })
 })
 

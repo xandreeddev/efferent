@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { FileSystem } from "@xandreed/sdk-core"
+import { FileSystem } from "../ports/FileSystem.js"
 
 /**
  * Cron scheduling: a JSON job list plus a per-minute tick that fires a fresh run
@@ -108,12 +108,10 @@ export const loadJobs = (): Effect.Effect<ReadonlyArray<ScheduledJob>, never, Fi
     const fs = yield* FileSystem
     const read = yield* fs.read(cronJobsPath()).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
     if (read === undefined) return []
-    try {
-      const v = JSON.parse(read.content) as unknown
-      return Array.isArray(v) ? (v as ReadonlyArray<ScheduledJob>) : []
-    } catch {
-      return []
-    }
+    return yield* Effect.try(() => JSON.parse(read.content) as unknown).pipe(
+      Effect.map((v) => (Array.isArray(v) ? (v as ReadonlyArray<ScheduledJob>) : [])),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<ScheduledJob>),
+    )
   })
 
 export const saveJobs = (

@@ -9,11 +9,16 @@ packages/code/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
 ├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
 ├── terminal.ts        OSC-52 + spinner-frame + ANSI/width helpers (shared infra; print mode uses it too)
+├── prompts/           root coder system prompt (coder.ts: `coderPrompt` + the opt-in `renderDelegationPolicy`); fleet/scope prompt pieces live in @xandreed/sdk-core/prompts
+├── usecases/          workspace-shaped use cases: coderAgentConfig · teamAgents (the built-in fleet) · loadAgents/loadMemory/loadSkills · discoverInstructionFiles · directive
+├── workspace/         the in-process Workspace runtime: inProcess.ts (JobController/submitJob + the stranded-node sweeper) · headlessApproval.ts (the cron parking approval)
+├── server/            daemon-serve HTTP/SSE host
 ├── modes/
 │   ├── tui.ts         just the TuiModeInput seam (driver lives in cli/)
 │   ├── print.ts       one-shot, streams final text to stdout
 │   ├── json.ts        same loop as print but JSONL events on stdout
-│   └── rpc.ts         bidirectional JSON-RPC over stdio
+│   ├── rpc.ts         bidirectional JSON-RPC over stdio
+│   └── daemon.ts      headless cron scheduler (--mode daemon); --mode daemon-serve runs server/
 ├── cli/         the TUI driver — OpenTUI native renderer + SolidJS (no React)
 │   ├── runtime.ts     composition root + the Effect⇄Solid⇄OpenTUI three-runtime bridge
 │   ├── state/         signal slices (conversation · side · session · ui · overlay)
@@ -78,7 +83,7 @@ borders/surfaces/glyphs; every pane/overlay composes them.
 - **Selection/yank uses OpenTUI's native mouse** (`useMouse:true`): drag-select highlights, `y` (read-only panes) copies the selection via OSC 52 (`renderer.copyToClipboardOSC52`). The input `<textarea>` owns its own selection/edit while typing.
 - Keybind discovery is the **`?` shortcuts overlay** (`view/overlays/Shortcuts.tsx` + `presentation/shortcuts.ts`), not a persistent box.
 - The renderer (alt buffer / raw mode / mouse / frame loop) is OpenTUI's, wrapped in an `Effect.acquireRelease` so the terminal is restored on success, failure, AND interruption.
-- Bash safety is **three layers** (all wired): the static `--allow-bash` gate (the `allowBash` flag flows into `codingToolkitLayer`; a denied call returns to the model as a tool failure), the **`Approval` port** (`sdk-core/ports/Approval.ts`) consulted per command from the loop, fronted by the **fast-tier auto-approval judge** (`sdk-core/usecases/autoApproval.ts`). An unmatched command goes to the judge — allow silently, or prompt the **borderless approval sheet** (`cli/approval.ts` + `view/overlays/ApprovalView.tsx`: `a/s/p/d`). Headless modes use an allow-all impl behind `--allow-bash`.
+- Bash safety is **three layers** (all wired): the static `--allow-bash` gate (the `allowBash` flag flows into `codingToolkitLayer`; a denied call returns to the model as a tool failure), the **`Approval` port** (`sdk-core/ports/Approval.ts`) consulted per command from the loop, fronted by the **fast-tier auto-approval judge** (`sdk-core/usecases/autoApproval.ts`). An unmatched command goes to the judge — allow silently, or prompt the **borderless approval sheet** (`cli/approval.ts` + `view/overlays/ApprovalView.tsx`: `a/s/p/d`). Evals/CI use an allow-all impl behind `--allow-bash`; the **unattended cron path** (`--mode daemon`) uses a **headless parking approval** (`workspace/headlessApproval.ts`) — the judge still auto-approves in-scope work, but anything it can't clear emits a **`needs_human`** event (`parked: true`) and is denied-with-reason, never silently allowed. Interactive prompts emit the same event (`parked: false`); the TUI rolls both into a "decisions need you" roster (`view/chrome/DecisionsBar.tsx` + `state/decisions.ts`).
 
 ## Hardcoded knobs (move to a settings layer later)
 

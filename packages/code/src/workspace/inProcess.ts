@@ -21,27 +21,34 @@ import {
   nodeSessionId,
   sessionConversationId,
   sessionNodeId,
+  initialPhaseState,
+  reducePhase,
+  submittedPhaseState,
+  type AgentPhase,
+  type PhaseState,
+  type AgentContextNode,
   type AgentDefinition,
   type Approval,
   type Directive,
+  type Job,
   type Scope,
   type Memory,
   type Skill,
   type AgentHooks,
   type ApprovalDecision,
+  type ScopeRuntime,
   type SeqEvent,
   type SessionId,
   type SessionState,
   type SessionSummary,
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
+import { buildScopeRuntime, inboxToMessages } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
-import { inboxToMessages } from "../usecases/agentBus.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
-import type { ToolDefinition } from "../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { FleetSupervisor } from "../cli/state/fleet.js"
 import { makeAgentEventHooks, type AgentEvent } from "../events.js"
 import { join } from "node:path"
@@ -132,7 +139,124 @@ interface FleetState {
 
 const wsError = (message: string): WorkspaceError => new WorkspaceError({ message })
 
+/** How often the stranded-node sweeper ticks. */
+export const SWEEP_INTERVAL_MS = 30_000
+/**
+ * Grace window before a `running` DB node with no live bus fiber is declared
+ * stranded. Bus liveness is the primary signal (a wedged/dead fiber has already
+ * left the bus); the window is a belt-and-braces guard against a brief race
+ * where a node is persisted `running` a beat before its bus mailbox registers
+ * (or just after `markDone`/`complete` removed it but before `recordReturn`).
+ */
+export const SWEEP_GRACE_MS = 120_000
+
+/**
+ * The PURE sweep decision for one node — extracted so it's unit-testable without
+ * a daemon. A node is stranded (and should be flipped to `error`) iff it's still
+ * `running` in the DB, the orchestration bus does NOT know it as running (its
+ * fiber wedged or died, taking its mailbox with it), AND it's older than the
+ * grace window (so a legitimately slow turn or a just-spawned node isn't killed).
+ */
+export const shouldSweepNode = (input: {
+  readonly status: AgentContextNode["status"]
+  readonly isRunningOnBus: boolean
+  readonly createdAt: number
+  readonly now: number
+  readonly graceMs?: number
+}): boolean =>
+  input.status === "running" &&
+  !input.isRunningOnBus &&
+  input.now - input.createdAt >= (input.graceMs ?? SWEEP_GRACE_MS)
+
 export type InProcessWorkspace = ReturnType<typeof Workspace.of>
+
+/**
+ * The **JobController** — the one entry that unifies how a turn starts. The three
+ * sources (a human typing, a message queued while busy, a cron tick) used to take
+ * three different primitives with three different (and for scheduled, MISSING)
+ * setups of mission + interaction policy. `submitJob` is a thin router over the
+ * existing primitives that sets those CONSISTENTLY:
+ *
+ *   - `source: "scheduled"`  → `spawnAgent`, but with `mission = job.prompt` (so
+ *     the unattended run + its sub-agents know the overall goal — the bare
+ *     `spawnAgent` never seeded this) and `interactionPolicy: "headless"` (so its
+ *     approval parks-and-denies rather than blocking on an absent human).
+ *   - `source: "interactive"` / `"queued"` → the existing `send`/queue path,
+ *     interactive policy (a human is watching).
+ *
+ * It is NOT a rewrite of the primitives — just the consistent policy + mission
+ * seam in front of them.
+ */
+export interface JobController {
+  readonly submitJob: (
+    job: Job,
+  ) => Effect.Effect<
+    { readonly conversationId: ConversationId; readonly nodeId?: ContextNodeId },
+    never,
+    WorkspaceRunServices
+  >
+}
+
+/**
+ * Build a `JobController` over the routing primitives. `runtime.spawnAgent` is the
+ * scheduled path; `send` (when provided — the in-process workspace's `send`/queue)
+ * is the interactive path. A caller with no interactive surface (the standalone
+ * cron daemon, `modes/daemon.ts`) omits `send`; an interactive/queued job there
+ * falls back to a fresh scheduled-style spawn so the entry never silently drops a
+ * job.
+ *
+ * Scheduled runs are provided the caller's `scheduledApproval` (the headless
+ * parking approval — never allow-all). The interactive `send` path carries its own
+ * (server) approval, so it isn't re-provided here.
+ */
+export const makeJobController = (input: {
+  readonly runtime: Pick<ScopeRuntime, "spawnAgent">
+  /** The headless parking approval layer for unattended (scheduled) runs. */
+  readonly scheduledApproval: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
+  /** The interactive send/queue path (in-process workspace). Omit when there's
+   *  no client surface (the cron-only daemon). */
+  readonly send?: (cid: ConversationId, prompt: string) => Effect.Effect<void>
+}): JobController => {
+  const spawnScheduled = (job: Job) =>
+    input.runtime
+      .spawnAgent({
+        rootConversationId: job.conversationId,
+        folder: job.folder,
+        task: job.prompt,
+        // The fix: seed the overall mission + mark the run unattended, so the
+        // scheduled subtree knows the goal AND its approval parks-and-denies.
+        mission: job.prompt,
+        interactionPolicy: "headless",
+        ...(job.agent !== undefined ? { agent: job.agent } : {}),
+        ...(job.title !== undefined ? { title: job.title } : {}),
+      })
+      .pipe(
+        Effect.provide(input.scheduledApproval),
+        Effect.map((r) => ({ conversationId: job.conversationId, nodeId: r.nodeId })),
+        // A scheduled job's failure is already recorded on its context node; the
+        // controller never fails (the daemon logs around it).
+        Effect.catchAll(() => Effect.succeed({ conversationId: job.conversationId })),
+        Effect.catchAllDefect(() => Effect.succeed({ conversationId: job.conversationId })),
+      ) as Effect.Effect<
+        { conversationId: ConversationId; nodeId?: ContextNodeId },
+        never,
+        WorkspaceRunServices
+      >
+
+  return {
+    submitJob: (job) =>
+      job.source === "scheduled"
+        ? spawnScheduled(job)
+        : input.send !== undefined
+          ? input
+              .send(job.conversationId, job.prompt)
+              .pipe(Effect.as({ conversationId: job.conversationId }))
+          : // No interactive surface here → run it like a scheduled spawn rather
+            // than drop it. (The standalone cron daemon only ever submits
+            // scheduled jobs, so this branch is a safety net.)
+            spawnScheduled({ ...job, source: "scheduled", interactionPolicy: "headless" }),
+  }
+}
 
 /**
  * Build the in-process Workspace service. Requires the agent-run services in
@@ -200,6 +324,27 @@ export const makeInProcessWorkspace = (
     // top-level completions from each kicking off a resume turn.
     const autoDelivering = yield* Ref.make(new Set<string>())
 
+    // The daemon-AUTHORITATIVE per-session lifecycle phase. Each root turn's
+    // events are folded through `reducePhase` (the same rules the client's
+    // `agentState` machine uses), so `getState(id).phase` lets a (re)attaching
+    // client seed/reconcile its spinner instead of inferring from `busy` — the
+    // fix for the phantom "thinking" that survived a detach/re-attach.
+    const phases = yield* Ref.make(new Map<string, PhaseState>())
+    const setPhase = (key: string, ps: PhaseState): Effect.Effect<void> =>
+      Ref.update(phases, (m) => new Map(m).set(key, ps))
+    const getPhase = (key: string): Effect.Effect<AgentPhase> =>
+      Ref.get(phases).pipe(Effect.map((m) => (m.get(key) ?? initialPhaseState).phase))
+    // A root-tagged publish: fold the event into THIS root's phase (sub-agent
+    // events carry a nodeId and `reducePhase` already ignores them), then publish
+    // to the shared ledger. The root turn's hooks are built over this.
+    const publishForRoot =
+      (rootKey: string) =>
+      (event: AgentEvent): Effect.Effect<void> =>
+        Ref.update(phases, (m) => {
+          const cur = m.get(rootKey) ?? initialPhaseState
+          return new Map(m).set(rootKey, reducePhase(cur, event))
+        }).pipe(Effect.zipRight(publish(event)))
+
     // The live fleet set, seeded from deps.roots, grown by createFleet.
     const fleets = yield* Ref.make(
       new Map<string, FleetState>(
@@ -266,7 +411,9 @@ export const makeInProcessWorkspace = (
       })
 
     const rootHooksFor = (rootKey: string): AgentHooks<never> => ({
-      ...baseHooks,
+      // Lifecycle events flow through the root-tagged publish so this session's
+      // authoritative phase advances; everything else is identical to baseHooks.
+      ...makeAgentEventHooks(publishForRoot(rootKey)),
       onTransformContext: (messages) =>
         Effect.gen(function* () {
           const inbox = yield* scopeRuntime.bus.drain(rootKey)
@@ -278,6 +425,11 @@ export const makeInProcessWorkspace = (
       Effect.gen(function* () {
         const leftover = yield* scopeRuntime.bus.drain(key)
         yield* scopeRuntime.bus.markDone(key)
+        // The root turn ended on EVERY path (success, error, interrupt) — settle
+        // the authoritative phase to idle so a (re)attaching client can never be
+        // left showing a stale "thinking" (an interrupt emits no agent_end). If a
+        // queued message starts the next turn below, startRootTurn re-flips it.
+        yield* setPhase(key, initialPhaseState)
         yield* setRun(key, (s) => ({
           busy: false,
           fiber: undefined,
@@ -348,6 +500,10 @@ export const makeInProcessWorkspace = (
           Effect.asVoid,
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
+        // Optimistically flip to thinking the instant the turn starts, so a
+        // client attaching in the model-latency gap (before turn_start lands)
+        // already sees the spinner; the first event reconciles from there.
+        yield* setPhase(rootKey, submittedPhaseState)
         yield* scopeRuntime.bus.markRunning(rootKey, "you")
         const fiber = Runtime.runFork(rt)(runEffect)
         yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
@@ -381,6 +537,7 @@ export const makeInProcessWorkspace = (
           Effect.asVoid,
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
+        yield* setPhase(rootKey, submittedPhaseState)
         yield* scopeRuntime.bus.markRunning(rootKey, "you")
         const fiber = Runtime.runFork(rt)(runEffect)
         yield* setRun(rootKey, (s) => ({ ...s, busy: true, fiber }))
@@ -569,11 +726,21 @@ export const makeInProcessWorkspace = (
             status: busy ? "running" : "idle",
             parentId: null,
           }
+          // The authoritative phase. A root reads its folded phase ledger; an
+          // agent node has no per-event phase, so derive it from the bus (live →
+          // thinking, else idle) — enough for a paired client to seed correctly.
+          const phase: AgentPhase =
+            kind === "root"
+              ? yield* getPhase(id as string)
+              : (yield* scopeRuntime.bus.isRunning(id as string))
+                ? "thinking"
+                : "idle"
           return {
             session: session ?? fallback,
             log,
             logBaseOffset,
             busy,
+            phase,
             queue: run.queue,
             pendingApproval,
             cursor,
@@ -807,6 +974,80 @@ export const makeInProcessWorkspace = (
       yield* conv.clearPending(p.id).pipe(Effect.ignore)
       yield* startResumeTurn(p.id)
     }
+
+    // --- mid-session stranded-node sweeper ----------------------------------
+    // The daemon's startup reconcile (server/daemon.ts) only flips nodes left
+    // `running` by a PRIOR crash. A node whose fiber wedges or dies WHILE the
+    // daemon lives would otherwise stay `running` forever in the UI. This
+    // background sweeper closes that gap using the bus as ground truth.
+    const sweepNode = (node: AgentContextNode): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        // Re-check liveness right before acting — the periodic snapshot may have
+        // gone stale (a node could have started since the tick began).
+        const live = yield* scopeRuntime.bus.isRunning(node.id as string)
+        const now = yield* Clock.currentTimeMillis
+        if (
+          !shouldSweepNode({
+            status: node.status,
+            isRunningOnBus: live,
+            createdAt: node.createdAt,
+            now,
+          })
+        ) {
+          return
+        }
+        const summary = "[stalled — no longer running]"
+        // 1) Persist the terminal status, so :tree/activity stop showing it live.
+        yield* tree
+          .recordReturn(node.id, { status: "error", summary, filesChanged: [] })
+          .pipe(Effect.ignore)
+        // 2) Notify via the SAME bus path a normal completion uses — registering
+        //    the (now-absent) node first so `complete` has an entry to read,
+        //    which then delivers the failure to the parent's inbox (or buffers it
+        //    for the parent's next resume) + the blackboard + wakes any waiter.
+        const parentKey = (node.parentId ?? node.rootConversationId ?? null) as string | null
+        const label = node.title ?? node.folder
+        yield* scopeRuntime.bus.markRunning(node.id as string, label, { parentKey })
+        yield* scopeRuntime.bus.complete(node.id as string, {
+          status: "error",
+          summary,
+          filesChanged: [],
+        })
+        // 3) Publish subagent_end so the UI flips status live AND a TOP-LEVEL
+        //    node's parent root auto-resumes to report it (onTopLevelDone).
+        yield* publish({
+          type: "subagent_end",
+          name: label,
+          nodeId: node.id as string,
+          ok: false,
+          summary,
+          filesChanged: [],
+        })
+      }).pipe(Effect.ignore)
+
+    const sweepOnce = Effect.gen(function* () {
+      const fleetMap = yield* Ref.get(fleets)
+      yield* Effect.forEach(
+        [...fleetMap.values()],
+        (f) =>
+          tree.listTree(f.rootCid).pipe(
+            Effect.flatMap((nodes) =>
+              Effect.forEach(nodes.filter((n) => n.status === "running"), sweepNode, {
+                discard: true,
+              }),
+            ),
+            Effect.ignore,
+          ),
+        { discard: true },
+      )
+    }).pipe(Effect.ignore)
+
+    // forkDaemon under the runtime scope → interrupted on teardown; never throws
+    // (every step is `Effect.ignore`-guarded), so a transient store error just
+    // skips a tick.
+    yield* Effect.forkDaemon(
+      Effect.forever(Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(Effect.zipRight(sweepOnce))),
+    )
 
     return service
   })

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { AgentEvent } from "@xandreed/sdk-core"
-import { makeAgentBus } from "../usecases/agentBus.js"
+import { makeAgentBus } from "@xandreed/sdk-core"
 import { FAKE_ROOT_CID, fakeServerLive } from "./fakeAppEnv.js"
 import { makeHttpTransport } from "../transport/http/client.js"
 

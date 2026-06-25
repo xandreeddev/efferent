@@ -1,27 +1,31 @@
 import { Clock, Effect } from "effect"
 import {
-  ApprovalAllowAllLive,
   ContextTreeStore,
   ConversationStore,
   FileSystem,
   Http,
+  SettingsStore,
   Shell,
+  UtilityLlm,
   WebSearch,
   type AgentDefinition,
   type Scope,
   type Memory,
   type Skill,
+  buildScopeRuntime,
 } from "@xandreed/sdk-core"
 import { LanguageModel } from "@effect/ai"
-import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
-import type { ToolDefinition } from "../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import {
   cronMatches,
   loadJobs,
   markJobRun,
   minuteBucket,
   parseCron,
-} from "../usecases/schedule.js"
+} from "@xandreed/sdk-core"
+import type { AgentEvent } from "../events.js"
+import { makeHeadlessApproval } from "../workspace/headlessApproval.js"
+import { makeJobController } from "../workspace/inProcess.js"
 
 /**
  * Phase 7 (Stage B, v1) — the headless **daemon**: a long-lived process that
@@ -51,7 +55,18 @@ export const runDaemonMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | WebSearch
+  | FileSystem
+  | Http
+  | Shell
+  | LanguageModel.LanguageModel
+  | ConversationStore
+  | ContextTreeStore
+  | WebSearch
+  // The headless parking approval (replacing allow-all) runs the fast-tier judge,
+  // so the unattended scheduler now needs the same two services every other mode
+  // does (provided by the daemon command's `AppLive`).
+  | SettingsStore
+  | UtilityLlm
 > =>
   Effect.gen(function* () {
     const runtime = buildScopeRuntime(input.rootScope, {
@@ -65,6 +80,24 @@ export const runDaemonMode = (
 
     yield* Effect.logInfo(`scheduler running for ${input.cwd} (Ctrl-C to stop)`)
 
+    // No clients are attached to the cron daemon, so a parked decision has
+    // nowhere to render — log `needs_human` to the daemon log (the durable
+    // record for a human to review later); other events are ignored here.
+    const publish = (event: AgentEvent): Effect.Effect<void> =>
+      event.type === "needs_human"
+        ? Effect.logWarning(
+            `needs_human (parked): ${event.tool ?? "?"} — ${event.reason} | ${event.summary}`,
+          )
+        : Effect.void
+
+    // Route the tick through the JobController: a scheduled job is unattended, so
+    // its approval is the headless parking approval (NEVER allow-all) and its
+    // mission is seeded to the prompt so the run + its sub-agents know the goal.
+    const jobs = makeJobController({
+      runtime,
+      scheduledApproval: makeHeadlessApproval(publish),
+    })
+
     const fire = (job: { id: string; folder: string; prompt: string; agent?: string }, nowMs: number) =>
       Effect.gen(function* () {
         const cid = yield* cs.create(input.cwd).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
@@ -72,20 +105,18 @@ export const runDaemonMode = (
         yield* Effect.logInfo(`fire: ${job.prompt}`).pipe(
           Effect.annotateLogs("scheduled_at", new Date(nowMs).toISOString()),
         )
-        yield* runtime
-          .spawnAgent({
-            rootConversationId: cid,
+        yield* jobs
+          .submitJob({
+            conversationId: cid,
+            source: "scheduled",
+            interactionPolicy: "headless",
             folder: job.folder,
-            task: job.prompt,
+            prompt: job.prompt,
             title: `scheduled: ${job.prompt.slice(0, 30)}`,
             ...(job.agent !== undefined ? { agent: job.agent } : {}),
           })
           .pipe(
-            Effect.provide(ApprovalAllowAllLive),
-            Effect.tap((r) => Effect.logInfo(`scheduled job done: ${r.summary.slice(0, 200)}`)),
-            Effect.catchAll((e) =>
-              Effect.logError(`scheduled job failed: ${e.error}: ${e.message ?? ""}`),
-            ),
+            Effect.tap(() => Effect.logInfo(`scheduled job submitted: ${job.prompt.slice(0, 120)}`)),
             Effect.catchAllDefect((d) => Effect.logError(`scheduled job crashed: ${String(d)}`)),
           )
       })

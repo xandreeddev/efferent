@@ -7,6 +7,8 @@ import {
   UtilityLlm,
   type ApprovalDecision,
   type ApprovalRequest,
+  type Settings,
+  type TokenUsage,
 } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 
@@ -33,7 +35,67 @@ export interface ServerApproval {
   readonly pendingFor: (sessionKey: string) => ApprovalRequest | undefined
 }
 
-const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`)
+export const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`)
+
+/**
+ * The shared "would the auto-approval judge wave this through?" decision, factored
+ * out so the interactive server approval AND the unattended headless approval reuse
+ * the SAME judge + permitted-folder logic (never two divergent copies of the
+ * security-relevant classification). Returns:
+ *  - `{ allow: true }`            — an already-covered rule/folder, or the judge said allow;
+ *  - `{ allow: false, hint }`     — the judge said prompt (hint carries its reason/folder),
+ *                                   so the caller decides whether to park (interactive) or
+ *                                   record-and-deny (headless).
+ * `usage`, when present, is the FAST-tier spend the judge billed (publish it as
+ * `helper_usage`). Total: any judge failure already degrades to `{ verdict: "prompt" }`
+ * inside `judgeApproval`, so this never throws.
+ */
+export interface JudgeGateResult {
+  readonly allow: boolean
+  readonly hint?: { readonly reason?: string; readonly folder?: string }
+  readonly usage?: TokenUsage
+}
+
+export const judgeGate = (
+  req: ApprovalRequest,
+  input: {
+    readonly settings: Settings
+    /** Extra session-granted folders (interactive only; headless passes none). */
+    readonly sessionFolders?: ReadonlyArray<string>
+    /** Extra session-granted rules (interactive only). */
+    readonly sessionRules?: ReadonlyArray<string>
+  },
+): Effect.Effect<JudgeGateResult, never, UtilityLlm> =>
+  Effect.gen(function* () {
+    const { settings } = input
+    // Already-blessed rule/folder → allow with no judge call.
+    if (settings.approvedBashRules?.includes(req.ruleKey) === true) return { allow: true }
+    if (input.sessionRules?.includes(req.ruleKey) === true) return { allow: true }
+
+    // autoApprove off → the judge is disabled; everything unmatched needs a human.
+    if (settings.autoApprove === false) return { allow: false, hint: {} }
+
+    const permitted = [
+      req.cwd,
+      ...(settings.approvedFolders ?? []),
+      ...(input.sessionFolders ?? []),
+    ]
+    const utility = yield* UtilityLlm
+    const outcome = yield* judgeApproval(req, permitted).pipe(
+      Effect.provideService(UtilityLlm, utility),
+    )
+    if (outcome.verdict === "allow") {
+      return { allow: true, ...(outcome.usage !== undefined ? { usage: outcome.usage } : {}) }
+    }
+    return {
+      allow: false,
+      hint: {
+        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+        ...(outcome.folder !== undefined ? { folder: outcome.folder } : {}),
+      },
+      ...(outcome.usage !== undefined ? { usage: outcome.usage } : {}),
+    }
+  })
 
 interface Pending {
   readonly req: ApprovalRequest
@@ -77,26 +139,19 @@ export const makeServerApproval = (
             const sessionKey = String(rc.parentNodeId ?? rc.rootConversationId ?? "root")
             if (yield* coveredNow(req, undefined)) return { kind: "allow", scope: "once" } as const
 
-            // The fast judge (default ON) — allow silently inside permitted folders.
-            let hint: { reason?: string; folder?: string } | undefined
-            if (settings.autoApprove !== false) {
-              const permitted = [
-                req.cwd,
-                ...(settings.approvedFolders ?? []),
-                ...(yield* Ref.get(sessionFolders)),
-              ]
-              const outcome = yield* judgeApproval(req, permitted).pipe(
-                Effect.provideService(UtilityLlm, utility),
-              )
-              if (outcome.usage !== undefined) {
-                yield* publish({ type: "helper_usage", role: "fast", usage: outcome.usage })
-              }
-              if (outcome.verdict === "allow") return { kind: "allow", scope: "once" } as const
-              hint = {
-                ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-                ...(outcome.folder !== undefined ? { folder: outcome.folder } : {}),
-              }
+            // The fast judge (default ON) — allow silently inside permitted
+            // folders. Shared with the headless approval via `judgeGate` (one
+            // copy of the security-relevant classification, never two).
+            const gateResult = yield* judgeGate(req, {
+              settings,
+              sessionFolders: [...(yield* Ref.get(sessionFolders))],
+              sessionRules: [...(yield* Ref.get(sessionRules))],
+            }).pipe(Effect.provideService(UtilityLlm, utility))
+            if (gateResult.usage !== undefined) {
+              yield* publish({ type: "helper_usage", role: "fast", usage: gateResult.usage })
             }
+            if (gateResult.allow) return { kind: "allow", scope: "once" } as const
+            const hint = gateResult.hint
 
             const grantedFolder = hint?.folder
             // One sheet at a time across the daemon; a waiter re-checks the
@@ -117,6 +172,18 @@ export const makeServerApproval = (
                   ruleKey: req.ruleKey,
                   ...(hint?.reason !== undefined ? { reason: hint.reason } : {}),
                   ...(hint?.folder !== undefined ? { folder: hint.folder } : {}),
+                })
+                // Also emit a `needs_human` (parked: false — an interactive
+                // prompt is open, not an unattended denial) so a future
+                // top-level "decisions" list can surface it alongside the sheet.
+                yield* publish({
+                  type: "needs_human",
+                  sessionId: sessionKey,
+                  tool: req.tool,
+                  summary: clip(req.summary, 400),
+                  reason: hint?.reason ?? "a command needs your approval",
+                  ...(hint?.folder !== undefined ? { folder: hint.folder } : {}),
+                  parked: false,
                 })
                 const decision = yield* Deferred.await(deferred).pipe(
                   Effect.onInterrupt(() =>

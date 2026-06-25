@@ -142,6 +142,25 @@ export const AgentEvent = Schema.Union(
     type: Schema.Literal("approval_resolved"),
     sessionId: Schema.optional(Schema.String),
   }),
+  // A point where the run needs a human decision — the control-plane's
+  // "decisions" channel. Two shapes share one event:
+  //   `parked: true`  — an UNATTENDED (headless/scheduled) run hit something the
+  //                      auto-approval judge wouldn't wave through; nobody is
+  //                      watching, so it was DENIED and the need recorded here
+  //                      for a human to review later.
+  //   `parked: false` — an INTERACTIVE run opened a prompt for a human (emitted
+  //                      alongside `approval_needed`), so a top-level "decisions"
+  //                      list can surface it.
+  Schema.Struct({
+    type: Schema.Literal("needs_human"),
+    sessionId: Schema.optional(Schema.String),
+    nodeId: Schema.optional(Schema.String),
+    tool: Schema.optional(Schema.String),
+    summary: Schema.String,
+    reason: Schema.String,
+    folder: Schema.optional(Schema.String),
+    parked: Schema.Boolean,
+  }),
   // An inter-agent message hit the bus (blackboard post, a direct inbox message,
   // or a completion note) — the "messages flying" stream the control dashboard
   // tails. Rides the ledger so it replays like any event.
