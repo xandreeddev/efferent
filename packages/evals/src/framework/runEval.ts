@@ -21,7 +21,64 @@ const toOutcome = (name: string, r: ScoreResult): ScoreOutcome =>
 const average = (ns: ReadonlyArray<number>): number =>
   ns.length === 0 ? 0 : ns.reduce((a, b) => a + b, 0) / ns.length
 
+/** Sample standard deviation (n-1) of the per-sample means — 0 for < 2 samples. */
+const sampleStdev = (ns: ReadonlyArray<number>): number => {
+  if (ns.length < 2) return 0
+  const m = average(ns)
+  const variance = ns.reduce((a, x) => a + (x - m) ** 2, 0) / (ns.length - 1)
+  return Math.sqrt(variance)
+}
+
+/** Average each scorer's score across the samples that produced it (failed
+ *  samples contribute none). Keeps the last seen detail for context. */
+const aggregateScores = (perSample: ReadonlyArray<ReadonlyArray<ScoreOutcome>>): Array<ScoreOutcome> => {
+  const acc = new Map<string, { sum: number; n: number; detail?: string }>()
+  for (const scores of perSample) {
+    for (const s of scores) {
+      const cur = acc.get(s.name) ?? { sum: 0, n: 0 }
+      acc.set(s.name, { sum: cur.sum + s.score, n: cur.n + 1, ...(s.detail !== undefined ? { detail: s.detail } : {}) })
+    }
+  }
+  return [...acc.entries()].map(([name, { sum, n, detail }]) =>
+    detail !== undefined ? { name, score: sum / n, detail } : { name, score: sum / n },
+  )
+}
+
 const firstLine = (s: string): string => s.split("\n")[0] ?? s
+
+interface SampleResult {
+  readonly ok: boolean
+  readonly mean: number
+  readonly scores: ReadonlyArray<ScoreOutcome>
+  readonly error?: string
+}
+
+/** One sample of a case: run the task (exit-captured) then every scorer
+ *  (exit-captured), collapsing to a per-sample mean. A task failure is a
+ *  0-scored sample, never a crash. */
+const runSample = <I, O, T, R>(
+  spec: EvalSpec<I, O, T, R>,
+  kase: EvalCase<I, T>,
+): Effect.Effect<SampleResult, never, R> =>
+  Effect.gen(function* () {
+    const taskExit = yield* spec.task(kase.input, kase).pipe(Effect.withSpan("eval.task"), Effect.exit)
+    if (Exit.isFailure(taskExit)) {
+      return { ok: false, mean: 0, scores: [], error: Cause.pretty(taskExit.cause) }
+    }
+    const output = taskExit.value
+    const scores: Array<ScoreOutcome> = []
+    for (const scorer of spec.scorers) {
+      const scoreExit = yield* scorer
+        .score({ input: kase.input, output, expected: kase.expected })
+        .pipe(Effect.withSpan(`eval.scorer:${scorer.name}`), Effect.exit)
+      scores.push(
+        Exit.isFailure(scoreExit)
+          ? { name: scorer.name, score: 0, detail: `scorer error: ${firstLine(Cause.pretty(scoreExit.cause))}` }
+          : toOutcome(scorer.name, scoreExit.value),
+      )
+    }
+    return { ok: true, mean: average(scores.map((s) => s.score)), scores }
+  })
 
 /**
  * Quality attributes for a case span — the per-scorer scores under
@@ -51,51 +108,39 @@ const runCase = <I, O, T, R>(
 ): Effect.Effect<CaseResult, never, R> =>
   Effect.gen(function* () {
     const start = yield* Clock.currentTimeMillis
-    const taskExit = yield* spec
-      .task(kase.input, kase)
-      .pipe(Effect.withSpan("eval.task"), Effect.exit)
+    const n = Math.max(1, Math.floor(spec.samples ?? 1))
+    // Samples run sequentially within a case (case-level concurrency already
+    // parallelizes); the whole case stays ONE `eval.case` span.
+    const samples = yield* Effect.forEach(Array.from({ length: n }, (_, i) => i), () =>
+      runSample(spec, kase),
+    )
 
-    if (Exit.isFailure(taskExit)) {
-      const end = yield* Clock.currentTimeMillis
-      yield* Effect.annotateCurrentSpan({ "eval.ok": false })
-      return {
-        name: kase.name,
-        ok: false,
-        error: Cause.pretty(taskExit.cause),
-        scores: [],
-        mean: 0,
-        durationMs: end - start,
-      }
-    }
-
-    const output = taskExit.value
-    const scores: Array<ScoreOutcome> = []
-    for (const scorer of spec.scorers) {
-      const scoreExit = yield* scorer
-        .score({ input: kase.input, output, expected: kase.expected })
-        .pipe(Effect.withSpan(`eval.scorer:${scorer.name}`), Effect.exit)
-      scores.push(
-        Exit.isFailure(scoreExit)
-          ? {
-              name: scorer.name,
-              score: 0,
-              detail: `scorer error: ${firstLine(Cause.pretty(scoreExit.cause))}`,
-            }
-          : toOutcome(scorer.name, scoreExit.value),
-      )
-    }
+    const means = samples.map((s) => s.mean)
+    const mean = average(means)
+    const stdev = sampleStdev(means)
+    const anyOk = samples.some((s) => s.ok)
+    // Aggregate per-scorer over the samples that produced scores.
+    const scores = aggregateScores(samples.filter((s) => s.ok).map((s) => s.scores))
+    const error = anyOk ? undefined : samples.find((s) => s.error !== undefined)?.error
 
     const end = yield* Clock.currentTimeMillis
-    const mean = average(scores.map((s) => s.score))
-    yield* Effect.annotateCurrentSpan({ "eval.ok": true, ...scoreAttributes(scores, mean) })
+    yield* Effect.annotateCurrentSpan({
+      "eval.ok": anyOk,
+      "eval.samples": n,
+      "eval.stdev": stdev,
+      ...scoreAttributes(scores, mean),
+    })
     yield* Effect.forEach(scores, (s) => recordEvalScore(spec.name, s.name, s.score), {
       discard: true,
     })
     return {
       name: kase.name,
-      ok: true,
+      ok: anyOk,
+      ...(error !== undefined ? { error } : {}),
       scores,
       mean,
+      samples: n,
+      stdev,
       durationMs: end - start,
     }
   }).pipe(

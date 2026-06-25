@@ -7,6 +7,7 @@ export const settingsFromConfig = (base: Settings, c: RunConfig): Settings => ({
   ...base,
   model: c.main,
   ...(c.fast !== undefined ? { fastModel: c.fast } : {}),
+  ...(c.code !== undefined ? { codeModel: c.code } : {}),
   ...(c.maxSteps !== undefined ? { maxSteps: c.maxSteps } : {}),
   ...(c.toolResultMaxTokens !== undefined
     ? { toolResultMaxTokens: c.toolResultMaxTokens }
