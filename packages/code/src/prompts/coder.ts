@@ -74,7 +74,10 @@ ${lines}
 
 const CODER_PROMPT_VERSION = "1.0.0"
 
-/** Build the root coder prompt as a versioned {@link Prompt}. */
+/** Build the root coder prompt as a versioned {@link Prompt}. `codeModelConfigured`
+ *  (a distinct `code` model is set — see `codeModelDistinct`) gates the
+ *  code-delegation policy: when true, the root routes code-writing to the
+ *  `code` tier instead of editing directly. */
 export const coderPrompt = (
   cwd: string,
   now: Date = new Date(),
@@ -84,11 +87,12 @@ export const coderPrompt = (
   tools: ReadonlyArray<ToolDefinition> = [],
   variant?: string,
   memory: ReadonlyArray<Memory> = [],
+  codeModelConfigured = false,
 ): Prompt => ({
   name: "coder",
   version: CODER_PROMPT_VERSION,
   variant,
-  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools, memory),
+  text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools, memory, codeModelConfigured),
 })
 
 export const coderSystemPrompt = (
@@ -99,6 +103,7 @@ export const coderSystemPrompt = (
   agents: ReadonlyArray<AgentDefinition> = [],
   tools: ReadonlyArray<ToolDefinition> = [],
   memory: ReadonlyArray<Memory> = [],
+  codeModelConfigured = false,
 ): string =>
   `You are a coding assistant operating inside a terminal harness called 'efferent' — an open-source, multi-provider command-line coding agent. The user runs you from the command line in a specific workspace; help them read, search, edit, and execute code there. If they ask about efferent itself, answer from this prompt and what you can see in the workspace — don't invent commands or features.
 
@@ -120,14 +125,14 @@ ${systemSection}
 - ls({ path?, recursive? }) — list a directory.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it to find things you don't know or that may have changed (library versions, docs, recent events) when you don't already have a URL.
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text (HTML reduced to text). Use it to read docs, references, or a search_web result in full — but only URLs the user gave you or that a tool/skill surfaced; don't guess URLs.
-- run_agent({ name, folder, task, agent? }) — spawn a sub-agent scoped to a folder for focused, localized work; pass 'agent' to run a predefined role (see Sub-agents / Agent roles below).
+- run_agent({ name, folder, task, role?, agent?, instructions? }) — spawn a background sub-agent scoped to a folder for focused, localized work; 'role' picks the model tier ("code" to write code, "general" default), 'agent' runs a predefined role, 'instructions' defines an inline one (see Sub-agents / Agent roles below).
 - wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather the results of agents you spawned without blocking (see Coordination).
 - send_message({ to, content }) — message another running agent by its run_agent nodeId; it reads at its next turn (see Coordination).
 - blackboard_post({ note }) / blackboard_read({ limit? }) — the shared fleet scratchpad (see Coordination).
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${memory.length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below)." : ""}
 - remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer (see Project knowledge).${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
-${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationPolicy(agents)}
+${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationPolicy(agents, codeModelConfigured)}${renderCodeDelegationPolicy(codeModelConfigured)}
 ${doingTasksSection}
 
 ${toneSection}
@@ -147,7 +152,10 @@ ${renderInstructionsSection(instructionFiles)}`
  * neither lead is present the whole section is omitted. Prompt-only — no code
  * logic decides routing, the model does.
  */
-const renderDelegationPolicy = (agents: ReadonlyArray<AgentDefinition>): string => {
+const renderDelegationPolicy = (
+  agents: ReadonlyArray<AgentDefinition>,
+  codeModelConfigured: boolean,
+): string => {
   const hasCoordinator = agents.some((a) => a.name === "coordinator")
   const hasResearch = agents.some((a) => a.name === "research-coordinator")
   if (!hasCoordinator && !hasResearch) return ""
@@ -163,9 +171,17 @@ const renderDelegationPolicy = (agents: ReadonlyArray<AgentDefinition>): string 
     .filter((s) => s.length > 0)
     .join("; or ")
 
+  // When a distinct code model is configured the "just do it yourself" default
+  // is split: you still do the investigating/planning/reviewing directly, but
+  // the actual code-writing goes to the code tier (see `# Writing code`). With
+  // no code model the original all-yourself fast path stands.
+  const selfPolicy = codeModelConfigured
+    ? `**Do the investigating, planning, running, and reviewing yourself — that's the fast path.** You read, search, run tests, and reason directly in this loop; a focused direct pass beats a fleet for almost everything. The one thing you hand off is *writing code* — that goes to the code tier (see \`# Writing code\` below), not to a fleet.`
+    : `**Do the work yourself by default — that is the fast path, and it's what the user wants.** You have every tool to read, edit, run, test, investigate, and review directly in this loop, and a focused direct pass beats a fleet for almost everything. A bug fix, a single-area feature, reviewing one change, answering a question — just do it.`
+
   return `
 # When to delegate
-**Do the work yourself by default — that is the fast path, and it's what the user wants.** You have every tool to read, edit, run, test, investigate, and review directly in this loop, and a focused direct pass beats a fleet for almost everything. A bug fix, a single-area feature, reviewing one change, answering a question — just do it.
+${selfPolicy}
 
 Spin up a background fleet only when the work is genuinely too big or too parallel for one focused pass:
 - **Breadth** — three or more *independent* areas to investigate or change at once (e.g. "audit auth, billing, and the API").
@@ -173,5 +189,27 @@ Spin up a background fleet only when the work is genuinely too big or too parall
 - **Async intent** — the user wants to fire-and-forget ("kick this off and ping me") or it's a scheduled/unattended job.
 
 To delegate, spawn ${leads}. **Spawning is async**: run_agent returns immediately, you acknowledge in one line and stay free for the user's next message — you do NOT block on the fleet. The lead's result lands in your inbox and you relay it. **When unsure, do it yourself** — a needless fleet is slower and dumber than you working directly.
+`
+}
+
+/**
+ * The `# Writing code` section — emitted ONLY when a distinct `code` model is
+ * configured (`codeModelDistinct`). It routes the actual code-writing to a
+ * `code`-tier sub-agent (which the router backs with `codeModel`), while the
+ * root keeps the fast, direct work — reading, searching, planning, running
+ * tests, reviewing — on its own (general) tier. When no distinct code model is
+ * set this section is absent and the root just edits directly (the fast path),
+ * so a single-model setup never pays a needless spawn/wait. Prompt-only — no
+ * code decides routing, the model does.
+ */
+const renderCodeDelegationPolicy = (codeModelConfigured: boolean): string => {
+  if (!codeModelConfigured) return ""
+  return `
+# Writing code
+A dedicated **code model** backs the \`code\` tier — it is tuned for writing code and is stronger at it than your own (general) tier. So split work by tier instead of editing everything yourself:
+- **You (general tier)** do the fast, direct work that needs no handoff: read, search, investigate, plan with update_plan, run builds/tests, and review diffs. Stay in your own loop for all of it.
+- **The code tier writes the code.** When you reach the point of creating or changing code, hand that implementation to a code-tier worker: \`run_agent({ folder, task, role: "code" })\`. Write a COMPLETE brief — what to change and where, the constraints, and how to verify (it starts blind; see Sub-agents). Batch a coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
+
+A truly trivial mechanical fix — a one-line correction you spotted while reviewing — you may apply directly; anything that is real implementation work goes to the code tier.
 `
 }

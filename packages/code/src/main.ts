@@ -8,6 +8,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer, Option } from "effect"
 import {
   AuthStore,
+  codeModelDistinct,
   SettingsStore,
   type Scope,
 } from "@xandreed/sdk-core"
@@ -227,6 +228,13 @@ const discoverWorkspace = (workspace: string) =>
     const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
     const tools = yield* loadTools(workspace, homedir())
     const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
+    // Whether a distinct `code` model is configured — gates the root's
+    // code-delegation policy (write code on the `code` tier, not directly).
+    // `coderAgentConfig` uses THIS rootScope's systemPrompt for every mode, so
+    // computing it here threads the policy everywhere (TUI / daemon / print /
+    // json / rpc). Read at startup; a mid-session `:set codeModel` takes effect
+    // on the next launch (the prompt is built once, like the rest of the scope).
+    const settings = yield* (yield* SettingsStore).load(workspace, homedir())
     const root = coderPrompt(
       workspace,
       new Date(),
@@ -236,6 +244,7 @@ const discoverWorkspace = (workspace: string) =>
       tools,
       undefined,
       memory,
+      codeModelDistinct(settings),
     )
     const rootScope: Scope = yield* discoverScopeTree(workspace, (_children, body) =>
       body !== undefined && body.trim().length > 0
