@@ -14,6 +14,7 @@ import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
 import { judgeApprovalEval } from "./suites/judgeApproval.eval.js"
+import { quality } from "./suites/quality.eval.js"
 import { repoTasksEval } from "./suites/repoTasks.eval.js"
 import { sessionTitleEval } from "./suites/sessionTitle.eval.js"
 import { toolSelectionEval } from "./suites/toolSelection.eval.js"
@@ -23,6 +24,7 @@ import { wholeTaskEval } from "./suites/wholeTask.eval.js"
 type AnySpec = EvalSpec<any, any, any, EvalEnv>
 
 const SUITES: ReadonlyArray<AnySpec> = [
+  quality,
   handoffEval,
   toolSelectionEval,
   coderEditEval,
@@ -42,7 +44,7 @@ const flag = (name: string): string | undefined => {
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
 }
 const json = argv.includes("--json")
-const FLAG_NAMES = ["--config", "--main", "--fast", "--max-steps", "--prompt"]
+const FLAG_NAMES = ["--config", "--main", "--fast", "--code", "--judge", "--max-steps", "--prompt"]
 const consumed = new Set<string>()
 for (const f of FLAG_NAMES) {
   const i = argv.indexOf(f)
@@ -67,12 +69,16 @@ const buildConfigs = (): ReadonlyArray<RunConfig | undefined> => {
   if (main === undefined) return [undefined]
   const maxSteps = flag("--max-steps")
   const fast = flag("--fast")
+  const code = flag("--code")
+  const judge = flag("--judge")
   const prompt = flag("--prompt")
   return [
     {
       name: "inline",
       main,
       ...(fast !== undefined ? { fast } : {}),
+      ...(code !== undefined ? { code } : {}),
+      ...(judge !== undefined ? { judge } : {}),
       ...(prompt !== undefined ? { promptVariant: prompt } : {}),
       ...(maxSteps !== undefined ? { maxSteps: Number(maxSteps) } : {}),
     },
@@ -101,6 +107,7 @@ const runConfigGroup = (config: RunConfig | undefined) =>
         "config.name": config?.name ?? "default",
         ...(config?.main !== undefined ? { "config.main": config.main } : {}),
         ...(config?.fast !== undefined ? { "config.fast": config.fast } : {}),
+        ...(config?.code !== undefined ? { "config.code": config.code } : {}),
         ...(config?.promptVariant !== undefined ? { "config.prompt": config.promptVariant } : {}),
       },
     }),

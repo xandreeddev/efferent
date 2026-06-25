@@ -39,11 +39,16 @@ export interface RunCoderOptions {
   readonly promptVariant?: string
 }
 
-/** Build the root coder config for `dir` exactly as `main.ts` does. */
+/** Build the root coder config for `dir` exactly as `main.ts` does.
+ *  `codeModelConfigured` mirrors `main.ts` `discoverWorkspace`: when a distinct
+ *  code model is set it emits the `# Writing code` delegation policy, so routing
+ *  evals exercise the real prompt the agent ships with. */
 export const buildCoderConfig = (
   dir: string,
   transform: (base: string) => string = (s) => s,
   variant?: string,
+  codeModelConfigured = false,
+  hooks?: AgentHooks,
 ) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
@@ -51,14 +56,17 @@ export const buildCoderConfig = (
     const agents = yield* loadAgents(dir, homedir())
     const tools = yield* loadTools(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
-    const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, agents, tools, variant, memory)
+    const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, agents, tools, variant, memory, codeModelConfigured)
     const rootScope = yield* discoverScopeTree(dir, (_children, body) => {
       const base = transform(prompt.text)
       return body !== undefined && body.trim().length > 0
         ? `${base}\n\n# Project scope\n\n${body}`
         : base
     })
-    const runtime = buildScopeRuntime(rootScope, { skills, memory, agents, tools, allowBash: true })
+    // Pass hooks so SUB-AGENT lifecycle events (onSubAgentStart with `role`,
+    // onSubAgentEnd, per-tier onAssistantMessage) reach the caller — the
+    // trajectory harness needs them; runCoder passes none (unchanged).
+    const runtime = buildScopeRuntime(rootScope, { skills, memory, agents, tools, allowBash: true }, hooks)
     return { config: coderAgentConfig(rootScope, runtime, prompt), runtime }
   })
 
