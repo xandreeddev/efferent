@@ -247,7 +247,7 @@ const eventParts = () => {
       out.push({ type: "text-delta", id: "0", delta: content })
     }
 
-    const toolCalls = delta.tool_calls as ReadonlyArray<Json> | undefined
+    const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls as ReadonlyArray<Json> : undefined
     if (toolCalls !== undefined) {
       for (const tc of toolCalls) {
         const index = typeof tc.index === "number" ? tc.index : 0

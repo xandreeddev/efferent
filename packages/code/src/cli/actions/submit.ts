@@ -143,12 +143,12 @@ export const makeSubmit = (
         // and land on the fresh tail; refresh the always-visible navigator.
         if (store.nodePreview()?.nodeId === preview.nodeId) {
           yield* openNodePreview(store, preview.nodeId, { focus: false }).pipe(
-            Effect.catchAll(() => Effect.void),
+            Effect.catchAll((e) => Effect.log(`submit: preview refresh failed: ${e}`)),
           )
           store.convScroller.current?.scrollToBottom()
         }
         yield* refreshNav(store, store.run.getConversationId()).pipe(
-          Effect.catchAll(() => Effect.void),
+          Effect.catchAll((e) => Effect.log(`submit: nav refresh failed: ${e}`)),
         )
         if (next !== undefined) yield* submit(next)
       })
@@ -327,7 +327,7 @@ export const makeSubmit = (
         }
         // Refresh the always-visible navigator — a run may have spawned or
         // updated sub-agent nodes. Best-effort; a store hiccup never blocks.
-        yield* refreshNav(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        yield* refreshNav(store, cid).pipe(Effect.catchAll((e) => Effect.log(`submit: nav refresh failed: ${e}`)))
         // Compaction: fold at the boundary. When the last turn's context crossed
         // the threshold, run the handoff fold NOW — one deliberate prefix
         // rebuild (the only cache-safe way to shrink history), then the cache

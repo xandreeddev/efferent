@@ -100,7 +100,9 @@ export const runDaemonMode = (
 
     const fire = (job: { id: string; folder: string; prompt: string; agent?: string }, nowMs: number) =>
       Effect.gen(function* () {
-        const cid = yield* cs.create(input.cwd).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+        const cid = yield* cs.create(input.cwd).pipe(
+          Effect.catchAll((e) => Effect.logError(`scheduled job: could not create conversation: ${e}`).pipe(Effect.zipRight(Effect.succeed(undefined)))),
+        )
         if (cid === undefined) return
         yield* Effect.logInfo(`fire: ${job.prompt}`).pipe(
           Effect.annotateLogs("scheduled_at", new Date(nowMs).toISOString()),
@@ -136,7 +138,7 @@ export const runDaemonMode = (
         // Fork so a long job doesn't stall the once-a-minute tick.
         yield* Effect.forkDaemon(fire(job, nowMs))
       }
-    }).pipe(Effect.catchAll(() => Effect.void))
+    }).pipe(Effect.catchAll((e) => Effect.logError(`scheduler tick failed: ${e}`)))
 
     yield* Effect.forever(tick.pipe(Effect.delay("60 seconds")))
   })

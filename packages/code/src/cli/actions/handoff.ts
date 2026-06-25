@@ -38,11 +38,11 @@ export const runHandoff = (store: TuiStore, cid: ConversationId) =>
     const cs = yield* ConversationStore
     const cp = yield* cs
       .getLatestCheckpoint(cid)
-      .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-    const history = yield* cs.list(cid).pipe(Effect.catchAll(() => Effect.succeed([])))
+      .pipe(Effect.catchAll((e) => Effect.logWarning(`handoff: could not read checkpoint: ${e}`).pipe(Effect.zipRight(Effect.succeed(undefined)))))
+    const history = yield* cs.list(cid).pipe(Effect.catchAll((e) => Effect.logWarning(`handoff: could not read history: ${e}`).pipe(Effect.zipRight(Effect.succeed([])))))
     const checkpoints = yield* cs
       .listCheckpoints(cid)
-      .pipe(Effect.catchAll(() => Effect.succeed([])))
+      .pipe(Effect.catchAll((e) => Effect.logWarning(`handoff: could not read checkpoints: ${e}`).pipe(Effect.zipRight(Effect.succeed([])))))
 
     yield* Effect.sync(() =>
       batch(() => {

@@ -81,6 +81,9 @@ export const SwitchableStoresLive: Layer.Layer<
       Effect.orElse(() => buildHandle(LOCAL_DB_NAME, localConn())),
     )
     const ref = yield* Ref.make<Handle>(initial)
+    // Serialize switchTo calls so two concurrent swaps can't interleave
+    // (build next → count → getAndSet → close prev must be atomic).
+    const switchLock = yield* Effect.makeSemaphore(1)
     // Close whichever store is current when the app's scope closes.
     yield* Effect.addFinalizer(() =>
       Ref.get(ref).pipe(Effect.flatMap((h) => Scope.close(h.scope, Exit.void))),
@@ -121,18 +124,20 @@ export const SwitchableStoresLive: Layer.Layer<
     const switchSvc = StoreSwitch.of({
       current: Ref.get(ref).pipe(Effect.map((h) => ({ name: h.name, kind: h.kind }))),
       switchTo: (name, conn, cwd) =>
-        Effect.gen(function* () {
-          const next = yield* buildHandle(name, conn)
-          const count = yield* Context.get(next.ctx, ConversationStore)
-            .listByWorkspace(cwd)
-            .pipe(
-              Effect.map((l) => l.length),
-              Effect.catchAll(() => Effect.succeed(0)),
-            )
-          const prev = yield* Ref.getAndSet(ref, next)
-          yield* Scope.close(prev.scope, Exit.void)
-          return { conversationCount: count }
-        }),
+        switchLock.withPermits(1)(
+          Effect.gen(function* () {
+            const next = yield* buildHandle(name, conn)
+            const count = yield* Context.get(next.ctx, ConversationStore)
+              .listByWorkspace(cwd)
+              .pipe(
+                Effect.map((l) => l.length),
+                Effect.catchAll(() => Effect.succeed(0)),
+              )
+            const prev = yield* Ref.getAndSet(ref, next)
+            yield* Scope.close(prev.scope, Exit.void)
+            return { conversationCount: count }
+          }),
+        ),
       listSessions: (conn, cwd) =>
         Layer.build(storesLayerFor(conn)).pipe(
           Effect.provide(platform),

@@ -1,5 +1,5 @@
 import type { Effect } from "effect"
-import type { TokenUsage } from "../ports/LlmInfo.js"
+import type { TokenUsage } from "./TokenUsage.js"
 import type { ContextNodeId } from "./AgentContext.js"
 import type { AgentMessage, ToolCall } from "./Conversation.js"
 import type { AgentModelRole } from "./Model.js"

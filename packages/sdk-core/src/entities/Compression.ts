@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { TokenUsage } from "../ports/LlmInfo.js"
+import type { TokenUsage } from "./TokenUsage.js"
 import type { AgentMessage } from "./Conversation.js"
 
 /**

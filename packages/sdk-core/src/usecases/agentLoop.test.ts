@@ -130,9 +130,10 @@ describe("runAgentLoop malformed-response recovery", () => {
     ) as Effect.Effect<AgentResult, unknown, never>
     const exit = await Effect.runPromiseExit(program)
 
-    // 3 retries are tolerated; the 4th consecutive failure surfaces, not hangs.
+    // MAX_MALFORMED (3) consecutive malformed responses surface the error (not hang):
+    // the loop gives up ON the 3rd, so the model is called exactly 3 times.
     expect(Exit.isFailure(exit)).toBe(true)
-    expect(model.calls()).toBe(4)
+    expect(model.calls()).toBe(3)
   })
 })
 

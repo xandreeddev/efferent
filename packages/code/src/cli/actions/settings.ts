@@ -494,11 +494,11 @@ const switchActiveDatabase = (
     // Snapshot the current conversation from the CURRENT store, before switching.
     const msgs = yield* cs
       .list(curId)
-      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AgentMessage>)))
+      .pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not read messages: ${e}`).pipe(Effect.zipRight(Effect.succeed([] as ReadonlyArray<AgentMessage>)))))
     const cps = yield* cs
       .listCheckpoints(curId)
-      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<Checkpoint>)))
-    const ws = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll(() => Effect.succeed([])))
+      .pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not read checkpoints: ${e}`).pipe(Effect.zipRight(Effect.succeed([] as ReadonlyArray<Checkpoint>)))))
+    const ws = yield* cs.listByWorkspace(cwd).pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not list workspace: ${e}`).pipe(Effect.zipRight(Effect.succeed([])))))
     const title = ws.find((c) => c.id === curId)?.title
 
     yield* Effect.sync(() => store.setNote(`connecting to ${name}…`))
@@ -521,17 +521,17 @@ const switchActiveDatabase = (
     const ordered = [...cps].sort((a, b) => a.messagePosition - b.messagePosition)
     let ci = 0
     for (let i = 0; i < msgs.length; i++) {
-      yield* cs.append(newId, msgs[i]!).pipe(Effect.catchAll(() => Effect.void))
+      yield* cs.append(newId, msgs[i]!).pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not append message ${i}: ${e}`).pipe(Effect.zipRight(Effect.void))))
       while (ci < ordered.length && ordered[ci]!.messagePosition === i) {
-        yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll(() => Effect.void))
+        yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not checkpoint: ${e}`).pipe(Effect.zipRight(Effect.void))))
         ci++
       }
     }
     while (ci < ordered.length) {
-      yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll(() => Effect.void))
+      yield* cs.checkpoint(newId, ordered[ci]!.summary).pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not checkpoint: ${e}`).pipe(Effect.zipRight(Effect.void))))
       ci++
     }
-    if (title !== undefined) yield* cs.setTitle(newId, title).pipe(Effect.catchAll(() => Effect.void))
+    if (title !== undefined) yield* cs.setTitle(newId, title).pipe(Effect.catchAll((e) => Effect.logWarning(`db-switch: could not set title: ${e}`).pipe(Effect.zipRight(Effect.void))))
 
     yield* Effect.sync(() => {
       store.run.newConversation(newId)
