@@ -26,6 +26,10 @@ export interface CaseAgg {
   readonly configName: string
   readonly ok: boolean
   readonly mean: number
+  /** Samples taken for this case (`spec.samples`); 1 unless sampled. */
+  readonly samples: number
+  /** Sample stdev of the per-sample means — the noise on `mean`. */
+  readonly stdev: number
   readonly scores: ReadonlyArray<{ readonly name: string; readonly score: number }>
   readonly steps: number
   readonly inputTokens: number
@@ -119,6 +123,8 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     const suite = strAttr(a, "eval.suite") ?? "?"
     const name = strAttr(a, "eval.case") ?? "?"
     const mean = numAttr(a, "eval.mean") ?? 0
+    const samples = numAttr(a, "eval.samples") ?? 1
+    const stdev = numAttr(a, "eval.stdev") ?? 0
     const ok = boolAttr(a, "eval.ok") ?? false
     const scores: Array<{ name: string; score: number }> = []
     for (const [k, v] of Object.entries(a)) {
@@ -153,6 +159,8 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
       configName: configFor(s),
       ok,
       mean,
+      samples,
+      stdev,
       scores,
       steps,
       inputTokens: input,
