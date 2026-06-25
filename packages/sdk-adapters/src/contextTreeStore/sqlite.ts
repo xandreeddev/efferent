@@ -152,26 +152,34 @@ export const SqliteContextTreeStoreLive = Layer.effect(
           // SESSION → FLEET → AGENT: a parentless node is a top-level fleet
           // (task/coordinator), a child is a worker agent.
           const kind = input.parentId === null ? "fleet" : "agent"
-          yield* wrapSql(
-            sql`
-              INSERT INTO context_nodes (
-                id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                seed, status, return_summary, files_changed, usage, workspace_ref,
-                seed_message_count, created_at, ended_at
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* wrapSql(
+                sql`
+                  INSERT INTO context_nodes (
+                    id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
+                    seed, status, return_summary, files_changed, usage, workspace_ref,
+                    seed_message_count, created_at, ended_at
+                  )
+                  VALUES (
+                    ${id}, ${input.parentId ?? null}, ${kind}, ${input.rootConversationId ?? null},
+                    ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
+                    ${JSON.stringify(input.seed)}, 'running', ${null}, '[]', ${null}, ${null},
+                    ${input.seedMessages.length}, ${createdAt}, ${null}
+                  )
+                `,
+                "Failed to spawn context node",
               )
-              VALUES (
-                ${id}, ${input.parentId ?? null}, ${kind}, ${input.rootConversationId ?? null},
-                ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
-                ${JSON.stringify(input.seed)}, 'running', ${null}, '[]', ${null}, ${null},
-                ${input.seedMessages.length}, ${createdAt}, ${null}
-              )
-            `,
-            "Failed to spawn context node",
+              for (let i = 0; i < input.seedMessages.length; i++) {
+                yield* insertMessageAt(id, input.seedMessages[i]!, i)
+              }
+              return yield* decodeNodeId(id)
+            }),
+          ).pipe(
+            Effect.catchTag("SqlError", (e) =>
+              Effect.fail(new ContextTreeStoreError({ cause: e, message: "spawn transaction failed" })),
+            ),
           )
-          for (let i = 0; i < input.seedMessages.length; i++) {
-            yield* insertMessageAt(id, input.seedMessages[i]!, i)
-          }
-          return yield* decodeNodeId(id)
         }),
 
       append: (id, msg) =>
@@ -259,30 +267,38 @@ export const SqliteContextTreeStoreLive = Layer.effect(
         }),
 
       drop: (id) =>
-        Effect.gen(function* () {
-          yield* wrapSql(
-            sql`
-              WITH RECURSIVE descendants(id) AS (
-                SELECT id FROM context_nodes WHERE id = ${id}
-                UNION ALL
-                SELECT cn.id FROM context_nodes cn JOIN descendants d ON cn.parent_id = d.id
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* wrapSql(
+                sql`
+                  WITH RECURSIVE descendants(id) AS (
+                    SELECT id FROM context_nodes WHERE id = ${id}
+                    UNION ALL
+                    SELECT cn.id FROM context_nodes cn JOIN descendants d ON cn.parent_id = d.id
+                  )
+                  DELETE FROM context_messages WHERE node_id IN (SELECT id FROM descendants)
+                `,
+                "Failed to drop context messages",
               )
-              DELETE FROM context_messages WHERE node_id IN (SELECT id FROM descendants)
-            `,
-            "Failed to drop context messages",
-          )
-          yield* wrapSql(
-            sql`
-              WITH RECURSIVE descendants(id) AS (
-                SELECT id FROM context_nodes WHERE id = ${id}
-                UNION ALL
-                SELECT cn.id FROM context_nodes cn JOIN descendants d ON cn.parent_id = d.id
+              yield* wrapSql(
+                sql`
+                  WITH RECURSIVE descendants(id) AS (
+                    SELECT id FROM context_nodes WHERE id = ${id}
+                    UNION ALL
+                    SELECT cn.id FROM context_nodes cn JOIN descendants d ON cn.parent_id = d.id
+                  )
+                  DELETE FROM context_nodes WHERE id IN (SELECT id FROM descendants)
+                `,
+                "Failed to drop context nodes",
               )
-              DELETE FROM context_nodes WHERE id IN (SELECT id FROM descendants)
-            `,
-            "Failed to drop context nodes",
+            }),
           )
-        }),
+          .pipe(
+            Effect.catchTag("SqlError", (e) =>
+              Effect.fail(new ContextTreeStoreError({ cause: e, message: "drop transaction failed" })),
+            ),
+          ),
     })
 
     return store

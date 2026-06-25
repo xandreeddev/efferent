@@ -26,7 +26,7 @@ import { type AppServices } from "../TuiContext.js"
 export const loadAgentTree = (store: TuiStore, activeCid: ConversationId): Effect.Effect<void, never, AppServices> =>
   Effect.gen(function* () {
     const cts = yield* ContextTreeStore
-    const nodes = yield* cts.listTree(activeCid).pipe(Effect.catchAll(() => Effect.succeed([])))
+    const nodes = yield* cts.listTree(activeCid).pipe(Effect.catchAll((e) => Effect.logWarning(`tree: could not load: ${e}`).pipe(Effect.zipRight(Effect.succeed([])))))
     const head = yield* getWorkspaceRef(store.status().cwd)
     yield* Effect.sync(() =>
       store.setTreeData((d) => ({

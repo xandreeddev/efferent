@@ -1,15 +1,7 @@
 import { Context, type Effect } from "effect"
+import type { TokenUsage } from "../entities/TokenUsage.js"
 
-/**
- * Per-turn token usage. `cacheReadTokens` is the portion of `inputTokens`
- * served from a provider-side cache (0 when uncached).
- */
-export interface TokenUsage {
-  readonly inputTokens: number
-  readonly outputTokens: number
-  readonly totalTokens: number
-  readonly cacheReadTokens: number
-}
+export { type TokenUsage } from "../entities/TokenUsage.js"
 
 export interface LlmMetadata {
   readonly modelId: string

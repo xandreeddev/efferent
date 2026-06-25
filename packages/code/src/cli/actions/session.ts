@@ -281,8 +281,8 @@ export const applyBuilt = (
 
 const listAll = (cs: ConversationStore["Type"], cid: ConversationId) =>
   Effect.all({
-    history: cs.list(cid).pipe(Effect.catchAll(() => Effect.succeed([]))),
-    checkpoints: cs.listCheckpoints(cid).pipe(Effect.catchAll(() => Effect.succeed([]))),
+    history: cs.list(cid).pipe(Effect.catchAll((e) => Effect.logWarning(`session: could not read history: ${e}`).pipe(Effect.zipRight(Effect.succeed([]))))),
+    checkpoints: cs.listCheckpoints(cid).pipe(Effect.catchAll((e) => Effect.logWarning(`session: could not read checkpoints: ${e}`).pipe(Effect.zipRight(Effect.succeed([]))))),
   })
 
 /**

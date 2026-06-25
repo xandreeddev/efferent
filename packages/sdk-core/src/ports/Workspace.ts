@@ -4,7 +4,7 @@ import { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ContextNodeId } from "../entities/AgentContext.js"
 import { Directive } from "../entities/Directive.js"
 import { Settings } from "../entities/Settings.js"
-import { AgentPhase } from "../usecases/agentPhase.js"
+import { AgentPhase } from "../entities/AgentPhase.js"
 import { ApprovalDecision, ApprovalRequest } from "./Approval.js"
 
 /**

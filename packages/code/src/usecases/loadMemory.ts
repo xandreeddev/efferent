@@ -38,7 +38,7 @@ export const loadMemory = (
           : resolve(dir, entry.path)
         const read = yield* fs
           .read(absPath)
-          .pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+          .pipe(Effect.catchAll((e) => Effect.log(`memory: skipping ${absPath}: ${e}`).pipe(Effect.zipRight(Effect.succeed(undefined)))))
         if (read === undefined) continue
         const parsed = parseMemoryFile(read.content, absPath)
         if (parsed === undefined) continue
