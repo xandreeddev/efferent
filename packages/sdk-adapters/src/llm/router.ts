@@ -23,6 +23,7 @@ import {
 import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import { retryableLlm } from "./retry.js"
+import { withCircuitBreaker } from "./circuitBreaker.js"
 import {
   makeProviderLanguageModel,
   prependClaudeCode,
@@ -228,14 +229,23 @@ export const RouterLanguageModelLive = Layer.effect(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc
-                  .generateText(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(
-                    retryableLlm,
-                    Effect.tap((res) => observe(sel, options, res)),
-                    Effect.tapError(observeError),
-                  )
-                  .pipe(withLlmSpan(sel, "main")),
+                withCircuitBreaker(
+                  svc
+                    .generateText(shapeOptions(sel, shouldPrepend, options))
+                    .pipe(
+                      retryableLlm,
+                      Effect.tap((res) => observe(sel, options, res)),
+                      Effect.tapError(observeError),
+                    ),
+                  sel.provider,
+                  sel.modelId,
+                  (msg) =>
+                    new AiError.UnknownError({
+                      module: "CircuitBreaker",
+                      method: "generateText",
+                      description: msg,
+                    }) as never,
+                ).pipe(withLlmSpan(sel, "main")),
               ),
             ),
           ),
@@ -248,14 +258,23 @@ export const RouterLanguageModelLive = Layer.effect(
           Effect.flatMap((sel) =>
             resolveAndBuild(sel).pipe(
               Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc
-                  .generateObject(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(
-                    retryableLlm,
-                    Effect.tap((res) => observe(sel, options, res)),
-                    Effect.tapError(observeError),
-                  )
-                  .pipe(withLlmSpan(sel, "main")),
+                withCircuitBreaker(
+                  svc
+                    .generateObject(shapeOptions(sel, shouldPrepend, options))
+                    .pipe(
+                      retryableLlm,
+                      Effect.tap((res) => observe(sel, options, res)),
+                      Effect.tapError(observeError),
+                    ),
+                  sel.provider,
+                  sel.modelId,
+                  (msg) =>
+                    new AiError.UnknownError({
+                      module: "CircuitBreaker",
+                      method: "generateObject",
+                      description: msg,
+                    }) as never,
+                ).pipe(withLlmSpan(sel, "main")),
               ),
             ),
           ),
