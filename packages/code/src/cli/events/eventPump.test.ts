@@ -163,3 +163,85 @@ describe("eventPump — a node's live log accumulates from the start (open any t
     expect(store.blocks().some((b) => b.kind === "agents")).toBe(false)
   })
 })
+
+describe("eventPump — needs_human surfaces a pending-decision roster", () => {
+  test("a parked needs_human becomes a decision entry (attribution + reason carried)", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({
+      type: "needs_human",
+      sessionId: "s1",
+      nodeId: "n1",
+      tool: "Bash",
+      summary: "rm -rf build",
+      reason: "destructive command outside the workspace",
+      folder: "/work/build",
+      parked: true,
+    })
+    const ds = store.decisions()
+    expect(ds).toHaveLength(1)
+    expect(ds[0]).toMatchObject({
+      sessionId: "s1",
+      nodeId: "n1",
+      tool: "Bash",
+      summary: "rm -rf build",
+      reason: "destructive command outside the workspace",
+      folder: "/work/build",
+      parked: true,
+    })
+  })
+
+  test("interactive (parked:false) and parked are both surfaced and distinguishable", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "needs_human", sessionId: "s1", summary: "ask A", reason: "r", parked: false })
+    reduce({ type: "needs_human", sessionId: "s2", summary: "ask B", reason: "r", parked: true })
+    const ds = store.decisions()
+    expect(ds).toHaveLength(2)
+    expect(ds.find((d) => d.summary === "ask A")!.parked).toBe(false)
+    expect(ds.find((d) => d.summary === "ask B")!.parked).toBe(true)
+  })
+
+  test("de-dupe: a repeated ask for the same session+summary upserts, doesn't stack", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "needs_human", sessionId: "s1", summary: "ask A", reason: "first", parked: true })
+    reduce({ type: "needs_human", sessionId: "s1", summary: "ask A", reason: "second", parked: true })
+    const ds = store.decisions()
+    expect(ds).toHaveLength(1)
+    expect(ds[0]!.reason).toBe("second") // latest wins, in place
+  })
+
+  test("the same summary in a DIFFERENT session is a distinct decision", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "needs_human", sessionId: "s1", summary: "same", reason: "r", parked: true })
+    reduce({ type: "needs_human", sessionId: "s2", summary: "same", reason: "r", parked: true })
+    expect(store.decisions()).toHaveLength(2)
+  })
+
+  test("dismiss clears one decision by id", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "needs_human", sessionId: "s1", summary: "ask A", reason: "r", parked: true })
+    reduce({ type: "needs_human", sessionId: "s2", summary: "ask B", reason: "r", parked: true })
+    const target = store.decisions().find((d) => d.summary === "ask A")!
+    store.dismissDecision(target.id)
+    const ds = store.decisions()
+    expect(ds).toHaveLength(1)
+    expect(ds[0]!.summary).toBe("ask B")
+  })
+
+  test("approval_resolved auto-clears that session's PARKED decisions, leaves others", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "needs_human", sessionId: "s1", summary: "parked s1", reason: "r", parked: true })
+    reduce({ type: "needs_human", sessionId: "s1", summary: "live s1", reason: "r", parked: false })
+    reduce({ type: "needs_human", sessionId: "s2", summary: "parked s2", reason: "r", parked: true })
+    reduce({ type: "approval_resolved", sessionId: "s1" })
+    const ds = store.decisions()
+    // s1's parked entry is gone; s1's interactive entry stays (sheet owns it);
+    // s2's parked entry is untouched.
+    expect(ds.map((d) => d.summary).sort()).toEqual(["live s1", "parked s2"])
+  })
+})

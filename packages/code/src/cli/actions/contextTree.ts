@@ -6,8 +6,8 @@ import {
   ContextTreeStore,
   ConversationStore,
   type ConversationId,
+  getWorkspaceRef,
 } from "@xandreed/sdk-core"
-import { getWorkspaceRef } from "../../usecases/staleness.js"
 import type { ScrollbackBlock } from "../presentation/conversation.js"
 import type { NavConversation } from "../presentation/contextTreeView.js"
 import { withSeedMarkers } from "../presentation/nodePreview.js"

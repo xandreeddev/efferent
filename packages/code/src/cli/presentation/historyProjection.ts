@@ -43,7 +43,7 @@ import {
 } from "./executionTree.js"
 import { mergeFileChange, parsePlanSteps, type FileChange } from "./sidePane.js"
 import { formatTokens } from "./statusBar.js"
-import type { PlanStep } from "../../usecases/codingToolkit.js"
+import type { PlanStep } from "@xandreed/sdk-core"
 
 export interface HistoryProjection {
   readonly blocks: ScrollbackBlock[]

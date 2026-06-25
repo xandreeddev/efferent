@@ -27,14 +27,14 @@ import {
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
 
-import { rootPrompt } from "./prompts/coder.js"
+import { coderPrompt } from "./prompts/coder.js"
+import { discoverScopeTree } from "@xandreed/sdk-core"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
-import { discoverScopeTree } from "./usecases/discoverScopeTree.js"
 import { withBuiltinAgents } from "./usecases/directive.js"
 import { loadAgents } from "./usecases/loadAgents.js"
+import { loadTools } from "@xandreed/sdk-core"
 import { loadMemory } from "./usecases/loadMemory.js"
 import { loadSkills } from "./usecases/loadSkills.js"
-import { loadTools } from "./usecases/loadTools.js"
 
 import { runPrintMode } from "./modes/print.js"
 import { runJsonMode } from "./modes/json.js"
@@ -227,7 +227,7 @@ const discoverWorkspace = (workspace: string) =>
     const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
     const tools = yield* loadTools(workspace, homedir())
     const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
-    const root = rootPrompt(
+    const root = coderPrompt(
       workspace,
       new Date(),
       skills,

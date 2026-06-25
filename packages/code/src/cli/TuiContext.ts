@@ -18,7 +18,7 @@ import type {
 } from "@xandreed/sdk-core"
 import type { LanguageModel } from "@effect/ai"
 import type { Directive } from "../usecases/directive.js"
-import type { ToolDefinition } from "../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { TuiStore } from "./state/store.js"
 
 /**

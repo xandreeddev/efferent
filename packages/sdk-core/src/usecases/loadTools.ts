@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
-import { FileSystem } from "@xandreed/sdk-core"
-import { parseFrontmatter } from "./discoverScopeTree.js"
+import { FileSystem } from "../ports/FileSystem.js"
+import { parseFrontmatter } from "./parseFrontmatter.js"
 
 /**
  * Phase 2 — a **declarative tool** is a git-shareable tool defined in a file

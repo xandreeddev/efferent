@@ -10,6 +10,7 @@ import {
 } from "../presentation/toolDescribe.js"
 import { formatTokens } from "../presentation/statusBar.js"
 import { openApproval } from "../presentation/approvalView.js"
+import { decisionId } from "../state/decisions.js"
 import {
   onAgentEnd as treeAgentEnd,
   onSubAgentEndKeyed as treeSubAgentEndKeyed,
@@ -163,13 +164,16 @@ export const makeEventReducer = (
         // plus the tree. Routed by the event's own `nodeId` (undefined ⇒ root),
         // so a root tool call still gets its rail pill while a fleet runs.
         if (event.nodeId === undefined) {
-          // Key the rail pill by the provider tool-call id — the SAME identity
+          // Key the rail pill by the tool-call id — the SAME identity
           // `projectHistory` stamps (`part.toolCallId`). So when an idle resync
           // re-projects this turn, the projected pill upserts onto the live one
-          // instead of the live pill (an ephemeral `t<seq>`) surviving as an
-          // unmatched suffix and "jumping to the end". Counter only as a fallback
-          // when the provider omits an id (matches `matchKey`'s name fallback,
-          // and projectHistory's empty toolCallId, so the pairing stays consistent).
+          // instead of the live pill surviving as an unmatched suffix and
+          // "jumping to the end". The loop now mints a DETERMINISTIC id at the
+          // source (`ensureToolCallIds`) for any provider that omits one, writing
+          // it into BOTH the event and the persisted message — so `event.id` is
+          // always non-empty here and matches the projected key. The `t<seq>`
+          // counter is a defensive last resort that should never fire (an
+          // ephemeral per-process id WOULD re-introduce the jump-to-end bug).
           const sid = event.id.length > 0 ? event.id : `t${++toolSeq}`
           enqueue(toolScrollIds, matchKey(event), sid)
           store.pushBlock({ kind: "tool", id: sid, toolName: label, state: "running" })
@@ -425,8 +429,38 @@ export const makeEventReducer = (
       }
 
       case "approval_resolved":
-        // Some client answered — clear a stale sheet here.
+        // Some client answered — clear a stale sheet here, and drop any PARKED
+        // decisions for that session (the need was resolved). Interactive
+        // roster entries clear by the same path: once the ask is answered, the
+        // session's parked-or-not entries no longer need surfacing — but only
+        // the parked ones are auto-cleared (the interactive mirror is dropped by
+        // the sheet's own resolve). `clearSession` only touches parked entries.
         if (store.overlay().kind === "approval") store.closeOverlay()
+        store.clearSession(event.sessionId)
+        return
+
+      case "needs_human": {
+        // The control-plane "decisions" channel. Mirror the need into the
+        // pending-decisions roster (de-duped by session+summary). `parked: true`
+        // is an UNATTENDED denial recorded for later review; `parked: false` is
+        // an interactive ask whose live sheet is already up (this is the roster
+        // visibility). The interactive sheet itself stays on `approval_needed`.
+        store.pushDecision({
+          id: decisionId(event),
+          ...(event.sessionId !== undefined ? { sessionId: event.sessionId } : {}),
+          ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
+          ...(event.tool !== undefined ? { tool: event.tool } : {}),
+          summary: event.summary,
+          reason: event.reason,
+          ...(event.folder !== undefined ? { folder: event.folder } : {}),
+          parked: event.parked,
+        })
+        return
+      }
+
+      // The inter-agent message stream (`board_note`) is tailed by the control
+      // dashboard, not the TUI rail — no-op here (keeps the switch total).
+      case "board_note":
         return
     }
   }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentEvent } from "../../events.js"
 import {
+  agentStateForPhase,
   agentStateLabel,
   fleetLabel,
   idleAgentState,
@@ -112,5 +113,34 @@ describe("agentState — the live state machine", () => {
     ])
     expect(s.phase).toBe("thinking")
     expect(s.openToolCount).toBe(0)
+  })
+
+  test("agentStateForPhase reconciles to the daemon's authoritative phase", () => {
+    // The phantom-spinner kill: a client stuck "thinking" must snap to idle when
+    // the daemon reports idle — and the open tool count is cleared with it.
+    const stuck: AgentState = { phase: "thinking", since: 1000, openToolCount: 2, fleet: [] }
+    const reconciled = agentStateForPhase(stuck, "idle", 9000)
+    expect(reconciled.phase).toBe("idle")
+    expect(reconciled.since).toBe(9000)
+    expect(reconciled.openToolCount).toBe(0)
+
+    // A client that joins mid-turn (idle locally) adopts the daemon's thinking.
+    const joined = agentStateForPhase(idleAgentState, "thinking", 9000)
+    expect(joined.phase).toBe("thinking")
+
+    // The live fleet (tracked separately, seeded from the context tree) survives.
+    const withFleet: AgentState = {
+      phase: "thinking",
+      since: 1000,
+      openToolCount: 0,
+      fleet: [{ nodeId: "n1", name: "audit" }],
+    }
+    expect(agentStateForPhase(withFleet, "idle", 9000).fleet).toEqual([
+      { nodeId: "n1", name: "audit" },
+    ])
+
+    // No phase change → identity (no spurious `since` churn restarting the timer).
+    const same: AgentState = { phase: "tool", since: 1000, openToolCount: 1, fleet: [] }
+    expect(agentStateForPhase(same, "tool", 9000)).toBe(same)
   })
 })

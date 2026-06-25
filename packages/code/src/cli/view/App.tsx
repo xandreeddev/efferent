@@ -5,6 +5,7 @@ import { pasteIntoOverlay } from "../keys/overlay.js"
 import { focusAccent, glyph, tokens } from "../state/theme.js"
 import { Header } from "./chrome/Header.js"
 import { RunningLoader } from "./chrome/RunningLoader.js"
+import { DecisionsBar } from "./chrome/DecisionsBar.js"
 import { Conversation } from "./panes/Conversation.js"
 import { AgentPane } from "./panes/AgentPane.js"
 import { FleetTree } from "./panes/FleetTree.js"
@@ -112,12 +113,18 @@ export const App = (props: { ctx: TuiContext }) => {
         </Show>
         {/* agy bottom chrome, top→bottom: the **running loader** (a spinner line
             while a turn is in flight) sits directly above the input, then the
-            **pending queue** (`▸` messages typed mid-turn), then the input fence;
-            the `:` command menu + `/` search drop BELOW it (contextual menus),
-            and the two-zone status bar anchors the very bottom. Keybind discovery
-            moved to the `?` shortcuts overlay (no persistent footer box). */}
+            **pending queue** (`▸` messages typed mid-turn), then the **decisions
+            roster** (`⚠ N decisions need you` from `needs_human` events), then the
+            input fence; the `:` command menu + `/` search drop BELOW it
+            (contextual menus), and the two-zone status bar anchors the very
+            bottom. Keybind discovery moved to the `?` shortcuts overlay (no
+            persistent footer box). */}
         <RunningLoader ctx={props.ctx} />
         <QueuedMessages ctx={props.ctx} />
+        {/* The passive "decisions need you" roster — `needs_human` events,
+            especially PARKED (headless) denials a human only sees on attach.
+            The interactive ASK still uses the inline approval sheet below. */}
+        <DecisionsBar ctx={props.ctx} />
         <InputBox ctx={props.ctx} />
         <SlashPalette ctx={props.ctx} />
         {/* Every contextual surface renders INLINE here (borderless, agy-style),

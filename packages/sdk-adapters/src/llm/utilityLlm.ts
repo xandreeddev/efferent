@@ -23,6 +23,7 @@ import {
 } from "@xandreed/sdk-core"
 import { Effect, FiberRef, Layer } from "effect"
 import { makeProviderLanguageModel, prependClaudeCode } from "./providers.js"
+import { retryableLlm } from "./retry.js"
 
 const errorMessage = (e: unknown): string => {
   if (typeof e === "object" && e !== null) {
@@ -77,9 +78,11 @@ export const UtilityLlmLive = Layer.effect(
           const request = {
             prompt: Prompt.make([{ role: "user", content: prompt }] as never),
           }
-          const res = yield* svc.generateText(
-            shouldPrepend ? (prependClaudeCode(request) as typeof request) : request,
-          )
+          const res = yield* svc
+            .generateText(
+              shouldPrepend ? (prependClaudeCode(request) as typeof request) : request,
+            )
+            .pipe(retryableLlm)
           const usage = extractUsage(res.usage, res.content)
           // Hand in hand with telemetry being on — same gate as the main tier.
           const content =

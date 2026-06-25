@@ -12,8 +12,8 @@ import {
   ModelRegistry,
   SettingsStore,
   StoreSwitch,
+  buildScopeRuntime,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
@@ -34,7 +34,7 @@ import {
   markJobRun,
   minuteBucket,
   parseCron,
-} from "../usecases/schedule.js"
+} from "@xandreed/sdk-core"
 import { refreshNav } from "./actions/contextTree.js"
 import { loadInitialConversation, openConversationPicker } from "./actions/session.js"
 import { openOnboardingFlow } from "./actions/onboarding.js"

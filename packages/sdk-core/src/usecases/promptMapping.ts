@@ -39,6 +39,49 @@ type AnyPart = {
   readonly usage?: unknown
 }
 
+/**
+ * Some providers (notably Gemini's function-calling responses) return a
+ * tool-call WITHOUT an `id`. An absent id is fatal to UI identity: the live
+ * event pump can only invent a per-client-process fallback (`t<seq>`), which
+ * differs between a live run and a later re-projection of the SAME persisted
+ * messages — so a tool "pill" on the conversation rail duplicates or jumps to
+ * the end on re-attach. The cure is to mint a DETERMINISTIC id ONCE, at the
+ * source (the loop, per turn), and write it into the response content BEFORE it
+ * is split into (a) the events the hooks emit and (b) the persisted
+ * `AgentMessage`. Both then carry the identical id, and the projection reads it
+ * straight back off `toolCallId` — live key === projected key, automatically.
+ *
+ * The id is `<turnIndex>:<toolName>:<ordinalInTurn>` — unique within the run
+ * (turnIndex separates turns, the ordinal separates calls in a turn) and stable
+ * because it's persisted, so a re-projection never re-mints it. The Nth
+ * id-less tool-call and the Nth id-less tool-result pair on the same ordinal, so
+ * a call and its result share the synthesized id and the assistant
+ * tool-call ↔ tool-result pairing the loop relies on stays valid.
+ *
+ * MUTATES the parts in place (they are this turn's fresh response objects, not
+ * shared) so every downstream read of `content` sees the same id. A non-empty
+ * provider id is always left untouched — today's good path is unchanged.
+ */
+export const ensureToolCallIds = (
+  content: ReadonlyArray<unknown>,
+  turnIndex: number,
+): void => {
+  const parts = content as ReadonlyArray<Record<string, unknown>>
+  let callOrd = 0
+  let resultOrd = 0
+  for (const part of parts) {
+    const id = part["id"]
+    const name = typeof part["name"] === "string" ? (part["name"] as string) : ""
+    if (part["type"] === "tool-call") {
+      if (id === undefined || id === "") part["id"] = `${turnIndex}:${name}:${callOrd}`
+      callOrd++
+    } else if (part["type"] === "tool-result") {
+      if (id === undefined || id === "") part["id"] = `${turnIndex}:${name}:${resultOrd}`
+      resultOrd++
+    }
+  }
+}
+
 const hasKeys = (o: unknown): o is Record<string, unknown> =>
   typeof o === "object" && o !== null && Object.keys(o).length > 0
 

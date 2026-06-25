@@ -3,18 +3,18 @@ import { Effect, Ref } from "effect"
 import {
   ApprovalAllowAllLive,
   type AgentHooks,
+  buildScopeRuntime,
   ConversationStore,
+  discoverScopeTree,
+  loadTools,
   runAgent,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "@xandreed/code/usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "@xandreed/code/usecases/coderAgentConfig.js"
 import { coderPrompt } from "@xandreed/code/prompts/coder.js"
 import { discoverInstructionFiles } from "@xandreed/code/usecases/discoverInstructionFiles.js"
-import { discoverScopeTree } from "@xandreed/code/usecases/discoverScopeTree.js"
 import { loadAgents } from "@xandreed/code/usecases/loadAgents.js"
 import { loadMemory } from "@xandreed/code/usecases/loadMemory.js"
 import { loadSkills } from "@xandreed/code/usecases/loadSkills.js"
-import { loadTools } from "@xandreed/code/usecases/loadTools.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

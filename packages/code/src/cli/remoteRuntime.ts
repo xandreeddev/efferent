@@ -20,7 +20,7 @@ import {
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
 import type { TuiModeInput } from "../modes/tui.js"
-import { submittedAgentState } from "./presentation/agentState.js"
+import { agentStateForPhase, submittedAgentState } from "./presentation/agentState.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
 import { rolesReadout } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
@@ -177,6 +177,14 @@ export const runTuiModeRemote = (
           }),
         )
         yield* Effect.sync(() => store.run.setQueue(state0.queue ?? []))
+        // Seed the live state machine from the daemon's AUTHORITATIVE phase, so a
+        // client that (re)attaches mid-turn shows the spinner instead of `idle`,
+        // and one that attaches while idle never inherits a phantom "thinking".
+        // A stale daemon predating the field reports no phase → fall back to busy.
+        const phase0 = state0.phase ?? (state0.busy ? "thinking" : "idle")
+        yield* Effect.sync(() =>
+          store.setAgentState(agentStateForPhase(store.agentState(), phase0, Date.now())),
+        )
       }
       store.pushBlock({
         kind: "info",
@@ -490,15 +498,27 @@ export const runTuiModeRemote = (
           const st = yield* ws.getState(rootSessionId).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
           if (st !== undefined) {
             cursor = st.cursor
-            // Only rebuild the rail from the DB when IDLE. A mid-turn resync
-            // would project a snapshot that lags the streaming tail, and a
-            // blind replace would drop the in-flight blocks the user is
-            // watching. While a turn streams we tail-only: the cursor reset +
-            // re-subscribe replays the gap from the ledger, and the keyed cache
-            // makes any overlap idempotent. When idle, `reconcile` merges by key
-            // (keeping any live suffix), with `logBaseOffset` keeping keys
-            // absolute.
-            if (store.agentState().phase === "idle") {
+            // The DAEMON's phase is authoritative — reconcile the client to it
+            // FIRST. A stale daemon predating the field reports none → fall back
+            // to busy. This is what kills the phantom "thinking": if the daemon
+            // is idle but the client is stuck thinking (a dropped agent_end
+            // across a detach), this snaps it back to idle. The old gate read the
+            // client's OWN phase, so a stuck "thinking" never reconciled.
+            const daemonPhase = st.phase ?? (st.busy ? "thinking" : "idle")
+            const clientPhase = store.agentState().phase
+            yield* Effect.sync(() =>
+              store.setAgentState(agentStateForPhase(store.agentState(), daemonPhase, Date.now())),
+            )
+            // Rebuild the rail from the DB when the daemon is IDLE (safe — nothing
+            // is streaming) or when the phases DIVERGED (the client's view was
+            // wrong, e.g. it thought a turn was running that the daemon already
+            // finished). A blind mid-turn rebuild would lag the streaming tail and
+            // drop in-flight blocks, so while BOTH agree a turn streams we
+            // tail-only: the cursor reset + re-subscribe replays the gap from the
+            // ledger, and the keyed cache makes any overlap idempotent. `reconcile`
+            // merges by key (keeping any live suffix), with `logBaseOffset` keeping
+            // keys absolute.
+            if (daemonPhase === "idle" || daemonPhase !== clientPhase) {
               yield* Effect.sync(() =>
                 applyContext(store, rootCid, st.log, [], {
                   collapseContext: false,

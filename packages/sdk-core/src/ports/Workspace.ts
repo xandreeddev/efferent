@@ -4,6 +4,7 @@ import { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ContextNodeId } from "../entities/AgentContext.js"
 import { Directive } from "../entities/Directive.js"
 import { Settings } from "../entities/Settings.js"
+import { AgentPhase } from "../usecases/agentPhase.js"
 import { ApprovalDecision, ApprovalRequest } from "./Approval.js"
 
 /**
@@ -110,6 +111,16 @@ export const SessionState = Schema.Struct({
    */
   logBaseOffset: Schema.optional(Schema.Number),
   busy: Schema.Boolean,
+  /**
+   * The daemon's **authoritative** lifecycle phase for this session, derived by
+   * folding every published root event through `reducePhase`. The client
+   * reconciles its own `agentState` machine against this on (re)attach + resync,
+   * so a client that joins mid-turn shows `thinking` and an idle daemon clears a
+   * stale `thinking` spinner. `optional` so a stale daemon that predates the
+   * field still decodes — the client then falls back to `busy ? "thinking" :
+   * "idle"`.
+   */
+  phase: Schema.optional(AgentPhase),
   /**
    * Messages typed while this session was busy, awaiting their turn — the
    * pending `▸` list the client shows above the input (agy-style queue). The

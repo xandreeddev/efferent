@@ -6,6 +6,7 @@ import { createSideSlice, type SideSlice } from "./side.js"
 import { createSessionSlice, type SessionSlice } from "./session.js"
 import { createUiSlice, type UiSlice } from "./ui.js"
 import { createOverlaySlice, type OverlaySlice } from "./overlay.js"
+import { createDecisionsSlice, type DecisionsSlice } from "./decisions.js"
 
 // Re-export the foundational types so consumers can `import { … } from
 // "…/state/store.js"` without chasing each slice file.
@@ -14,6 +15,7 @@ export type { FocusPane, UiMode } from "./ui.js"
 export type { RunHandle, OAuthSession, BrowseEntry } from "./session.js"
 export type { Overlay, SelectPurpose, EffortSettingKey } from "./overlay.js"
 export type { SearchState, ConvScroller } from "./conversation.js"
+export type { Decision } from "./decisions.js"
 
 /**
  * The reactive UI state, composed from four concern-scoped slices
@@ -26,7 +28,8 @@ export interface TuiStore
     SideSlice,
     SessionSlice,
     UiSlice,
-    OverlaySlice {}
+    OverlaySlice,
+    DecisionsSlice {}
 
 export interface TuiStoreInit {
   readonly status: StatusState
@@ -45,4 +48,5 @@ export const createTuiStore = (init: TuiStoreInit): TuiStore => ({
   }),
   ...createUiSlice(),
   ...createOverlaySlice(),
+  ...createDecisionsSlice(),
 })

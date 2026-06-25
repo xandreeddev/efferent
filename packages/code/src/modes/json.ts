@@ -15,11 +15,11 @@ import {
   type Scope,
   type Memory,
   type Skill,
+  buildScopeRuntime,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime } from "../usecases/buildScopeRuntime.js"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
-import type { ToolDefinition } from "../usecases/loadTools.js"
+import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 

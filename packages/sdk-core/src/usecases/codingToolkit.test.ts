@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { Arbitrary, FastCheck as fc, Schema } from "effect"
-import { Failure } from "@xandreed/sdk-core"
+import { Failure } from "../entities/Failure.js"
 import {
   firstLine,
   normalizeEdits,
