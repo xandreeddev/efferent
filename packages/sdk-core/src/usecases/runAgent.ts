@@ -1,5 +1,5 @@
 import type { Tool } from "@effect/ai"
-import { Effect } from "effect"
+import { Duration, Effect } from "effect"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
@@ -11,6 +11,76 @@ import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
 import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
 import type { AgentConfig } from "./agentConfig.js"
+
+/**
+ * Detect whether the conversation ends mid-tool-call: the last message is an
+ * assistant with tool-call parts and no matching tool-result follows it. This
+ * happens when a crash occurred after the model emitted the call but before the
+ * handler finished and persisted the result. On resume the model would otherwise
+ * see an unmatched call and retry it — dangerous for non-idempotent operations.
+ */
+const lastMessageHasPendingToolCalls = (
+  msgs: ReadonlyArray<AgentMessage>,
+): boolean => {
+  const last = msgs[msgs.length - 1]
+  if (last === undefined || last.role !== "assistant") return false
+  const toolCalls = (last.content as ReadonlyArray<{ type?: string }>).filter(
+    (p) => p.type === "tool-call",
+  )
+  return toolCalls.length > 0
+}
+
+/**
+ * Synthetic message injected on resume when the last turn was interrupted
+ * mid-tool-call. Tells the model the result is unknown and it must verify
+ * state before retrying — prevents blind re-execution of non-idempotent ops.
+ */
+const interruptedToolCallMessage = (toolNames: ReadonlyArray<string>): AgentMessage => ({
+  role: "user",
+  content:
+    `[System note: the previous turn was interrupted while executing ` +
+    `${toolNames.join(", ")}. The result of that tool call is unknown — ` +
+    `it may have partially completed, fully completed, or not run at all. ` +
+    `Before calling the same tool again, verify the current state of the ` +
+    `workspace rather than assuming the previous call failed.]`,
+})
+
+/**
+ * Persistence retry policy: 3 attempts with exponential backoff (200ms → 400ms → 800ms).
+ * A transient DB hiccup (SQLite lock, network blip to Postgres) should not kill a
+ * running fleet — we retry, then continue in-memory with the conversation marked
+ * "at risk" so the human knows durability is compromised.
+ */
+const PERSIST_RETRIES = 3
+const PERSIST_BASE_MS = 200
+
+const persistWithRetry = <E>(
+  eff: Effect.Effect<ReadonlyArray<number>, E>,
+): Effect.Effect<
+  { positions: ReadonlyArray<number>; atRisk: boolean },
+  never
+> =>
+  Effect.gen(function* () {
+    let lastError: unknown
+    for (let i = 0; i < PERSIST_RETRIES; i++) {
+      const result = yield* eff.pipe(
+        Effect.map((positions) => ({ positions, atRisk: false as const })),
+        Effect.catchAll((e) => {
+          lastError = e
+          return Effect.succeed({ positions: [] as ReadonlyArray<number>, atRisk: true as const })
+        }),
+      )
+      if (!result.atRisk) return result
+      if (i < PERSIST_RETRIES - 1) {
+        yield* Effect.sleep(Duration.millis(PERSIST_BASE_MS * 2 ** i))
+      }
+    }
+    yield* Effect.logWarning(
+      `persist failed after ${PERSIST_RETRIES} attempts — continuing in-memory. ` +
+        `Error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    )
+    return { positions: [] as ReadonlyArray<number>, atRisk: true }
+  })
 
 interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
   readonly config: AgentConfig<Tools>
@@ -46,10 +116,22 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
 
     // Persist each turn's tail the moment it lands (incremental persistence) — so
     // the session is restorable to its last completed turn, and a mid-run nav/state
-    // read sees real history, not just memory. A persist failure is a defect (can't
-    // safely continue without durable history).
+    // read sees real history, not just memory. Retries on transient failure; if
+    // the store stays down we continue in-memory and warn rather than killing the fleet.
     const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(input.conversationId, m)).pipe(Effect.orDie)
+      persistWithRetry(Effect.forEach(msgs, (m) => store.append(input.conversationId, m))).pipe(
+        Effect.tap(({ atRisk }) => {
+          if (atRisk) {
+            return Effect.logWarning(
+              `conversation ${input.conversationId} is running AT RISK — ` +
+                `turn tail was not persisted to the store. A crash now would lose ` +
+                `${msgs.length} message(s) from this turn.`,
+            )
+          }
+          return Effect.void
+        }),
+        Effect.map(({ positions }) => positions),
+      )
 
     const result = yield* runAgentLoop({
       system: input.config.prompt.text,
@@ -194,10 +276,24 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
     const prefix: ReadonlyArray<AgentMessage> =
       checkpoint !== undefined ? [handoffToMessage(checkpoint.summary)] : []
 
+    const allMessages: ReadonlyArray<AgentMessage> = [...prefix, ...active]
+
+    // Crash-recovery safety: if the last turn was interrupted mid-tool-call,
+    // inject a synthetic user message warning the model not to blindly retry.
+    const resumeMessages = lastMessageHasPendingToolCalls(allMessages)
+      ? (() => {
+          const last = allMessages[allMessages.length - 1]!
+          const toolNames = (last.content as ReadonlyArray<{ type?: string; toolName?: string }>)
+            .filter((p) => p.type === "tool-call")
+            .map((p) => p.toolName ?? "unknown")
+          return [...allMessages, interruptedToolCallMessage(toolNames)]
+        })()
+      : allMessages
+
     return yield* driveLoop({
       config,
       conversationId,
-      messages: [...prefix, ...active],
+      messages: resumeMessages,
       extraHooks,
       workspaceDir,
       pinnedGeneral,

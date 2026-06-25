@@ -51,6 +51,8 @@ export interface BoardNote {
   readonly from: string
   readonly note: string
   readonly at: number
+  /** The conversation this note belongs to — blackboard reads are scoped by it. */
+  readonly rootConversationId?: string | undefined
 }
 
 /** Live status of an agent the bus knows about. */
@@ -77,6 +79,8 @@ export interface MarkRunningOpts {
   /** The bus key of the agent (or root) that spawned this one — its completion
    *  message is delivered there, and `childrenOf(parentKey)` finds it. */
   readonly parentKey?: string | null
+  /** The root conversation id — used to scope blackboard posts to this fleet. */
+  readonly rootConversationId?: string | null
 }
 
 export interface AgentBus {
@@ -124,7 +128,8 @@ export interface AgentBus {
   /** Take + clear a mailbox (the recipient drains it at a turn boundary). */
   readonly drain: (nodeId: string) => Effect.Effect<ReadonlyArray<InboxMessage>>
   readonly boardPost: (note: BoardNote) => Effect.Effect<void>
-  readonly boardRead: () => Effect.Effect<ReadonlyArray<BoardNote>>
+  /** Read the blackboard scoped to a conversation; omit for the global view. */
+  readonly boardRead: (rootConversationId?: string) => Effect.Effect<ReadonlyArray<BoardNote>>
   /** A status view of the given agents (or all known, running + recently done). */
   readonly snapshot: (
     nodeIds?: ReadonlyArray<string>,
@@ -146,6 +151,7 @@ export interface AgentBus {
 interface AgentEntry {
   readonly label: string
   readonly parentKey: string | null
+  readonly rootConversationId: string | null
   readonly inbox: ReadonlyArray<InboxMessage>
   /** Fulfilled exactly once when the run finishes (complete/markDone). */
   readonly completion: Deferred.Deferred<void>
@@ -183,6 +189,8 @@ const MAX_BOARD = 200
 const MAX_DONE = 200
 /** Cap buffered completions per idle parent (a parent that never resumes). */
 const MAX_PENDING = 100
+/** Cap per-agent inbox so a runaway sender can't OOM the process. */
+const MAX_INBOX = 100
 
 const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n)}…`)
 
@@ -241,6 +249,8 @@ export const makeAgentBus = (
           running.set(nodeId, {
             label,
             parentKey: opts?.parentKey ?? existing?.parentKey ?? null,
+            rootConversationId:
+              opts?.rootConversationId ?? existing?.rootConversationId ?? null,
             inbox: [...(existing?.inbox ?? []), ...buffered],
             // Keep an existing completion latch so a parent that already awaits
             // it is still woken; only the first registration creates one.
@@ -402,7 +412,11 @@ export const makeAgentBus = (
           const e = s.running.get(nodeId)
           if (e === undefined) return [undefined, s]
           const running = new Map(s.running)
-          running.set(nodeId, { ...e, inbox: [...e.inbox, msg] })
+          const nextInbox = [...e.inbox, msg]
+          if (nextInbox.length > MAX_INBOX) {
+            nextInbox.splice(0, nextInbox.length - MAX_INBOX)
+          }
+          running.set(nodeId, { ...e, inbox: nextInbox })
           return [e, { ...s, running }]
         })
         if (entry === undefined) return false
@@ -427,7 +441,14 @@ export const makeAgentBus = (
         Effect.zipRight(emit(note.from, note.note, note.at)),
       ),
 
-    boardRead: () => Ref.get(ref).pipe(Effect.map((s) => s.board)),
+    boardRead: (rootConversationId) =>
+      Ref.get(ref).pipe(
+        Effect.map((s) =>
+          rootConversationId !== undefined
+            ? s.board.filter((n) => n.rootConversationId === undefined || n.rootConversationId === rootConversationId)
+            : s.board,
+        ),
+      ),
 
     snapshot: (nodeIds) =>
       Ref.get(ref).pipe(

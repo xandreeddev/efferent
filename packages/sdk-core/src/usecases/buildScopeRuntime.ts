@@ -823,7 +823,13 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // an `error` return + notifies the parent itself — otherwise the DB node
   // stays `running` forever and the parent is never told (markDone only tears
   // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
-  const returnRecordedRef = Ref.unsafeMake(false)
+  /**
+   * Lifecycle state for the run, guarded by a single Ref to eliminate the race
+   * between `store.recordReturn` and a separate boolean flag.  We transition to
+   * `"done"` *before* any external call (store / bus) so the exit finalizer can
+   * never overwrite a successfully-recorded return with `[interrupted]`.
+   */
+  const lifecycleRef = Ref.unsafeMake<"running" | "done">("running")
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = args.title ?? (basename(folder) || folder)
@@ -851,7 +857,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       args.parentNodeId ?? args.rootConversationId ?? null
     // Register a live mailbox so siblings/the human can message this run; torn
     // down on every exit path (success, failure, interrupt) by the ensuring below.
-    yield* args.bus.markRunning(nodeId, label, { parentKey })
+    yield* args.bus.markRunning(nodeId, label, {
+      parentKey,
+      rootConversationId: args.rootConversationId,
+    })
     const budgetStopRef = yield* Ref.make(false)
     const innerHooks = makeInnerHooks(
       hooks,
@@ -1023,6 +1032,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         stopNote !== undefined
           ? `${outcome.r.finalText}\n\n${stopNote}`.trim()
           : outcome.r.finalText
+      // Transition lifecycle BEFORE external calls — the finalizer reads this
+      // Ref and will never overwrite a terminal result with an interrupt note.
+      yield* Ref.set(lifecycleRef, "done")
       yield* store.recordReturn(nodeId, {
         status: "ok",
         summary,
@@ -1030,8 +1042,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         ...(hasUsage ? { usage } : {}),
         ...stamp,
       })
-      // Mark the return recorded so the exit finalizer doesn't double-record it.
-      yield* Ref.set(returnRecordedRef, true)
       // Deliver the outcome to the bus FIRST: wakes a parent's `wait_for_agents`,
       // delivers/buffers a completion in the parent's inbox + the blackboard, and
       // records the terminal result. This MUST precede `onSubAgentEnd` — that
@@ -1054,6 +1064,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
 
     const f = toFailure(outcome.e)
     const summary = f.message ? `${f.error}: ${f.message}` : f.error
+    // Transition lifecycle BEFORE external calls — see the ok-path comment above.
+    yield* Ref.set(lifecycleRef, "done")
     yield* store.recordReturn(nodeId, {
       status: "error",
       summary,
@@ -1061,8 +1073,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(hasUsage ? { usage } : {}),
       ...stamp,
     })
-    // Mark the return recorded so the exit finalizer doesn't double-record it.
-    yield* Ref.set(returnRecordedRef, true)
     // Same ordering as the ok path: deliver to the bus before the event that
     // triggers the auto-resume, so a parent draining its inbox sees the failure.
     yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
@@ -1097,12 +1107,15 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // Everything here is failure-safe (Effect.ignore / catchAll) so teardown never
   // throws — the finalizer must always complete even mid-interruption.
   const finalize = Effect.gen(function* () {
-    const recorded = yield* Ref.get(returnRecordedRef)
-    if (recorded) {
+    const state = yield* Ref.get(lifecycleRef)
+    if (state === "done") {
+      // Normal terminal path (ok or error) already recorded the return AND
+      // notified the parent — just tear the mailbox down.
       yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
       return
     }
-    // Interrupted / died: record an error return + notify the parent ourselves.
+    // Interrupted / died before a terminal path: record an error return + notify
+    // the parent so the DB node never stays `running` forever.
     yield* args.store
       .recordReturn(args.nodeId, {
         status: "error",
@@ -1154,7 +1167,10 @@ const makeRunAgentHandler =
         const label = spawnArgs.title ?? (basename(spawnArgs.folder) || spawnArgs.folder)
         const parentKey: string | null =
           spawnArgs.parentNodeId ?? spawnArgs.rootConversationId ?? null
-        yield* bus.markRunning(spawnArgs.nodeId, label, { parentKey })
+        yield* bus.markRunning(spawnArgs.nodeId, label, {
+          parentKey,
+          rootConversationId: spawnArgs.rootConversationId,
+        })
         const fiber = yield* Effect.forkDaemon(
           runSpawnedAgent(spawnArgs).pipe(Effect.catchAll(() => Effect.void), Effect.asVoid),
         )
@@ -1495,13 +1511,19 @@ const buildGenericHandlers = <R>(
       Effect.gen(function* () {
         const rc = yield* FiberRef.get(RunContextRef)
         const at = yield* Clock.currentTimeMillis
-        yield* bus.boardPost({ from: senderLabel(rc), note: params.note, at })
+        yield* bus.boardPost({
+          from: senderLabel(rc),
+          note: params.note,
+          at,
+          rootConversationId: rc.rootConversationId ?? undefined,
+        })
         return { posted: true }
       })
 
     const blackboard_read = (params: { readonly limit?: number }) =>
       Effect.gen(function* () {
-        const all = yield* bus.boardRead()
+        const rc = yield* FiberRef.get(RunContextRef)
+        const all = yield* bus.boardRead(rc.rootConversationId ?? undefined)
         const picked =
           params.limit !== undefined && params.limit > 0 ? all.slice(-params.limit) : all
         return { notes: picked.map((n) => ({ from: n.from, note: n.note })) }
@@ -1531,7 +1553,7 @@ const buildGenericHandlers = <R>(
         yield* bus.awaitChange({ waiterKey, watch, timeoutMs })
         const snaps = yield* bus.snapshot(watch.length > 0 ? watch : undefined)
         const inbox = yield* bus.drain(waiterKey)
-        const board = yield* bus.boardRead()
+        const board = yield* bus.boardRead(rc.rootConversationId ?? undefined)
         const allDone = snaps.length > 0 && snaps.every((s) => s.status !== "running")
         return {
           agents: snaps.map((s) => ({
