@@ -51,6 +51,14 @@ export interface EvalSpec<I, O, T, R> {
   readonly threshold?: number
   /** How many cases run at once. Default 1 (gentle on rate limits). */
   readonly concurrency?: number
+  /**
+   * How many times to run EACH case (default 1). A single LLM run is noisy, so a
+   * delta between two configs can be sampling noise; running N samples and
+   * reporting mean ± stdev turns a number into a signal. The whole case still
+   * collapses to ONE `eval.case` span (the aggregate mean), so the trace report
+   * is unaffected; the framework `EvalReport` carries the variance.
+   */
+  readonly samples?: number
 }
 
 /** Identity helper that pins the generic inference at the definition site. */
@@ -71,8 +79,14 @@ export interface CaseResult {
   /** False when the task threw — captured, not propagated. */
   readonly ok: boolean
   readonly error?: string
+  /** Per-scorer scores (averaged across samples when `samples > 1`). */
   readonly scores: ReadonlyArray<ScoreOutcome>
+  /** Case mean (mean of per-sample means when sampled). */
   readonly mean: number
+  /** How many samples produced this result (1 unless `spec.samples > 1`). */
+  readonly samples?: number
+  /** Sample stdev of the per-sample means — the noise on `mean`. 0 for 1 sample. */
+  readonly stdev?: number
   readonly durationMs: number
 }
 
