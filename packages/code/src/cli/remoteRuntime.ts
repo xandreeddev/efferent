@@ -309,7 +309,18 @@ export const runTuiModeRemote = (
           )
         },
         interrupt: () => {
-          void Runtime.runPromise(rt)(ws.interrupt(rootSessionId).pipe(Effect.ignore))
+          // Immediate feedback that Esc registered (the daemon's agent_end lands a
+          // beat later over SSE) AND surface a failed interrupt instead of
+          // swallowing it — a silent `Effect.ignore` here hid "Esc does nothing"
+          // failures (a non-2xx POST, a dropped connection) with no trace.
+          store.toast("interrupting…")
+          void Runtime.runPromise(rt)(
+            ws.interrupt(rootSessionId).pipe(
+              Effect.catchAll((e) =>
+                Effect.sync(() => store.toast(`interrupt failed: ${e.message}`)),
+              ),
+            ),
+          )
         },
         newConversation: () => {
           // `:clear` on the master bin = a brand-new daemon fleet, and re-point

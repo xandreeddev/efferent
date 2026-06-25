@@ -2,6 +2,7 @@ import { glyph, tokens } from "../../state/theme.js"
 import type { TuiContext } from "../../state/store.js"
 import { ContextTreeView } from "./side/ContextTree.js"
 import { NodeDetail } from "./side/NodeDetail.js"
+import { PlanSection } from "./side/PlanSection.js"
 
 /**
  * The RIGHT pane of the chat-first layout: the **fleet tree** — every session
@@ -33,6 +34,9 @@ export const FleetTree = (props: { ctx: TuiContext }) => {
           {subtitle()}
         </text>
       </box>
+      {/* The working plan, pinned + always visible (independent of the tree
+          cursor) — the session's roadmap sits above its fleet. */}
+      <PlanSection ctx={props.ctx} />
       {/* Tree on top (holds the cursor); the detail mirrors the cursor below,
           capped at half the region so a short detail never costs 50%. */}
       <box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
