@@ -87,3 +87,31 @@ export const llmJudge = <I, O, T>(
       return parseJudge(res.text)
     }),
 })
+
+/**
+ * A graded quality judge: `llmJudge` with **anchored rubric levels** so scores
+ * are comparable across cases/configs (not ad-hoc per prompt). The caller
+ * supplies the case-specific `rubric` (what "good" means for this task) and the
+ * `output` to grade (final answer and/or the produced files). The anchors
+ * (1.0 / 0.75 / 0.5 / 0.25 / 0) are fixed here so a "0.5" means the same thing
+ * everywhere — the property that makes the scorecard trend-able.
+ */
+export const qualityRubric = <I, O, T>(
+  name: string,
+  build: (a: ScorerArgs<I, O, T>) => { readonly rubric: string; readonly output: string },
+): Scorer<I, O, T, unknown, LanguageModel.LanguageModel> =>
+  llmJudge(name, (a) => {
+    const { rubric, output } = build(a)
+    return [
+      "Grade the candidate against the rubric using these ANCHORED levels:",
+      "- 1.0  = fully satisfies — correct, complete, and tightly scoped.",
+      "- 0.75 = correct with only minor issues.",
+      "- 0.5  = partially correct, OR correct but with scope creep / a missing piece.",
+      "- 0.25 = mostly wrong but contains some relevant work.",
+      "- 0.0  = wrong, empty, or off-task.",
+      "",
+      `RUBRIC (what good looks like for THIS task):\n${rubric}`,
+      "",
+      `CANDIDATE OUTPUT:\n${output}`,
+    ].join("\n")
+  })

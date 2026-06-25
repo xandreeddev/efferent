@@ -25,12 +25,23 @@ const REPO_ROOT = ((): string => {
   }
 })()
 
-const gitShow = (ref: string, path: string): string =>
-  execFileSync("git", ["show", `${ref}:${path}`], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-  })
+// Fail-soft: these refs are old commits that may not exist after history
+// rewrites / the monorepo rename. A missing ref must NOT crash module load —
+// `run.ts` imports every suite, so a throw here took down the ENTIRE `bun run
+// eval` (even `eval quality`). Return "" instead; the case then has an empty
+// oracle and scores poorly (visible), rather than killing the whole CLI.
+const gitShow = (ref: string, path: string): string => {
+  try {
+    return execFileSync("git", ["show", `${ref}:${path}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    })
+  } catch {
+    console.warn(`repo-tasks: could not load ${ref}:${path} (skipping its oracle)`)
+    return ""
+  }
+}
 
 interface RepoInput {
   readonly files: Record<string, string>

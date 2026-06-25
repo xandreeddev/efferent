@@ -14,6 +14,14 @@ export interface RunConfig {
   /** Fast/helper model → `settings.fastModel`. Unset ⇒ follows main. */
   readonly fast?: string
   /**
+   * Code-tier model → `settings.codeModel`. Set this DISTINCT from `main` to
+   * exercise the code-delegation routing (the `# Writing code` policy is gated
+   * on a distinct codeModel). Unset / equal to `main` ⇒ the root codes directly
+   * and routing evals see no code tier. The model-comparison matrix is exactly
+   * swapping this.
+   */
+  readonly code?: string
+  /**
    * Pin the `llmJudge` model so a baseline and a candidate are graded by the
    * SAME judge. Unset ⇒ the judge runs on whatever `LanguageModel` is in
    * context (i.e. `main`), which makes judge scores incomparable across configs.
@@ -36,6 +44,7 @@ export const configHash = (c: RunConfig): string => {
   const canonical = JSON.stringify({
     main: c.main,
     fast: c.fast ?? null,
+    code: c.code ?? null,
     judge: c.judge ?? null,
     promptVariant: c.promptVariant ?? null,
     maxSteps: c.maxSteps ?? null,
