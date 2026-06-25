@@ -308,10 +308,12 @@ export const toolArtifacts = (
       const o = str(r.output)
       return o !== undefined && o.trim().length > 0 ? { output: o } : {}
     }
-    case "read_file": {
-      const c = str(r.content)
-      return c !== undefined && c.length > 0 ? { output: c } : {}
-    }
+    case "read_file":
+      // No artifact for a read: its content is for the MODEL, not the rail. The
+      // pill + its `N lines` detail (describeToolResult) is all the human needs;
+      // echoing the file body is noise (and a long read would wall the rail).
+      // Edits still show their diff — that's the artifact that matters there.
+      return {}
     default:
       return {}
   }
