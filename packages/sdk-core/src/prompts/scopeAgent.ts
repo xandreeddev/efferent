@@ -1,3 +1,8 @@
+/**
+ * Builds a spawned sub-agent's system prompt (`renderScopeSystemPrompt`):
+ * the scope header (confined bash, return contract) + the shared fleet/scope
+ * sections + the folder's SCOPE.md body. Lifted from the CLI into the SDK.
+ */
 import type { AgentDefinition } from "../entities/AgentDefinition.js"
 import type { Memory } from "../entities/Memory.js"
 import {

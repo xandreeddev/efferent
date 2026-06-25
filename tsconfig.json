@@ -1,4 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["packages/*/src/**/*"]
+  "include": ["packages/*/src/**/*"],
+  "comment": "packages/website is the Astro docs site — it has its own tsconfig (Astro preset) and must not be pulled into the root typecheck.",
+  "exclude": ["packages/website/**"]
 }
