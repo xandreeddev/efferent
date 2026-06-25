@@ -15,6 +15,7 @@ import {
   EnvAuthStoreLive,
   FetchHttpClientLive,
   HttpLive,
+  LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
@@ -81,14 +82,28 @@ const PortsLive = Layer.mergeAll(
  * a `RunConfig`, a FIXED `SettingsStore` pins the run's models/prompt/steps so
  * the disk config can't override the chosen independent variable.
  */
+/** Provider key env vars (mirrors adapters/auth/env.ts). When ANY is set we're
+ *  in CI / a key-injected run → read env (`EnvAuthStoreLive`). When none is set
+ *  → fall back to the user's `~/.efferent/auth.json` (`LocalAuthStoreLive`) so a
+ *  LOCAL `bun run eval` "just works" with logged-in creds (no export needed) —
+ *  which is what makes a real baseline runnable on a dev machine. */
+const ENV_KEY_VARS = [
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENCODE_API_KEY",
+] as const
+const hasEnvKey = (): boolean => ENV_KEY_VARS.some((v) => (process.env[v] ?? "").length > 0)
+
 export const makeEvalEnv = (config?: RunConfig): Layer.Layer<EvalEnv> => {
   const settingsLive =
     config === undefined
       ? LocalSettingsStoreLive.pipe(Layer.provide(FsLive))
       : settingsLayerForConfig(config)
+  const authLive = hasEnvKey() ? EnvAuthStoreLive : LocalAuthStoreLive
   // provideMerge (not merge): feeds AuthStore + SettingsStore *into* the model
   // tier / WebSearch AND keeps SettingsStore in the output (runAgent reads it).
-  const CredentialsLive = Layer.mergeAll(EnvAuthStoreLive, settingsLive)
+  const CredentialsLive = Layer.mergeAll(authLive, settingsLive)
   return PortsLive.pipe(Layer.provideMerge(CredentialsLive), Layer.orDie)
 }
 

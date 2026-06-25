@@ -7,9 +7,10 @@ import type { RunConfig } from "./config/RunConfig.js"
 import { makeEvalEnv, type EvalEnv } from "./env.js"
 import type { EvalSpec } from "./framework/Eval.js"
 import { runEval } from "./framework/runEval.js"
+import { buildReport, gitSha, readReport, reportExists, writeReport } from "./storage.js"
 import { makeCollector } from "./telemetry/collect.js"
 import { processSpans } from "./trace/process.js"
-import { renderRuns } from "./trace/report.js"
+import { renderRuns, renderVsBaseline } from "./trace/report.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
@@ -44,7 +45,19 @@ const flag = (name: string): string | undefined => {
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
 }
 const json = argv.includes("--json")
-const FLAG_NAMES = ["--config", "--main", "--fast", "--code", "--judge", "--max-steps", "--prompt"]
+const FLAG_NAMES = [
+  "--config",
+  "--main",
+  "--fast",
+  "--code",
+  "--judge",
+  "--max-steps",
+  "--prompt",
+  "--save",
+  "--compare",
+  "--label",
+  "--samples",
+]
 const consumed = new Set<string>()
 for (const f of FLAG_NAMES) {
   const i = argv.indexOf(f)
@@ -54,7 +67,15 @@ for (const f of FLAG_NAMES) {
   }
 }
 const names = argv.filter((a) => !a.startsWith("-") && !consumed.has(a))
-const selected = names.length === 0 ? SUITES : SUITES.filter((s) => names.includes(s.name))
+const picked = names.length === 0 ? SUITES : SUITES.filter((s) => names.includes(s.name))
+// `--samples N` overrides each suite's sample count (statistical rigor on demand
+// — golden runs N=3, the noise on a delta shrinks with √N).
+const samplesOverride = (() => {
+  const i = argv.indexOf("--samples")
+  return i >= 0 && i + 1 < argv.length ? Math.max(1, Number(argv[i + 1])) : undefined
+})()
+const selected: ReadonlyArray<AnySpec> =
+  samplesOverride !== undefined ? picked.map((s) => ({ ...s, samples: samplesOverride })) : picked
 
 // Build the list of configs to run. undefined ⇒ the default env (today's
 // behavior). A `--config` file is an array of RunConfig; otherwise the inline
@@ -142,10 +163,21 @@ const program = Effect.gen(function* () {
   // Build the eval data from the collected spans — the single data path.
   const spans = collector.getSpans()
   const runs = processSpans(spans)
+
+  // Compare against a committed baseline (`--compare <path>`): per-suite delta +
+  // bootstrap 95% CI → "is this change effective, or noise?".
+  const comparePath = flag("--compare")
+  // Persist this run as a (committable) baseline (`--save <path>`).
+  const savePath = flag("--save")
+
   if (json) {
     console.log(JSON.stringify(runs, null, 2))
   } else {
     console.log(renderRuns(runs))
+    if (comparePath !== undefined && reportExists(comparePath)) {
+      console.log("")
+      console.log(renderVsBaseline(runs, readReport(comparePath)))
+    }
     console.log("")
     // The data only reached Grafana if an OTLP endpoint was set; otherwise the
     // report above is the whole story (in-memory only).
@@ -156,6 +188,12 @@ const program = Effect.gen(function* () {
       )
       console.log("")
     }
+  }
+
+  if (savePath !== undefined) {
+    const label = flag("--label")
+    writeReport(savePath, buildReport(runs, new Date().toISOString(), gitSha(), label))
+    console.log(`saved baseline → ${savePath}`)
   }
 
   const anyFail = runs.some((r) => r.suites.some((s) => s.mean < 0.6))

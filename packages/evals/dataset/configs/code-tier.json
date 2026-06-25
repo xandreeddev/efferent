@@ -1,0 +1,13 @@
+[
+  {
+    "name": "no-code-tier",
+    "main": "opencode:kimi-k2.6",
+    "fast": "opencode:deepseek-v4-flash"
+  },
+  {
+    "name": "deepseek-code-tier",
+    "main": "opencode:kimi-k2.6",
+    "code": "opencode:deepseek-v4-pro",
+    "fast": "opencode:deepseek-v4-flash"
+  }
+]
