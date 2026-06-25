@@ -6,14 +6,14 @@
 
 > The pure domain of the efferent agent — entities, ports, and use cases. Runtime dependencies are **`effect`** and **`@effect/ai`** (provider-agnostic) and nothing else.
 
-This is the inward end of the [ports & adapters](../../README.md) architecture: `cli` → `adapters` → `core`. `core` imports nothing from its siblings — it declares *what* the agent does as Effects over `Context.Tag` ports; the adapters supply *how*.
+This is the inward end of the [ports & adapters](../../README.md) architecture: `code` → `sdk-adapters` → `sdk-core`. `sdk-core` imports nothing from its siblings — it declares *what* the agent does as Effects over `Context.Tag` ports; the adapters supply *how*.
 
 ## What's inside
 
-- **`entities/`** — Schema-backed types the loop manipulates: `Conversation` (the `AgentMessage` union, `Checkpoint`), `AgentContext` (context-tree nodes), `Model` (selections, roles, the generated context-window catalogue), `Settings`, `Scope`, `Skill`, `AgentHooks`. Pure values, no IO.
+- **`entities/`** — Schema-backed types the loop manipulates: `Conversation` (the `AgentMessage` union, `Checkpoint`), `AgentContext` (context-tree nodes), `AgentEvent` (the wire event union), `Model` (selections, roles, the generated context-window catalogue), `Settings`, `Scope`, `Skill`, `AgentDefinition`, `AgentHooks`, `Job` (the control-plane submission unit), `Memory`, `Directive`. Pure values, no IO.
 - **`ports/`** — `Context.Tag` services for everything the domain needs from outside: `ConversationStore`, `ContextTreeStore`, `FileSystem`, `Shell`, `Http`, `WebSearch`, `AuthStore`, `SettingsStore`, `ModelRegistry`, `LlmInfo`, `UtilityLlm`, `Approval`, `AuthFlow`. Each port file pairs its tagged errors with the Tag.
-- **`usecases/`** — Effects over the ports: the agent loop (`runAgent.ts`, `agentLoop.ts`), the coding toolkit (`codingToolkit.ts`), prompt⇄message mapping (`promptMapping.ts`), sub-agent spawning over the context tree (`buildScopeRuntime.ts`, `runContext.ts`, `tokenBudget.ts`, `staleness.ts`), context management (`handoff.ts`, `compaction.ts`), approval (`autoApproval.ts`), discovery (`loadSkills.ts`, `discoverScopeTree.ts`), and helpers.
-- **`prompts/`** — system-prompt strings/functions: `coder.ts`, `handoff.ts`, `title.ts`.
+- **`usecases/`** — Effects over the ports: the agent loop (`runAgent.ts`, `agentLoop.ts`, `promptMapping.ts`, `agentPhase.ts`); the **orchestration substrate** lifted here from the CLI — `agentBus.ts` (the **Supervisor**, exported as `type Supervisor = AgentBus`; **not** a `Context.Tag` port but a per-session stateful value carrying the event sink, threaded via `makeAgentBus`), `buildScopeRuntime.ts` (sub-agent spawning over the context tree), `codingToolkit.ts` (the coding tools), `discoverScopeTree.ts`, `loadTools.ts`, `schedule.ts`, `staleness.ts`, `parseFrontmatter.ts`; the loop primitives `runContext.ts` + `tokenBudget.ts`; context management (`handoff.ts`, `compaction.ts`, `compactionContent.ts`); approval (`autoApproval.ts`); and helpers (`generateTitle.ts`). (Workspace-shaped discovery — `loadSkills.ts`, `loadAgents.ts`, `loadMemory.ts`, `teamAgents.ts` — lives in `@xandreed/code`.)
+- **`prompts/`** — system-prompt strings/functions: `handoff.ts`, `title.ts`, plus the shared fleet/scope pieces lifted from the CLI — `sections.ts` (`subAgentsSection` / `coordinationSection` / `renderAgentsSection` / `renderMemorySection`) and `scopeAgent.ts` (`renderScopeSystemPrompt`). (The root coder prompt `coder.ts` lives in `@xandreed/code`.)
 
 ## Rules
 
