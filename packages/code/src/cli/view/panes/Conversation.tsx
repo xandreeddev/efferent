@@ -100,9 +100,11 @@ const Prose = (props: { text: string; hl?: Hl | undefined }) => {
   )
 }
 
-/** Tool output (read content, bash stdout, grep, search answer, ls/glob) shown
- *  expanded beneath the pill — capped to keep the always-expanded rail usable;
- *  the full output is one re-read / narrower query away (the model can recover it). */
+/** Tool output (bash stdout, grep, search answer, ls/glob) shown expanded
+ *  beneath the pill — capped to keep the always-expanded rail usable; the full
+ *  output is one re-read / narrower query away (the model can recover it).
+ *  read_file carries no output (its body is for the model, not the rail), so it
+ *  never reaches here — the pill's `N lines` detail is all the human sees. */
 const OUTPUT_PREVIEW_LINES = 20
 const OutputPreview = (props: { text: string; hl?: Hl | undefined }) => {
   const lines = () => props.text.replace(/\s+$/, "").split("\n")
