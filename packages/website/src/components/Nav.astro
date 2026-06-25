@@ -1,0 +1,123 @@
+---
+import Icon from "./Icon.astro"
+import BrandLogo from "./BrandLogo.astro"
+import { href, topNav, GITHUB } from "../lib/nav"
+const path = Astro.url.pathname
+const isActive = (h: string) => h.startsWith("/docs") && path.includes("/docs")
+---
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href={href("/")} aria-label="efferent home">
+      <BrandLogo height={28} />
+    </a>
+
+    <nav class="links" aria-label="Primary">
+      {topNav.map((l) => (
+        <a href={href(l.href)} class:list={["nav-link", { active: isActive(l.href) }]}>
+          {l.label}
+        </a>
+      ))}
+    </nav>
+
+    <div class="actions">
+      <a class="icon-btn" href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub">
+        <Icon name="github" size={18} />
+      </a>
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle colour theme">
+        <Icon name="sun" size={18} class="i-sun" />
+        <Icon name="moon" size={18} class="i-moon" />
+      </button>
+    </div>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    height: var(--nav-h);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: saturate(140%) blur(12px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .nav-inner {
+    /* Full-bleed nav bar (effect.website-style) — its edges line up with the
+       full-width docs shell below, so the brand sits at the sidebar's left edge
+       and the actions at the TOC's right edge. */
+    max-width: none;
+    height: 100%;
+    margin: 0;
+    padding: 0 1.75rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text);
+    font-weight: 680;
+    letter-spacing: -0.03em;
+    font-size: 1.12rem;
+  }
+  .brand:hover {
+    text-decoration: none;
+  }
+  .links {
+    display: flex;
+    gap: 0.35rem;
+    margin-right: auto;
+  }
+  .nav-link {
+    color: var(--text-dim);
+    font-size: 0.92rem;
+    font-weight: 500;
+    padding: 0.35rem 0.7rem;
+    border-radius: 8px;
+  }
+  .nav-link:hover {
+    color: var(--text);
+    background: var(--surface);
+    text-decoration: none;
+  }
+  .nav-link.active {
+    color: var(--accent);
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    color: var(--text);
+    background: var(--surface);
+    border-color: var(--hairline);
+    text-decoration: none;
+  }
+  :global(:root[data-theme="dark"]) .i-sun {
+    display: none;
+  }
+  :global(:root[data-theme="light"]) .i-moon {
+    display: none;
+  }
+  @media (max-width: 620px) {
+    .links {
+      display: none;
+    }
+  }
+</style>
