@@ -42,7 +42,9 @@ export type ScrollbackBlock =
       readonly detail?: string
       /** Unified diff (edit_file/write_file) — rendered colorized below the pill. */
       readonly diff?: string
-      /** Full textual output (bash/grep/read) — shown when expanded. */
+      /** Full textual output (bash/grep) — shown (capped) below the pill. read_file
+       *  deliberately carries none: its body is for the model, not the rail (the
+       *  pill's `N lines` detail is all the human needs). */
       readonly output?: string
       readonly msgIndex?: number
     }

@@ -53,6 +53,33 @@ describe("coderSystemPrompt delegation policy", () => {
   })
 })
 
+describe("coderSystemPrompt code-delegation policy", () => {
+  it("routes code-writing to the code tier when a distinct code model is configured", () => {
+    // 8th positional arg = codeModelConfigured.
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [], [], true)
+    expect(p).toContain("# Writing code")
+    expect(p).toContain('run_agent({ folder, task, role: "code" })')
+    // The fleet "do it yourself" default is reframed to defer code-writing.
+    expect(p).toContain("Do the investigating, planning, running, and reviewing yourself")
+    expect(p).not.toContain("Do the work yourself by default")
+  })
+
+  it("omits the code-delegation policy when no distinct code model is configured", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).not.toContain("# Writing code")
+    // …and the original all-yourself fast path stands.
+    expect(p).toContain("Do the work yourself by default")
+  })
+
+  it("the code-delegation policy is independent of the fleet roster", () => {
+    // No coordinator ⇒ no `# When to delegate`, but `# Writing code` still shows
+    // (a distinct code model routes writing to the code tier regardless).
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [], [], true)
+    expect(p).not.toContain("# When to delegate")
+    expect(p).toContain("# Writing code")
+  })
+})
+
 describe("renderScopeSystemPrompt", () => {
   it("includes the agent roster so a coordinator can name its specialists", () => {
     const p = renderScopeSystemPrompt({

@@ -60,8 +60,10 @@ describe("toolArtifacts.fileChange — structured diffstat (no regex on the deta
     expect(art.output).toContain("EditFailed")
   })
 
-  test("read_file has no fileChange", () => {
-    expect(toolArtifacts("read_file", true, { content: "x", totalLines: 1 }).fileChange).toBeUndefined()
+  test("read_file has no fileChange — and no output body (its content is for the model, not the rail)", () => {
+    const art = toolArtifacts("read_file", true, { content: "x".repeat(5000), totalLines: 200 })
+    expect(art.fileChange).toBeUndefined()
+    expect(art.output).toBeUndefined()
   })
 })
 

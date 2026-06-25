@@ -132,6 +132,20 @@ export const roleIsConfigured = (settings: RoleModelSettings, role: ModelRole): 
   }
 }
 
+/**
+ * Whether a **distinct** code model is configured — `codeModel` is set and
+ * differs from the general model. This is the gate for routing code-writing to
+ * the `code` tier: when it's false (unset, or the same string as `model`),
+ * delegating the implementation to a `code`-tier sub-agent is pure overhead —
+ * the same model would back it, so the root just edits directly (the fast path).
+ * Pure; the root prompt builder reads it to decide whether to emit the
+ * code-delegation policy.
+ */
+export const codeModelDistinct = (settings: RoleModelSettings): boolean =>
+  settings.codeModel !== undefined &&
+  settings.codeModel.length > 0 &&
+  settings.codeModel !== settings.model
+
 /** Parse a persisted `"<provider>:<modelId>"` into a full {@link ModelSelection}. */
 export const selectionFromString = (raw: string): ModelSelection => {
   const { provider, modelId } = parseModel(raw)
