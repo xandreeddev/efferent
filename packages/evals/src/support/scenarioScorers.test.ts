@@ -40,7 +40,7 @@ describe("routingScore — coding task that should delegate to the code tier", (
   const exp: RoutingExpectation = { shouldDelegate: true, codingTier: "code" }
 
   it("perfect: delegated AND ran on the code tier", () => {
-    expect(routing(run({ delegated: true, usedCodeTier: true, spawns: [{ name: "w", role: "code", ok: true, filesChanged: 1, tokens: 10 }] }), exp)).toBe(1)
+    expect(routing(run({ delegated: true, usedCodeTier: true, spawns: [{ name: "w", role: "code", ok: true, filesChanged: 1, files: [], tokens: 10 }] }), exp)).toBe(1)
   })
   it("the recurring failure: root coded directly (no delegate, no code tier) scores low", () => {
     // delegate-match 0 + code-tier 0 → 0.
@@ -48,7 +48,7 @@ describe("routingScore — coding task that should delegate to the code tier", (
   })
   it("delegated but on the WRONG (general) tier → half credit", () => {
     // delegate-match 1 + code-tier 0 → 0.5.
-    expect(routing(run({ delegated: true, usedCodeTier: false, spawns: [{ name: "w", role: "general", ok: true, filesChanged: 0, tokens: 5 }] }), exp)).toBe(0.5)
+    expect(routing(run({ delegated: true, usedCodeTier: false, spawns: [{ name: "w", role: "general", ok: true, filesChanged: 0, files: [], tokens: 5 }] }), exp)).toBe(0.5)
   })
 })
 
@@ -60,7 +60,7 @@ describe("routingScore — read-only task that should stay direct", () => {
   })
   it("over-spawned a simple task → penalized", () => {
     // delegate-match 0 + over-spawn penalty (1 - 1*0.5=0.5) + code-tier-general 1 → (0+0.5+1)/3.
-    const s = routing(run({ delegated: true, spawns: [{ name: "w", role: "general", ok: true, filesChanged: 0, tokens: 1 }] }), exp)
+    const s = routing(run({ delegated: true, spawns: [{ name: "w", role: "general", ok: true, filesChanged: 0, files: [], tokens: 1 }] }), exp)
     expect(s).toBeLessThan(0.6)
   })
   it("no routing expectation ⇒ neutral 1", () => {
