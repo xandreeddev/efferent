@@ -32,8 +32,9 @@ packages/
 bun install                                          # from the repo root only
 bun run typecheck                                    # cross-package via path mappings
 bun run build                                        # bundle the CLI → packages/cli/dist/efferent.js
-bun run eval [name …]                                # run eval suites (key-gated)
+bun run eval [name …]                                # run eval suites (key-gated)  ·  also: efferent eval [name …]
 bun run generate-models                              # refresh the model catalogue from models.dev
+efferent verify [--target source|commit:<sha>|release:<ver>] [--tier A|B|C|all]  # graded acceptance battery (Tier A no-key; B/C use opencode:deepseek-v4-flash)
 
 # Postgres is OPTIONAL (only when EFFERENT_DB_URL is set); the default store is SQLite.
 docker compose up -d                                 # start local Postgres (host port 5434)
@@ -180,6 +181,8 @@ Composition root: `packages/cli/src/main.ts`.
 - **`efferent code`** — the **focused single-fleet coder, IN-PROCESS** (in-memory Workspace, `variant: "code"`) — the bundled coding agent run without a daemon (replaces the old `code` bin / `--code` flag, both deleted along with the `dist/code.js` shim).
 - **`efferent attach`** — explicitly attach the master TUI to the daemon (auto-spawn if absent).
 - **`efferent daemon start`** (alias **`serve`**; was `--mode daemon-serve`) — run the persistent per-workspace HTTP/SSE daemon thin clients attach to. **`efferent daemon status`** / **`efferent daemon stop`** manage its lifecycle.
+- **`efferent verify`** — the **graded acceptance battery** (`packages/cli/src/verify/`): runs against a `--target` (`source` default · `commit:<sha>` worktree · `release:<ver>`/`npm:<spec>` clean-room Docker) in three tiers — **A** deterministic/no-key (boot · the no-provider gate · the **internal UI flows** via `testRender` bun tests in `cli/verify-flows/` · daemon lifecycle), **B** LLM-as-agent objective (real keyed turns through in-process/daemon/rpc, asserting a *file side-effect* not prose, on `opencode:deepseek-v4-flash` by default; the daemon turn uses `createFleet` so the root coder writes the file), **C** LLM-as-judge semantic (a cheap eval subset, soft unless `--strict`). Reuses `makeHttpTransport`/`probeHealth` for the daemon, the evals `--json` for Tier C, and the in-repo `test/docker/run.sh` for the container target. Exits non-zero only on a hard `fail` (skips/softs don't). `--tier A|B|C|all`, `--model`, `--strict`, `--json`, `--keep`. `verify`/`eval` join `code`/`attach`/`daemon` as reserved first-token words.
+- **`efferent eval [suites…]`** — first-class access to the eval suites (forwards to `packages/evals/src/run.ts`; source checkout only). Flags `--main`/`--fast`/`--judge`/`--samples`/`--config`/`--json`.
 - **`efferent "<prompt>"`** (print), **`--mode json|rpc|daemon`** — the headless modes, unchanged.
 
 Modes under `packages/cli/src/modes/` (`--mode <x>`, default `auto`):
@@ -250,7 +253,8 @@ A fourth package, **`packages/evals`** — a minimal, Effect-native eval library
 - **Env** (`src/env.ts`): `EvalEnvLive` mirrors `main.ts`'s composition but swaps Postgres for an in-memory `ConversationStore` (`support/inMemoryConversationStore.ts`, replicating the position/checkpoint fold semantics) so evals need no Docker. `support/workspace.ts` gives `withTempWorkspace` (acquire/release temp dirs); `support/coder.ts` (`runCoder`) stands up a real coder agent over a temp repo and reports the tools it called + final text + read-back files.
 - **Config injection** (`src/config/`): a `RunConfig` pins `{main, fast, judge, promptVariant, maxSteps}`; `makeEvalEnv(config?)` swaps in a `FixedSettingsStoreLive` (its `load()` ignores disk) so a `--config matrix.json` run is the independent variable A/B'd against a baseline. No config ⇒ today's `LocalSettingsStoreLive`.
 - **Suites** (`src/suites/*.eval.ts`): `handoff`, `tool-selection`, `coder-edit` (originals) + `whole-task` (bug-fix / multi-file / refactor / failing-test / read-only Q&A through the FULL loop), and three **fast-model** suites calling the fast-tier use cases directly — `judge-approval` (labelled allow/prompt accuracy), `compaction-digest` (`compressToolResults` fidelity), `session-title` (`generateSessionTitle` quality).
-- **Run**: `bun run eval [name …] [--config f] [--main m] [--fast m] [--json]` (`src/run.ts`). Gated on `hasKey` — no key → skip cleanly. Each run is collected **in-memory** and the report is **built from the spans** (`trace/process.ts` → `trace/report.ts`); set `OTEL_EXPORTER_OTLP_ENDPOINT` and it also streams to Grafana. Unit tests (`bun test`) cover the framework, the store fold contract, and the pure trace processor (synthetic spans), with no LLM/Docker.
+- **Run**: `bun run eval [name …] [--config f] [--main m] [--fast m] [--json]` (`src/run.ts`), or **`efferent eval [name …]`** (the same runner, fronted by the CLI). Gated on `hasKey` — no key → skip cleanly. Each run is collected **in-memory** and the report is **built from the spans** (`trace/process.ts` → `trace/report.ts`); set `OTEL_EXPORTER_OTLP_ENDPOINT` and it also streams to Grafana. Unit tests (`bun test`) cover the framework, the store fold contract, and the pure trace processor (synthetic spans), with no LLM/Docker.
+- **`efferent verify`** (see CLI shape) is the **acceptance** layer above the evals: it drives the *real CLI* end to end (boot · UI flows · daemon · keyed turns) and folds a cheap eval subset in as its Tier C. Where evals score the agent's *quality*, verify proves the *build works*.
 
 ## Observability (traces + metrics)
 
