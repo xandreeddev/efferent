@@ -1,30 +1,41 @@
-# Publish the efferent CLI to npm under BOTH names (`efferent` + `@xandreed/cli`,
-# same bundle, kept in sync) when a GitHub release is published.
+# Changesets-driven release for the whole monorepo. Every push to main runs the
+# Changesets action, which does one of two things:
 #
-# Auth is npm **trusted publishing** (OIDC) — no token secret to store or
-# rotate. One-time setup on npmjs.com, FOR EACH NAME: package `efferent` (and
-# `@xandreed/cli`) → Settings → Trusted publisher → GitHub Actions → owner
-# `xandreeddev`, repo `efferent`, workflow `release.yml`. A brand-new scoped
-# name may need a first manual publish (or a token) before OIDC applies.
-# Publishing this way also generates a provenance attestation (the npm page
-# shows the source repo + the exact build run).
+#   • If there are pending `.changeset/*.md` files → it opens/updates a
+#     "Version Packages" PR that bumps each affected package + writes its
+#     CHANGELOG (the `version` command below).
+#   • If there are none (i.e. that PR was just merged) → it runs the `publish`
+#     command, which builds + publishes every package whose version isn't yet on
+#     npm (`scripts/publish.ts`), then creates the git tags + GitHub releases
+#     from the `New tag:` lines the script prints.
 #
-# Release flow: bump `packages/cli/package.json` version → push → create a
-# GitHub release tagged `vX.Y.Z` (matching the package version — guarded
-# below) → this workflow gates on typecheck + tests + a leak audit, then
-# publishes both names.
+# Auth is npm **trusted publishing** (OIDC) — no token secret. One-time setup on
+# npmjs.com, FOR EACH published name (`efferent`, `@xandreed/cli`,
+# `@xandreed/sdk-core`, `@xandreed/sdk-adapters`, `@xandreed/evals`): Settings →
+# Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `efferent`,
+# workflow `release.yml`. A brand-new scoped name needs ONE manual bootstrap
+# publish first (OIDC can't create a name that doesn't exist yet) — see
+# CONTRIBUTING.md. Publishing emits a provenance attestation.
+#
+# Authoring a release: add a changeset with `bun run changeset` in your PR. On
+# merge to main the Version PR appears; merging IT publishes.
 name: release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
 
 permissions:
-  contents: read
+  contents: write # create tags + GitHub releases, push the Version PR
+  pull-requests: write # open/update the Version Packages PR
   id-token: write # OIDC — npm trusted publishing + provenance
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,42 +52,15 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - run: bun run typecheck
-
-      # Eval suites are key-gated and skip cleanly in CI; unit tests run.
-      - run: bun test
-
-      - name: Check release tag matches the package version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./packages/cli/package.json').version")"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "release tag v$TAG does not match packages/cli version $PKG" >&2
-            exit 1
-          fi
-
-      - name: Build + audit the bundle
-        run: |
-          bun run build
-          # The artifact must never embed a build-machine path (bundlers bake
-          # __dirname into CommonJS shims — see scripts/build.ts's tokenizer
-          # stub + the msgpackr-extract external for the incidents this guards).
-          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/cli/dist/efferent.js; then
-            echo "build-machine path found in the bundle — aborting publish" >&2
-            exit 1
-          fi
-
-      # Publish the same bundle under BOTH names, kept in sync: the brand
-      # `efferent` (the on-disk package name) and the scoped `@xandreed/cli`.
-      # Each name needs npm trusted publishing (OIDC) configured on npmjs.com
-      # for repo xandreeddev/efferent + workflow release.yml.
-      - name: Publish efferent
-        run: npm publish --provenance
-        working-directory: packages/cli
-
-      - name: Publish @xandreed/cli (same bundle, synced)
-        working-directory: packages/cli
-        run: |
-          node -e "const fs=require('fs');const p=require('./package.json');p.name='@xandreed/cli';fs.writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
-          npm publish --provenance
-          git checkout -- package.json
+      # `version` maintains the Version PR (bump + CHANGELOGs + refresh bun.lock);
+      # `publish` (run only once that PR is merged) gates on typecheck + tests,
+      # builds the libs + the CLI bundle, then publishes via OIDC. The action
+      # tags + creates GitHub releases from the script's `New tag:` lines.
+      - uses: changesets/action@v1
+        with:
+          version: bun run version
+          publish: bun run release
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
