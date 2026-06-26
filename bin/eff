@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/cli/dist/efferent.js" "$@"
+# Short alias for `efferent` — delegates to the same fresh-source launcher.
+exec "$(cd "$(dirname "$0")" && pwd)/efferent" "$@"

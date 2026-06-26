@@ -532,8 +532,13 @@ import packageJson from "../package.json" with { type: "json" }
 /* `daemon` command group — the control plane (cluster) operations      */
 /* ------------------------------------------------------------------ */
 
+// Default workspace = the explicit --cwd, else EFFERENT_CWD, else process.cwd().
+// EFFERENT_CWD lets the dev `bin/efferent` launcher run Bun WITH the repo as cwd
+// (so it resolves Solid's jsxImportSource from this repo's tsconfig) while still
+// operating on the user's real directory. Unset in normal/published runs ⇒ no
+// change (falls through to process.cwd()).
 const resolveCwd = (cwd: Option.Option<string>): string =>
-  Option.getOrElse(cwd, () => process.cwd())
+  Option.getOrElse(cwd, () => process.env.EFFERENT_CWD ?? process.cwd())
 
 // Print the daemon's running/health status for a workspace. Shared by
 // `efferent daemon status` and bare `efferent daemon`.
