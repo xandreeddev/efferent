@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "composite": true,
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo"
+  },
+  "//": "Publishable surface only — the reusable framework (index re-exports it). The efferent-specific suites / support/coder.ts / env.ts / run.ts couple to the CLI (efferent/* path alias) and stay in-repo (dev/CI, run via Bun), never built or published.",
+  "include": ["src/index.ts", "src/framework/**/*", "src/telemetry/metrics.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../sdk-core/tsconfig.build.json" },
+    { "path": "../sdk-adapters/tsconfig.build.json" }
+  ]
+}
