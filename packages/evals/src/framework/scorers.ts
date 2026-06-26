@@ -1,5 +1,6 @@
-import { LanguageModel, Prompt } from "@effect/ai"
-import { Effect, Either, Schema } from "effect"
+import { AiError, LanguageModel, Prompt } from "@effect/ai"
+import { Effect, Either, Schedule, Schema } from "effect"
+import { isTransientAiError } from "@xandreed/sdk-adapters"
 import type { Scorer, ScorerArgs, ScoreResult } from "./Eval.js"
 
 /** Pass/fail predicate — 1 if true, 0 if false. */
@@ -53,10 +54,24 @@ const JudgeReply = Schema.parseJson(
   }),
 )
 
+/** Tolerant JSON extraction: finds the LAST {...} block, strips markdown fences. */
+const extractJson = (text: string): string | undefined => {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  if (fenced !== null && fenced[1] !== undefined) {
+    const inner = fenced[1].trim()
+    const m = inner.match(/\{[\s\S]*\}/)
+    if (m !== null) return m[0]
+  }
+  const m = text.match(/\{[\s\S]*\}/g)
+  if (m === null) return undefined
+  // Last block is usually the JSON object (model may preamble).
+  return m[m.length - 1]
+}
+
 const parseJudge = (text: string): ScoreResult => {
-  const m = text.match(/\{[\s\S]*\}/)
-  if (m === null) return { score: 0, detail: "judge: no JSON in output" }
-  return Either.match(Schema.decodeUnknownEither(JudgeReply)(m[0]), {
+  const block = extractJson(text)
+  if (block === undefined) return { score: 0, detail: "judge: no JSON in output" }
+  return Either.match(Schema.decodeUnknownEither(JudgeReply)(block), {
     onLeft: (): ScoreResult => ({ score: 0, detail: "judge: unparseable JSON" }),
     onRight: ({ score, reason }): ScoreResult => {
       const raw = typeof score === "number" ? score : Number(score)
@@ -72,6 +87,9 @@ const parseJudge = (text: string): ScoreResult => {
  * Unparseable output scores 0. Runs on whatever `LanguageModel` is in context
  * (the same router the agent uses) — no second key.
  */
+/** Retry schedule for transient LLM failures (429, timeout, etc.). */
+const judgeRetry = Schedule.addDelay(Schedule.recurs(2), () => "1 second")
+
 export const llmJudge = <I, O, T>(
   name: string,
   buildPrompt: (a: ScorerArgs<I, O, T>) => string,
@@ -83,7 +101,13 @@ export const llmJudge = <I, O, T>(
         `${JUDGE_SYSTEM}\n\n${buildPrompt(a)}\n\n` +
           'Reply with ONLY a JSON object: {"score": <number between 0 and 1>, "reason": "<one sentence>"}.',
       )
-      const res = yield* LanguageModel.generateText({ prompt })
+      const res = yield* LanguageModel.generateText({ prompt }).pipe(
+        Effect.retry({ schedule: judgeRetry, while: (e) => AiError.isAiError(e) && isTransientAiError(e) }),
+        Effect.catchAll((e) => Effect.succeed({ text: ``, _tag: "judge-failed" as const, cause: String(e) })),
+      )
+      if ("_tag" in res && res._tag === "judge-failed") {
+        return { score: 0, detail: `judge: ${res.cause}` }
+      }
       return parseJudge(res.text)
     }),
 })
