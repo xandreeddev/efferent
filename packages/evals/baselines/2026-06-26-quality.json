@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "ts": "2026-06-25T23:50:56.735Z",
-  "gitSha": "c354dff3dee",
-  "label": "delegation hard-rule · code-tier routing reliable (kimi general + deepseek code)",
+  "ts": "2026-06-26T06:03:02.683Z",
+  "gitSha": "51a6572d399",
+  "label": "delegation hard-rule + multi-file judge fix (kimi general + deepseek code)",
   "runs": [
     {
       "configName": "inline",
       "suites": [
         {
           "suite": "quality",
-          "mean": 0.975,
+          "mean": 0.9949999999999999,
           "passRate": 1,
           "cases": [
             {
@@ -38,11 +38,11 @@
                   "score": 1
                 }
               ],
-              "steps": 51,
-              "inputTokens": 345487,
-              "outputTokens": 7077,
-              "cacheReadTokens": 253879,
-              "wallMs": 145548.328035
+              "steps": 47,
+              "inputTokens": 325402,
+              "outputTokens": 6147,
+              "cacheReadTokens": 227584,
+              "wallMs": 177150.745287
             },
             {
               "suite": "quality",
@@ -70,11 +70,11 @@
                   "score": 1
                 }
               ],
-              "steps": 59,
-              "inputTokens": 413335,
-              "outputTokens": 13068,
-              "cacheReadTokens": 312727,
-              "wallMs": 255991.966794
+              "steps": 57,
+              "inputTokens": 393436,
+              "outputTokens": 12666,
+              "cacheReadTokens": 289920,
+              "wallMs": 309451.90264
             },
             {
               "suite": "quality",
@@ -103,10 +103,10 @@
                 }
               ],
               "steps": 17,
-              "inputTokens": 134736,
-              "outputTokens": 5062,
-              "cacheReadTokens": 83968,
-              "wallMs": 94481.500254
+              "inputTokens": 134417,
+              "outputTokens": 4356,
+              "cacheReadTokens": 79872,
+              "wallMs": 141719.027266
             },
             {
               "suite": "quality",
@@ -134,24 +134,24 @@
                   "score": 1
                 }
               ],
-              "steps": 12,
-              "inputTokens": 95446,
-              "outputTokens": 3392,
-              "cacheReadTokens": 53248,
-              "wallMs": 87172.611412
+              "steps": 11,
+              "inputTokens": 87717,
+              "outputTokens": 5015,
+              "cacheReadTokens": 47104,
+              "wallMs": 152167.61135
             },
             {
               "suite": "quality",
               "name": "refactor · rename a symbol across two files",
               "configName": "inline",
               "ok": true,
-              "mean": 0.875,
+              "mean": 0.975,
               "samples": 5,
-              "stdev": 0,
+              "stdev": 0.05590169943749474,
               "scores": [
                 {
                   "name": "quality",
-                  "score": 0.5
+                  "score": 0.9
                 },
                 {
                   "name": "routing",
@@ -166,11 +166,11 @@
                   "score": 1
                 }
               ],
-              "steps": 44,
-              "inputTokens": 301489,
-              "outputTokens": 7621,
-              "cacheReadTokens": 210716,
-              "wallMs": 166398.052089
+              "steps": 54,
+              "inputTokens": 377649,
+              "outputTokens": 21800,
+              "cacheReadTokens": 282624,
+              "wallMs": 593815.102733
             }
           ]
         }
