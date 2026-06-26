@@ -44,15 +44,31 @@ paired per-case delta and a verdict: `✔ better` / `✘ worse` (CI excludes 0) 
 # does having a code tier help at all? (no-tier vs deepseek-tier)
 bun run eval quality --config packages/evals/dataset/configs/code-tier.json
 
-# which model should back the code tier? (general+fast held constant, code varied)
-# code-tier choice only moves CODE quality, so filter to the coding scenarios:
-QUALITY_FILTER="bug-fix,feature,refactor" \
-  bun run eval quality --config packages/evals/dataset/configs/code-model-matrix.json --samples 3
+# which model should back the code tier? — use the FEATURE suite (the quality
+# suite saturates at ~1.0 and can't rank coders; see the finding below):
+bun run eval feature --config packages/evals/dataset/configs/code-model-matrix.json --samples 3
 ```
 
 Each `--config` is an array of `RunConfig`; the run prints a per-config scorecard
 plus a comparison of every config against the **first** (the comparison baseline),
 with the paired-delta bootstrap CI + a `✔ sig. / ✘ sig. / ~ noise` verdict.
+
+### The `feature` suite — the discriminating one
+
+`quality` (the `golden.ts` set) is for ROUTING + fast sanity; its toy tasks saturate
+at ~1.0 for any competent coder. The **`feature` suite** (`dataset/feature.ts`) is the
+one that ranks coders: full-feature implementations (LRU+TTL cache, RFC-4180 CSV parser,
+nested-transaction KV store) graded by a **hidden `bun test` suite** (44 assertions over
+the edge cases) run AFTER the agent finishes — the objective `tests` pass-RATIO is the
+discriminator (a weak coder ships a happy-path solution that fails the edges). Pure,
+dependency-free TS → `bun test` runs hermetically, no Docker. **Rank by `tests`** — the
+`quality` rubric axis runs on the loop's LLM and can flake to 0 on a gateway error
+(an independent `--judge` model is the planned fix; see `docs/roadmap.md`).
+
+```bash
+bun run eval feature --main opencode:kimi-k2.6 --code opencode:deepseek-v4-pro --fast opencode:deepseek-v4-flash
+FEATURE_FILTER="csv,tx" bun run eval feature ...   # narrow to some scenarios while iterating
+```
 
 > **Finding (2026-06-26, N=3 — `code-model-matrix.json`, deepseek-v4-pro vs glm-5.1
 > vs qwen3.7-max vs minimax-m3, kimi general).** All four are **quality-equivalent**
