@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/xandreeddev/efferent/main/assets/logo-code.svg" alt="efferent &lt; code &gt;" width="520">
+  <img src="https://raw.githubusercontent.com/xandreeddev/efferent/main/assets/logo-cli.svg" alt="efferent &lt; cli &gt;" width="520">
 </p>
 
 > **The efferent CLI** — one CLI that runs agents on the **efferent agent runtime** (Effect.ts + Bun). Drive an agent from an interactive borderless TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), headless (print / json / rpc), or a persistent per-workspace daemon that thin clients attach to. Zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree. The bundled coding agent (`efferent code`) is one app it runs.
