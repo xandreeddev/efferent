@@ -243,7 +243,9 @@ export const OnboardingView = (props: { state: OnboardingState; note?: string | 
       paddingRight={2}
       paddingTop={1}
     >
-      <Logo variant="code" />
+      {/* Onboarding sets up the whole runtime (not specifically the coding
+          agent), so it wears the master mark regardless of entry point. */}
+      <Logo variant="master" />
 
       {/* One consistent blank line between the logo and the step body on EVERY
           step (marginTop), so the gap never changes as you move through. The
