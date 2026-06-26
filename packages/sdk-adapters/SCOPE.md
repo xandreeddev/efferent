@@ -12,7 +12,7 @@ Key Layers: `ModelLive` (bundles the router `LanguageModel` + `ModelRegistry` + 
 - Each adapter is a `Layer.effect(Port, Effect.gen(function* () { ... return { method: ... } }))`.
 - All external promises go through `Effect.tryPromise`, with the `catch` mapping the thrown value into the port's tagged error type. Never let an untyped error escape.
 - Read configuration via `Config.string` / `Config.redacted` / `Config.number`, not `process.env`. Provider API keys are **key-optional** (`Config.option`) so a missing `OPENAI_API_KEY` never blocks a Google-only user — an absent key only 401s if that provider is actually selected.
-- Adapters may depend on `@xandreed/sdk-core` + `@effect/ai` provider packages (`@effect/ai-google`, `@effect/ai-openai`) and other SDKs only. Never import from `@xandreed/code`/`@xandreed/web`/other adapters.
+- Adapters may depend on `@xandreed/sdk-core` + `@effect/ai` provider packages (`@effect/ai-google`, `@effect/ai-openai`) and other SDKs only. Never import from `efferent`/`@xandreed/web`/other adapters.
 
 ## Multi-provider router (src/llm/)
 - The agent loop talks to one provider-agnostic `LanguageModel`; provider/model is a **runtime selection**, not a compile-time layer. `RouterLanguageModelLive` reads `ModelRegistry.current` on every call and delegates to the chosen provider's `@effect/ai` service, built on the fly from the captured `GoogleClient`/`OpenAiClient`.

@@ -2,7 +2,7 @@
 
 A minimal, Effect-native eval library + the agent's eval suites. Driver-level:
 depends on `@xandreed/sdk-core` + `@xandreed/sdk-adapters` (composes them at the edge, like
-`cli`) and never on `@xandreed/code`.
+`cli`) and never on `efferent`.
 
 ## Layout
 

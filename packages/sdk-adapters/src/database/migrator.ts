@@ -40,7 +40,7 @@ import sqlite0009 from "./migrations-sqlite/0009_node_kind.js"
 /**
  * Database layer + ConversationStore, selected at runtime from a single
  * `EFFERENT_DB_URL` value (env, or seeded from config.json's `dbUrl` at boot —
- * see packages/code/src/main.ts `seedDbUrlFromConfig`; env always wins):
+ * see packages/cli/src/main.ts `seedDbUrlFromConfig`; env always wins):
  *   - `postgres://…` / `postgresql://…` → Postgres (the opt-in backend);
  *   - any other non-empty value (a path, optionally `sqlite:`-prefixed) →
  *     SQLite at that path;

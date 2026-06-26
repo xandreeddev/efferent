@@ -3,13 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "examples"],
   "scripts": {
-    "dev": "bun --hot packages/code/src/main.ts",
-    "start": "bun packages/code/src/main.ts",
-    "start:fresh": "EFFERENT_HOME=$(mktemp -d) bun packages/code/src/main.ts",
-    "code": "bun packages/code/src/code.ts",
-    "code:dev": "bun --hot packages/code/src/code.ts",
+    "dev": "bun --hot packages/cli/src/main.ts",
+    "start": "bun packages/cli/src/main.ts",
+    "start:fresh": "EFFERENT_HOME=$(mktemp -d) bun packages/cli/src/main.ts",
+    "code": "bun packages/cli/src/main.ts code",
+    "code:dev": "bun --hot packages/cli/src/main.ts code",
     "social": "bun packages/social/src/main.ts",
     "social:dev": "bun --hot packages/social/src/main.ts",
     "build": "bun run scripts/build.ts",
@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "@types/node": "^24.13.2",
     "typescript": "^5.9.3"
   },
   "dependencies": {

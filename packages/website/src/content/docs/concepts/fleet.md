@@ -114,7 +114,7 @@ Two doors, and the line is firm. **Compose with files** — roles, declarative t
 under `.efferent/` (read at startup, git-shareable) wire together capability efferent already has;
 they carry no new logic. **Build in code** — a genuinely new capability is a typed `Tool.make` plus
 an Effect handler in the source, gated by the type checker and the no-`try/catch` ban, loaded on the
-next launch. efferent can write that code itself (it's a coding agent on its own tree), but it ships
+next launch. efferent can write that code itself (its bundled coding agent runs on its own tree), but it ships
 like any code: nothing is hot-loaded, and there is no runtime `eval`. The payoff is that every
 capability is reviewable, typed code — never an opaque blob injected mid-run.
 

@@ -27,7 +27,7 @@
       "@xandreed/application/*": ["packages/application/src/*"],
       "@xandreed/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
       "@xandreed/sdk-adapters/*": ["packages/sdk-adapters/src/*"],
-      "@xandreed/code/*": ["packages/code/src/*"]
+      "efferent/*": ["packages/cli/src/*"]
     }
   }
 }

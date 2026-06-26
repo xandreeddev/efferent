@@ -13,10 +13,10 @@ Three layers, with dependencies pointing **strictly inward**:
 packages/
 ├── sdk-core/      pure domain: entities, ports, use cases, prompts   (depends on effect + @effect/ai)
 ├── sdk-adapters/  Layer impls of the ports                           (depends on sdk-core + external SDKs)
-└── code/          a driver: the coding agent's TUI / print / json / rpc modes
+└── cli/           the CLI that runs agents: TUI / print / json / rpc / daemon (bundles the coding agent)
 ```
 
-`code → sdk-adapters → sdk-core`. The core imports nothing from its siblings; adapters import the core
+`cli → sdk-adapters → sdk-core`. The core imports nothing from its siblings; adapters import the core
 plus the one external SDK they wrap; drivers compose the `Layer`s at the very edge and hand off to
 `BunRuntime.runMain`. Your own agent is just another driver.
 

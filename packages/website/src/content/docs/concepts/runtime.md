@@ -31,7 +31,7 @@ entirely and render the same queue as text or JSON.
 
 ## Launch
 
-`packages/code/src/main.ts` is the composition root. Booting is a fixed sequence:
+`packages/cli/src/main.ts` is the composition root. Booting is a fixed sequence:
 
 1. **Parse argv** with `@effect/cli` (`--mode`, `--resume`, `--cwd`, `--allow-bash`, the prompt).
 2. **Compose the Layer stack** — one `AppLive` that merges every adapter the agent needs:
@@ -91,7 +91,7 @@ The loop is identical across modes; only *how the event queue is rendered* diffe
 
 ## On the wire — the event stream
 
-Every mode is driven by one **`AgentEvent`** union (`code/src/events.ts`). In `json` mode each event
+Every mode is driven by one **`AgentEvent`** union (`cli/src/events.ts`). In `json` mode each event
 is serialized as a single line of JSON on stdout (JSONL). A turn that reads a file looks like this:
 
 ```jsonl
@@ -193,10 +193,10 @@ fleet, and `seedFromNode` + `seedMode` (`resume` / `branch` / `handoff`) re-seed
 
 | Concern | Where |
 | --- | --- |
-| Composition root, mode dispatch | `code/src/main.ts` |
-| The event vocabulary + hook→queue pump | `code/src/events.ts` |
-| JSON-RPC server | `code/src/modes/rpc.ts` |
-| Headless scheduler daemon | `code/src/modes/daemon.ts` |
+| Composition root, mode dispatch | `cli/src/main.ts` |
+| The event vocabulary + hook→queue pump | `cli/src/events.ts` |
+| JSON-RPC server | `cli/src/modes/rpc.ts` |
+| Headless scheduler daemon | `cli/src/modes/daemon.ts` |
 | The per-request provider router | `adapters/src/llm/router.ts` |
 | Store selection (SQLite / Postgres) | `adapters/src/database/migrator.ts` |
 | Sub-agent spawn + bus + RunContext | `sdk-core/usecases/buildScopeRuntime.ts`, `sdk-core/usecases/agentBus.ts`, `sdk-core/usecases/runContext.ts` |
