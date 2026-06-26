@@ -58,6 +58,8 @@ interface DockerResult {
   readonly exitCode: number
   readonly stdout: string
   readonly stderr: string
+  /** The command was killed by the `timeout` (spawnSync sets `error.code=ETIMEDOUT`). */
+  readonly timedOut: boolean
 }
 
 const docker = (args: ReadonlyArray<string>, timeoutMs = 120_000): DockerResult => {
@@ -66,7 +68,8 @@ const docker = (args: ReadonlyArray<string>, timeoutMs = 120_000): DockerResult 
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
   })
-  return { exitCode: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }
+  const timedOut = (r.error as { code?: string } | undefined)?.code === "ETIMEDOUT"
+  return { exitCode: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "", timedOut }
 }
 
 export interface Sandbox {
@@ -143,7 +146,7 @@ export const dockerShellLayer = (sb: Sandbox): Layer.Layer<Shell> =>
             stdout: r.stdout,
             stderr: r.stderr,
             durationMs: Date.now() - start,
-            timedOut: false,
+            timedOut: r.timedOut,
           }
         }),
     }),

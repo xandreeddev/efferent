@@ -81,6 +81,17 @@ bun hooksAgent.ts                # observe and steer the loop with hooks
 bun compressionAgent.ts          # customize context compression
 ```
 
+### Run the eval suites
+
+Once you have a provider key, run the built-in evals to see how the coding agent scores on a labeled golden set:
+
+```sh
+bun run eval quality          # quality scorecard (5 golden scenarios)
+bun run eval --max-cost 2.00  # all suites, with a cost budget
+```
+
+Evals skip cleanly if no key is present. See [Evaluating your agent](/docs/guides/evals-guide/) for how to read the scorecard, compare baselines, and write custom suites.
+
 :::note
 The SDK packages are workspace-internal today (not published standalone on npm). Build against a
 clone of the repo; standalone packages may follow. The `efferent` CLI is the published artifact.
@@ -89,5 +100,6 @@ clone of the repo; standalone packages may follow. The `efferent` CLI is the pub
 ## Next
 
 - **[Your first agent](/docs/your-first-agent/)** — build the dice agent line by line.
+- **[Evaluating your agent](/docs/guides/evals-guide/)** — run the eval suites, compare baselines, and write your own.
 - **[Concepts](/docs/concepts/architecture/)** — what the SDK leverages and why.
 - **[Examples](/docs/examples/)** — the runnable files, rendered from source.

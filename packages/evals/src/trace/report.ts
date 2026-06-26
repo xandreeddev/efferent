@@ -77,11 +77,35 @@ const suiteCost = (s: SuiteAgg): number | undefined => {
 }
 const delta = (n: number): string => (n >= 0 ? green(`+${n.toFixed(2)}`) : red(n.toFixed(2)))
 
-/** Baseline (first config) vs each candidate: mean / tokens / cost deltas per suite. */
+const effectSizeLabel = (d: number): string => {
+  const a = Math.abs(d)
+  if (a >= 0.8) return "large"
+  if (a >= 0.5) return "medium"
+  if (a >= 0.2) return "small"
+  return "negligible"
+}
+
+/** `d=<mag> <label>`, rendering a zero-variance ±∞ effect as `∞` not `Infinity`. */
+const formatEffect = (d: number): string => {
+  const mag = Number.isFinite(d) ? d.toFixed(2) : d > 0 ? "∞" : "-∞"
+  return `d=${mag} ${effectSizeLabel(d)}`
+}
+
+/** The CI's actual confidence level — widened by Bonferroni when comparing
+ *  against >1 candidate (alpha = 0.05 / comparisons), so the label isn't a lie. */
+const ciLabel = (comparisons: number): string =>
+  comparisons > 1 ? `${(100 * (1 - 0.05 / comparisons)).toFixed(1)}%CI` : "95%CI"
+
+/**
+ * Baseline (first config) vs each candidate: mean / tokens / cost deltas per suite.
+ * Applies Bonferroni correction when comparing against multiple candidates.
+ */
 const renderComparison = (runs: ReadonlyArray<RunAgg>): string => {
   const base = runs[0]
   if (base === undefined) return ""
-  const lines: Array<string> = [bold(cyan(`▌ comparison (baseline: ${base.configName})`))]
+  const comparisons = runs.length - 1
+  const corrected = comparisons > 1 ? dim(`  (Bonferroni-corrected for ${comparisons} comparisons)`) : ""
+  const lines: Array<string> = [bold(cyan(`▌ comparison (baseline: ${base.configName})`)), corrected]
   const suiteNames = base.suites.map((s) => s.suite)
   for (let i = 1; i < runs.length; i++) {
     const cand = runs[i]
@@ -95,16 +119,17 @@ const renderComparison = (runs: ReadonlyArray<RunAgg>): string => {
       const cc = suiteCost(c)
       const costStr = bc !== undefined && cc !== undefined ? ` · cost ${usd(cc)} (${delta(cc - bc)})` : ""
       const { base: bm, cand: cm } = pairByName(b.cases, c.cases)
-      const ci = pairedDeltaCI(bm, cm)
+      const ci = pairedDeltaCI(bm, cm, 2000, 0x5eed1e, comparisons)
       const verdict = ci.significant
         ? c.mean >= b.mean
           ? green(" ✔ sig.")
           : red(" ✘ sig.")
         : dim(" ~ noise")
+      const es = formatEffect(ci.cohensD)
       lines.push(
         `    ${pad(name, 16)} mean ${scoreColor(c.mean)} (${delta(c.mean - b.mean)})` +
           ` · tok ${ktok(suiteTokens(c))} (${delta(suiteTokens(c) - suiteTokens(b))})${costStr}` +
-          ` · 95%CI [${ci.low.toFixed(2)},${ci.high.toFixed(2)}]${verdict}`,
+          ` · ${ciLabel(comparisons)} [${ci.low.toFixed(2)},${ci.high.toFixed(2)}] · ${es}${verdict}`,
       )
     }
   }
@@ -136,6 +161,7 @@ export const renderVsBaseline = (
       }
       const { base, cand } = pairByName(bs.cases, s.cases)
       const ci = pairedDeltaCI(base, cand)
+      const es = formatEffect(ci.cohensD)
       const verdict = ci.significant
         ? ci.delta >= 0
           ? green(" ✔ better")
@@ -143,7 +169,7 @@ export const renderVsBaseline = (
         : dim(" ~ noise")
       lines.push(
         `    ${pad(s.suite, 16)} ${scoreColor(s.mean)} vs ${scoreColor(bs.mean)}` +
-          ` · Δ ${delta(ci.delta)} 95%CI [${ci.low.toFixed(2)},${ci.high.toFixed(2)}] (n=${ci.n})${verdict}`,
+          ` · Δ ${delta(ci.delta)} 95%CI [${ci.low.toFixed(2)},${ci.high.toFixed(2)}] (n=${ci.n}) · ${es}${verdict}`,
       )
     }
   }
