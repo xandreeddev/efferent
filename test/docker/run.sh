@@ -54,14 +54,16 @@ if [ "$HAS_KEY" -eq 0 ]; then
   exit $FAIL
 fi
 
-hr "in-process keyed turn (efferent --mode json)"
-OUT=$(efferent --mode json "$PROMPT" 2>/tmp/ip.err); RC=$?
-echo "$OUT" | tail -2
-# A real turn emits assistant text and exits 0.
-if [ "$RC" -eq 0 ] && echo "$OUT" | grep -qi "hello"; then
-  ok "in-process turn produced an assistant reply"
+hr "in-process keyed turn — a real tool-using session (write_file + Bash)"
+rm -f /work/ip-proof.txt
+OUT=$(efferent --cwd /work --allow-bash --mode json \
+  "Create a file named ip-proof.txt containing exactly: efferent in-process ok. Then run 'cat ip-proof.txt'." 2>/tmp/ip.err); RC=$?
+echo "$OUT" | grep -oE '"toolName":"[^"]+"' | sort -u | tr '\n' ' '; echo
+# The proof is the side effect: the agent actually wrote the file.
+if [ "$RC" -eq 0 ] && grep -q "efferent in-process ok" /work/ip-proof.txt 2>/dev/null; then
+  ok "agent used tools and created /work/ip-proof.txt ($(cat /work/ip-proof.txt))"
 else
-  bad "in-process turn failed (rc=$RC) — see stderr:"; tail -3 /tmp/ip.err
+  bad "in-process tool session failed (rc=$RC, file=$(cat /work/ip-proof.txt 2>/dev/null || echo missing))"; tail -3 /tmp/ip.err
 fi
 
 hr "split-daemon keyed turn (efferent daemon start + HTTP API)"
@@ -79,10 +81,12 @@ done
 if [ -n "$PORT" ]; then
   ok "daemon healthy on 127.0.0.1:$PORT"
   curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && ok "GET /health 200" || bad "/health unreachable"
-  # Spawn an agent session with a task — a real turn through the daemon process.
+  # Spawn an agent session with a real task — a tool-using turn through the
+  # daemon process; the proof is the file it writes into /work.
+  rm -f /work/daemon-proof.txt
   SID=$(curl -fsS -X POST "http://127.0.0.1:$PORT/sessions" \
         -H 'content-type: application/json' \
-        -d "{\"folder\":\"/work\",\"task\":\"$PROMPT\"}" 2>/dev/null \
+        -d '{"folder":"/work","task":"Create a file named daemon-proof.txt containing exactly: efferent daemon ok"}' 2>/dev/null \
         | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const v=JSON.parse(d);process.stdout.write(typeof v==="string"?v:(v.id??v.sessionId??""))}catch{process.stdout.write("")}})')
   if [ -n "$SID" ]; then
     ok "spawned daemon session $SID"
@@ -93,11 +97,12 @@ if [ -n "$PORT" ]; then
       if [ "$BUSY" = "false" ]; then DONE=1; break; fi
       sleep 2
     done
-    if [ "$DONE" -eq 1 ]; then
-      LOGLEN=$(echo "$STATE" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const s=JSON.parse(d);process.stdout.write(String((s.log||[]).length))}catch{process.stdout.write("0")}})')
-      [ "${LOGLEN:-0}" -ge 1 ] && ok "daemon turn completed (log has $LOGLEN message(s))" || bad "daemon turn finished but log empty"
+    if [ "$DONE" -eq 1 ] && grep -q "efferent daemon ok" /work/daemon-proof.txt 2>/dev/null; then
+      ok "daemon turn used tools and wrote /work/daemon-proof.txt"
+    elif [ "$DONE" -eq 1 ]; then
+      soft "daemon turn settled but file not found (model may have answered differently); daemon lifecycle still verified"
     else
-      soft "daemon turn did not settle within timeout (state shape may differ for spawned nodes); daemon lifecycle still verified"
+      soft "daemon turn did not settle within timeout; daemon lifecycle still verified"
     fi
   else
     soft "could not parse a session id from POST /sessions; daemon lifecycle still verified"

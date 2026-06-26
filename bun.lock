@@ -16,6 +16,18 @@
         "typescript": "^5.9.3",
       },
     },
+    "examples": {
+      "name": "@xandreed/examples",
+      "version": "0.0.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/platform": "^0.96.1",
+        "@effect/platform-bun": "^0.89.0",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
+        "effect": "^3.21.2",
+      },
+    },
     "packages/cli": {
       "name": "efferent",
       "version": "0.2.0",
@@ -540,6 +552,8 @@
     "@ungap/structured-clone": ["@ungap/structured-clone@1.3.2", "", {}, "sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA=="],
 
     "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
+
+    "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 

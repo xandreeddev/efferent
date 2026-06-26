@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "examples"],
   "scripts": {
     "dev": "bun --hot packages/cli/src/main.ts",
     "start": "bun packages/cli/src/main.ts",
