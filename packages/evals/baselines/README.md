@@ -102,3 +102,24 @@ EFFERENT_EVAL_PRIVATE=~/private-scenarios.json bun run eval feature ...  # held-
 | `2026-06-26-quality.json` | **after** — the tuned hard-rule delegation prompt + the multi-file judge fix (the rubric judge now sees every read-back file, not just `expect.file`, so the rename's `use.ts` is graded). Coding routing reliably hits the code tier; QA unchanged. Overall 0.99, Δ +0.17 over the 06-25 baseline (95% CI [0.05,0.29] → significant). |
 
 > **Read routing as a rate, not a constant.** Code-tier delegation is prompt-driven, so it has real run-to-run variance — at N=5 the coding scenarios measured ~0.8–1.0 routing across separate runs. The `2026-06-26` snapshot happened to land at 1.0 on every coding case, so its per-case stdev reads 0.00, which **understates** that variance. A later run dipping to ~0.8 on a single coding scenario is within noise, not a regression — trust the `--compare` bootstrap-CI verdict (`✔ better` / `✘ worse` / `~ noise`) over a raw per-case delta. Re-run with `--samples 5+` when you need a tighter read.
+
+## Multi-agent (fleet) evaluation
+
+For runs that delegate to the background fleet (coordinator + specialists), the
+toolkit measures the SYSTEM, not just per-agent outcomes (MAST + Anthropic's
+multi-agent playbook):
+
+- **`coordination`** scorer (`support/fleetMetrics.ts`, no LLM) — penalises
+  over-spawn, duplicated-writer work (files touched by >1 sub-agent), and failed
+  sub-agents. ~1.0 on single-area scenarios; bites on a messy fleet.
+- **`trajectoryMatch`** (`fleetMetrics.ts`) — deterministic `agentevals`-style
+  tool-sequence checks: `strict` / `unordered` / `superset` (a required step
+  like the architect ran) / `subset` (no over-tooling). Cheap regression gate.
+- **MAST classifier** (`support/mast.ts`) — `classifyMast(run)` tags a run's
+  trajectory into the 14 MAST failure modes (FC1 design / FC2 inter-agent /
+  FC3 verification) via the independent judge; `parseMast` is pure + tested.
+  Track FC1/FC2/FC3 rates as the fleet-reliability KPIs.
+
+These exercise meaningfully on **breadth** scenarios (≥3 independent areas that
+trigger a real fleet) — the natural next dataset to add; on the current
+single-area feature scenarios they read ~clean (one code-tier writer).

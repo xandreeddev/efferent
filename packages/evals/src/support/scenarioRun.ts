@@ -40,6 +40,8 @@ export interface Spawn {
   readonly role: AgentModelRole
   readonly ok: boolean
   readonly filesChanged: number
+  /** Paths this sub-agent changed — for the writer-overlap (duplicated/conflicting work) metric. */
+  readonly files: ReadonlyArray<string>
   /** Cumulative billed tokens for this sub-agent's run. */
   readonly tokens: number
 }
@@ -182,7 +184,7 @@ export const runScenario = (
         onSubAgentStart: (e) =>
           Ref.update(spawnsRef, (a) => [
             ...a,
-            { name: e.name, role: e.role ?? "general", ok: false, filesChanged: 0, tokens: 0 },
+            { name: e.name, role: e.role ?? "general", ok: false, filesChanged: 0, files: [], tokens: 0 },
           ]),
         onSubAgentEnd: (e) =>
           Ref.update(spawnsRef, (a) => {
@@ -192,7 +194,13 @@ export const runScenario = (
             for (let i = a.length - 1; i >= 0; i--) {
               const s = a[i]!
               if (!done && s.name === e.name && !s.ok) {
-                next.push({ ...s, ok: e.ok, filesChanged: e.filesChanged.length, tokens: billed(e.usage) })
+                next.push({
+                  ...s,
+                  ok: e.ok,
+                  filesChanged: e.filesChanged.length,
+                  files: e.filesChanged,
+                  tokens: billed(e.usage),
+                })
                 done = true
               } else next.push(s)
             }

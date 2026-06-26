@@ -3,6 +3,7 @@ import { defineEval } from "../framework/Eval.js"
 import { fromEffect, qualityRubric } from "../framework/scorers.js"
 import type { EvalEnv } from "../env.js"
 import { FEATURES, type FeatureScenario } from "../dataset/feature.js"
+import { coordinationMetrics, coordinationScore } from "../support/fleetMetrics.js"
 import { loadPrivateFeatures } from "../support/privateFeatures.js"
 import { runScenario, type ScenarioRun } from "../support/scenarioRun.js"
 import {
@@ -115,5 +116,16 @@ export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
     })),
     routingScore<Input, Expected>("routing"),
     efficiencyScore<Input, Expected>("efficiency"),
+    // Coordination guardrail (cheap, no LLM): catches over-spawn / duplicated-writer
+    // / failed sub-agents. ~1.0 on single-area scenarios; bites on a messy fleet.
+    fromEffect<Input, ScenarioRun, Expected, never, never>("coordination", ({ output }) =>
+      Effect.sync(() => {
+        const m = coordinationMetrics(output.trajectory.spawns)
+        return {
+          score: coordinationScore(m),
+          detail: `${m.spawnCount} spawns · overlap ${(m.writerOverlap * 100).toFixed(0)}% · overSpawn ${m.overSpawn}`,
+        }
+      }),
+    ),
   ],
 })
