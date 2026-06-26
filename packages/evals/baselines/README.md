@@ -61,13 +61,27 @@ one that ranks coders: full-feature implementations (LRU+TTL cache, RFC-4180 CSV
 nested-transaction KV store) graded by a **hidden `bun test` suite** (44 assertions over
 the edge cases) run AFTER the agent finishes — the objective `tests` pass-RATIO is the
 discriminator (a weak coder ships a happy-path solution that fails the edges). Pure,
-dependency-free TS → `bun test` runs hermetically, no Docker. **Rank by `tests`** — the
-`quality` rubric axis runs on the loop's LLM and can flake to 0 on a gateway error
-(an independent `--judge` model is the planned fix; see `docs/roadmap.md`).
+dependency-free TS → `bun test` runs hermetically (per-case `--network none` Docker).
+
+**The scorecard** (rank by the OBJECTIVE axes; the `quality` rubric is corroborating):
+- **`tests`** — overall hidden-test pass-ratio · **`tests_edge`** — ratio over just the
+  EDGE-case tests (the sharper discriminator; a scenario tags its edge file via
+  `edgeTests`) · **`pass^k`** — did EVERY one of k samples go fully green (consistency,
+  the product metric for a write-to-disk agent) · **`routing`** · **`efficiency`**.
+- The suite head also reports **`$/pass`** (cost-per-success — the headline efficiency
+  metric, since tokens explain ~80% of a multi-agent system's performance variance) and
+  per-case **tool-call counts**.
+- The **`quality`** rubric runs on the **independent `--judge`** model (PR: trust-layer),
+  not the model under test — so self-preference bias and loop-gateway flakes don't taint
+  it. Validate it with `bun run eval --judge-agreement` (Cohen's κ vs human labels).
+- A determinism pre-check (`bun test …/validateSuites.test.ts`) guarantees each hidden
+  suite is a non-flaky oracle before it can score a model.
 
 ```bash
-bun run eval feature --main opencode:kimi-k2.6 --code opencode:deepseek-v4-pro --fast opencode:deepseek-v4-flash
+bun run eval feature --main opencode:kimi-k2.6 --code opencode:deepseek-v4-pro \
+  --fast opencode:deepseek-v4-flash --judge anthropic:claude-sonnet-4-6 --samples 5
 FEATURE_FILTER="csv,tx" bun run eval feature ...   # narrow to some scenarios while iterating
+EFFERENT_EVAL_PRIVATE=~/private-scenarios.json bun run eval feature ...  # held-out hard cases
 ```
 
 > **Finding (2026-06-26, N=3 — `code-model-matrix.json`, deepseek-v4-pro vs glm-5.1
@@ -88,3 +102,24 @@ FEATURE_FILTER="csv,tx" bun run eval feature ...   # narrow to some scenarios wh
 | `2026-06-26-quality.json` | **after** — the tuned hard-rule delegation prompt + the multi-file judge fix (the rubric judge now sees every read-back file, not just `expect.file`, so the rename's `use.ts` is graded). Coding routing reliably hits the code tier; QA unchanged. Overall 0.99, Δ +0.17 over the 06-25 baseline (95% CI [0.05,0.29] → significant). |
 
 > **Read routing as a rate, not a constant.** Code-tier delegation is prompt-driven, so it has real run-to-run variance — at N=5 the coding scenarios measured ~0.8–1.0 routing across separate runs. The `2026-06-26` snapshot happened to land at 1.0 on every coding case, so its per-case stdev reads 0.00, which **understates** that variance. A later run dipping to ~0.8 on a single coding scenario is within noise, not a regression — trust the `--compare` bootstrap-CI verdict (`✔ better` / `✘ worse` / `~ noise`) over a raw per-case delta. Re-run with `--samples 5+` when you need a tighter read.
+
+## Multi-agent (fleet) evaluation
+
+For runs that delegate to the background fleet (coordinator + specialists), the
+toolkit measures the SYSTEM, not just per-agent outcomes (MAST + Anthropic's
+multi-agent playbook):
+
+- **`coordination`** scorer (`support/fleetMetrics.ts`, no LLM) — penalises
+  over-spawn, duplicated-writer work (files touched by >1 sub-agent), and failed
+  sub-agents. ~1.0 on single-area scenarios; bites on a messy fleet.
+- **`trajectoryMatch`** (`fleetMetrics.ts`) — deterministic `agentevals`-style
+  tool-sequence checks: `strict` / `unordered` / `superset` (a required step
+  like the architect ran) / `subset` (no over-tooling). Cheap regression gate.
+- **MAST classifier** (`support/mast.ts`) — `classifyMast(run)` tags a run's
+  trajectory into the 14 MAST failure modes (FC1 design / FC2 inter-agent /
+  FC3 verification) via the independent judge; `parseMast` is pure + tested.
+  Track FC1/FC2/FC3 rates as the fleet-reliability KPIs.
+
+These exercise meaningfully on **breadth** scenarios (≥3 independent areas that
+trigger a real fleet) — the natural next dataset to add; on the current
+single-area feature scenarios they read ~clean (one code-tier writer).

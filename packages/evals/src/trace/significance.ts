@@ -31,6 +31,11 @@ export interface DeltaCI {
   readonly n: number
   /** Cohen's d — standardized effect size (0.2 small, 0.5 medium, 0.8 large). */
   readonly cohensD: number
+  /** Bootstrap standard error of the mean delta, CLUSTERED by scenario: we
+   *  resample whole-case deltas (each case = one cluster), so within-case sample
+   *  correlation can't deflate it (naive per-sample SEs understate variance ~3×
+   *  — Anthropic's eval-stats playbook). */
+  readonly standardError: number
 }
 
 /** Adjust alpha for multiple comparisons (Bonferroni). */
@@ -72,7 +77,8 @@ export const pairedDeltaCI = (
   const n = Math.min(baseline.length, candidate.length)
   const deltas = Array.from({ length: n }, (_, i) => candidate[i]! - baseline[i]!)
   const delta = n === 0 ? 0 : deltas.reduce((a, b) => a + b, 0) / n
-  if (n < 2) return { delta, low: delta, high: delta, significant: false, n, cohensD: 0 }
+  if (n < 2)
+    return { delta, low: delta, high: delta, significant: false, n, cohensD: 0, standardError: 0 }
 
   const alpha = bonferroniAlpha(0.05, comparisons)
   const lowPct = alpha / 2
@@ -85,6 +91,7 @@ export const pairedDeltaCI = (
     for (let i = 0; i < n; i++) sum += deltas[Math.floor(rng() * n)]!
     means.push(sum / n)
   }
+  const standardError = stdev(means) // SE of the (case-clustered) bootstrap distribution
   means.sort((a, b) => a - b)
   const low = means[Math.floor(lowPct * iterations)]!
   const high = means[Math.min(iterations - 1, Math.floor(highPct * iterations))]!
@@ -95,5 +102,6 @@ export const pairedDeltaCI = (
     significant: low > 0 || high < 0,
     n,
     cohensD: cohensD(deltas),
+    standardError,
   }
 }

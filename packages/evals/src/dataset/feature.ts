@@ -24,9 +24,16 @@ export interface FeatureScenario {
    *  agent never sees them — it must infer the full spec from the prompt. */
   readonly hiddenTests: Record<string, string>
   readonly testPaths?: ReadonlyArray<string>
+  /** Subset of `hiddenTests` that are EDGE-case tests — scored separately as
+   *  `tests_edge` (the sharper discriminator). Omit ⇒ no edge split. */
+  readonly edgeTests?: ReadonlyArray<string>
   /** Impl files read back for the judge to assess code quality alongside the tests. */
   readonly readback: ReadonlyArray<string>
   readonly rubric: string
+  /** Difficulty stratum — for interpreting results + retiring saturated cases.
+   *  Grow the set toward `hard` as models improve (avoid the saturation the
+   *  golden set hit). */
+  readonly difficulty?: "basic" | "moderate" | "hard"
   readonly routing?: RoutingExpectation
   readonly budget?: EfficiencyBudget
   /** A KNOWN-GOOD implementation (keyed like `files`, replacing the stub). Used
@@ -255,7 +262,8 @@ export const parseCsv = (input: string): string[][] => {
 }
 `
 
-const csvTest = String.raw`import { test, expect } from "bun:test"
+// CORE: basic field/record parsing every competent impl gets right.
+const csvCoreTest = String.raw`import { test, expect } from "bun:test"
 import { parseCsv } from "./csv"
 
 test("empty input ⇒ no records", () => {
@@ -278,14 +286,6 @@ test("CRLF line endings", () => {
   expect(parseCsv("a,b\r\nc,d")).toEqual([["a", "b"], ["c", "d"]])
 })
 
-test("a single trailing LF does not add a record", () => {
-  expect(parseCsv("a,b\n")).toEqual([["a", "b"]])
-})
-
-test("a single trailing CRLF does not add a record", () => {
-  expect(parseCsv("a\r\n")).toEqual([["a"]])
-})
-
 test("empty fields are preserved", () => {
   expect(parseCsv("a,,c")).toEqual([["a", "", "c"]])
 })
@@ -294,12 +294,26 @@ test("a line of only commas ⇒ all-empty fields", () => {
   expect(parseCsv(",,")).toEqual([["", "", ""]])
 })
 
-test("an empty line in the middle ⇒ a record with one empty field", () => {
-  expect(parseCsv("a\n\nb")).toEqual([["a"], [""], ["b"]])
-})
-
 test("whitespace is significant (not trimmed)", () => {
   expect(parseCsv(" a , b ")).toEqual([[" a ", " b "]])
+})
+`
+
+// EDGE: the quoting/escaping/line-ending cases a weak impl drops — the sharper
+// discriminator that the basic ratio would otherwise drown out.
+const csvEdgeTest = String.raw`import { test, expect } from "bun:test"
+import { parseCsv } from "./csv"
+
+test("a single trailing LF does not add a record", () => {
+  expect(parseCsv("a,b\n")).toEqual([["a", "b"]])
+})
+
+test("a single trailing CRLF does not add a record", () => {
+  expect(parseCsv("a\r\n")).toEqual([["a"]])
+})
+
+test("an empty line in the middle ⇒ a record with one empty field", () => {
+  expect(parseCsv("a\n\nb")).toEqual([["a"], [""], ["b"]])
 })
 
 test("quoted field containing a comma", () => {
@@ -675,18 +689,21 @@ export const FEATURES: ReadonlyArray<FeatureScenario> = [
       "lruCache.ts implements a correct fixed-capacity LRU cache with TTL. Critical behaviours: get refreshes recency but has does NOT; eviction removes the true least-recently-used live entry; expiry uses the injected clock (now >= insertedAt + ttl) with per-entry ttl overriding defaultTtlMs and no-ttl meaning never-expires; expired entries are purged lazily and excluded from size/keys; updating a key resets its ttl and recency; keys() is ordered LRU-first. Penalise any missing edge case (recency-on-has, expiry purging freeing capacity, ttl reset on update). Implementation stays scoped to lruCache.ts.",
     routing: { shouldDelegate: true, codingTier: "code" },
     budget: { maxSteps: 18 },
+    difficulty: "moderate",
   },
   {
     name: "feature · RFC-4180 CSV parser",
     files: { "csv.ts": csvStub },
     prompt: csvPrompt,
-    hiddenTests: { "csv.spec.ts": csvTest },
+    hiddenTests: { "csv.core.spec.ts": csvCoreTest, "csv.edge.spec.ts": csvEdgeTest },
+    edgeTests: ["csv.edge.spec.ts"],
     reference: { "csv.ts": csvRef },
     readback: ["csv.ts"],
     rubric:
       "csv.ts implements a correct RFC-4180 CSV parser. Critical behaviours: comma field separation; LF and CRLF record separation; a single trailing line break does NOT add an empty record but a mid-document empty line yields [\"\"]; empty fields preserved; whitespace significant; quoted fields where commas/newlines are literal; doubled quotes (\"\") decode to one quote; CRLF preserved literally inside quotes. Penalise any unhandled quoting/escaping/line-ending edge case. Scoped to csv.ts.",
     routing: { shouldDelegate: true, codingTier: "code" },
     budget: { maxSteps: 18 },
+    difficulty: "hard",
   },
   {
     name: "feature · nested-transaction KV store",
@@ -699,5 +716,6 @@ export const FEATURES: ReadonlyArray<FeatureScenario> = [
       "txStore.ts implements a correct nestable-transaction KV store. Critical behaviours: layered view (innermost layer down to base); set/delete target the innermost layer; delete is a tombstone that hides lower values in-view; commit merges the innermost layer (sets AND tombstones) into the enclosing scope so an inner commit reaches the outer tx but not the base until the outer commits; rollback discards the layer; commit/rollback throw when no tx is active; keys() reflects the layered view sorted ascending. Penalise missing tombstone handling, wrong commit propagation, or absent error-on-no-tx. Scoped to txStore.ts.",
     routing: { shouldDelegate: true, codingTier: "code" },
     budget: { maxSteps: 22 },
+    difficulty: "hard",
   },
 ]
