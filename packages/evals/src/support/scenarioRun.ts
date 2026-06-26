@@ -13,6 +13,7 @@ import {
 } from "@xandreed/sdk-core"
 import type { EvalEnv } from "../env.js"
 import { buildCoderConfig } from "./coder.js"
+import { dockerShellLayer, type Sandbox, withSandbox } from "./dockerSandbox.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 
 /**
@@ -87,6 +88,11 @@ export interface RunScenarioOptions {
   readonly hiddenTests?: Record<string, string>
   /** Which of `hiddenTests` to run (defaults to all of them). */
   readonly testPaths?: ReadonlyArray<string>
+  /** Run the agent's Bash AND the hidden tests inside a per-case Docker sandbox
+   *  (`oven/bun`, `--network none`, bind-mounted temp dir) instead of on the host
+   *  — the safe path for a suite that executes LLM-generated code. Mirrors the
+   *  `repo-tasks` isolation. Requires Docker; defaults to off (host execution). */
+  readonly sandbox?: boolean
 }
 
 const billed = (u?: { readonly inputTokens: number; readonly outputTokens: number }): number =>
@@ -97,29 +103,8 @@ const countMatch = (s: string, re: RegExp): number => {
   return m !== null && m[1] !== undefined ? Number(m[1]) : 0
 }
 
-/** Write the hidden tests into the finished workspace and run `bun test` over
- *  them (no Docker — the scenarios are pure, dependency-free TS, so the built-in
- *  runner needs no install). `bun test` exits non-zero on failures, which
- *  `execFileSync` throws on; we capture stdout/stderr from the error either way. */
-const runHiddenTests = (
-  dir: string,
-  tests: Record<string, string>,
-  testPaths: ReadonlyArray<string>,
-): TestResult => {
-  for (const [rel, content] of Object.entries(tests)) {
-    const abs = join(dir, rel)
-    mkdirSync(dirname(abs), { recursive: true })
-    writeFileSync(abs, content)
-  }
-  // bun test writes its "N pass / N fail" summary to STDERR and exits non-zero on
-  // failures; spawnSync captures both streams regardless of exit code (no throw).
-  const r = spawnSync("bun", ["test", ...testPaths], {
-    cwd: dir,
-    encoding: "utf8",
-    timeout: 90_000,
-  })
-  const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`
-  const exitCode = r.status ?? 1
+/** Parse `bun test`'s "N pass / N fail" summary (written to stderr) into a verdict. */
+const parseTestOutput = (out: string, exitCode: number): TestResult => {
   const pass = countMatch(out, /(\d+)\s+pass/)
   const fail = countMatch(out, /(\d+)\s+fail/)
   const total = pass + fail
@@ -127,13 +112,51 @@ const runHiddenTests = (
   return { pass, fail, ratio, allPass: exitCode === 0 && fail === 0 && pass > 0, output: out.slice(0, 4000) }
 }
 
+const writeTests = (dir: string, tests: Record<string, string>): void => {
+  for (const [rel, content] of Object.entries(tests)) {
+    const abs = join(dir, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, content)
+  }
+}
+
+/** Run the hidden tests on the HOST (the non-sandboxed path). The scenarios are
+ *  pure, dependency-free TS, so `bun test` needs no install. `spawnSync` captures
+ *  both streams regardless of exit code (bun exits non-zero on failures). */
+const runTestsHost = (
+  dir: string,
+  tests: Record<string, string>,
+  testPaths: ReadonlyArray<string>,
+): TestResult => {
+  writeTests(dir, tests)
+  const r = spawnSync("bun", ["test", ...testPaths], { cwd: dir, encoding: "utf8", timeout: 90_000 })
+  return parseTestOutput(`${r.stdout ?? ""}\n${r.stderr ?? ""}`, r.status ?? 1)
+}
+
+/** Run the hidden tests INSIDE the sandbox container (the isolated path). The
+ *  tests are written on the host but visible in the container via the /work bind
+ *  mount, so they can't be read by the agent before this point either. */
+const runTestsSandbox = (
+  sb: Sandbox,
+  dir: string,
+  tests: Record<string, string>,
+  testPaths: ReadonlyArray<string>,
+): TestResult => {
+  writeTests(dir, tests)
+  const r = sb.exec(`bun test ${testPaths.join(" ")}`, 90_000)
+  return parseTestOutput(`${r.stdout}\n${r.stderr}`, r.exitCode)
+}
+
 export const runScenario = (
   files: Record<string, string>,
   prompt: string,
   opts: RunScenarioOptions = {},
 ): Effect.Effect<ScenarioRun, unknown, EvalEnv> =>
-  withTempWorkspace(files, (dir) =>
-    Effect.gen(function* () {
+  withTempWorkspace(files, (dir) => {
+    // When sandboxed, the agent's Bash + the hidden tests run inside a
+    // `--network none` container (over the /work bind mount); otherwise on the host.
+    const body = (sb?: Sandbox): Effect.Effect<ScenarioRun, unknown, EvalEnv> =>
+      Effect.gen(function* () {
       const settings = yield* (yield* SettingsStore).get()
       const transform = opts.systemPromptOverride ?? ((s: string) => s)
 
@@ -192,10 +215,16 @@ export const runScenario = (
       const store = yield* ConversationStore
       const id = yield* store.create(dir)
 
-      const result = yield* runAgent(config, id, prompt, hooks, dir).pipe(
+      // In the sandbox, override the agent's Shell with the container exec layer
+      // (inner provide wins over the env's host LocalShellLive); file tools stay
+      // on the host over the bind mount, exactly as `repo-tasks` does it.
+      const baseRun = runAgent(config, id, prompt, hooks, dir).pipe(
         Effect.provide(runtime.handlerLayer),
         Effect.provide(ApprovalAllowAllLive),
       )
+      const result = yield* (sb !== undefined
+        ? baseRun.pipe(Effect.provide(dockerShellLayer(sb)))
+        : baseRun)
 
       const tools = yield* Ref.get(toolsRef)
       const spawns = yield* Ref.get(spawnsRef)
@@ -208,9 +237,13 @@ export const runScenario = (
       // built (after the run, so it could never see or edit the tests).
       const testResult =
         opts.hiddenTests !== undefined
-          ? yield* Effect.sync(() =>
-              runHiddenTests(dir, opts.hiddenTests!, opts.testPaths ?? Object.keys(opts.hiddenTests!)),
-            )
+          ? yield* Effect.sync(() => {
+              const tests = opts.hiddenTests!
+              const paths = opts.testPaths ?? Object.keys(tests)
+              return sb !== undefined
+                ? runTestsSandbox(sb, dir, tests, paths)
+                : runTestsHost(dir, tests, paths)
+            })
           : undefined
 
       return {
@@ -226,5 +259,6 @@ export const runScenario = (
         },
         ...(testResult !== undefined ? { testResult } : {}),
       }
-    }),
-  )
+      })
+    return opts.sandbox === true ? withSandbox(dir, body) : body()
+  })
