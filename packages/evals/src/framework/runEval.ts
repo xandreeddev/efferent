@@ -53,6 +53,18 @@ interface SampleResult {
   readonly error?: string
 }
 
+/** Did this one sample "pass"? Gated on the objective scorer when `spec.gate`
+ *  is set (so pass^k reflects code correctness, not a noisy judge), else on the
+ *  sample mean vs threshold. A crashed sample never passes. */
+const samplePassed = <I, O, T, R>(spec: EvalSpec<I, O, T, R>, s: SampleResult): boolean => {
+  if (!s.ok) return false
+  if (spec.gate !== undefined) {
+    const sc = s.scores.find((x) => x.name === spec.gate!.scorer)
+    return sc !== undefined && sc.score >= (spec.gate.min ?? 1)
+  }
+  return s.mean >= (spec.threshold ?? 0.6)
+}
+
 /** One sample of a case: run the task (exit-captured) then every scorer
  *  (exit-captured), collapsing to a per-sample mean. A task failure is a
  *  0-scored sample, never a crash. */
@@ -119,6 +131,10 @@ const runCase = <I, O, T, R>(
     const mean = average(means)
     const stdev = sampleStdev(means)
     const anyOk = samples.some((s) => s.ok)
+    // pass@k (any sample passed the gate) and pass^k (every sample did — the
+    // consistency metric that matters for a write-to-disk agent).
+    const passAtK = samples.some((s) => samplePassed(spec, s))
+    const passHatK = samples.every((s) => samplePassed(spec, s))
     // Aggregate per-scorer over the samples that produced scores.
     const scores = aggregateScores(samples.filter((s) => s.ok).map((s) => s.scores))
     const error = anyOk ? undefined : samples.find((s) => s.error !== undefined)?.error
@@ -128,6 +144,8 @@ const runCase = <I, O, T, R>(
       "eval.ok": anyOk,
       "eval.samples": n,
       "eval.stdev": stdev,
+      "eval.pass_at_k": passAtK,
+      "eval.pass_hat_k": passHatK,
       ...scoreAttributes(scores, mean),
     })
     yield* Effect.forEach(scores, (s) => recordEvalScore(spec.name, s.name, s.score), {
@@ -141,6 +159,8 @@ const runCase = <I, O, T, R>(
       mean,
       samples: n,
       stdev,
+      passAtK,
+      passHatK,
       durationMs: end - start,
     }
   }).pipe(

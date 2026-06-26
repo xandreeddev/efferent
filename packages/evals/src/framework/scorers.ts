@@ -1,7 +1,8 @@
-import { AiError, LanguageModel, Prompt } from "@effect/ai"
+import { AiError, Prompt } from "@effect/ai"
 import { Effect, Either, Schedule, Schema } from "effect"
 import { isTransientAiError } from "@xandreed/sdk-adapters"
 import type { Scorer, ScorerArgs, ScoreResult } from "./Eval.js"
+import { JudgeModel } from "./judge.js"
 
 /** Pass/fail predicate — 1 if true, 0 if false. */
 export const predicate = <I, O, T>(
@@ -84,8 +85,11 @@ const parseJudge = (text: string): ScoreResult => {
 /**
  * LLM-as-judge. `buildPrompt` returns the rubric + candidate as a single
  * string; the model is asked to reply with `{"score": 0..1, "reason": "…"}`.
- * Unparseable output scores 0. Runs on whatever `LanguageModel` is in context
- * (the same router the agent uses) — no second key.
+ * Unparseable output scores 0. Runs on the {@link JudgeModel} — a strong,
+ * INDEPENDENT grader (`--judge`) when configured, else the main model — never
+ * the model under test, so its scores aren't inflated by self-preference bias.
+ * Transient failures retry; a hard failure degrades to a 0 with the cause in the
+ * detail (so a flaky gateway never silently corrupts the score).
  */
 /** Retry schedule for transient LLM failures (429, timeout, etc.). */
 const judgeRetry = Schedule.addDelay(Schedule.recurs(2), () => "1 second")
@@ -93,15 +97,16 @@ const judgeRetry = Schedule.addDelay(Schedule.recurs(2), () => "1 second")
 export const llmJudge = <I, O, T>(
   name: string,
   buildPrompt: (a: ScorerArgs<I, O, T>) => string,
-): Scorer<I, O, T, unknown, LanguageModel.LanguageModel> => ({
+): Scorer<I, O, T, unknown, JudgeModel> => ({
   name,
   score: (a) =>
     Effect.gen(function* () {
+      const judge = yield* JudgeModel
       const prompt = Prompt.make(
         `${JUDGE_SYSTEM}\n\n${buildPrompt(a)}\n\n` +
           'Reply with ONLY a JSON object: {"score": <number between 0 and 1>, "reason": "<one sentence>"}.',
       )
-      const res = yield* LanguageModel.generateText({ prompt }).pipe(
+      const res = yield* judge.generateText({ prompt }).pipe(
         Effect.retry({ schedule: judgeRetry, while: (e) => AiError.isAiError(e) && isTransientAiError(e) }),
         Effect.catchAll((e) => Effect.succeed({ text: ``, _tag: "judge-failed" as const, cause: String(e) })),
       )
@@ -123,7 +128,7 @@ export const llmJudge = <I, O, T>(
 export const qualityRubric = <I, O, T>(
   name: string,
   build: (a: ScorerArgs<I, O, T>) => { readonly rubric: string; readonly output: string },
-): Scorer<I, O, T, unknown, LanguageModel.LanguageModel> =>
+): Scorer<I, O, T, unknown, JudgeModel> =>
   llmJudge(name, (a) => {
     const { rubric, output } = build(a)
     return [
