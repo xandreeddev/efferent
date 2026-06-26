@@ -1,11 +1,11 @@
-# @xandreed/code
+# efferent — the CLI driver (`@xandreed/cli`)
 
-Coding-agent driver — composition root for four modes, plus the OpenTUI/SolidJS TUI.
+The efferent CLI driver — composition root for the run modes + daemon, plus the OpenTUI/SolidJS TUI. Published as the unscoped npm package **`efferent`** (and the scoped alias **`@xandreed/cli`**, same bundle).
 
 ## Layout
 
 ```
-packages/code/src/
+packages/cli/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
 ├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
 ├── terminal.ts        OSC-52 + spinner-frame + ANSI/width helpers (shared infra; print mode uses it too)
@@ -18,7 +18,7 @@ packages/code/src/
 │   ├── print.ts       one-shot, streams final text to stdout
 │   ├── json.ts        same loop as print but JSONL events on stdout
 │   ├── rpc.ts         bidirectional JSON-RPC over stdio
-│   └── daemon.ts      headless cron scheduler (--mode daemon); --mode daemon-serve runs server/
+│   └── daemon.ts      headless cron scheduler (--mode daemon); daemon-serve runs server/ (the `efferent daemon start`/`serve` subcommand)
 ├── cli/         the TUI driver — OpenTUI native renderer + SolidJS (no React)
 │   ├── runtime.ts     composition root + the Effect⇄Solid⇄OpenTUI three-runtime bridge
 │   ├── state/         signal slices (conversation · side · session · ui · overlay)
@@ -73,6 +73,7 @@ borders/surfaces/glyphs; every pane/overlay composes them.
 - Each mode is a single `Effect.Effect<void, never, FileSystem | Shell | Llm | ConversationStore>` that subscribes to the agent's event queue and renders its way.
 - `main.ts` is the *only* place adapter selection happens. To swap the LLM provider, swap the Layer imported here.
 - Mode resolution defaults: argv prompt or piped stdin → print; TTY → tui; else print. `--mode <x>` overrides.
+- **Subcommands are the run-path surface** (`main.ts`): **`efferent`** (no subcommand) is the default master TUI — attach-or-spawn the per-workspace daemon (split process; `EFFERENT_LOCAL=1` forces the in-process driver, `EFFERENT_REMOTE` is the explicit remote alias); **`efferent code`** runs the focused single-fleet coder IN-PROCESS (in-memory Workspace, `variant: "code"`) — the bundled coding agent without a daemon, replacing the deleted `code` bin / `--code` flag / `dist/code.js` shim; **`efferent attach`** explicitly attaches the master TUI to the daemon (auto-spawn if absent); **`efferent daemon start`** (alias **`serve`**; was `--mode daemon-serve`) runs the persistent HTTP/SSE daemon, with **`efferent daemon status`** / **`efferent daemon stop`** for lifecycle. The headless `efferent "<prompt>"` / `--mode json|rpc|daemon` paths are unchanged.
 - `--help` and `--version` are provided by `@effect/cli` — don't shadow them.
 
 ## TUI invariants

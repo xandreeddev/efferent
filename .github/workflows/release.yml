@@ -49,9 +49,9 @@ jobs:
       - name: Check release tag matches the package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./packages/code/package.json').version")"
+          PKG="$(node -p "require('./packages/cli/package.json').version")"
           if [ "$TAG" != "$PKG" ]; then
-            echo "release tag v$TAG does not match packages/code version $PKG" >&2
+            echo "release tag v$TAG does not match packages/cli version $PKG" >&2
             exit 1
           fi
 

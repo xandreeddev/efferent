@@ -1,22 +1,25 @@
 ---
 title: Getting started
-description: Install the efferent coding agent, log in a provider, and run your first prompt — then clone the repo to build your own agent on the SDK.
+description: Install efferent, log in a provider, and run your first prompt — then clone the repo to build your own agent on the SDK.
 ---
 
-efferent is two things in one repo: a **coding agent** you can install and use today, and the
-**SDK** that agent is built on. This page gets you running with both.
+efferent is two things in one repo: an **agent runtime** you can install and use today, and the
+**SDK** it's built on. The runtime is one CLI that runs agents — an interactive TUI, headless
+print/json/rpc, or a persistent per-workspace daemon — and it ships with a batteries-included coding
+agent (`efferent code`). This page gets you running with both.
 
 :::note
 Bun is the runtime. Install it first if you haven't: see [bun.sh](https://bun.sh) (Bun ≥ 1.2).
 efferent runs TypeScript directly — there is no build step for development.
 :::
 
-## Track 1 — Use the coding agent
+## Track 1 — Use the CLI
 
-The agent ships on npm as **`@xandreed/code`** (a Bun bundle; the binaries it installs are `efferent`, `eff`, and `e`).
+The CLI ships on npm as **`efferent`** (with a scoped alias **`@xandreed/cli`** — same bundle, kept in
+sync); it's a Bun bundle that installs the binaries `efferent` and `eff`.
 
 ```sh
-npm i -g @xandreed/code
+npm i -g efferent
 efferent
 ```
 
@@ -37,6 +40,21 @@ on the next message.
 on the local path — efferent never reads provider keys from environment variables (that path exists
 only for CI/evals; see [Providers](/docs/concepts/providers/)).
 :::
+
+### Subcommands
+
+`efferent` runs agents through a small subcommand surface:
+
+| Command | What it does |
+| --- | --- |
+| `efferent` | Default master TUI — attaches to (or spawns) the per-workspace daemon. |
+| `efferent code` | The bundled coding agent — a focused single-fleet coder, in-process. |
+| `efferent attach` | Explicitly attach the TUI to the daemon (auto-spawns it if absent). |
+| `efferent daemon start` | Run the persistent daemon (alias `serve`). |
+| `efferent daemon status` / `stop` | Daemon lifecycle. |
+
+`EFFERENT_LOCAL=1` forces the in-process path; `EFFERENT_REMOTE` is the remote alias. See the
+[CLI reference](/docs/reference/cli/) for the full surface.
 
 ### The four run modes
 
@@ -83,7 +101,7 @@ bun compressionAgent.ts          # customize context compression
 
 ### Run the eval suites
 
-Once you have a provider key, run the built-in evals to see how the coding agent scores on a labeled golden set:
+Once you have a provider key, run the built-in evals to see how the bundled coding agent scores on a labeled golden set:
 
 ```sh
 bun run eval quality          # quality scorecard (5 golden scenarios)

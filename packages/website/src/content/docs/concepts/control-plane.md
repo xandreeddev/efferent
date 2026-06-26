@@ -105,9 +105,9 @@ wanted a human surface in one place.
 | Concern | Where |
 | --- | --- |
 | The `Job` descriptor | `sdk-core/entities/Job.ts` |
-| The `JobController` (`submitJob`) | `code/src/workspace/inProcess.ts` |
+| The `JobController` (`submitJob`) | `cli/src/workspace/inProcess.ts` |
 | Interaction policy on the run context | `sdk-core/usecases/runContext.ts` |
-| The parking approval (headless) | `code/src/workspace/headlessApproval.ts` |
-| Interactive (parking) approval | `code/src/workspace/serverApproval.ts` |
+| The parking approval (headless) | `cli/src/workspace/headlessApproval.ts` |
+| Interactive (parking) approval | `cli/src/workspace/serverApproval.ts` |
 | The `needs_human` event | `sdk-core/entities/AgentEvent.ts` |
-| The "decisions need you" roster | `code/src/cli/view/chrome/DecisionsBar.tsx` |
+| The "decisions need you" roster | `cli/src/cli/view/chrome/DecisionsBar.tsx` |
