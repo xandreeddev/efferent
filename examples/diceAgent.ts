@@ -20,7 +20,7 @@
  *        it and oversized clips degrade to plain markers. `onHelperUsage`
  *        accounts the spend.
  *   4    threshold auto-fold — NOT automatic; a driver calls `shouldAutoHandoff`
- *        + `createHandoff` at a turn boundary (see packages/code submit.ts).
+ *        + `createHandoff` at a turn boundary (see packages/cli submit.ts).
  */
 import { Tool, Toolkit } from "@effect/ai"
 import { FetchHttpClient } from "@effect/platform"

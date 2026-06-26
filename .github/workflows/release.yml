@@ -1,15 +1,18 @@
-# Publish `@xandreed/code` to npm when a GitHub release is published.
+# Publish the efferent CLI to npm under BOTH names (`efferent` + `@xandreed/cli`,
+# same bundle, kept in sync) when a GitHub release is published.
 #
 # Auth is npm **trusted publishing** (OIDC) — no token secret to store or
-# rotate. One-time setup on npmjs.com: package `@xandreed/code` → Settings →
-# Trusted publisher → GitHub Actions → owner `xandreeddev`, repo `efferent`,
-# workflow `release.yml`. Publishing this way also generates a provenance
-# attestation (the npm page shows the source repo + the exact build run).
+# rotate. One-time setup on npmjs.com, FOR EACH NAME: package `efferent` (and
+# `@xandreed/cli`) → Settings → Trusted publisher → GitHub Actions → owner
+# `xandreeddev`, repo `efferent`, workflow `release.yml`. A brand-new scoped
+# name may need a first manual publish (or a token) before OIDC applies.
+# Publishing this way also generates a provenance attestation (the npm page
+# shows the source repo + the exact build run).
 #
-# Release flow: bump `packages/code/package.json` version → push → create a
+# Release flow: bump `packages/cli/package.json` version → push → create a
 # GitHub release tagged `vX.Y.Z` (matching the package version — guarded
 # below) → this workflow gates on typecheck + tests + a leak audit, then
-# publishes.
+# publishes both names.
 name: release
 
 on:
@@ -46,9 +49,9 @@ jobs:
       - name: Check release tag matches the package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PKG="$(node -p "require('./packages/code/package.json').version")"
+          PKG="$(node -p "require('./packages/cli/package.json').version")"
           if [ "$TAG" != "$PKG" ]; then
-            echo "release tag v$TAG does not match packages/code version $PKG" >&2
+            echo "release tag v$TAG does not match packages/cli version $PKG" >&2
             exit 1
           fi
 
@@ -57,11 +60,23 @@ jobs:
           bun run build
           # The artifact must never embed a build-machine path (bundlers bake
           # __dirname into CommonJS shims — see scripts/build.ts's tokenizer
-          # stub for the incident this guards against).
-          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/code/dist/efferent.js; then
+          # stub + the msgpackr-extract external for the incidents this guards).
+          if grep -qE "/home/[a-z]|/Users/[a-z]" packages/cli/dist/efferent.js; then
             echo "build-machine path found in the bundle — aborting publish" >&2
             exit 1
           fi
 
-      - run: npm publish --provenance
-        working-directory: packages/code
+      # Publish the same bundle under BOTH names, kept in sync: the brand
+      # `efferent` (the on-disk package name) and the scoped `@xandreed/cli`.
+      # Each name needs npm trusted publishing (OIDC) configured on npmjs.com
+      # for repo xandreeddev/efferent + workflow release.yml.
+      - name: Publish efferent
+        run: npm publish --provenance
+        working-directory: packages/cli
+
+      - name: Publish @xandreed/cli (same bundle, synced)
+        working-directory: packages/cli
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.name='@xandreed/cli';fs.writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
+          npm publish --provenance
+          git checkout -- package.json
