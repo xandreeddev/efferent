@@ -26,10 +26,13 @@ docker build --build-arg "TARBALL=$TARBALL" -t efferent-e2e "$HERE"
 echo "==> docker run"
 if [ "$KEYED" -eq 1 ]; then
   [ -f "$HOME/.efferent/auth.json" ] || { echo "no ~/.efferent/auth.json to mount"; exit 1; }
-  # Optional model override (the in-image default is google:gemini-3.5-flash).
-  MODELENV=(); [ -n "${EFFERENT_MODEL:-}" ] && MODELENV=(-e "EFFERENT_MODEL=$EFFERENT_MODEL")
-  docker run --rm "${MODELENV[@]}" \
-    -v "$HOME/.efferent/auth.json:/root/.efferent/auth.json:ro" efferent-e2e
+  # Reflect a real ONBOARDED user, with NO env: mount the auth.json + config.json
+  # that `:login`/onboarding wrote (config pins the model). Both read-only as
+  # individual files so /root/.efferent stays writable for the SQLite db. The
+  # interactive first-run onboarding itself is TTY-only (see README/run notes).
+  CFG=(); [ -f "$HOME/.efferent/config.json" ] && CFG=(-v "$HOME/.efferent/config.json:/root/.efferent/config.json:ro")
+  docker run --rm \
+    -v "$HOME/.efferent/auth.json:/root/.efferent/auth.json:ro" "${CFG[@]}" efferent-e2e
 else
   docker run --rm efferent-e2e
 fi

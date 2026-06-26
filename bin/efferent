@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Dev launcher for the MASTER assistant (the `efferent`/`eff`/`e` published bin).
+# Dev launcher for the MASTER assistant (the `efferent`/`eff` published bin).
 # Runs the BUILT BUNDLE, not src/main.ts: the bundle has the Solid JSX already
 # transformed, so it works from ANY workspace dir — whereas `bun src/main.ts`
 # only resolves `jsxImportSource: solid-js` when the cwd is this repo (Bun reads
 # the tsconfig from the cwd), so its TUI breaks elsewhere. Rebuild after editing
 # efferent's source: `bun run build` (or hot-dev in-repo with `bun run dev`).
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/code/dist/efferent.js" "$@"
+exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/cli/dist/efferent.js" "$@"

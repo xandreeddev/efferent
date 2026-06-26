@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/code/dist/efferent.js" "$@"
+exec bun "$(cd "$(dirname "$0")/.." && pwd)/packages/cli/dist/efferent.js" "$@"
