@@ -29,6 +29,31 @@ export interface DeltaCI {
   readonly significant: boolean
   /** Number of paired cases the CI is built from. */
   readonly n: number
+  /** Cohen's d — standardized effect size (0.2 small, 0.5 medium, 0.8 large). */
+  readonly cohensD: number
+}
+
+/** Adjust alpha for multiple comparisons (Bonferroni). */
+const bonferroniAlpha = (alpha: number, comparisons: number): number =>
+  comparisons <= 1 ? alpha : alpha / comparisons
+
+/** Sample standard deviation (n-1). */
+const stdev = (ns: ReadonlyArray<number>): number => {
+  if (ns.length < 2) return 0
+  const m = ns.reduce((a, b) => a + b, 0) / ns.length
+  return Math.sqrt(ns.reduce((a, x) => a + (x - m) ** 2, 0) / (ns.length - 1))
+}
+
+/** Cohen's d for paired samples = mean(delta) / stdev(delta). */
+const cohensD = (deltas: ReadonlyArray<number>): number => {
+  const sd = stdev(deltas)
+  const mean = deltas.length === 0 ? 0 : deltas.reduce((a, b) => a + b, 0) / deltas.length
+  // Zero variance: a perfectly-consistent delta. If it's also zero, there's no
+  // effect (0); if it's a consistent non-zero shift, the effect is unbounded
+  // (±∞) — NOT "negligible", which `return 0` here used to mislabel even while
+  // the CI collapsed to a significant point.
+  if (sd === 0) return mean === 0 ? 0 : mean > 0 ? Infinity : -Infinity
+  return mean / sd
 }
 
 /**
@@ -41,11 +66,17 @@ export const pairedDeltaCI = (
   candidate: ReadonlyArray<number>,
   iterations = 2000,
   seed = 0x5eed1e,
+  /** Number of simultaneous comparisons (for Bonferroni correction). Default 1. */
+  comparisons = 1,
 ): DeltaCI => {
   const n = Math.min(baseline.length, candidate.length)
   const deltas = Array.from({ length: n }, (_, i) => candidate[i]! - baseline[i]!)
   const delta = n === 0 ? 0 : deltas.reduce((a, b) => a + b, 0) / n
-  if (n < 2) return { delta, low: delta, high: delta, significant: false, n }
+  if (n < 2) return { delta, low: delta, high: delta, significant: false, n, cohensD: 0 }
+
+  const alpha = bonferroniAlpha(0.05, comparisons)
+  const lowPct = alpha / 2
+  const highPct = 1 - alpha / 2
 
   const rng = mulberry32(seed)
   const means: Array<number> = []
@@ -55,7 +86,14 @@ export const pairedDeltaCI = (
     means.push(sum / n)
   }
   means.sort((a, b) => a - b)
-  const low = means[Math.floor(0.025 * iterations)]!
-  const high = means[Math.min(iterations - 1, Math.floor(0.975 * iterations))]!
-  return { delta, low, high, significant: low > 0 || high < 0, n }
+  const low = means[Math.floor(lowPct * iterations)]!
+  const high = means[Math.min(iterations - 1, Math.floor(highPct * iterations))]!
+  return {
+    delta,
+    low,
+    high,
+    significant: low > 0 || high < 0,
+    n,
+    cohensD: cohensD(deltas),
+  }
 }

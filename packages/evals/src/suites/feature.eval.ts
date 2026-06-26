@@ -76,6 +76,9 @@ export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
       readback: input.readback,
       hiddenTests: input.hiddenTests,
       ...(input.testPaths !== undefined ? { testPaths: input.testPaths } : {}),
+      // Execute the agent's Bash + the hidden tests in a --network none container,
+      // not on the host — this suite runs LLM-generated code.
+      sandbox: true,
     }),
   scorers: [
     // The objective discriminator: fraction of the hidden test suite that passes.
