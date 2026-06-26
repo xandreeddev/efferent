@@ -6,12 +6,13 @@ sidebar:
   order: 5
 ---
 
-The [dice agent](/docs/your-first-agent/) shows the bare primitives. efferent's own coding agent is
-the *batteries-included* counterpart — a full file/shell/web toolkit, a scoped sandbox, and sub-agents —
-assembled from the **same `AgentConfig` shape**. The reusable scope machinery —
-**`buildScopeRuntime`** and **`codingToolkit`** — now lives in **`@xandreed/sdk-core`**
-(`sdk-core/usecases/`); only the driver-specific bundling (`coderAgentConfig`, the coder system prompt)
-stays in the `@xandreed/code` package, where the runtime concerns belong. The pattern is worth knowing.
+The [dice agent](/docs/your-first-agent/) shows the bare primitives. efferent's own coding agent — the
+batteries-included app you reach with `efferent code`, built on the runtime SDK — is the *full*
+counterpart: a complete file/shell/web toolkit, a scoped sandbox, and sub-agents — assembled from the
+**same `AgentConfig` shape**. The reusable scope machinery — **`buildScopeRuntime`** and
+**`codingToolkit`** — now lives in **`@xandreed/sdk-core`** (`sdk-core/usecases/`); only the
+driver-specific bundling (`coderAgentConfig`, the coder system prompt) stays in the CLI package
+(`packages/cli`), where the runtime concerns belong. The pattern is worth knowing.
 
 ## Two pieces
 

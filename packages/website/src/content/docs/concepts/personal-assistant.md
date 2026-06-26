@@ -23,14 +23,14 @@ daemon  ── the per-workspace infrastructure (one process, HTTP/SSE)
               └─ agent ── one worker in that fleet (a sub-agent run)
 ```
 
-Two binaries share **one** chat-first TUI over the **same** `Workspace` interface:
+Two entry points share **one** chat-first TUI over the **same** `Workspace` interface:
 
-- **`efferent`** — the assistant, daemon-backed. A split screen: the **chat** on the left, a **live
-  fleet tree** on the right (every agent from this session, with running/idle status). N resumable
-  sessions. It does the work directly by default, and when a task is wide enough it spins up a
-  background coding/research fleet, does follow-ups, and schedules jobs.
-- **`code`** — a focused, fast, in-memory coder (no daemon), same TUI and the same "jump into any
-  agent" capability, scoped to one session.
+- **`efferent`** — the assistant, daemon-backed (the default master TUI). A split screen: the **chat**
+  on the left, a **live fleet tree** on the right (every agent from this session, with running/idle
+  status). N resumable sessions. It does the work directly by default, and when a task is wide enough it
+  spins up a background coding/research fleet, does follow-ups, and schedules jobs.
+- **`efferent code`** — a focused, fast, in-memory coder (no daemon), same TUI and the same "jump into
+  any agent" capability, scoped to one session.
 
 The organizing principle is *one workspace · many sessions · one seat*: you attend to exactly one thing
 at a time and **move your seat** — the left chat re-points to whichever agent you select — rather than
@@ -128,9 +128,10 @@ opt-in via `EFFERENT_DB_URL`. Both run the same migrations (`Migrator.fromRecord
 
 ## The seam — the `Workspace` port
 
-The whole UI — both bins — depends only on one interface, never on HTTP. Two adapters satisfy it:
-the **in-process** one (the `code` bin and what the daemon hosts) and the **remote** one (the `efferent`
-client). Pick the impl at the composition root; the frontend code is identical against either.
+The whole UI — both entry points — depends only on one interface, never on HTTP. Two adapters satisfy
+it: the **in-process** one (`efferent code` and what the daemon hosts) and the **remote** one (the
+default `efferent` client). Pick the impl at the composition root; the frontend code is identical against
+either.
 
 ```ts
 // ports/Workspace.ts (excerpt)
@@ -153,7 +154,7 @@ reducer, so presentation stays 100% client-side and the daemon only ever ships `
 
 ## On the wire — HTTP + SSE
 
-The transport (`packages/code/src/transport/http/`) is the *only* place HTTP appears, and it maps the
+The transport (`packages/cli/src/transport/http/`) is the *only* place HTTP appears, and it maps the
 port **1:1**. The server (`server.ts`) hosts the in-process Workspace; the client (`client.ts`) turns the
 endpoints back into `Workspace`-shaped calls for the remote adapter.
 
@@ -200,15 +201,15 @@ Bun.spawn([process.execPath, entry, "--mode", "daemon-serve", "--cwd", workspace
 ```
 
 `efferent` resolves to the **remote** driver, which `attachOrSpawn`s the per-workspace daemon (a tiny
-discovery file finds or spawns it) and then renders the chat-first TUI as a thin client. `code` resolves
-to the **in-process** driver — the same TUI, but the Workspace is built in-memory in the same process, no
-daemon. Same code, two backends.
+discovery file finds or spawns it) and then renders the chat-first TUI as a thin client. `efferent code`
+resolves to the **in-process** driver — the same TUI, but the Workspace is built in-memory in the same
+process, no daemon. Same code, two backends.
 
 ## A turn, end to end
 
 ```text
 you type  ─▶ ws.send(sessionId, prompt)
-            ─▶ POST /sessions/:id/send            (remote bin only; in-process skips the wire)
+            ─▶ POST /sessions/:id/send            (remote only; in-process skips the wire)
             ─▶ inProcess.send  ──┬─ running?  → bus.post(mailbox)        (steer a live agent)
                                  ├─ busy?     → queue
                                  └─ a root session → startRootTurn(cid, prompt)
@@ -302,12 +303,12 @@ packages/sdk-core/src/
   usecases/runAgent.ts        drives a session's turn ; agentLoop.ts iterates
   usecases/buildScopeRuntime  run_agent / wait_for_agents over the Supervisor + context tree
   usecases/agentBus.ts        the Supervisor: mailboxes, blackboard, supervision (a threaded value)
-packages/code/src/
+packages/cli/src/
   workspace/inProcess.ts      the authoritative Workspace + the JobController (the daemon hosts it)
   workspace/remote.ts         the remote Workspace (calls the transport client)
   transport/http/             server.ts + client.ts + the SSE codec — the ONLY HTTP
   server/{daemon,attach,discovery}.ts   the per-workspace daemon lifecycle
-  cli/                        the one chat-first TUI (both bins) + the event pump
+  cli/                        the one chat-first TUI (both entry points) + the event pump
 ```
 
 The takeaway: one transport-agnostic port, one persistent context tree, and a single event stream —

@@ -125,8 +125,10 @@ Two daemon-authoritative pieces keep a re-attaching client honest:
 ## Lifecycle
 
 `efferent` reads a discovery file (`~/.efferent/daemon-<workspaceHash>.json`), attaches to a
-healthy daemon if one is registered, and otherwise spawns a detached `--mode daemon-serve`
-and polls until it's up — all transparent. (`EFFERENT_LOCAL=1` runs the legacy in-process
-driver instead.) The daemon boots **credential-less** on purpose: you log in from any
+healthy daemon if one is registered, and otherwise spawns a detached daemon process and polls
+until it's up — all transparent. You can also run the daemon explicitly with `efferent daemon start`
+(alias `serve`); the auto-spawn still targets `--mode daemon-serve`, which stays accepted. (`efferent
+attach` forces the attach path; `EFFERENT_LOCAL=1` runs the legacy in-process driver instead.) The
+daemon boots **credential-less** on purpose: you log in from any
 attached client and the router resolves the key per request, so a long-lived daemon survives
 logins and logouts.

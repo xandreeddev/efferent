@@ -3,7 +3,7 @@ import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 
 /**
- * The TUI driver lives in `packages/code/src/cli/` (OpenTUI + SolidJS) — the
+ * The TUI driver lives in `packages/cli/src/cli/` (OpenTUI + SolidJS) — the
  * frontend for the agent. This module is the stable `TuiModeInput` seam:
  * `main.ts` builds one and hands it to `runTuiModeSolid` (`cli/runtime.ts`),
  * loaded via a lazy

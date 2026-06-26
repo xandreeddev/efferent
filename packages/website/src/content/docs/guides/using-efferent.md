@@ -132,8 +132,8 @@ These are git-shareable and importable straight from GitHub (`:agents add github
 **startup**. They compose what efferent already does — no new logic.
 
 **Build a tool in code.** A genuinely new capability is a typed `Tool.make` plus an Effect handler
-in the source (see [Define a tool](/docs/guides/define-a-tool/)). efferent is a coding agent on its
-own codebase, so it can *write that tool itself* — but the change lands like any code: the type
+in the source (see [Define a tool](/docs/guides/define-a-tool/)). efferent's bundled coding agent runs
+on its own codebase, so it can *write that tool itself* — but the change lands like any code: the type
 checker and the no-`try/catch` ban gate it, and it's available on the **next launch**.
 
 :::important[No runtime eval — and that's the point]

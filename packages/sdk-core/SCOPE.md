@@ -11,7 +11,7 @@ description: Owns packages/core/. Pure domain — entities, ports, use cases, pr
 - `src/index.ts` — public surface; everything other packages import comes through here.
 
 ## Hard rules
-- Never import from `@xandreed/sdk-adapters`, `@xandreed/code`, or `@xandreed/web`.
+- Never import from `@xandreed/sdk-adapters`, `efferent`, or `@xandreed/web`.
 - No IO libraries and no provider SDKs — no `fs`, no Bun-only globals, no `@effect/ai-google`/`@effect/ai-openai`. The only SDK allowed is provider-agnostic `@effect/ai` (`LanguageModel`, `Tool`, `Toolkit`, `Prompt`). If a use case needs a capability, declare a port.
 - Pure standard-lib helpers from `node:path` and `node:crypto` are allowed (string-only — no filesystem access). Anything that performs IO goes through a port.
 - Schema imports use `import { Schema } from "effect"`.

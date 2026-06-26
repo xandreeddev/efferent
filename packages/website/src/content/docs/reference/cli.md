@@ -6,8 +6,23 @@ sidebar:
   order: 8
 ---
 
-The bundled coding agent ships as the `@xandreed/code` npm package (binaries `efferent`, `eff`, `e`), a Bun bundle.
+The efferent CLI ships as the **`efferent`** npm package (scoped alias **`@xandreed/cli`** — same
+bundle, kept in sync; binaries `efferent` and `eff`), a Bun bundle. It runs agents: the default master
+TUI, the bundled coding agent via `efferent code`, headless print/json/rpc, or a persistent daemon.
 Install and run: see [Getting started](/docs/getting-started/).
+
+## Subcommands
+
+| Command | What it does |
+| --- | --- |
+| `efferent` | Default master TUI — attaches to (or spawns) the per-workspace [daemon](/docs/concepts/daemon/). |
+| `efferent code` | The bundled coding agent — a focused single-fleet coder, in-process. |
+| `efferent attach` | Explicitly attach the TUI to the daemon (auto-spawns it if absent). |
+| `efferent daemon start` | Run the persistent daemon (alias `serve`; was `--mode daemon-serve`, still accepted). |
+| `efferent daemon status` · `efferent daemon stop` | Daemon lifecycle. |
+
+`EFFERENT_LOCAL=1` forces the in-process path (the legacy daemonless driver); `EFFERENT_REMOTE` is the
+remote alias. A bare prompt or `--mode <x>` (below) is the headless surface.
 
 ## Modes
 
@@ -21,7 +36,7 @@ Mode resolves automatically: an argv prompt or piped stdin → `print`; a TTY �
 | `json` | `efferent --mode json "<prompt>"` | Same loop; every agent event as JSONL on stdout. |
 | `rpc` | `efferent --mode rpc` | Bidirectional JSON-RPC over stdio (`agent.send`). |
 | `daemon` | `efferent --mode daemon` | Headless cron scheduler — fires this workspace's due jobs forever, no UI. |
-| `daemon-serve` | `efferent --mode daemon-serve` | The persistent per-workspace Workspace daemon (HTTP/SSE) that TUI/web clients attach to. Normally spawned automatically — see [the daemon](/docs/concepts/daemon/). |
+| `daemon-serve` | `efferent daemon start` (alias `serve`; legacy `efferent --mode daemon-serve`) | The persistent per-workspace Workspace daemon (HTTP/SSE) that TUI/web clients attach to. Normally spawned automatically — `--mode daemon-serve` stays accepted as that auto-spawn target. See [the daemon](/docs/concepts/daemon/). |
 
 ## Flags
 
