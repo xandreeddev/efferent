@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Effect, Layer, Ref, Stream } from "effect"
+import { Chunk, Effect, FiberRef, Layer, Ref, Stream } from "effect"
 import { LanguageModel } from "@effect/ai"
 import {
   type AgentContextNode,
@@ -13,6 +13,7 @@ import {
   DefaultSettings,
   FileSystem,
   Http,
+  RunContextRef,
   SettingsStore,
   Shell,
   UtilityLlm,
@@ -68,7 +69,7 @@ const stubTree = Layer.succeed(
   }),
 )
 
-const stubPorts = Layer.mergeAll(
+const stubPortsNoModel = Layer.mergeAll(
   Layer.succeed(
     FileSystem,
     FileSystem.of({
@@ -97,9 +98,30 @@ const stubPorts = Layer.mergeAll(
       load: () => Effect.succeed(DefaultSettings),
     }),
   ),
-  doneModel,
   stubTree,
 )
+
+const stubPorts = Layer.mergeAll(stubPortsNoModel, doneModel)
+
+/** A model that records the general model pinned on RunContext for the turn. */
+const capturingModel = (captured: Ref.Ref<string | undefined>) =>
+  Layer.succeed(
+    LanguageModel.LanguageModel,
+    LanguageModel.LanguageModel.of({
+      generateText: () =>
+        FiberRef.get(RunContextRef).pipe(
+          Effect.flatMap((rc) => Ref.set(captured, rc.pinnedModels?.general)),
+          Effect.as({
+            content: [],
+            text: "ok",
+            finishReason: "stop",
+            usage: undefined,
+          }),
+        ),
+      generateObject: () => Effect.die("unused"),
+      streamText: () => Effect.die("unused"),
+    } as never),
+  )
 
 /** A fresh in-memory ConversationStore (just what `runAgent`/`getState` touch). */
 const stubConv = () =>
@@ -184,6 +206,46 @@ describe("in-process Workspace", () => {
     const userMsgs = result.state.log.filter((m) => m.role === "user")
     expect(userMsgs.length).toBeGreaterThanOrEqual(1)
     expect(result.state.session.kind).toBe("root")
+  })
+
+  test("setFleetModel changes the model a subsequent turn uses (the daemon honors a model switch)", async () => {
+    const used = await Effect.runPromise(
+      Effect.gen(function* () {
+        const captured = yield* Ref.make<string | undefined>(undefined)
+        const program = Effect.gen(function* () {
+          const ws = yield* makeInProcessWorkspace({
+            roots: [{ cid: ROOT_CID as never }],
+            rootScope,
+            cwd: "/tmp/ws",
+            skills: [],
+            memory: [],
+            agents: [],
+            tools: [],
+            instructionFiles: [],
+            approvalLayer: ApprovalAllowAllLive,
+            fleet: makeFleetSupervisor(),
+            allowBash: true,
+          })
+          const rootId = conversationSessionId(ROOT_CID as never)
+          // Switch the fleet's model, then run a turn. The remote-path bug was
+          // that a `:login`/`:model` switch never reached the daemon, so turns
+          // kept using the boot-time default; this asserts the switch lands on
+          // the turn (`RunContext.pinnedModels.general`), which the router uses.
+          yield* ws.setFleetModel(rootId, "opencode:switched-model")
+          yield* ws.send(rootId, "go")
+          let spins = 0
+          while ((yield* ws.getState(rootId)).busy && spins < 300) {
+            yield* Effect.sleep("20 millis")
+            spins += 1
+          }
+        }).pipe(
+          Effect.provide(Layer.mergeAll(stubPortsNoModel, capturingModel(captured), stubConv())),
+        )
+        yield* program
+        return yield* Ref.get(captured)
+      }),
+    )
+    expect(used).toBe("opencode:switched-model")
   })
 
   test("getState reports the authoritative phase: idle before a turn, idle after it settles", async () => {

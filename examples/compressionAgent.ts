@@ -16,6 +16,7 @@
  *
  *   bun examples/compressionAgent.ts
  */
+import { homedir } from "node:os"
 import { Tool, Toolkit } from "@effect/ai"
 import { FetchHttpClient } from "@effect/platform"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
@@ -25,6 +26,7 @@ import {
   ConversationId,
   Compaction,
   runAgent,
+  SettingsStore,
   type AgentConfig,
   type AgentHooks,
   type CompressionPolicy,
@@ -89,6 +91,9 @@ const config: AgentConfig<typeof toolkit extends Toolkit.Toolkit<infer T> ? T : 
 const hooks: AgentHooks = {}
 
 const program = Effect.gen(function* () {
+  // Load settings so the agent uses YOUR configured model (the one `:login`
+  // pinned in ~/.efferent/config.json, or $EFFERENT_MODEL) — not the default.
+  yield* (yield* SettingsStore).load(process.cwd(), homedir())
   const cid = yield* Schema.decodeUnknown(ConversationId)(crypto.randomUUID())
   const result = yield* runAgent(
     config,

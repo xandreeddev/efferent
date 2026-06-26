@@ -87,7 +87,12 @@ fixed settings store — so a `--config matrix.json` run is a clean A/B against 
 bun run eval [name …] [--config f] [--main m] [--fast m] [--json]
 ```
 
-Gated on having a key — no key, the run skips cleanly. Suites cover the full loop (bug-fix, multi-file,
+The inline model/prompt flags (`--fast`, `--code`, `--judge`, `--prompt`, `--max-steps`) only take
+effect alongside **`--main`** (or a `--config` file) — they form a single ad-hoc config, so on their
+own (without `--main`) they're ignored and the run uses your default settings.
+
+Gated on having a key — no key, the run skips cleanly. (On a logged-in box it falls back to
+`~/.efferent/auth.json`, so an unscoped `bun run eval <suite>` spends real money.) Suites cover the full loop (bug-fix, multi-file,
 refactor, failing-test, read-only Q&A) plus the [fast-tier](/docs/concepts/providers/) use cases
 (approval judging, compaction digests, session titles).
 

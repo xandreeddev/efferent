@@ -63,7 +63,10 @@ const FLAG_NAMES = [
   "--samples",
   "--max-cost",
   "--shard",
-  "--sequential",
+  // NB: value-taking flags only. Boolean flags (`--json`, `--sequential`,
+  // `--judge-agreement`) are read with `argv.includes` and must NOT be listed
+  // here — otherwise the consumed-token loop swallows the NEXT arg (e.g. a suite
+  // name), so `eval --sequential quality` would run every suite, not just quality.
 ]
 const consumed = new Set<string>()
 for (const f of FLAG_NAMES) {
@@ -234,7 +237,7 @@ const program = Effect.gen(function* () {
 
   if (!haveKey) {
     console.log(
-      "⚠ skipped — no provider key (set GOOGLE_GENERATIVE_AI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY)",
+      "⚠ skipped — no provider key (set GOOGLE_GENERATIVE_AI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENCODE_API_KEY, or log in via ~/.efferent/auth.json)",
     )
     return
   }

@@ -7,7 +7,9 @@ import { batch } from "solid-js"
 import { Deferred, Effect, Fiber, Runtime, Schema, Stream } from "effect"
 import { FetchHttpClient } from "@effect/platform"
 import {
+  AuthStore,
   ConversationId,
+  formatModel,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
@@ -27,6 +29,7 @@ import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/si
 import { App } from "./view/App.js"
 import { treeSitterClient } from "./view/syntax.js"
 import { stopOAuthSession } from "./actions/login.js"
+import { openOnboardingFlow } from "./actions/onboarding.js"
 import { applyContext, resetConversationRail } from "./actions/session.js"
 import { refreshNav } from "./actions/contextTree.js"
 import { makeEventReducer } from "./events/eventPump.js"
@@ -126,6 +129,36 @@ export const runTuiModeRemote = (
       let rootSessionId: SessionId = initialRoot
       let rootCid: ConversationId = sessionConversationId(rootSessionId)
 
+      // The model registry + credentials live on the CLIENT, but the daemon runs
+      // the turns. After any command that may change the active model (`:login`
+      // pinning a first model, `:model`, onboarding), push the resolved model to
+      // the daemon so the NEXT turn uses it — otherwise the daemon stays on the
+      // model it had when it was auto-spawned (the cold-start bug: a fresh
+      // `:login`/onboarding left the daemon on the boot-time default and turns
+      // failed). Credentials themselves propagate via the shared
+      // ~/.efferent/auth.json (the daemon resolves keys per request); only the
+      // model selection needs an explicit push. Guarded so it's a cheap no-op
+      // (one registry read) until the selection actually changes.
+      let lastSyncedModel = ""
+      const syncModelToDaemon: Effect.Effect<void, never, AppServices> = Effect.gen(
+        function* () {
+          const cur = yield* (yield* ModelRegistry).current
+          const model = formatModel(cur.provider, cur.modelId)
+          const s = yield* (yield* SettingsStore).get()
+          const sig = `${model}|${s.codeModel ?? ""}|${s.fastModel ?? ""}`
+          if (sig === lastSyncedModel) return
+          lastSyncedModel = sig
+          yield* ws.setFleetModel(rootSessionId, model).pipe(Effect.ignore)
+          yield* ws
+            .updateSettings({
+              model,
+              ...(s.codeModel !== undefined ? { codeModel: s.codeModel } : {}),
+              ...(s.fastModel !== undefined ? { fastModel: s.fastModel } : {}),
+            })
+            .pipe(Effect.ignore)
+        },
+      ).pipe(Effect.catchAllCause(() => Effect.void))
+
       const sidePane: SidePaneState = {
         ...emptySidePane,
         skillsLoaded: input.skills.map((s) => s.name),
@@ -191,6 +224,19 @@ export const runTuiModeRemote = (
         text: "attached to daemon · type to chat (↵ sends) · : for commands · ? for keys",
       })
 
+      // First-run onboarding on the daemon path too (gated on credentials, same
+      // as the in-process driver) — a fresh user on the default `efferent` would
+      // otherwise land here with no provider and no prompt to set one up. The
+      // overlay completes via UI actions that route through `ctx.run`, so the
+      // model it pins is pushed to the daemon by the `syncModelToDaemon` wrap.
+      const authAll = yield* (yield* AuthStore).all
+      if (Object.keys(authAll).length === 0) {
+        yield* openOnboardingFlow(store)
+      }
+      // Align the daemon with the client's current selection at attach time
+      // (covers a daemon that was already running on a different model).
+      yield* syncModelToDaemon
+
       // Seed the always-visible fleet tree from the SHARED store (the client
       // process has `ContextTreeStore`/`ConversationStore` in `AppServices` and
       // already reads them for `openNodePreview`). The daemon stamps every
@@ -242,7 +288,9 @@ export const runTuiModeRemote = (
         // The remote driver backs the `efferent` master assistant — always the
         // full-chrome "master" variant (`code` runs the in-process driver).
         variant: input.variant ?? "master",
-        run: (program) => Runtime.runPromise(rt)(program),
+        // After every command, push any model change to the daemon (see
+        // syncModelToDaemon) — `:login`/`:model`/onboarding all run through here.
+        run: (program) => Runtime.runPromise(rt)(Effect.ensuring(program, syncModelToDaemon)),
         submit: (text) => {
           // Jumped into an agent? Route the message to THAT node's session — the
           // daemon delivers to a running node's mailbox or resumes a finished one

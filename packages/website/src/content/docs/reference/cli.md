@@ -47,6 +47,7 @@ Mode resolves automatically: an argv prompt or piped stdin â†’ `print`; a TTY â†
 | `--resume <conversationId>` | Resume an existing session. |
 | `--allow-bash` | Allow bash in non-interactive modes (the TUI always allows it, behind approval). |
 | `--cwd <path>` | Override the workspace (defaults to the process cwd). |
+| `--fleet <rootSessionId>` | Attach the TUI to a specific fleet's coordinator (as `efferent attach` does); with several fleets and no `--fleet`, the daemon's active one is used. |
 | `--help`, `--version` | Provided by `@effect/cli`. |
 
 ## In-TUI commands

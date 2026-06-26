@@ -80,9 +80,14 @@ const config: AgentConfig<typeof toolkit extends Toolkit.Toolkit<infer T> ? T : 
 Provide the handler layer at the edge.
 
 ```ts
-import { ConversationId, runAgent } from "@xandreed/sdk-core"
+import { homedir } from "node:os"
+import { ConversationId, runAgent, SettingsStore } from "@xandreed/sdk-core"
 
 const program = Effect.gen(function* () {
+  // Load settings first, so the agent uses YOUR configured model (the one
+  // `:login` pinned in ~/.efferent/config.json, or $EFFERENT_MODEL) rather than
+  // the built-in default. The real CLI does this at startup too.
+  yield* (yield* SettingsStore).load(process.cwd(), homedir())
   const cid = yield* Schema.decodeUnknown(ConversationId)(crypto.randomUUID())
   const result = yield* runAgent(config, cid, "Roll a 20-sided die.").pipe(
     Effect.provide(handlerLayer),
