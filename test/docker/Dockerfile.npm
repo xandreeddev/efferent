@@ -1,4 +1,5 @@
-# Clean-room test of the PUBLISHED `efferent@0.2.0` from npm — no mounted configs.
+# Clean-room test of the PUBLISHED `efferent` (default `efferent@0.3.0`, override
+# with --build-arg SPEC=…) from npm — no mounted configs.
 # Installs exactly as a new user would, plus tmux so the interactive first-run
 # (onboarding + :login) can be driven and captured. No ~/.efferent is mounted;
 # credentials are entered through the in-app :login flow, isolated from the host.
@@ -7,7 +8,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates tmux procps \
  && rm -rf /var/lib/apt/lists/* \
  && npm i -g bun
-ARG SPEC=efferent@0.2.0
+ARG SPEC=efferent@0.3.0
 RUN npm i -g "${SPEC}"
 RUN mkdir -p /work && printf '# scratch project\n' > /work/README.md
 WORKDIR /work
