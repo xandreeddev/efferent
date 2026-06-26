@@ -30,9 +30,10 @@ const caseLine = (c: CaseAgg, nameW: number): string => {
   const n = c.samples > 1 ? `${c.samples}× · ` : ""
   // pass^k marker only when sampled (k>1): did EVERY attempt pass the gate?
   const consist = c.samples > 1 ? `  ${dim("pass^k")} ${c.passHatK ? green("✓") : red("✗")}` : ""
+  const tools = c.toolCalls > 0 ? `${c.toolCalls} tool${c.toolCalls === 1 ? "" : "s"} · ` : ""
   return (
     `  ${icon} ${pad(c.name, nameW)}  ${dim("mean")} ${meanCell(c)}  ${scores}${consist}` +
-    `  ${dim(`${n}${c.steps} step${c.steps === 1 ? "" : "s"} · ${ktok(c.inputTokens)}→${ktok(c.outputTokens)} tok${cost} · ${(c.wallMs / 1000).toFixed(1)}s`)}`
+    `  ${dim(`${n}${c.steps} step${c.steps === 1 ? "" : "s"} · ${tools}${ktok(c.inputTokens)}→${ktok(c.outputTokens)} tok${cost} · ${(c.wallMs / 1000).toFixed(1)}s`)}`
   )
 }
 
@@ -59,7 +60,8 @@ const suiteBlock = (s: SuiteAgg): string => {
   // Show pass^k (consistency) only when the suite was sampled (k>1).
   const sampled = s.cases.some((c) => c.samples > 1)
   const consist = sampled ? dim(` · pass^k ${(s.passHatKRate * 100).toFixed(0)}%`) : ""
-  const head = `${bold(cyan(`▌ ${s.suite}`))}  ${dim("mean")} ${scoreColor(s.mean)} ${dim(`· pass ${(s.passRate * 100).toFixed(0)}% · ${s.cases.length} cases`)}${consist}`
+  const cps = s.costPerPass !== undefined ? dim(` · ${usd(s.costPerPass)}/pass`) : ""
+  const head = `${bold(cyan(`▌ ${s.suite}`))}  ${dim("mean")} ${scoreColor(s.mean)} ${dim(`· pass ${(s.passRate * 100).toFixed(0)}% · ${s.cases.length} cases`)}${consist}${cps}`
   return [head, ...s.cases.map((c) => caseLine(c, nameW))].join("\n")
 }
 

@@ -36,6 +36,8 @@ export interface CaseAgg {
   readonly passHatK: boolean
   readonly scores: ReadonlyArray<{ readonly name: string; readonly score: number }>
   readonly steps: number
+  /** Tool calls across the run (incl. sub-agents) — the efficiency signal a pass-ratio hides. */
+  readonly toolCalls: number
   readonly inputTokens: number
   readonly outputTokens: number
   readonly cacheReadTokens: number
@@ -51,6 +53,10 @@ export interface SuiteAgg {
   readonly passAtKRate: number
   /** Fraction of cases where ALL k samples passed the gate (pass^k — consistency). */
   readonly passHatKRate: number
+  /** Total cost ÷ number of cases that passed (pass@k) — the headline efficiency
+   *  metric for a multi-agent system (tokens explain ~80% of its performance
+   *  variance). Undefined when nothing is priced or nothing passed. */
+  readonly costPerPass?: number
   readonly cases: ReadonlyArray<CaseAgg>
 }
 
@@ -150,11 +156,13 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     let cacheRead = 0
     let cost: number | undefined = undefined
     let steps = 0
+    let toolCalls = 0
     for (const d of subtree) {
       // Match on the stable `agent.kind` attribute, not the (renamable) span
       // name — the same identity the Grafana dashboards filter on.
       const kind = strAttr(d.attributes, "agent.kind")
       if (kind === "turn") steps++
+      if (kind === "tool") toolCalls++
       if (kind === "llm") {
         const c = llmContribution(d)
         input += c.input
@@ -176,6 +184,7 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
       passHatK,
       scores,
       steps,
+      toolCalls,
       inputTokens: input,
       outputTokens: output,
       cacheReadTokens: cacheRead,
@@ -202,12 +211,18 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     }
     const suites: Array<SuiteAgg> = []
     for (const [suite, scases] of bySuite) {
+      // Cost-per-success: total priced cost ÷ cases that passed (pass@k).
+      const priced = scases.filter((c) => c.costUsd !== undefined)
+      const totalCost = priced.reduce((a, c) => a + (c.costUsd ?? 0), 0)
+      const passedCount = scases.filter((c) => c.passAtK).length
+      const costPerPass = priced.length > 0 && passedCount > 0 ? totalCost / passedCount : undefined
       suites.push({
         suite,
         mean: average(scases.map((c) => c.mean)),
         passRate: average(scases.map((c) => (c.mean >= 0.6 ? 1 : 0))),
         passAtKRate: average(scases.map((c) => (c.passAtK ? 1 : 0))),
         passHatKRate: average(scases.map((c) => (c.passHatK ? 1 : 0))),
+        ...(costPerPass !== undefined ? { costPerPass } : {}),
         cases: scases,
       })
     }
