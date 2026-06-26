@@ -41,12 +41,28 @@ paired per-case delta and a verdict: `✔ better` / `✘ worse` (CI excludes 0) 
 ## Model comparison (matrix)
 
 ```bash
+# does having a code tier help at all? (no-tier vs deepseek-tier)
 bun run eval quality --config packages/evals/dataset/configs/code-tier.json
+
+# which model should back the code tier? (general+fast held constant, code varied)
+# code-tier choice only moves CODE quality, so filter to the coding scenarios:
+QUALITY_FILTER="bug-fix,feature,refactor" \
+  bun run eval quality --config packages/evals/dataset/configs/code-model-matrix.json --samples 3
 ```
 
-Runs the golden set across each config (e.g. no-code-tier vs deepseek-code-tier)
-and prints the per-config scorecard + comparison — "which model should back the
-code tier?".
+Each `--config` is an array of `RunConfig`; the run prints a per-config scorecard
+plus a comparison of every config against the **first** (the comparison baseline),
+with the paired-delta bootstrap CI + a `✔ sig. / ✘ sig. / ~ noise` verdict.
+
+> **Finding (2026-06-26, N=3 — `code-model-matrix.json`, deepseek-v4-pro vs glm-5.1
+> vs qwen3.7-max vs minimax-m3, kimi general).** All four are **quality-equivalent**
+> on the golden coding scenarios — every delta is `~ noise` (CI includes 0). These
+> tasks (one-line bug fix, add a pure function, two-file rename) saturate at ~1.0 for
+> any competent coder, so the suite can only separate code models on **cost/latency**:
+> `deepseek-v4-pro` is the leanest (incumbent — keep it), `minimax-m3` ties it,
+> `qwen3.7-max` costs ~40% more tokens for no quality gain. **To rank coders on
+> quality, add harder scenarios** (the `repo-tasks` / `whole-task` suites: real
+> `bun test`, multi-file, trickier logic) — the current golden set can't discriminate.
 
 ## Committed baselines
 
