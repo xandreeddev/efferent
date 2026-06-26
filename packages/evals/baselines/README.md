@@ -48,8 +48,11 @@ Runs the golden set across each config (e.g. no-code-tier vs deepseek-code-tier)
 and prints the per-config scorecard + comparison — "which model should back the
 code tier?".
 
-> Note: the first real baseline is pending a credited provider on this machine
-> (`google` is out of credits; the opencode/anthropic/openai creds in
-> `auth.json` weren't resolving through the eval auth path). Export
-> `OPENCODE_API_KEY` (above) to bypass that, or re-`:login` opencode in the TUI
-> to rewrite `auth.json` in the current format.
+## Committed baselines
+
+| file | what it captures |
+|------|------------------|
+| `2026-06-25-quality.json` | **before** — the untuned `# Writing code` policy. Coding scenarios route to the code tier 0% of the time (the root edits directly on general); read-only QA correct. Overall 0.82. |
+| `2026-06-26-quality.json` | **after** — the tuned hard-rule delegation prompt. Coding routing reliably hits the code tier; QA unchanged. Overall 0.97, Δ +0.15 over the 06-25 baseline (95% CI [0.05,0.25] → significant). |
+
+> **Read routing as a rate, not a constant.** Code-tier delegation is prompt-driven, so it has real run-to-run variance — at N=5 the coding scenarios measured ~0.8–1.0 routing across separate runs. The `2026-06-26` snapshot happened to land at 1.0 on every coding case, so its per-case stdev reads 0.00, which **understates** that variance. A later run dipping to ~0.8 on a single coding scenario is within noise, not a regression — trust the `--compare` bootstrap-CI verdict (`✔ better` / `✘ worse` / `~ noise`) over a raw per-case delta. Re-run with `--samples 5+` when you need a tighter read.
