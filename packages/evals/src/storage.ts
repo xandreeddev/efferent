@@ -1,7 +1,31 @@
 import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import type { RunAgg } from "./trace/process.js"
+
+/**
+ * Reproducibility manifest — what the run was pinned to, so a saved baseline is
+ * reconstructable and comparable (the SWE-bench/LiveCodeBench lesson: pin the
+ * image by digest + lock the deps + the source commit + the models).
+ */
+export interface RunManifest {
+  /** Content-addressed sandbox image (`oven/bun@sha256:…`). */
+  readonly imageDigest?: string
+  /** Short sha256 of `bun.lock` — the exact dependency closure. */
+  readonly bunLockHash?: string
+  /** Model selection per role for each config (configName → {main,code,fast,judge}). */
+  readonly models?: Record<string, Record<string, string>>
+}
+
+/** Short sha256 of a file's contents, or undefined if unreadable. */
+export const fileHash = (path: string): string | undefined => {
+  try {
+    return createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 16)
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Persisted eval result — a dated, git-stamped snapshot of a run's per-config /
@@ -17,6 +41,8 @@ export interface SavedReport {
   readonly gitSha?: string
   /** A human note (e.g. "baseline before the routing change"). */
   readonly label?: string
+  /** What the run was pinned to (image digest, dep-lock hash, models). */
+  readonly manifest?: RunManifest
   readonly runs: ReadonlyArray<RunAgg>
 }
 
@@ -34,11 +60,13 @@ export const buildReport = (
   ts: string,
   sha?: string,
   label?: string,
+  manifest?: RunManifest,
 ): SavedReport => ({
   version: 1,
   ts,
   ...(sha !== undefined ? { gitSha: sha } : {}),
   ...(label !== undefined ? { label } : {}),
+  ...(manifest !== undefined ? { manifest } : {}),
   runs,
 })
 

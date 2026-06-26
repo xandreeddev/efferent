@@ -7,7 +7,9 @@ import type { RunConfig } from "./config/RunConfig.js"
 import { makeEvalEnv, type EvalEnv } from "./env.js"
 import type { EvalSpec } from "./framework/Eval.js"
 import { runEval } from "./framework/runEval.js"
-import { buildReport, gitSha, readReport, reportExists, writeReport } from "./storage.js"
+import { buildReport, fileHash, gitSha, readReport, reportExists, writeReport, type RunManifest } from "./storage.js"
+import { resolveImageDigest } from "./support/dockerSandbox.js"
+import { JUDGE_LABELS, judgeLabeledCases } from "./support/judgeAgreement.js"
 import { makeCollector } from "./telemetry/collect.js"
 import { processSpans } from "./trace/process.js"
 import { renderRuns, renderVsBaseline } from "./trace/report.js"
@@ -237,6 +239,22 @@ const program = Effect.gen(function* () {
     return
   }
 
+  // `--judge-agreement`: grade the human-labelled set with the (independent)
+  // judge and report κ + TPR/TNR — the gate for trusting the LLM-judge axis.
+  if (argv.includes("--judge-agreement")) {
+    const cfg = buildConfigs()[0]
+    const s = yield* judgeLabeledCases(JUDGE_LABELS).pipe(Effect.provide(makeEvalEnv(cfg)))
+    const verdict =
+      s.cohensKappa >= 0.61 ? "substantial" : s.cohensKappa >= 0.41 ? "moderate" : "weak — do not trust"
+    console.log(
+      `\n▌ judge agreement (${cfg?.judge ?? "main model"})\n` +
+        `  n=${s.n} · κ=${s.cohensKappa.toFixed(2)} (${verdict}) · raw=${(s.rawAgreement * 100).toFixed(0)}%` +
+        ` · TPR=${s.tpr.toFixed(2)} · TNR=${s.tnr.toFixed(2)}\n` +
+        `  confusion: tp=${s.confusion.tp} fp=${s.confusion.fp} tn=${s.confusion.tn} fn=${s.confusion.fn}`,
+    )
+    return
+  }
+
   for (const config of buildConfigs()) {
     if (aborted) break
     yield* runConfigGroup(config)
@@ -288,7 +306,26 @@ const program = Effect.gen(function* () {
   // means/cost from a partial set of suites.
   if (savePath !== undefined && !aborted) {
     const label = flag("--label")
-    writeReport(savePath, buildReport(runs, new Date().toISOString(), gitSha(), label))
+    // Reproducibility manifest: pin the sandbox image digest, the dep-lock hash,
+    // and the per-config model selections into the committed baseline.
+    const models: Record<string, Record<string, string>> = {}
+    for (const c of buildConfigs()) {
+      if (c === undefined) continue
+      models[c.name] = {
+        main: c.main,
+        ...(c.code !== undefined ? { code: c.code } : {}),
+        ...(c.fast !== undefined ? { fast: c.fast } : {}),
+        ...(c.judge !== undefined ? { judge: c.judge } : {}),
+      }
+    }
+    const digest = resolveImageDigest()
+    const lock = fileHash("bun.lock")
+    const manifest: RunManifest = {
+      ...(digest !== undefined ? { imageDigest: digest } : {}),
+      ...(lock !== undefined ? { bunLockHash: lock } : {}),
+      ...(Object.keys(models).length > 0 ? { models } : {}),
+    }
+    writeReport(savePath, buildReport(runs, new Date().toISOString(), gitSha(), label, manifest))
     console.log(`saved baseline → ${savePath}`)
   }
 

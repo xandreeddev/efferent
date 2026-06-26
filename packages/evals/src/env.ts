@@ -1,15 +1,16 @@
-import type { LanguageModel } from "@effect/ai"
-import { Layer } from "effect"
-import type {
-  AuthStore,
-  ContextTreeStore,
-  ConversationStore,
-  FileSystem,
-  Http,
-  SettingsStore,
-  Shell,
-  UtilityLlm,
-  WebSearch,
+import { LanguageModel } from "@effect/ai"
+import { Effect, Layer } from "effect"
+import {
+  type AuthStore,
+  type ContextTreeStore,
+  type ConversationStore,
+  type FileSystem,
+  type Http,
+  selectionFromString,
+  type SettingsStore,
+  type Shell,
+  type UtilityLlm,
+  type WebSearch,
 } from "@xandreed/sdk-core"
 import {
   EnvAuthStoreLive,
@@ -19,12 +20,14 @@ import {
   LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
+  makePinnedModel,
   ModelLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
 import type { RunConfig } from "./config/RunConfig.js"
 import { settingsLayerForConfig } from "./config/settingsLayer.js"
+import { JudgeModel } from "./framework/judge.js"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"
 import { InMemoryContextTreeStoreLive } from "./support/inMemoryContextTreeStore.js"
 
@@ -38,6 +41,7 @@ import { InMemoryContextTreeStoreLive } from "./support/inMemoryContextTreeStore
  */
 export type EvalEnv =
   | LanguageModel.LanguageModel
+  | JudgeModel
   | UtilityLlm
   | AuthStore
   | ConversationStore
@@ -95,6 +99,27 @@ const ENV_KEY_VARS = [
 ] as const
 const hasEnvKey = (): boolean => ENV_KEY_VARS.some((v) => (process.env[v] ?? "").length > 0)
 
+/**
+ * The judge model — a strong, INDEPENDENT grader pinned to `--judge` when set,
+ * else the main model (today's behaviour). Built once per env (the eval run's
+ * lifetime, `Layer.scoped`); a judge-key/build failure degrades to the main
+ * model rather than aborting the run. Resolves LanguageModel/Auth/Settings from
+ * the base env; brings its own HttpClient.
+ */
+const JudgeModelLive = (
+  config?: RunConfig,
+): Layer.Layer<JudgeModel, never, LanguageModel.LanguageModel | AuthStore | SettingsStore> =>
+  Layer.scoped(
+    JudgeModel,
+    Effect.gen(function* () {
+      const main = yield* LanguageModel.LanguageModel
+      if (config?.judge === undefined) return main
+      return yield* makePinnedModel(selectionFromString(config.judge)).pipe(
+        Effect.orElseSucceed(() => main),
+      )
+    }),
+  ).pipe(Layer.provide(FetchHttpClientLive))
+
 export const makeEvalEnv = (config?: RunConfig): Layer.Layer<EvalEnv> => {
   const settingsLive =
     config === undefined
@@ -104,7 +129,9 @@ export const makeEvalEnv = (config?: RunConfig): Layer.Layer<EvalEnv> => {
   // provideMerge (not merge): feeds AuthStore + SettingsStore *into* the model
   // tier / WebSearch AND keeps SettingsStore in the output (runAgent reads it).
   const CredentialsLive = Layer.mergeAll(authLive, settingsLive)
-  return PortsLive.pipe(Layer.provideMerge(CredentialsLive), Layer.orDie)
+  const base = PortsLive.pipe(Layer.provideMerge(CredentialsLive))
+  // JudgeModel sits on top — it needs LanguageModel + Auth + Settings from base.
+  return JudgeModelLive(config).pipe(Layer.provideMerge(base), Layer.orDie)
 }
 
 /** The default eval env (no pinned config) — what `bun run eval` uses. */

@@ -29,6 +29,12 @@ export interface FeatureScenario {
   readonly rubric: string
   readonly routing?: RoutingExpectation
   readonly budget?: EfficiencyBudget
+  /** A KNOWN-GOOD implementation (keyed like `files`, replacing the stub). Used
+   *  only by the determinism pre-check (`validateSuites`): it runs this against
+   *  the hidden tests N× and fails the suite if a hidden test is flaky or the
+   *  reference doesn't pass — catching a broken oracle before it ships (the #1
+   *  reliability threat in execution-graded evals). Never given to the agent. */
+  readonly reference?: Record<string, string>
 }
 
 // ───────────────────────── 1 · LRU cache with TTL ─────────────────────────
@@ -554,12 +560,116 @@ Transactions
 
 Keep the implementation tightly scoped to txStore.ts.`
 
+// ───────── reference implementations (determinism pre-check only) ─────────
+// Known-good impls validated to pass all hidden tests. `validateSuites` runs
+// each N× to prove the hidden suite is a reliable, non-flaky oracle. NOT shown
+// to the agent. Plain JS bodies (Bun runs the .ts file regardless of types).
+
+const lruRef = String.raw`export class LruCache {
+  constructor(capacity, options = {}) {
+    this.capacity = capacity
+    this.defaultTtlMs = options.defaultTtlMs
+    this.now = options.now ?? (() => Date.now())
+    this.map = new Map()
+  }
+  _expired(e) { return e.expiresAt !== undefined && this.now() >= e.expiresAt }
+  _purge() { for (const [k, e] of [...this.map]) if (this._expired(e)) this.map.delete(k) }
+  get size() { this._purge(); return this.map.size }
+  set(key, value, ttlMs) {
+    const ttl = ttlMs ?? this.defaultTtlMs
+    const expiresAt = ttl === undefined ? undefined : this.now() + ttl
+    if (this.map.has(key)) { this.map.delete(key); this.map.set(key, { value, expiresAt }); return }
+    this._purge()
+    if (this.map.size >= this.capacity) {
+      const lru = this.map.keys().next().value
+      if (lru !== undefined) this.map.delete(lru)
+    }
+    this.map.set(key, { value, expiresAt })
+  }
+  get(key) {
+    const e = this.map.get(key)
+    if (e === undefined) return undefined
+    if (this._expired(e)) { this.map.delete(key); return undefined }
+    this.map.delete(key); this.map.set(key, e)
+    return e.value
+  }
+  has(key) {
+    const e = this.map.get(key)
+    if (e === undefined) return false
+    if (this._expired(e)) { this.map.delete(key); return false }
+    return true
+  }
+  delete(key) { return this.map.delete(key) }
+  clear() { this.map.clear() }
+  keys() { this._purge(); return [...this.map.keys()] }
+}
+`
+
+const csvRef = String.raw`export const parseCsv = (input) => {
+  if (input === "") return []
+  const rows = []
+  let row = []
+  let field = ""
+  let inQuotes = false
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (input[i + 1] === '"') { field += '"'; i++ } else { inQuotes = false }
+      } else { field += ch }
+      continue
+    }
+    if (ch === '"' && field === "") { inQuotes = true }
+    else if (ch === ",") { row.push(field); field = "" }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = "" }
+    else if (ch === "\r" && input[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++ }
+    else { field += ch }
+  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row) }
+  return rows
+}
+`
+
+const txRef = String.raw`export class TxStore {
+  constructor() { this.base = new Map(); this.layers = [] }
+  get depth() { return this.layers.length }
+  _top() { return this.layers.length > 0 ? this.layers[this.layers.length - 1] : undefined }
+  _resolve(key) {
+    for (let i = this.layers.length - 1; i >= 0; i--) {
+      const layer = this.layers[i]
+      if (layer.has(key)) return layer.get(key)
+    }
+    if (this.base.has(key)) return { value: this.base.get(key) }
+    return undefined
+  }
+  get(key) { const e = this._resolve(key); return e === undefined || e.deleted ? undefined : e.value }
+  has(key) { const e = this._resolve(key); return e !== undefined && !e.deleted }
+  set(key, value) { const t = this._top(); if (t) t.set(key, { value }); else this.base.set(key, value) }
+  delete(key) { const t = this._top(); if (t) t.set(key, { deleted: true }); else this.base.delete(key) }
+  keys() {
+    const out = new Set([...this.base.keys()])
+    for (const layer of this.layers) for (const [k, e] of layer) { if (e.deleted) out.delete(k); else out.add(k) }
+    return [...out].sort()
+  }
+  begin() { this.layers.push(new Map()) }
+  commit() {
+    if (this.layers.length === 0) throw new Error("no active transaction")
+    const top = this.layers.pop()
+    const below = this._top()
+    if (below) { for (const [k, e] of top) below.set(k, e) }
+    else { for (const [k, e] of top) { if (e.deleted) this.base.delete(k); else this.base.set(k, e.value) } }
+  }
+  rollback() { if (this.layers.length === 0) throw new Error("no active transaction"); this.layers.pop() }
+}
+`
+
 export const FEATURES: ReadonlyArray<FeatureScenario> = [
   {
     name: "feature · LRU cache with per-entry TTL",
     files: { "lruCache.ts": lruStub },
     prompt: lruPrompt,
     hiddenTests: { "lruCache.spec.ts": lruTest },
+    reference: { "lruCache.ts": lruRef },
     readback: ["lruCache.ts"],
     rubric:
       "lruCache.ts implements a correct fixed-capacity LRU cache with TTL. Critical behaviours: get refreshes recency but has does NOT; eviction removes the true least-recently-used live entry; expiry uses the injected clock (now >= insertedAt + ttl) with per-entry ttl overriding defaultTtlMs and no-ttl meaning never-expires; expired entries are purged lazily and excluded from size/keys; updating a key resets its ttl and recency; keys() is ordered LRU-first. Penalise any missing edge case (recency-on-has, expiry purging freeing capacity, ttl reset on update). Implementation stays scoped to lruCache.ts.",
@@ -571,6 +681,7 @@ export const FEATURES: ReadonlyArray<FeatureScenario> = [
     files: { "csv.ts": csvStub },
     prompt: csvPrompt,
     hiddenTests: { "csv.spec.ts": csvTest },
+    reference: { "csv.ts": csvRef },
     readback: ["csv.ts"],
     rubric:
       "csv.ts implements a correct RFC-4180 CSV parser. Critical behaviours: comma field separation; LF and CRLF record separation; a single trailing line break does NOT add an empty record but a mid-document empty line yields [\"\"]; empty fields preserved; whitespace significant; quoted fields where commas/newlines are literal; doubled quotes (\"\") decode to one quote; CRLF preserved literally inside quotes. Penalise any unhandled quoting/escaping/line-ending edge case. Scoped to csv.ts.",
@@ -582,6 +693,7 @@ export const FEATURES: ReadonlyArray<FeatureScenario> = [
     files: { "txStore.ts": txStub },
     prompt: txPrompt,
     hiddenTests: { "txStore.spec.ts": txTest },
+    reference: { "txStore.ts": txRef },
     readback: ["txStore.ts"],
     rubric:
       "txStore.ts implements a correct nestable-transaction KV store. Critical behaviours: layered view (innermost layer down to base); set/delete target the innermost layer; delete is a tombstone that hides lower values in-view; commit merges the innermost layer (sets AND tombstones) into the enclosing scope so an inner commit reaches the outer tx but not the base until the outer commits; rollback discards the layer; commit/rollback throw when no tx is active; keys() reflects the layered view sorted ascending. Penalise missing tombstone handling, wrong commit propagation, or absent error-on-no-tx. Scoped to txStore.ts.",

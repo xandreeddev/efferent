@@ -13,6 +13,8 @@ const sampleRuns: ReadonlyArray<RunAgg> = [
         suite: "quality",
         mean: 0.7,
         passRate: 0.8,
+        passAtKRate: 1,
+        passHatKRate: 0.67,
         cases: [
           {
             suite: "quality",
@@ -22,6 +24,8 @@ const sampleRuns: ReadonlyArray<RunAgg> = [
             mean: 0.7,
             samples: 3,
             stdev: 0.05,
+            passAtK: true,
+            passHatK: false,
             scores: [{ name: "quality", score: 0.7 }],
             steps: 4,
             inputTokens: 100,
