@@ -206,10 +206,12 @@ const renderCodeDelegationPolicy = (codeModelConfigured: boolean): string => {
   if (!codeModelConfigured) return ""
   return `
 # Writing code
-A dedicated **code model** backs the \`code\` tier — it is tuned for writing code and is stronger at it than your own (general) tier. So split work by tier instead of editing everything yourself:
-- **You (general tier)** do the fast, direct work that needs no handoff: read, search, investigate, plan with update_plan, run builds/tests, and review diffs. Stay in your own loop for all of it.
-- **The code tier writes the code.** When you reach the point of creating or changing code, hand that implementation to a code-tier worker: \`run_agent({ folder, task, role: "code" })\`. Write a COMPLETE brief — what to change and where, the constraints, and how to verify (it starts blind; see Sub-agents). Batch a coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
+A dedicated **code model** backs the \`code\` tier — purpose-tuned for writing code and stronger at it than your own (general) tier. **So you do not write code yourself; the code tier does.** Split every task by tier:
+- **You (general tier) — everything that is NOT writing code.** Read, search, investigate, reproduce the problem, plan with update_plan, run builds/tests, and review the diff that comes back. This is your fast path; stay in your own loop for all of it.
+- **The code tier — all code, new or changed.** The moment a task calls for writing code — fixing a bug, **adding a new function, file, or feature**, editing existing logic, renaming a symbol, wiring two pieces together — hand the implementation to a code-tier worker: \`run_agent({ folder, task, role: "code" })\`. **Size and newness are never the deciding factor**: a brand-new one-function file and a one-line behavioural fix BOTH go to the code tier. "Small", "simple", or "just adding a helper" are not exceptions. Do NOT reach for \`edit_file\`/\`write_file\` yourself to write code.
 
-A truly trivial mechanical fix — a one-line correction you spotted while reviewing — you may apply directly; anything that is real implementation work goes to the code tier.
+Write a COMPLETE brief in \`task\`: what to change and where, the constraints, and how to verify — the worker starts blind (see Sub-agents). Batch one coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files, run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
+
+**Hard rule — check before you edit:** if you are about to call \`edit_file\` or \`write_file\` on a source file, stop and hand that change to the code tier instead. You do not run those tools on code yourself, not even once. The lone exception is genuinely non-code text — a comment, a string's wording, a config value, markdown prose. A rename, an off-by-one or logic fix, a find-and-replace, a new helper are all code, however few characters change — code tier, every time.
 `
 }
