@@ -36,18 +36,24 @@ interface Expected {
   readonly budget?: EfficiencyBudget
 }
 
-/** The text the judge / objective check reads: the produced file when the
- *  scenario names one, else the agent's final answer. */
-const subject = (output: ScenarioRun, expected: Expected): string => {
-  const file = expected.expect?.file
-  if (file !== undefined && output.files[file] !== undefined && output.files[file]!.length > 0) {
-    return output.files[file]!
-  }
-  // No single named file → judge the answer plus any read-back file contents.
+/** Everything the JUDGE grades against: the agent's final answer plus the full
+ *  post-run contents of EVERY read-back file. Multi-file scenarios (e.g. a rename
+ *  across two files) need all of them — judging only the single `expect.file`
+ *  blinds the judge to cross-file consistency the rubric asks about (the refactor
+ *  rubric checks the call site in `use.ts`, not just the export in `math.ts`). */
+const judgeSubject = (output: ScenarioRun): string => {
   const fileDump = Object.entries(output.files)
     .map(([p, c]) => `// ${p}\n${c}`)
     .join("\n\n")
   return [output.finalText, fileDump].filter((s) => s.trim().length > 0).join("\n\n")
+}
+
+/** The text the OBJECTIVE substring check runs against: the specific file the
+ *  scenario targets (`expect.file`), else the full judge subject. Kept narrow so
+ *  a `mustNotContain` isn't accidentally satisfied (or violated) by another file. */
+const objectiveText = (output: ScenarioRun, e: NonNullable<Expected["expect"]>): string => {
+  if (e.file !== undefined && (output.files[e.file]?.length ?? 0) > 0) return output.files[e.file]!
+  return judgeSubject(output)
 }
 
 /** Iteration aid: `QUALITY_FILTER="bug-fix,refactor"` narrows the golden set to
@@ -78,14 +84,14 @@ export const quality = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
   scorers: [
     qualityRubric<Input, ScenarioRun, Expected>("quality", ({ output, expected }) => ({
       rubric: expected.rubric,
-      output: subject(output, expected),
+      output: judgeSubject(output),
     })),
     routingScore<Input, Expected>("routing"),
     efficiencyScore<Input, Expected>("efficiency"),
     predicate<Input, ScenarioRun, Expected>("objective", ({ output, expected }) => {
       const e = expected.expect
       if (e === undefined) return true
-      const text = subject(output, expected)
+      const text = objectiveText(output, e)
       const has = (e.mustContain ?? []).every((n) => text.includes(n))
       const lacks = (e.mustNotContain ?? []).every((n) => !text.includes(n))
       return has && lacks
