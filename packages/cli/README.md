@@ -2,11 +2,11 @@
   <img src="https://raw.githubusercontent.com/xandreeddev/efferent/main/assets/logo-code.svg" alt="efferent &lt; code &gt;" width="520">
 </p>
 
-> A coding agent that lives in your terminal. **Effect.ts + Bun**, a borderless full-screen TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree.
+> **The efferent CLI** — one CLI that runs agents on the **efferent agent runtime** (Effect.ts + Bun). Drive an agent from an interactive borderless TUI (OpenTUI + SolidJS — no React, no Ink, no Electron), headless (print / json / rpc), or a persistent per-workspace daemon that thin clients attach to. Zero-config local history, multi-provider with subscription OAuth, cache-safe context compaction that never breaks the prompt cache, and a sub-agent fleet over a persistent context tree. The bundled coding agent (`efferent code`) is one app it runs.
 
 ```bash
-npm i -g @xandreed/code    # requires Bun (https://bun.sh); bin: efferent / eff
-efferent                   # opens the TUI in the current project
+npm i -g efferent          # requires Bun (https://bun.sh); bin: efferent / eff
+efferent                   # default master TUI: attach-or-spawn the per-workspace daemon
                            # → type :login to add a provider
 ```
 
@@ -56,11 +56,15 @@ That's it. No `init`, no wizard, no env vars. **`:login`** picks a subscription 
 Requires [Bun](https://bun.sh) ≥ 1.2. The npm package is a Bun bundle with two runtime dependencies (`@opentui/core` — the native terminal renderer loads via FFI — and `web-tree-sitter`); everything else is inlined.
 
 ```bash
-npm i -g @xandreed/code     # or: bun add -g @xandreed/code  (bin: efferent / eff)
+npm i -g efferent           # or the scoped alias @xandreed/cli (same bundle); bin: efferent / eff
 ```
 
 ```bash
-efferent                                 # full TUI (default in a TTY)
+efferent                                 # default master TUI: attach-or-spawn the per-workspace daemon
+efferent code                            # focused single-fleet coder, in-process (the bundled coding agent)
+efferent attach                          # explicitly attach the master TUI to the daemon
+efferent daemon start                    # run the persistent per-workspace daemon (alias: serve)
+efferent daemon status | stop            # daemon lifecycle
 efferent "summarise packages/sdk-core"   # one-shot print mode
 efferent --mode json "ls"                # stream JSONL events
 efferent --mode rpc                      # JSON-RPC over stdio
@@ -119,8 +123,8 @@ The sub-agent gets the full toolkit but only **writes** inside `folder` (bash is
 git clone https://github.com/xandreeddev/efferent && cd efferent
 bun install
 bun run typecheck && bun test         # the correctness gates (no build step for dev)
-bun packages/code/src/main.ts         # run from source — Bun runs .ts directly
-bun run build                         # bundle → packages/code/dist/efferent.js
+bun packages/cli/src/main.ts          # run from source — Bun runs .ts directly
+bun run build                         # bundle → packages/cli/dist/efferent.js
 bun run eval [name …]                 # eval suites (key-gated)
 ```
 
@@ -128,11 +132,11 @@ bun run eval [name …]                 # eval suites (key-gated)
 packages/
 ├── sdk-core/      pure domain — entities, ports, use cases, prompts (effect + @effect/ai only)
 ├── sdk-adapters/  Layer impls of core ports — provider SDKs + IO live here
-├── code/          this package — composition root + the modes + the OpenTUI/SolidJS TUI
+├── cli/           this package — composition root + the modes + the OpenTUI/SolidJS TUI
 └── evals/         Effect-native eval framework + the agent's suites
 ```
 
-Dependency direction is strictly inward: `code` → `sdk-adapters` → `sdk-core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
+Dependency direction is strictly inward: `cli` → `sdk-adapters` → `sdk-core`. Tests are colocated (`bun test`, 440+, incl. property-based tests via effect's fast-check integration).
 
 ## Docs
 

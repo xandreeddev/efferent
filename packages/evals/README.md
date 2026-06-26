@@ -299,4 +299,4 @@ Covers:
 - **Don't re-collect metrics in suites.** Tokens/steps/cost live on the agent's spans.
 - **Eval telemetry stays disjoint from prod.** `service.name=efferent-evals`, `deployment.environment=eval`.
 
-Part of [**efferent**](../../README.md) — a coding agent on Effect.ts + Bun.
+Part of [**efferent**](../../README.md) — an agent runtime on Effect.ts + Bun.

@@ -1,6 +1,6 @@
 ---
 name: cli
-description: Owns packages/code/. Coding-agent driver — composition root + five modes (TUI, print, json, rpc, daemon). The TUI is OpenTUI + SolidJS (no React/Ink).
+description: Owns packages/cli/. The efferent CLI driver — composition root for the run modes (TUI, print, json, rpc, daemon) + the per-workspace daemon, the one CLI that runs agents on the runtime. The TUI is OpenTUI + SolidJS (no React/Ink).
 ---
 
 ## Layout

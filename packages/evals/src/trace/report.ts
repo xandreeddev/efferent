@@ -2,7 +2,7 @@ import type { SavedReport } from "../storage.js"
 import type { CaseAgg, RunAgg, SuiteAgg } from "./process.js"
 import { pairedDeltaCI } from "./significance.js"
 
-/* Inline ANSI — evals must not depend on @xandreed/code. */
+/* Inline ANSI — evals must not depend on efferent. */
 const ESC = "\x1b["
 const wrap = (code: number) => (s: string): string => `${ESC}${code}m${s}${ESC}0m`
 const dim = wrap(2)

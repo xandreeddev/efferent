@@ -9,12 +9,12 @@ import {
   loadTools,
   runAgent,
 } from "@xandreed/sdk-core"
-import { coderAgentConfig } from "@xandreed/code/usecases/coderAgentConfig.js"
-import { coderPrompt } from "@xandreed/code/prompts/coder.js"
-import { discoverInstructionFiles } from "@xandreed/code/usecases/discoverInstructionFiles.js"
-import { loadAgents } from "@xandreed/code/usecases/loadAgents.js"
-import { loadMemory } from "@xandreed/code/usecases/loadMemory.js"
-import { loadSkills } from "@xandreed/code/usecases/loadSkills.js"
+import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
+import { coderPrompt } from "efferent/prompts/coder.js"
+import { discoverInstructionFiles } from "efferent/usecases/discoverInstructionFiles.js"
+import { loadAgents } from "efferent/usecases/loadAgents.js"
+import { loadMemory } from "efferent/usecases/loadMemory.js"
+import { loadSkills } from "efferent/usecases/loadSkills.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

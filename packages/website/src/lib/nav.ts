@@ -11,7 +11,7 @@ export const href = (path: string): string => {
 }
 
 export const GITHUB = "https://github.com/xandreeddev/efferent"
-export const NPM = "https://www.npmjs.com/package/@xandreed/code"
+export const NPM = "https://www.npmjs.com/package/efferent"
 
 export const topNav = [
   { label: "Docs", href: "/docs/getting-started" },

@@ -34,18 +34,19 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
 
 <BaseLayout
   title="efferent"
-  description="An open-source agent framework on Effect.ts + Bun — and the coding agent built on it. The loop, a multi-provider router, cache-safe context compaction, and a persistent sub-agent fleet, composed as Effects in your codebase."
+  description="An open-source agent runtime on Effect.ts + Bun — a composable SDK plus one CLI that runs agents (TUI, headless, or a persistent daemon). The loop, a multi-provider router, cache-safe context compaction, and a persistent sub-agent fleet, composed as Effects in your codebase."
 >
   <!-- HERO -->
   <section class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
         <p class="eyebrow">The efferent ecosystem</p>
-        <h1>Coding agents,<br /><span class="grad">composed on Effect.</span></h1>
+        <h1>An agent runtime,<br /><span class="grad">composed on Effect.</span></h1>
         <p class="sub">
-          An open-source SDK for building agents — and a batteries-included coding agent built on it.
-          The loop, the multi-provider router, cache-safe context compaction, and a sub-agent fleet
-          live in your codebase as composable Effects, not buried in a CLI.
+          An open-source SDK for building agents — and one CLI that runs them: an interactive TUI,
+          headless modes, or a persistent per-workspace daemon. The loop, the multi-provider router,
+          cache-safe context compaction, and a sub-agent fleet live in your codebase as composable
+          Effects, not buried in a CLI.
         </p>
         <div class="hero-cta">
           <a class="btn btn-primary" href={href("/docs/getting-started")}>
@@ -54,8 +55,8 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
           <a class="btn btn-ghost" href={href("/#ecosystem")}>Explore the ecosystem</a>
         </div>
         <div class="cmd">
-          <code><span class="prompt">$</span> npm i -g @xandreed/code</code>
-          <button class="copy" data-copy="npm i -g @xandreed/code" aria-label="Copy install command">Copy</button>
+          <code><span class="prompt">$</span> npm i -g efferent</code>
+          <button class="copy" data-copy="npm i -g efferent" aria-label="Copy install command">Copy</button>
         </div>
       </div>
 

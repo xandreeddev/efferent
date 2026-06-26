@@ -22,4 +22,4 @@ The middle ring of the architecture: `adapters` depends on `core` + the external
 - Depend on `@xandreed/sdk-core` + external SDKs only. Never import from the CLI or another adapter's internals.
 - Migrations register in `migrator.ts` via `Migrator.fromRecord` (bundle-safe) — one record per store flavor.
 
-Part of [**efferent**](../../README.md) — a coding agent on Effect.ts + Bun.
+Part of [**efferent**](../../README.md) — an agent runtime on Effect.ts + Bun.
