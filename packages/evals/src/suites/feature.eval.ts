@@ -3,6 +3,7 @@ import { defineEval } from "../framework/Eval.js"
 import { fromEffect, qualityRubric } from "../framework/scorers.js"
 import type { EvalEnv } from "../env.js"
 import { FEATURES, type FeatureScenario } from "../dataset/feature.js"
+import { loadPrivateFeatures } from "../support/privateFeatures.js"
 import { runScenario, type ScenarioRun } from "../support/scenarioRun.js"
 import {
   efficiencyScore,
@@ -29,6 +30,7 @@ interface Input {
   readonly prompt: string
   readonly hiddenTests: Record<string, string>
   readonly testPaths?: ReadonlyArray<string>
+  readonly edgeTests?: ReadonlyArray<string>
   readonly readback: ReadonlyArray<string>
 }
 interface Expected {
@@ -45,11 +47,13 @@ const judgeSubject = (output: ScenarioRun): string => {
   return [output.finalText, fileDump].filter((s) => s.trim().length > 0).join("\n\n")
 }
 
+// Public golden features + any held-out private scenarios (EFFERENT_EVAL_PRIVATE).
+const ALL_FEATURES: ReadonlyArray<FeatureScenario> = [...FEATURES, ...loadPrivateFeatures()]
 const FILTER = process.env["FEATURE_FILTER"]?.trim().toLowerCase()
 const SCENARIOS: ReadonlyArray<FeatureScenario> =
   FILTER === undefined || FILTER.length === 0
-    ? FEATURES
-    : FEATURES.filter((s) =>
+    ? ALL_FEATURES
+    : ALL_FEATURES.filter((s) =>
         FILTER.split(",").some((f) => s.name.toLowerCase().includes(f.trim())),
       )
 
@@ -68,6 +72,7 @@ export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
       prompt: s.prompt,
       hiddenTests: s.hiddenTests,
       ...(s.testPaths !== undefined ? { testPaths: s.testPaths } : {}),
+      ...(s.edgeTests !== undefined ? { edgeTests: s.edgeTests } : {}),
       readback: s.readback,
     },
     expected: {
@@ -81,6 +86,7 @@ export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
       readback: input.readback,
       hiddenTests: input.hiddenTests,
       ...(input.testPaths !== undefined ? { testPaths: input.testPaths } : {}),
+      ...(input.edgeTests !== undefined ? { edgeTestPaths: input.edgeTests } : {}),
       // Execute the agent's Bash + the hidden tests in a --network none container,
       // not on the host — this suite runs LLM-generated code.
       sandbox: true,
@@ -92,6 +98,15 @@ export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
         const r = output.testResult
         if (r === undefined) return { score: 0, detail: "no test result" }
         return { score: r.ratio, detail: `${r.pass}/${r.pass + r.fail} pass` }
+      }),
+    ),
+    // The SHARPER discriminator: pass-rate over just the edge-case tests (falls
+    // back to the overall ratio when a scenario has no edge split).
+    fromEffect<Input, ScenarioRun, Expected, never, never>("tests_edge", ({ output }) =>
+      Effect.sync(() => {
+        const r = output.testResult
+        if (r === undefined) return { score: 0, detail: "no test result" }
+        return { score: r.edgeRatio ?? r.ratio, detail: r.edgeRatio !== undefined ? "edge-only" : "no edge split" }
       }),
     ),
     qualityRubric<Input, ScenarioRun, Expected>("quality", ({ output, expected }) => ({

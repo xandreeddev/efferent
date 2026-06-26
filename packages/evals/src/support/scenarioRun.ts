@@ -61,10 +61,14 @@ export interface Trajectory {
 export interface TestResult {
   readonly pass: number
   readonly fail: number
-  /** pass / (pass + fail); 1 if the suite is green with no parseable count, 0 if it couldn't load. */
+  /** pass / (pass + fail) over ALL hidden tests; 1 if green with no count, 0 if it couldn't load. */
   readonly ratio: number
-  /** Exit 0, ≥1 pass, 0 fail. */
+  /** Exit 0, ≥1 pass, 0 fail — the binary all-pass (resists "9 easy / 1 hard" gaming). */
   readonly allPass: boolean
+  /** Pass-ratio over just the EDGE-case tests (the sharper discriminator) when the
+   *  scenario tags them; undefined otherwise. The overall `ratio` can be dominated
+   *  by trivial happy-path tests — this isolates the hard cases. */
+  readonly edgeRatio?: number
   readonly output: string
 }
 
@@ -88,6 +92,10 @@ export interface RunScenarioOptions {
   readonly hiddenTests?: Record<string, string>
   /** Which of `hiddenTests` to run (defaults to all of them). */
   readonly testPaths?: ReadonlyArray<string>
+  /** The subset of `hiddenTests` that are EDGE-case tests — run separately to
+   *  report `edgeRatio` (the sharper discriminator). They're also part of the
+   *  overall run; this just isolates their pass-rate. */
+  readonly edgeTestPaths?: ReadonlyArray<string>
   /** Run the agent's Bash AND the hidden tests inside a per-case Docker sandbox
    *  (`oven/bun`, `--network none`, bind-mounted temp dir) instead of on the host
    *  — the safe path for a suite that executes LLM-generated code. Mirrors the
@@ -120,30 +128,19 @@ const writeTests = (dir: string, tests: Record<string, string>): void => {
   }
 }
 
-/** Run the hidden tests on the HOST (the non-sandboxed path). The scenarios are
- *  pure, dependency-free TS, so `bun test` needs no install. `spawnSync` captures
- *  both streams regardless of exit code (bun exits non-zero on failures). */
-const runTestsHost = (
-  dir: string,
-  tests: Record<string, string>,
-  testPaths: ReadonlyArray<string>,
-): TestResult => {
-  writeTests(dir, tests)
-  const r = spawnSync("bun", ["test", ...testPaths], { cwd: dir, encoding: "utf8", timeout: 90_000 })
+/** Run `bun test <paths>` on the HOST (the non-sandboxed path) and parse the
+ *  verdict. Tests must already be written. Pure, dependency-free TS → no install;
+ *  `spawnSync` captures both streams regardless of exit code. */
+const runPathsHost = (dir: string, paths: ReadonlyArray<string>): TestResult => {
+  const r = spawnSync("bun", ["test", ...paths], { cwd: dir, encoding: "utf8", timeout: 90_000 })
   return parseTestOutput(`${r.stdout ?? ""}\n${r.stderr ?? ""}`, r.status ?? 1)
 }
 
-/** Run the hidden tests INSIDE the sandbox container (the isolated path). The
- *  tests are written on the host but visible in the container via the /work bind
- *  mount, so they can't be read by the agent before this point either. */
-const runTestsSandbox = (
-  sb: Sandbox,
-  dir: string,
-  tests: Record<string, string>,
-  testPaths: ReadonlyArray<string>,
-): TestResult => {
-  writeTests(dir, tests)
-  const r = sb.exec(`bun test ${testPaths.join(" ")}`, 90_000)
+/** Run `bun test <paths>` INSIDE the sandbox container (the isolated path). The
+ *  tests live on the host but are visible in the container via the /work bind
+ *  mount; the agent never sees them (written only after its run). */
+const runPathsSandbox = (sb: Sandbox, paths: ReadonlyArray<string>): TestResult => {
+  const r = sb.exec(`bun test ${paths.join(" ")}`, 90_000)
   return parseTestOutput(`${r.stdout}\n${r.stderr}`, r.exitCode)
 }
 
@@ -239,10 +236,16 @@ export const runScenario = (
         opts.hiddenTests !== undefined
           ? yield* Effect.sync(() => {
               const tests = opts.hiddenTests!
-              const paths = opts.testPaths ?? Object.keys(tests)
-              return sb !== undefined
-                ? runTestsSandbox(sb, dir, tests, paths)
-                : runTestsHost(dir, tests, paths)
+              const allPaths = opts.testPaths ?? Object.keys(tests)
+              writeTests(dir, tests)
+              const run = (paths: ReadonlyArray<string>): TestResult =>
+                sb !== undefined ? runPathsSandbox(sb, paths) : runPathsHost(dir, paths)
+              const main = run(allPaths)
+              // Edge-case tests run again on their own to isolate the sharper ratio.
+              if (opts.edgeTestPaths !== undefined && opts.edgeTestPaths.length > 0) {
+                return { ...main, edgeRatio: run(opts.edgeTestPaths).ratio }
+              }
+              return main
             })
           : undefined
 

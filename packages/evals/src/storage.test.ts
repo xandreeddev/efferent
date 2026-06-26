@@ -28,6 +28,7 @@ const sampleRuns: ReadonlyArray<RunAgg> = [
             passHatK: false,
             scores: [{ name: "quality", score: 0.7 }],
             steps: 4,
+            toolCalls: 6,
             inputTokens: 100,
             outputTokens: 50,
             cacheReadTokens: 0,
