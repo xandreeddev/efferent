@@ -11,7 +11,7 @@ bad() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=1; }
 soft() { printf '  \033[33mSOFT\033[0m %s\n' "$1"; }
 
 hr "version + bins"
-WANT_VERSION="${EXPECT_VERSION:-0.2.0}"
+WANT_VERSION="${EXPECT_VERSION:-0.3.0}"
 V=$(efferent --version 2>/dev/null | tr -d '[:space:]')
 [ "$V" = "$WANT_VERSION" ] && ok "efferent --version = $V" || bad "version is '$V' (want $WANT_VERSION)"
 command -v efferent >/dev/null && ok "efferent on PATH" || bad "efferent not on PATH"
