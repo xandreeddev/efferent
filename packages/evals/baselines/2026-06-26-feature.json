@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "ts": "2026-06-26T14:12:59.080Z",
+  "gitSha": "73fb2212be7",
+  "label": "feature scorecard baseline · kimi general + deepseek code + glm judge",
+  "manifest": {
+    "imageDigest": "oven/bun@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4",
+    "bunLockHash": "8ba490728b26596a",
+    "models": {
+      "inline": {
+        "main": "opencode:kimi-k2.6",
+        "code": "opencode:deepseek-v4-pro",
+        "fast": "opencode:deepseek-v4-flash",
+        "judge": "opencode:glm-5.1"
+      }
+    }
+  },
+  "runs": [
+    {
+      "configName": "inline",
+      "suites": [
+        {
+          "suite": "feature",
+          "mean": 0.937962962962963,
+          "passRate": 1,
+          "passAtKRate": 1,
+          "passHatKRate": 0.6666666666666666,
+          "cases": [
+            {
+              "suite": "feature",
+              "name": "feature · LRU cache with per-entry TTL",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 3,
+              "stdev": 0,
+              "passAtK": true,
+              "passHatK": true,
+              "scores": [
+                {
+                  "name": "tests",
+                  "score": 1
+                },
+                {
+                  "name": "tests_edge",
+                  "score": 1
+                },
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "coordination",
+                  "score": 1
+                }
+              ],
+              "steps": 62,
+              "toolCalls": 63,
+              "inputTokens": 691491,
+              "outputTokens": 39401,
+              "cacheReadTokens": 584832,
+              "wallMs": 1002593.612041
+            },
+            {
+              "suite": "feature",
+              "name": "feature · RFC-4180 CSV parser",
+              "configName": "inline",
+              "ok": true,
+              "mean": 0.813888888888889,
+              "samples": 3,
+              "stdev": 0.16880571782487222,
+              "passAtK": true,
+              "passHatK": false,
+              "scores": [
+                {
+                  "name": "tests",
+                  "score": 0.6666666666666666
+                },
+                {
+                  "name": "tests_edge",
+                  "score": 0.6666666666666666
+                },
+                {
+                  "name": "quality",
+                  "score": 0.75
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "coordination",
+                  "score": 0.7999999999999999
+                }
+              ],
+              "steps": 94,
+              "toolCalls": 93,
+              "inputTokens": 1910556,
+              "outputTokens": 121817,
+              "cacheReadTokens": 1796480,
+              "wallMs": 2925579.716033
+            },
+            {
+              "suite": "feature",
+              "name": "feature · nested-transaction KV store",
+              "configName": "inline",
+              "ok": true,
+              "mean": 1,
+              "samples": 3,
+              "stdev": 0,
+              "passAtK": true,
+              "passHatK": true,
+              "scores": [
+                {
+                  "name": "tests",
+                  "score": 1
+                },
+                {
+                  "name": "tests_edge",
+                  "score": 1
+                },
+                {
+                  "name": "quality",
+                  "score": 1
+                },
+                {
+                  "name": "routing",
+                  "score": 1
+                },
+                {
+                  "name": "efficiency",
+                  "score": 1
+                },
+                {
+                  "name": "coordination",
+                  "score": 1
+                }
+              ],
+              "steps": 78,
+              "toolCalls": 76,
+              "inputTokens": 918226,
+              "outputTokens": 32702,
+              "cacheReadTokens": 790656,
+              "wallMs": 649523.513401
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
