@@ -4,7 +4,7 @@ import { AgentMessage } from "./Conversation.js"
 /**
  * The mode-agnostic event vocabulary the agent loop emits via hooks — and, once
  * the daemon split lands, the **wire payload** every transport carries. It lived
- * as a hand-written TS union in `@xandreed/code`'s `events.ts`; it's a
+ * as a hand-written TS union in `efferent`'s `events.ts`; it's a
  * `Schema.Union` here so the same shape serves three masters: the loop's hooks
  * (`makeEventHooks`), the JSON modes (json/rpc), and the HTTP/SSE transport
  * (`subscribe` → `Stream<SeqEvent>`). `events.ts` re-exports it, so the loop

@@ -9,7 +9,7 @@ import { Schema } from "effect"
  * Lives in sdk-core (not the `code` package) because the daemon persists it and
  * the `Workspace` protocol carries it across the wire — both need the Schema.
  * The agent-definition side (the verifier role, `withBuiltinAgents`) stays in
- * `@xandreed/code`'s `usecases/directive.ts`, which re-exports this.
+ * `efferent`'s `usecases/directive.ts`, which re-exports this.
  */
 export const Directive = Schema.Struct({
   objective: Schema.String,

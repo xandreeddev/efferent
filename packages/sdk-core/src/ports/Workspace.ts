@@ -14,7 +14,7 @@ import { ApprovalDecision, ApprovalRequest } from "./Approval.js"
  * port, and every frontend depend ONLY on this interface plus the serializable
  * Schemas below — never on HTTP. Two implementations satisfy it:
  *
- *   - **in-process** (`@xandreed/code` `workspace/inProcess.ts`) — wraps the
+ *   - **in-process** (`efferent` `workspace/inProcess.ts`) — wraps the
  *     real `buildScopeRuntime` + bus + fleet + stores; the daemon hosts it; the
  *     sole authoritative owner of live state.
  *   - **remote** (`workspace/remote.ts`) — implements the same interface by

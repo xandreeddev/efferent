@@ -10,7 +10,7 @@
 **Landed & green (typecheck + 580 tests pass) — the Phase (a) contract + backend:**
 
 1. **`AgentEvent` is now a `Schema.Union`** in `packages/sdk-core/src/entities/AgentEvent.ts`
-   (moved off the hand-written union in `packages/code/src/events.ts`, which re-exports it). Both the
+   (moved off the hand-written union in `packages/cli/src/events.ts`, which re-exports it). Both the
    loop's hooks and the future wire share one shape. `nodeId`/`parentNodeId` stay plain strings.
 2. **`Directive` moved to sdk-core** (`entities/Directive.ts`, Schema + `parseDirective`/
    `renderDirectiveSection`); `code`'s `usecases/directive.ts` re-exports it + keeps the verifier role.
@@ -29,15 +29,15 @@
    nullable `pending_prompt` column (migrations pg `0011_pending_turn`, sqlite `0007_pending_turn`).
    `runAgent` marks pending before the loop (best-effort) and clears on completion. Tests added in
    `conversationStore/sqlite.test.ts`.
-7. **Event ledger** (`packages/code/src/workspace/eventLedger.ts` + `.test.ts`, 8 tests): the
+7. **Event ledger** (`packages/cli/src/workspace/eventLedger.ts` + `.test.ts`, 8 tests): the
    multi-client fan-out + reconnect core — monotonic `seq`, bounded ring (`DEFAULT_LEDGER_RING`),
    `PubSub`; `publish`, `latestSeq`, `hasGap(since)` (→ resync), `replay(since)`, and
    `stream(since)` (subscribe-then-snapshot, seam-deduped — exactly-once, in order). This is the
    plan's "highest-risk correctness" piece, landed with tests first as recommended.
-8. **Publish-based hooks** (`packages/code/src/events.ts`): `makeAgentEventHooks(publish, …)` is the
+8. **Publish-based hooks** (`packages/cli/src/events.ts`): `makeAgentEventHooks(publish, …)` is the
    single event-construction point; `makeEventHooks(queue, …)` is now a thin Queue adapter over it,
    and the in-process Workspace builds hooks that publish to the `EventLedger`.
-9. **In-process Workspace adapter** (`packages/code/src/workspace/inProcess.ts` + `.test.ts`, 2 tests
+9. **In-process Workspace adapter** (`packages/cli/src/workspace/inProcess.ts` + `.test.ts`, 2 tests
    driven by a fake `LanguageModel`): `makeInProcessWorkspace(deps)` — the authoritative owner. It
    builds one `buildScopeRuntime` (baseHooks → ledger), owns the ledger + a directive `Ref` + a
    per-session run state (busy/fiber/queue), and forks runs on a captured runtime so `send` returns
@@ -48,13 +48,13 @@
    `spawn` → `scopeRuntime.spawnAgent` + fleet, `getDirective`/`setDirective`, `importAgents/Tools`.
    The UI-free distillation of `submit.ts`/`spawnAgent.ts`/the `runtime.ts` directive closure.
 
-10. **SSE codec** (`packages/code/src/transport/http/sse.ts` + `.test.ts`, 8 tests): the wire framing
+10. **SSE codec** (`packages/cli/src/transport/http/sse.ts` + `.test.ts`, 8 tests): the wire framing
     — `encodeSeqEvent` (`id:<seq>\nevent:agent_event\ndata:<JSON>\n\n`), `encodeResync`/`encodeNamed`/
     `encodeHeartbeat`, a chunk-tolerant `makeSseParser` (CRLF, multi-line `data:`, leading-space strip,
     `:`-comment skip, frames split across chunk boundaries), and `frameToSeqEvent` (Schema-validated
     decode). The ONLY place the SSE byte format lives; server + client both build on it. (Phase b.)
 
-11. **HTTP server** (`packages/code/src/transport/http/server.ts`): `workspaceRouter(identity)` maps
+11. **HTTP server** (`packages/cli/src/transport/http/server.ts`): `workspaceRouter(identity)` maps
     the endpoint table to the `Workspace` Tag (`/health`, `/snapshot`, `/sessions` GET+POST,
     `/sessions/:id/{state,send,interrupt,stop,approve}`, `/sessions/:id/events` SSE,
     `/directive` GET+POST, `/agents|tools/import`); bodies via `HttpServerRequest.schemaBodyJson`,
@@ -62,7 +62,7 @@
     `ledger.stream` + a 15s heartbeat merge. `serveWorkspaceHttp({identity, port})` =
     `HttpServer.serve()(router)` over `BunHttpServer.layer({hostname:"127.0.0.1"})`. The ONLY HTTP
     server code. (`resync` on `hasGap` is deferred to phase d's restart path.)
-12. **HTTP client** (`packages/code/src/transport/http/client.ts`): `makeHttpTransport(baseUrl)` →
+12. **HTTP client** (`packages/cli/src/transport/http/client.ts`): `makeHttpTransport(baseUrl)` →
     a `HttpTransport` of `Workspace`-shaped calls over `HttpClient` (every method maps wire failures
     to `WorkspaceError`); `subscribe` streams the SSE bytes through `makeSseParser`/`frameToSeqEvent`
     → `Stream<SeqEvent>`. The remote adapter (phase c) is a thin wrapper over this.
@@ -110,7 +110,7 @@ an `efferent daemon {status,stop}` CLI + `:daemon` command; fold auto-handoff in
 
 Today the agent runs **in-process with the TUI** — the loop, the comms bus (`AgentBus`), the fleet,
 the per-node logs, the directive, and the approval ledger are all Effect fibers/Refs inside the
-OpenTUI process (`packages/code/src/cli/runtime.ts`). So: closing the UI kills the fleet; live state
+OpenTUI process (`packages/cli/src/cli/runtime.ts`). So: closing the UI kills the fleet; live state
 is ephemeral; Esc/teardown is fragile; you can't reattach; and a context node whose process dies is
 stranded `status="running"` forever.
 
@@ -157,21 +157,21 @@ back — and an in-flight turn auto-resumes).
 
 1. **`Workspace` port + protocol (sdk-core, transport-agnostic).** The interface + serializable
    Schemas for every command/event/state. No transport. The shared contract.
-2. **`Workspace` implementations (`packages/code`).**
+2. **`Workspace` implementations (`packages/cli`).**
    - **in-process adapter** — wraps today's `buildScopeRuntime` + bus + fleet + stores; daemon-hosted;
      sole authoritative owner of live state; no transport knowledge.
    - **remote adapter** — implements `Workspace` by calling a *transport client*; its event stream
      feeds the existing `eventPump` reducer verbatim. Generic over the transport client.
-3. **Transport adapter (swappable last layer, `packages/code/src/transport/`).** A server+client
+3. **Transport adapter (swappable last layer, `packages/cli/src/transport/`).** A server+client
    *pair* per transport. **HTTP/SSE first**; a unix-socket/websocket pair drops in beside it with no
    change to layers 1–2 or frontends. **`@effect/platform` HTTP/SSE code lives ONLY here.**
 
 The split is cheap because the seam already exists:
-- `packages/code/src/cli/TuiContext.ts:53-102` — the complete command/query surface (becomes the port).
-- `packages/code/src/events.ts:13-82` — `AgentEvent` union, already JSON-serializable (the SSE payload).
-- `packages/code/src/cli/events/eventPump.ts:48` — `makeEventReducer` is a pure `(AgentEvent)=>void`
+- `packages/cli/src/cli/TuiContext.ts:53-102` — the complete command/query surface (becomes the port).
+- `packages/cli/src/events.ts:13-82` — `AgentEvent` union, already JSON-serializable (the SSE payload).
+- `packages/cli/src/cli/events/eventPump.ts:48` — `makeEventReducer` is a pure `(AgentEvent)=>void`
   over the store; reused verbatim as the client-side stream consumer.
-- `packages/code/src/cli/presentation/historyProjection.ts` `projectHistory` — already rebuilds the
+- `packages/cli/src/cli/presentation/historyProjection.ts` `projectHistory` — already rebuilds the
   rail + activity tree from persisted messages (how resume/build/fork/boot work). The DB-rebuild
   backbone for `/state` and restorability.
 
@@ -227,17 +227,17 @@ Workspace {
 - `copySelection`/`exit`/`run`/`roles`/`tools` stay **client-only** (not on the port).
 - `WorkspaceError` = one `Schema.TaggedError { message }` (crosses HTTP as a JSON body).
 
-## In-process Workspace adapter (`packages/code/src/workspace/inProcess.ts`)
+## In-process Workspace adapter (`packages/cli/src/workspace/inProcess.ts`)
 
 Authoritative owner of live state. Wraps:
 - one `buildScopeRuntime(rootScope, opts, hooks)` (today `runtime.ts:104`) + its `scopeRuntime.bus`
-  (`packages/code/src/usecases/agentBus.ts`).
-- the `FleetSupervisor` (move `packages/code/src/cli/state/fleet.ts` → `workspace/`).
+  (`packages/cli/src/usecases/agentBus.ts`).
+- the `FleetSupervisor` (move `packages/cli/src/cli/state/fleet.ts` → `workspace/`).
 - a **per-session event ledger**: `Map<SessionId, { seq; events: AgentEvent[] (ring); hub: PubSub<SeqEvent> }>`.
   Replace the single `makeEventHooks` `Queue` with a **`PubSub`** (multi-subscriber fan-out); each
   event gets a monotonic `seq`, is appended to the ring, then published.
 - the **directive** (move out of `runtime.ts:198` closure into a Ref + persistence).
-- the **approval ledger + pending map** (move from `packages/code/src/cli/approval.ts`): session
+- the **approval ledger + pending map** (move from `packages/cli/src/cli/approval.ts`): session
   rules/folders Refs, the 1-permit gate (`approval.ts:56`), and `Map<SessionId, resume>` of parked
   `Effect.async` resumes (`approval.ts:59-70`). "Open modal" becomes "publish `approval_needed`".
 - a server-side `Map<SessionId, Fiber>` replacing `store.run.getFiber` (`submit.ts:399`).
@@ -282,7 +282,7 @@ One `PubSub` per session (replaces the single `makeEventHooks` `Queue`): produce
 run; each client `subscribe`s with its own cursor. Two TUIs / TUI+browser on one session both stream,
 both steer; `interrupt`/`approve` are shared state, `approval_resolved` clears stale modals on all.
 
-## HTTP+SSE transport adapter (`packages/code/src/transport/http/{server,client}.ts`)
+## HTTP+SSE transport adapter (`packages/cli/src/transport/http/{server,client}.ts`)
 
 The ONLY place HTTP/SSE/`@effect/platform` appears. `server.ts`: `HttpRouter` + `HttpServerResponse.stream`
 (NOT `HttpApi` — can't model an open SSE byte stream), served by `BunHttpServer.layer({port, hostname:"127.0.0.1"})`
@@ -309,9 +309,9 @@ reconnects `?since=`/`Last-Event-ID`; server replays ring `seq>since`, then tail
 `since` predates the bounded ring → `event: resync` → client re-fetches `/state`. Ring bounded like
 `agentBus.ts:160-161` (`MAX_BOARD`/`MAX_DONE`).
 
-## Daemon + auto-spawn (`packages/code/src/server/daemon.ts`, new `daemon-serve` mode)
+## Daemon + auto-spawn (`packages/cli/src/server/daemon.ts`, new `daemon-serve` mode)
 
-Distinct from the legacy cron `daemon` (`packages/code/src/modes/daemon.ts`); add `daemon-serve` to
+Distinct from the legacy cron `daemon` (`packages/cli/src/modes/daemon.ts`); add `daemon-serve` to
 the mode choice + dispatch (`main.ts:108-115,278-381`). Composes `AppLive` (`main.ts:56-78`, unchanged)
 + in-process Workspace + `transport/http/server` under `BunRuntime.runMain`. Transport referenced only
 here (swap = one line). Cron scheduler folds in (ticks the Workspace).
@@ -326,7 +326,7 @@ here (swap = one line). Cron scheduler folds in (ticks the Workspace).
 - **Management:** `efferent daemon {status,stop}` CLI + `:daemon` command (`POST /shutdown` →
   `bus.interruptAll()` like `runtime.ts:351`, remove discovery file, exit). Per-workspace.
 
-## Remote Workspace adapter + TUI rewrite (`packages/code`)
+## Remote Workspace adapter + TUI rewrite (`packages/cli`)
 
 `workspace/remote.ts`: implements `Workspace` over a transport client; `subscribe` → SSE
 `Stream<SeqEvent>`; on attach `GET /snapshot` then `GET /sessions/:id/state` and replay `log` through
@@ -394,14 +394,14 @@ Keep red windows short: gate c–d behind the flag; flip default only when attac
 ## Critical files
 
 - **New:** `packages/sdk-core/src/entities/AgentEvent.ts` (Schema union, moved); `…/ports/Workspace.ts`
-  (port + protocol Schemas); `packages/code/src/workspace/{inProcess,remote}.ts` (remote =
-  transport-generic); `packages/code/src/transport/http/{server,client}.ts` (the ONLY HTTP/SSE code);
-  `packages/code/src/server/daemon.ts`.
-- **Reworked:** `packages/code/src/modes/daemon.ts` (→ `daemon-serve` + lifecycle + reconcile +
-  auto-resume); `packages/code/src/cli/runtime.ts` (re-point to Workspace; SSE pump);
+  (port + protocol Schemas); `packages/cli/src/workspace/{inProcess,remote}.ts` (remote =
+  transport-generic); `packages/cli/src/transport/http/{server,client}.ts` (the ONLY HTTP/SSE code);
+  `packages/cli/src/server/daemon.ts`.
+- **Reworked:** `packages/cli/src/modes/daemon.ts` (→ `daemon-serve` + lifecycle + reconcile +
+  auto-resume); `packages/cli/src/cli/runtime.ts` (re-point to Workspace; SSE pump);
   `packages/sdk-core/src/usecases/{runAgent,agentLoop}.ts` + `buildScopeRuntime.ts` (incremental
-  persistence + in-flight marker); `packages/code/src/cli/approval.ts` (ledger → server);
-  `packages/code/src/main.ts` (mode + auto-spawn).
+  persistence + in-flight marker); `packages/cli/src/cli/approval.ts` (ledger → server);
+  `packages/cli/src/main.ts` (mode + auto-spawn).
 - **Reused verbatim:** `events.ts` (AgentEvent), `eventPump.ts` (`makeEventReducer`),
   `presentation/historyProjection.ts` (`projectHistory`), the stores, `login/oauthServer.ts`.
 - **DB migrations (`packages/adapters/src/database/`):** per-turn message append; an in-flight/pending
@@ -465,9 +465,9 @@ daemon and can each attach to a different fleet. Built as 5 phases (all on `wip2
    new fleet, `s` stop agent, `i` interrupt fleet, `D` shutdown, `q` quit). Pure `dashboardView.ts`
    model is unit-tested; the OpenTUI mount is smoke-tested via `efferent daemon`.
 5. **`daemon` command group + config-through-API + `--fleet`** (`2a920ad`). `efferent daemon`
-   boots-or-attaches + opens the dashboard (`-v`/`--logs` tails the daemon log); `daemon serve` is the
-   headless server (today's `--mode daemon-serve`, dual-accepted as the auto-spawn target); `daemon
-   status`/`stop`. `getSettings`/`updateSettings(SettingsPatch)` let a client configure the daemon
+   boots-or-attaches + opens the dashboard (`-v`/`--logs` tails the daemon log); `daemon start` (alias
+   `serve`) is the headless server (today's `--mode daemon-serve`, which stays accepted as the auto-spawn
+   target); `daemon status`/`stop`. `getSettings`/`updateSettings(SettingsPatch)` let a client configure the daemon
    over the API (the daemon owns + persists its config — no file-editing behind its back);
    `updateSettings({model})` changes only the DEFAULT new fleets inherit. `efferent --fleet <id>` pins
    which coordinator the coder attaches to.

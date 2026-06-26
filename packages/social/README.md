@@ -18,4 +18,4 @@ A driver-level package on the same stack as the rest of efferent (`@xandreed/sdk
 
 > **OPSEC:** this package operates the `@xandreeddev` alias. Browser sessions and credentials are alias-bound and never committed.
 
-Part of [**efferent**](../../README.md) — a coding agent on Effect.ts + Bun.
+Part of [**efferent**](../../README.md) — an agent runtime on Effect.ts + Bun.
