@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { Effect, Ref } from "effect"
 import {
   type AgentHooks,
@@ -52,21 +55,77 @@ export interface Trajectory {
   readonly steps: number
 }
 
+/** The verdict from running a scenario's HIDDEN test suite against the agent's
+ *  produced code — the objective discriminator a graded rubric can't fake. */
+export interface TestResult {
+  readonly pass: number
+  readonly fail: number
+  /** pass / (pass + fail); 1 if the suite is green with no parseable count, 0 if it couldn't load. */
+  readonly ratio: number
+  /** Exit 0, ≥1 pass, 0 fail. */
+  readonly allPass: boolean
+  readonly output: string
+}
+
 export interface ScenarioRun {
   readonly tools: ReadonlyArray<string>
   readonly finalText: string
   readonly files: Record<string, string>
   readonly trajectory: Trajectory
+  /** Present only when the scenario shipped `hiddenTests`. */
+  readonly testResult?: TestResult
 }
 
 export interface RunScenarioOptions {
   readonly readback?: ReadonlyArray<string>
   readonly systemPromptOverride?: (base: string) => string
   readonly promptVariant?: string
+  /** Test files (workspace-relative) written AFTER the agent run — so the agent
+   *  can't read or edit them — then executed with `bun test` for an objective
+   *  pass-ratio. The agent never sees these; it must infer the full spec from
+   *  the prompt (which is exactly what separates a strong coder from a weak one). */
+  readonly hiddenTests?: Record<string, string>
+  /** Which of `hiddenTests` to run (defaults to all of them). */
+  readonly testPaths?: ReadonlyArray<string>
 }
 
 const billed = (u?: { readonly inputTokens: number; readonly outputTokens: number }): number =>
   u === undefined ? 0 : u.inputTokens + u.outputTokens
+
+const countMatch = (s: string, re: RegExp): number => {
+  const m = s.match(re)
+  return m !== null && m[1] !== undefined ? Number(m[1]) : 0
+}
+
+/** Write the hidden tests into the finished workspace and run `bun test` over
+ *  them (no Docker — the scenarios are pure, dependency-free TS, so the built-in
+ *  runner needs no install). `bun test` exits non-zero on failures, which
+ *  `execFileSync` throws on; we capture stdout/stderr from the error either way. */
+const runHiddenTests = (
+  dir: string,
+  tests: Record<string, string>,
+  testPaths: ReadonlyArray<string>,
+): TestResult => {
+  for (const [rel, content] of Object.entries(tests)) {
+    const abs = join(dir, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, content)
+  }
+  // bun test writes its "N pass / N fail" summary to STDERR and exits non-zero on
+  // failures; spawnSync captures both streams regardless of exit code (no throw).
+  const r = spawnSync("bun", ["test", ...testPaths], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 90_000,
+  })
+  const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`
+  const exitCode = r.status ?? 1
+  const pass = countMatch(out, /(\d+)\s+pass/)
+  const fail = countMatch(out, /(\d+)\s+fail/)
+  const total = pass + fail
+  const ratio = total > 0 ? pass / total : exitCode === 0 ? 1 : 0
+  return { pass, fail, ratio, allPass: exitCode === 0 && fail === 0 && pass > 0, output: out.slice(0, 4000) }
+}
 
 export const runScenario = (
   files: Record<string, string>,
@@ -145,6 +204,15 @@ export const runScenario = (
       const readback: Record<string, string> = {}
       for (const rel of opts.readback ?? []) readback[rel] = readWorkspaceFile(dir, rel)
 
+      // Objective discriminator: run the hidden test suite against what the agent
+      // built (after the run, so it could never see or edit the tests).
+      const testResult =
+        opts.hiddenTests !== undefined
+          ? yield* Effect.sync(() =>
+              runHiddenTests(dir, opts.hiddenTests!, opts.testPaths ?? Object.keys(opts.hiddenTests!)),
+            )
+          : undefined
+
       return {
         tools,
         finalText: result.finalText,
@@ -156,6 +224,7 @@ export const runScenario = (
           perTierSpend,
           steps,
         },
+        ...(testResult !== undefined ? { testResult } : {}),
       }
     }),
   )
