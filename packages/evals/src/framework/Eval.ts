@@ -59,6 +59,13 @@ export interface EvalSpec<I, O, T, R> {
    * is unaffected; the framework `EvalReport` carries the variance.
    */
   readonly samples?: number
+  /**
+   * Pass GATE for `pass@k` / `pass^k`: a sample "passes" when this scorer's
+   * score ≥ `min` (default 1). Unset ⇒ a sample passes when its mean ≥
+   * `threshold`. Gate on the OBJECTIVE scorer (e.g. `tests`) for execution-graded
+   * suites so `pass^k` reflects code correctness, not a noisy LLM judge.
+   */
+  readonly gate?: { readonly scorer: string; readonly min?: number }
 }
 
 /** Identity helper that pins the generic inference at the definition site. */
@@ -87,6 +94,10 @@ export interface CaseResult {
   readonly samples?: number
   /** Sample stdev of the per-sample means — the noise on `mean`. 0 for 1 sample. */
   readonly stdev?: number
+  /** At least one of the k samples passed the gate (pass@k for this case). */
+  readonly passAtK?: boolean
+  /** ALL k samples passed the gate (pass^k for this case — the consistency metric). */
+  readonly passHatK?: boolean
   readonly durationMs: number
 }
 

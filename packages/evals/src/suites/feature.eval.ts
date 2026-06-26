@@ -45,17 +45,22 @@ const judgeSubject = (output: ScenarioRun): string => {
   return [output.finalText, fileDump].filter((s) => s.trim().length > 0).join("\n\n")
 }
 
-const FILTER = process.env["FEATURE_FILTER"]?.trim()
+const FILTER = process.env["FEATURE_FILTER"]?.trim().toLowerCase()
 const SCENARIOS: ReadonlyArray<FeatureScenario> =
   FILTER === undefined || FILTER.length === 0
     ? FEATURES
-    : FEATURES.filter((s) => FILTER.split(",").some((f) => s.name.includes(f.trim())))
+    : FEATURES.filter((s) =>
+        FILTER.split(",").some((f) => s.name.toLowerCase().includes(f.trim())),
+      )
 
 export const feature = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
   name: "feature",
   description:
     "Hard full-feature scenarios graded by a hidden bun-test suite (objective pass-ratio) + a completeness rubric — the discriminating quality suite.",
   threshold: 0.4,
+  // pass^k gates on the OBJECTIVE tests (all hidden tests green), not the blended
+  // mean — so consistency reflects code correctness, never the LLM judge.
+  gate: { scorer: "tests", min: 1 },
   data: SCENARIOS.map((s) => ({
     name: s.name,
     input: {

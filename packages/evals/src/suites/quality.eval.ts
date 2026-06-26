@@ -59,11 +59,11 @@ const objectiveText = (output: ScenarioRun, e: NonNullable<Expected["expect"]>):
 /** Iteration aid: `QUALITY_FILTER="bug-fix,refactor"` narrows the golden set to
  *  scenarios whose name contains any listed substring (comma-separated). Unset ⇒
  *  the whole set. Lets a prompt-tuning loop re-run only the affected scenarios. */
-const FILTER = process.env["QUALITY_FILTER"]?.trim()
+const FILTER = process.env["QUALITY_FILTER"]?.trim().toLowerCase()
 const SCENARIOS =
   FILTER === undefined || FILTER.length === 0
     ? GOLDEN
-    : GOLDEN.filter((s) => FILTER.split(",").some((f) => s.name.includes(f.trim())))
+    : GOLDEN.filter((s) => FILTER.split(",").some((f) => s.name.toLowerCase().includes(f.trim())))
 
 export const quality = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
   name: "quality",

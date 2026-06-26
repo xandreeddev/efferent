@@ -14,7 +14,17 @@ import { Shell } from "@xandreed/sdk-core"
  * containers → safe concurrency.
  */
 
-const IMAGE = "oven/bun:latest"
+/** Sandbox base image — `oven/bun:latest` by default; set `EVAL_SANDBOX_IMAGE`
+ *  to a digest (`oven/bun@sha256:…`) for strict reproducible pinning. The actual
+ *  resolved digest is recorded in each saved baseline's run manifest regardless. */
+const IMAGE = process.env["EVAL_SANDBOX_IMAGE"] ?? "oven/bun:latest"
+export const sandboxImage = (): string => IMAGE
+
+/** Resource caps so untrusted, LLM-generated code can't exhaust the host: a hard
+ *  memory ceiling (OOM-killed on overage; `--memory-swap` == `--memory` disables
+ *  swap), a PID limit (no fork bombs), and a CPU share. Combined with
+ *  `--network none` and the per-exec wall-clock timeout (`docker(..., timeoutMs)`). */
+const LIMITS = ["--memory", "2g", "--memory-swap", "2g", "--pids-limit", "512", "--cpus", "2"]
 
 /**
  * The repo's `node_modules`, mounted read-only at `/work/node_modules` so a
@@ -72,6 +82,39 @@ const docker = (args: ReadonlyArray<string>, timeoutMs = 120_000): DockerResult 
   return { exitCode: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "", timedOut }
 }
 
+/** The full `docker run` argv for a case container — pure, so a unit test can
+ *  assert the hardening flags (`--network none`, the resource caps) are present
+ *  without a Docker daemon. */
+export const sandboxRunArgs = (hostDir: string, uid: number, gid: number): Array<string> => [
+  "run",
+  "-d",
+  "--rm",
+  "--network",
+  "none",
+  ...LIMITS,
+  "--user",
+  `${uid}:${gid}`,
+  "-v",
+  `${hostDir}:/work`,
+  ...(existsSync(NODE_MODULES) ? ["-v", `${NODE_MODULES}:/work/node_modules:ro`] : []),
+  "-w",
+  "/work",
+  IMAGE,
+  "sleep",
+  "900",
+]
+
+/** The image's content-addressed digest (`oven/bun@sha256:…`) for the run
+ *  manifest. Best-effort — undefined if docker or the image isn't available. */
+export const resolveImageDigest = (): string | undefined => {
+  const r = spawnSync("docker", ["inspect", "--format", "{{index .RepoDigests 0}}", IMAGE], {
+    encoding: "utf8",
+    timeout: 10_000,
+  })
+  const out = (r.stdout ?? "").trim()
+  return r.status === 0 && out.length > 0 ? out : undefined
+}
+
 export interface Sandbox {
   readonly containerId: string
   /** Run a command inside the container at `/work`. Never throws. */
@@ -93,25 +136,7 @@ export const withSandbox = <A, E, R>(
         ensureEffectScopeLink()
         const uid = process.getuid?.() ?? 1000
         const gid = process.getgid?.() ?? 1000
-        const start = docker([
-          "run",
-          "-d",
-          "--rm",
-          "--network",
-          "none",
-          "--user",
-          `${uid}:${gid}`,
-          "-v",
-          `${hostDir}:/work`,
-          ...(existsSync(NODE_MODULES)
-            ? ["-v", `${NODE_MODULES}:/work/node_modules:ro`]
-            : []),
-          "-w",
-          "/work",
-          IMAGE,
-          "sleep",
-          "900",
-        ])
+        const start = docker(sandboxRunArgs(hostDir, uid, gid))
         const cid = start.stdout.trim()
         if (start.exitCode !== 0 || cid.length === 0) {
           throw new Error(`docker run failed: ${start.stderr || start.stdout}`)

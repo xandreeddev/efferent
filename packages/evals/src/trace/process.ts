@@ -30,6 +30,10 @@ export interface CaseAgg {
   readonly samples: number
   /** Sample stdev of the per-sample means — the noise on `mean`. */
   readonly stdev: number
+  /** At least one of the k samples passed the gate (pass@k for this case). */
+  readonly passAtK: boolean
+  /** ALL k samples passed the gate (pass^k for this case — the consistency metric). */
+  readonly passHatK: boolean
   readonly scores: ReadonlyArray<{ readonly name: string; readonly score: number }>
   readonly steps: number
   readonly inputTokens: number
@@ -43,6 +47,10 @@ export interface SuiteAgg {
   readonly suite: string
   readonly mean: number
   readonly passRate: number
+  /** Fraction of cases where ANY of the k samples passed the gate (pass@k). */
+  readonly passAtKRate: number
+  /** Fraction of cases where ALL k samples passed the gate (pass^k — consistency). */
+  readonly passHatKRate: number
   readonly cases: ReadonlyArray<CaseAgg>
 }
 
@@ -126,6 +134,9 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
     const samples = numAttr(a, "eval.samples") ?? 1
     const stdev = numAttr(a, "eval.stdev") ?? 0
     const ok = boolAttr(a, "eval.ok") ?? false
+    // Back-compat: older spans lack the gate annotations → fall back to the mean.
+    const passAtK = boolAttr(a, "eval.pass_at_k") ?? mean >= 0.6
+    const passHatK = boolAttr(a, "eval.pass_hat_k") ?? mean >= 0.6
     const scores: Array<{ name: string; score: number }> = []
     for (const [k, v] of Object.entries(a)) {
       if (k.startsWith("eval.score.") && typeof v === "number") {
@@ -161,6 +172,8 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
       mean,
       samples,
       stdev,
+      passAtK,
+      passHatK,
       scores,
       steps,
       inputTokens: input,
@@ -193,6 +206,8 @@ export const processSpans = (spans: ReadonlyArray<ReadableSpan>): ReadonlyArray<
         suite,
         mean: average(scases.map((c) => c.mean)),
         passRate: average(scases.map((c) => (c.mean >= 0.6 ? 1 : 0))),
+        passAtKRate: average(scases.map((c) => (c.passAtK ? 1 : 0))),
+        passHatKRate: average(scases.map((c) => (c.passHatK ? 1 : 0))),
         cases: scases,
       })
     }
