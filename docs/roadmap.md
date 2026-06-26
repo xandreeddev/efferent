@@ -63,6 +63,10 @@ We already track `inputTokens` / `outputTokens` / `cacheReadTokens` per turn (st
 
 Two billed-LLM call sites are uncounted: handoff briefs (`:handoff`, `seedMode: "handoff"`) and web search (`search_web`). Both are real spend that doesn't appear in `byRole` — add usage reporting to their callers. See [`models.md`](./models.md) for the full call-site inventory.
 
+### Evals — independent judge model (`--judge`)
+
+The `llmJudge`/`qualityRubric` scorers run on the in-context `LanguageModel` (the same router/general model the agent uses), so the `quality` axis is subject to the loop provider's flakiness — a transient gateway error can score a correct solution 0. The `RunConfig.judge` field + `--judge` flag are parsed but **inert** (`settingsLayer` doesn't apply them). Wire a separate `JudgeModel` (a distinct `LanguageModel` pinned to `config.judge`, built per-call from the `AuthStore` like the router) that the scorers resolve instead — ideally a strong, stable, INDEPENDENT grader (e.g. `anthropic:claude-sonnet-4-6`), which is both more reliable and better methodology. Until then, rank with the objective `tests` axis of the `feature` suite (gateway-independent), not the rubric.
+
 ---
 
 ## Tier 3 — extensions + later

@@ -14,6 +14,7 @@ import { renderRuns, renderVsBaseline } from "./trace/report.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
+import { feature } from "./suites/feature.eval.js"
 import { judgeApprovalEval } from "./suites/judgeApproval.eval.js"
 import { quality } from "./suites/quality.eval.js"
 import { repoTasksEval } from "./suites/repoTasks.eval.js"
@@ -26,6 +27,7 @@ type AnySpec = EvalSpec<any, any, any, EvalEnv>
 
 const SUITES: ReadonlyArray<AnySpec> = [
   quality,
+  feature,
   handoffEval,
   toolSelectionEval,
   coderEditEval,
