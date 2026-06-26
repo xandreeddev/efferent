@@ -11,8 +11,9 @@ bad() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=1; }
 soft() { printf '  \033[33mSOFT\033[0m %s\n' "$1"; }
 
 hr "version + bins"
+WANT_VERSION="${EXPECT_VERSION:-0.2.0}"
 V=$(efferent --version 2>/dev/null | tr -d '[:space:]')
-[ "$V" = "0.2.0" ] && ok "efferent --version = $V" || bad "version is '$V' (want 0.2.0)"
+[ "$V" = "$WANT_VERSION" ] && ok "efferent --version = $V" || bad "version is '$V' (want $WANT_VERSION)"
 command -v efferent >/dev/null && ok "efferent on PATH" || bad "efferent not on PATH"
 command -v eff      >/dev/null && ok "eff on PATH"      || bad "eff not on PATH"
 # The VS-Code-colliding `code` bin must be GONE.

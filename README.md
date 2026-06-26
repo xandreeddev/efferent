@@ -29,6 +29,8 @@ efferent code              # the focused single-fleet coder (in-process)
 efferent attach            # explicitly attach the TUI to the workspace daemon
 efferent daemon start      # run the persistent per-workspace daemon (alias: serve)
 efferent daemon status     # stop · status of the running daemon
+efferent verify            # graded acceptance battery (boot · UI flows · daemon · keyed turns)
+efferent eval [suites…]    # run the eval suites
 ```
 
 That's it. No `init`, no wizard, no env vars. **`:login`** picks a subscription (OAuth — Claude Pro/Max, OpenAI) or an API key (Anthropic / Google / OpenAI / OpenCode / Ollama), persists to `~/.efferent/auth.json`, and the next message goes out — same turn, no restart.

@@ -155,6 +155,50 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
+// ── `efferent verify` options ──────────────────────────────────────────────
+const verifyTargetOption = Options.text("target").pipe(
+  Options.optional,
+  Options.withDescription(
+    "What to verify: 'source' (this working tree, default), 'commit:<sha>', " +
+      "'release:<ver>' or 'npm:<spec>' (a clean-room npm install in Docker).",
+  ),
+)
+const verifyModelOption = Options.text("model").pipe(
+  Options.optional,
+  Options.withDescription(
+    "Model for the keyed turns + judge (default opencode:deepseek-v4-flash).",
+  ),
+)
+const verifyTierOption = Options.choice("tier", ["A", "B", "C", "all"]).pipe(
+  Options.withDefault("all" as const),
+  Options.withDescription(
+    "Highest tier to run (A=deterministic always runs; B adds keyed turns; C adds the eval smoke).",
+  ),
+)
+const verifyStrictOption = Options.boolean("strict").pipe(
+  Options.withDescription("Promote Tier-C (and other soft) results to hard fails."),
+)
+const verifyJsonOption = Options.boolean("json").pipe(
+  Options.withDescription("Emit the structured report as JSON."),
+)
+const verifyKeepOption = Options.boolean("keep").pipe(
+  Options.withDescription("Keep temp workspaces / containers for debugging."),
+)
+
+// ── `efferent eval` passthrough options (forwarded to the evals runner) ─────
+const evalSuitesArg = Args.text({ name: "suite" }).pipe(
+  Args.repeated,
+  Args.withDescription("Suite names to run (empty = all)."),
+)
+const evalMainOption = Options.text("main").pipe(Options.optional)
+const evalFastOption = Options.text("fast").pipe(Options.optional)
+const evalJudgeOption = Options.text("judge").pipe(Options.optional)
+const evalSamplesOption = Options.text("samples").pipe(Options.optional)
+const evalConfigOption = Options.text("config").pipe(Options.optional)
+const evalJsonOption = Options.boolean("json").pipe(
+  Options.withDescription("Emit the eval report as JSON."),
+)
+
 type Mode = "tui" | "print" | "json" | "rpc" | "daemon" | "daemon-serve"
 
 const resolveMode = (
@@ -661,8 +705,71 @@ const attachCommand = Command.make(
     }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
 )
 
+// `efferent verify` — the graded acceptance battery (boot/UI-flows/daemon are
+// deterministic; the keyed turns + eval smoke use the cheap model). Lazy-imports
+// the verify module so its test/docker deps stay off the normal boot path.
+const verifyCommand = Command.make(
+  "verify",
+  {
+    target: verifyTargetOption,
+    model: verifyModelOption,
+    tier: verifyTierOption,
+    strict: verifyStrictOption,
+    json: verifyJsonOption,
+    keep: verifyKeepOption,
+  },
+  ({ target, model, tier, strict, json, keep }) =>
+    Effect.gen(function* () {
+      const { runVerify } = yield* Effect.promise(() => import("./verify/run.js"))
+      yield* runVerify({
+        target: Option.getOrUndefined(target),
+        model: Option.getOrUndefined(model),
+        tier,
+        strict,
+        json,
+        keep,
+      })
+    }),
+)
+
+// `efferent eval` — first-class access to the eval suites (forwarded to the
+// evals runner; runs from a source checkout).
+const evalCommand = Command.make(
+  "eval",
+  {
+    suites: evalSuitesArg,
+    main: evalMainOption,
+    fast: evalFastOption,
+    judge: evalJudgeOption,
+    samples: evalSamplesOption,
+    config: evalConfigOption,
+    json: evalJsonOption,
+  },
+  ({ suites, main, fast, judge, samples, config, json }) =>
+    Effect.gen(function* () {
+      const { runEvalForward } = yield* Effect.promise(() => import("./verify/eval.js"))
+      yield* runEvalForward({
+        suites,
+        main: Option.getOrUndefined(main),
+        fast: Option.getOrUndefined(fast),
+        judge: Option.getOrUndefined(judge),
+        samples: Option.getOrUndefined(samples),
+        config: Option.getOrUndefined(config),
+        json,
+      })
+    }),
+)
+
 const cli = Command.run(
-  root.pipe(Command.withSubcommands([codeCommand, attachCommand, daemonCommand])),
+  root.pipe(
+    Command.withSubcommands([
+      codeCommand,
+      attachCommand,
+      daemonCommand,
+      verifyCommand,
+      evalCommand,
+    ]),
+  ),
   {
     name: "efferent",
     version: packageJson.version,
