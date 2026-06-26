@@ -20,6 +20,8 @@ Install and run: see [Getting started](/docs/getting-started/).
 | `efferent attach` | Explicitly attach the TUI to the daemon (auto-spawns it if absent). |
 | `efferent daemon start` | Run the persistent daemon (alias `serve`; was `--mode daemon-serve`, still accepted). |
 | `efferent daemon status` · `efferent daemon stop` | Daemon lifecycle. |
+| `efferent verify` | Run the graded acceptance battery against a target (this tree, a commit, or a published release). See [verifying a build](/docs/guides/verify/). |
+| `efferent eval` | Run the eval suites (forwarded to the evals runner; from a source checkout). |
 
 `EFFERENT_LOCAL=1` forces the in-process path (the legacy daemonless driver); `EFFERENT_REMOTE` is the
 remote alias. A bare prompt or `--mode <x>` (below) is the headless surface.
