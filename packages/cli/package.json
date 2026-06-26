@@ -1,15 +1,13 @@
 {
-  "name": "@xandreed/code",
-  "version": "0.1.2",
-  "description": "The efferent coding agent on Effect.ts + Bun — bundles the TUI frontend; runs headless too (print/json/rpc). Multi-provider (Anthropic/OpenAI/Gemini), persistent sub-agent context tree, cache-safe context compression, zero-config SQLite history. No React.",
+  "name": "efferent",
+  "version": "0.2.0",
+  "description": "efferent — an agent runtime on Effect.ts + Bun. One CLI to run agents: an interactive TUI, headless (print/json/rpc), or a persistent per-workspace daemon that thin clients attach to. Multi-provider (Anthropic/OpenAI/Gemini), persistent sub-agent context tree, cache-safe context compression, zero-config SQLite history. No React.",
   "license": "MIT",
   "author": "Xand Reed <xandreed@proton.me>",
   "type": "module",
   "bin": {
     "efferent": "dist/efferent.js",
-    "eff": "dist/efferent.js",
-    "e": "dist/efferent.js",
-    "code": "dist/code.js"
+    "eff": "dist/efferent.js"
   },
   "files": ["dist"],
   "engines": {
@@ -24,8 +22,10 @@
     "url": "https://github.com/xandreeddev/efferent/issues"
   },
   "keywords": [
-    "coding-agent",
+    "agent-runtime",
     "agent",
+    "ai-agent",
+    "daemon",
     "cli",
     "tui",
     "effect",
