@@ -156,6 +156,12 @@ export const runTuiModeRemote = (
               ...(s.fastModel !== undefined ? { fastModel: s.fastModel } : {}),
             })
             .pipe(Effect.ignore)
+          // Keep the client's status bar in step with the new selection: the
+          // roles row + model id are seeded once at boot, so an onboarding /
+          // `:login` model pin wouldn't otherwise refresh them on this path.
+          yield* Effect.sync(() =>
+            store.setStatus({ roles: rolesReadout(s), modelId: cur.modelId }),
+          )
         },
       ).pipe(Effect.catchAllCause(() => Effect.void))
 
