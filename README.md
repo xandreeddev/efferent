@@ -70,6 +70,7 @@ efferent --mode rpc                      # JSON-RPC over stdio
 efferent --resume <conversationId>       # continue a session headlessly
 efferent --allow-bash                    # allow bash in non-interactive modes
 efferent --cwd <path>                    # override the workspace
+efferent --fleet <rootSessionId>         # attach to a specific fleet's coordinator
 ```
 
 ## Add a provider

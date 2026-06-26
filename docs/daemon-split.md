@@ -404,7 +404,7 @@ Keep red windows short: gate c–d behind the flag; flip default only when attac
   `packages/cli/src/main.ts` (mode + auto-spawn).
 - **Reused verbatim:** `events.ts` (AgentEvent), `eventPump.ts` (`makeEventReducer`),
   `presentation/historyProjection.ts` (`projectHistory`), the stores, `login/oauthServer.ts`.
-- **DB migrations (`packages/adapters/src/database/`):** per-turn message append; an in-flight/pending
+- **DB migrations (`packages/sdk-adapters/src/database/`):** per-turn message append; an in-flight/pending
   marker; a `directives` row; a persisted session-approval set.
 
 ## Biggest risks → de-risking
