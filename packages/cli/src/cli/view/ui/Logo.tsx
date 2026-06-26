@@ -7,7 +7,7 @@ import { BRAND, glyph, tokens } from "../../state/theme.js"
  * package — `< >` markup/generics, `( )` social, `{ }` modules, `[ ]` lists) +
  * a one-line tagline. `master` is the bare wordmark (no bracket tag).
  */
-export type LogoVariant = "master" | "code" | "social" | "sdk" | "evals"
+export type LogoVariant = "master" | "cli" | "social" | "sdk" | "evals"
 
 interface VariantSpec {
   readonly pkg?: string
@@ -17,8 +17,8 @@ interface VariantSpec {
 }
 
 const VARIANTS: Record<LogoVariant, VariantSpec> = {
-  master: { tagline: "agents, composed on Effect" },
-  code: { pkg: "code", open: "<", close: ">", tagline: "a coding agent + fleet, in your terminal" },
+  master: { tagline: "an agent runtime on Effect" },
+  cli: { pkg: "cli", open: "<", close: ">", tagline: "one CLI to run agents, in your terminal" },
   social: { pkg: "social", open: "(", close: ")", tagline: "a build-in-public content engine" },
   sdk: { pkg: "sdk", open: "{", close: "}", tagline: "ports, adapters, a typed agent loop" },
   evals: { pkg: "evals", open: "[", close: "]", tagline: "colocated, Effect-native evals" },
