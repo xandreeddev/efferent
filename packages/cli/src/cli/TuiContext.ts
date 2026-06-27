@@ -14,6 +14,7 @@ import type {
   Shell,
   StoreSwitch,
   UtilityLlm,
+  Verifier,
   WebSearch,
 } from "@xandreed/sdk-core"
 import type { LanguageModel } from "@effect/ai"
@@ -43,6 +44,7 @@ export type AppServices =
   | AuthStore
   | AuthFlow
   | LlmInfo
+  | Verifier
 
 /**
  * The single handle the whole view tree consumes. `run` bridges UI→Effect (any

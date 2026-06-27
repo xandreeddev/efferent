@@ -14,6 +14,7 @@ import {
 } from "@xandreed/sdk-core"
 import {
   AuthFlowLive,
+  ClaudeHeadlessVerifierLive,
   HttpLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
@@ -80,6 +81,11 @@ const AppLive = Layer.mergeAll(
     Layer.provide(ModelRegistryLive),
     Layer.provide(FetchHttpClient.layer),
   ),
+  // The self-improving loop's verify gate — Opus via the real `claude` headless
+  // CLI over the Shell port (see docs/self-improving-loop.md). Cheap to build
+  // (no `claude` spawned until `efferent distill` calls `refute`), so it lives in
+  // the shared AppLive even though only `distill` uses it.
+  ClaudeHeadlessVerifierLive.pipe(Layer.provide(LocalShellLive)),
 ).pipe(Layer.provideMerge(CredentialsLive))
 
 /**
@@ -199,6 +205,27 @@ const evalJsonOption = Options.boolean("json").pipe(
   Options.withDescription("Emit the eval report as JSON."),
 )
 
+// ── `efferent distill` options (the self-improving loop) ────────────────────
+const distillSinceOption = Options.text("since").pipe(
+  Options.optional,
+  Options.withDescription("Only mine conversations created on/after this date (YYYY-MM-DD)."),
+)
+const distillConversationOption = Options.text("conversation").pipe(
+  Options.optional,
+  Options.withDescription("Mine a single conversation by id (or id prefix)."),
+)
+const distillDryRunOption = Options.boolean("dry-run").pipe(
+  Options.withDescription("Show candidate learnings without verifying or writing anything."),
+)
+const distillLimitOption = Options.text("limit").pipe(
+  Options.optional,
+  Options.withDescription("Cap how many conversations to mine (most recent first)."),
+)
+const distillThresholdOption = Options.text("threshold").pipe(
+  Options.optional,
+  Options.withDescription("Accept score cutoff for the Opus verify gate (0–1, default 0.7)."),
+)
+
 type Mode = "tui" | "print" | "json" | "rpc" | "daemon" | "daemon-serve"
 
 const resolveMode = (
@@ -239,9 +266,6 @@ const discoverWorkspace = (workspace: string) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(workspace, homedir())
     const memory = yield* loadMemory(workspace, homedir())
-    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
-    const tools = yield* loadTools(workspace, homedir())
-    const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
     // Whether a distinct `code` model is configured — gates the root's
     // code-delegation policy (write code on the `code` tier, not directly).
     // `coderAgentConfig` uses THIS rootScope's systemPrompt for every mode, so
@@ -249,6 +273,14 @@ const discoverWorkspace = (workspace: string) =>
     // json / rpc). Read at startup; a mid-session `:set codeModel` takes effect
     // on the next launch (the prompt is built once, like the rest of the scope).
     const settings = yield* (yield* SettingsStore).load(workspace, homedir())
+    // The self-improving loop knobs shape the built-in coordinator: autoLoop
+    // toggles the Opus gate + learn/retry phase, maxLoopAttempts the round cap.
+    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()), {
+      autoLoop: settings.autoLoop !== false,
+      maxLoopAttempts: settings.maxLoopAttempts ?? 3,
+    })
+    const tools = yield* loadTools(workspace, homedir())
+    const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
     const root = coderPrompt(
       workspace,
       new Date(),
@@ -765,6 +797,39 @@ const evalCommand = Command.make(
     }),
 )
 
+// `efferent distill` — the self-improving loop (docs/self-improving-loop.md):
+// mine finished conversations from the DB for reusable learnings on the cheap
+// fast tier, refute each with the Opus verify gate (`claude` headless), and
+// persist survivors as skills/memory/constraints the next run auto-loads.
+// `--dry-run` skips the gate + writes entirely (no `claude`, no cost).
+const distillCommand = Command.make(
+  "distill",
+  {
+    cwd: cwdOption,
+    since: distillSinceOption,
+    conversation: distillConversationOption,
+    dryRun: distillDryRunOption,
+    limit: distillLimitOption,
+    threshold: distillThresholdOption,
+  },
+  ({ cwd, since, conversation, dryRun, limit, threshold }) =>
+    Effect.gen(function* () {
+      const workspace = resolveCwd(cwd)
+      yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
+      const limitN = Option.getOrUndefined(limit)
+      const thresholdN = Option.getOrUndefined(threshold)
+      const { runDistill } = yield* Effect.promise(() => import("./distill/run.js"))
+      yield* runDistill({
+        workspace,
+        dryRun,
+        ...(since._tag === "Some" ? { since: since.value } : {}),
+        ...(conversation._tag === "Some" ? { conversation: conversation.value } : {}),
+        ...(limitN !== undefined ? { limit: Number.parseInt(limitN, 10) } : {}),
+        ...(thresholdN !== undefined ? { threshold: Number.parseFloat(thresholdN) } : {}),
+      })
+    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+)
+
 const cli = Command.run(
   root.pipe(
     Command.withSubcommands([
@@ -773,6 +838,7 @@ const cli = Command.run(
       daemonCommand,
       verifyCommand,
       evalCommand,
+      distillCommand,
     ]),
   ),
   {

@@ -3,6 +3,7 @@ import {
   ARCHITECT_AGENT,
   BACKEND_AGENT,
   BUILTIN_TEAM_AGENTS,
+  coordinatorAgent,
   COORDINATOR_AGENT,
   FRONTEND_AGENT,
   IMPLEMENTER_AGENT,
@@ -44,6 +45,29 @@ describe("the built-in coding team", () => {
     expect(ARCHITECT_AGENT.body).toContain("SOUND")
     expect(ARCHITECT_AGENT.body).toContain("NEEDS WORK")
     expect(ARCHITECT_AGENT.body).toContain("BLOCKED")
+  })
+
+  it("autoLoop ON → coordinator gets the Opus gate tools + the gate/learn/retry phase + the cap", () => {
+    const c = coordinatorAgent({ autoLoop: true, maxLoopAttempts: 4 })
+    expect(c.tools).toContain("verify_with_gate")
+    expect(c.tools).toContain("note_constraint")
+    expect(c.body).toContain("verify_with_gate")
+    expect(c.body).toContain("GATE → LEARN → RETRY")
+    expect(c.body).toContain("at most 4 gate rounds")
+    // default export is the loop-on, 3-round variant
+    expect(COORDINATOR_AGENT.body).toContain("at most 3 gate rounds")
+  })
+
+  it("autoLoop OFF → no gate tools, no gate phase, architect-only deliver", () => {
+    const c = coordinatorAgent({ autoLoop: false, maxLoopAttempts: 3 })
+    expect(c.tools).not.toContain("verify_with_gate")
+    expect(c.tools).not.toContain("note_constraint")
+    expect(c.body).not.toContain("verify_with_gate")
+    expect(c.body).not.toContain("GATE → LEARN → RETRY")
+    expect(c.body).toContain("DELIVER")
+    // still a lead (spawns + gathers), still doesn't write code
+    expect(c.tools).toContain("run_agent")
+    expect(c.tools).not.toContain("edit_file")
   })
 
   it("implementing specialists are leaf coders: full coding toolkit + comms, but no run_agent/wait_for_agents", () => {

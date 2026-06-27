@@ -1,6 +1,6 @@
 import type { AgentDefinition } from "@xandreed/sdk-core"
 import { BUILTIN_RESEARCH_AGENTS } from "./researchAgents.js"
-import { BUILTIN_TEAM_AGENTS } from "./teamAgents.js"
+import { BUILTIN_TEAM_AGENTS, builtinTeamAgents } from "./teamAgents.js"
 
 // The `Directive` type + its pure `parseDirective`/`renderDirectiveSection`
 // helpers moved to `@xandreed/sdk-core` (`entities/Directive.ts`) — the daemon
@@ -31,20 +31,24 @@ export const VERIFIER_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-const BUILTINS: ReadonlyArray<AgentDefinition> = [
-  VERIFIER_AGENT,
-  ...BUILTIN_TEAM_AGENTS,
-  ...BUILTIN_RESEARCH_AGENTS,
-]
-
 /**
  * Merge the built-in roles into the loaded ones. A workspace/home file role of
  * the same name WINS (so users can customise the verifier) — built-ins only
- * fill names not already defined.
+ * fill names not already defined. `loopOpts` (from settings) shapes the
+ * coordinator: `autoLoop` toggles the Opus gate + learn/retry phase, and
+ * `maxLoopAttempts` sets the gate-round cap (see {@link builtinTeamAgents}).
+ * Omitted ⇒ the default team (loop on, 3-round cap).
  */
 export const withBuiltinAgents = (
   loaded: ReadonlyArray<AgentDefinition>,
+  loopOpts?: { readonly autoLoop: boolean; readonly maxLoopAttempts: number },
 ): ReadonlyArray<AgentDefinition> => {
+  const team = loopOpts === undefined ? BUILTIN_TEAM_AGENTS : builtinTeamAgents(loopOpts)
+  const builtins: ReadonlyArray<AgentDefinition> = [
+    VERIFIER_AGENT,
+    ...team,
+    ...BUILTIN_RESEARCH_AGENTS,
+  ]
   const have = new Set(loaded.map((a) => a.name))
-  return [...loaded, ...BUILTINS.filter((b) => !have.has(b.name))]
+  return [...loaded, ...builtins.filter((b) => !have.has(b.name))]
 }
