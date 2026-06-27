@@ -36,6 +36,13 @@ export interface RunContext {
    *  the built-in default (`DEFAULT_SUB_AGENT_MAX_DEPTH`). The spawn guard refuses
    *  a `run_agent` once `depth >= subAgentMaxDepth`. */
   readonly subAgentMaxDepth?: number
+  /** Per-sub-agent web-lookup budget (`Settings.subAgentFetchBudget`): max combined
+   *  `web_fetch` + `search_web` calls a single spawned agent makes in its whole run
+   *  before the tools refuse (the deterministic brake on a research worker that
+   *  over-fetches). Seeded at the top-level run + inherited by the subtree; absent →
+   *  the built-in default (`DEFAULT_SUB_AGENT_FETCH_BUDGET`). The root coder is
+   *  exempt (its binding leaves `fetchBudget` unset). */
+  readonly subAgentFetchBudget?: number
   /** Compaction budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */

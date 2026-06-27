@@ -41,6 +41,12 @@ export const Settings = Schema.Struct({
         "Sub-agent nesting depth: how many levels deep the fleet can spawn (root → coordinator → … ). Unset → 3. Raise it for deeper hierarchical fleets on big jobs; a spawn past the cap returns MaxDepthReached as a tool failure.",
     }),
   ),
+  subAgentFetchBudget: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Per-sub-agent web-lookup budget: max combined web_fetch + search_web calls ONE spawned agent makes in its whole run before the tools refuse with a 'report now' signal — the deterministic brake on a fleet worker that over-researches. Unset → 15. 0 disables (no cap). The root coder is always exempt.",
+    }),
+  ),
   approvedBashRules: Schema.optional(
     Schema.Array(Schema.String).annotations({
       description:

@@ -1,11 +1,18 @@
 import { describe, expect, it } from "bun:test"
-import { Arbitrary, FastCheck as fc, Schema } from "effect"
+import { Arbitrary, Effect, FastCheck as fc, Layer, Schema } from "effect"
 import { Failure } from "../entities/Failure.js"
+import { ApprovalAllowAllLive } from "../ports/Approval.js"
+import { FileSystem } from "../ports/FileSystem.js"
+import { Http } from "../ports/Http.js"
+import { Shell } from "../ports/Shell.js"
+import { WebSearch } from "../ports/WebSearch.js"
 import {
   firstLine,
+  makeCodingHandlers,
   normalizeEdits,
   parseGrepFlags,
   PlanStep,
+  type ScopeBinding,
   slugify,
   truncateOutput,
   unifiedDiff,
@@ -135,6 +142,67 @@ describe("truncateOutput", () => {
     expect(out.startsWith("line 0")).toBe(true) // head
     expect(out).toContain(" 1 fail") // the tail summary that head-only cuts erased
     expect(out).toContain("bytes omitted from the middle")
+  })
+})
+
+describe("web-lookup budget (subAgentFetchBudget) — the convergence brake", () => {
+  const ports = Layer.mergeAll(
+    Layer.succeed(FileSystem, FileSystem.of({} as never)),
+    Layer.succeed(Shell, Shell.of({} as never)),
+    Layer.succeed(
+      Http,
+      Http.of({
+        get: () =>
+          Effect.succeed({ status: 200, contentType: "text/plain", body: "ok" }),
+      } as never),
+    ),
+    Layer.succeed(
+      WebSearch,
+      WebSearch.of({ search: () => Effect.succeed({ answer: "a", sources: [] }) }),
+    ),
+    ApprovalAllowAllLive,
+  )
+
+  const binding = (fetchBudget?: number): ScopeBinding => ({
+    rootDir: "/w",
+    displayRoot: "/w",
+    enforceWrite: true,
+    allowBash: false,
+    ...(fetchBudget !== undefined ? { fetchBudget } : {}),
+  })
+
+  // Drive a mix of search_web / web_fetch calls and report each as "ok" or its
+  // error tag, so we can assert exactly when the cap bites.
+  const tag = (r: { _tag: "Left" | "Right"; left?: unknown }): string =>
+    r._tag === "Right" ? "ok" : String((r.left as { error?: unknown }).error)
+
+  const runLookups = (b: ScopeBinding, kinds: ReadonlyArray<"search" | "fetch">) =>
+    Effect.gen(function* () {
+      const h = yield* makeCodingHandlers(b)
+      const out: string[] = []
+      for (const k of kinds) {
+        if (k === "search") {
+          out.push(tag(yield* Effect.either(h.search_web({ query: "q" }))))
+        } else {
+          out.push(tag(yield* Effect.either(h.web_fetch({ url: "https://example.com" }))))
+        }
+      }
+      return out
+    }).pipe(Effect.provide(ports), Effect.runPromise)
+
+  it("caps combined web_fetch + search_web at the budget, then refuses", async () => {
+    const out = await runLookups(binding(2), ["search", "fetch", "search"])
+    expect(out).toEqual(["ok", "ok", "FetchBudgetReached"])
+  })
+
+  it("an unset budget (the root coder) never caps", async () => {
+    const out = await runLookups(binding(undefined), Array(6).fill("fetch"))
+    expect(out).toEqual(Array(6).fill("ok"))
+  })
+
+  it("budget 0 disables the cap", async () => {
+    const out = await runLookups(binding(0), Array(5).fill("search"))
+    expect(out).toEqual(Array(5).fill("ok"))
   })
 })
 
