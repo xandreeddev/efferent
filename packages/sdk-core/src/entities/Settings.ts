@@ -26,7 +26,7 @@ export const Settings = Schema.Struct({
   subAgentTokenBudget: Schema.optional(
     Schema.Number.annotations({
       description:
-        "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap (unlimited — for long unattended fleet runs). Unset → 10000000.",
+        "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap (unlimited — for long unattended fleet runs). Unset → 4000000.",
     }),
   ),
   subAgentMaxSteps: Schema.optional(

@@ -13,6 +13,7 @@ import {
   WebSearch,
   runAgent,
   type AgentDefinition,
+  type AgentResult,
   type Scope,
   type Memory,
   type Skill,
@@ -20,6 +21,7 @@ import {
 } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import { runFleetToCompletion, withInboxDrain } from "./fleetCompletion.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -84,26 +86,39 @@ export const runJsonMode = (
     )
 
     const prompt = coderPrompt(input.cwd, new Date(), input.skills, [], input.agents, input.tools)
-    yield* runAgent(
-      coderAgentConfig(input.rootScope, runtime, prompt),
-      cid,
-      input.prompt,
-      hooks,
-      input.cwd,
-    ).pipe(
+    const config = coderAgentConfig(input.rootScope, runtime, prompt)
+    const rootKey = String(cid)
+    const drainHooks = withInboxDrain(hooks, runtime.bus, rootKey)
+
+    const runTurn = (p: string) =>
+      runAgent(config, cid, p, drainHooks, input.cwd).pipe(
+        Effect.catchAll((err) =>
+          Effect.gen(function* () {
+            const msg =
+              typeof err === "object" && err !== null && "message" in err
+                ? String((err as { message: unknown }).message)
+                : String(err)
+            yield* Queue.offer(queue, { type: "error", message: msg })
+            return { finalText: "", messages: [], newTail: [] } as AgentResult
+          }),
+        ),
+      )
+
+    // Headless auto-block: wait for an outstanding fleet and let the root
+    // synthesize (see fleetCompletion.ts). Layers wrap the whole loop so the
+    // fleet's forkDaemon fibers survive between turns.
+    yield* runtime.bus.markRunning(rootKey, "root")
+    yield* runFleetToCompletion({
+      bus: runtime.bus,
+      rootKey,
+      firstPrompt: input.prompt,
+      runTurn,
+    }).pipe(
       Effect.provide(runtime.handlerLayer),
       // Headless: --allow-bash already encodes the standing decision; the
       // Approval port answers allow-all behind that gate (no prompts in CI).
       Effect.provide(ApprovalAllowAllLive),
-      Effect.catchAll((err) =>
-        Effect.gen(function* () {
-          const msg =
-            typeof err === "object" && err !== null && "message" in err
-              ? String((err as { message: unknown }).message)
-              : String(err)
-          yield* Queue.offer(queue, { type: "error", message: msg })
-        }),
-      ),
+      Effect.ensuring(runtime.bus.markDone(rootKey)),
     )
 
     // Deterministic drain: the run is done, so a sentinel is strictly the last
