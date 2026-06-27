@@ -1,5 +1,5 @@
 import type { AgentDefinition } from "@xandreed/sdk-core"
-import { BUILTIN_RESEARCH_AGENTS } from "./researchAgents.js"
+import { BUILTIN_RESEARCH_AGENTS, builtinResearchAgents } from "./researchAgents.js"
 import { BUILTIN_TEAM_AGENTS, builtinTeamAgents } from "./teamAgents.js"
 
 // The `Directive` type + its pure `parseDirective`/`renderDirectiveSection`
@@ -44,10 +44,12 @@ export const withBuiltinAgents = (
   loopOpts?: { readonly autoLoop: boolean; readonly maxLoopAttempts: number },
 ): ReadonlyArray<AgentDefinition> => {
   const team = loopOpts === undefined ? BUILTIN_TEAM_AGENTS : builtinTeamAgents(loopOpts)
+  const research =
+    loopOpts === undefined ? BUILTIN_RESEARCH_AGENTS : builtinResearchAgents(loopOpts)
   const builtins: ReadonlyArray<AgentDefinition> = [
     VERIFIER_AGENT,
     ...team,
-    ...BUILTIN_RESEARCH_AGENTS,
+    ...research,
   ]
   const have = new Set(loaded.map((a) => a.name))
   return [...loaded, ...builtins.filter((b) => !have.has(b.name))]

@@ -6,7 +6,7 @@ import {
   DEFAULT_AUTO_HANDOFF_PCT,
   generateSessionTitle,
   runAgent,
-  runDistillation,
+  runAutoDistill,
   SettingsStore,
   shouldAutoHandoff,
   type AgentDefinition,
@@ -359,27 +359,23 @@ export const makeSubmit = (
             ...skills.map((s) => s.name),
             ...memory.map((m) => m.name),
           ]
-          const distillEffect = Effect.gen(function* () {
-            const cs = yield* ConversationStore
-            const messages = yield* cs.list(cid)
-            // Nothing reusable in a greeting / one-shot Q&A.
-            if (messages.length < 4) return
-            const results = yield* runDistillation({
-              conversationId: cid,
-              messages,
-              repoDir: cwd,
-              existing,
-            })
-            const saved = results.filter((r) => r.persisted !== undefined)
-            if (saved.length > 0) {
-              yield* Effect.sync(() =>
-                store.pushBlock({
-                  kind: "info",
-                  text: `learned ${saved.length} reusable ${saved.length === 1 ? "lesson" : "lessons"} for next time: ${saved.map((r) => r.candidate.name).join(", ")} (:set autoDistill off to disable)`,
-                }),
-              )
-            }
-          }).pipe(Effect.catchAll((e) => Effect.log(`auto-distill failed: ${e}`)))
+          const distillEffect = runAutoDistill({
+            conversationId: cid,
+            repoDir: cwd,
+            existing,
+          }).pipe(
+            Effect.flatMap((saved) =>
+              saved.length === 0
+                ? Effect.void
+                : Effect.sync(() =>
+                    store.pushBlock({
+                      kind: "info",
+                      text: `learned ${saved.length} reusable ${saved.length === 1 ? "lesson" : "lessons"} for next time: ${saved.map((r) => r.candidate.name).join(", ")} (:set autoDistill off to disable)`,
+                    }),
+                  ),
+            ),
+            Effect.catchAll((e) => Effect.log(`auto-distill failed: ${e}`)),
+          )
           yield* Effect.forkDaemon(distillEffect)
         }
         if (next !== undefined) yield* submit(next)

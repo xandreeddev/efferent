@@ -108,7 +108,7 @@ export const buildDistillPrompt = (input: {
     `Be strict: most sessions yield NOTHING worth saving. Return an empty list rather than padding.\n\n` +
     `Each lesson is one of:\n` +
     `- "skill" — a reusable PROCEDURE (how to do a recurring kind of task). Propose a skill ONLY from work that clearly SUCCEEDED.\n` +
-    `- "constraint" — a hard RULE that would have prevented a mistake the agent actually made this session. Propose a constraint ONLY when the transcript shows a real misstep (an error it had to recover from, a wrong path, a violated convention).\n` +
+    `- "constraint" — a hard RULE that would make the next session better: either it would have PREVENTED A MISTAKE the agent actually made (an error it had to recover from, a wrong path, a violated convention) OR it would have AVOIDED A PROCESS INEFFICIENCY the transcript clearly shows — e.g. it OVER-RESEARCHED (many redundant searches/fetches for a small answer), spawned more workers than the task needed, or repeated near-identical work. Propose one ONLY when the transcript shows that misstep or inefficiency actually happening (not a hypothetical), and write it as a general rule ("for a question answerable from a few sources, use one researcher and stop after a couple of searches"), never a play-by-play.\n` +
     `- "memory" — a durable project FACT/decision worth remembering (an architecture choice, a gotcha).\n\n` +
     `Rules (these matter — violating them makes the lesson useless):\n` +
     `1. ABSTRACT THE ROUTINE, NOT THE LOG. Generalize away this-session-specific paths, ids, filenames, and values. "When editing a Zod schema, run \`bun typecheck\` after" is good; "I edited src/foo/bar.ts line 42" is useless.\n` +
