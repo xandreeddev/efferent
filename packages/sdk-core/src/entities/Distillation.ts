@@ -13,6 +13,28 @@ export const CandidateKind = Schema.Literal("skill", "memory", "constraint")
 export type CandidateKind = typeof CandidateKind.Type
 
 /**
+ * Where a learning is filed. `global` (general — a language/framework/style rule
+ * that applies to ANY project: Effect patterns, `const` over `let`, "typed errors
+ * not try/catch in domain code") → `~/.efferent/`, loaded into every workspace.
+ * `project` (this-repo specifics: its structure, a named decision, a local
+ * convention) → `<repo>/.efferent/`. The read side already walks both tiers
+ * (closer shadows farther); this routes the WRITE.
+ */
+export const CandidateScope = Schema.Literal("global", "project")
+export type CandidateScope = typeof CandidateScope.Type
+
+/**
+ * Who authored the rule. `user` — the human stated it explicitly (a correction /
+ * instruction); it is authoritative, so it is persisted WITHOUT the Opus refute
+ * gate (trustworthy by construction, like the deterministic efficiency gate).
+ * `inferred` — the loop deduced it from the run; it must pass the Opus gate.
+ * NOTE: the bypass is only for *additive* deposits (constraint/skill/memory),
+ * never for a prompt-overlay rewrite — those always pass Opus (see Phase 2).
+ */
+export const CandidateSource = Schema.Literal("user", "inferred")
+export type CandidateSource = typeof CandidateSource.Type
+
+/**
  * Pointers into the real record so the verifier can **check, not trust** — the
  * conversation it came from, the message positions that evidence it, and (when
  * a file change is the evidence) the diff. The whole point of evidence is that
@@ -39,6 +61,10 @@ export const Candidate = Schema.Struct({
   description: Schema.String,
   /** The abstracted procedure (skill) or hard rule (constraint) or fact (memory). */
   body: Schema.String,
+  /** Global (applies everywhere) vs project-local — routes the Curator's write. */
+  scope: CandidateScope,
+  /** Human-stated (authoritative, gate-bypassed) vs loop-inferred (gated). */
+  source: CandidateSource,
   evidence: CandidateEvidence,
 })
 export type Candidate = typeof Candidate.Type

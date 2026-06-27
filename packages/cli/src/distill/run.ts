@@ -131,6 +131,7 @@ export const runDistill = (
           conversationId: conv.id,
           messages,
           repoDir: opts.workspace,
+          globalDir: homedir(),
           existing,
           ...(opts.threshold !== undefined ? { threshold: opts.threshold } : {}),
         })

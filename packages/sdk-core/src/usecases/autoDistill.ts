@@ -32,8 +32,11 @@ export const AUTO_DISTILL_MIN_MESSAGES = 4
  */
 export const runAutoDistill = (args: {
   readonly conversationId: ConversationId
-  /** Repo dir: the Opus gate runs here AND artifacts land under its `.efferent/`. */
+  /** Repo dir: the Opus gate runs here AND `project`-scoped artifacts land under its `.efferent/`. */
   readonly repoDir: string
+  /** Global root (`~`): `global`-scoped learnings land under ITS `.efferent/`, loaded
+   *  into every workspace (general rules — Effect/style/language). Omit ⇒ all local. */
+  readonly globalDir?: string
   /** Names already known (skills + memory) so the miner doesn't re-propose them. */
   readonly existing: ReadonlyArray<string>
   readonly minMessages?: number
@@ -45,12 +48,16 @@ export const runAutoDistill = (args: {
   Effect.gen(function* () {
     const out: DistillResult[] = []
 
-    // (1) Deterministic efficiency gate — always, no LLM, no Verifier.
+    // (1) Deterministic efficiency gate — always, no LLM, no Verifier. Its constraint
+    // is project-scoped (about THIS run's fleet), so it stays local.
     const effCandidate = yield* efficiencyGate(args.conversationId)
     if (effCandidate !== null) {
-      const persisted = yield* persistArtifact(args.repoDir, effCandidate).pipe(
-        Effect.catchAll(() => Effect.succeed(undefined)),
-      )
+      const persisted = yield* persistArtifact(
+        args.repoDir,
+        effCandidate,
+        undefined,
+        args.globalDir,
+      ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
       if (persisted !== undefined) {
         out.push({
           candidate: effCandidate,
@@ -61,7 +68,8 @@ export const runAutoDistill = (args: {
       }
     }
 
-    // (2) LLM distiller — gated on conversation length; fail-closed at the Opus gate.
+    // (2) LLM distiller — gated on conversation length; fail-closed at the Opus gate
+    // (except user-stated rules, which bypass it — see runDistillation).
     const cs = yield* ConversationStore
     const messages = yield* cs.list(args.conversationId)
     if (messages.length >= (args.minMessages ?? AUTO_DISTILL_MIN_MESSAGES)) {
@@ -69,6 +77,7 @@ export const runAutoDistill = (args: {
         conversationId: args.conversationId,
         messages,
         repoDir: args.repoDir,
+        ...(args.globalDir !== undefined ? { globalDir: args.globalDir } : {}),
         existing: args.existing,
       })
       out.push(...results.filter((r) => r.persisted !== undefined))
