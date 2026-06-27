@@ -24,6 +24,7 @@ import {
   effortSettingKeyFor,
   DEFAULT_SUB_AGENT_MAX_DEPTH,
   DEFAULT_SUB_AGENT_MAX_STEPS,
+  DEFAULT_SUB_AGENT_FETCH_BUDGET,
 } from "@xandreed/sdk-core"
 import { openSelect, type SelectOption } from "../presentation/selectBox.js"
 import { rolesReadout } from "../presentation/statusBar.js"
@@ -169,6 +170,13 @@ export const openSettingsView = (store: TuiStore) =>
         value: String(current.subAgentMaxDepth ?? DEFAULT_SUB_AGENT_MAX_DEPTH),
         kind: "readonly",
         hint: "fleet nesting depth · use :set subAgentMaxDepth <n>",
+      },
+      {
+        key: "subAgentFetchBudget",
+        label: "fetchBudget",
+        value: String(current.subAgentFetchBudget ?? DEFAULT_SUB_AGENT_FETCH_BUDGET),
+        kind: "readonly",
+        hint: "per-agent web lookups · use :set subAgentFetchBudget <n> (0 = off)",
       },
       {
         key: "anthropicThinkingEffort",
@@ -445,6 +453,15 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => store.toast(`Updated subAgentMaxDepth → ${Math.floor(num)} · applies next turn`))
       return
     }
+    if (key === "subAgentFetchBudget") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 0) {
+        return yield* err("Setting 'subAgentFetchBudget' must be a number ≥ 0 (0 disables the per-agent web-lookup cap)")
+      }
+      yield* settings.update((curr) => ({ ...curr, subAgentFetchBudget: Math.floor(num) }))
+      yield* Effect.sync(() => store.toast(`Updated subAgentFetchBudget → ${num === 0 ? "off" : Math.floor(num)} · applies next turn`))
+      return
+    }
     if (key in ENUM_ALLOWED) {
       const allowed = ENUM_ALLOWED[key]!
       if (!allowed.includes(value)) return yield* err(`Setting '${key}' must be one of: ${allowed.join(", ")}`)
@@ -540,7 +557,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, subAgentMaxDepth, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, autoLoop, autoDistill, maxLoopAttempts, telemetry, grafanaUrl`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, subAgentMaxDepth, subAgentFetchBudget, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, autoLoop, autoDistill, maxLoopAttempts, telemetry, grafanaUrl`,
     )
   })
 
