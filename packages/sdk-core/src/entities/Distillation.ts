@@ -8,9 +8,39 @@ import { Schema } from "effect"
  * next run auto-loads. These are the values that flow between those stages.
  */
 
-/** What a distilled learning becomes once persisted. */
-export const CandidateKind = Schema.Literal("skill", "memory", "constraint")
+/**
+ * What a distilled learning becomes once persisted. `skill`/`memory`/`constraint`
+ * are filed under `.efferent/{skills,memory,CONSTRAINTS.md}`. `process` is the
+ * META layer — a rule about HOW the agent should WORK (plan first, check
+ * assumptions, right-size the fleet); it edits the operating-guidance prompt
+ * overlay (`.efferent/prompts/coder.md`). Because it changes the agent's OWN
+ * instructions it is high-stakes: it ALWAYS passes the Opus gate — the
+ * user-correction bypass never applies to it (see `runDistillation`).
+ */
+export const CandidateKind = Schema.Literal("skill", "memory", "constraint", "process")
 export type CandidateKind = typeof CandidateKind.Type
+
+/**
+ * Where a learning is filed. `global` (general — a language/framework/style rule
+ * that applies to ANY project: Effect patterns, `const` over `let`, "typed errors
+ * not try/catch in domain code") → `~/.efferent/`, loaded into every workspace.
+ * `project` (this-repo specifics: its structure, a named decision, a local
+ * convention) → `<repo>/.efferent/`. The read side already walks both tiers
+ * (closer shadows farther); this routes the WRITE.
+ */
+export const CandidateScope = Schema.Literal("global", "project")
+export type CandidateScope = typeof CandidateScope.Type
+
+/**
+ * Who authored the rule. `user` — the human stated it explicitly (a correction /
+ * instruction); it is authoritative, so it is persisted WITHOUT the Opus refute
+ * gate (trustworthy by construction, like the deterministic efficiency gate).
+ * `inferred` — the loop deduced it from the run; it must pass the Opus gate.
+ * NOTE: the bypass is only for *additive* deposits (constraint/skill/memory),
+ * never for a prompt-overlay rewrite — those always pass Opus (see Phase 2).
+ */
+export const CandidateSource = Schema.Literal("user", "inferred")
+export type CandidateSource = typeof CandidateSource.Type
 
 /**
  * Pointers into the real record so the verifier can **check, not trust** — the
@@ -39,6 +69,10 @@ export const Candidate = Schema.Struct({
   description: Schema.String,
   /** The abstracted procedure (skill) or hard rule (constraint) or fact (memory). */
   body: Schema.String,
+  /** Global (applies everywhere) vs project-local — routes the Curator's write. */
+  scope: CandidateScope,
+  /** Human-stated (authoritative, gate-bypassed) vs loop-inferred (gated). */
+  source: CandidateSource,
   evidence: CandidateEvidence,
 })
 export type Candidate = typeof Candidate.Type

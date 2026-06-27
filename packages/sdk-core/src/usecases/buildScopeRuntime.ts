@@ -1470,6 +1470,10 @@ const buildGenericHandlers = <R>(
     const note_constraint = (params: { readonly rule: string }) =>
       persistArtifact(binding.displayRoot, {
         kind: "constraint",
+        // The coordinator learns this mid-task from the gate's feedback — project-scoped
+        // (this repo's work) + inferred (the loop deduced it, not a human correction).
+        scope: "project",
+        source: "inferred",
         name: params.rule.slice(0, 50),
         description: params.rule,
         body: params.rule,

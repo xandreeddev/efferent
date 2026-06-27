@@ -1,3 +1,4 @@
+import { homedir } from "node:os"
 import { Cause, Clock, Effect, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
@@ -362,6 +363,7 @@ export const makeSubmit = (
           const distillEffect = runAutoDistill({
             conversationId: cid,
             repoDir: cwd,
+            globalDir: homedir(),
             existing,
           }).pipe(
             Effect.flatMap((saved) =>

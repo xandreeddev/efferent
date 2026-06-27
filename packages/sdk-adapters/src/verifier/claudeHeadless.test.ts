@@ -54,6 +54,8 @@ describe("buildRefutePrompt", () => {
     name: "run-typecheck",
     description: "run typecheck after edits",
     body: "After editing TS, run `bun run typecheck`.",
+    scope: "project",
+    source: "inferred",
     evidence: { conversationId: "c1", positions: [4, 9] },
   }
 
@@ -172,5 +174,44 @@ describe("ClaudeHeadlessVerifierLive.gate (full adapter path)", () => {
   it("fails on unparseable claude output", async () => {
     const res = await runGate(envelope("the work looks fine to me"))
     expect(res._tag).toBe("Left")
+  })
+
+  it("clean-room: sandbox cwd (not the repo), pinned model, --add-dir only for code context", async () => {
+    const calls: Array<{ command: string; cwd: string }> = []
+    const capturing = Layer.succeed(
+      Shell,
+      Shell.of({
+        exec: (req: { command: string; cwd?: string }) => {
+          calls.push({ command: req.command, cwd: req.cwd ?? "" })
+          return Effect.succeed({
+            stdout: envelope('{"verdict":"sound","reasons":[]}'),
+            stderr: "",
+            exitCode: 0,
+            durationMs: 1,
+            timedOut: false,
+          })
+        },
+      } as never),
+    )
+    const run = (filesChanged: ReadonlyArray<string>) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const v = yield* Verifier
+          return yield* v.gate({ task: "t", summary: "s", filesChanged, repoDir: "/repo" })
+        }).pipe(Effect.provide(ClaudeHeadlessVerifierLive.pipe(Layer.provide(capturing)))),
+      )
+
+    await run(["f.ts"]) // coding deliverable → repo access
+    await run([]) // prose deliverable → no repo
+
+    expect(calls.length).toBe(2)
+    for (const c of calls) {
+      expect(c.command).toContain("--model 'claude-opus-4-8'") // pinned
+      expect(c.command).toContain("--permission-mode plan") // read-only
+      expect(c.cwd).toMatch(/efferent-verify-/) // isolated sandbox, NOT the repo
+      expect(c.cwd).not.toBe("/repo")
+    }
+    expect(calls[0]!.command).toContain("--add-dir '/repo'") // code context → repo
+    expect(calls[1]!.command).not.toContain("--add-dir") // prose → no repo
   })
 })
