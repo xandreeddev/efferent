@@ -3,6 +3,7 @@ import {
   BUILTIN_RESEARCH_AGENTS,
   RESEARCH_COORDINATOR_AGENT,
   RESEARCHER_AGENT,
+  researchCoordinatorAgent,
 } from "./researchAgents.js"
 
 describe("the built-in research team", () => {
@@ -44,5 +45,21 @@ describe("the built-in research team", () => {
     expect(tools).not.toContain("edit_file")
     expect(tools).not.toContain("run_agent")
     expect(tools).not.toContain("wait_for_agents")
+  })
+
+  it("autoLoop adds the Opus gate + learn/retry; off → synthesize-and-report", () => {
+    const on = researchCoordinatorAgent({ autoLoop: true, maxLoopAttempts: 3 })
+    expect(on.tools).toContain("verify_with_gate")
+    expect(on.tools).toContain("note_constraint")
+    expect(on.body).toContain("VALIDATE → LEARN → RETRY")
+    expect(on.body).toContain("verify_with_gate")
+
+    const off = researchCoordinatorAgent({ autoLoop: false, maxLoopAttempts: 3 })
+    expect(off.tools).not.toContain("verify_with_gate")
+    expect(off.tools).not.toContain("note_constraint")
+    expect(off.body).not.toContain("VALIDATE → LEARN → RETRY")
+    // Both still end at REPORT (the gate phase is spliced in just before it).
+    expect(on.body).toContain("5. REPORT.")
+    expect(off.body).toContain("5. REPORT.")
   })
 })

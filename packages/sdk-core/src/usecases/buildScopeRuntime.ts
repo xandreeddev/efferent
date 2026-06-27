@@ -140,10 +140,24 @@ export interface ScopeRuntime {
   readonly bus: AgentBus
 }
 
-/** Default step (turn) cap per spawned sub-agent — overridable via
- *  `Settings.subAgentMaxSteps` (threaded through `RunContext`) or
- *  `BuildScopeRuntimeOptions.maxSteps`. */
-export const DEFAULT_SUB_AGENT_MAX_STEPS = 80
+/** Default step (turn) cap per spawned sub-agent — the unset default for
+ *  `Settings.subAgentMaxSteps` (threaded through `RunContext`); also overridable
+ *  via `BuildScopeRuntimeOptions.maxSteps`. Generous so a worker finishes real
+ *  work on a codebase (read → edit → test → fix) without truncating mid-task. */
+export const DEFAULT_SUB_AGENT_MAX_STEPS = 200
+
+/** Default sub-agent nesting depth — the unset default for
+ *  `Settings.subAgentMaxDepth`. 3 lets a hierarchy form (root → coordinator →
+ *  sub-lead → worker) for larger jobs; raise it for deeper fleets. */
+export const DEFAULT_SUB_AGENT_MAX_DEPTH = 3
+
+/** Default per-sub-agent web-lookup budget — the unset default for
+ *  `Settings.subAgentFetchBudget`. Max combined `web_fetch` + `search_web` calls
+ *  ONE spawned agent makes before the tools refuse with a "report now" signal.
+ *  15 is generous for a single research angle (a few searches + a few reads) yet
+ *  hard-stops the looping-researcher pathology behind the 69-fetch runaway. The
+ *  root coder is exempt (its binding leaves `fetchBudget` unset). */
+export const DEFAULT_SUB_AGENT_FETCH_BUDGET = 15
 
 /** Appended to a sub-agent's summary when the step cap cut it off mid-work —
  *  without it the run's mid-thought last sentence reads as the deliverable. */
@@ -929,6 +943,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       displayRoot,
       enforceWrite: true,
       allowBash: opts.allowBash ?? true,
+      // Deterministic web-lookup brake for this spawned worker (config via
+      // Settings.subAgentFetchBudget, inherited down the subtree on RunContext).
+      fetchBudget:
+        args.runContext.subAgentFetchBudget ?? DEFAULT_SUB_AGENT_FETCH_BUDGET,
     }
     const scopeBody = yield* getScopePromptBody(folder)
     // Role instructions (if any) lead, then the folder's ambient SCOPE.md body —
@@ -993,6 +1011,18 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       tokenPool: args.tokenPool,
       ...(childPrompt !== undefined ? { prompt: childPrompt } : {}),
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
+      // Inherit the nesting-depth cap down the subtree (seeded once at run start
+      // from Settings.subAgentMaxDepth), so the spawn guard reads the same config
+      // at every level.
+      ...(args.runContext.subAgentMaxDepth !== undefined
+        ? { subAgentMaxDepth: args.runContext.subAgentMaxDepth }
+        : {}),
+      // Inherit the per-sub-agent web-lookup budget down the subtree, so a
+      // grandchild researcher is capped the same as a child (the value is per
+      // AGENT-run via its own binding counter, but the cap is shared config).
+      ...(args.runContext.subAgentFetchBudget !== undefined
+        ? { subAgentFetchBudget: args.runContext.subAgentFetchBudget }
+        : {}),
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
@@ -1240,7 +1270,9 @@ const makeRunAgentHandler =
     }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
-      const maxDepth = opts.maxDepth ?? 2
+      // Config-driven: Settings.subAgentMaxDepth (via RunContext) wins, then the
+      // build-time opts override, then the built-in default.
+      const maxDepth = rc.subAgentMaxDepth ?? opts.maxDepth ?? DEFAULT_SUB_AGENT_MAX_DEPTH
       if (rc.depth >= maxDepth) {
         return yield* Effect.fail({
           error: "MaxDepthReached",

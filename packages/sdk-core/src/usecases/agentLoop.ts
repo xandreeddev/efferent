@@ -224,7 +224,11 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 ) =>
   Effect.gen(function* () {
     const hooks = input.hooks
-    const maxSteps = input.maxSteps ?? 20
+    // Default for the loop when `maxSteps` is unset — generous so a root
+    // orchestrating a fleet (spawn → wait_for_agents loop → synthesize across
+    // pieces) isn't truncated mid-coordination. A ceiling, not a target: a normal
+    // turn still ends as soon as the model stops calling tools.
+    const maxSteps = input.maxSteps ?? 100
     let messages: ReadonlyArray<AgentMessage> = input.messages
     let finalText = ""
     let turnIndex = 0

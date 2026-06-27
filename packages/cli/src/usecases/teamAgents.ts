@@ -88,6 +88,8 @@ Protocol:
 
 4. GATHER. After any spawn, call wait_for_agents. **It returns on the FIRST change — one agent finishing, a message to you, or the timeout — NOT when everyone's done.** LOOP it until \`allDone\` is true; react each time (answer an "[inbox …]" message, steer a teammate, spawn a fix). In the read phase wait for all investigators; in the write phase wait for the current coder before spawning the next. If a coder is stuck (keeps timing out with no progress), stop it and re-plan rather than waiting forever.
 
+4a. RECOVER — the fleet must survive failures, not die on them. A sub-agent that returns \`status: "error"\`, times out, or comes back marked \`[stopped early …]\` (a step/budget cap) is a SETBACK, not the end. Re-plan and keep going: retry the piece with a smaller/sharper task, split it differently, hand it to a different role, or do that piece yourself — whatever moves the job forward. If a \`run_agent\` call itself fails (BudgetExhausted, MaxDepthReached), stop spawning and finish the remaining work directly. NEVER abandon the whole task because one part failed; deliver the best result you can and say plainly what's done vs. outstanding. On a LONG job, make steady durable progress — land and verify one piece at a time so a later failure never loses the earlier wins.
+
 5. VALIDATE each piece (architect, cheap + continuous). Before accepting a piece, have the architect review it in a fresh context: run_agent({ agent: "architect", folder, task: "<what changed + what to check>" }), then wait for its verdict. On NEEDS WORK / BLOCKED, send the coder the findings (resume or spawn a fix) and re-validate. Never sign off without the architect.`
 
 /** The roster footer, shared by both variants. */

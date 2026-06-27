@@ -109,6 +109,20 @@ describe("buildGatePrompt", () => {
     expect(p).toContain("/repo")
     expect(p).toContain('"verdict"')
   })
+
+  it("no files → judges the PROSE deliverable (research answer + sources), not code", () => {
+    const p = buildGatePrompt({
+      task: "name two TS agent frameworks with a differentiator each",
+      summary: "Mastra (durable workflows); LangGraph (graph state) — https://...",
+      filesChanged: [],
+      repoDir: "/repo",
+    })
+    expect(p).toContain("research/analysis swarm")
+    expect(p).toContain("SUPPORTED") // judges sources/citations
+    expect(p).not.toContain("typecheck") // not the code-gate instructions
+    expect(p).not.toContain("Files changed:")
+    expect(p).toContain('"verdict"')
+  })
 })
 
 // --- gate adapter path (deterministic, stub Shell — no real claude) ----------
