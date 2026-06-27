@@ -69,6 +69,12 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         ...(settings.subAgentMaxSteps !== undefined
           ? { subAgentMaxSteps: settings.subAgentMaxSteps }
           : {}),
+        ...(settings.subAgentMaxDepth !== undefined
+          ? { subAgentMaxDepth: settings.subAgentMaxDepth }
+          : {}),
+        ...(settings.subAgentFetchBudget !== undefined
+          ? { subAgentFetchBudget: settings.subAgentFetchBudget }
+          : {}),
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
         ...(input.config.compression !== undefined ? { compression: input.config.compression } : {}),
         pinnedModels: {

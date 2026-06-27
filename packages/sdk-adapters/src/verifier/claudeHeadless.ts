@@ -90,7 +90,7 @@ export const buildRefutePrompt = (
     `2. NOT GENERAL — it's a one-off about a specific file/value, not a reusable rule/procedure.\n` +
     `3. REDUNDANT — already covered by an existing library item.\n` +
     `4. UNSAFE — contains a secret, an absolute home path, a personal name, or a destructive instruction.\n` +
-    `5. NOT USEFUL — wouldn't change what a future agent does, or wouldn't have prevented a real mistake.\n\n` +
+    `5. NOT USEFUL — wouldn't change what a future agent does. NOTE: a lesson that makes the next run more EFFICIENT (avoid over-researching, right-size a fleet, stop after enough sources, skip redundant work) counts as useful even when no error occurred — judge it on whether FOLLOWING it would measurably improve the next run, not on whether a mistake was made.\n\n` +
     `Reply with ONLY this JSON, no fences, no prose:\n` +
     `{"accept": <true|false>, "score": <0.0-1.0 confidence it SHOULD be saved>, "reason": "<one line>"}`
   )
@@ -101,15 +101,23 @@ export const buildRefutePrompt = (
  * task — judge only, never edit. Runs in the repo so it reads the changed files.
  */
 export const buildGatePrompt = (input: GateInput): string => {
-  const files =
-    input.filesChanged.length > 0 ? input.filesChanged.join(", ") : "(none reported)"
+  const hasFiles = input.filesChanged.length > 0
+  // The deliverable is either a CODE change (files to read + check) or a PROSE
+  // deliverable — a research answer / report — which IS the summary itself.
+  const lead = hasFiles
+    ? `You are the FINAL validation gate for a coding swarm's work. Your ONLY job is to VALIDATE the deliverable against the task — judge, never edit. Be skeptical; check against the ACTUAL code, do not take the summary on faith.\n\n` +
+      `You are running inside the repository at ${input.repoDir}. READ the changed files and run read-only checks (the repo's build / typecheck / tests) to confirm the work is correct and complete.\n\n`
+    : `You are the FINAL validation gate for a research/analysis swarm's work. Your ONLY job is to VALIDATE the deliverable against the task — judge, never edit. The deliverable is the answer below (no files were changed); judge IT.\n\n` +
+      `You are running inside ${input.repoDir} and MAY read files there if the task references the workspace, but the answer itself is what you are grading.\n\n`
+  const judge = hasFiles
+    ? `Judge on correctness (does it actually do the task, edge cases included), completeness (every part covered), and fit (matches the codebase conventions, no obvious regression/bug).`
+    : `Judge on: does it actually ANSWER the task (every part addressed, not dodged); is it SUPPORTED (concrete sources/citations present, claims specific and plausible, not vague hand-waving); is it HONEST about gaps and uncertainty; is it COHERENT (synthesized, not a pile of contradictions). A confident answer with no sources, or that ignores part of the question, is needs_work.`
   return (
-    `You are the FINAL validation gate for a coding swarm's work. Your ONLY job is to VALIDATE the deliverable against the task — judge, never edit. Be skeptical; check against the ACTUAL code, do not take the summary on faith.\n\n` +
-    `You are running inside the repository at ${input.repoDir}. READ the changed files and run read-only checks (the repo's build / typecheck / tests) to confirm the work is correct and complete.\n\n` +
+    lead +
     `TASK the swarm was given:\n<task>\n${input.task}\n</task>\n\n` +
     `What it reports it did:\n<summary>\n${input.summary}\n</summary>\n\n` +
-    `Files changed: ${files}\n\n` +
-    `Judge on correctness (does it actually do the task, edge cases included), completeness (every part covered), and fit (matches the codebase conventions, no obvious regression/bug). Then return a verdict:\n` +
+    (hasFiles ? `Files changed: ${input.filesChanged.join(", ")}\n\n` : "") +
+    `${judge} Then return a verdict:\n` +
     `- "sound" — correct and complete; ship it (reasons may be empty).\n` +
     `- "needs_work" — specific, FIXABLE problems. List each as a concrete, actionable reason the swarm can act on: what is wrong AND what to do about it.\n` +
     `- "blocked" — cannot proceed (missing info, contradictory task).\n\n` +

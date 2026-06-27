@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Schema } from "effect"
+import { Effect, Ref, Schema } from "effect"
 import type { Memory } from "../entities/Memory.js"
 import type { Skill } from "../entities/Skill.js"
 import { Failure, toFailure } from "../entities/Failure.js"
@@ -752,6 +752,10 @@ export interface ScopeBinding {
   readonly enforceWrite: boolean
   /** Allow the `bash` tool. */
   readonly allowBash: boolean
+  /** Max combined `web_fetch` + `search_web` calls for this agent's whole run
+   *  before the tools refuse (model-readable "converge now"). Bounds a fleet
+   *  worker that over-researches; unset → no cap (the root coder, user-visible). */
+  readonly fetchBudget?: number
 }
 
 /**
@@ -791,6 +795,24 @@ export const makeCodingHandlers = (
     // and shell serialize on this one-permit gate per handler set. Bash holds
     // it only around the exec — never while waiting on the approval modal.
     const writeGate = Effect.unsafeMakeSemaphore(1)
+
+    // Per-run web-lookup budget: a fleet researcher with no hard stop will
+    // over-fetch (soft "converge" prose isn't enough — see the 69-fetch
+    // runaway). One counter per handler set = per spawned agent run; past the
+    // cap, web_fetch/search_web refuse with a model-readable "report now", which
+    // `failureMode: "return"` turns into a graceful in-turn signal. Unset budget
+    // (the root) → no cap.
+    const fetchCount = yield* Ref.make(0)
+    const chargeFetch = Effect.gen(function* () {
+      if (binding.fetchBudget === undefined || binding.fetchBudget <= 0) return
+      const n = yield* Ref.updateAndGet(fetchCount, (x) => x + 1)
+      if (n > binding.fetchBudget) {
+        return yield* Effect.fail({
+          error: "FetchBudgetReached",
+          message: `web-lookup budget reached (${binding.fetchBudget} web_fetch/search_web calls for this agent). Stop searching now and report your findings from what you already have — a tight, sourced answer for your angle beats more crawling. If a specific fact is genuinely still missing, say so in your summary.`,
+        })
+      }
+    })
 
     return codingToolkit.of({
       read_file: ({ path, offset, limit }) =>
@@ -979,6 +1001,7 @@ export const makeCodingHandlers = (
               message: "url must be an absolute http:// or https:// URL",
             })
           }
+          yield* chargeFetch
           const cap = maxBytes ?? 50_000
           const res = yield* http.get(url, { maxBytes: cap })
           const text = res.contentType.includes("html")
@@ -993,10 +1016,11 @@ export const makeCodingHandlers = (
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       search_web: ({ query }) =>
-        webSearch.search(query).pipe(
-          Effect.map((r) => ({ answer: r.answer, sources: r.sources })),
-          Effect.catchAll((e) => Effect.fail(toFailure(e))),
-        ),
+        Effect.gen(function* () {
+          yield* chargeFetch
+          const r = yield* webSearch.search(query)
+          return { answer: r.answer, sources: r.sources }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       read_skill: ({ name }) =>
         Effect.gen(function* () {

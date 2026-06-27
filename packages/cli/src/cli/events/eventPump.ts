@@ -353,6 +353,17 @@ export const makeEventReducer = (
         )
         return
 
+      case "learned":
+        // The turn-boundary distiller persisted reusable lessons the next run
+        // inherits — surface it on the rail (the visible proof the loop closed).
+        if (event.lessons.length > 0) {
+          store.pushBlock({
+            kind: "info",
+            text: `learned ${event.lessons.length} reusable ${event.lessons.length === 1 ? "lesson" : "lessons"} for next time: ${event.lessons.map((l) => l.name).join(", ")} (:set autoDistill off to disable)`,
+          })
+        }
+        return
+
       case "assistant_message": {
         // Sub-agent narration (it carries a `nodeId`, stamped by the inner
         // hooks) never lands on the parent rail and never counts toward the

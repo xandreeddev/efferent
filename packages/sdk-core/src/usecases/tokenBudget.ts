@@ -18,8 +18,13 @@ import type { ContextUsage } from "../entities/AgentContext.js"
  * stop reason in the node's summary so the parent knows the result is partial.
  */
 
-/** Default pool: 1M tokens per top-level turn across all sub-agents. */
-export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 1_000_000
+/** Default pool: 4M tokens per top-level turn across all sub-agents — more
+ *  headroom than the old 1M (which stranded broad runs mid-coordination), but
+ *  still a real SAFETY brake against a fleet over-researching a small task (10M
+ *  let a "compare 3 frameworks" run balloon to 160+ fetches without converging).
+ *  A ceiling, not a target — the fleet should STOP when it has enough, not spend
+ *  to the cap. `:set subAgentTokenBudget 0` removes it for genuine long-running. */
+export const DEFAULT_SUB_AGENT_TOKEN_BUDGET = 4_000_000
 
 /** A live pool, or `null` when the budget is disabled (`<= 0`). */
 export type TokenPool = Ref.Ref<number> | null
