@@ -17,7 +17,7 @@ import { FileSystem } from "@xandreed/sdk-core"
 export interface InstructionFile {
   readonly path: string
   readonly content: string
-  readonly kind?: "agent" | "constraints"
+  readonly kind?: "agent" | "constraints" | "operating"
 }
 
 /** Per-file char cap in the rendered prompt. Mirrors Claude Code. */
@@ -74,6 +74,10 @@ const INSTRUCTION_FILE_NAMES = [
   { name: "AGENT.md", kind: "agent" },
   { name: "AGENT.local.md", kind: "agent" },
   { name: ".efferent/CONSTRAINTS.md", kind: "constraints" },
+  // The loop-editable + hand-editable operating-guidance overlay (Phase 2: the
+  // self-improving loop's meta/process learnings — "plan first", "check
+  // assumptions" — land here as Opus-validated bullets, scope-routed global/local).
+  { name: ".efferent/prompts/coder.md", kind: "operating" },
 ] as const
 
 /**
@@ -131,12 +135,22 @@ export const renderInstructionsSection = (
 ): string => {
   if (files.length === 0) return ""
 
+  const operatingFiles = files.filter((f) => f.kind === "operating")
   const constraintFiles = files.filter((f) => f.kind === "constraints")
-  const agentFiles = files.filter((f) => f.kind !== "constraints")
+  const agentFiles = files.filter(
+    (f) => f.kind !== "constraints" && f.kind !== "operating",
+  )
 
-  // Constraints render FIRST and under their own heading — they're the
-  // self-improving loop's learned hard rules, the highest-priority always-on
-  // layer (see `docs/self-improving-loop.md`).
+  // Operating guidance renders FIRST — it shapes HOW you work (planning,
+  // assumptions, delegation), above the hard rules below. It's the loop's
+  // Opus-validated meta-learnings + any hand-written .efferent/prompts/coder.md.
+  const operating = renderFileGroup(
+    operatingFiles,
+    "# Operating guidance",
+    "How to approach work in this workspace — operating guidance (planning, assumptions, delegation discipline) the self-improving loop learned and Opus-validated, plus any hand-written `.efferent/prompts/coder.md`. Internalize it before you start; it shapes HOW you work, above the domain rules below.",
+  )
+  // Constraints render under their own heading — the loop's learned hard rules,
+  // a high-priority always-on layer (see `docs/self-improving-loop.md`).
   const constraints = renderFileGroup(
     constraintFiles,
     "# Constraints",
@@ -147,7 +161,9 @@ export const renderInstructionsSection = (
     "# Instructions",
     "Auto-discovered AGENT.md files from the workspace's ancestor chain. Treat them as durable guidance for this workspace — hard rules unless the user explicitly overrides them in conversation.",
   )
-  const body = [constraints, instructions].filter((s) => s.length > 0).join("\n\n")
+  const body = [operating, constraints, instructions]
+    .filter((s) => s.length > 0)
+    .join("\n\n")
   if (body === "") return ""
   return `\n${body}\n`
 }

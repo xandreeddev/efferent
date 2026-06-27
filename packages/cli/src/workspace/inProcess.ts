@@ -1,3 +1,4 @@
+import { homedir } from "node:os"
 import { Clock, Effect, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
 import type { LanguageModel } from "@effect/ai"
 import {
@@ -482,6 +483,7 @@ export const makeInProcessWorkspace = (
             const distillEffect = runAutoDistill({
               conversationId: cid,
               repoDir: deps.cwd,
+              globalDir: homedir(),
               existing,
             }).pipe(
               Effect.flatMap((saved) =>

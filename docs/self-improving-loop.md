@@ -59,8 +59,17 @@ back to the architect's verdict, so your task never blocks; you just don't get t
 - `autoLoop on|off` — the Opus gate + retry (off → the old single architect cycle). *Applies next launch.*
 - `autoDistill on|off` — turn-end learning (off → use `efferent distill` manually). *Applies live.*
 - `maxLoopAttempts <1-10>` — gate rounds before delivering what it has (1 = gate once, no retry).
-- Env: `EFFERENT_CLAUDE_BIN` (default `claude`), `EFFERENT_VERIFY_MODEL` (default `opus`),
-  `EFFERENT_VERIFY_ARGS` (default `--permission-mode plan`, read-only).
+- Env: `EFFERENT_CLAUDE_BIN` (default `claude`), `EFFERENT_VERIFY_MODEL` (default **pinned**
+  `claude-opus-4-8`; set `opus` if the id is unknown), `EFFERENT_VERIFY_ARGS` (default
+  `--permission-mode plan`, read-only).
+- **Clean-room.** The gate runs in an isolated sandbox cwd under a CONTROLLED validator `CLAUDE.md`
+  (not the project's `AGENT.md`), reaching the repo READ-ONLY via `--add-dir` ONLY for code-related
+  checks (a `project`-scoped learning, or a deliverable with file changes) — a general rule or a
+  prose deliverable is judged on its own merits. **Airtight:** `HOME` points at the sandbox with ONLY
+  claude's credentials (`~/.claude/.credentials.json`) copied in — it authenticates but loads NO
+  global `CLAUDE.md`/memory/config (verified: inherited context drops to ~nothing); a keychain-only
+  setup falls back to HOME-intact (the sandbox cwd still excludes the project narrative). The
+  independence matters most for Phase 2, where the gate validates an edit to the agent's OWN instructions.
 
 **Manual / backlog mining.** Mine past conversations from the DB on demand:
 ```
@@ -392,6 +401,32 @@ changes make the fleet actually learn to converge, and compound it:
   fleet-wide `ScenarioRun.trajectory` (the 69-fetch runaway scores ~0 where `swarm` scored it 1.0);
   `loopClosure.test.ts` proves the loop CLOSES deterministically (gate → `persistArtifact` →
   `discoverInstructionFiles` → `# Constraints` in the next run's prompt).
+
+## Scope, corrections, and meta-prompts (2026-06-27)
+
+Make the loop "learn as we go for whatever task" — across projects, from your corrections,
+including the agent's own operating instructions. Every learning now carries **`scope`**
+(`global | project`) and **`source`** (`user | inferred`), classified by the miner:
+
+- **Scope routing.** `persistArtifact` writes a `global` learning under `~/.efferent/` and a
+  `project` one under `<repo>/.efferent/` (the new `globalRoot` arg, threaded as `homedir()`).
+  The read side was ALREADY global-aware (`loadSkills`/`loadMemory`/`discoverInstructionFiles`
+  walk `cwd → parents → ~/.efferent`), so a general rule (Effect/style/language) learned in one
+  project is now inherited by every project; a project-specific one stays local.
+- **User corrections bypass the gate.** A rule you STATE ("use `const` not `let`", "no try/catch in
+  the domain") is marked `source:"user"` (USER turns are tagged in the transcript + the miner is
+  told to always capture them) and persisted DIRECTLY — no Opus refutation. The human is the
+  authority; the bypass is the same "trustworthy by construction" the deterministic efficiency gate
+  uses. Inferred lessons still pass the gate, fail-closed. So you state a correction once and never
+  repeat it. *Bypass is additive deposits only (constraint/skill/memory).*
+- **Meta-prompts — the loop edits its own operating instructions.** A new `process` learning kind
+  (a rule about HOW to work — plan first, check assumptions, right-size the fleet) is filed in a
+  loadable **operating-guidance overlay** `.efferent/prompts/coder.md`, discovered by the instruction
+  channel and rendered as a high-priority `# Operating guidance` section (above `# Constraints`).
+  Editable by hand AND by the loop — but a `process` learning **always passes the Opus gate** (the
+  user-bypass NEVER applies; changing the agent's own instructions is high-stakes), and the edit is a
+  deterministic delta bullet (append/update by id — ACE-safe, no LLM rewrite). The built-in
+  `coderPrompt` stays the floor; the overlay is bounded by the instruction budget.
 
 ## Not yet wired (named, so it's not mistaken for done)
 
