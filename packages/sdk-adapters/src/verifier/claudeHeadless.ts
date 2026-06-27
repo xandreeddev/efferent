@@ -90,7 +90,7 @@ export const buildRefutePrompt = (
     `2. NOT GENERAL — it's a one-off about a specific file/value, not a reusable rule/procedure.\n` +
     `3. REDUNDANT — already covered by an existing library item.\n` +
     `4. UNSAFE — contains a secret, an absolute home path, a personal name, or a destructive instruction.\n` +
-    `5. NOT USEFUL — wouldn't change what a future agent does, or wouldn't have prevented a real mistake.\n\n` +
+    `5. NOT USEFUL — wouldn't change what a future agent does. NOTE: a lesson that makes the next run more EFFICIENT (avoid over-researching, right-size a fleet, stop after enough sources, skip redundant work) counts as useful even when no error occurred — judge it on whether FOLLOWING it would measurably improve the next run, not on whether a mistake was made.\n\n` +
     `Reply with ONLY this JSON, no fences, no prose:\n` +
     `{"accept": <true|false>, "score": <0.0-1.0 confidence it SHOULD be saved>, "reason": "<one line>"}`
   )

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
@@ -9,6 +10,12 @@ import { runAutoDistill, AUTO_DISTILL_MIN_MESSAGES } from "./autoDistill.js"
 
 const convStore = (messages: ReadonlyArray<AgentMessage>) =>
   Layer.succeed(ConversationStore, { list: () => Effect.succeed(messages) } as never)
+
+// Empty tree → the deterministic efficiency gate finds no over-research (it must
+// not fire here; we're testing the LLM-distiller guard).
+const emptyTree = Layer.succeed(ContextTreeStore, {
+  listTree: () => Effect.succeed([]),
+} as never)
 
 // If anything downstream of the guard runs, these die loudly — the test asserts
 // the short-conversation guard short-circuits BEFORE the miner/gate/FS are touched.
@@ -29,7 +36,7 @@ const run = (messages: ReadonlyArray<AgentMessage>) =>
   Effect.runPromise(
     runAutoDistill({ conversationId: cid, repoDir: "/r", existing: [] }).pipe(
       Effect.provide(
-        Layer.mergeAll(convStore(messages), minerDies, verifierDies, fsDies),
+        Layer.mergeAll(convStore(messages), emptyTree, minerDies, verifierDies, fsDies),
       ),
     ),
   )
@@ -51,6 +58,7 @@ describe("runAutoDistill — turn-boundary learn step", () => {
             Layer.succeed(ConversationStore, {
               list: () => Effect.fail(new Error("store down")),
             } as never),
+            emptyTree,
             minerDies,
             verifierDies,
             fsDies,
