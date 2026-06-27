@@ -8,8 +8,16 @@ import { Schema } from "effect"
  * next run auto-loads. These are the values that flow between those stages.
  */
 
-/** What a distilled learning becomes once persisted. */
-export const CandidateKind = Schema.Literal("skill", "memory", "constraint")
+/**
+ * What a distilled learning becomes once persisted. `skill`/`memory`/`constraint`
+ * are filed under `.efferent/{skills,memory,CONSTRAINTS.md}`. `process` is the
+ * META layer — a rule about HOW the agent should WORK (plan first, check
+ * assumptions, right-size the fleet); it edits the operating-guidance prompt
+ * overlay (`.efferent/prompts/coder.md`). Because it changes the agent's OWN
+ * instructions it is high-stakes: it ALWAYS passes the Opus gate — the
+ * user-correction bypass never applies to it (see `runDistillation`).
+ */
+export const CandidateKind = Schema.Literal("skill", "memory", "constraint", "process")
 export type CandidateKind = typeof CandidateKind.Type
 
 /**

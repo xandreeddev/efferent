@@ -72,6 +72,18 @@ describe("persistArtifact — Curator (deterministic delta merge)", () => {
     expect(bullets.length).toBe(2)
   })
 
+  it("process: a meta rule lands in the prompt overlay (delta bullet), not CONSTRAINTS", async () => {
+    const store = new Map<string, string>()
+    const overlay = "/repo/.efferent/prompts/coder.md"
+    await run(store, cand("process", "plan-first", "Before a multi-step task, write the plan and confirm it."))
+    expect(store.get(overlay)).toContain("- [plan-first] Before a multi-step task")
+    expect(store.has("/repo/.efferent/CONSTRAINTS.md")).toBe(false)
+    // Same id → update in place (delta-merge), not a second bullet.
+    await run(store, cand("process", "plan-first", "Always plan first and confirm the decomposition."))
+    expect(store.get(overlay)).toContain("Always plan first")
+    expect(store.get(overlay)!.match(/\[plan-first\]/g)?.length).toBe(1)
+  })
+
   it("routes by scope: global → the global root, project → the project root", async () => {
     const store = new Map<string, string>()
     const provide = <A>(eff: Effect.Effect<A, unknown, FileSystem>) =>

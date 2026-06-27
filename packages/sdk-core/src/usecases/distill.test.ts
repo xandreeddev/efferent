@@ -249,6 +249,39 @@ describe("runDistillation", () => {
     expect(keys.some((k) => k.includes("/repo/.efferent"))).toBe(false)
   })
 
+  it("a PROCESS learning is NEVER bypassed — a user-stated process rule still passes Opus", async () => {
+    const store = new Map<string, string>()
+    // A user-stated PROCESS rule. A constraint would bypass the gate; a process
+    // rule (it edits the agent's own instructions) must always be Opus-validated.
+    const userProcess = JSON.stringify({
+      candidates: [
+        {
+          kind: "process",
+          scope: "global",
+          source: "user",
+          name: "plan-first",
+          description: "plan before multi-step work",
+          body: "Before a multi-step task, write the plan and confirm the decomposition.",
+        },
+      ],
+    })
+    // The gate REJECTS — so a correctly-gated process rule is dropped (no overlay write).
+    const rejecting = () => Effect.succeed({ accept: false, score: 0, reason: "nope" } satisfies Verdict)
+    const results = await Effect.runPromise(
+      runDistillation({
+        conversationId: "c",
+        messages: MSGS,
+        repoDir: "/repo",
+        globalDir: "/home",
+      }).pipe(
+        Effect.provide(Layer.mergeAll(minerLayer(userProcess), verifierLayer(rejecting), fsLayer(store))),
+      ),
+    )
+    expect(results[0]!.accepted).toBe(false)
+    expect(results[0]!.persisted).toBeUndefined()
+    expect(store.size).toBe(0)
+  })
+
   it("respects the score threshold", async () => {
     const store = new Map<string, string>()
     const results = await runOrch(store, Effect.succeed(accept(0.5)), { threshold: 0.7 })
