@@ -35,6 +35,40 @@
 > event variants (today the gate/learn steps surface as the coordinator's `verify_with_gate` /
 > `note_constraint` tool pills + a `learned N lessons` rail line).
 
+## How to use it
+
+**It's automatic — there's nothing to invoke.** Two behaviors run on by default:
+
+1. **The swarm loop** (`autoLoop`, default on). When you give the agent a task substantial enough
+   that it delegates to the fleet, the coordinator runs the Kimi swarm, the architect reviews each
+   piece, then the **Opus gate** validates the whole deliverable and the coordinator **learns +
+   retries** until it passes (or hits `maxLoopAttempts`, default 3). You watch it happen in the TUI:
+   the coordinator's `verify_with_gate` / `note_constraint` calls show as tool pills, and a learned
+   rule lands in `.efferent/CONSTRAINTS.md`.
+2. **Turn-end distillation** (`autoDistill`, default on). After each finished turn the runtime
+   mines the conversation in the background for reusable skills/constraints, Opus-verifies them, and
+   saves the survivors under `.efferent/` — you see a `learned N lessons for next time: …` line.
+   Those auto-load into the next run (skills/memory as prompt index, constraints as `# Constraints`).
+
+**Prerequisites.** The swarm + miner need a logged-in provider (`:login`, Kimi by default). The Opus
+gate needs the **`claude` CLI on your PATH**, logged into Claude Code — that's the cheap-subscription
+path. **Without `claude` it's fail-soft**: the gate reports unavailable and the coordinator falls
+back to the architect's verdict, so your task never blocks; you just don't get the Opus sign-off.
+
+**Knobs** (`:set …`, or `config.json`):
+- `autoLoop on|off` — the Opus gate + retry (off → the old single architect cycle). *Applies next launch.*
+- `autoDistill on|off` — turn-end learning (off → use `efferent distill` manually). *Applies live.*
+- `maxLoopAttempts <1-10>` — gate rounds before delivering what it has (1 = gate once, no retry).
+- Env: `EFFERENT_CLAUDE_BIN` (default `claude`), `EFFERENT_VERIFY_MODEL` (default `opus`),
+  `EFFERENT_VERIFY_ARGS` (default `--permission-mode plan`, read-only).
+
+**Manual / backlog mining.** Mine past conversations from the DB on demand:
+```
+efferent distill --dry-run --limit 5        # show what it WOULD learn (cheap miner only, no claude)
+efferent distill --since 2026-06-20         # mine + Opus-verify + save the survivors
+efferent distill --conversation <id|prefix> # just one conversation
+```
+
 ## The one idea worth stealing
 
 efferent already **is** the thing the article tells you to build by hand:
