@@ -112,13 +112,13 @@ export const products = [
     cta: "Explore the SDK",
   },
   {
-    name: "efferent code",
-    logo: "code" as const,
+    name: "efferent CLI",
+    logo: "cli" as const,
     tag: "the efferent CLI",
     accent: "var(--verdigris)",
     blurb:
-      "The batteries-included coding agent built on the SDK — a borderless full-screen terminal UI (and headless print / json / rpc modes), file + shell + web tools, and a persistent sub-agent fleet. One npm install.",
-    points: ["TUI + print + json + rpc", "Sub-agents over a context tree", "Multi-provider, subscription or key"],
+      "One CLI that runs agents on the runtime — a borderless full-screen terminal UI, headless print / json / rpc, or a persistent per-workspace daemon. File + shell + web tools and a sub-agent fleet; the bundled coding agent runs with `efferent code`. One npm install.",
+    points: ["TUI · headless · daemon", "Sub-agents over a context tree", "Multi-provider, subscription or key"],
     href: "/docs/getting-started",
     cta: "Get started",
   },

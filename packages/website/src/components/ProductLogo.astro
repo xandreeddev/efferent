@@ -1,13 +1,13 @@
 ---
-// Official per-product lockups (efferent { sdk } / < code > / [ evals ] / ( social )),
+// Official per-product lockups (efferent { sdk } / < cli > / [ evals ] / ( social )),
 // inlined so the EFFERENT wordmark adapts to the theme; the product word + gradient
 // keep their brand hues.
 import sdk from "../assets/logos/logo-sdk.svg?raw"
-import code from "../assets/logos/logo-code.svg?raw"
+import cli from "../assets/logos/logo-cli.svg?raw"
 import evals from "../assets/logos/logo-evals.svg?raw"
 import social from "../assets/logos/logo-social.svg?raw"
 
-const map = { sdk, code, evals, social } as const
+const map = { sdk, cli, evals, social } as const
 interface Props {
   name: keyof typeof map
   height?: number
