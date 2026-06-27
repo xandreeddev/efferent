@@ -15,6 +15,7 @@ import { processSpans } from "./trace/process.js"
 import { renderRuns, renderVsBaseline } from "./trace/report.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { distillEval } from "./suites/distill.eval.js"
+import { distillClassificationEval } from "./suites/distillClassification.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
 import { feature } from "./suites/feature.eval.js"
@@ -42,6 +43,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   sessionTitleEval,
   repoTasksEval,
   distillEval,
+  distillClassificationEval,
   swarmEval,
   researchEfficiencyEval,
 ]

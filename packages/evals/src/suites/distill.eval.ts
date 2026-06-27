@@ -53,6 +53,41 @@ const CHITCHAT: ReadonlyArray<AgentMessage> = [
   say("You're welcome!"),
 ]
 
+// A reusable multi-step routine the agent discovers via friction: adding a tool
+// isn't one edit — it must be defined, REGISTERED in the toolkit, AND given a
+// HANDLER, or it silently never runs. Exactly the repeatable recipe a skill
+// should capture.
+const SUCCESS_SKILL_SESSION: ReadonlyArray<AgentMessage> = [
+  { role: "user", content: "Add a new `glob` tool to the coding toolkit." },
+  t("1", "edit_file", { path: "codingToolkit.ts", oldText: "// tool defs", newText: "// tool defs\nconst glob = Tool.make({ name: 'glob' })" }),
+  r("1", "edit_file", "edited codingToolkit.ts"),
+  t("2", "Bash", { command: "bun run typecheck" }),
+  r("2", "Bash", "0 errors"),
+  { role: "user", content: "it typechecks but the model never calls glob — it can't see the tool." },
+  say("Right — defining the tool isn't enough. It must also be registered in the Toolkit and given a handler in the layer. Three steps, not one."),
+  t("3", "edit_file", { path: "codingToolkit.ts", oldText: "tools: [read, edit]", newText: "tools: [read, edit, glob]" }),
+  r("3", "edit_file", "registered glob in the toolkit"),
+  t("4", "edit_file", { path: "codingToolkit.ts", oldText: "// handlers", newText: "// handlers\nglob: (i) => fs.glob(i.pattern)," }),
+  r("4", "edit_file", "added the glob handler"),
+  say("Done. The repeatable recipe for adding a tool: define it, register it in the Toolkit, and add its handler in the layer — miss any one and it silently never runs."),
+]
+
+// A recurring failure: the agent keeps forgetting to run the typecheck after
+// edits, leading to red CI.
+const FAILURE_CONSTRAINT_SESSION: ReadonlyArray<AgentMessage> = [
+  { role: "user", content: "Add a `retryDelay` option to the client config." },
+  t("1", "edit_file", { path: "src/Client.ts", oldText: "timeout: Schema.Number", newText: "timeout: Schema.Number,\n  retryDelay: Schema.Number" }),
+  r("1", "edit_file", "edited src/Client.ts"),
+  say("Added `retryDelay` to the config schema."),
+  { role: "user", content: "the typecheck is failing — did you forget to update the decoder?" },
+  say("You're right, I skipped the decoder. Let me fix it."),
+  t("2", "edit_file", { path: "src/clientDecoder.ts", oldText: "{ timeout }", newText: "{ timeout, retryDelay }" }),
+  r("2", "edit_file", "edited src/clientDecoder.ts"),
+  t("3", "Bash", { command: "bun run typecheck" }),
+  r("3", "Bash", "0 errors"),
+  say("Fixed — I need to remember to update the decoder alongside the schema."),
+]
+
 const CASES: ReadonlyArray<{
   name: string
   input: DistillCaseInput
@@ -67,6 +102,16 @@ const CASES: ReadonlyArray<{
     name: "nothing-to-learn",
     input: { messages: CHITCHAT },
     expected: { wantsCandidate: false },
+  },
+  {
+    name: "success-skill",
+    input: { messages: SUCCESS_SKILL_SESSION },
+    expected: { wantsCandidate: true, keywords: ["register", "handler"] },
+  },
+  {
+    name: "failure-constraint",
+    input: { messages: FAILURE_CONSTRAINT_SESSION },
+    expected: { wantsCandidate: true, keywords: ["typecheck", "decoder"] },
   },
 ]
 
