@@ -32,6 +32,24 @@ describe("parseCandidates", () => {
     expect(out[0]!.evidence.positions).toEqual([3, 7])
   })
 
+  it("carries scope + source, defaulting project/inferred when the miner omits them", () => {
+    const tagged = parseCandidates(
+      JSON.stringify({
+        candidates: [
+          { kind: "constraint", scope: "global", source: "user", name: "use-const", description: "d", body: "b" },
+        ],
+      }),
+      "c",
+    )
+    expect(tagged[0]).toMatchObject({ scope: "global", source: "user" })
+
+    const bare = parseCandidates(
+      JSON.stringify({ candidates: [{ kind: "constraint", name: "x", description: "d", body: "b" }] }),
+      "c",
+    )
+    expect(bare[0]).toMatchObject({ scope: "project", source: "inferred" })
+  })
+
   it("tolerates prose around the JSON object", () => {
     const text =
       'Here are the lessons:\n{"candidates":[{"kind":"skill","name":"x","description":"d","body":"b"}]}\nDone.'
@@ -81,7 +99,7 @@ describe("renderTranscript", () => {
       },
     ]
     const out = renderTranscript(messages)
-    expect(out).toContain("[0] user: fix the bug")
+    expect(out).toContain("[0] USER: fix the bug")
     expect(out).toContain("[1] assistant:")
     expect(out).toContain("→ grep(")
     expect(out).toContain("[2] tool grep:")
@@ -190,6 +208,45 @@ describe("runDistillation", () => {
     expect(results[0]!.accepted).toBe(false)
     expect(results[0]!.verdict.reason).toContain("verifier unavailable")
     expect(store.size).toBe(0)
+  })
+
+  it("a user-stated rule BYPASSES the gate AND a global rule routes to the global dir", async () => {
+    const store = new Map<string, string>()
+    // A miner reply marking the rule as USER-stated + GLOBAL-scoped.
+    const userGlobal = JSON.stringify({
+      candidates: [
+        {
+          kind: "constraint",
+          scope: "global",
+          source: "user",
+          name: "use-const",
+          description: "use const not let",
+          body: "Use const, not let, unless a binding is reassigned.",
+        },
+      ],
+    })
+    // A verifier that would REJECT everything — proving the bypass (it's never consulted).
+    const rejecting = () => Effect.fail(new VerifierError({ message: "would reject" }))
+    const results = await Effect.runPromise(
+      runDistillation({
+        conversationId: "c",
+        messages: MSGS,
+        repoDir: "/repo",
+        globalDir: "/home",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(minerLayer(userGlobal), verifierLayer(rejecting), fsLayer(store)),
+        ),
+      ),
+    )
+    // Persisted despite the rejecting verifier — the human is the authority.
+    expect(results[0]!.accepted).toBe(true)
+    expect(results[0]!.persisted).toBeDefined()
+    expect(results[0]!.verdict.reason).toContain("user")
+    // Routed to the GLOBAL dir (~/.efferent), not the project.
+    const keys = [...store.keys()]
+    expect(keys.some((k) => k.includes("/home/.efferent/CONSTRAINTS.md"))).toBe(true)
+    expect(keys.some((k) => k.includes("/repo/.efferent"))).toBe(false)
   })
 
   it("respects the score threshold", async () => {

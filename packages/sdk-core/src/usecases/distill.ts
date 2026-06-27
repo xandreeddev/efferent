@@ -3,6 +3,8 @@ import type { AgentMessage } from "../entities/Conversation.js"
 import {
   Candidate,
   CandidateKind,
+  CandidateScope,
+  CandidateSource,
   type Verdict,
 } from "../entities/Distillation.js"
 import { FileSystem } from "../ports/FileSystem.js"
@@ -45,7 +47,9 @@ export const renderTranscript = (
   const lines: string[] = []
   messages.forEach((msg, i) => {
     if (msg.role === "user") {
-      lines.push(`[${i}] user: ${summarize(msg.content)}`)
+      // Caps so the miner can attribute authority — a rule stated in a USER turn
+      // is an authoritative correction (source:"user"), not an agent inference.
+      lines.push(`[${i}] USER: ${summarize(msg.content)}`)
       return
     }
     if (msg.role === "assistant") {
@@ -110,16 +114,20 @@ export const buildDistillPrompt = (input: {
     `- "skill" — a reusable PROCEDURE (how to do a recurring kind of task). Propose a skill ONLY from work that clearly SUCCEEDED.\n` +
     `- "constraint" — a hard RULE that would make the next session better: either it would have PREVENTED A MISTAKE the agent actually made (an error it had to recover from, a wrong path, a violated convention) OR it would have AVOIDED A PROCESS INEFFICIENCY the transcript clearly shows — e.g. it OVER-RESEARCHED (many redundant searches/fetches for a small answer), spawned more workers than the task needed, or repeated near-identical work. Propose one ONLY when the transcript shows that misstep or inefficiency actually happening (not a hypothetical), and write it as a general rule ("for a question answerable from a few sources, use one researcher and stop after a couple of searches"), never a play-by-play.\n` +
     `- "memory" — a durable project FACT/decision worth remembering (an architecture choice, a gotcha).\n\n` +
+    `For EACH lesson also set:\n` +
+    `- "scope": "global" if it is a GENERAL language/framework/style rule that applies to ANY project (an Effect or TypeScript pattern, "use const not let", "in Effect domain code return typed errors instead of throwing / no try-catch"); "project" if it is specific to THIS repository (its structure, a named architectural decision, a local convention). When unsure, prefer "project".\n` +
+    `- "source": "user" if the lesson comes from an explicit instruction or correction a USER turn gave the agent (the human telling it a rule); "inferred" if you deduced it from the agent's own behavior.\n\n` +
     `Rules (these matter — violating them makes the lesson useless):\n` +
     `1. ABSTRACT THE ROUTINE, NOT THE LOG. Generalize away this-session-specific paths, ids, filenames, and values. "When editing a Zod schema, run \`bun typecheck\` after" is good; "I edited src/foo/bar.ts line 42" is useless.\n` +
     `2. FINE GRAINED. One lesson = one reusable idea. Never dump the whole session as one skill.\n` +
     `3. EVIDENCE. For each lesson, cite the transcript line numbers ([N]) that justify it in "positions".\n` +
-    `4. SAFE. Never include secrets, absolute home paths, or personal names.\n\n` +
+    `4. SAFE. Never include secrets, absolute home paths, or personal names.\n` +
+    `5. ALWAYS CAPTURE USER CORRECTIONS. The strictness above has ONE exception: when a USER turn states a rule or corrects the agent ("use const", "don't use try/catch in the domain", "always run typecheck first"), capture it as a "constraint" with source:"user" — EVEN IF it seems obvious or generic. That is exactly the correction the human does not want to repeat. Pick its scope honestly (a general rule → global, a this-repo rule → project).\n\n` +
     (outcomeLine !== "" ? `${outcomeLine}\n` : "") +
-    `Transcript (each line is prefixed with its [position]):\n<transcript>\n${input.transcript}\n</transcript>` +
+    `Transcript (each line is prefixed with its [position]; USER turns are the human):\n<transcript>\n${input.transcript}\n</transcript>` +
     existingLine +
     `\n\nReply with ONLY this JSON, no fences, no prose:\n` +
-    `{"candidates":[{"kind":"skill"|"memory"|"constraint","name":"<kebab-case-id>","description":"<one line>","body":"<the abstracted procedure or rule>","positions":[<line numbers>]}]}`
+    `{"candidates":[{"kind":"skill"|"memory"|"constraint","scope":"global"|"project","source":"user"|"inferred","name":"<kebab-case-id>","description":"<one line>","body":"<the abstracted procedure or rule>","positions":[<line numbers>]}]}`
   )
 }
 
@@ -132,6 +140,10 @@ const MinerOutput = Schema.parseJson(
         name: Schema.String,
         description: Schema.String,
         body: Schema.String,
+        // Optional on the wire — a miner that omits them defaults conservatively
+        // (project / inferred) so an old prompt or a sloppy reply never crashes.
+        scope: Schema.optional(CandidateScope),
+        source: Schema.optional(CandidateSource),
         positions: Schema.optional(Schema.Array(Schema.Number)),
       }),
     ),
@@ -160,6 +172,8 @@ export const parseCandidates = (
             name,
             description: c.description.trim(),
             body,
+            scope: c.scope ?? "project",
+            source: c.source ?? "inferred",
             evidence: { conversationId, positions: c.positions ?? [] },
           } satisfies Candidate,
         ]
@@ -212,8 +226,11 @@ export interface DistillResult {
 }
 
 export interface RunDistillationInput extends DistillInput {
-  /** Repo dir: the gate runs here AND artifacts are written under its `.efferent/`. */
+  /** Repo dir: the gate runs here AND `project`-scoped artifacts are written under its `.efferent/`. */
   readonly repoDir: string
+  /** Global root (`~`): `global`-scoped learnings land under ITS `.efferent/`, loaded
+   *  into every workspace. Omit ⇒ everything stays project-local. */
+  readonly globalDir?: string
   /** Show verdicts but write nothing (the `--dry-run` of the FULL pipeline). */
   readonly dryRun?: boolean
   /** Accept iff `verdict.accept && verdict.score >= threshold` (default 0.7). */
@@ -241,26 +258,36 @@ export const runDistillation = (
     const threshold = input.threshold ?? DEFAULT_THRESHOLD
     const results: DistillResult[] = []
     for (const candidate of candidates) {
-      // Fail-closed: any verifier error becomes a reject verdict.
-      const verdict = yield* verifier
-        .refute(candidate, {
-          repoDir: input.repoDir,
-          existing: input.existing ?? [],
-        })
-        .pipe(
-          Effect.catchAll((e) =>
-            Effect.succeed({
-              accept: false,
-              score: 0,
-              reason: `verifier unavailable: ${e.message}`,
-            } satisfies Verdict),
-          ),
-        )
-      const accepted = verdict.accept && verdict.score >= threshold
+      // A rule the USER stated is authoritative — the human IS the gate. Persist it
+      // directly, no Opus refutation (the same "trustworthy by construction" bypass
+      // the deterministic efficiencyGate uses). An INFERRED lesson still passes the
+      // gate, fail-closed. NOTE: this bypass is for additive deposits only — a
+      // prompt-overlay rewrite (Phase 2) always passes Opus regardless of source.
+      const userStated = candidate.source === "user"
+      const verdict: Verdict = userStated
+        ? { accept: true, score: 1, reason: "stated by the user (authoritative)" }
+        : yield* verifier
+            .refute(candidate, {
+              repoDir: input.repoDir,
+              existing: input.existing ?? [],
+            })
+            .pipe(
+              Effect.catchAll((e) =>
+                Effect.succeed({
+                  accept: false,
+                  score: 0,
+                  reason: `verifier unavailable: ${e.message}`,
+                } satisfies Verdict),
+              ),
+            )
+      const accepted = userStated || (verdict.accept && verdict.score >= threshold)
       if (accepted && input.dryRun !== true) {
-        const persisted = yield* persistArtifact(input.repoDir, candidate).pipe(
-          Effect.catchAll(() => Effect.succeed(undefined)),
-        )
+        const persisted = yield* persistArtifact(
+          input.repoDir,
+          candidate,
+          undefined,
+          input.globalDir,
+        ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
         results.push({
           candidate,
           verdict,

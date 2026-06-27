@@ -1,3 +1,4 @@
+import { homedir } from "node:os"
 import { Effect, Option } from "effect"
 import {
   ContextTreeStore,
@@ -43,6 +44,7 @@ export const headlessDistill = (args: {
     const out = yield* runAutoDistill({
       conversationId: args.conversationId,
       repoDir: args.repoDir,
+      globalDir: homedir(),
       existing,
     }).pipe(Effect.timeoutOption("180 seconds"))
     return Option.getOrElse(out, () => [] as ReadonlyArray<DistillResult>)

@@ -46,19 +46,28 @@ const firstLine = (s: string): string => {
 }
 
 export const persistArtifact = (
+  /** The PROJECT root (`<repo>`); a `project`-scoped learning lands under its `.efferent/`. */
   displayRoot: string,
   candidate: Candidate,
   now: Date = new Date(),
+  /** The GLOBAL root (`~`); a `global`-scoped learning lands under ITS `.efferent/`,
+   *  loaded into every workspace. Omit ⇒ everything stays project-local (back-compat). */
+  globalRoot?: string,
 ): Effect.Effect<PersistResult, PersistError, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
+    // Route the WRITE by scope. The read side already loads both ~/.efferent and
+    // <repo>/.efferent (closer shadows farther), so a global learning is inherited
+    // by every project; a project learning stays local.
+    const dir =
+      candidate.scope === "global" && globalRoot !== undefined ? globalRoot : displayRoot
     switch (candidate.kind) {
       case "constraint":
-        return yield* persistConstraint(fs, displayRoot, candidate)
+        return yield* persistConstraint(fs, dir, candidate)
       case "skill":
-        return yield* persistSkill(fs, displayRoot, candidate, now)
+        return yield* persistSkill(fs, dir, candidate, now)
       case "memory":
-        return yield* persistMemory(fs, displayRoot, candidate, now)
+        return yield* persistMemory(fs, dir, candidate, now)
     }
   })
 

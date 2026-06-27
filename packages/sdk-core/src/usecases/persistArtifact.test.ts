@@ -34,11 +34,14 @@ const cand = (
   name: string,
   body: string,
   description = "d",
+  scope: Candidate["scope"] = "project",
 ): Candidate => ({
   kind,
   name,
   description,
   body,
+  scope,
+  source: "inferred",
   evidence: { conversationId: "c", positions: [] },
 })
 
@@ -67,6 +70,20 @@ describe("persistArtifact — Curator (deterministic delta merge)", () => {
       .split("\n")
       .filter((l) => l.startsWith("- ["))
     expect(bullets.length).toBe(2)
+  })
+
+  it("routes by scope: global → the global root, project → the project root", async () => {
+    const store = new Map<string, string>()
+    const provide = <A>(eff: Effect.Effect<A, unknown, FileSystem>) =>
+      Effect.runPromise(eff.pipe(Effect.provide(makeFs(store))))
+    // project-scoped (default) lands under /repo; global under /home — same call, globalRoot="/home".
+    await provide(persistArtifact("/repo", cand("constraint", "local-rule", "stay local."), undefined, "/home"))
+    await provide(
+      persistArtifact("/repo", cand("constraint", "use-const", "Use const.", "d", "global"), undefined, "/home"),
+    )
+    expect(store.get("/repo/.efferent/CONSTRAINTS.md")).toContain("stay local.")
+    expect(store.get("/home/.efferent/CONSTRAINTS.md")).toContain("Use const.")
+    expect([...store.keys()].some((k) => k.startsWith("/repo") && k.includes("use-const"))).toBe(false)
   })
 
   it("skill: writes once with frontmatter and never clobbers an existing file", async () => {

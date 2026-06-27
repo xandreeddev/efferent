@@ -54,6 +54,8 @@ describe("buildRefutePrompt", () => {
     name: "run-typecheck",
     description: "run typecheck after edits",
     body: "After editing TS, run `bun run typecheck`.",
+    scope: "project",
+    source: "inferred",
     evidence: { conversationId: "c1", positions: [4, 9] },
   }
 

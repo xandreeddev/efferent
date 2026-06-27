@@ -61,6 +61,10 @@ export const efficiencyConstraint = (
   if (!overSpawned && !overSpent) return null
   return {
     kind: "constraint",
+    // Project-scoped (about THIS repo's fleet runs) + inferred (the gate deduced it,
+    // though it bypasses the Opus refute — it's deterministic, trustworthy by construction).
+    scope: "project",
+    source: "inferred",
     name: RESEARCH_BUDGET_SLUG,
     description: "Right-size fleet effort to the task — don't over-research.",
     body:
