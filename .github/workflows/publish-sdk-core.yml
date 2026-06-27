@@ -1,0 +1,31 @@
+# Publish @xandreed/sdk-core to npm via OIDC trusted publishing.
+#
+# Connect on npmjs.com: package @xandreed/sdk-core → Settings → Trusted Publisher
+# → GitHub Actions → owner `xandreeddev`, repo `efferent`, workflow
+# `publish-sdk-core.yml`. Then run this workflow (Actions tab → Run workflow) to
+# publish the current packages/sdk-core version — it builds the libs, rewrites
+# the manifest to ship dist with real dep ranges, and `npm publish`es (skips if
+# that version is already on npm).
+name: publish @xandreed/sdk-core
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC — npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/publish.ts @xandreed/sdk-core
