@@ -4,6 +4,9 @@
 
 > An **agent runtime on Effect.ts** — and the apps built on it. A pure-domain SDK (entities, ports, and use cases as `Layer`s; tools as an `@effect/ai` `Toolkit`; every error tagged; provider selection a runtime concern) plus **one CLI that runs agents** — an interactive TUI, headless (print / json / rpc), or a persistent per-workspace daemon that thin clients attach to — with a coding agent, a content engine, and a colocated eval harness on top.
 
+> [!WARNING]
+> **This repo is in a high state of flux.** It's built in public and moving fast — public APIs, package layout, CLI commands, settings, and docs can change or break between commits without notice, and `main` is not guaranteed stable. Pin a specific published version if you depend on it, and expect churn. Issues and PRs are welcome all the same.
+
 The runtime is the wedge: the agent loop, the context tree, compaction compression, the multi-provider router, and approval all live in `@xandreed/sdk-core` as composable Effects — not buried in a CLI. Each app is a thin driver that composes those Layers; the CLI (`efferent`) **bundles a terminal UI**, runs headless, and can run as a per-workspace daemon.
 
 ```
