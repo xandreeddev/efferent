@@ -21,6 +21,7 @@ import { feature } from "./suites/feature.eval.js"
 import { judgeApprovalEval } from "./suites/judgeApproval.eval.js"
 import { quality } from "./suites/quality.eval.js"
 import { repoTasksEval } from "./suites/repoTasks.eval.js"
+import { researchEfficiencyEval } from "./suites/researchEfficiency.eval.js"
 import { sessionTitleEval } from "./suites/sessionTitle.eval.js"
 import { swarmEval } from "./suites/swarm.eval.js"
 import { toolSelectionEval } from "./suites/toolSelection.eval.js"
@@ -42,6 +43,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   repoTasksEval,
   distillEval,
   swarmEval,
+  researchEfficiencyEval,
 ]
 
 // --- argv ---------------------------------------------------------------
