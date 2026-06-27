@@ -6,10 +6,18 @@ import { FileSystem } from "@xandreed/sdk-core"
  * A markdown instruction file picked up from the ancestor chain.
  * `path` is absolute; `content` is the verbatim file body (un-truncated;
  * the renderer applies the prompt budget).
+ *
+ * `kind` distinguishes hand-written guidance (`agent` — `AGENT.md`) from the
+ * **distilled constraints** the self-improving loop writes
+ * (`constraints` — `.efferent/CONSTRAINTS.md`). Both are always-on hard rules,
+ * but constraints render under their own prominent `# Constraints` heading so
+ * the model reads the loop's learned rules as a first-class layer. See
+ * `docs/self-improving-loop.md`.
  */
 export interface InstructionFile {
   readonly path: string
   readonly content: string
+  readonly kind?: "agent" | "constraints"
 }
 
 /** Per-file char cap in the rendered prompt. Mirrors Claude Code. */
@@ -40,7 +48,7 @@ export const discoverInstructionFiles = (
     const out: InstructionFile[] = []
 
     for (const dir of instructionSearchPath(cwd, homeDir)) {
-      for (const name of INSTRUCTION_FILE_NAMES) {
+      for (const { name, kind } of INSTRUCTION_FILE_NAMES) {
         const abs = resolve(dir, name)
         const read = yield* fs
           .read(abs)
@@ -50,13 +58,23 @@ export const discoverInstructionFiles = (
         const normalized = normalizeContent(read.content)
         if (seenContent.has(normalized)) continue
         seenContent.add(normalized)
-        out.push({ path: abs, content: read.content })
+        out.push({ path: abs, content: read.content, kind })
       }
     }
     return out
   })
 
-const INSTRUCTION_FILE_NAMES = ["AGENT.md", "AGENT.local.md"] as const
+/**
+ * The files discovered per ancestor dir. `AGENT.md` is hand-written guidance;
+ * `.efferent/CONSTRAINTS.md` is the self-improving loop's distilled hard-rules
+ * file (`docs/self-improving-loop.md`) — same always-on-hard-rule semantics, but
+ * rendered under its own `# Constraints` heading.
+ */
+const INSTRUCTION_FILE_NAMES = [
+  { name: "AGENT.md", kind: "agent" },
+  { name: "AGENT.local.md", kind: "agent" },
+  { name: ".efferent/CONSTRAINTS.md", kind: "constraints" },
+] as const
 
 /**
  * Order: root → … → cwd → homeDir. The model reads broad guidance
@@ -113,15 +131,41 @@ export const renderInstructionsSection = (
 ): string => {
   if (files.length === 0) return ""
 
-  const sections: string[] = [
+  const constraintFiles = files.filter((f) => f.kind === "constraints")
+  const agentFiles = files.filter((f) => f.kind !== "constraints")
+
+  // Constraints render FIRST and under their own heading — they're the
+  // self-improving loop's learned hard rules, the highest-priority always-on
+  // layer (see `docs/self-improving-loop.md`).
+  const constraints = renderFileGroup(
+    constraintFiles,
+    "# Constraints",
+    "Hard rules distilled from past runs by the self-improving loop and verified before they were saved. They exist to stop a mistake from recurring — follow them unless the user explicitly overrides one in conversation. Each bullet is a learned rule (the `[id] (✓n ✗m)` prefix is its identity + how often it has helped/hurt).",
+  )
+  const instructions = renderFileGroup(
+    agentFiles,
     "# Instructions",
     "Auto-discovered AGENT.md files from the workspace's ancestor chain. Treat them as durable guidance for this workspace — hard rules unless the user explicitly overrides them in conversation.",
-  ]
+  )
+  const body = [constraints, instructions].filter((s) => s.length > 0).join("\n\n")
+  if (body === "") return ""
+  return `\n${body}\n`
+}
+
+/** Render one labelled group of instruction files under `heading`, honoring the
+ *  shared per-file + total char budgets. Returns "" when the group is empty. */
+const renderFileGroup = (
+  files: ReadonlyArray<InstructionFile>,
+  heading: string,
+  preamble: string,
+): string => {
+  if (files.length === 0) return ""
+  const sections: string[] = [heading, preamble]
   let remaining = MAX_TOTAL_INSTRUCTION_CHARS
   for (const file of files) {
     if (remaining <= 0) {
       sections.push(
-        "_Additional instruction content omitted after reaching the prompt budget._",
+        "_Additional content omitted after reaching the prompt budget._",
       )
       break
     }
@@ -134,5 +178,5 @@ export const renderInstructionsSection = (
     sections.push(rendered)
     remaining -= rendered.length
   }
-  return `\n${sections.join("\n\n")}\n`
+  return sections.join("\n\n")
 }

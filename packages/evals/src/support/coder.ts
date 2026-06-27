@@ -9,6 +9,7 @@ import {
   loadTools,
   runAgent,
 } from "@xandreed/sdk-core"
+import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
 import { coderPrompt } from "efferent/prompts/coder.js"
 import { discoverInstructionFiles } from "efferent/usecases/discoverInstructionFiles.js"
@@ -112,6 +113,9 @@ export const runCoder = (
         Effect.provide(runtime.handlerLayer),
         // Evals never prompt: static allow-all approval.
         Effect.provide(ApprovalAllowAllLive),
+        // No `claude` in evals: the verify gate reports unavailable (so the
+        // toolkit's Verifier requirement resolves without shelling out).
+        Effect.provide(UnavailableVerifierLive),
       )
 
       const tools = yield* Ref.get(toolsRef)

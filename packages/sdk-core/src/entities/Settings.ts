@@ -101,6 +101,24 @@ export const Settings = Schema.Struct({
         "Auto-fold threshold: when a turn's context reaches this percent of the window, the TUI runs :handoff automatically at the next turn boundary. Unset → 85; 0 disables.",
     }),
   ),
+  autoLoop: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "The self-improving task loop: when the fleet handles a substantial task, the coordinator submits the deliverable to the independent Opus gate, learns from a 'needs work' verdict (note_constraint), and retries until it passes (capped). Unset → on; false → the coordinator just reports the architect's verdict (today's single-cycle behavior).",
+    }),
+  ),
+  autoDistill: Schema.optional(
+    Schema.Boolean.annotations({
+      description:
+        "Learn-for-next-runs: at each finished turn the runtime mines the conversation for reusable skills/constraints (cheap fast tier), verifies each with the Opus gate, and persists the survivors so future runs inherit them. Unset → on; false → no automatic distillation (run `efferent distill` manually instead).",
+    }),
+  ),
+  maxLoopAttempts: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Self-improving loop: max Opus-gate rounds before the coordinator delivers what it has. Unset → 3 (the article's typical convergence). 1 disables the retry (gate once, deliver). Token budget + spawn depth are the hard ceilings regardless.",
+    }),
+  ),
   theme: Schema.optional(
     Schema.String.annotations({
       description:
