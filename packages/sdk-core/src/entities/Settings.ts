@@ -26,13 +26,19 @@ export const Settings = Schema.Struct({
   subAgentTokenBudget: Schema.optional(
     Schema.Number.annotations({
       description:
-        "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap. Unset → 1000000.",
+        "Total token budget (input+output) shared by ALL sub-agents spawned within one top-level turn. 0 disables the cap (unlimited — for long unattended fleet runs). Unset → 10000000.",
     }),
   ),
   subAgentMaxSteps: Schema.optional(
     Schema.Number.annotations({
       description:
-        "Step (turn) cap for each spawned sub-agent's loop. Unset → 80. A capped run returns its partial work marked '[stopped early …]'.",
+        "Step (turn) cap for each spawned sub-agent's loop. Unset → 200. A capped run returns its partial work marked '[stopped early …]'.",
+    }),
+  ),
+  subAgentMaxDepth: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Sub-agent nesting depth: how many levels deep the fleet can spawn (root → coordinator → … ). Unset → 3. Raise it for deeper hierarchical fleets on big jobs; a spawn past the cap returns MaxDepthReached as a tool failure.",
     }),
   ),
   approvedBashRules: Schema.optional(

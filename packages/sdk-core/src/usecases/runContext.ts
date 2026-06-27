@@ -31,6 +31,11 @@ export interface RunContext {
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
   readonly subAgentMaxSteps?: number
+  /** Sub-agent nesting depth cap (`Settings.subAgentMaxDepth`), seeded once at the
+   *  top-level run and inherited by the whole subtree (like the pool) — absent →
+   *  the built-in default (`DEFAULT_SUB_AGENT_MAX_DEPTH`). The spawn guard refuses
+   *  a `run_agent` once `depth >= subAgentMaxDepth`. */
+  readonly subAgentMaxDepth?: number
   /** Compaction budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */
