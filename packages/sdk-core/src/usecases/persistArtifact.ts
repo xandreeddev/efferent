@@ -68,7 +68,41 @@ export const persistArtifact = (
         return yield* persistSkill(fs, dir, candidate, now)
       case "memory":
         return yield* persistMemory(fs, dir, candidate, now)
+      case "process":
+        return yield* persistProcess(fs, dir, candidate)
     }
+  })
+
+// --- process: an operating-guidance bullet in the prompt overlay (Phase 2) ---
+// Same deterministic delta-merge as a constraint (append/update by id, never an
+// LLM rewrite — ACE-safe), but filed in `.efferent/prompts/coder.md` so it loads
+// as the `# Operating guidance` section. The INSIGHT was Opus-validated upstream
+// (runDistillation, never bypassed); this append is trustworthy by construction.
+
+const persistProcess = (
+  fs: Context.Tag.Service<typeof FileSystem>,
+  dir: string,
+  c: Candidate,
+): Effect.Effect<PersistResult, PersistError> =>
+  Effect.gen(function* () {
+    const abs = resolve(dir, ".efferent/prompts/coder.md")
+    const id = slugifyName(c.name)
+    const rule = c.body.trim().replace(/\s+/g, " ")
+    const exists = yield* fs.exists(abs)
+    if (!exists) {
+      yield* fs.write(abs, `- [${id}] ${rule}\n`)
+      return { path: abs, created: true, kind: "process" as const }
+    }
+    const before = (yield* fs.read(abs)).content
+    const lines = before.split("\n")
+    const idx = lines.findIndex((l) => l.includes(`[${id}]`))
+    if (idx >= 0) {
+      lines[idx] = `- [${id}] ${rule}`
+      yield* fs.write(abs, lines.join("\n"))
+      return { path: abs, created: false, kind: "process" as const }
+    }
+    yield* fs.write(abs, `${before.replace(/\n+$/, "")}\n- [${id}] ${rule}\n`)
+    return { path: abs, created: false, kind: "process" as const }
   })
 
 // --- constraint: a delta-item bullet, append/update-in-place, never rewrite ---

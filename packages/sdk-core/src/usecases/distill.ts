@@ -113,7 +113,8 @@ export const buildDistillPrompt = (input: {
     `Each lesson is one of:\n` +
     `- "skill" — a reusable PROCEDURE (how to do a recurring kind of task). Propose a skill ONLY from work that clearly SUCCEEDED.\n` +
     `- "constraint" — a hard RULE that would make the next session better: either it would have PREVENTED A MISTAKE the agent actually made (an error it had to recover from, a wrong path, a violated convention) OR it would have AVOIDED A PROCESS INEFFICIENCY the transcript clearly shows — e.g. it OVER-RESEARCHED (many redundant searches/fetches for a small answer), spawned more workers than the task needed, or repeated near-identical work. Propose one ONLY when the transcript shows that misstep or inefficiency actually happening (not a hypothetical), and write it as a general rule ("for a question answerable from a few sources, use one researcher and stop after a couple of searches"), never a play-by-play.\n` +
-    `- "memory" — a durable project FACT/decision worth remembering (an architecture choice, a gotcha).\n\n` +
+    `- "memory" — a durable project FACT/decision worth remembering (an architecture choice, a gotcha).\n` +
+    `- "process" — a META rule about HOW the agent should WORK (plan before a multi-step task; verify an assumption before acting on it; right-size the fleet rather than over-delegating). Unlike a constraint (a domain rule), a process rule edits the agent's OWN operating instructions. Propose one ONLY for a clear, recurring process improvement the transcript shows would have helped — it is held to a HIGH bar (it always passes the Opus gate, never the user-bypass). Write it as a short imperative ("Before a multi-step task, write the plan and confirm the decomposition before executing").\n\n` +
     `For EACH lesson also set:\n` +
     `- "scope": "global" if it is a GENERAL language/framework/style rule that applies to ANY project (an Effect or TypeScript pattern, "use const not let", "in Effect domain code return typed errors instead of throwing / no try-catch"); "project" if it is specific to THIS repository (its structure, a named architectural decision, a local convention). When unsure, prefer "project".\n` +
     `- "source": "user" if the lesson comes from an explicit instruction or correction a USER turn gave the agent (the human telling it a rule); "inferred" if you deduced it from the agent's own behavior.\n\n` +
@@ -127,7 +128,7 @@ export const buildDistillPrompt = (input: {
     `Transcript (each line is prefixed with its [position]; USER turns are the human):\n<transcript>\n${input.transcript}\n</transcript>` +
     existingLine +
     `\n\nReply with ONLY this JSON, no fences, no prose:\n` +
-    `{"candidates":[{"kind":"skill"|"memory"|"constraint","scope":"global"|"project","source":"user"|"inferred","name":"<kebab-case-id>","description":"<one line>","body":"<the abstracted procedure or rule>","positions":[<line numbers>]}]}`
+    `{"candidates":[{"kind":"skill"|"memory"|"constraint"|"process","scope":"global"|"project","source":"user"|"inferred","name":"<kebab-case-id>","description":"<one line>","body":"<the abstracted procedure or rule>","positions":[<line numbers>]}]}`
   )
 }
 
@@ -261,9 +262,10 @@ export const runDistillation = (
       // A rule the USER stated is authoritative — the human IS the gate. Persist it
       // directly, no Opus refutation (the same "trustworthy by construction" bypass
       // the deterministic efficiencyGate uses). An INFERRED lesson still passes the
-      // gate, fail-closed. NOTE: this bypass is for additive deposits only — a
-      // prompt-overlay rewrite (Phase 2) always passes Opus regardless of source.
-      const userStated = candidate.source === "user"
+      // gate, fail-closed. CRITICAL: a `process` learning edits the agent's OWN
+      // instructions (the prompt overlay), so it ALWAYS passes Opus — the bypass
+      // never applies to it, even when a human prompted the insight.
+      const userStated = candidate.source === "user" && candidate.kind !== "process"
       const verdict: Verdict = userStated
         ? { accept: true, score: 1, reason: "stated by the user (authoritative)" }
         : yield* verifier
