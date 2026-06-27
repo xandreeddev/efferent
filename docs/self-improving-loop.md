@@ -59,8 +59,16 @@ back to the architect's verdict, so your task never blocks; you just don't get t
 - `autoLoop on|off` — the Opus gate + retry (off → the old single architect cycle). *Applies next launch.*
 - `autoDistill on|off` — turn-end learning (off → use `efferent distill` manually). *Applies live.*
 - `maxLoopAttempts <1-10>` — gate rounds before delivering what it has (1 = gate once, no retry).
-- Env: `EFFERENT_CLAUDE_BIN` (default `claude`), `EFFERENT_VERIFY_MODEL` (default `opus`),
-  `EFFERENT_VERIFY_ARGS` (default `--permission-mode plan`, read-only).
+- Env: `EFFERENT_CLAUDE_BIN` (default `claude`), `EFFERENT_VERIFY_MODEL` (default **pinned**
+  `claude-opus-4-8`; set `opus` if the id is unknown), `EFFERENT_VERIFY_ARGS` (default
+  `--permission-mode plan`, read-only).
+- **Clean-room.** The gate runs in an isolated sandbox cwd under a CONTROLLED validator `CLAUDE.md`
+  (not the project's `AGENT.md`), reaching the repo READ-ONLY via `--add-dir` ONLY for code-related
+  checks (a `project`-scoped learning, or a deliverable with file changes) — a general rule or a
+  prose deliverable is judged on its own merits. `HOME` stays intact (claude's Opus-subscription auth
+  lives in `~/.claude`); full HOME isolation would break auth, so the *global* `~/.claude/CLAUDE.md`
+  may still load — minor vs. the project narrative the sandbox excludes. The independence matters most
+  for Phase 2, where the gate validates an edit to the agent's OWN instructions.
 
 **Manual / backlog mining.** Mine past conversations from the DB on demand:
 ```

@@ -1,4 +1,4 @@
-import { unlink, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Config, Effect, Either, Layer, Schema } from "effect"
@@ -16,12 +16,21 @@ import {
 /**
  * `ClaudeHeadlessVerifierLive` — the self-improving loop's **closer**
  * (`docs/self-improving-loop.md`). It refutes a candidate learning by running
- * **Opus via the real `claude` Claude Code headless CLI**, in the repo dir, over
- * the existing `Shell` port. Two reasons it shells out instead of reusing
- * efferent's own Anthropic client: (1) the Opus *subscription* rate only applies
- * through Claude Code, not the per-token API; (2) it's an INDEPENDENT process the
- * engine can't bias, and — running in the repo — it can read the files / grep /
- * check the cited evidence against ground truth, not just judge text.
+ * **Opus via the real `claude` Claude Code headless CLI** over the `Shell` port.
+ * Two reasons it shells out instead of reusing efferent's own Anthropic client:
+ * (1) the Opus *subscription* rate only applies through Claude Code, not the
+ * per-token API; (2) it's an INDEPENDENT process the engine can't bias.
+ *
+ * **Clean-room.** To keep it a genuinely independent referee (not one steeped in
+ * the very project it judges), each run is sandboxed: claude runs in a fresh temp
+ * dir holding a CONTROLLED `CLAUDE.md` (its validator role) — NOT the project's
+ * `AGENT.md`/`CLAUDE.md` — with a PINNED model. The repo is reachable READ-ONLY
+ * via `--add-dir`, but ONLY when the check is code-related (a project-scoped
+ * learning, or a deliverable with file changes); a general rule ("use const") or a
+ * prose/research deliverable is judged on its own merits, no repo context. `HOME`
+ * is left intact so claude keeps its Opus-subscription auth (lives in `~/.claude`);
+ * full HOME isolation would break auth, so the user's GLOBAL `~/.claude/CLAUDE.md`
+ * may still load — minor noise vs. the project narrative the sandbox excludes.
  *
  * Everything is **fail-closed**: a missing binary, a non-zero exit, or
  * unparseable output surfaces as `VerifierError`, which the orchestrator treats
@@ -29,7 +38,8 @@ import {
  *
  * Config (env, all optional):
  * - `EFFERENT_CLAUDE_BIN` — the binary (default `claude`).
- * - `EFFERENT_VERIFY_MODEL` — the model alias (default `opus`).
+ * - `EFFERENT_VERIFY_MODEL` — the model (default PINNED `claude-opus-4-8`; set to
+ *   `opus` if a `claude` install doesn't recognize the pinned id).
  * - `EFFERENT_VERIFY_ARGS` — extra CLI args (default `--permission-mode plan`,
  *   Claude Code's read-only mode: it may read/grep the repo to verify, never edit).
  */
@@ -163,22 +173,50 @@ export const parseDeliverableVerdict = (
   })
 }
 
-const writeTemp = (content: string): Effect.Effect<string, VerifierError> =>
+/**
+ * The CONTROLLED `CLAUDE.md` the validator runs under. It replaces whatever
+ * project/global `CLAUDE.md` claude would otherwise inherit (the bias risk), so
+ * the gate's only framing is its purpose: an independent, skeptical referee that
+ * checks claims against ground truth. It's written into the sandbox cwd, NOT the
+ * repo — so the project's own `AGENT.md` narrative never frames its judgment.
+ */
+const VALIDATOR_CLAUDE_MD =
+  `# Validation sandbox\n\n` +
+  `You are the INDEPENDENT validator for efferent's self-improving loop, running in an ISOLATED ` +
+  `sandbox. No project or user narrative frames you here — your only inputs are the prompt you are ` +
+  `given and, for a code-related check, READ access to the repository (added as an extra directory).\n\n` +
+  `Judge the proposed learning or deliverable STRICTLY and INDEPENDENTLY. Reject by default. Check ` +
+  `every claim against GROUND TRUTH — when you have repo access, read/grep the ACTUAL code; never ` +
+  `trust a summary. Be a skeptical referee, not a collaborator. Reply with ONLY the JSON verdict the ` +
+  `prompt asks for — no prose, no fences.\n`
+
+/**
+ * Build the isolated run sandbox: a fresh temp dir holding the controlled
+ * `CLAUDE.md` + the prompt file. claude runs with this as its cwd, so it picks up
+ * the controlled framing — not the project's. HOME is left intact so claude keeps
+ * its Opus-subscription auth (which lives in `~/.claude`); the project narrative
+ * is excluded by running OUTSIDE the repo, and the code is reachable read-only via
+ * `--add-dir` only when the check is code-related.
+ */
+const makeSandbox = (
+  prompt: string,
+): Effect.Effect<{ readonly dir: string; readonly promptPath: string }, VerifierError> =>
   Effect.tryPromise({
     try: async () => {
-      const path = join(
-        tmpdir(),
-        `efferent-verify-${Date.now()}-${process.pid}.txt`,
-      )
-      await writeFile(path, content, "utf8")
-      return path
+      const dir = await mkdtemp(join(tmpdir(), "efferent-verify-"))
+      await writeFile(join(dir, "CLAUDE.md"), VALIDATOR_CLAUDE_MD, "utf8")
+      const promptPath = join(dir, "prompt.txt")
+      await writeFile(promptPath, prompt, "utf8")
+      return { dir, promptPath }
     },
     catch: (cause) =>
-      new VerifierError({ message: `temp write failed: ${String(cause)}` }),
+      new VerifierError({ message: `sandbox setup failed: ${String(cause)}` }),
   })
 
-const removeTemp = (path: string): Effect.Effect<void> =>
-  Effect.tryPromise(() => unlink(path)).pipe(Effect.catchAll(() => Effect.void))
+const removeDir = (dir: string): Effect.Effect<void> =>
+  Effect.tryPromise(() => rm(dir, { recursive: true, force: true })).pipe(
+    Effect.catchAll(() => Effect.void),
+  )
 
 export const ClaudeHeadlessVerifierLive = Layer.effect(
   Verifier,
@@ -187,29 +225,35 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     const bin = yield* Config.string("EFFERENT_CLAUDE_BIN").pipe(
       Config.withDefault("claude"),
     )
+    // Pinned by default for reproducible verdicts (a floating `opus` alias can
+    // silently change behavior under you). Override with EFFERENT_VERIFY_MODEL —
+    // set it to `opus` if a `claude` install doesn't recognize the pinned id.
     const model = yield* Config.string("EFFERENT_VERIFY_MODEL").pipe(
-      Config.withDefault("opus"),
+      Config.withDefault("claude-opus-4-8"),
     )
     const extraArgs = yield* Config.string("EFFERENT_VERIFY_ARGS").pipe(
       Config.withDefault("--permission-mode plan"),
     )
 
-    // One claude-headless invocation, shared by both gates: write the prompt to a
-    // temp file (so the multi-line content needs no shell escaping), run `claude -p`
-    // in `repoDir`, return the result text (or fail with a VerifierError).
+    // One claude-headless invocation, shared by both gates. Clean-room: runs in an
+    // isolated sandbox cwd (controlled CLAUDE.md, NOT the project's), reads the repo
+    // ONLY when the check is code-related (`codeContext` → `--add-dir`), pinned
+    // model, read-only. HOME is intact so auth survives.
     const runClaude = (
       prompt: string,
       repoDir: string,
+      codeContext: boolean,
     ): Effect.Effect<string, VerifierError> =>
       Effect.acquireUseRelease(
-        writeTemp(prompt),
-        (tmp) =>
+        makeSandbox(prompt),
+        ({ dir, promptPath }) =>
           Effect.gen(function* () {
+            const addDir = codeContext ? ` --add-dir ${sq(repoDir)}` : ""
             const command =
-              `${bin} -p "$(cat ${sq(tmp)})" ` +
-              `--output-format json --model ${sq(model)} ${extraArgs}`
+              `${bin} -p "$(cat ${sq(promptPath)})" ` +
+              `--output-format json --model ${sq(model)} ${extraArgs}${addDir}`
             const res = yield* shell
-              .exec({ command, cwd: repoDir, timeoutMs: VERIFY_TIMEOUT_MS })
+              .exec({ command, cwd: dir, timeoutMs: VERIFY_TIMEOUT_MS })
               .pipe(
                 Effect.mapError(
                   (e) =>
@@ -225,7 +269,7 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
             }
             return extractResultText(res.stdout)
           }),
-        (tmp) => removeTemp(tmp),
+        ({ dir }) => removeDir(dir),
       )
 
     // The learning gate (fail-closed at the orchestrator).
@@ -233,7 +277,9 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
       candidate: Candidate,
       ctx: VerifyContext,
     ): Effect.Effect<Verdict, VerifierError> =>
-      runClaude(buildRefutePrompt(candidate, ctx), ctx.repoDir).pipe(
+      // Code context helps verify a PROJECT-scoped learning against the repo; a
+      // GLOBAL/general rule (e.g. "use const") is judged on its own merits — no repo.
+      runClaude(buildRefutePrompt(candidate, ctx), ctx.repoDir, candidate.scope === "project").pipe(
         Effect.flatMap((text) => {
           const verdict = parseVerdict(text)
           return verdict === undefined
@@ -250,7 +296,9 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     const gate = (
       input: GateInput,
     ): Effect.Effect<DeliverableVerdict, VerifierError> =>
-      runClaude(buildGatePrompt(input), input.repoDir).pipe(
+      // A coding deliverable (files changed) gets repo access to read the actual
+      // diff; a prose/research deliverable (no files) is self-contained — no repo.
+      runClaude(buildGatePrompt(input), input.repoDir, input.filesChanged.length > 0).pipe(
         Effect.flatMap((text) => {
           const verdict = parseDeliverableVerdict(text)
           return verdict === undefined
