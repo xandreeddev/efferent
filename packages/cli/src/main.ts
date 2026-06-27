@@ -266,9 +266,6 @@ const discoverWorkspace = (workspace: string) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(workspace, homedir())
     const memory = yield* loadMemory(workspace, homedir())
-    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()))
-    const tools = yield* loadTools(workspace, homedir())
-    const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
     // Whether a distinct `code` model is configured — gates the root's
     // code-delegation policy (write code on the `code` tier, not directly).
     // `coderAgentConfig` uses THIS rootScope's systemPrompt for every mode, so
@@ -276,6 +273,14 @@ const discoverWorkspace = (workspace: string) =>
     // json / rpc). Read at startup; a mid-session `:set codeModel` takes effect
     // on the next launch (the prompt is built once, like the rest of the scope).
     const settings = yield* (yield* SettingsStore).load(workspace, homedir())
+    // The self-improving loop knobs shape the built-in coordinator: autoLoop
+    // toggles the Opus gate + learn/retry phase, maxLoopAttempts the round cap.
+    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()), {
+      autoLoop: settings.autoLoop !== false,
+      maxLoopAttempts: settings.maxLoopAttempts ?? 3,
+    })
+    const tools = yield* loadTools(workspace, homedir())
+    const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
     const root = coderPrompt(
       workspace,
       new Date(),

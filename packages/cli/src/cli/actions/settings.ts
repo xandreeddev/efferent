@@ -357,7 +357,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* settings.update((curr) => ({ ...curr, autoLoop: on }))
       yield* Effect.sync(() => {
         store.toast(
-          `Updated autoLoop → ${on ? "on (fleet gates with Opus + retries till sound)" : "off (single architect cycle)"}`,
+          `Updated autoLoop → ${on ? "on (fleet gates with Opus + retries till sound)" : "off (single architect cycle)"} · applies next launch`,
         )
         reflectRow(store, "autoLoop", String(on))
       })
