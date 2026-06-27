@@ -9,6 +9,7 @@ import {
   Http,
   SettingsStore,
   Shell,
+  Verifier,
   WebSearch,
   buildScopeRuntime,
   discoverScopeTree,
@@ -85,7 +86,7 @@ const handleSend = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch | Verifier
 > =>
   Effect.gen(function* () {
     const prompt =
@@ -201,7 +202,7 @@ const dispatch = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch | Verifier
 > => {
   if (req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     writeLine({
@@ -231,7 +232,7 @@ export const runRpcMode = (
 ): Effect.Effect<
   void,
   never,
-  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch
+  FileSystem | Http | Shell | LanguageModel.LanguageModel | ConversationStore | ContextTreeStore | SettingsStore | WebSearch | Verifier
 > =>
   Effect.gen(function* () {
     // Read stdin as an async iterator of UTF-8 chunks. Bun exposes

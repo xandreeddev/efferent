@@ -6,6 +6,7 @@ import {
   DEFAULT_AUTO_HANDOFF_PCT,
   generateSessionTitle,
   runAgent,
+  runDistillation,
   SettingsStore,
   shouldAutoHandoff,
   type AgentDefinition,
@@ -347,6 +348,39 @@ export const makeSubmit = (
             text: `context at ${contextPercent(st.inputTokens, st.contextWindow)}% of the window — auto-folding via handoff (:set autoHandoffPct 0 to disable)`,
           })
           yield* runHandoff(store, cid).pipe(Effect.catchAll(() => Effect.void))
+        }
+        // Learn for next runs: at the turn boundary, mine this conversation for
+        // reusable skills/constraints (cheap fast tier), Opus-verify each, and
+        // persist the survivors so future runs inherit them. Background daemon +
+        // fail-soft — never blocks the UI, and a missing claude / provider just
+        // means nothing is learned this turn. Skipped while messages are queued.
+        if (next === undefined && settings.autoDistill !== false) {
+          const existing = [
+            ...skills.map((s) => s.name),
+            ...memory.map((m) => m.name),
+          ]
+          const distillEffect = Effect.gen(function* () {
+            const cs = yield* ConversationStore
+            const messages = yield* cs.list(cid)
+            // Nothing reusable in a greeting / one-shot Q&A.
+            if (messages.length < 4) return
+            const results = yield* runDistillation({
+              conversationId: cid,
+              messages,
+              repoDir: cwd,
+              existing,
+            })
+            const saved = results.filter((r) => r.persisted !== undefined)
+            if (saved.length > 0) {
+              yield* Effect.sync(() =>
+                store.pushBlock({
+                  kind: "info",
+                  text: `learned ${saved.length} reusable ${saved.length === 1 ? "lesson" : "lessons"} for next time: ${saved.map((r) => r.candidate.name).join(", ")} (:set autoDistill off to disable)`,
+                }),
+              )
+            }
+          }).pipe(Effect.catchAll((e) => Effect.log(`auto-distill failed: ${e}`)))
+          yield* Effect.forkDaemon(distillEffect)
         }
         if (next !== undefined) yield* submit(next)
       })

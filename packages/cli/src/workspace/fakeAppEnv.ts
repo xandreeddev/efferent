@@ -20,6 +20,7 @@ import {
   WebSearch,
   Workspace,
 } from "@xandreed/sdk-core"
+import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "./inProcess.js"
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
 import { workspaceRouter } from "../transport/http/server.js"
@@ -130,6 +131,7 @@ export const fakeEnvLayersNoConv = (modelText?: string) =>
     fakeAuthStore,
     fakeModel(modelText),
     stubTree,
+    UnavailableVerifierLive,
   )
 
 /** A no-op AuthStore (the daemon router's /auth/reload needs it; tests never log in). */
