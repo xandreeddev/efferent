@@ -115,6 +115,15 @@ export const AgentEvent = Schema.Union(
     usage: TokenUsage,
   }),
   Schema.Struct({
+    /** The turn-boundary distiller persisted reusable lessons (skills/constraints/
+     *  memory) the next run will inherit — emitted on every run path so the
+     *  self-improving loop's "learn for next time" step is visible. */
+    type: Schema.Literal("learned"),
+    lessons: Schema.Array(
+      Schema.Struct({ name: Schema.String, kind: Schema.String }),
+    ),
+  }),
+  Schema.Struct({
     type: Schema.Literal("agent_end"),
     finalText: Schema.String,
     messages: Schema.Array(AgentMessage),

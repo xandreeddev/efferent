@@ -9,6 +9,7 @@ import {
   Http,
   SettingsStore,
   Shell,
+  UtilityLlm,
   Verifier,
   WebSearch,
   runAgent,
@@ -22,6 +23,7 @@ import {
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { runFleetToCompletion, withInboxDrain } from "./fleetCompletion.js"
+import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -101,6 +103,7 @@ export const runPrintMode = (
   | SettingsStore
   | WebSearch
   | Verifier
+  | UtilityLlm
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =
@@ -166,4 +169,19 @@ export const runPrintMode = (
     yield* Fiber.join(consumer)
 
     process.stdout.write(result.finalText + "\n")
+
+    // Learn for next runs: the answer is already on stdout, so distillation runs
+    // after delivery (gated/bounded/fail-soft in headlessDistill). It delays exit,
+    // not the answer — and closes the self-improving loop on the headless path.
+    const learned = yield* headlessDistill({
+      conversationId: cid,
+      repoDir: input.cwd,
+      skills: input.skills,
+      memory: input.memory,
+    })
+    if (learned.length > 0) {
+      yield* writeStderr(
+        `${ansi.fgGreen}learned ${learned.length} reusable ${learned.length === 1 ? "lesson" : "lessons"} for next time: ${learned.map((r) => r.candidate.name).join(", ")}${ansi.reset}`,
+      )
+    }
   })

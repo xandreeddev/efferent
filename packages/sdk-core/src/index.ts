@@ -65,6 +65,7 @@ export * from "./usecases/schedule.js"
 export * from "./usecases/codingToolkit.js"
 export * from "./usecases/persistArtifact.js"
 export * from "./usecases/distill.js"
+export * from "./usecases/autoDistill.js"
 
 // Telemetry
 export * from "./telemetry/metrics.js"
