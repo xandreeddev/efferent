@@ -1,5 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Config, Effect, Either, Layer, Schema } from "effect"
 import {
@@ -27,10 +27,12 @@ import {
  * `AGENT.md`/`CLAUDE.md` — with a PINNED model. The repo is reachable READ-ONLY
  * via `--add-dir`, but ONLY when the check is code-related (a project-scoped
  * learning, or a deliverable with file changes); a general rule ("use const") or a
- * prose/research deliverable is judged on its own merits, no repo context. `HOME`
- * is left intact so claude keeps its Opus-subscription auth (lives in `~/.claude`);
- * full HOME isolation would break auth, so the user's GLOBAL `~/.claude/CLAUDE.md`
- * may still load — minor noise vs. the project narrative the sandbox excludes.
+ * prose/research deliverable is judged on its own merits, no repo context. For
+ * AIRTIGHT isolation, `HOME` is pointed at the sandbox with ONLY claude's
+ * credentials (`~/.claude/.credentials.json`) copied in — it authenticates but
+ * loads NO global `CLAUDE.md` / memory / config (verified: inherited context drops
+ * to ~nothing). If the creds aren't a file (keychain / other setup) it falls back
+ * to HOME-intact, where the sandbox cwd still excludes the project narrative.
  *
  * Everything is **fail-closed**: a missing binary, a non-zero exit, or
  * unparseable output surfaces as `VerifierError`, which the orchestrator treats
@@ -192,22 +194,39 @@ const VALIDATOR_CLAUDE_MD =
 
 /**
  * Build the isolated run sandbox: a fresh temp dir holding the controlled
- * `CLAUDE.md` + the prompt file. claude runs with this as its cwd, so it picks up
- * the controlled framing — not the project's. HOME is left intact so claude keeps
- * its Opus-subscription auth (which lives in `~/.claude`); the project narrative
- * is excluded by running OUTSIDE the repo, and the code is reachable read-only via
- * `--add-dir` only when the check is code-related.
+ * `CLAUDE.md` + the prompt file, which claude runs in as its cwd (so the
+ * controlled framing applies, not the project's). For AIRTIGHT isolation we also
+ * copy ONLY claude's credentials (`~/.claude/.credentials.json`) into the
+ * sandbox's `.claude/` and point `HOME` at it — so claude authenticates but
+ * inherits no global `CLAUDE.md` / memory / config. If the creds aren't a file
+ * (keychain or a different setup), `isolated` is false and we fall back to leaving
+ * `HOME` intact (the sandbox cwd still excludes the PROJECT narrative — the main
+ * bias — only the user's global `~/.claude/CLAUDE.md` would then still load).
  */
 const makeSandbox = (
   prompt: string,
-): Effect.Effect<{ readonly dir: string; readonly promptPath: string }, VerifierError> =>
+): Effect.Effect<
+  { readonly dir: string; readonly promptPath: string; readonly isolated: boolean },
+  VerifierError
+> =>
   Effect.tryPromise({
     try: async () => {
       const dir = await mkdtemp(join(tmpdir(), "efferent-verify-"))
       await writeFile(join(dir, "CLAUDE.md"), VALIDATOR_CLAUDE_MD, "utf8")
       const promptPath = join(dir, "prompt.txt")
       await writeFile(promptPath, prompt, "utf8")
-      return { dir, promptPath }
+      let isolated = false
+      try {
+        const src = join(homedir(), ".claude", ".credentials.json")
+        const claudeDir = join(dir, ".claude")
+        await mkdir(claudeDir, { recursive: true })
+        await copyFile(src, join(claudeDir, ".credentials.json"))
+        await chmod(join(claudeDir, ".credentials.json"), 0o600)
+        isolated = true
+      } catch {
+        // No credentials file (keychain / other setup) — fall back to HOME-intact.
+      }
+      return { dir, promptPath, isolated }
     },
     catch: (cause) =>
       new VerifierError({ message: `sandbox setup failed: ${String(cause)}` }),
@@ -246,11 +265,15 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     ): Effect.Effect<string, VerifierError> =>
       Effect.acquireUseRelease(
         makeSandbox(prompt),
-        ({ dir, promptPath }) =>
+        ({ dir, promptPath, isolated }) =>
           Effect.gen(function* () {
             const addDir = codeContext ? ` --add-dir ${sq(repoDir)}` : ""
+            // Airtight when we could copy the creds: point HOME at the sandbox so no
+            // global CLAUDE.md/memory loads. Else HOME-intact (sandbox cwd still
+            // excludes the project narrative).
+            const homePrefix = isolated ? `HOME=${sq(dir)} ` : ""
             const command =
-              `${bin} -p "$(cat ${sq(promptPath)})" ` +
+              `${homePrefix}${bin} -p "$(cat ${sq(promptPath)})" ` +
               `--output-format json --model ${sq(model)} ${extraArgs}${addDir}`
             const res = yield* shell
               .exec({ command, cwd: dir, timeoutMs: VERIFY_TIMEOUT_MS })

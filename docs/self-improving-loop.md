@@ -65,10 +65,11 @@ back to the architect's verdict, so your task never blocks; you just don't get t
 - **Clean-room.** The gate runs in an isolated sandbox cwd under a CONTROLLED validator `CLAUDE.md`
   (not the project's `AGENT.md`), reaching the repo READ-ONLY via `--add-dir` ONLY for code-related
   checks (a `project`-scoped learning, or a deliverable with file changes) — a general rule or a
-  prose deliverable is judged on its own merits. `HOME` stays intact (claude's Opus-subscription auth
-  lives in `~/.claude`); full HOME isolation would break auth, so the *global* `~/.claude/CLAUDE.md`
-  may still load — minor vs. the project narrative the sandbox excludes. The independence matters most
-  for Phase 2, where the gate validates an edit to the agent's OWN instructions.
+  prose deliverable is judged on its own merits. **Airtight:** `HOME` points at the sandbox with ONLY
+  claude's credentials (`~/.claude/.credentials.json`) copied in — it authenticates but loads NO
+  global `CLAUDE.md`/memory/config (verified: inherited context drops to ~nothing); a keychain-only
+  setup falls back to HOME-intact (the sandbox cwd still excludes the project narrative). The
+  independence matters most for Phase 2, where the gate validates an edit to the agent's OWN instructions.
 
 **Manual / backlog mining.** Mine past conversations from the DB on demand:
 ```
