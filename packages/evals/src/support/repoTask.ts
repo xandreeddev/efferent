@@ -7,6 +7,7 @@ import {
   ConversationStore,
   runAgent,
 } from "@xandreed/sdk-core"
+import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import type { EvalEnv } from "../env.js"
 import { buildCoderConfig } from "./coder.js"
 import { dockerShellLayer, withSandbox } from "./dockerSandbox.js"
@@ -70,6 +71,7 @@ export const runRepoTask = (
         const result = yield* runAgent(config, id, prompt, hooks, dir).pipe(
           Effect.provide(runtime.handlerLayer),
           Effect.provide(ApprovalAllowAllLive),
+          Effect.provide(UnavailableVerifierLive),
           // The agent's Bash runs INSIDE the sandbox container.
           Effect.provide(dockerShellLayer(sb)),
         )

@@ -9,7 +9,18 @@ import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
+
+/** Stub Verifier for the scope-runtime handler layer (these tests never call the
+ *  verify gate; like Http/WebSearch above, it dies if unexpectedly used). */
+const verifierStub = Layer.succeed(
+  Verifier,
+  Verifier.of({
+    refute: () => Effect.die("unused"),
+    gate: () => Effect.die("unused"),
+  } as never),
+)
 import { RunContextRef, type RunContext } from "./runContext.js"
 import {
   applyInlineDefinition,
@@ -271,6 +282,7 @@ const stubPorts = Layer.mergeAll(
   Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
   Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
   ApprovalAllowAllLive,
+  verifierStub,
   doneModel,
 )
 
@@ -353,6 +365,7 @@ describe("ScopeRuntime.spawnAgent — mission + interactionPolicy seeding (the J
       Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
       Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
       ApprovalAllowAllLive,
+      verifierStub,
       model,
     )
 
@@ -545,6 +558,7 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
     Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
     Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
     ApprovalAllowAllLive,
+    verifierStub,
     blockingModel,
   )
 
@@ -648,6 +662,7 @@ describe("schedule management tools — schedule / list_scheduled_jobs / cancel_
       Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
       Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
       ApprovalAllowAllLive,
+      verifierStub,
       doneModel,
     )
   }

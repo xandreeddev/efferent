@@ -9,6 +9,7 @@ import {
   Http,
   SettingsStore,
   Shell,
+  Verifier,
   WebSearch,
   runAgent,
   type AgentDefinition,
@@ -97,6 +98,7 @@ export const runPrintMode = (
   | ContextTreeStore
   | SettingsStore
   | WebSearch
+  | Verifier
 > =>
   Effect.gen(function* () {
     const conversationIdRaw =

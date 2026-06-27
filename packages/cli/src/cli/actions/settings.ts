@@ -230,6 +230,27 @@ export const openSettingsView = (store: TuiStore) =>
         hint: "sending folds the previous turns",
       },
       {
+        key: "autoLoop",
+        label: "autoLoop",
+        value: String(current.autoLoop ?? true),
+        kind: "boolean",
+        hint: "fleet validates with the Opus gate + retries till sound",
+      },
+      {
+        key: "autoDistill",
+        label: "autoDistill",
+        value: String(current.autoDistill ?? true),
+        kind: "boolean",
+        hint: "learn reusable skills/constraints at each turn end",
+      },
+      {
+        key: "maxLoopAttempts",
+        label: "maxLoopAttempts",
+        value: String(current.maxLoopAttempts ?? 3),
+        kind: "readonly",
+        hint: "max Opus-gate rounds (use :set)",
+      },
+      {
         key: "telemetry",
         label: "telemetry",
         value: String(current.telemetry ?? false),
@@ -326,6 +347,44 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => {
         store.toast(`Updated autoCollapse → ${on ? "on (sending folds previous turns)" : "off"}`)
         reflectRow(store, "autoCollapse", String(on))
+      })
+      return
+    }
+    if (key === "autoLoop") {
+      const on = value === "true" || value === "on"
+      const off = value === "false" || value === "off"
+      if (!on && !off) return yield* err("Setting 'autoLoop' must be 'on' or 'off'")
+      yield* settings.update((curr) => ({ ...curr, autoLoop: on }))
+      yield* Effect.sync(() => {
+        store.toast(
+          `Updated autoLoop → ${on ? "on (fleet gates with Opus + retries till sound)" : "off (single architect cycle)"} · applies next launch`,
+        )
+        reflectRow(store, "autoLoop", String(on))
+      })
+      return
+    }
+    if (key === "autoDistill") {
+      const on = value === "true" || value === "on"
+      const off = value === "false" || value === "off"
+      if (!on && !off) return yield* err("Setting 'autoDistill' must be 'on' or 'off'")
+      yield* settings.update((curr) => ({ ...curr, autoDistill: on }))
+      yield* Effect.sync(() => {
+        store.toast(
+          `Updated autoDistill → ${on ? "on (learns skills/constraints at each turn end)" : "off (run efferent distill manually)"}`,
+        )
+        reflectRow(store, "autoDistill", String(on))
+      })
+      return
+    }
+    if (key === "maxLoopAttempts") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 1 || num > 10) {
+        return yield* err("Setting 'maxLoopAttempts' must be 1–10 (1 = gate once, no retry)")
+      }
+      yield* settings.update((curr) => ({ ...curr, maxLoopAttempts: Math.floor(num) }))
+      yield* Effect.sync(() => {
+        store.toast(`Updated maxLoopAttempts → ${Math.floor(num)}`)
+        reflectRow(store, "maxLoopAttempts", String(Math.floor(num)))
       })
       return
     }
@@ -464,7 +523,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, telemetry, grafanaUrl`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, autoLoop, autoDistill, maxLoopAttempts, telemetry, grafanaUrl`,
     )
   })
 

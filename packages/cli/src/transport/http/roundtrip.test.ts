@@ -21,6 +21,7 @@ import {
   WebSearch,
   Workspace,
 } from "@xandreed/sdk-core"
+import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "../../workspace/inProcess.js"
 import { makeFleetSupervisor } from "../../cli/state/fleet.js"
 import { fakeAuthStore } from "../../workspace/fakeAppEnv.js"
@@ -118,6 +119,7 @@ const stubPorts = Layer.mergeAll(
   doneModel,
   stubTree,
   stubConv,
+  UnavailableVerifierLive,
 )
 
 const workspaceLayer = Layer.effect(
