@@ -24,6 +24,9 @@ import { join } from "node:path"
 
 const ROOT = join(import.meta.dir, "..")
 const DRY = process.argv.includes("--dry-run")
+// Optional package-name filter (positional args) — a per-package publish workflow
+// passes its own name, e.g. `bun scripts/publish.ts @xandreed/sdk-core`. Empty ⇒ all.
+const ONLY = new Set(process.argv.slice(2).filter((a) => !a.startsWith("-")))
 
 type Kind = "lib" | "cli"
 const PUBLISHABLE: ReadonlyArray<{ dir: string; kind: Kind }> = [
@@ -100,12 +103,21 @@ const pointToDist = (m: Manifest): void => {
 }
 
 const npmPublish = (dir: string): number => {
-  // --provenance needs CI + OIDC; a local --dry-run would error on it.
-  const args = DRY ? ["publish", "--dry-run"] : ["publish", "--provenance"]
-  const r = run("npm", args, join(ROOT, dir))
-  process.stdout.write(r.stdout)
-  process.stderr.write(r.stderr)
-  return r.code
+  // --provenance requires a supported CI + OIDC (GitHub Actions); locally (a
+  // dry-run, or a one-time bootstrap publish from a logged-in CLI) it errors, so
+  // only attach it when actually running in CI.
+  const provenance = !DRY && process.env.GITHUB_ACTIONS === "true"
+  const ci = process.env.GITHUB_ACTIONS === "true"
+  const args = [
+    "publish",
+    ...(DRY ? ["--dry-run"] : []),
+    ...(provenance ? ["--provenance"] : []),
+    // Local bootstrap: force web auth so npm opens the browser for 2FA and POLLS
+    // until you authorize (otherwise it exits instantly with EOTP, no TTY).
+    ...(!DRY && !ci ? ["--auth-type=web"] : []),
+  ]
+  const r = spawnSync("npm", args, { cwd: join(ROOT, dir), stdio: "inherit" })
+  return r.status ?? 1
 }
 
 const auditCliBundle = (): void => {
@@ -122,6 +134,7 @@ const auditCliBundle = (): void => {
 // changesets, so a no-op run must stay cheap and never build.
 const toPublish = PUBLISHABLE.filter(({ dir }) => {
   const m = readManifest(dir)
+  if (ONLY.size > 0 && !ONLY.has(m.name)) return false
   return !isPublished(m.name, m.version)
 })
 if (toPublish.length === 0) {
@@ -132,10 +145,14 @@ console.log(
   `To publish: ${toPublish.map(({ dir }) => { const m = readManifest(dir); return `${m.name}@${m.version}` }).join(", ")}`,
 )
 
-// Build only when there's something to publish (so a no-op main push is cheap).
-// The merge that triggered this was already gated by ci.yml (typecheck + tests);
-// `tsc -b` + the bundle build re-typecheck on the way to emit.
-for (const step of ["build:libs", "build"]) {
+// Build only what we're actually publishing (so a single-package workflow / a
+// no-op push stays cheap). The merge that triggered this was already gated by
+// ci.yml; `tsc -b` + the bundle build re-typecheck on the way to emit.
+const buildSteps = [
+  ...(toPublish.some((p) => p.kind === "lib") ? ["build:libs"] : []),
+  ...(toPublish.some((p) => p.kind === "cli") ? ["build"] : []),
+]
+for (const step of buildSteps) {
   const r = run("bun", ["run", step], ROOT)
   process.stdout.write(r.stdout)
   process.stderr.write(r.stderr)
@@ -154,6 +171,8 @@ for (const { dir, kind } of PUBLISHABLE) {
   const original = readFileSync(manifestPath(dir), "utf8")
   const committed = JSON.parse(original) as Manifest
   const { name, version } = committed
+
+  if (ONLY.size > 0 && !ONLY.has(name)) continue
 
   if (isPublished(name, version)) {
     console.log(`• ${name}@${version} already on npm — skipping`)
