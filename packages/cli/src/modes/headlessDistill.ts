@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect"
 import {
+  ContextTreeStore,
   ConversationStore,
   FileSystem,
   runAutoDistill,
@@ -30,7 +31,7 @@ export const headlessDistill = (args: {
 }): Effect.Effect<
   ReadonlyArray<DistillResult>,
   never,
-  SettingsStore | ConversationStore | UtilityLlm | Verifier | FileSystem
+  SettingsStore | ConversationStore | ContextTreeStore | UtilityLlm | Verifier | FileSystem
 > =>
   Effect.gen(function* () {
     const settings = yield* (yield* SettingsStore).get()
