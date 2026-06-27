@@ -14,7 +14,9 @@ import {
   renderDirectiveSection,
   resumeAgent,
   runAgent,
+  runAutoDistill,
   SettingsStore,
+  Verifier,
   Workspace,
   WorkspaceError,
   conversationSessionId,
@@ -87,6 +89,7 @@ export type WorkspaceRunServices =
   | ContextTreeStore
   | SettingsStore
   | UtilityLlm
+  | Verifier
   | LanguageModel.LanguageModel
 
 /** A fleet to seed at build (the daemon passes the workspace's conversations). */
@@ -463,6 +466,42 @@ export const makeInProcessWorkspace = (
           nm.set(key, { ...s, queue: [] })
           return [combined, nm]
         })
+        // Learn for next runs: at a true turn boundary (nothing queued), mine
+        // this conversation for reusable lessons and persist them so the NEXT
+        // turn inherits them — the self-improving loop's "learn" step. Background
+        // + fail-soft. This closes the loop on the DEFAULT daemon path, which
+        // previously never distilled (only `efferent code` did).
+        if (next === undefined && fleet !== undefined) {
+          const settings = yield* settingsStore.get()
+          if (settings.autoDistill !== false) {
+            const cid = fleet.rootCid
+            const existing = [
+              ...deps.skills.map((s) => s.name),
+              ...deps.memory.map((m) => m.name),
+            ]
+            const distillEffect = runAutoDistill({
+              conversationId: cid,
+              repoDir: deps.cwd,
+              existing,
+            }).pipe(
+              Effect.flatMap((saved) =>
+                saved.length === 0
+                  ? Effect.void
+                  : publish({
+                      type: "learned",
+                      lessons: saved.map((r) => ({
+                        name: r.candidate.name,
+                        kind: r.candidate.kind,
+                      })),
+                    }),
+              ),
+              Effect.ignore,
+            )
+            yield* Effect.sync(() => {
+              Runtime.runFork(rt)(distillEffect)
+            })
+          }
+        }
         if (next !== undefined && fleet !== undefined) yield* startRootTurn(fleet.rootCid, next)
       })
 
