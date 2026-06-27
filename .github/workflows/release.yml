@@ -52,14 +52,14 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # `version` maintains the Version PR (bump + CHANGELOGs + refresh bun.lock);
-      # `publish` (run only once that PR is merged) gates on typecheck + tests,
-      # builds the libs + the CLI bundle, then publishes via OIDC. The action
-      # tags + creates GitHub releases from the script's `New tag:` lines.
+      # `version` maintains the Version PR (bump + CHANGELOGs + refresh bun.lock).
+      # Publishing itself is per-package (publish-<pkg>.yml, OIDC trusted
+      # publishing) so each npm package connects to its own workflow — so this
+      # workflow does NOT publish, it only keeps versions/changelogs current.
+      # After merging a Version PR, run the affected package's publish workflow.
       - uses: changesets/action@v1
         with:
           version: bun run version
-          publish: bun run release
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
