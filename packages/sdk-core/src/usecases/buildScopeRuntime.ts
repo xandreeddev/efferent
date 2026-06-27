@@ -140,10 +140,16 @@ export interface ScopeRuntime {
   readonly bus: AgentBus
 }
 
-/** Default step (turn) cap per spawned sub-agent — overridable via
- *  `Settings.subAgentMaxSteps` (threaded through `RunContext`) or
- *  `BuildScopeRuntimeOptions.maxSteps`. */
-export const DEFAULT_SUB_AGENT_MAX_STEPS = 80
+/** Default step (turn) cap per spawned sub-agent — the unset default for
+ *  `Settings.subAgentMaxSteps` (threaded through `RunContext`); also overridable
+ *  via `BuildScopeRuntimeOptions.maxSteps`. Generous so a worker finishes real
+ *  work on a codebase (read → edit → test → fix) without truncating mid-task. */
+export const DEFAULT_SUB_AGENT_MAX_STEPS = 200
+
+/** Default sub-agent nesting depth — the unset default for
+ *  `Settings.subAgentMaxDepth`. 3 lets a hierarchy form (root → coordinator →
+ *  sub-lead → worker) for larger jobs; raise it for deeper fleets. */
+export const DEFAULT_SUB_AGENT_MAX_DEPTH = 3
 
 /** Appended to a sub-agent's summary when the step cap cut it off mid-work —
  *  without it the run's mid-thought last sentence reads as the deliverable. */
@@ -993,6 +999,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       tokenPool: args.tokenPool,
       ...(childPrompt !== undefined ? { prompt: childPrompt } : {}),
       ...(args.maxSteps !== undefined ? { subAgentMaxSteps: args.maxSteps } : {}),
+      // Inherit the nesting-depth cap down the subtree (seeded once at run start
+      // from Settings.subAgentMaxDepth), so the spawn guard reads the same config
+      // at every level.
+      ...(args.runContext.subAgentMaxDepth !== undefined
+        ? { subAgentMaxDepth: args.runContext.subAgentMaxDepth }
+        : {}),
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
@@ -1240,7 +1252,9 @@ const makeRunAgentHandler =
     }) =>
     Effect.gen(function* () {
       const rc = yield* FiberRef.get(RunContextRef)
-      const maxDepth = opts.maxDepth ?? 2
+      // Config-driven: Settings.subAgentMaxDepth (via RunContext) wins, then the
+      // build-time opts override, then the built-in default.
+      const maxDepth = rc.subAgentMaxDepth ?? opts.maxDepth ?? DEFAULT_SUB_AGENT_MAX_DEPTH
       if (rc.depth >= maxDepth) {
         return yield* Effect.fail({
           error: "MaxDepthReached",
