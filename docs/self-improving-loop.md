@@ -359,6 +359,40 @@ run actually shipped) is the remaining piece — the cron substrate (`schedule.t
 `JobController.submitJob`) exists, but distill is a pipeline, not an agent turn, so it needs its own
 job kind rather than riding the agent-prompt cron path.
 
+## Convergence + run-over-run learning (2026-06-27)
+
+The first cut closed the loop *as a command* (`efferent distill`) but in practice the fleet was a
+one-off: distillation fired only in `efferent code`, the research fleet had no Opus validation at
+all, the distiller couldn't even represent a "converge faster" lesson, and nothing hard-stopped a
+researcher that over-fetched (a 2-item question burned **69 web_fetches** and never converged). Five
+changes make the fleet actually learn to converge, and compound it:
+
+- **B — deterministic convergence brake ✅.** A per-sub-agent web-lookup counter
+  (`Settings.subAgentFetchBudget`, default 15, threaded `RunContext` → `ScopeBinding` →
+  `makeCodingHandlers`): past the cap `web_fetch`/`search_web` refuse with a model-readable "report
+  now", which `failureMode:return` turns into a graceful in-turn signal. The root coder is exempt.
+  Plus a tightened research-coordinator prompt (right-size the fan-out). Live: the same task that ran
+  to 69 fetches now lands at ~27 and delivers.
+- **A — the loop closes on EVERY run path ✅.** `runAutoDistill` (core) is fired from the daemon
+  (`inProcess.finishTurn`, which never distilled) and headless print/json (`headlessDistill.ts`,
+  awaited + bounded), not just `efferent code`. A `learned` `AgentEvent` surfaces persisted lessons
+  on every path.
+- **C — learn the convergence lesson ✅.** Two sources, both folded into `runAutoDistill`: a
+  **deterministic fleet-efficiency gate** (`efficiencyGate.ts` — reads the persisted context tree; if
+  the fleet over-worked the run it persists a canonical `fleet-research-budget` constraint, no LLM,
+  trustworthy by construction → no Opus gate; catches the runaway the per-worker cap can't: too MANY
+  workers), and a **broadened distiller** (the miner + the Opus refute gate now admit
+  process/efficiency lessons, judged on whether following the rule improves the next run).
+- **D — the Opus gate reaches the research fleet ✅.** `researchCoordinatorAgent(opts)` mirrors the
+  coding `coordinatorAgent`: `autoLoop` adds `verify_with_gate` + `note_constraint` and a
+  VALIDATE→LEARN→RETRY phase before REPORT. `buildGatePrompt` branches — a research deliverable is
+  PROSE (no files), so Opus judges the answer (addresses the task, well-sourced, honest) instead of
+  reading changed files.
+- **E — evals prove it ✅.** `research-efficiency` suite budgets fetches/tokens/spawns from the
+  fleet-wide `ScenarioRun.trajectory` (the 69-fetch runaway scores ~0 where `swarm` scored it 1.0);
+  `loopClosure.test.ts` proves the loop CLOSES deterministically (gate → `persistArtifact` →
+  `discoverInstructionFiles` → `# Constraints` in the next run's prompt).
+
 ## Not yet wired (named, so it's not mistaken for done)
 
 - **Counter feedback.** The delta-item `helpful`/`harmful` counters are written (`✓0 ✗0`) but
