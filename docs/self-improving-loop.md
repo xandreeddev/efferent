@@ -393,6 +393,32 @@ changes make the fleet actually learn to converge, and compound it:
   `loopClosure.test.ts` proves the loop CLOSES deterministically (gate → `persistArtifact` →
   `discoverInstructionFiles` → `# Constraints` in the next run's prompt).
 
+## Scope, corrections, and meta-prompts (2026-06-27)
+
+Make the loop "learn as we go for whatever task" — across projects, from your corrections,
+including the agent's own operating instructions. Every learning now carries **`scope`**
+(`global | project`) and **`source`** (`user | inferred`), classified by the miner:
+
+- **Scope routing.** `persistArtifact` writes a `global` learning under `~/.efferent/` and a
+  `project` one under `<repo>/.efferent/` (the new `globalRoot` arg, threaded as `homedir()`).
+  The read side was ALREADY global-aware (`loadSkills`/`loadMemory`/`discoverInstructionFiles`
+  walk `cwd → parents → ~/.efferent`), so a general rule (Effect/style/language) learned in one
+  project is now inherited by every project; a project-specific one stays local.
+- **User corrections bypass the gate.** A rule you STATE ("use `const` not `let`", "no try/catch in
+  the domain") is marked `source:"user"` (USER turns are tagged in the transcript + the miner is
+  told to always capture them) and persisted DIRECTLY — no Opus refutation. The human is the
+  authority; the bypass is the same "trustworthy by construction" the deterministic efficiency gate
+  uses. Inferred lessons still pass the gate, fail-closed. So you state a correction once and never
+  repeat it. *Bypass is additive deposits only (constraint/skill/memory).*
+- **Meta-prompts — the loop edits its own operating instructions.** A new `process` learning kind
+  (a rule about HOW to work — plan first, check assumptions, right-size the fleet) is filed in a
+  loadable **operating-guidance overlay** `.efferent/prompts/coder.md`, discovered by the instruction
+  channel and rendered as a high-priority `# Operating guidance` section (above `# Constraints`).
+  Editable by hand AND by the loop — but a `process` learning **always passes the Opus gate** (the
+  user-bypass NEVER applies; changing the agent's own instructions is high-stakes), and the edit is a
+  deterministic delta bullet (append/update by id — ACE-safe, no LLM rewrite). The built-in
+  `coderPrompt` stays the floor; the overlay is bounded by the instruction budget.
+
 ## Not yet wired (named, so it's not mistaken for done)
 
 - **Counter feedback.** The delta-item `helpful`/`harmful` counters are written (`✓0 ✗0`) but
