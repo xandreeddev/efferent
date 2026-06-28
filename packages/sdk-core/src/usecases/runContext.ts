@@ -1,5 +1,6 @@
-import { FiberRef } from "effect"
+import { type Effect, FiberRef } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
+import type { AgentLlmRetryEvent } from "../entities/AgentHooks.js"
 import type { CompressionPolicy } from "../entities/Compression.js"
 import type { ConversationId } from "../entities/Conversation.js"
 import type { ModelRole } from "../entities/Model.js"
@@ -82,6 +83,14 @@ export interface RunContext {
    * the run and inherited by every spawn (like {@link mission}), so the whole
    * scheduled subtree knows it is unattended. */
   readonly interactionPolicy?: "interactive" | "headless"
+  /**
+   * Sink for transient-LLM-retry notices, seeded by `runAgent` from
+   * `AgentHooks.onLlmRetry` and inherited by the whole subtree. The provider
+   * adapter (`retryableLlm`) runs BELOW the loop, so it can't reach the loop's
+   * hooks; it reads this off the FiberRef instead and calls it on each backoff,
+   * turning a silent multi-second wait into a visible event. `R = never` (the
+   * adapter's fiber doesn't carry the loop's requirements). */
+  readonly onLlmRetry?: (event: AgentLlmRetryEvent) => Effect.Effect<void>
 }
 
 export const initialRunContext: RunContext = {

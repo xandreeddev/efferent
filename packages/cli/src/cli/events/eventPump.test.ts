@@ -47,6 +47,20 @@ describe("eventPump — tool start/end matching (FIFO per call id)", () => {
   })
 })
 
+describe("eventPump — transient retry notice", () => {
+  test("an llm_retry event renders a visible info line (not a silent wait)", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "turn_start", turnIndex: 0 })
+    reduce({ type: "llm_retry", reason: "HTTP 429", attempt: 1, maxAttempts: 3, delayMs: 8000 })
+    const info = store.blocks().filter((b) => b.kind === "info") as Array<{ text: string }>
+    expect(info.length).toBe(1)
+    expect(info[0]?.text).toContain("HTTP 429")
+    expect(info[0]?.text).toContain("retrying in 8s")
+    expect(info[0]?.text).toContain("(attempt 1/3)")
+  })
+})
+
 describe("eventPump — per-role spend attribution", () => {
   const usage = { inputTokens: 1000, outputTokens: 200, totalTokens: 1200, cacheReadTokens: 0 }
 

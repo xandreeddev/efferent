@@ -122,6 +122,20 @@ export interface AgentHelperUsageEvent {
 }
 
 /**
+ * A transient LLM failure (rate-limit / overload / transport) is being retried
+ * with backoff — emitted by `retryableLlm` (the adapter) so the UI can show the
+ * wait instead of a silent hang. `attempt`/`maxAttempts` are 1-based; `delayMs`
+ * is the (already-clamped) wait before the next try; `reason` is a short label
+ * (`"HTTP 429"`, `"HttpRequestError"`).
+ */
+export interface AgentLlmRetryEvent {
+  readonly reason: string
+  readonly attempt: number
+  readonly maxAttempts: number
+  readonly delayMs: number
+}
+
+/**
  * Hook surface that lets the application (and the route layer above it)
  * observe and influence the agent loop without owning the loop itself.
  *
@@ -164,4 +178,13 @@ export interface AgentHooks<R = never> {
   readonly onHelperUsage?: (
     event: AgentHelperUsageEvent,
   ) => Effect.Effect<void, never, R>
+  /**
+   * A transient LLM failure is being retried. UNLIKE every other hook, this one
+   * is `R = never` (self-contained): it's invoked from the provider adapter
+   * (`retryableLlm`, below the loop), whose fiber carries the LLM's own
+   * requirements, NOT the loop's `R`. So it must need nothing — the driver wires
+   * it to a plain queue/PubSub publish. Threaded to the adapter via
+   * `RunContext.onLlmRetry` (a FiberRef), not called by the loop directly.
+   */
+  readonly onLlmRetry?: (event: AgentLlmRetryEvent) => Effect.Effect<void>
 }

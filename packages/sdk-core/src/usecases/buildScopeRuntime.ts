@@ -1054,6 +1054,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.interactionPolicy !== undefined
         ? { interactionPolicy: args.runContext.interactionPolicy }
         : {}),
+      // Carry the retry-notice sink down so a sub-agent's backoff is visible too.
+      ...(args.runContext.onLlmRetry !== undefined
+        ? { onLlmRetry: args.runContext.onLlmRetry }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
