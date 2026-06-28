@@ -88,7 +88,7 @@ borders/surfaces/glyphs; every pane/overlay composes them.
 
 ## Hardcoded knobs (move to a settings layer later)
 
-- Bash timeout default (in `coderAgentConfig` tools): 60s.
+- Bash timeout default (`DEFAULT_BASH_TIMEOUT_MS` in `codingToolkit.ts`): **5 min**, agent-overridable via the `timeout` param; kept independent from the verifier's 30-min `EFFERENT_VERIFY_TIMEOUT_MS` (they share `Shell.exec` but never a default). For work that should outlive a call, the agent uses `Bash(run_in_background)` (+ `bash_output`/`kill_bash`) or a tmux `session_*` instead of a long timeout.
 - TUI palette: 6 visible rows, `:` commands hardcoded in `slashPalette.ts`.
 - maxSteps for the agent loop: default 20 (`Settings.maxSteps`; `runAgentLoop` falls back to 20).
 - Conversation store: SQLite at `~/.efferent/efferent.db` by default; `EFFERENT_DB_URL` (a `postgres://…` URL → Postgres, any other value → SQLite at that path) or a `dbUrl` in `~/.efferent/config.json` selects otherwise — env wins, config is seeded into the env at boot (`seedDbUrlFromConfig` in `main.ts`; `parseDbTarget`/`ConversationStoreLive` in `adapters/src/database/migrator.ts`).

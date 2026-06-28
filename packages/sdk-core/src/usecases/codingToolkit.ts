@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Ref, Schema } from "effect"
+import { Effect, FiberRef, Ref, Schema } from "effect"
 import type { Memory } from "../entities/Memory.js"
 import type { Skill } from "../entities/Skill.js"
 import { Failure, toFailure } from "../entities/Failure.js"
@@ -8,7 +8,16 @@ import { Approval, bashRuleKey } from "../ports/Approval.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { TerminalSession } from "../ports/TerminalSession.js"
 import { WebSearch as WebSearchPort } from "../ports/WebSearch.js"
+import { RunContextRef } from "./runContext.js"
+
+/** Default cap on a foreground `Bash` call (agent-overridable via `timeout`).
+ *  5 min covers installs/builds/test suites; for anything meant to OUTLIVE the
+ *  call, use `run_in_background` / a terminal session instead of a long timeout.
+ *  Kept separate from the verifier's 30-min `EFFERENT_VERIFY_TIMEOUT_MS` — they
+ *  share `Shell.exec` but never a default. */
+export const DEFAULT_BASH_TIMEOUT_MS = 300_000
 
 /**
  * The coding tools as an `@effect/ai` Toolkit. Each tool ships explicit
@@ -459,24 +468,73 @@ export const EditFile = Tool.make("edit_file", {
 // name the model expects.
 export const Bash = Tool.make("Bash", {
   description:
-    "Execute a shell command in the workspace. Use for git, build, test, install, and other operations not covered by the other tools.",
+    "Execute a shell command in the workspace. Use for git, build, test, install, and other operations not covered by the other tools. " +
+    "Default timeout is 5 minutes (override with `timeout`). For a command that should OUTLIVE this call — a dev server, a file watcher, a long build you want to keep working alongside — set `run_in_background: true`: it returns a `processId` immediately, then read its output with `bash_output` and stop it with `kill_bash`. Do NOT launch an interactive TUI here; use a terminal session (`session_start`) instead.",
   parameters: {
     command: Schema.String.annotations({
       description: "Shell command. Runs via 'bash -c' in the workspace cwd.",
     }),
     timeout: Schema.optional(
       Schema.Number.annotations({
-        description: "Timeout in milliseconds. Defaults to 60000.",
+        description: "Timeout in milliseconds. Defaults to 300000 (5 min). Ignored when run_in_background.",
+      }),
+    ),
+    run_in_background: Schema.optional(
+      Schema.Boolean.annotations({
+        description:
+          "Run the command in the background and return a processId immediately, instead of blocking until it finishes. Use for servers/watchers/long jobs; read output with bash_output, stop with kill_bash.",
       }),
     ),
   },
+  // One success Struct for both modes (a tool can declare only one): a foreground
+  // run fills exitCode/stdout/stderr/durationMs/timedOut; a background START fills
+  // processId/running. Optional fields keep both shapes decodable; the handler
+  // returns the right one.
   success: Schema.Struct({
     exitCode: Schema.Number,
     stdout: Schema.String,
     stderr: Schema.String,
     durationMs: Schema.Number,
     timedOut: Schema.Boolean,
+    processId: Schema.optional(Schema.String),
+    running: Schema.optional(Schema.Boolean),
   }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const BashOutput = Tool.make("bash_output", {
+  description:
+    "Read buffered output from a background process started with Bash(run_in_background). Returns new output since the last cursor, whether it's still running, and its exit code once finished.",
+  parameters: {
+    processId: Schema.String.annotations({
+      description: "The processId returned by Bash(run_in_background: true).",
+    }),
+    sinceCursor: Schema.optional(
+      Schema.Number.annotations({
+        description: "Pass the `cursor` from a previous bash_output to get only newer output. Omit for all buffered output.",
+      }),
+    ),
+  },
+  success: Schema.Struct({
+    stdout: Schema.String,
+    stderr: Schema.String,
+    exitCode: Schema.NullOr(Schema.Number),
+    running: Schema.Boolean,
+    cursor: Schema.Number,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const KillBash = Tool.make("kill_bash", {
+  description: "Terminate a background process (and its whole process group) started with Bash(run_in_background).",
+  parameters: {
+    processId: Schema.String.annotations({
+      description: "The processId to kill.",
+    }),
+  },
+  success: Schema.Struct({ killed: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
 })
@@ -719,11 +777,82 @@ export const UpdatePlan = Tool.make("update_plan", {
   failureMode: "return",
 })
 
+export const SessionStart = Tool.make("session_start", {
+  description:
+    "Start an INTERACTIVE terminal session (backed by tmux) that outlives this call — the way to drive a TUI, a REPL, ssh, or any program that needs a real terminal. Returns a sessionId; drive it with session_send, read its screen with session_read, and stop it with session_kill. A human can `tmux attach -t <sessionId>` to watch the same pane.",
+  parameters: {
+    name: Schema.optional(
+      Schema.String.annotations({ description: "Short human label for the session." }),
+    ),
+    command: Schema.optional(
+      Schema.String.annotations({
+        description: "Program to launch in the session (e.g. a TUI or REPL). Omit for a plain shell.",
+      }),
+    ),
+  },
+  success: Schema.Struct({ sessionId: Schema.String }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const SessionSend = Tool.make("session_send", {
+  description:
+    "Send keystrokes to a terminal session. `keys` is typed literally (tmux key names like 'C-c' or 'Enter' also work); an Enter is appended unless enter:false.",
+  parameters: {
+    sessionId: Schema.String.annotations({ description: "The sessionId from session_start." }),
+    keys: Schema.String.annotations({ description: "Text/keys to send." }),
+    enter: Schema.optional(
+      Schema.Boolean.annotations({ description: "Append Enter after the keys (default true)." }),
+    ),
+  },
+  success: Schema.Struct({ sent: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const SessionRead = Tool.make("session_read", {
+  description: "Capture the current screen (pane contents) of a terminal session.",
+  parameters: {
+    sessionId: Schema.String.annotations({ description: "The sessionId from session_start." }),
+    lines: Schema.optional(
+      Schema.Number.annotations({
+        description: "Capture this many trailing lines (incl. scrollback). Omit for the visible screen.",
+      }),
+    ),
+  },
+  success: Schema.Struct({ screen: Schema.String }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const SessionKill = Tool.make("session_kill", {
+  description: "Stop a terminal session.",
+  parameters: {
+    sessionId: Schema.String.annotations({ description: "The sessionId to kill." }),
+  },
+  success: Schema.Struct({ killed: Schema.Boolean }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+export const SessionList = Tool.make("session_list", {
+  description: "List the terminal sessions currently open in this workspace.",
+  parameters: {
+    // ≥1 parameter is required (Gemini); a no-op filter keeps the schema valid.
+    all: Schema.optional(Schema.Boolean.annotations({ description: "Unused; reserved." })),
+  },
+  success: Schema.Struct({ sessions: Schema.Array(Schema.Struct({ sessionId: Schema.String })) }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const codingToolkit = Toolkit.make(
   ReadFile,
   WriteFile,
   EditFile,
   Bash,
+  BashOutput,
+  KillBash,
   Grep,
   Glob,
   Ls,
@@ -733,6 +862,11 @@ export const codingToolkit = Toolkit.make(
   WebFetch,
   WebSearchTool,
   UpdatePlan,
+  SessionStart,
+  SessionSend,
+  SessionRead,
+  SessionKill,
+  SessionList,
 )
 
 /**
@@ -776,6 +910,7 @@ export const makeCodingHandlers = (
     const http = yield* Http
     const webSearch = yield* WebSearchPort
     const approval = yield* Approval
+    const session = yield* TerminalSession
     const { rootDir, displayRoot, enforceWrite, allowBash } = binding
     const skillByName = new Map(skills.map((s) => [s.name, s] as const))
     const memoryByName = new Map(memory.map((m) => [m.name, m] as const))
@@ -886,7 +1021,7 @@ export const makeCodingHandlers = (
           }
         })).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
-      Bash: ({ command, timeout }) =>
+      Bash: ({ command, timeout, run_in_background }) =>
         Effect.gen(function* () {
           if (!allowBash) {
             return yield* Effect.fail({
@@ -913,11 +1048,32 @@ export const makeCodingHandlers = (
                   : "the user denied this command. Don't retry it verbatim — adjust your approach or ask what they'd prefer.",
             })
           }
+          // Background: fork-and-return immediately. No writeGate (it doesn't
+          // hold the turn), tagged with the conversation for teardown scoping.
+          if (run_in_background === true) {
+            const rc = yield* FiberRef.get(RunContextRef)
+            const { id } = yield* shell.spawnBackground({
+              command,
+              cwd: rootDir,
+              ...(rc.rootConversationId !== null
+                ? { conversationId: rc.rootConversationId }
+                : {}),
+            })
+            return {
+              exitCode: 0,
+              stdout: "",
+              stderr: "",
+              durationMs: 0,
+              timedOut: false,
+              processId: id,
+              running: true,
+            }
+          }
           const r = yield* writeGate.withPermits(1)(
             shell.exec({
               command,
               cwd: rootDir,
-              timeoutMs: timeout ?? 60_000,
+              timeoutMs: timeout ?? DEFAULT_BASH_TIMEOUT_MS,
             }),
           )
           return {
@@ -928,6 +1084,82 @@ export const makeCodingHandlers = (
             timedOut: r.timedOut,
           }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      bash_output: ({ processId, sinceCursor }) =>
+        Effect.gen(function* () {
+          const r = yield* shell.readBackground({
+            id: processId,
+            ...(sinceCursor !== undefined ? { sinceCursor } : {}),
+          })
+          return {
+            stdout: truncateOutput(r.stdout, 32_000),
+            stderr: truncateOutput(r.stderr, 8_000),
+            exitCode: r.exitCode,
+            running: r.running,
+            cursor: r.cursor,
+          }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      kill_bash: ({ processId }) =>
+        shell.killBackground(processId).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      session_start: ({ name, command }) =>
+        Effect.gen(function* () {
+          if (!allowBash) {
+            return yield* Effect.fail({
+              error: "BashNotAllowed",
+              message: "terminal sessions are disabled in this mode — re-run with --allow-bash",
+            })
+          }
+          // A session that launches a command is arbitrary execution → approve it.
+          if (command !== undefined && command.trim().length > 0) {
+            const decision = yield* approval.request({
+              tool: "session_start",
+              summary: command,
+              cwd: rootDir,
+              ruleKey: bashRuleKey(command),
+            })
+            if (decision.kind === "deny") {
+              return yield* Effect.fail({
+                error: "Denied",
+                message: "the user denied launching this session. Adjust your approach.",
+              })
+            }
+          }
+          const rc = yield* FiberRef.get(RunContextRef)
+          return yield* session.start({
+            cwd: rootDir,
+            ...(name !== undefined ? { name } : {}),
+            ...(command !== undefined ? { command } : {}),
+            ...(rc.rootConversationId !== null
+              ? { conversationId: rc.rootConversationId }
+              : {}),
+          })
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      session_send: ({ sessionId, keys, enter }) =>
+        session
+          .send({ sessionId, keys, ...(enter !== undefined ? { enter } : {}) })
+          .pipe(
+            Effect.as({ sent: true }),
+            Effect.catchAll((e) => Effect.fail(toFailure(e))),
+          ),
+
+      session_read: ({ sessionId, lines }) =>
+        session
+          .read({ sessionId, ...(lines !== undefined ? { lines } : {}) })
+          .pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      session_kill: ({ sessionId }) =>
+        session.kill(sessionId).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      session_list: () =>
+        session
+          .list()
+          .pipe(
+            Effect.map((sessions) => ({ sessions })),
+            Effect.catchAll((e) => Effect.fail(toFailure(e))),
+          ),
 
       grep: ({ pattern, dir, flags, context }) =>
         Effect.gen(function* () {

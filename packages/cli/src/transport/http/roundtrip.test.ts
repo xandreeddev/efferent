@@ -21,7 +21,7 @@ import {
   WebSearch,
   Workspace,
 } from "@xandreed/sdk-core"
-import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
+import { NoopTerminalSessionLive, UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "../../workspace/inProcess.js"
 import { makeFleetSupervisor } from "../../cli/state/fleet.js"
 import { fakeAuthStore } from "../../workspace/fakeAppEnv.js"
@@ -104,6 +104,7 @@ const stubPorts = Layer.mergeAll(
     Shell,
     Shell.of({ exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }) } as never),
   ),
+  NoopTerminalSessionLive,
   Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
   Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
   Layer.succeed(UtilityLlm, UtilityLlm.of({ complete: () => Effect.die("unused") } as never)),
