@@ -81,7 +81,7 @@ export const App = (props: { ctx: TuiContext }) => {
             accent. The shortcuts card takes over the whole region when open. */}
         <Show when={!hidePanes()}>
           <box flexDirection="row" flexGrow={1} minHeight={0}>
-            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column">
+            <box flexGrow={3} flexBasis={0} minWidth={0} flexDirection="column">
               {/* Breadcrumb: the chat's accent when chat-focused, dim otherwise. */}
               <box flexDirection="row" flexShrink={0}>
                 <text
@@ -106,7 +106,7 @@ export const App = (props: { ctx: TuiContext }) => {
                     : tokens.text.dim
               }
             />
-            <box flexGrow={1} flexBasis={0} minWidth={0} flexDirection="column" paddingLeft={1}>
+            <box flexGrow={2} flexBasis={0} minWidth={0} flexDirection="column" paddingLeft={1}>
               <FleetTree ctx={props.ctx} />
             </box>
           </box>

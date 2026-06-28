@@ -24,6 +24,7 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
       { keys: "^l", label: "the fleet tree" },
       { keys: "^j", label: "the composer" },
       { keys: "w", label: "cycle focus (NORMAL alias)" },
+      { keys: "header", label: "shows [INSERT] / [NOR] / [VIS] mode" },
     ],
   },
   {
@@ -63,7 +64,7 @@ export const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
     title: "global",
     rows: [
       { keys: "^C ×2", label: "quit" },
-      { keys: "esc", label: "interrupt a run · close" },
+      { keys: "esc", label: "interrupt · cancel · close · clear" },
       { keys: "?", label: "this help" },
     ],
   },
