@@ -7,7 +7,14 @@
 > honest."* This doc is the design **and** the as-built map; the literature-grounded improvements
 > over the article are in *Prior art* below.
 >
-> **What shipped** (`bun run typecheck` + 820 unit tests green; live-verified):
+> **What shipped** (`bun run typecheck` + unit tests green; live-verified):
+> - **The mandatory swarm gate** — every run that **used sub-agents** is validated by the
+>   independent Opus gate in `driveLoop` (`sdk-core/usecases/runAgent.ts`, the one path every mode
+>   funnels through) BEFORE the objective is done — no dependence on a coordinator or a tool call.
+>   **Fail-closed**: `needs_work` → learn (distill) → re-run with the gate's reasons → re-gate, to
+>   `maxLoopAttempts`; an unavailable verifier emits a loud `gate` event and proceeds (never a silent
+>   pass, never an infinite loop). Gated by `autoLoop` (default on). *Tested in `runAgent.test.ts`
+>   (no-subagents/sound/retry/cap/unavailable); live-verified via a `--mode json` swarm.*
 > - **The online swarm loop (validate → learn → retry)** — the coordinator
 >   (`cli/usecases/teamAgents.ts`) runs the Kimi swarm, the Kimi architect reviews each piece, then
 >   the **independent Opus gate** validates the whole deliverable via `verify_with_gate` →
@@ -30,10 +37,11 @@
 > - **Evals/tests** — `distill` suite + the gate adapter path (`claudeHeadless.test.ts`, stub Shell)
 >   + the fail-closed/threshold orchestration + the delta-merge.
 >
-> **Designed-not-built**: a daemon-integrated scheduled distill, the helpful/harmful counter
-> feedback, embedding dedup + the SkillOps maintenance pass, and dedicated `gate_*`/`distill_*` TUI
-> event variants (today the gate/learn steps surface as the coordinator's `verify_with_gate` /
-> `note_constraint` tool pills + a `learned N lessons` rail line).
+> The mandatory gate emits a dedicated **`gate` `AgentEvent`** (`sound`/`needs_work`/`blocked`/
+> `unavailable`), rendered as a rail line. **Designed-not-built**: a daemon-integrated scheduled
+> distill, the helpful/harmful counter feedback, embedding dedup + the SkillOps maintenance pass,
+> and a dedicated `distill_*` TUI event (the learn step still surfaces as a `learned N lessons` rail
+> line + `note_constraint` pills).
 
 ## How to use it
 

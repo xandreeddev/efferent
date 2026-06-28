@@ -149,6 +149,21 @@ export interface AgentBgOutputEvent {
 }
 
 /**
+ * The mandatory swarm gate produced a verdict on the finished objective (see
+ * `driveLoop`). Emitted once per gate round whenever a run used sub-agents, so the
+ * verification is never silent: `sound` (shipped), `needs_work`/`blocked` (the
+ * deliverable was rejected — `reasons` say why; the loop learns + retries), or
+ * `unavailable` (no `claude`/verifier error — the run proceeds, loudly unverified,
+ * never silently passed). `attempt` is 1-based.
+ */
+export interface AgentGateEvent {
+  readonly verdict: "sound" | "needs_work" | "blocked" | "unavailable"
+  readonly reasons: ReadonlyArray<string>
+  readonly attempt: number
+  readonly filesChanged: ReadonlyArray<string>
+}
+
+/**
  * Hook surface that lets the application (and the route layer above it)
  * observe and influence the agent loop without owning the loop itself.
  *
@@ -190,6 +205,13 @@ export interface AgentHooks<R = never> {
   ) => Effect.Effect<void, never, R>
   readonly onHelperUsage?: (
     event: AgentHelperUsageEvent,
+  ) => Effect.Effect<void, never, R>
+  /**
+   * The mandatory swarm gate returned a verdict (see {@link AgentGateEvent}).
+   * Fired by `driveLoop` after the swarm objective finishes, once per gate round.
+   */
+  readonly onGateResult?: (
+    event: AgentGateEvent,
   ) => Effect.Effect<void, never, R>
   /**
    * A transient LLM failure is being retried. UNLIKE every other hook, this one

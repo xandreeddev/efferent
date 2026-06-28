@@ -364,6 +364,21 @@ export const makeEventReducer = (
         }
         return
 
+      case "gate": {
+        // The mandatory swarm gate validated (or rejected) the finished objective.
+        // Surface every verdict on the rail — verification is never silent.
+        const files =
+          event.filesChanged.length > 0 ? ` · ${event.filesChanged.length} file(s)` : ""
+        const text =
+          event.verdict === "sound"
+            ? `✓ verifier: deliverable SOUND (attempt ${event.attempt})${files}`
+            : event.verdict === "unavailable"
+              ? `⚠ verifier UNAVAILABLE — work NOT verified: ${event.reasons.join("; ")}`
+              : `✗ verifier: ${event.verdict.toUpperCase().replace("_", " ")} (attempt ${event.attempt})${files} — ${event.reasons.join("; ")}`
+        store.pushBlock({ kind: "info", text })
+        return
+      }
+
       case "assistant_message": {
         // Sub-agent narration (it carries a `nodeId`, stamped by the inner
         // hooks) never lands on the parent rail and never counts toward the

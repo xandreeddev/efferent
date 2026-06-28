@@ -123,6 +123,18 @@ export const AgentEvent = Schema.Union(
       Schema.Struct({ name: Schema.String, kind: Schema.String }),
     ),
   }),
+  // The mandatory swarm gate validated (or rejected) the finished objective —
+  // emitted once per gate round whenever a run used sub-agents, so verification is
+  // never silent. `sound` ships; `needs_work`/`blocked` carry the reasons the loop
+  // learns from + retries on; `unavailable` means no verdict was possible (no
+  // `claude`) and the run proceeded LOUDLY unverified, never a silent pass.
+  Schema.Struct({
+    type: Schema.Literal("gate"),
+    verdict: Schema.Literal("sound", "needs_work", "blocked", "unavailable"),
+    reasons: Schema.Array(Schema.String),
+    attempt: Schema.Number,
+    filesChanged: Schema.Array(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("agent_end"),
     finalText: Schema.String,
