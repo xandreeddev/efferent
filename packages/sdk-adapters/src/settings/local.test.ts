@@ -56,6 +56,38 @@ describe("LocalSettingsStore load/update round-trip", () => {
     expect(onDisk.approvedBashRules).toEqual(["cmd:bun test"])
     expect(onDisk.allowBash).toBe(true)
   })
+
+  // Regression: `codeModel: null` (what the `:model code` "default (follow general)"
+  // option writes) is invalid to the schema (string|undefined, never null). Before
+  // the fix it failed validation and the loader discarded the ENTIRE config — every
+  // other setting silently lost, falling back to global/defaults. That's what
+  // silently disabled the code tier (and showed "everything deepseek").
+  test("a null on an optional field is treated as unset — it does NOT discard the whole config", async () => {
+    const d = mkdtempSync(join(tmpdir(), "eff-null-"))
+    mkdirSync(join(d, ".efferent"), { recursive: true })
+    writeFileSync(
+      join(d, ".efferent", "config.json"),
+      JSON.stringify({
+        model: "opencode:kimi-k2.6",
+        fastModel: "opencode:deepseek-v4-flash",
+        codeModel: null,
+        theme: "tokyo-night",
+      }),
+    )
+    const loaded = await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        return yield* store.load(d, join(d, "no-home"))
+      }).pipe(Effect.provide(layer())),
+    )
+    // The rest of the config SURVIVED the stray null.
+    expect(loaded.model).toBe("opencode:kimi-k2.6")
+    expect(loaded.fastModel).toBe("opencode:deepseek-v4-flash")
+    expect(loaded.theme).toBe("tokyo-night")
+    // The null field reads as unset (code role follows general).
+    expect(loaded.codeModel).toBeUndefined()
+    rmSync(d, { recursive: true, force: true })
+  })
 })
 
 describe("config tiers (global ⊕ local) + scoped writes", () => {
