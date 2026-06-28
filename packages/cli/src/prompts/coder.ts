@@ -132,7 +132,7 @@ ${systemSection}
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${memory.length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below)." : ""}
 - remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer (see Project knowledge).${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
-${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationPolicy(agents, codeModelConfigured)}${renderCodeDelegationPolicy(codeModelConfigured)}
+${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationPolicy(agents, codeModelConfigured)}${renderResearchDelegationPolicy(agents)}${renderCodeDelegationPolicy(codeModelConfigured)}
 ${doingTasksSection}
 
 ${toneSection}
@@ -174,21 +174,55 @@ const renderDelegationPolicy = (
   // When a distinct code model is configured the "just do it yourself" default
   // is split: you still do the investigating/planning/reviewing directly, but
   // the actual code-writing goes to the code tier (see `# Writing code`). With
-  // no code model the original all-yourself fast path stands.
-  const selfPolicy = codeModelConfigured
-    ? `**Do the investigating, planning, running, and reviewing yourself — that's the fast path.** You read, search, run tests, and reason directly in this loop; a focused direct pass beats a fleet for almost everything. The one thing you hand off is *writing code* — that goes to the code tier (see \`# Writing code\` below), not to a fleet.`
-    : `**Do the work yourself by default — that is the fast path, and it's what the user wants.** You have every tool to read, edit, run, test, investigate, and review directly in this loop, and a focused direct pass beats a fleet for almost everything. A bug fix, a single-area feature, reviewing one change, answering a question — just do it.`
+  // no code model the original all-yourself fast path stands. Either way, when a
+  // research fleet is present a *broad* investigation peels off to it (see
+  // `# Investigating & researching`) — reading parallelises with zero conflict,
+  // so it's the read-side mirror of the code-writing hand-off.
+  const researchQualifier = hasResearch
+    ? " The exception is a *broad* investigation — getting oriented across many files or several areas at once — which goes to the research fleet (see `# Investigating & researching` below), not a serial read."
+    : ""
+  const selfPolicy =
+    (codeModelConfigured
+      ? `**Do the investigating, planning, running, and reviewing yourself — that's the fast path.** You read, search, run tests, and reason directly in this loop; a focused direct pass beats a fleet for almost everything. The one thing you hand off is *writing code* — that goes to the code tier (see \`# Writing code\` below), not to a fleet.`
+      : `**Do the work yourself by default — that is the fast path, and it's what the user wants.** You have every tool to read, edit, run, test, investigate, and review directly in this loop, and a focused direct pass beats a fleet for almost everything. A bug fix, a single-area feature, reviewing one change, answering a focused question — just do it.`) +
+    researchQualifier
 
   return `
 # When to delegate
 ${selfPolicy}
 
 Spin up a background fleet only when the work is genuinely too big or too parallel for one focused pass:
-- **Breadth** — three or more *independent* areas to investigate or change at once (e.g. "audit auth, billing, and the API").
+- **Breadth** — three or more *independent* areas to change at once (e.g. "add auth, billing, and an admin page").
 - **Scale** — a change spanning many packages where doing it serially would blow your context window.
 - **Async intent** — the user wants to fire-and-forget ("kick this off and ping me") or it's a scheduled/unattended job.
 
-To delegate, spawn ${leads}. **Spawning is async**: run_agent returns immediately, you acknowledge in one line and stay free for the user's next message — you do NOT block on the fleet. The lead's result lands in your inbox and you relay it. **When unsure, do it yourself** — a needless fleet is slower and dumber than you working directly.
+To delegate, spawn ${leads}. **Spawning is async**: run_agent returns immediately, you acknowledge in one line and stay free for the user's next message — you do NOT block on the fleet. The lead's result lands in your inbox and you relay it. **When unsure on a small, focused task, do it yourself** — a needless fleet is slower and dumber than you working directly; but don't grind serially through a broad investigation a research fleet can read in parallel.
+`
+}
+
+/**
+ * The `# Investigating & researching` section — emitted ONLY when the research
+ * fleet (`research-coordinator`) is in the roster. The READ-side mirror of
+ * `# Writing code`: a focused lookup stays on the root, but a BROAD investigation
+ * (orienting in an unfamiliar codebase, mapping several modules, tracing a flow
+ * across many files, auditing multiple areas) is handed to the research fleet,
+ * which fans out parallel read-only researchers and synthesizes one answer.
+ * Reading never conflicts, so the fan-out is pure speed-up and keeps the root's
+ * context clean. It exists because the root otherwise reads everything serially
+ * — the recurring "the initial research that could be sped up by the swarm runs
+ * in the master session instead" complaint. Prompt-only — the model decides;
+ * this just makes the broad/focused split explicit, as `# Writing code` does for
+ * the write side.
+ */
+const renderResearchDelegationPolicy = (agents: ReadonlyArray<AgentDefinition>): string => {
+  if (!agents.some((a) => a.name === "research-coordinator")) return ""
+  return `
+# Investigating & researching
+A read-only **research fleet** is available — \`run_agent({ agent: "research-coordinator", folder, task })\` — that breaks a question into angles, fans out parallel researchers, and synthesizes one sourced answer. Reading never conflicts between agents, so parallel readers are pure speed-up, and the investigation stays out of your own context. Split investigation by BREADTH, the way code splits by tier:
+- **You — focused lookups.** One file, one function, a single named thing, a quick "does X do Y?" — read it yourself with read_file/grep/glob. Spawning a fleet to answer a one-file question is slower than just reading it; for a focused lookup, size is the deciding factor and the answer is you.
+- **The research fleet — broad investigation.** The moment getting an answer means reading across MANY files or several areas at once — getting oriented in an unfamiliar codebase, mapping how several modules work and connect, tracing a request or data-flow end-to-end, auditing multiple areas, or a "research X" question spanning the web and the code — hand it to the research fleet. Write the full question in \`task\` (it starts fresh — see Sub-agents); it fans the angles out in parallel (one per area) and reports a synthesized, sourced answer. **Don't grind through a broad investigation serially when the fleet can read it all at once** — that's the biggest single speed-up the fleet buys you.
+
+Same async hand-off as any spawn: run_agent returns immediately, you stay free, and the synthesized answer lands in your inbox to relay. Right-size it — a small question is ONE researcher, a genuine multi-area investigation is one angle per area; don't fan a committee at a two-file question.
 `
 }
 

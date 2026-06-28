@@ -12,6 +12,7 @@ import {
 import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
 import { coderPrompt } from "efferent/prompts/coder.js"
+import { withBuiltinAgents } from "efferent/usecases/directive.js"
 import { discoverInstructionFiles } from "efferent/usecases/discoverInstructionFiles.js"
 import { loadAgents } from "efferent/usecases/loadAgents.js"
 import { loadMemory } from "efferent/usecases/loadMemory.js"
@@ -43,18 +44,32 @@ export interface RunCoderOptions {
 /** Build the root coder config for `dir` exactly as `main.ts` does.
  *  `codeModelConfigured` mirrors `main.ts` `discoverWorkspace`: when a distinct
  *  code model is set it emits the `# Writing code` delegation policy, so routing
- *  evals exercise the real prompt the agent ships with. */
+ *  evals exercise the real prompt the agent ships with.
+ *
+ *  `includeFleet` mirrors `main.ts`'s `withBuiltinAgents` — it merges the
+ *  built-in coordinator / research-coordinator / specialist roster into the
+ *  loaded agents, so the `# When to delegate` policy is actually EMITTED and a
+ *  `run_agent({ agent: "research-coordinator" })` resolves to the real fleet
+ *  (instead of `resolveAgent` failing `UnknownAgent` and the model degrading to
+ *  a generic spawn). Off by default so the focused-behaviour suites keep their
+ *  lean prompt; the routing/fleet suites opt in. The Opus gate phase is left OFF
+ *  (`autoLoop: false`) — evals have no `claude`, and a routing eval measures the
+ *  DELEGATION decision, which happens before any gate. */
 export const buildCoderConfig = (
   dir: string,
   transform: (base: string) => string = (s) => s,
   variant?: string,
   codeModelConfigured = false,
   hooks?: AgentHooks,
+  includeFleet = false,
 ) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(dir, homedir())
     const memory = yield* loadMemory(dir, homedir())
-    const agents = yield* loadAgents(dir, homedir())
+    const loaded = yield* loadAgents(dir, homedir())
+    const agents = includeFleet
+      ? withBuiltinAgents(loaded, { autoLoop: false, maxLoopAttempts: 1 })
+      : loaded
     const tools = yield* loadTools(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
     const prompt = coderPrompt(dir, new Date(), skills, instructionFiles, agents, tools, variant, memory, codeModelConfigured)
