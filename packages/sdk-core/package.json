@@ -1,10 +1,17 @@
 {
   "name": "@xandreed/sdk-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "efferent SDK — the pure Effect.ts domain: agent loop, context tree, compaction, multi-provider router contracts, approval. Ports + use cases, no IO. Runtime-agnostic.",
   "license": "MIT",
-  "keywords": ["effect", "effect-ts", "ai-agent", "agent", "sdk", "llm"],
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "ai-agent",
+    "agent",
+    "sdk",
+    "llm"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xandreeddev/efferent.git",
@@ -22,7 +29,9 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json"
   },

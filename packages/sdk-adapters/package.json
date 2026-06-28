@@ -1,10 +1,17 @@
 {
   "name": "@xandreed/sdk-adapters",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "efferent SDK — Layer implementations of the sdk-core ports: multi-provider LLM router, auth, conversation/context stores (SQLite + Postgres), settings, fs/shell/http. Side effects live here.",
   "license": "MIT",
-  "keywords": ["effect", "effect-ts", "ai-agent", "sdk", "llm", "adapters"],
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "ai-agent",
+    "sdk",
+    "llm",
+    "adapters"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xandreeddev/efferent.git",
@@ -22,7 +29,9 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json"
   },
