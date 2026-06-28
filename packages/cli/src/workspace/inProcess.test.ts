@@ -19,7 +19,7 @@ import {
   UtilityLlm,
   WebSearch,
 } from "@xandreed/sdk-core"
-import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
+import { NoopTerminalSessionLive, UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "./inProcess.js"
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
 
@@ -100,6 +100,7 @@ const stubPortsNoModel = Layer.mergeAll(
     }),
   ),
   stubTree,
+  NoopTerminalSessionLive,
   UnavailableVerifierLive,
 )
 

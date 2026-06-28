@@ -11,7 +11,9 @@ import {
   LlmInfo,
   ModelRegistry,
   SettingsStore,
+  Shell,
   StoreSwitch,
+  TerminalSession,
   buildScopeRuntime,
 } from "@xandreed/sdk-core"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
@@ -377,6 +379,16 @@ export const runTuiModeSolid = (
       //     keep Bun alive past exit. Interrupt the whole fleet on every teardown
       //     path so the process can quit cleanly. No-op when nothing is running.
       yield* Effect.addFinalizer(() => scopeRuntime.bus.interruptAll().pipe(Effect.ignore))
+
+      // 6e. Background shell processes (Bash run_in_background) + tmux sessions are
+      //     DETACHED — they outlive turns on purpose, but must not outlive the app.
+      //     Group-kill them all on exit so no dev server / watcher / pane is orphaned.
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          yield* (yield* Shell).killAllBackground()
+          yield* (yield* TerminalSession).killAll()
+        }).pipe(Effect.ignore),
+      )
 
       // 7. Drain the agent event queue into the signal store (scoped fiber).
       yield* Effect.forkScoped(runEventPump(eventQueue, reduce))

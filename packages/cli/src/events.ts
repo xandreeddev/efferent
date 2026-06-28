@@ -116,6 +116,13 @@ export const makeAgentEventHooks = <R = never>(
       maxAttempts: event.maxAttempts,
       delayMs: event.delayMs,
     }),
+  onBgOutput: (event) =>
+    publish({
+      type: "bg_output",
+      processId: event.processId,
+      stream: event.stream,
+      chunk: event.chunk,
+    }),
   onAgentEnd: (event) =>
     publish({
       type: "agent_end",
