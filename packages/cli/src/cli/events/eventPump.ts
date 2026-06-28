@@ -451,6 +451,24 @@ export const makeEventReducer = (
         return
       }
 
+      case "bg_output": {
+        // Live output from a background process (Bash run_in_background) — show
+        // the latest non-empty line so a long-runner reads as alive. The model
+        // still polls full output via bash_output; this is just awareness.
+        const line = event.chunk
+          .split("\n")
+          .map((l) => l.trimEnd())
+          .filter((l) => l.length > 0)
+          .pop()
+        if (line !== undefined) {
+          store.pushBlock({
+            kind: "info",
+            text: `${event.processId}: ${line.slice(0, 200)}`,
+          })
+        }
+        return
+      }
+
       case "approval_needed": {
         // Remote-client path: the daemon parked on a bash approval — render the
         // sheet. The key handler answers via `ctx.resolveApproval` → `approve`.

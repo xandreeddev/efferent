@@ -25,6 +25,7 @@ import {
   OtlpTelemetryLive,
   resolveConfigRoots,
   SwitchableStoresLive,
+  TmuxTerminalSessionLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
@@ -66,6 +67,10 @@ const AppLive = Layer.mergeAll(
   ModelLive,
   LocalFileSystemLive,
   LocalShellLive,
+  // Interactive terminal sessions (tmux), backed by the Shell port — the coding
+  // toolkit's session_* tools resolve this. Feature-detected: no tmux ⇒ the tools
+  // return a graceful failure (NoopTerminalSessionLive is used in evals/tests).
+  TmuxTerminalSessionLive.pipe(Layer.provide(LocalShellLive)),
   HttpLive,
   // OAuth protocol port — dependency-free; the `:login` driver uses it instead
   // of reaching into adapter OAuth internals.

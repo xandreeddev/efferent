@@ -136,6 +136,19 @@ export interface AgentLlmRetryEvent {
 }
 
 /**
+ * A chunk of output from a BACKGROUND shell process (one started with
+ * `run_in_background`, which outlives the spawning tool call). Emitted by the
+ * Shell adapter's drain loop — like {@link AgentLlmRetryEvent}, it surfaces work
+ * that happens BELOW the loop, so a long-running background process is visible
+ * live in the rail instead of silent until the next `bash_output` poll.
+ */
+export interface AgentBgOutputEvent {
+  readonly processId: string
+  readonly stream: "stdout" | "stderr"
+  readonly chunk: string
+}
+
+/**
  * Hook surface that lets the application (and the route layer above it)
  * observe and influence the agent loop without owning the loop itself.
  *
@@ -187,4 +200,11 @@ export interface AgentHooks<R = never> {
    * `RunContext.onLlmRetry` (a FiberRef), not called by the loop directly.
    */
   readonly onLlmRetry?: (event: AgentLlmRetryEvent) => Effect.Effect<void>
+  /**
+   * A background shell process emitted output. Same `R = never` contract as
+   * {@link onLlmRetry} — invoked from the Shell adapter's drain fiber (below the
+   * loop), threaded via `RunContext.onBgOutput`, wired by the driver to a plain
+   * queue/PubSub publish.
+   */
+  readonly onBgOutput?: (event: AgentBgOutputEvent) => Effect.Effect<void>
 }

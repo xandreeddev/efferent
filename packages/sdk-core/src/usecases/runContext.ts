@@ -1,6 +1,6 @@
 import { type Effect, FiberRef } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
-import type { AgentLlmRetryEvent } from "../entities/AgentHooks.js"
+import type { AgentBgOutputEvent, AgentLlmRetryEvent } from "../entities/AgentHooks.js"
 import type { CompressionPolicy } from "../entities/Compression.js"
 import type { ConversationId } from "../entities/Conversation.js"
 import type { ModelRole } from "../entities/Model.js"
@@ -91,6 +91,13 @@ export interface RunContext {
    * turning a silent multi-second wait into a visible event. `R = never` (the
    * adapter's fiber doesn't carry the loop's requirements). */
   readonly onLlmRetry?: (event: AgentLlmRetryEvent) => Effect.Effect<void>
+  /**
+   * Sink for background-process output, seeded by `runAgent` from
+   * `AgentHooks.onBgOutput` and inherited by the subtree — same rationale as
+   * {@link onLlmRetry}: the Shell adapter's drain fiber runs below the loop and
+   * reads this off the FiberRef to surface a background proc's output live.
+   * `R = never`. */
+  readonly onBgOutput?: (event: AgentBgOutputEvent) => Effect.Effect<void>
 }
 
 export const initialRunContext: RunContext = {
