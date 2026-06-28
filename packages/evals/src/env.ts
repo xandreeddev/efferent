@@ -22,6 +22,7 @@ import {
   LocalShellLive,
   makePinnedModel,
   ModelLive,
+  NoopTerminalSessionLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
@@ -75,6 +76,7 @@ const PortsLive = Layer.mergeAll(
   InMemoryContextTreeStoreLive,
   FsLive,
   LocalShellLive,
+  NoopTerminalSessionLive,
   HttpLive,
   WebSearchLive.pipe(Layer.provide(FetchHttpClientLive)), // requires AuthStore (below)
 )

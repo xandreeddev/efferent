@@ -17,11 +17,11 @@ const stubShell = (answers: Record<string, string>) =>
       }
       return Effect.succeed(res)
     },
-  })
+  } as never)
 
 const failingShell = Shell.of({
   exec: () => Effect.fail(new ShellError({ cause: "boom", message: "no git here" })),
-})
+} as never)
 
 const run = <A>(e: Effect.Effect<A, never, Shell>, shell: Shell["Type"]) =>
   Effect.runPromise(e.pipe(Effect.provideService(Shell, shell)))

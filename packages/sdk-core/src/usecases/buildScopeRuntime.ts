@@ -1058,6 +1058,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.onLlmRetry !== undefined
         ? { onLlmRetry: args.runContext.onLlmRetry }
         : {}),
+      // And the background-output sink, so a sub-agent's bg process is visible too.
+      ...(args.runContext.onBgOutput !== undefined
+        ? { onBgOutput: args.runContext.onBgOutput }
+        : {}),
     }
 
     const outcome = yield* runAgentLoop({
