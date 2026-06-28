@@ -108,6 +108,14 @@ export const makeAgentEventHooks = <R = never>(
       role: event.role,
       usage: event.usage,
     }),
+  onLlmRetry: (event) =>
+    publish({
+      type: "llm_retry",
+      reason: event.reason,
+      attempt: event.attempt,
+      maxAttempts: event.maxAttempts,
+      delayMs: event.delayMs,
+    }),
   onAgentEnd: (event) =>
     publish({
       type: "agent_end",

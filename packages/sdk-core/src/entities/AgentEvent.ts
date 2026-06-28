@@ -132,6 +132,16 @@ export const AgentEvent = Schema.Union(
     type: Schema.Literal("error"),
     message: Schema.String,
   }),
+  // A transient LLM failure (rate-limit / overload / transport) is being retried
+  // with backoff — surfaced so a wait shows up live instead of a silent hang.
+  // `attempt`/`maxAttempts` are 1-based; `delayMs` is the (clamped) wait.
+  Schema.Struct({
+    type: Schema.Literal("llm_retry"),
+    reason: Schema.String,
+    attempt: Schema.Number,
+    maxAttempts: Schema.Number,
+    delayMs: Schema.Number,
+  }),
   // The agent is parked on a bash-approval request — the daemon publishes this
   // so every attached client renders the sheet; a client answers with
   // `Workspace.approve` (POST /approve). `sessionId` is the asking session.
