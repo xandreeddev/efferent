@@ -63,6 +63,18 @@ export const LocalSettingsStoreLive = Layer.effect(
           yield* Effect.logWarning(`Failed to parse settings JSON at ${path}: ${String(err)}`)
           return undefined
         }
+        // A `null` on an optional field is NOT the same as absent to the schema
+        // (`Schema.optional(Schema.String)` accepts string|undefined, never null),
+        // so a single null — e.g. `codeModel: null`, written by the `:model code`
+        // "default (follow general)" option — would fail validation and discard the
+        // ENTIRE config, silently dropping every other setting (model, fastModel,
+        // approvals…) and falling back to global. Treat a top-level null as "unset"
+        // so one cleared field never nukes the rest.
+        if (json !== null && typeof json === "object" && !Array.isArray(json)) {
+          json = Object.fromEntries(
+            Object.entries(json as Record<string, unknown>).filter(([, v]) => v !== null),
+          )
+        }
         return yield* Schema.decodeUnknown(Schema.partial(Settings))(json).pipe(
           Effect.catchAll((err) =>
             Effect.gen(function* () {

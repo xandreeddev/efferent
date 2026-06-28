@@ -37,6 +37,22 @@ interface Expected {
 
 const UTIL = "export const greet = (name: string): string => `hi ${name}`\n"
 
+// A small multi-file "app" with rough edges — the shape of the REAL failure: an
+// OPEN-ENDED "improve this" task that requires reading several files and then
+// editing a couple. This is what actually didn't delegate in practice (a complex
+// research+code task), unlike the toy "add function X" cases above.
+const APP_FILES: Record<string, string> = {
+  "src/app.ts":
+    'import { runCommand } from "./commands"\n\nconst [name, ...rest] = process.argv.slice(2)\nrunCommand(name ?? "help", rest)\n',
+  "src/commands.ts":
+    'export const runCommand = (name: string, rest: ReadonlyArray<string>): void => {\n' +
+    '  if (name === "help") return console.log(HELP)\n' +
+    '  if (name === "greet") return console.log(`hello ${rest[0] ?? "world"}`)\n' +
+    '  if (name === "status") {\n    // TODO: not implemented — prints nothing today\n  }\n' +
+    '  console.log(`unknown command: ${name}`)\n}\n\n' +
+    'const HELP = "commands: help, greet, status"\n',
+}
+
 const CASES: ReadonlyArray<{ name: string; input: Input; expected: Expected }> = [
   {
     // CODING → must delegate to the code tier. A clear, unambiguous code edit,
@@ -61,6 +77,19 @@ const CASES: ReadonlyArray<{ name: string; input: Input; expected: Expected }> =
       prompt:
         "Add a `multiply(a: number, b: number): number` function to src/math.ts and re-export it from src/index.ts alongside add.",
       readback: ["src/math.ts", "src/index.ts"],
+    },
+    expected: { routing: { shouldDelegate: true, codingTier: "code" } },
+  },
+  {
+    // THE REAL SHAPE — open-ended "improve this" across multiple files (research +
+    // code), exactly the kind of task that didn't delegate in practice. Coding work
+    // → must still route to the code tier, however much reading it takes first.
+    name: "improve-cli-ux",
+    input: {
+      files: APP_FILES,
+      prompt:
+        "This tiny CLI has rough edges: the `status` command does nothing, and the help text doesn't explain what each command does. Look through src/ and improve the UX — make `status` actually report something useful, and rewrite the help so it describes each command.",
+      readback: ["src/commands.ts"],
     },
     expected: { routing: { shouldDelegate: true, codingTier: "code" } },
   },
