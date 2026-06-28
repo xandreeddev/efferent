@@ -62,6 +62,36 @@ const USER_PROCESS_RULE: ReadonlyArray<AgentMessage> = [
   say("Understood — I'll outline the plan and get your confirmation before proceeding with multi-step work."),
 ]
 
+// USER states a verify-your-assumptions working rule (a HOW-to-work rule, not a
+// code rule) → kind:process, source:user.
+const USER_PROCESS_VERIFY: ReadonlyArray<AgentMessage> = [
+  { role: "user", content: "A working rule for you: always read a file's current contents before you edit it — never act on an assumption about what's in there." },
+  say("Understood — I'll read a file before every edit and never edit from an assumption."),
+]
+
+// USER states a delegation-discipline rule — right-size the fleet (a HOW-to-work
+// rule about the agent's own method) → kind:process, source:user.
+const USER_PROCESS_FLEET: ReadonlyArray<AgentMessage> = [
+  { role: "user", content: "Don't spin up a big sub-agent fleet for a small task — if you can answer it directly, just do the work yourself instead of delegating." },
+  say("Understood — I'll right-size delegation and only spin up a fleet for genuinely broad or parallel work."),
+]
+
+// INFERRED process lesson (the harder generalization probe — no user correction):
+// the agent dives into a multi-module migration without surveying scope, hits a
+// wall, and the lesson is a WORK-METHOD rule (plan/sequence before editing), not a
+// domain rule → kind:process, source:inferred.
+const INFERRED_PROCESS_PLAN: ReadonlyArray<AgentMessage> = [
+  { role: "user", content: "Migrate the app config from JSON to TOML." },
+  t("1", "edit_file", { path: "loader.ts", oldText: "JSON.parse(raw)", newText: "TOML.parse(raw)" }),
+  r("1", "edit_file", "edited loader.ts"),
+  t("2", "Bash", { command: "bun run typecheck" }),
+  r("2", "Bash", "error: 11 other modules still import the JSON config and now fail to typecheck", true),
+  say("I started editing before mapping the scope — 11 dependent modules I didn't account for. I should have surveyed all the affected sites and sequenced the change before touching any code."),
+  t("3", "grep", { pattern: "config.json" }),
+  r("3", "grep", "11 matches across 9 files"),
+  say("Done after sequencing the rest. The lesson is about method, not the code: for a change spanning many modules, survey all the affected sites and sequence the work BEFORE editing — diving straight in caused avoidable rework."),
+]
+
 // A general gotcha the agent DISCOVERS while debugging (NOT user-stated): JS
 // `Array.sort()` is lexicographic by default, so numbers need an explicit
 // comparator. A general rule that applies to ANY project → global + inferred.
@@ -107,6 +137,24 @@ const CASES: ReadonlyArray<{
     name: "user-process-rule",
     input: { messages: USER_PROCESS_RULE },
     expected: { wantsCandidate: true, source: "user", kind: "process" },
+  },
+  {
+    name: "user-process-verify",
+    input: { messages: USER_PROCESS_VERIFY },
+    expected: { wantsCandidate: true, source: "user", kind: "process" },
+  },
+  {
+    name: "user-process-fleet",
+    input: { messages: USER_PROCESS_FLEET },
+    expected: { wantsCandidate: true, source: "user", kind: "process" },
+  },
+  {
+    // The generalization probe — an INFERRED process lesson (no user correction).
+    // Harder for the cheap tier: it must recognize a work-METHOD lesson and not
+    // file it as a domain constraint. Scored honestly whatever it does.
+    name: "inferred-process-plan",
+    input: { messages: INFERRED_PROCESS_PLAN },
+    expected: { wantsCandidate: true, source: "inferred", kind: "process" },
   },
   {
     // kind is left unasserted — the miner may reasonably file a discovered gotcha
