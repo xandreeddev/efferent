@@ -1,10 +1,17 @@
 {
   "name": "@xandreed/evals",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "efferent SDK — a minimal, Effect-native eval library: the data → task → scorers shape as Effects, so a task can be the real agent loop and a scorer can call an LLM. Trace-first reporting.",
   "license": "MIT",
-  "keywords": ["effect", "effect-ts", "ai-agent", "evals", "llm", "llm-as-judge"],
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "ai-agent",
+    "evals",
+    "llm",
+    "llm-as-judge"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xandreeddev/efferent.git",
@@ -22,7 +29,9 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json"
   },
