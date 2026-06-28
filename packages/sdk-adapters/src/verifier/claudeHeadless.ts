@@ -1,7 +1,7 @@
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { Config, Effect, Either, Layer, Schema } from "effect"
+import { Config, Duration, Effect, Either, Layer, Schema } from "effect"
 import {
   type Candidate,
   type DeliverableVerdict,
@@ -44,9 +44,16 @@ import {
  *   `opus` if a `claude` install doesn't recognize the pinned id).
  * - `EFFERENT_VERIFY_ARGS` — extra CLI args (default `--permission-mode plan`,
  *   Claude Code's read-only mode: it may read/grep the repo to verify, never edit).
+ * - `EFFERENT_VERIFY_TIMEOUT_MS` — hard cap on one claude review (default 30 min).
+ *   An Opus multi-file review is genuinely slow; cut it off too early and the gate
+ *   returns "unavailable", so the loop can't validate → can't iterate. Raise it
+ *   rather than lower it.
  */
 
-const VERIFY_TIMEOUT_MS = 180_000
+// Default generously: an Opus review reads several files and reasons, which can
+// take many minutes. A 30 min ceiling guards against a true hang without cutting
+// off a legitimate long review (the old 3 min cap killed real reviews mid-flight).
+const DEFAULT_VERIFY_TIMEOUT_MS = 1_800_000
 
 /** Single-quote a token for safe embedding in a `bash -c` command. */
 const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
@@ -253,6 +260,9 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     const extraArgs = yield* Config.string("EFFERENT_VERIFY_ARGS").pipe(
       Config.withDefault("--permission-mode plan"),
     )
+    const timeoutMs = yield* Config.integer("EFFERENT_VERIFY_TIMEOUT_MS").pipe(
+      Config.withDefault(DEFAULT_VERIFY_TIMEOUT_MS),
+    )
 
     // One claude-headless invocation, shared by both gates. Clean-room: runs in an
     // isolated sandbox cwd (controlled CLAUDE.md, NOT the project's), reads the repo
@@ -275,21 +285,41 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
             const command =
               `${homePrefix}${bin} -p "$(cat ${sq(promptPath)})" ` +
               `--output-format json --model ${sq(model)} ${extraArgs}${addDir}`
-            const res = yield* shell
-              .exec({ command, cwd: dir, timeoutMs: VERIFY_TIMEOUT_MS })
+            const capSecs = Math.round(timeoutMs / 1000)
+            yield* Effect.logInfo(
+              `verify gate: running ${model} (repo access: ${codeContext}, isolated: ${isolated}, cap ${capSecs}s)`,
+            )
+            const [elapsed, res] = yield* shell
+              .exec({ command, cwd: dir, timeoutMs })
               .pipe(
+                Effect.timed,
+                // Actionable, tag-aware message — surfaced to the log AND back to the
+                // model as the gate's `reasons`, so "what went wrong" is legible.
+                Effect.tapError((e) =>
+                  Effect.logWarning(`verify gate: claude exec failed (${e._tag}) after ~${capSecs}s cap`),
+                ),
                 Effect.mapError(
                   (e) =>
-                    new VerifierError({ message: `claude exec failed (${e._tag})` }),
+                    new VerifierError({
+                      message:
+                        e._tag === "ShellTimeout"
+                          ? `claude review exceeded the ${capSecs}s cap — raise EFFERENT_VERIFY_TIMEOUT_MS if reviews legitimately need longer`
+                          : `claude exec failed (${e._tag})`,
+                    }),
                 ),
               )
+            const secs = Math.round(Duration.toMillis(elapsed) / 1000)
             if (res.exitCode !== 0) {
+              yield* Effect.logWarning(
+                `verify gate: claude exited ${res.exitCode} after ${secs}s — ${res.stderr.slice(0, 300).trim()}`,
+              )
               return yield* Effect.fail(
                 new VerifierError({
-                  message: `claude exited ${res.exitCode}: ${res.stderr.slice(0, 200).trim()}`,
+                  message: `claude exited ${res.exitCode} after ${secs}s: ${res.stderr.slice(0, 200).trim()}`,
                 }),
               )
             }
+            yield* Effect.logInfo(`verify gate: ${model} completed in ${secs}s`)
             return extractResultText(res.stdout)
           }),
         ({ dir }) => removeDir(dir),
