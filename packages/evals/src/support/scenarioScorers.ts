@@ -15,6 +15,13 @@ export interface RoutingExpectation {
   /** When code is written, the tier it should run on. `code` ⇒ the code-writing
    *  must hit the code tier; `general` ⇒ no code-tier spend at all. */
   readonly codingTier?: "code" | "general"
+  /** When delegation is expected, the minimum number of sub-agents — the
+   *  parallel FAN-OUT. A broad investigation's speed-up comes from ≥2 concurrent
+   *  read-only researchers, not one serial sub-agent; this makes "actually used
+   *  the swarm" measurable, so a root that did the reading itself scores a clean
+   *  0 (with `shouldDelegate`) rather than a soft pass. Only checked when
+   *  `shouldDelegate === true`. */
+  readonly minSpawns?: number
 }
 
 export interface EfficiencyBudget {
@@ -43,6 +50,10 @@ export const routingScore = <I, T extends { readonly routing?: RoutingExpectatio
         // A task that should stay direct but fanned out is worse the more it spawned.
         if (exp.shouldDelegate === false && t.spawns.length > 0)
           checks.push(Math.max(0, 1 - t.spawns.length * 0.5))
+        // A task that should delegate must actually FAN OUT (≥ minSpawns parallel
+        // readers), not spawn a single serial sub-agent — that's "used the swarm".
+        if (exp.shouldDelegate === true && exp.minSpawns !== undefined)
+          checks.push(t.spawns.length >= exp.minSpawns ? 1 : 0)
       }
       if (exp.codingTier === "code") checks.push(t.usedCodeTier ? 1 : 0)
       if (exp.codingTier === "general") checks.push(t.perTierSpend.code === 0 ? 1 : 0)

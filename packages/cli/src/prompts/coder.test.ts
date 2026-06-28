@@ -80,6 +80,42 @@ describe("coderSystemPrompt code-delegation policy", () => {
   })
 })
 
+describe("coderSystemPrompt research-delegation policy", () => {
+  it("adds the `# Investigating & researching` section when the research fleet is present", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
+    expect(p).toContain("# Investigating & researching")
+    expect(p).toContain('run_agent({ agent: "research-coordinator"')
+    // The broad/focused split — the read-side mirror of `# Writing code`.
+    expect(p).toContain("broad investigation")
+    expect(p).toContain("focused lookups")
+    // …and `# When to delegate`'s self-policy points at it.
+    expect(p).toContain("research fleet (see `# Investigating & researching`")
+  })
+
+  it("omits the research-delegation section when no research-coordinator is loaded", () => {
+    // A coding fleet alone ⇒ `# When to delegate` shows, but not the research section.
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("# When to delegate")
+    expect(p).not.toContain("# Investigating & researching")
+  })
+
+  it("the research section is independent of the code tier (shows with or without a code model)", () => {
+    const withCode = coderSystemPrompt(
+      "/w",
+      new Date(0),
+      [],
+      [],
+      [role("research-coordinator")],
+      [],
+      [],
+      true,
+    )
+    expect(withCode).toContain("# Investigating & researching")
+    const noCode = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
+    expect(noCode).toContain("# Investigating & researching")
+  })
+})
+
 describe("renderScopeSystemPrompt", () => {
   it("includes the agent roster so a coordinator can name its specialists", () => {
     const p = renderScopeSystemPrompt({
