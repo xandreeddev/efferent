@@ -5,6 +5,7 @@ import { ApprovalAllowAllLive } from "../ports/Approval.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { TerminalSession } from "../ports/TerminalSession.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import {
   firstLine,
@@ -160,6 +161,7 @@ describe("web-lookup budget (subAgentFetchBudget) — the convergence brake", ()
       WebSearch,
       WebSearch.of({ search: () => Effect.succeed({ answer: "a", sources: [] }) }),
     ),
+    Layer.succeed(TerminalSession, TerminalSession.of({} as never)),
     ApprovalAllowAllLive,
   )
 

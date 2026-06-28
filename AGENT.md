@@ -77,7 +77,10 @@ An `@effect/ai` `Toolkit` in `@xandreed/sdk-core/usecases/codingToolkit.ts`, bac
 | `read_file`  | `{ path; offset?; limit? }`                      | `FileSystem.read`                            |
 | `write_file` | `{ path; content }`                              | `FileSystem.write`                           |
 | `edit_file`  | `{ path; edits: [{ oldText; newText }] }` *or* flat `{ path; oldText; newText }` | `normalizeEdits` → read → string replace → write, returns diff |
-| `Bash`       | `{ command; timeout? }`                          | `Shell.exec`, cwd bound at tool-build time  |
+| `Bash`       | `{ command; timeout?; run_in_background? }`       | `Shell.exec` (cwd bound at tool-build time); default timeout **5 min** (`DEFAULT_BASH_TIMEOUT_MS`). `run_in_background:true` → `Shell.spawnBackground`, returns `{ processId; running }` at once |
+| `bash_output`| `{ processId; sinceCursor? }`                    | `Shell.readBackground` — incremental stdout/stderr + exitCode/running of a background proc |
+| `kill_bash`  | `{ processId }`                                  | `Shell.killBackground` — group-kills a background proc |
+| `session_start` / `session_send` / `session_read` / `session_kill` / `session_list` | tmux session id + keys/lines | `TerminalSession` (tmux): start a detached interactive pane (TUI/REPL), send keys, capture screen, kill; namespaced so a human can `tmux attach`. Feature-detected; no tmux ⇒ graceful failure |
 | `grep`       | `{ pattern; dir?; flags?; context? }`            | shells out to `grep -rnE` for now            |
 | `glob`       | `{ pattern; dir? }`                              | `FileSystem.glob` via `Bun.Glob`             |
 | `ls`         | `{ path?; recursive? }`                          | `FileSystem.list`                            |

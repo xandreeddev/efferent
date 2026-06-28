@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { existsSync, realpathSync, symlinkSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { Effect, Layer } from "effect"
-import { Shell } from "@xandreed/sdk-core"
+import { Shell, type ShellExecInput } from "@xandreed/sdk-core"
 
 /**
  * Per-case Docker isolation so real-commit tasks (which let the agent run
@@ -161,8 +161,10 @@ export const withSandbox = <A, E, R>(
 export const dockerShellLayer = (sb: Sandbox): Layer.Layer<Shell> =>
   Layer.succeed(
     Shell,
+    // Docker eval sandbox only runs one-shot `exec`; background/session methods
+    // aren't needed here (`as never` opts out of the rest of the Shell surface).
     Shell.of({
-      exec: ({ command, timeoutMs }) =>
+      exec: ({ command, timeoutMs }: ShellExecInput) =>
         Effect.sync(() => {
           const start = Date.now()
           const r = sb.exec(command, timeoutMs)
@@ -174,5 +176,5 @@ export const dockerShellLayer = (sb: Sandbox): Layer.Layer<Shell> =>
             timedOut: r.timedOut,
           }
         }),
-    }),
+    } as never),
   )

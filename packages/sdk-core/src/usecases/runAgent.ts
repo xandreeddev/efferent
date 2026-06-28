@@ -88,6 +88,10 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         ...(input.extraHooks?.onLlmRetry !== undefined
           ? { onLlmRetry: input.extraHooks.onLlmRetry }
           : {}),
+        // Same for the background-process output sink (Shell adapter, below the loop).
+        ...(input.extraHooks?.onBgOutput !== undefined
+          ? { onBgOutput: input.extraHooks.onBgOutput }
+          : {}),
       }),
       Effect.tapErrorCause(() =>
         Effect.annotateCurrentSpan({ error: true }).pipe(

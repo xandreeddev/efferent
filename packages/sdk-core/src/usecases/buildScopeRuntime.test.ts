@@ -9,6 +9,7 @@ import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
 import { Shell } from "../ports/Shell.js"
+import { TerminalSession } from "../ports/TerminalSession.js"
 import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 
@@ -21,6 +22,9 @@ const verifierStub = Layer.succeed(
     gate: () => Effect.die("unused"),
   } as never),
 )
+
+/** Stub TerminalSession — these tests never open a session. */
+const terminalStub = Layer.succeed(TerminalSession, TerminalSession.of({} as never))
 import { RunContextRef, type RunContext } from "./runContext.js"
 import {
   applyInlineDefinition,
@@ -282,6 +286,7 @@ const stubPorts = Layer.mergeAll(
   Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
   Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
   ApprovalAllowAllLive,
+  terminalStub,
   verifierStub,
   doneModel,
 )
@@ -365,6 +370,7 @@ describe("ScopeRuntime.spawnAgent — mission + interactionPolicy seeding (the J
       Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
       Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
       ApprovalAllowAllLive,
+      terminalStub,
       verifierStub,
       model,
     )
@@ -558,6 +564,7 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
     Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
     Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
     ApprovalAllowAllLive,
+    terminalStub,
     verifierStub,
     blockingModel,
   )
@@ -662,6 +669,7 @@ describe("schedule management tools — schedule / list_scheduled_jobs / cancel_
       Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
       Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
       ApprovalAllowAllLive,
+      terminalStub,
       verifierStub,
       doneModel,
     )
