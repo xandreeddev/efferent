@@ -28,7 +28,7 @@ const statusColor = (s: Status): string =>
  * scope folder, dim metadata (provenance edge, non-default seed, files-changed
  * count) and the return summary.
  */
-const Row = (props: { row: TreeRowData; active: boolean }) => {
+const Row = (props: { row: TreeRowData; active: boolean; store: TuiContext["store"] }) => {
   const d = () => props.row.display
   // A row carries a fold caret iff it is foldable (has a `foldId`); the lone
   // always-expanded session root has none, so it shows no caret.
@@ -56,26 +56,30 @@ const Row = (props: { row: TreeRowData; active: boolean }) => {
       </Show>
       <Show
         when={d().kind === "node"}
-        fallback={renderConversation(() => d() as TreeConversationDisplay, foldable())}
+        fallback={renderConversation({ d: () => d() as TreeConversationDisplay, foldable: foldable(), store: props.store })}
       >
-        {renderNode(() => d() as TreeNodeDisplay, foldable())}
+        {renderNode({ d: () => d() as TreeNodeDisplay, foldable: foldable(), store: props.store })}
       </Show>
     </box>
   )
 }
 
-const renderConversation = (d: () => TreeConversationDisplay, foldable: boolean) => {
-  const v = d()
+const renderConversation = (props: { d: () => TreeConversationDisplay; foldable: boolean; store: TuiContext["store"] }) => {
+  const v = props.d()
+  const spin = () =>
+    v.rootRunning
+      ? glyph.spinner[props.store.spinner() % glyph.spinner.length]
+      : glyph.railDot
   return (
     <>
-      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${foldable ? foldCaret(v.folded) : " "} `}</text>
-      {/* The orchestrator's own live status: a running ● while its turn is in
-          flight (next to the fleet's per-agent glyphs), a dim ● when idle. */}
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${props.foldable ? foldCaret(v.folded) : " "} `}</text>
+      {/* The orchestrator's own live status: a running spinner while its turn is
+          in flight (next to the fleet's per-agent glyphs), a dim ● when idle. */}
       <text
         fg={v.rootRunning ? tokens.state.running : tokens.text.dim}
         wrapMode="none"
         flexShrink={0}
-      >{`${glyph.railDot} `}</text>
+      >{`${spin()} `}</text>
       <text fg={v.active ? tokens.text.default : tokens.text.muted} wrapMode="none">
         {v.label}
       </text>
@@ -89,8 +93,12 @@ const renderConversation = (d: () => TreeConversationDisplay, foldable: boolean)
   )
 }
 
-const renderNode = (d: () => TreeNodeDisplay, foldable: boolean) => {
-  const v = d()
+const renderNode = (props: { d: () => TreeNodeDisplay; foldable: boolean; store: TuiContext["store"] }) => {
+  const v = props.d()
+  const spin = () =>
+    v.status === "running"
+      ? glyph.spinner[props.store.spinner() % glyph.spinner.length]
+      : statusGlyph(v.status)
   const meta = [
     // The fleet tier (a top-level task/coordinator) reads distinctly from a
     // worker agent; the agent tier is the unmarked default, so only tag fleets.
@@ -104,8 +112,8 @@ const renderNode = (d: () => TreeNodeDisplay, foldable: boolean) => {
     .join(" · ")
   return (
     <>
-      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${foldable ? foldCaret(v.folded) : " "} `}</text>
-      <text fg={statusColor(v.status)} wrapMode="none" flexShrink={0}>{`${statusGlyph(v.status)} `}</text>
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{`${props.foldable ? foldCaret(v.folded) : " "} `}</text>
+      <text fg={statusColor(v.status)} wrapMode="none" flexShrink={0}>{`${spin()} `}</text>
       <text fg={tokens.text.default} wrapMode="none" flexShrink={0}>
         {v.label}
       </text>
@@ -193,7 +201,7 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
         <For each={rows()}>
           {(row, i) => (
             <box id={`tree-row-${i()}`}>
-              <Row row={row} active={focused() && i() === cursor()} />
+              <Row row={row} active={focused() && i() === cursor()} store={store} />
             </box>
           )}
         </For>

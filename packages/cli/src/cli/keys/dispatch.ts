@@ -517,22 +517,11 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // Esc on a `:`/`/` command line in the composer cancels the command first
-  // (vim cmdline behavior) — before it could close the agent pane.
-  if (key.name === "escape" && store.focus() === "input") {
-    const text = store.input()
-    if (text.startsWith(":") || text.startsWith("/")) {
-      store.inputControl.current?.seed("")
-      store.setPaletteIndex(0)
-      return
-    }
-  }
-
   // Esc clears an active search first — finer-grained than closing a pane, and
   // it works from any focus (a `/` search is typed in the composer, so focus is
   // often the input when it's live).
   if (key.name === "escape" && store.search() !== undefined) {
-    store.setSearch(undefined)
+    clearSearch(store)
     return
   }
 
@@ -545,11 +534,18 @@ export const dispatch = (ctx: TuiContext, raw: Key): void => {
     return
   }
 
-  // Esc in the idle input (no agent pane) — the modifier-free way OUT of the
-  // composer, for vi hands and tmux users alike (Ctrl-H never arrives in legacy
-  // terminals). Leaves the draft intact and drops to NORMAL on the chat.
+  // Esc in the input cancels a `:`/`/` command line first (vim cmdline behavior),
+  // otherwise leaves the composer and drops to NORMAL on the chat. This is the
+  // unified "leave input" path — the only Esc behavior when focus is input and
+  // nothing is in flight.
   if (key.name === "escape" && store.focus() === "input") {
-    focusChat(store)
+    const text = store.input()
+    if (text.startsWith(":") || text.startsWith("/")) {
+      store.inputControl.current?.seed("")
+      store.setPaletteIndex(0)
+    } else {
+      focusChat(store)
+    }
     return
   }
 
