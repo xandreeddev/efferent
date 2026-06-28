@@ -142,6 +142,15 @@ export const AgentEvent = Schema.Union(
     maxAttempts: Schema.Number,
     delayMs: Schema.Number,
   }),
+  // A chunk of output from a background shell process (`run_in_background`) —
+  // surfaced live so a long-running background command is visible in the rail
+  // instead of silent until the next `bash_output` poll.
+  Schema.Struct({
+    type: Schema.Literal("bg_output"),
+    processId: Schema.String,
+    stream: Schema.Literal("stdout", "stderr"),
+    chunk: Schema.String,
+  }),
   // The agent is parked on a bash-approval request — the daemon publishes this
   // so every attached client renders the sheet; a client answers with
   // `Workspace.approve` (POST /approve). `sessionId` is the asking session.
