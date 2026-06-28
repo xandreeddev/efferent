@@ -104,6 +104,13 @@ export interface RunScenarioOptions {
    *  — the safe path for a suite that executes LLM-generated code. Mirrors the
    *  `repo-tasks` isolation. Requires Docker; defaults to off (host execution). */
   readonly sandbox?: boolean
+  /** Merge the built-in fleet (coordinator / research-coordinator / specialists)
+   *  into the roster, exactly as `main.ts` does with `withBuiltinAgents`. Required
+   *  for any eval that measures whether the root DELEGATES to the fleet — without
+   *  it the `# When to delegate` policy is never emitted and a
+   *  `run_agent({ agent: "research-coordinator" })` fails `UnknownAgent`. Defaults
+   *  off so the focused-behaviour suites keep their lean prompt. */
+  readonly includeFleet?: boolean
 }
 
 const billed = (u?: { readonly inputTokens: number; readonly outputTokens: number }): number =>
@@ -217,6 +224,7 @@ export const runScenario = (
         opts.promptVariant,
         codeModelDistinct(settings),
         hooks,
+        opts.includeFleet === true,
       )
       const store = yield* ConversationStore
       const id = yield* store.create(dir)
