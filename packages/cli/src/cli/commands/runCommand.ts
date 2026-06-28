@@ -3,9 +3,11 @@ import { ConversationId } from "@xandreed/sdk-core"
 import { SLASH_COMMANDS } from "../presentation/slashPalette.js"
 import type { TuiContext } from "../state/store.js"
 import {
+  buildFromSelection,
   openResumeBrowser,
   resetConversationRail,
   resumeConversation,
+  toggleContext,
 } from "../actions/session.js"
 import { focusFleetTree, refreshNav } from "../actions/contextTree.js"
 import { runHandoff } from "../actions/handoff.js"
@@ -97,11 +99,10 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       })
       return
     case ":context":
+      void ctx.run(toggleContext(store, store.run.getConversationId()))
+      return
     case ":build":
-      store.pushBlock({
-        kind: "info",
-        text: "context curation (:context/:build) is deferred — the current session's fleet is on the right (Tab to focus)",
-      })
+      void ctx.run(buildFromSelection(store, store.status().cwd))
       return
     case ":browse":
       // The agy tabbed resume browser: one tab per DB connection, each listing
