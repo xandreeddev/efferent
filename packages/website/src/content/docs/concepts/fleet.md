@@ -126,6 +126,18 @@ bus — is the supervisor. Completion is judged by a separate **verifier**: a bu
 role spawned in a *fresh* context, so it never grades its own work (the lead-researcher pattern).
 It returns `MET` / `NOT MET` / `INCONCLUSIVE` with evidence.
 
+## The mandatory gate
+
+When a run **uses sub-agents**, the finished objective is validated by an independent Opus gate
+before the run is considered done. This is enforced in `driveLoop` — the single use case every mode
+funnels through — so a fan-out can't reach "done" unverified, and it depends on neither a coordinator
+nor the model choosing to call a tool. It's **fail-closed**: on `needs_work` the loop distills
+reusable lessons, re-runs with the gate's concrete reasons fed back, and re-gates, up to a
+configurable attempt cap; an unavailable verifier (no `claude` on the box) is surfaced loudly — never
+a silent pass, never an infinite loop. It's the enforcement point of the self-improving loop: every
+swarm objective is checked, and what the gate rejects becomes the next attempt's feedback (and a
+durable lesson). Off the swarm path — a run with no sub-agents — nothing changes.
+
 ## Scheduling
 
 Cron is a JSON job list (`~/.efferent/cron.json`) plus a per-minute tick that fires due jobs.

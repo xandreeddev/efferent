@@ -21,7 +21,10 @@ const runAgent: <Tools extends Record<string, Tool.Any>, R>(
 
 It appends the user message, loads history (applying the latest [handoff](/docs/concepts/compaction/#handoff)
 checkpoint), runs the [loop](/docs/concepts/agent-loop/) until the model stops calling tools or
-`maxSteps`, persists the new tail, and returns the result.
+`maxSteps`, persists the new tail, and returns the result. **If the run used sub-agents**, it then
+puts the finished objective through the mandatory Opus
+[gate](/docs/concepts/fleet/#the-mandatory-gate) before returning — fail-closed, learning and
+re-running on `needs_work` until `sound` or the attempt cap (gated by `autoLoop`).
 
 ## Parameters
 
@@ -48,6 +51,7 @@ const AgentResult = Schema.Struct({
 ## Requirements
 
 The effect requires the ports the loop uses — `ConversationStore`, `LanguageModel`, `SettingsStore`,
-`AuthStore`, plus whatever your tool handlers need — satisfied by your
+`AuthStore`, and (for the mandatory swarm gate) `Verifier` + `ContextTreeStore` + `UtilityLlm` +
+`FileSystem`, plus whatever your tool handlers need — satisfied by your
 [composition root](/docs/guides/composition-root/). The toolkit's **handler layer** is provided
 separately: `runAgent(...).pipe(Effect.provide(handlerLayer))`.
