@@ -1,5 +1,6 @@
 import { AiError } from "@effect/ai"
-import { Duration, Effect } from "effect"
+import { type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
+import { Duration, Effect, FiberRef } from "effect"
 
 /**
  * Retry-with-backoff for LLM calls. The default provider (Kimi via the opencode
@@ -12,11 +13,25 @@ import { Duration, Effect } from "effect"
  * Apply it around the CONNECT, never a live stream — wrapping `generateText`
  * (which collects the whole response into one Effect) or a provider's `postChat`
  * is safe; retrying a partially-emitted stream would duplicate tokens.
+ *
+ * Two properties the early version lacked, both fixed here:
+ *   1. **The backoff is visible.** Each retry calls `RunContext.onLlmRetry` (a
+ *      FiberRef sink the driver wires to the event stream), so the UI shows
+ *      `retrying in 8s (1/3)` instead of a silent hang.
+ *   2. **`Retry-After` is clamped.** The opencode gateway answers a 429 on daily-
+ *      quota exhaustion with `Retry-After` = seconds-until-the-midnight-UTC reset
+ *      — HOURS. The old code honored it verbatim and slept ~13h. We honor a wait
+ *      only up to {@link MAX_HONORED_RETRY_AFTER_MS}; a longer one means quota/
+ *      outage, so we DON'T retry — the error surfaces immediately and the human
+ *      can switch models (`:model`) instead of staring at a frozen turn.
  */
 
 const MAX_RETRIES = 3
 const BASE_MS = 1_000
 const MAX_BACKOFF_MS = 8_000
+/** Honor a provider's `Retry-After` only up to a minute. Longer ⇒ not a
+ *  transient blip but a rate/quota wall — fail fast rather than park the turn. */
+export const MAX_HONORED_RETRY_AFTER_MS = 60_000
 
 /** 429 (rate limit) + the retryable 5xx (overload / gateway / unavailable). */
 const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504])
@@ -65,15 +80,18 @@ export const isTransientAiError = (e: AiError.AiError): boolean => {
 const reasonLabel = (e: AiError.AiError): string =>
   e._tag === "HttpResponseError" ? `HTTP ${e.response.status}` : e._tag
 
-/** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms, if present. */
-const retryAfterMs = (e: AiError.AiError): number | undefined => {
-  if (e._tag !== "HttpResponseError") return undefined
-  const raw = e.response.headers["retry-after"] ?? e.response.headers["Retry-After"]
+/**
+ * Parse a `Retry-After` header value (delta-seconds or an HTTP-date) into ms.
+ * Pure — `nowMs` is passed so the HTTP-date branch is testable. Exported for the
+ * regression test: the opencode daily-quota value (`"48489"` ⇒ 48 489 000 ms)
+ * is exactly what must NOT be slept on.
+ */
+export const parseRetryAfter = (raw: string | undefined, nowMs: number): number | undefined => {
   if (raw === undefined || raw.length === 0) return undefined
   const secs = Number(raw)
   if (Number.isFinite(secs)) return Math.max(0, Math.round(secs * 1000))
   const at = Date.parse(raw)
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined
+  return Number.isFinite(at) ? Math.max(0, at - nowMs) : undefined
 }
 
 /** Exponential 1s → 2s → 4s, capped, with ±25% jitter to avoid a thundering herd. */
@@ -83,12 +101,55 @@ const backoffMs = (attempt: number): number => {
 }
 
 /**
+ * Given a parsed `Retry-After` (ms, or undefined) and the 0-based attempt,
+ * decide whether to wait and for how long. A server wait over the ceiling is
+ * REFUSED (`wait: false`) — that's the quota/outage case we fail fast on; an
+ * absent header falls back to exponential backoff; everything is capped at the
+ * ceiling. Pure; this is what the clamp test pins.
+ */
+export const planDelay = (
+  retryAfterMs: number | undefined,
+  attempt: number,
+): { readonly wait: boolean; readonly delayMs: number } =>
+  retryAfterMs !== undefined && retryAfterMs > MAX_HONORED_RETRY_AFTER_MS
+    ? { wait: false, delayMs: 0 }
+    : { wait: true, delayMs: Math.min(retryAfterMs ?? backoffMs(attempt), MAX_HONORED_RETRY_AFTER_MS) }
+
+const retryAfterMs = (e: AiError.AiError): number | undefined => {
+  if (e._tag !== "HttpResponseError") return undefined
+  const raw = e.response.headers["retry-after"] ?? e.response.headers["Retry-After"]
+  return parseRetryAfter(raw, Date.now())
+}
+
+interface Decision {
+  readonly wait: boolean
+  readonly delayMs: number
+  readonly reason: string
+}
+
+/** The full retry decision for a failure on attempt `n` (0-based): transient?
+ *  under the attempt cap? a sleepable wait? Combines the transient classifier
+ *  with {@link planDelay}'s clamp. */
+const decide = <E>(e: E, n: number): Decision => {
+  if (n >= MAX_RETRIES || !AiError.isAiError(e) || !isTransientAiError(e))
+    return { wait: false, delayMs: 0, reason: "" }
+  const plan = planDelay(retryAfterMs(e), n)
+  return { wait: plan.wait, delayMs: plan.delayMs, reason: reasonLabel(e) }
+}
+
+/** Push a retry notice to the driver's sink (FiberRef), if one is wired. */
+const emitRetryNotice = (event: AgentLlmRetryEvent): Effect.Effect<void> =>
+  FiberRef.get(RunContextRef).pipe(
+    Effect.flatMap((rc) => (rc.onLlmRetry !== undefined ? rc.onLlmRetry(event) : Effect.void)),
+  )
+
+/**
  * Wrap an LLM call so a transient provider failure is retried with backoff.
- * Honors `Retry-After` when the provider sends one, else exponential backoff,
- * up to {@link MAX_RETRIES} retries. Each retry annotates the active span and
- * logs a warning, so the wait shows up in telemetry and the `llm.generate`
- * span's logs. Place this INSIDE the span (so the annotations land on it) but
- * OUTSIDE the success/error observers (so they only see the final outcome).
+ * Honors `Retry-After` (clamped — see {@link MAX_HONORED_RETRY_AFTER_MS}), else
+ * exponential backoff, up to {@link MAX_RETRIES} retries. Each retry emits a
+ * visible notice, annotates the active span, and logs a warning. Place this
+ * INSIDE the span (so annotations land on it) but OUTSIDE the success/error
+ * observers (so they only see the final outcome).
  */
 export const retryableLlm = <A, E, R>(
   eff: Effect.Effect<A, E, R>,
@@ -99,22 +160,29 @@ export const retryableLlm = <A, E, R>(
   const attempt = (n: number): Effect.Effect<A, E, R> =>
     eff.pipe(
       Effect.catchIf(
-        (e: E) => n < MAX_RETRIES && AiError.isAiError(e) && isTransientAiError(e),
+        (e: E) => decide(e, n).wait,
         (e: E) => {
-          const err = e as AiError.AiError
-          const delay = retryAfterMs(err) ?? backoffMs(n)
-          return Effect.annotateCurrentSpan({
-            "llm.retry": true,
-            "llm.retry.attempt": n + 1,
-            "llm.retry.reason": reasonLabel(err),
-            "llm.retry.delay_ms": delay,
+          const { delayMs, reason } = decide(e, n)
+          return emitRetryNotice({
+            reason,
+            attempt: n + 1,
+            maxAttempts: MAX_RETRIES,
+            delayMs,
           }).pipe(
             Effect.zipRight(
+              Effect.annotateCurrentSpan({
+                "llm.retry": true,
+                "llm.retry.attempt": n + 1,
+                "llm.retry.reason": reason,
+                "llm.retry.delay_ms": delayMs,
+              }),
+            ),
+            Effect.zipRight(
               Effect.logWarning(
-                `LLM ${reasonLabel(err)} — retrying in ${delay}ms (attempt ${n + 1}/${MAX_RETRIES})`,
+                `LLM ${reason} — retrying in ${delayMs}ms (attempt ${n + 1}/${MAX_RETRIES})`,
               ),
             ),
-            Effect.zipRight(Effect.sleep(Duration.millis(delay))),
+            Effect.zipRight(Effect.sleep(Duration.millis(delayMs))),
             Effect.zipRight(Effect.suspend(() => attempt(n + 1))),
           )
         },

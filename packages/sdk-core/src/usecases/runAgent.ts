@@ -83,6 +83,11 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
           fast: settings.fastModel ?? input.pinnedGeneral ?? settings.model,
         },
         ...(input.mission !== undefined ? { mission: input.mission } : {}),
+        // Thread the retry-notice sink down to the provider adapter (it runs
+        // below the loop and can't see hooks) so a backoff surfaces live.
+        ...(input.extraHooks?.onLlmRetry !== undefined
+          ? { onLlmRetry: input.extraHooks.onLlmRetry }
+          : {}),
       }),
       Effect.tapErrorCause(() =>
         Effect.annotateCurrentSpan({ error: true }).pipe(

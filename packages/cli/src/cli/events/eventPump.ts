@@ -439,6 +439,18 @@ export const makeEventReducer = (
         store.pushBlock({ kind: "error", text: event.message })
         return
 
+      case "llm_retry": {
+        // A transient provider failure is backing off — show the wait live so a
+        // pause reads as "retrying", not a hang. (The hard failure, if retries
+        // exhaust, still arrives as an `error` block.)
+        const secs = Math.max(1, Math.round(event.delayMs / 1000))
+        store.pushBlock({
+          kind: "info",
+          text: `provider ${event.reason} — retrying in ${secs}s (attempt ${event.attempt}/${event.maxAttempts})`,
+        })
+        return
+      }
+
       case "approval_needed": {
         // Remote-client path: the daemon parked on a bash approval — render the
         // sheet. The key handler answers via `ctx.resolveApproval` → `approve`.
