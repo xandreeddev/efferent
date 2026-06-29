@@ -175,10 +175,17 @@ const thinkingParams = (model: string, mode: "off" | "high"): Json => {
   return mode === "off" ? {} : { reasoning_effort: mode }
 }
 
+/** Optional sampling controls (eval determinism) — threaded from Settings. */
+export interface SamplingConfig {
+  readonly temperature?: number
+  readonly seed?: number
+}
+
 const requestBody = (
   model: string,
   options: LanguageModel.ProviderOptions,
   thinkingMode?: "off" | "high",
+  sampling?: SamplingConfig,
 ): Json => {
   const messages = toMessages(options.prompt)
   const tools = toTools(options.tools)
@@ -192,6 +199,8 @@ const requestBody = (
     ...(options.responseFormat.type !== "text"
       ? { response_format: responseTextFormat(options.responseFormat) }
       : {}),
+    ...(sampling?.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+    ...(sampling?.seed !== undefined ? { seed: sampling.seed } : {}),
     ...(thinkingMode !== undefined ? thinkingParams(model, thinkingMode) : {}),
   }
 }
@@ -434,13 +443,14 @@ export const makeOpenCodeLanguageModel = (
   model: string,
   apiKey: string,
   thinkingMode?: "off" | "high",
+  sampling?: SamplingConfig,
 ): Effect.Effect<LanguageModel.Service> =>
   LanguageModel.make({
     generateText: (options) =>
-      responseStream(apiKey, requestBody(model, options, thinkingMode)).pipe(
+      responseStream(apiKey, requestBody(model, options, thinkingMode, sampling)).pipe(
         Stream.runCollect,
         Effect.map((chunk) => collectStreamParts(Chunk.toArray(chunk))),
       ),
     streamText: (options) =>
-      responseStream(apiKey, requestBody(model, options, thinkingMode)),
+      responseStream(apiKey, requestBody(model, options, thinkingMode, sampling)),
   })

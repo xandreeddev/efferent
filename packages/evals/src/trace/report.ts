@@ -182,3 +182,51 @@ export const renderVsBaseline = (
   }
   return lines.join("\n")
 }
+
+export interface Regression {
+  readonly configName: string
+  readonly suite: string
+  readonly delta: number
+  readonly ciLow: number
+  readonly ciHigh: number
+}
+
+/**
+ * The CI-gate verdict: every suite that SIGNIFICANTLY regressed against the
+ * baseline (the paired bootstrap CI excludes 0 *and* the delta is negative).
+ * Bonferroni-corrected across the suites compared, so the gate doesn't fire on
+ * one-in-twenty noise when many suites run. Empty ⇒ no significant regression.
+ */
+export const regressionVerdict = (
+  current: ReadonlyArray<RunAgg>,
+  baseline: SavedReport,
+): ReadonlyArray<Regression> => {
+  let comparisons = 0
+  for (const run of current) {
+    const baseRun = baseline.runs.find((r) => r.configName === run.configName) ?? baseline.runs[0]
+    if (baseRun === undefined) continue
+    for (const s of run.suites) if (baseRun.suites.some((x) => x.suite === s.suite)) comparisons++
+  }
+  comparisons = Math.max(1, comparisons)
+  const out: Array<Regression> = []
+  for (const run of current) {
+    const baseRun = baseline.runs.find((r) => r.configName === run.configName) ?? baseline.runs[0]
+    if (baseRun === undefined) continue
+    for (const s of run.suites) {
+      const bs = baseRun.suites.find((x) => x.suite === s.suite)
+      if (bs === undefined) continue
+      const { base, cand } = pairByName(bs.cases, s.cases)
+      const ci = pairedDeltaCI(base, cand, 2000, 0x5eed1e, comparisons)
+      if (ci.significant && ci.delta < 0) {
+        out.push({
+          configName: run.configName,
+          suite: s.suite,
+          delta: ci.delta,
+          ciLow: ci.low,
+          ciHigh: ci.high,
+        })
+      }
+    }
+  }
+  return out
+}

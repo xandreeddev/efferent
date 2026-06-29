@@ -164,7 +164,16 @@ const runCase = <I, O, T, R>(
       durationMs: end - start,
     }
   }).pipe(
-    Effect.withSpan("eval.case", { attributes: { "eval.suite": spec.name, "eval.case": kase.name } }),
+    Effect.withSpan("eval.case", {
+      attributes: {
+        "eval.suite": spec.name,
+        "eval.case": kase.name,
+        ...(kase.tags !== undefined && kase.tags.length > 0
+          ? { "eval.tags": kase.tags.join(",") }
+          : {}),
+        ...(kase.difficulty !== undefined ? { "eval.difficulty": kase.difficulty } : {}),
+      },
+    }),
     Effect.annotateLogs({ "eval.suite": spec.name, "eval.case": kase.name }),
   )
 
