@@ -39,9 +39,10 @@ export interface GateInput {
  * (`docs/self-improving-loop.md`). Its only job is to *refute*: given a
  * candidate learning + its evidence, decide whether it's true, general,
  * non-redundant, safe, and worth saving. The default adapter
- * (`ClaudeHeadlessVerifierLive`) runs Opus via the real `claude` headless CLI
- * **in the repo dir**, so the model checks against ground truth and the
- * subscription rate applies — a separate process the engine can't bias.
+ * (`StructuredVerifierLive`) judges with Opus via `generateObject` — a
+ * PROVIDER-ENFORCED structured verdict (no free-text parsing can fail) under a
+ * controlled validator system prompt for independence; a code gate gets the
+ * changed-file contents in the prompt to check against ground truth.
  */
 export class Verifier extends Context.Tag("@xandreed/sdk-core/Verifier")<
   Verifier,

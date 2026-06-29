@@ -601,6 +601,77 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
   })
 })
 
+// --- Fix 3 WIRING: researchSubtree on RunContext → handler refuses a code lead -
+// constrainToReadOnly (the transform) is unit-tested above; this proves the FLAG
+// actually reaches the run_agent handler and gates the spawn (the gap the vacuous
+// live eval couldn't exercise).
+
+describe("run_agent — a research subtree refuses to spawn a coder (Fix 3 wiring)", () => {
+  const coordinatorDef: AgentDefinition = {
+    name: "coordinator", // a CODE lead — the thing a research subtree must not spawn
+    description: "code lead",
+    body: "lead",
+    tools: ["run_agent", "wait_for_agents"],
+    sourcePath: "<test>",
+  }
+  const rtWith = () =>
+    buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [coordinatorDef],
+      tools: [],
+    })
+  const callRunAgent = (
+    rt: ReturnType<typeof rtWith>,
+    params: Record<string, unknown>,
+    rc: { researchSubtree?: boolean },
+  ) => {
+    const { layer } = stubTreeStore()
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const tk = yield* rt.toolkit
+        const call = (tk as unknown as {
+          handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+        }).handle
+        const r = yield* call("run_agent", params)
+        return r.result as { error?: string; status?: string; nodeId?: string }
+      }).pipe(
+        Effect.provide(rt.handlerLayer),
+        Effect.provide(Layer.mergeAll(layer, stubPorts)),
+        // depth 1 = inside a lead's subtree (so the depth-0 RouteThroughCoordinator
+        // guard doesn't fire first); researchSubtree toggles the Fix-3 behavior.
+        Effect.locally(RunContextRef, {
+          rootConversationId: null,
+          parentNodeId: null,
+          depth: 1,
+          tokenPool: null,
+          ...rc,
+        }),
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "run_agent HUNG" }),
+      ) as Effect.Effect<{ error?: string; status?: string; nodeId?: string }>,
+    )
+  }
+
+  test("researchSubtree=true: spawning agent:'coordinator' is refused with ResearchStaysReadOnly", async () => {
+    const res = await callRunAgent(
+      rtWith(),
+      { name: "fixer", folder: "pkg", task: "go fix the bugs you found", agent: "coordinator" },
+      { researchSubtree: true },
+    )
+    expect(res.error).toBe("ResearchStaysReadOnly")
+  })
+
+  test("control — WITHOUT researchSubtree, the same coordinator spawn is NOT refused", async () => {
+    const res = await callRunAgent(
+      rtWith(),
+      { name: "fixer", folder: "pkg", task: "go fix the bugs", agent: "coordinator" },
+      {},
+    )
+    expect(res.error).not.toBe("ResearchStaysReadOnly")
+    expect(res.status).toBe("running") // it proceeds — the flag is what gates it
+  })
+})
+
 // --- interruption finalizer: a wedged/killed run notifies the parent ----------
 
 describe("runSpawnedAgent — interruption records an error return + notifies the parent", () => {
