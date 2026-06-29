@@ -196,6 +196,21 @@ export const Settings = Schema.Struct({
         "OpenCode (Kimi) thinking mode. 'off' disables extended thinking; 'high' enables it.",
     }),
   ),
+  // Sampling controls — primarily for EVAL DETERMINISM (pin via a RunConfig so a
+  // change's effect can be told from temperature noise). Unset → provider
+  // defaults (today's behaviour), so interactive use is unchanged.
+  samplingTemperature: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Sampling temperature (0 = greedy/deterministic). Unset → provider default. Honored by the opencode + Google providers; OpenAI/Anthropic best-effort.",
+    }),
+  ),
+  samplingSeed: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Determinism seed paired with temperature 0 (where the provider supports it — opencode/OpenAI). Unset → none.",
+    }),
+  ),
 })
 
 export type Settings = typeof Settings.Type

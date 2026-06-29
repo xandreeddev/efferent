@@ -10,9 +10,13 @@ import { runEval } from "./framework/runEval.js"
 import { buildReport, fileHash, gitSha, readReport, reportExists, writeReport, type RunManifest } from "./storage.js"
 import { resolveImageDigest } from "./support/dockerSandbox.js"
 import { JUDGE_LABELS, judgeLabeledCases } from "./support/judgeAgreement.js"
+import { judgeGradedCases } from "./calibration/judgeCalibration.js"
+import { JUDGE_GOLDEN } from "./calibration/judgeGolden.js"
+import { calibrationReport } from "./calibration/metrics.js"
 import { makeCollector } from "./telemetry/collect.js"
 import { processSpans } from "./trace/process.js"
-import { renderRuns, renderVsBaseline } from "./trace/report.js"
+import { regressionVerdict, renderRuns, renderVsBaseline } from "./trace/report.js"
+import { backgroundShellEval } from "./suites/backgroundShell.eval.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { delegationDecisionEval } from "./suites/delegationDecision.eval.js"
 import { distillEval } from "./suites/distill.eval.js"
@@ -40,6 +44,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   handoffEval,
   toolSelectionEval,
   coderEditEval,
+  backgroundShellEval,
   wholeTaskEval,
   judgeApprovalEval,
   compactionDigestEval,
@@ -92,8 +97,13 @@ for (const f of FLAG_NAMES) {
 }
 const names = argv.filter((a) => !a.startsWith("-") && !consumed.has(a))
 const picked = names.length === 0 ? SUITES : SUITES.filter((s) => names.includes(s.name))
-// `--samples N` overrides each suite's sample count (statistical rigor on demand
-// — golden runs N=3, the noise on a delta shrinks with √N).
+// Rigor by DEFAULT: every suite runs N samples so a bare `bun run eval` reports a
+// mean ± stdev (and pass@k/pass^k), not a single stochastic draw. The framework
+// library keeps its conservative default of 1; this is the efferent runner's
+// opinion. With the eval temperature pinned to 0 (config/settingsLayer.ts), the
+// residual variance is small, so N=3 is cheap insurance. `--samples 1` opts out
+// for quick local iteration; a suite's own `samples` (if set) still wins.
+const DEFAULT_SAMPLES = 3
 const samplesOverride = (() => {
   const i = argv.indexOf("--samples")
   return i >= 0 && i + 1 < argv.length ? Math.max(1, Number(argv[i + 1])) : undefined
@@ -137,7 +147,8 @@ const shardSpec = (s: AnySpec): AnySpec => {
 }
 
 const selected: ReadonlyArray<AnySpec> = picked
-  .map((s) => (samplesOverride !== undefined ? { ...s, samples: samplesOverride } : s))
+  // Precedence: --samples flag > the suite's own `samples` > the runner default.
+  .map((s) => ({ ...s, samples: samplesOverride ?? s.samples ?? DEFAULT_SAMPLES }))
   .map(shardSpec)
 
 // Build the list of configs to run. undefined ⇒ the default env (today's
@@ -260,15 +271,28 @@ const program = Effect.gen(function* () {
   // judge and report κ + TPR/TNR — the gate for trusting the LLM-judge axis.
   if (argv.includes("--judge-agreement")) {
     const cfg = buildConfigs()[0]
-    const s = yield* judgeLabeledCases(JUDGE_LABELS).pipe(Effect.provide(makeEvalEnv(cfg)))
+    // Binary (κ/TPR/TNR) + graded (MAE/correlation/bias) in ONE env build.
+    const { s, cal } = yield* Effect.gen(function* () {
+      const s = yield* judgeLabeledCases(JUDGE_LABELS)
+      const rows = yield* judgeGradedCases(JUDGE_GOLDEN)
+      return { s, cal: calibrationReport(rows) }
+    }).pipe(Effect.provide(makeEvalEnv(cfg)))
     const verdict =
       s.cohensKappa >= 0.61 ? "substantial" : s.cohensKappa >= 0.41 ? "moderate" : "weak — do not trust"
     console.log(
       `\n▌ judge agreement (${cfg?.judge ?? "main model"})\n` +
-        `  n=${s.n} · κ=${s.cohensKappa.toFixed(2)} (${verdict}) · raw=${(s.rawAgreement * 100).toFixed(0)}%` +
+        `  binary  n=${s.n} · κ=${s.cohensKappa.toFixed(2)} (${verdict}) · raw=${(s.rawAgreement * 100).toFixed(0)}%` +
         ` · TPR=${s.tpr.toFixed(2)} · TNR=${s.tnr.toFixed(2)}\n` +
-        `  confusion: tp=${s.confusion.tp} fp=${s.confusion.fp} tn=${s.confusion.tn} fn=${s.confusion.fn}`,
+        `  confusion: tp=${s.confusion.tp} fp=${s.confusion.fp} tn=${s.confusion.tn} fn=${s.confusion.fn}\n` +
+        `  graded  n=${cal.n} · MAE=${cal.mae.toFixed(2)} · RMSE=${cal.rmse.toFixed(2)} · bias=${cal.bias >= 0 ? "+" : ""}${cal.bias.toFixed(2)}` +
+        ` · ρ(spearman)=${cal.spearman.toFixed(2)} · r(pearson)=${cal.pearson.toFixed(2)}\n` +
+        `  length-bias=${cal.lengthBias >= 0 ? "+" : ""}${cal.lengthBias.toFixed(2)} ${cal.lengthBias > 0.15 ? "(⚠ over-rewards long outputs)" : "(ok)"}`,
     )
+    // Soft gate by default; --strict fails the run on a weak/biased judge.
+    if (argv.includes("--strict") && (s.cohensKappa < 0.41 || cal.mae > 0.25 || cal.lengthBias > 0.2)) {
+      console.error("✘ judge calibration below trust bar (κ<0.41 or MAE>0.25 or length-bias>0.2)")
+      process.exitCode = 1
+    }
     return
   }
 
@@ -348,6 +372,23 @@ const program = Effect.gen(function* () {
 
   const anyFail = runs.some((r) => r.suites.some((s) => s.mean < 0.6))
   if (anyFail) process.exitCode = 1
+
+  // Regression GATE: with `--compare <baseline>`, fail the run if any suite
+  // SIGNIFICANTLY regressed (paired bootstrap CI excludes 0, Bonferroni-corrected
+  // — the same stat the table shows). This is what makes the comparison a CI gate
+  // rather than a decoration. A non-significant dip is reported but never fails.
+  if (comparePath !== undefined && reportExists(comparePath)) {
+    const regressions = regressionVerdict(runs, readReport(comparePath))
+    if (regressions.length > 0) {
+      console.error("\n✘ REGRESSION GATE: significant drop vs baseline —")
+      for (const r of regressions) {
+        console.error(
+          `   ${r.suite} (${r.configName}): Δ ${r.delta.toFixed(3)} [${r.ciLow.toFixed(2)},${r.ciHigh.toFixed(2)}]`,
+        )
+      }
+      process.exitCode = 1
+    }
+  }
 }).pipe(Effect.provide(collector.layer))
 
 BunRuntime.runMain(program)

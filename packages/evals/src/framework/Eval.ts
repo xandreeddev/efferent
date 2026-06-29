@@ -32,6 +32,11 @@ export interface EvalCase<I, T> {
   readonly name: string
   readonly input: I
   readonly expected: T
+  /** Stratification tags (e.g. "broad", "narrow", "git", "edge-case") — carried
+   *  onto the `eval.case` span so results can be sliced by category. */
+  readonly tags?: ReadonlyArray<string>
+  /** Difficulty label for stratified analysis. */
+  readonly difficulty?: "easy" | "medium" | "hard"
 }
 
 /**
