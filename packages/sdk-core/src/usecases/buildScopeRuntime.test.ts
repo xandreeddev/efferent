@@ -3,6 +3,7 @@ import { Effect, FiberRef, Layer } from "effect"
 import { LanguageModel } from "@effect/ai"
 import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
+import type { AgentDefinition } from "../entities/AgentDefinition.js"
 import type { Scope } from "../entities/Scope.js"
 import { ApprovalAllowAllLive } from "../ports/Approval.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
@@ -55,6 +56,34 @@ describe("buildScopeRuntime", () => {
     expect(names).toContain("Bash")
     expect(names).toContain("update_plan")
     expect(names.some((n) => n.startsWith("delegate_to_"))).toBe(false)
+  })
+
+  test("with a coordinator in the roster the ROOT gets the orchestration-only toolkit (no work tools)", () => {
+    const coordinator: AgentDefinition = {
+      name: "coordinator",
+      description: "the lead",
+      body: "drive the team",
+      sourcePath: "<test>",
+    }
+    const { toolkit } = buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [coordinator],
+      tools: [],
+      allowBash: true,
+    })
+    const names = Object.keys(toolkit.tools)
+    // It can orchestrate…
+    expect(names).toContain("run_agent")
+    expect(names).toContain("wait_for_agents")
+    expect(names).toContain("update_plan")
+    // …but it CANNOT do the work itself — the mechanical purity guarantee.
+    expect(names).not.toContain("read_file")
+    expect(names).not.toContain("edit_file")
+    expect(names).not.toContain("write_file")
+    expect(names).not.toContain("grep")
+    expect(names).not.toContain("Bash")
+    expect(names).not.toContain("search_web")
   })
 
   test("the toolkit does not vary with the scope's children (spawning is dynamic now)", () => {

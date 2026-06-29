@@ -627,6 +627,36 @@ const genericToolkit = Toolkit.make(
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
 
 /**
+ * The **orchestration-only** toolkit — what the ROOT gets when a fleet is in the
+ * roster (always-orchestrate mode). It carries delegation + gather + comms +
+ * planning + the gate/learn tools, and **deliberately NO work tools** (no
+ * read/edit/write/grep/glob/ls/Bash/search/fetch/sessions). A prompt rule alone
+ * didn't stop the root from reading and editing itself (live-verified), so this
+ * is the mechanical guarantee: if the root *can't* call a work tool, it *must*
+ * route the work to a lead. Handlers still exist in the full layer — this only
+ * narrows what the model is offered, so the subset's handler layer agrees.
+ */
+const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "run_agent",
+  "wait_for_agents",
+  "send_message",
+  "blackboard_post",
+  "blackboard_read",
+  "update_plan",
+  "verify_with_gate",
+  "note_constraint",
+  "schedule",
+  "list_scheduled_jobs",
+  "cancel_scheduled_job",
+])
+
+const orchestrationToolkit = Toolkit.make(
+  ...((Object.entries(genericToolkit.tools) as Array<[string, Tool.Any]>)
+    .filter(([name]) => ORCHESTRATION_TOOL_NAMES.has(name))
+    .map(([, d]) => d) as ReadonlyArray<Tool.Any>),
+) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/**
  * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
  * a `tools` list is filtered against the available tools (base coding tools +
  * `run_agent`) — so `run_agent` is offered only when the list names it. A
@@ -1742,8 +1772,33 @@ export const buildScopeRuntime = <R = never>(
   // on by send_message / blackboard_* and drained into each agent's context.
   // The daemon's `onBusEvent` sink mirrors messages onto the event ledger.
   const bus = makeAgentBus(opts.onBusEvent)
-  const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks, bus),
+
+  // When a fleet lead is in the roster the ROOT is a pure orchestrator: it gets
+  // the orchestration-only toolkit (no work tools), so it CANNOT read/edit/grep
+  // itself and must route work to a coordinator/research-coordinator. With no
+  // fleet present the root keeps the full toolkit (the direct fast path for a
+  // single-model, no-fleet setup). Sub-agents are unaffected — they build their
+  // own per-spawn toolkit from `roleToolEntries`.
+  const orchestrate = opts.agents.some(
+    (a) => a.name === "coordinator" || a.name === "research-coordinator",
+  )
+  const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus)
+  const rootToolkit = orchestrate ? orchestrationToolkit : genericToolkit
+  const handlerLayer = (
+    orchestrate
+      ? orchestrationToolkit.toLayer(
+          rootHandlers.pipe(
+            Effect.map(
+              (full) =>
+                Object.fromEntries(
+                  Object.entries(full as Record<string, unknown>).filter(([k]) =>
+                    ORCHESTRATION_TOOL_NAMES.has(k),
+                  ),
+                ) as never,
+            ),
+          ),
+        )
+      : genericToolkit.toLayer(rootHandlers)
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
@@ -1866,5 +1921,5 @@ export const buildScopeRuntime = <R = never>(
       ScopeRuntime["spawnAgent"]
     >
 
-  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent, bus }
+  return { toolkit: rootToolkit, handlerLayer, resumeNode, spawnAgent, bus }
 }
