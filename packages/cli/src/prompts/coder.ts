@@ -160,43 +160,37 @@ const renderDelegationPolicy = (
   const hasResearch = agents.some((a) => a.name === "research-coordinator")
   if (!hasCoordinator && !hasResearch) return ""
 
-  const leads = [
-    hasCoordinator
-      ? `a **coding fleet** — \`run_agent({ agent: "coordinator", folder, task })\` (it plans, staffs frontend/backend/qa specialists plus a read-only architect, and reports back)`
-      : "",
-    hasResearch
-      ? `a **research fleet** — \`run_agent({ agent: "research-coordinator", folder, task })\` (it fans out web-research sub-agents in parallel and synthesizes a sourced answer)`
-      : "",
-  ]
-    .filter((s) => s.length > 0)
-    .join("; or ")
+  // `codeModelConfigured` no longer gates whether you delegate — with a coordinator
+  // in the roster you ALWAYS route work to a lead. (It still picks the code tier
+  // for the coordinator's own coders.) Kept in the signature for the caller.
+  void codeModelConfigured
 
-  // When a distinct code model is configured the "just do it yourself" default
-  // is split: you still do the investigating/planning/reviewing directly, but
-  // the actual code-writing goes to the code tier (see `# Writing code`). With
-  // no code model the original all-yourself fast path stands. Either way, when a
-  // research fleet is present a *broad* investigation peels off to it (see
-  // `# Investigating & researching`) — reading parallelises with zero conflict,
-  // so it's the read-side mirror of the code-writing hand-off.
-  const researchQualifier = hasResearch
-    ? " The exception is a *broad* investigation — getting oriented across many files or several areas at once — which goes to the research fleet (see `# Investigating & researching` below), not a serial read."
+  const codeLine = hasCoordinator
+    ? `- **Code — anything that writes or changes code** (a bug fix, a new function/file/feature, a rename, a refactor, a multi-area change): spawn the **coding fleet** — \`run_agent({ agent: "coordinator", folder, task })\`. The coordinator plans, staffs and **sequences** the specialists (one writer at a time), validates with the architect, gates the result, and reports a finished deliverable. **Size is never an excuse** — a one-line fix and a ten-file feature BOTH go to the coordinator. You do NOT call \`edit_file\`/\`write_file\` yourself, not even once.`
     : ""
-  const selfPolicy =
-    (codeModelConfigured
-      ? `**Do the investigating, planning, running, and reviewing yourself — that's the fast path.** You read, search, run tests, and reason directly in this loop; a focused direct pass beats a fleet for almost everything. The one thing you hand off is *writing code* — that goes to the code tier (see \`# Writing code\` below), not to a fleet.`
-      : `**Do the work yourself by default — that is the fast path, and it's what the user wants.** You have every tool to read, edit, run, test, investigate, and review directly in this loop, and a focused direct pass beats a fleet for almost everything. A bug fix, a single-area feature, reviewing one change, answering a focused question — just do it.`) +
-    researchQualifier
+  const researchLine = hasResearch
+    ? `- **Investigation — any look across the codebase or the web to answer or scope something** beyond a single glance: spawn the **research fleet** — \`run_agent({ agent: "research-coordinator", folder, task })\`. It fans out parallel read-only researchers and returns one sourced answer. You do NOT grind through a broad read with \`read_file\`/\`grep\`/\`search_web\` yourself.`
+    : ""
 
   return `
-# When to delegate
-${selfPolicy}
+# Your role: orchestrate, don't do the work
+You are the **top-level orchestrator** and the user's seat — not a worker. Your job is to understand
+the request, **route the real work to a lead**, **aggregate** what comes back, relay it to the user,
+and **loop on feedback** (re-fire a lead when the user or a gate asks for changes). You also own the
+**permission boundary**: approvals from the fleet surface to you. You do **not** write code, edit
+files, run builds, or do broad investigation yourself — a lead does.
 
-Spin up a background fleet only when the work is genuinely too big or too parallel for one focused pass:
-- **Breadth** — three or more *independent* areas to change at once (e.g. "add auth, billing, and an admin page").
-- **Scale** — a change spanning many packages where doing it serially would blow your context window.
-- **Async intent** — the user wants to fire-and-forget ("kick this off and ping me") or it's a scheduled/unattended job.
+Route every piece of real work to a lead:
+${[codeLine, researchLine].filter((s) => s.length > 0).join("\n")}
 
-To delegate, spawn ${leads}. **Spawning is async**: run_agent returns immediately, you acknowledge in one line and stay free for the user's next message — you do NOT block on the fleet. The lead's result lands in your inbox and you relay it. **When unsure on a small, focused task, do it yourself** — a needless fleet is slower and dumber than you working directly; but don't grind serially through a broad investigation a research fleet can read in parallel.
+**Stay direct ONLY for pure interaction** — a greeting, a clarifying question, explaining what you'll
+do, or a one-glance answer you already hold. No spawn for those. The moment a request needs the
+codebase touched or investigated, it's work — delegate it.
+
+**Spawning is async**: run_agent returns immediately; acknowledge in one line and stay free for the
+user. The lead's result lands in your inbox — aggregate it, relay it, and if feedback comes back,
+fire the lead again with it. You are the aggregator and the loop; the leads (and their workers) do
+the work.
 `
 }
 
@@ -214,17 +208,12 @@ To delegate, spawn ${leads}. **Spawning is async**: run_agent returns immediatel
  * this just makes the broad/focused split explicit, as `# Writing code` does for
  * the write side.
  */
-const renderResearchDelegationPolicy = (agents: ReadonlyArray<AgentDefinition>): string => {
-  if (!agents.some((a) => a.name === "research-coordinator")) return ""
-  return `
-# Investigating & researching
-A read-only **research fleet** is available — \`run_agent({ agent: "research-coordinator", folder, task })\` — that breaks a question into angles, fans out parallel researchers, and synthesizes one sourced answer. Reading never conflicts between agents, so parallel readers are pure speed-up, and the investigation stays out of your own context. Split investigation by BREADTH, the way code splits by tier:
-- **You — focused lookups.** One file, one function, a single named thing, a quick "does X do Y?" — read it yourself with read_file/grep/glob. Spawning a fleet to answer a one-file question is slower than just reading it; for a focused lookup, size is the deciding factor and the answer is you.
-- **The research fleet — broad investigation.** The moment getting an answer means reading across MANY files or several areas at once — getting oriented in an unfamiliar codebase, mapping how several modules work and connect, tracing a request or data-flow end-to-end, auditing multiple areas, or a "research X" question spanning the web and the code — hand it to the research fleet. Write the full question in \`task\` (it starts fresh — see Sub-agents); it fans the angles out in parallel (one per area) and reports a synthesized, sourced answer. **Don't grind through a broad investigation serially when the fleet can read it all at once** — that's the biggest single speed-up the fleet buys you.
-
-Same async hand-off as any spawn: run_agent returns immediately, you stay free, and the synthesized answer lands in your inbox to relay. Right-size it — a small question is ONE researcher, a genuine multi-area investigation is one angle per area; don't fan a committee at a two-file question.
-`
-}
+const renderResearchDelegationPolicy = (_agents: ReadonlyArray<AgentDefinition>): string =>
+  // Subsumed by `# Your role: orchestrate` above: the root no longer does "focused
+  // lookups itself vs broad to the fleet" — it routes ALL investigation to the
+  // research-coordinator (only pure interaction stays). The broad/focused split now
+  // lives inside the research-coordinator's own prompt, not the root's.
+  ""
 
 /**
  * The `# Writing code` section — emitted ONLY when a distinct `code` model is
@@ -236,16 +225,9 @@ Same async hand-off as any spawn: run_agent returns immediately, you stay free, 
  * so a single-model setup never pays a needless spawn/wait. Prompt-only — no
  * code decides routing, the model does.
  */
-const renderCodeDelegationPolicy = (codeModelConfigured: boolean): string => {
-  if (!codeModelConfigured) return ""
-  return `
-# Writing code
-A dedicated **code model** backs the \`code\` tier — purpose-tuned for writing code and stronger at it than your own (general) tier. **So you do not write code yourself; the code tier does.** Split every task by tier:
-- **You (general tier) — everything that is NOT writing code.** Read, search, investigate, reproduce the problem, plan with update_plan, run builds/tests, and review the diff that comes back. This is your fast path; stay in your own loop for all of it.
-- **The code tier — all code, new or changed.** The moment a task calls for writing code — fixing a bug, **adding a new function, file, or feature**, editing existing logic, renaming a symbol, wiring two pieces together — hand the implementation to a code-tier worker: \`run_agent({ folder, task, role: "code" })\`. **Size and newness are never the deciding factor**: a brand-new one-function file and a one-line behavioural fix BOTH go to the code tier. "Small", "simple", or "just adding a helper" are not exceptions. Do NOT reach for \`edit_file\`/\`write_file\` yourself to write code.
-
-Write a COMPLETE brief in \`task\`: what to change and where, the constraints, and how to verify — the worker starts blind (see Sub-agents). Batch one coherent unit of work into ONE spawn; never spawn per line. When writers touch overlapping files, run them ONE AT A TIME (see Coordination): spawn, \`wait_for_agents\`, then read the diff and verify (typecheck/tests) yourself before relaying.
-
-**Hard rule — check before you edit:** if you are about to call \`edit_file\` or \`write_file\` on a source file, stop and hand that change to the code tier instead. You do not run those tools on code yourself, not even once. The lone exception is genuinely non-code text — a comment, a string's wording, a config value, markdown prose. A rename, an off-by-one or logic fix, a find-and-replace, a new helper are all code, however few characters change — code tier, every time.
-`
-}
+const renderCodeDelegationPolicy = (_codeModelConfigured: boolean): string =>
+  // Subsumed by `# Your role: orchestrate` above: code now routes through the
+  // **coordinator** (which staffs + sequences code-tier workers and gates the
+  // result), not via the root spawning `role:"code"` workers directly. The
+  // code-tier briefing/sequencing detail lives in the coordinator's prompt.
+  ""

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import type { ScenarioRun, Trajectory } from "./scenarioRun.js"
-import { efficiencyScore, routingScore, type RoutingExpectation, type EfficiencyBudget } from "./scenarioScorers.js"
+import { efficiencyScore, orchestratorPurityScore, routingScore, type RoutingExpectation, type EfficiencyBudget } from "./scenarioScorers.js"
 
 const traj = (over: Partial<Trajectory>): Trajectory => ({
   delegated: false,
@@ -9,6 +9,8 @@ const traj = (over: Partial<Trajectory>): Trajectory => ({
   spawns: [],
   perTierSpend: { general: 0, code: 0, fast: 0 },
   steps: 1,
+  rootTools: [],
+  rootSpawnedAgents: [],
   ...over,
 })
 const run = (over: Partial<Trajectory>): ScenarioRun => ({
@@ -33,6 +35,14 @@ const efficiency = (output: ScenarioRun, exp: EfficiencyBudget): number =>
       input: {},
       output,
       expected: { budget: exp },
+    }) as Effect.Effect<number>,
+  )
+const purity = (output: ScenarioRun, exp: RoutingExpectation): number =>
+  Effect.runSync(
+    orchestratorPurityScore<unknown, { routing?: RoutingExpectation }>().score({
+      input: {},
+      output,
+      expected: { routing: exp },
     }) as Effect.Effect<number>,
   )
 
@@ -65,6 +75,40 @@ describe("routingScore — read-only task that should stay direct", () => {
   })
   it("no routing expectation ⇒ neutral 1", () => {
     expect(routing(run({}), {})).toBe(1)
+  })
+})
+
+describe("orchestratorPurityScore — root must orchestrate, not do the work itself", () => {
+  const exp: RoutingExpectation = { rootMustNotCode: true, expectLead: "coordinator" }
+
+  it("perfect: root only orchestrated + routed through the coordinator", () => {
+    expect(
+      purity(
+        run({ rootTools: ["run_agent", "wait_for_agents", "update_plan"], rootSpawnedAgents: ["coordinator"] }),
+        exp,
+      ),
+    ).toBe(1)
+  })
+  it("the bc1b8fef failure: root coded itself + spawned no lead → low", () => {
+    // rootMustNotCode: many work calls → 0 ; expectLead: no coordinator → 0 ; avg 0.
+    expect(
+      purity(
+        run({
+          rootTools: ["read_file", "read_file", "edit_file", "edit_file", "grep"],
+          rootSpawnedAgents: [""],
+        }),
+        exp,
+      ),
+    ).toBe(0)
+  })
+  it("routed through the lead but peeked at one file → partial (purity decays)", () => {
+    // expectLead 1 ; rootMustNotCode 1-0.25=0.75 ; avg 0.875.
+    expect(
+      purity(run({ rootTools: ["read_file", "run_agent"], rootSpawnedAgents: ["coordinator"] }), exp),
+    ).toBeCloseTo(0.875)
+  })
+  it("no purity expectation ⇒ neutral 1", () => {
+    expect(purity(run({ rootTools: ["edit_file"] }), {})).toBe(1)
   })
 })
 

@@ -47,18 +47,21 @@ describe("the built-in research team", () => {
     expect(tools).not.toContain("wait_for_agents")
   })
 
-  it("autoLoop adds the Opus gate + learn/retry; off → synthesize-and-report", () => {
+  it("the gate is STRUCTURAL: no verify_with_gate/note_constraint tools (any setting); autoLoop only adds the 'expect the gate' note", () => {
     const on = researchCoordinatorAgent({ autoLoop: true, maxLoopAttempts: 3 })
-    expect(on.tools).toContain("verify_with_gate")
-    expect(on.tools).toContain("note_constraint")
-    expect(on.body).toContain("VALIDATE → LEARN → RETRY")
-    expect(on.body).toContain("verify_with_gate")
+    // The Opus gate + learn + retry run in the runtime when it returns, not via
+    // tools — so the research-coordinator carries none of them.
+    expect(on.tools).not.toContain("verify_with_gate")
+    expect(on.tools).not.toContain("note_constraint")
+    expect(on.body).not.toContain("verify_with_gate")
+    // autoLoop ON → the prompt tells it to expect the automatic gate.
+    expect(on.body).toContain("EXPECT THE GATE")
+    expect(on.body).toContain("INDEPENDENT Opus gate")
 
     const off = researchCoordinatorAgent({ autoLoop: false, maxLoopAttempts: 3 })
     expect(off.tools).not.toContain("verify_with_gate")
-    expect(off.tools).not.toContain("note_constraint")
-    expect(off.body).not.toContain("VALIDATE → LEARN → RETRY")
-    // Both still end at REPORT (the gate phase is spliced in just before it).
+    expect(off.body).not.toContain("EXPECT THE GATE")
+    // Both still end at REPORT (the gate note is spliced in just before it).
     expect(on.body).toContain("5. REPORT.")
     expect(off.body).toContain("5. REPORT.")
   })

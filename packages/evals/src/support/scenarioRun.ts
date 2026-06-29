@@ -57,6 +57,15 @@ export interface Trajectory {
   readonly perTierSpend: Record<Tier, number>
   /** Root assistant turns (loop steps). */
   readonly steps: number
+  /** Tool names the ROOT called *itself* (`subAgentNodeId === undefined`) — distinct
+   *  from {@link ScenarioRun.tools}, which includes sub-agents' calls. Lets a scorer
+   *  assert the root kept its hands off code/research and only orchestrated. */
+  readonly rootTools: ReadonlyArray<string>
+  /** The `agent` type of each `run_agent` call the ROOT made (e.g. `"coordinator"`,
+   *  `"research-coordinator"`) — to assert the root routed through a LEAD rather than
+   *  spawning workers directly. `undefined` agent (a plain role spawn) is recorded as
+   *  the empty string so a direct-worker spawn is still visible/penalizable. */
+  readonly rootSpawnedAgents: ReadonlyArray<string>
 }
 
 /** The verdict from running a scenario's HIDDEN test suite against the agent's
@@ -116,6 +125,16 @@ export interface RunScenarioOptions {
 const billed = (u?: { readonly inputTokens: number; readonly outputTokens: number }): number =>
   u === undefined ? 0 : u.inputTokens + u.outputTokens
 
+/** Safely pull the `agent` (lead type) argument from a `run_agent` tool call's
+ *  args; "" when absent (a plain role spawn with no named agent — a direct worker). */
+const runAgentTargetAgent = (args: unknown): string => {
+  if (typeof args === "object" && args !== null && "agent" in args) {
+    const a = (args as { readonly agent?: unknown }).agent
+    if (typeof a === "string") return a
+  }
+  return ""
+}
+
 const countMatch = (s: string, re: RegExp): number => {
   const m = s.match(re)
   return m !== null && m[1] !== undefined ? Number(m[1]) : 0
@@ -168,15 +187,26 @@ export const runScenario = (
       const transform = opts.systemPromptOverride ?? ((s: string) => s)
 
       const toolsRef = yield* Ref.make<ReadonlyArray<string>>([])
+      const rootToolsRef = yield* Ref.make<ReadonlyArray<string>>([])
+      const rootSpawnedRef = yield* Ref.make<ReadonlyArray<string>>([])
       const spawnsRef = yield* Ref.make<ReadonlyArray<Spawn>>([])
       const spendRef = yield* Ref.make<Record<Tier, number>>({ general: 0, code: 0, fast: 0 })
       const stepsRef = yield* Ref.make(0)
 
       const hooks: AgentHooks = {
         onBeforeToolCall: (e) =>
-          Ref.update(toolsRef, (a) => [...a, e.toolName]).pipe(
-            Effect.as({ action: "continue" } as const),
-          ),
+          Effect.gen(function* () {
+            yield* Ref.update(toolsRef, (a) => [...a, e.toolName])
+            // A root-issued call (no sub-agent node) — the signal for "what the root
+            // did itself". `run_agent` from the root records which lead it spawned.
+            if (e.subAgentNodeId === undefined) {
+              yield* Ref.update(rootToolsRef, (a) => [...a, e.toolName])
+              if (e.toolName === "run_agent") {
+                yield* Ref.update(rootSpawnedRef, (a) => [...a, runAgentTargetAgent(e.args)])
+              }
+            }
+            return { action: "continue" } as const
+          }),
         onAssistantMessage: (e) =>
           Effect.gen(function* () {
             // A ROOT turn (no sub-agent node) is a loop step billed to `general`;
@@ -242,6 +272,8 @@ export const runScenario = (
         : baseRun)
 
       const tools = yield* Ref.get(toolsRef)
+      const rootTools = yield* Ref.get(rootToolsRef)
+      const rootSpawnedAgents = yield* Ref.get(rootSpawnedRef)
       const spawns = yield* Ref.get(spawnsRef)
       const perTierSpend = yield* Ref.get(spendRef)
       const steps = yield* Ref.get(stepsRef)
@@ -277,6 +309,8 @@ export const runScenario = (
           spawns,
           perTierSpend,
           steps,
+          rootTools,
+          rootSpawnedAgents,
         },
         ...(testResult !== undefined ? { testResult } : {}),
       }

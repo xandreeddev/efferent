@@ -18,6 +18,7 @@ import { delegationDecisionEval } from "./suites/delegationDecision.eval.js"
 import { distillEval } from "./suites/distill.eval.js"
 import { distillClassificationEval } from "./suites/distillClassification.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
+import { orchestrationEval } from "./suites/orchestration.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
 import { feature } from "./suites/feature.eval.js"
 import { judgeApprovalEval } from "./suites/judgeApproval.eval.js"
@@ -47,6 +48,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   distillEval,
   distillClassificationEval,
   delegationDecisionEval,
+  orchestrationEval,
   swarmEval,
   researchDelegationEval,
   researchEfficiencyEval,

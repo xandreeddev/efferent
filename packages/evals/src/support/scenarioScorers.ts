@@ -22,7 +22,29 @@ export interface RoutingExpectation {
    *  0 (with `shouldDelegate`) rather than a soft pass. Only checked when
    *  `shouldDelegate === true`. */
   readonly minSpawns?: number
+  /** The root must do **NIL coding/research itself** — only orchestrate
+   *  (`run_agent`/`wait_for_agents`/`update_plan`/comms). Any root-issued
+   *  `read_file`/`edit_file`/`write_file`/`grep`/`glob`/`ls`/`Bash`/`search_web`/
+   *  `web_fetch` is impurity. Scored by {@link orchestratorPurityScore}. */
+  readonly rootMustNotCode?: boolean
+  /** The LEAD the root must route through — `run_agent({ agent })`: `"coordinator"`
+   *  for code work, `"research-coordinator"` for investigation. The root spawning
+   *  workers directly (no lead) fails this. Scored by {@link orchestratorPurityScore}. */
+  readonly expectLead?: "coordinator" | "research-coordinator"
 }
+
+/** Tools that count as the root "doing the work itself" (vs orchestrating). */
+const WORK_TOOLS: ReadonlySet<string> = new Set([
+  "read_file",
+  "write_file",
+  "edit_file",
+  "grep",
+  "glob",
+  "ls",
+  "Bash",
+  "search_web",
+  "web_fetch",
+])
 
 export interface EfficiencyBudget {
   /** Soft cap on root loop steps; over-budget decays the score linearly. */
@@ -57,6 +79,37 @@ export const routingScore = <I, T extends { readonly routing?: RoutingExpectatio
       }
       if (exp.codingTier === "code") checks.push(t.usedCodeTier ? 1 : 0)
       if (exp.codingTier === "general") checks.push(t.perTierSpend.code === 0 ? 1 : 0)
+      return checks.length === 0 ? 1 : checks.reduce((a, b) => a + b, 0) / checks.length
+    }),
+})
+
+/**
+ * Score the root's ORCHESTRATOR PURITY — the "root should aggregate + delegate, do
+ * nil coding/research itself" property. Deterministic, from the trajectory's
+ * root-only signals (`rootTools`, `rootSpawnedAgents`). Averages the applicable
+ * checks; returns 1 when no purity expectation is set.
+ *   - `rootMustNotCode` → the root's own tool calls must be orchestration-only
+ *     (1 when it touched zero {@link WORK_TOOLS}; decays per work-call).
+ *   - `expectLead` → the root must have routed through that lead (coordinator /
+ *     research-coordinator), not spawned workers directly.
+ */
+export const orchestratorPurityScore = <I, T extends { readonly routing?: RoutingExpectation }>(
+  name = "orchestrator_purity",
+): Scorer<I, ScenarioRun, T> => ({
+  name,
+  score: ({ output, expected }) =>
+    Effect.sync(() => {
+      const exp = expected.routing
+      if (exp === undefined) return 1
+      const t = output.trajectory
+      const checks: number[] = []
+      if (exp.rootMustNotCode === true) {
+        const workCalls = t.rootTools.filter((n) => WORK_TOOLS.has(n)).length
+        checks.push(workCalls === 0 ? 1 : Math.max(0, 1 - workCalls * 0.25))
+      }
+      if (exp.expectLead !== undefined) {
+        checks.push(t.rootSpawnedAgents.includes(exp.expectLead) ? 1 : 0)
+      }
       return checks.length === 0 ? 1 : checks.reduce((a, b) => a + b, 0) / checks.length
     }),
 })
