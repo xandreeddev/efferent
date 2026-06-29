@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/evals",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "efferent SDK — a minimal, Effect-native eval library: the data → task → scorers shape as Effects, so a task can be the real agent loop and a scorer can call an LLM. Trace-first reporting.",
   "license": "MIT",
