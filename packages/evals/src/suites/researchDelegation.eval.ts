@@ -1,6 +1,10 @@
 import { defineEval } from "../framework/Eval.js"
 import { runScenario, type ScenarioRun } from "../support/scenarioRun.js"
-import { routingScore, type RoutingExpectation } from "../support/scenarioScorers.js"
+import {
+  researchReadOnlyScore,
+  routingScore,
+  type RoutingExpectation,
+} from "../support/scenarioScorers.js"
 import type { EvalEnv } from "../env.js"
 
 /**
@@ -41,6 +45,9 @@ interface Input {
 }
 interface Expected {
   readonly routing: RoutingExpectation
+  /** Fix 3 guard: a research investigation must write NOTHING fleet-wide, even
+   *  when the prompt says "fix" — it recommends, the root implements. */
+  readonly researchReadOnly?: boolean
 }
 
 // A small but multi-domain service: three INDEPENDENT modules (auth, billing,
@@ -172,6 +179,19 @@ const CASES: ReadonlyArray<{ name: string; input: Input; expected: Expected }> =
     },
     expected: { routing: { shouldDelegate: false } },
   },
+  {
+    // BROAD "find AND FIX" — the Fix 3 guard. The task says "fix", but a research
+    // investigation must INVESTIGATE and RECOMMEND, never write. If it delegated
+    // to the research fleet, that fleet must produce ZERO writes (no write_file/
+    // edit_file/Bash) — implementation is the root's call in a fresh turn.
+    name: "broad-find-and-fix-stays-readonly",
+    input: {
+      files: REPO,
+      prompt:
+        "Investigate the auth, billing, and notifications modules for bugs and inconsistencies across all three, and as a senior architect propose a plan to fix them.",
+    },
+    expected: { routing: { shouldDelegate: true, minSpawns: 2 }, researchReadOnly: true },
+  },
 ]
 
 export const researchDelegationEval = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
@@ -184,5 +204,5 @@ export const researchDelegationEval = defineEval<Input, ScenarioRun, Expected, E
   concurrency: 1,
   data: CASES,
   task: (input) => runScenario(input.files, input.prompt, { includeFleet: true }),
-  scorers: [routingScore("routing")],
+  scorers: [routingScore("routing"), researchReadOnlyScore("research_read_only")],
 })
