@@ -64,5 +64,9 @@ describe("the built-in research team", () => {
     // Both still end at REPORT (the gate note is spliced in just before it).
     expect(on.body).toContain("5. REPORT.")
     expect(off.body).toContain("5. REPORT.")
+
+    // The static export matches the non-autoLoop (default) body.
+    expect(RESEARCH_COORDINATOR_AGENT.body).toContain("5. REPORT.")
+    expect(RESEARCH_COORDINATOR_AGENT.body).not.toContain("VALIDATE → LEARN → RETRY")
   })
 })

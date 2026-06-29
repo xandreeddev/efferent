@@ -1,9 +1,22 @@
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, FiberRef, Ref, Schema } from "effect"
+import { Effect, FiberRef, Ref, Schedule, Schema } from "effect"
 import type { Memory } from "../entities/Memory.js"
 import type { Skill } from "../entities/Skill.js"
 import { Failure, toFailure } from "../entities/Failure.js"
+
+const isTransientBashError = (err: unknown): boolean => {
+  const msg = String(err)
+  return (
+    msg.includes("429") ||
+    msg.includes("timeout") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("ENOTFOUND") ||
+    msg.includes("EAI_AGAIN")
+  )
+}
 import { Approval, bashRuleKey } from "../ports/Approval.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
@@ -923,6 +936,12 @@ export const makeCodingHandlers = (
           })
         : Effect.void
 
+    const resolveReadPath = (p: string | undefined): string => {
+      if (p === undefined) return displayRoot
+      if (p.startsWith("/")) return p
+      return resolve(displayRoot, p)
+    }
+
     // A turn's tool calls resolve CONCURRENTLY (agentLoop's `concurrency`), so
     // mutating tools must not interleave: two edit_file calls on the same file
     // are a read-modify-write race that silently loses one edit, and bash can
@@ -952,7 +971,7 @@ export const makeCodingHandlers = (
     return codingToolkit.of({
       read_file: ({ path, offset, limit }) =>
         Effect.gen(function* () {
-          const abs = resolvePath(displayRoot, path)
+          const abs = resolveReadPath(path)
           const result = yield* fs.read(abs, {
             ...(offset !== undefined ? { offset } : {}),
             ...(limit !== undefined ? { limit } : {}),
@@ -1074,7 +1093,14 @@ export const makeCodingHandlers = (
               command,
               cwd: rootDir,
               timeoutMs: timeout ?? DEFAULT_BASH_TIMEOUT_MS,
-            }),
+            }).pipe(
+              Effect.retry({
+                schedule: Schedule.exponential("200 millis").pipe(
+                  Schedule.intersect(Schedule.recurs(3)),
+                ),
+                while: (err) => isTransientBashError(err),
+              }),
+            ),
           )
           return {
             exitCode: r.exitCode ?? -1,
@@ -1163,7 +1189,7 @@ export const makeCodingHandlers = (
 
       grep: ({ pattern, dir, flags, context }) =>
         Effect.gen(function* () {
-          const target = dir !== undefined ? resolvePath(displayRoot, dir) : displayRoot
+          const target = resolveReadPath(dir)
           // `context` is a schema-validated Number; floor it for a clean integer.
           const ctxFlag = context !== undefined ? ` -C ${Math.max(0, Math.trunc(context))}` : ""
           // `flags` is interpolated UNQUOTED into a `bash -c` grep command, so it
@@ -1194,7 +1220,7 @@ export const makeCodingHandlers = (
 
       glob: ({ pattern, dir }) =>
         Effect.gen(function* () {
-          const target = dir !== undefined ? resolvePath(displayRoot, dir) : displayRoot
+          const target = resolveReadPath(dir)
           const matches = yield* fs.glob(pattern, {
             cwd: target,
             respectGitignore: true,
@@ -1210,7 +1236,7 @@ export const makeCodingHandlers = (
 
       ls: ({ path, recursive }) =>
         Effect.gen(function* () {
-          const target = path !== undefined ? resolvePath(displayRoot, path) : displayRoot
+          const target = resolveReadPath(path)
           const entries = yield* fs.list(target, {
             ...(recursive !== undefined ? { recursive } : {}),
           })

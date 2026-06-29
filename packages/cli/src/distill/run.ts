@@ -14,6 +14,7 @@ import {
   type UtilityLlm,
   type Verifier,
 } from "@xandreed/sdk-core"
+import { loadConstraintIds } from "../usecases/loadConstraintIds.js"
 import { loadMemory } from "../usecases/loadMemory.js"
 import { loadSkills } from "../usecases/loadSkills.js"
 
@@ -81,7 +82,12 @@ export const runDistill = (
     // can reject redundant candidates.
     const skills = yield* loadSkills(opts.workspace, homedir())
     const memory = yield* loadMemory(opts.workspace, homedir())
-    const existing = [...skills.map((s) => s.name), ...memory.map((m) => m.name)]
+    const constraintIds = yield* loadConstraintIds(opts.workspace)
+    const existing = [
+      ...skills.map((s) => s.name),
+      ...memory.map((m) => m.name),
+      ...constraintIds,
+    ]
 
     const store = yield* ConversationStore
     const all = yield* store

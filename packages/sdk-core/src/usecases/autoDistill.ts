@@ -13,6 +13,18 @@ import { persistArtifact } from "./persistArtifact.js"
  *  one-shot Q&A yields nothing reusable. */
 export const AUTO_DISTILL_MIN_MESSAGES = 4
 
+/** Cooldown between distillations on the SAME conversation — prevents a tight
+ *  loop (e.g. gate-driven retry) from mining the same half-dozen messages
+ *  repeatedly. 5 minutes is long enough that a retry's new tail matters. */
+const DISTILL_COOLDOWN_MS = 5 * 60 * 1000
+
+const lastDistilled = new Map<ConversationId, number>()
+
+const isOnCooldown = (cid: ConversationId): boolean => {
+  const t = lastDistilled.get(cid)
+  return t !== undefined && Date.now() - t < DISTILL_COOLDOWN_MS
+}
+
 /**
  * Fire the self-improving distiller over a just-finished conversation and return
  * the lessons that were actually **persisted** (so the caller can surface them).
@@ -46,6 +58,8 @@ export const runAutoDistill = (args: {
   ConversationStore | ContextTreeStore | UtilityLlm | Verifier | FileSystem
 > =>
   Effect.gen(function* () {
+    if (isOnCooldown(args.conversationId)) return [] as ReadonlyArray<DistillResult>
+
     const out: DistillResult[] = []
 
     // (1) Deterministic efficiency gate — always, no LLM, no Verifier. Its constraint
@@ -83,5 +97,8 @@ export const runAutoDistill = (args: {
       out.push(...results.filter((r) => r.persisted !== undefined))
     }
 
+    if (out.length > 0) {
+      lastDistilled.set(args.conversationId, Date.now())
+    }
     return out as ReadonlyArray<DistillResult>
   }).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<DistillResult>)))

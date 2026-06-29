@@ -13,6 +13,7 @@ import {
   type Memory,
   type Skill,
 } from "@xandreed/sdk-core"
+import { loadConstraintIds } from "../usecases/loadConstraintIds.js"
 
 /**
  * Headless turn-boundary distillation: after a one-shot `-p`/`--json` run
@@ -37,9 +38,11 @@ export const headlessDistill = (args: {
   Effect.gen(function* () {
     const settings = yield* (yield* SettingsStore).get()
     if (settings.autoDistill === false) return [] as ReadonlyArray<DistillResult>
+    const constraintIds = yield* loadConstraintIds(args.repoDir)
     const existing = [
       ...args.skills.map((s) => s.name),
       ...args.memory.map((m) => m.name),
+      ...constraintIds,
     ]
     const out = yield* runAutoDistill({
       conversationId: args.conversationId,

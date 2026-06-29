@@ -33,6 +33,7 @@ import { onRunEnd, onRunStart } from "../presentation/executionTree.js"
 import { accumulateRoleSpend } from "../presentation/sidePane.js"
 import { contextPercent } from "../presentation/statusBar.js"
 import { runHandoff } from "./handoff.js"
+import { loadConstraintIds } from "../../usecases/loadConstraintIds.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 import { openNodePreview, refreshNav } from "./contextTree.js"
 import type { AppServices, TuiStore } from "../state/store.js"
@@ -356,9 +357,11 @@ export const makeSubmit = (
         // fail-soft — never blocks the UI, and a missing claude / provider just
         // means nothing is learned this turn. Skipped while messages are queued.
         if (next === undefined && settings.autoDistill !== false) {
+          const constraintIds = yield* loadConstraintIds(cwd)
           const existing = [
             ...skills.map((s) => s.name),
             ...memory.map((m) => m.name),
+            ...constraintIds,
           ]
           const distillEffect = runAutoDistill({
             conversationId: cid,

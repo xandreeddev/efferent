@@ -28,6 +28,9 @@ export interface RunContext {
   /** The prompt identity (name/version/variant) this run uses, surfaced on
    *  every `llm.generate` span so Grafana shows which prompt produced the call. */
   readonly prompt?: Prompt
+  /** The model's context window, resolved from `settings.model` at run start and
+   *  inherited by sub-agents so every loop in the subtree uses the same limit. */
+  readonly contextWindow?: number
   /** Per-sub-agent step cap (`Settings.subAgentMaxSteps`), threaded live per
    *  run like the pool so `:set` applies on the next turn — absent → the
    *  built-in default (`DEFAULT_SUB_AGENT_MAX_STEPS`). */
@@ -48,6 +51,10 @@ export interface RunContext {
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */
   readonly toolResultMaxChars?: number
+  /** Per-tool-call timeout in ms (`Settings.toolTimeoutMs`), inherited so
+   *  sub-agent loops apply the same cap as the root. Absent →
+   *  {@link DEFAULT_TOOL_TIMEOUT_MS}. 0 disables. */
+  readonly toolTimeoutMs?: number
   /** The agent's compression policy, threaded so the whole sub-agent subtree
    *  inherits it (the loop reads this when no `input.compression` override is
    *  given). Absent → `Compaction.default()`. */
