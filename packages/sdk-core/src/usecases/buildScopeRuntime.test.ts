@@ -37,6 +37,7 @@ import {
   constrainToReadOnly,
   missionPreamble,
   roleToolEntries,
+  STALL_NOTE,
 } from "./buildScopeRuntime.js"
 
 const rootScope: Scope = {
@@ -334,30 +335,47 @@ const doneModel = Layer.succeed(
   } as never),
 )
 
-const stubPorts = Layer.mergeAll(
-  Layer.succeed(
-    FileSystem,
-    FileSystem.of({
-      // No SCOPE.md anywhere — getScopePromptBody catches and degrades.
-      read: () => Effect.fail({ _tag: "FileNotFound" }),
-      write: () => Effect.void,
-      list: () => Effect.succeed([]),
-      glob: () => Effect.succeed([]),
-    } as never),
-  ),
-  Layer.succeed(
-    Shell,
-    Shell.of({
-      exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }),
-    } as never),
-  ),
-  Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
-  Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
-  ApprovalAllowAllLive,
-  terminalStub,
-  verifierStub,
-  doneModel,
+/** A model whose every call HANGS forever — the silent-stall failure mode (a
+ *  gateway connection that returns no bytes and no error). The stall watchdog is
+ *  the only thing that can end a sub-agent stuck on this. */
+const hangingModel = Layer.succeed(
+  LanguageModel.LanguageModel,
+  LanguageModel.LanguageModel.of({
+    generateText: () => Effect.never,
+    generateObject: () => Effect.die("unused"),
+    streamText: () => Effect.die("unused"),
+  } as never),
 )
+
+/** The stub ports, parameterised by the LanguageModel so a test can swap in a
+ *  hanging model (the rest of the ports are identical). */
+const stubPortsWith = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
+  Layer.mergeAll(
+    Layer.succeed(
+      FileSystem,
+      FileSystem.of({
+        // No SCOPE.md anywhere — getScopePromptBody catches and degrades.
+        read: () => Effect.fail({ _tag: "FileNotFound" }),
+        write: () => Effect.void,
+        list: () => Effect.succeed([]),
+        glob: () => Effect.succeed([]),
+      } as never),
+    ),
+    Layer.succeed(
+      Shell,
+      Shell.of({
+        exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }),
+      } as never),
+    ),
+    Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
+    Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
+    ApprovalAllowAllLive,
+    terminalStub,
+    verifierStub,
+    model,
+  )
+
+const stubPorts = stubPortsWith(doneModel)
 
 describe("ScopeRuntime.resumeNode", () => {
   test("resumes a finished node in place: appends the task, re-runs, records the return", async () => {
@@ -598,6 +616,136 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
     expect(result.handle.name).toBe("secret auditor") // display title from `name`, not "inline"
     expect(result.gathered.allDone).toBe(true)
     expect(result.gathered.agents[0]?.status).toBe("ok")
+  })
+})
+
+// --- The stall watchdog: a spawned sub-agent whose model call HANGS is killed --
+// The regression this fixes: a sub-agent's first `generateText` parked forever
+// (a silent gateway stall), so the node sat `running` with ZERO turns while its
+// parent's `wait_for_agents` looped blind. Neither existing backstop catches it
+// (the exit finalizer needs the fiber to EXIT — a parked one hasn't; the sweeper
+// needs the fiber OFF the bus — a parked one is still on it). The watchdog does:
+// no progress within the deadline → interrupt → record a STALL error → notify
+// the parent. A tiny injected `stallDeadlineMs` exercises it without a real wait.
+
+describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ error)", () => {
+  test("a sub-agent whose model call hangs is interrupted, recorded `error` with STALL_NOTE, and gathered by the parent", async () => {
+    const { entries, layer } = stubTreeStore()
+    // 100ms no-progress deadline — the hanging model never produces a turn, so
+    // the watchdog trips ~100ms in (vs. the 180s production default).
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [],
+      tools: [],
+      stallDeadlineMs: 100,
+    })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const spawned = yield* call("run_agent", {
+        name: "haver",
+        folder: "pkg",
+        task: "this run will hang on its first model call",
+      })
+      const handle = spawned.result as { nodeId: string; status: string }
+      // It spawned as running (non-blocking) — the hang is in the background.
+      expect(handle.status).toBe("running")
+      // Gather: the watchdog finishes the node as `error`, which wakes this wait.
+      const gathered = yield* call("wait_for_agents", {
+        nodeIds: [handle.nodeId],
+        timeoutSeconds: 5,
+      })
+      return {
+        handle,
+        gathered: gathered.result as {
+          agents: ReadonlyArray<{ status: string; summary?: string }>
+          allDone: boolean
+        },
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPortsWith(hangingModel))),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.pipe(
+        // If the watchdog DOESN'T fire, this 5s ceiling fails the test loudly
+        // (instead of the hang the regression caused).
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "watchdog FAILED to fire" }),
+      ) as unknown as Effect.Effect<{
+        handle: { status: string }
+        gathered: { agents: ReadonlyArray<{ status: string; summary?: string }>; allDone: boolean }
+      }>,
+    )
+
+    // The parent unblocked with a terminal error — not a perpetual `running`.
+    expect(result.gathered.allDone).toBe(true)
+    expect(result.gathered.agents).toHaveLength(1)
+    expect(result.gathered.agents[0]?.status).toBe("error")
+    expect(result.gathered.agents[0]?.summary).toBe(STALL_NOTE)
+    // And the persisted node is `error` (not stranded `running`).
+    const node = [...entries.values()][0]!.node
+    expect(node.status).toBe("error")
+    expect(node.returnSummary).toBe(STALL_NOTE)
+  })
+
+  test("a healthy (fast) sub-agent is NOT killed by the watchdog — it finishes ok", async () => {
+    // Same tiny deadline, but the model returns immediately: the body wins the
+    // race long before the deadline, so the watchdog never trips.
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [],
+      tools: [],
+      stallDeadlineMs: 100,
+    })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const spawned = yield* call("run_agent", { name: "worker", folder: "pkg", task: "quick" })
+      const handle = spawned.result as { nodeId: string }
+      const gathered = yield* call("wait_for_agents", { nodeIds: [handle.nodeId], timeoutSeconds: 5 })
+      return gathered.result as {
+        agents: ReadonlyArray<{ status: string; summary?: string }>
+        allDone: boolean
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPortsWith(doneModel))),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "healthy run HUNG" }),
+      ) as unknown as Effect.Effect<{
+        agents: ReadonlyArray<{ status: string; summary?: string }>
+        allDone: boolean
+      }>,
+    )
+
+    expect(result.allDone).toBe(true)
+    expect(result.agents[0]?.status).toBe("ok")
+    expect(result.agents[0]?.summary).not.toBe(STALL_NOTE)
   })
 })
 

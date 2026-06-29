@@ -1,5 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response, Tool } from "@effect/ai"
 import { Chunk, Effect, Option, Stream } from "effect"
+import { LLM_REQUEST_TIMEOUT_MS } from "./retry.js"
 
 export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
 
@@ -160,7 +161,7 @@ const postChat = (
           Authorization: "Bearer ollama",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       }),
     catch: (e) => aiUnknown("chatCompletion", e),
   }).pipe(

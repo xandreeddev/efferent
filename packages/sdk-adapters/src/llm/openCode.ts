@@ -1,5 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response, Tool, type Toolkit } from "@effect/ai"
 import { Chunk, Effect, Option, Stream } from "effect"
+import { LLM_REQUEST_TIMEOUT_MS } from "./retry.js"
 
 export const OPENCODE_API_URL = "https://opencode.ai/zen/go/v1"
 export const OPENCODE_CHAT_URL = `${OPENCODE_API_URL}/chat/completions`
@@ -221,7 +222,7 @@ const postChat = (
         method: "POST",
         headers: headers(apiKey),
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       }),
     catch: (e) => aiUnknown("chatCompletion", e),
   }).pipe(

@@ -2,7 +2,11 @@ import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
 import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
-import type { AgentAfterToolCallEvent, AgentHooks } from "../entities/AgentHooks.js"
+import type {
+  AgentAfterToolCallEvent,
+  AgentHooks,
+  AgentLlmRetryEvent,
+} from "../entities/AgentHooks.js"
 import { type AgentMessage, ConversationId } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
 import type { Scope } from "../entities/Scope.js"
@@ -185,6 +189,32 @@ export const STEP_STOP_NOTE =
  *  notified immediately instead of waiting on the mid-session sweeper. */
 export const INTERRUPTED_NOTE = "[interrupted — run did not finish]"
 
+/** Recorded as a sub-agent's return summary when the stall watchdog trips —
+ *  the run made no progress (no turn, no tool result, no retry) for
+ *  {@link SUBAGENT_STALL_DEADLINE_MS}, so it was interrupted. This is the fix for
+ *  the silent class of failure that BOTH existing backstops miss: the exit
+ *  finalizer only fires when the fiber EXITS (a parked fiber hasn't), and the
+ *  mid-session sweeper only flips a node whose fiber is no longer on the bus (a
+ *  parked-but-alive fiber still is). A sub-agent whose first model call hung thus
+ *  sat `running` with zero turns for up to ~20 min while its parent's
+ *  `wait_for_agents` looped blind — "stuck checking for agents, none ever ran". */
+export const STALL_NOTE =
+  "[stalled — the run made no progress within the watchdog deadline and was stopped]"
+
+/** No-progress deadline for a SPAWNED sub-agent: if no turn starts, no tool
+ *  result lands, and no LLM retry fires for this long, the run is interrupted and
+ *  recorded as an error (so the parent unblocks). Generous on purpose — it must
+ *  exceed any single legitimate blocking op: one LLM request (capped at the
+ *  adapter request timeout, 2 min) and one structural gate verifier call.
+ *  A live, working sub-agent emits a turn-start before every model call, so it
+ *  never approaches this; only a genuine freeze does. */
+export const SUBAGENT_STALL_DEADLINE_MS = 180_000
+
+/** How often the stall watchdog wakes to compare now − last-progress against the
+ *  deadline. Small relative to the deadline so the kill lands promptly once the
+ *  run is declared stalled, cheap enough to be free when the run is healthy. */
+export const WATCHDOG_TICK_MS = 15_000
+
 export interface BuildScopeRuntimeOptions {
   readonly skills: ReadonlyArray<Skill>
   /**
@@ -212,6 +242,10 @@ export interface BuildScopeRuntimeOptions {
   readonly maxDepth?: number
   /** Allow the `bash` tool. Default true. */
   readonly allowBash?: boolean
+  /** No-progress deadline (ms) for a spawned sub-agent's stall watchdog. Default
+   *  {@link SUBAGENT_STALL_DEADLINE_MS}. An internal seam — tests inject a tiny
+   *  value to exercise the watchdog without a real wait; production never sets it. */
+  readonly stallDeadlineMs?: number
   /** Optional sink for inter-agent messages — the daemon passes its ledger
    *  `publish` so blackboard/inbox/completion notes ride the event stream as
    *  `board_note` events (the "messages flying" firehose). */
@@ -874,6 +908,10 @@ const makeInnerHooks = <R>(
   pool: TokenPool,
   budgetStopRef: Ref.Ref<boolean>,
   bus: AgentBus,
+  /** Stall-watchdog liveness: stamp "now" on every observable step (turn start,
+   *  tool result, narration) so a parked run — and only a parked run — crosses
+   *  the no-progress deadline. */
+  bumpProgress: Effect.Effect<void>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -891,6 +929,11 @@ const makeInnerHooks = <R>(
   // fan-out the consumer attributes interleaved events to the right sub-agent
   // by key, not by "whichever opened last".
   return {
+    // Stall-watchdog liveness signal. onTurnStart fires immediately BEFORE each
+    // model call, so a hung `generateText` leaves this as the last stamp and the
+    // watchdog fires after the deadline. Not forwarded to the parent driver
+    // (sub-agent turn-starts never were) — it only feeds the local watchdog.
+    onTurnStart: () => bumpProgress,
     ...(parentBefore !== undefined
       ? {
           onBeforeToolCall: (e: Parameters<typeof parentBefore>[0]) =>
@@ -898,12 +941,11 @@ const makeInnerHooks = <R>(
         }
       : {}),
     onAfterToolCall: (e) =>
-      parentAfter !== undefined
-        ? Effect.gen(function* () {
-            yield* parentAfter({ ...e, subAgentNodeId: nodeId })
-            yield* trackFiles(e)
-          })
-        : trackFiles(e),
+      Effect.gen(function* () {
+        yield* bumpProgress
+        if (parentAfter !== undefined) yield* parentAfter({ ...e, subAgentNodeId: nodeId })
+        yield* trackFiles(e)
+      }),
     onAssistantMessage: (event) => {
       const u = event.usage
       const track =
@@ -917,11 +959,15 @@ const makeInnerHooks = <R>(
       // Forward inner narration to the parent's event stream too — the TUI
       // shows it live when this node's session is open in the preview (the
       // pump keeps it off the parent rail; usage stays node-local).
-      return parentAssistant !== undefined
-        ? parentAssistant({ ...event, subAgentNodeId: nodeId, subAgentRole: role }).pipe(
-            Effect.zipRight(track),
-          )
-        : track
+      return bumpProgress.pipe(
+        Effect.zipRight(
+          parentAssistant !== undefined
+            ? parentAssistant({ ...event, subAgentNodeId: nodeId, subAgentRole: role }).pipe(
+                Effect.zipRight(track),
+              )
+            : track,
+        ),
+      )
     },
     onShouldStopAfterTurn: () =>
       Effect.gen(function* () {
@@ -1010,6 +1056,16 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // stays `running` forever and the parent is never told (markDone only tears
   // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
   const returnRecordedRef = Ref.unsafeMake(false)
+  // Stall watchdog state, both OUTSIDE the body so the watchdog fiber (which
+  // races the body) and the finalizer can read them.
+  //  - progressRef: epoch-ms of the last observable step (turn start / tool
+  //    result / narration / LLM retry). Initialised at body start; the watchdog
+  //    compares now − this against the deadline.
+  //  - stalledRef: set true iff the watchdog tripped, so the finalizer records
+  //    STALL_NOTE (a deliberate stop) rather than the generic INTERRUPTED_NOTE.
+  const progressRef = Ref.unsafeMake(0)
+  const stalledRef = Ref.unsafeMake(false)
+  const bumpProgress = Clock.currentTimeMillis.pipe(Effect.flatMap((t) => Ref.set(progressRef, t)))
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = args.title ?? (basename(folder) || folder)
@@ -1039,6 +1095,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     // down on every exit path (success, failure, interrupt) by the ensuring below.
     yield* args.bus.markRunning(nodeId, label, { parentKey })
     const budgetStopRef = yield* Ref.make(false)
+    // Seed the progress clock NOW, before any model call, so the watchdog
+    // measures from a real timestamp (not epoch 0) on its first tick.
+    yield* bumpProgress
     const innerHooks = makeInnerHooks(
       hooks,
       nodeId,
@@ -1048,6 +1107,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       args.tokenPool,
       budgetStopRef,
       args.bus,
+      bumpProgress,
     )
 
     const binding: ScopeBinding = {
@@ -1166,10 +1226,17 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.interactionPolicy !== undefined
         ? { interactionPolicy: args.runContext.interactionPolicy }
         : {}),
-      // Carry the retry-notice sink down so a sub-agent's backoff is visible too.
-      ...(args.runContext.onLlmRetry !== undefined
-        ? { onLlmRetry: args.runContext.onLlmRetry }
-        : {}),
+      // Carry the retry-notice sink down so a sub-agent's backoff is visible too,
+      // and count each retry as PROGRESS for the stall watchdog: a call weathering
+      // a transient overload (429s, slow gateway) is working, not frozen, so it
+      // must not be killed. Always wrapped (even with no parent sink) so the bump
+      // happens; the forward is conditional.
+      onLlmRetry: (e: AgentLlmRetryEvent) => {
+        const parentSink = args.runContext.onLlmRetry
+        return parentSink !== undefined
+          ? bumpProgress.pipe(Effect.zipRight(parentSink(e)))
+          : bumpProgress
+      },
       // And the background-output sink, so a sub-agent's bg process is visible too.
       ...(args.runContext.onBgOutput !== undefined
         ? { onBgOutput: args.runContext.onBgOutput }
@@ -1241,6 +1308,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         let attempt = 1
         let current = outcome.r
         while (true) {
+          // The gate's verifier + child-settling are blocking ops OUTSIDE the
+          // inner loop (no turn-start hook fires), so stamp progress here too — a
+          // legitimately slow gate must not look like a stall to the watchdog.
+          yield* bumpProgress
           // The lead's deliverable = its workers' aggregate work (a coordinator
           // writes nothing itself), so the gate judges its CHILD nodes.
           const freshChildren = yield* settleChildren(rootConvId, nodeId)
@@ -1380,23 +1451,68 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
       return
     }
-    // Interrupted / died: record an error return + notify the parent ourselves.
+    // Interrupted / died / stalled before a terminal path ⇒ the Ref is still
+    // false. The watchdog distinguishes a deliberate stall-stop (STALL_NOTE)
+    // from a generic interruption (Esc / teardown / death → INTERRUPTED_NOTE),
+    // so the parent + `:tree` read WHY the node ended.
+    const note = (yield* Ref.get(stalledRef)) ? STALL_NOTE : INTERRUPTED_NOTE
     yield* args.store
       .recordReturn(args.nodeId, {
         status: "error",
-        summary: INTERRUPTED_NOTE,
+        summary: note,
         filesChanged: [],
       })
       .pipe(Effect.ignore)
     yield* args.bus
       .complete(args.nodeId, {
         status: "error",
-        summary: INTERRUPTED_NOTE,
+        summary: note,
         filesChanged: [],
       })
       .pipe(Effect.ignore)
   }).pipe(Effect.catchAll(() => Effect.void))
-  return body.pipe(Effect.onExit(() => finalize))
+
+  // The stall watchdog: a fiber that wakes every WATCHDOG_TICK_MS and fails the
+  // moment the run has gone SUBAGENT_STALL_DEADLINE_MS without progress (no turn
+  // start, tool result, narration, or LLM retry — all stamp `progressRef`). It
+  // fails (never succeeds), so racing it against `body` interrupts a parked body;
+  // the body's exit then runs `finalize`, which reads `stalledRef` and records a
+  // clear STALL error so the parent's `wait_for_agents` unblocks. This closes the
+  // hole BOTH other backstops miss: the exit finalizer needs the fiber to EXIT (a
+  // parked fiber hasn't), and the sweeper needs it OFF the bus (a parked fiber is
+  // still on it). Without this a hung first model call stranded the node `running`
+  // with zero turns while its parent looped blind.
+  const deadlineMs = args.opts.stallDeadlineMs ?? SUBAGENT_STALL_DEADLINE_MS
+  // Tick often enough to land the kill promptly once stalled, capped at the
+  // standard cadence (so a tiny injected deadline ticks proportionally fast).
+  const tickMs = Math.min(WATCHDOG_TICK_MS, Math.max(10, Math.floor(deadlineMs / 4)))
+  const watchdog: Effect.Effect<never, Failure> = Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(`${tickMs} millis`)
+      const now = yield* Clock.currentTimeMillis
+      const last = yield* Ref.get(progressRef)
+      if (now - last >= deadlineMs) {
+        yield* Ref.set(stalledRef, true)
+        return yield* Effect.fail<Failure>({
+          error: "SubAgentStalled",
+          message: `no progress for ${Math.round((now - last) / 1000)}s`,
+        })
+      }
+    }
+  })
+
+  // raceFirst: whichever settles first wins and interrupts the other. A healthy
+  // body settles first (watchdog interrupted, no-op). A stalled body never
+  // settles, so the watchdog's failure wins and interrupts the body. `onExit`
+  // wraps the WHOLE race so `finalize` is AWAITED to completion before the fiber
+  // settles — it records the STALL error + notifies the parent on every exit
+  // path (success → markDone, normal error → markDone, stall/interrupt → record).
+  // The Failure propagates to the fork's catchAll (it swallows all sub-agent
+  // errors), so nothing leaks.
+  return body.pipe(
+    Effect.raceFirst(watchdog),
+    Effect.onExit(() => finalize),
+  )
 }
 
 /** The model's `run_agent` result: the work happens in the background, so the
