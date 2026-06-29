@@ -677,6 +677,64 @@ const orchestrationToolkit = Toolkit.make(
  *  staffing, sequencing, and the gate. */
 const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
 
+/** The research lead — its whole subtree stays read-only (see RunContext.researchSubtree). */
+const RESEARCH_COORDINATOR_NAME = "research-coordinator"
+/** The code lead — a research subtree refuses to spawn one (implementation is the root's call). */
+const CODE_COORDINATOR_NAME = "coordinator"
+
+/** Tools that can MUTATE the workspace (write a file or run a shell that can).
+ *  Stripped from any spawn inside a read-only research subtree. */
+const MUTATING_TOOL_NAMES: ReadonlyArray<string> = [
+  "write_file",
+  "edit_file",
+  "Bash",
+  "bash_output",
+  "kill_bash",
+  "session_start",
+  "session_send",
+  "session_read",
+  "session_kill",
+  "session_list",
+]
+
+/** A bare (no-role, no-inline-tools) spawn inside a research subtree resolves to
+ *  THIS read-only worker instead of the full coding toolkit — the leak that let a
+ *  research-coordinator mint a full-toolkit coder. Web + read + comms only. */
+const READ_ONLY_RESEARCH_WORKER: AgentDefinition = {
+  name: "research-worker",
+  description: "Read-only research worker (investigation only — never writes files)",
+  role: "general",
+  body: "You investigate read-only: search the web and read the workspace, then report findings with sources. You NEVER write or edit files and you never run shell commands — if the task implies a change, describe the change as a recommendation in your findings.",
+  tools: [
+    "read_file",
+    "grep",
+    "glob",
+    "ls",
+    "read_skill",
+    "search_web",
+    "web_fetch",
+    "update_plan",
+    "send_message",
+    "blackboard_post",
+    "blackboard_read",
+  ],
+  sourcePath: "<builtin>",
+}
+
+/** Constrain a resolved definition to read-only for a research subtree: a bare
+ *  spawn becomes the read-only worker; any explicit toolset loses its mutating
+ *  tools; the tier drops to `general`. Exported for unit tests. */
+export const constrainToReadOnly = (def: AgentDefinition | undefined): AgentDefinition => {
+  if (def === undefined) return READ_ONLY_RESEARCH_WORKER
+  return {
+    ...def,
+    role: "general",
+    tools: (def.tools ?? READ_ONLY_RESEARCH_WORKER.tools ?? []).filter(
+      (t) => !MUTATING_TOOL_NAMES.includes(t),
+    ),
+  }
+}
+
 /**
  * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
  * a `tools` list is filtered against the available tools (base coding tools +
@@ -1116,6 +1174,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.onBgOutput !== undefined
         ? { onBgOutput: args.runContext.onBgOutput }
         : {}),
+      // Read-only research subtree: set when THIS spawn is a research-coordinator,
+      // inherited once set — so every spawn beneath it stays investigation-only and
+      // implementation flows back to the root (see RunContext.researchSubtree).
+      ...(args.runContext.researchSubtree === true || definition?.name === RESEARCH_COORDINATOR_NAME
+        ? { researchSubtree: true }
+        : {}),
     }
 
     // One attempt of the scoped loop over a message buffer — reused verbatim for
@@ -1446,7 +1510,24 @@ const makeRunAgentHandler =
       // task-tailored agent flows through the same `definition` slot as a role.
       // `role` is only the model TIER (general | code) — never a specific model.
       const baseDefinition = yield* resolveAgent(opts.agents, agent)
-      const definition = applyInlineDefinition(baseDefinition, { instructions, tools, role })
+      let definition = applyInlineDefinition(baseDefinition, { instructions, tools, role })
+
+      // Read-only research subtree: a research-coordinator investigates and RETURNS
+      // a report — it must not spawn a code lead or mint write-capable workers
+      // ("fix the findings" is the ROOT's call, in a fresh turn). Refuse a code
+      // coordinator outright; constrain every other spawn to read-only. (Without
+      // this, a research-coordinator spawned a full-toolkit worker that wrote code.)
+      if (rc.researchSubtree === true) {
+        if (agent === CODE_COORDINATOR_NAME) {
+          return yield* Effect.fail({
+            error: "ResearchStaysReadOnly",
+            message:
+              "You are leading a read-only investigation — you don't implement or spawn coders. List the fixes you'd make as concrete RECOMMENDATIONS in your final report; the root will implement them in a fresh turn (with its own budget).",
+          })
+        }
+        definition = constrainToReadOnly(definition)
+      }
+
       // A spawn of a LEAD role owns the structural gate over its subtree. Keyed
       // off the requested `agent` name (the canonical signal — `definition.name`
       // collapses to `"inline"` once instructions/tools are layered on).

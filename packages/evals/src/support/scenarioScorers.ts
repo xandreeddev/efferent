@@ -127,3 +127,35 @@ export const efficiencyScore = <I, T extends { readonly budget?: EfficiencyBudge
       return steps <= max ? 1 : Math.max(0, 1 - (steps - max) / max)
     }),
 })
+
+/** Tools that mutate the workspace — a read-only investigation must use NONE
+ *  (fleet-wide). Mirrors core's `MUTATING_TOOL_NAMES`. */
+const RESEARCH_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "edit_file",
+  "Bash",
+])
+
+/**
+ * Guard for Fix 3 — a research investigation must stay READ-ONLY across the whole
+ * fleet. Even when the prompt says "find AND fix", a research-coordinator
+ * investigates and recommends; it must not write code or spawn a coder. Scores 1
+ * when the fleet-wide tool trajectory has zero mutating tools, 0 otherwise. Only
+ * checked when `expected.researchReadOnly === true`.
+ */
+export const researchReadOnlyScore = <
+  I,
+  T extends { readonly researchReadOnly?: boolean },
+>(
+  name = "research_read_only",
+): Scorer<I, ScenarioRun, T> => ({
+  name,
+  score: ({ output, expected }) =>
+    Effect.sync(() => {
+      if (expected.researchReadOnly !== true) return 1
+      const mutated = output.tools.filter((t) => RESEARCH_FORBIDDEN_TOOLS.has(t))
+      return mutated.length === 0
+        ? { score: 1, detail: "no writes in the research fleet" }
+        : { score: 0, detail: `research fleet used mutating tools: ${mutated.join(", ")}` }
+    }),
+})

@@ -34,6 +34,7 @@ import { RunContextRef, type RunContext } from "./runContext.js"
 import {
   applyInlineDefinition,
   buildScopeRuntime,
+  constrainToReadOnly,
   missionPreamble,
   roleToolEntries,
 } from "./buildScopeRuntime.js"
@@ -205,6 +206,40 @@ describe("applyInlineDefinition — the coordinator defines a sub-agent inline",
   test("blank/whitespace inline fields are treated as absent", () => {
     const base = role("B")
     expect(applyInlineDefinition(base, { instructions: "   ", tools: [] })).toBe(base)
+  })
+})
+
+describe("constrainToReadOnly — a research subtree can't mint writers (Fix 3)", () => {
+  test("a bare spawn (no definition) becomes the read-only research worker, not the full toolkit", () => {
+    const d = constrainToReadOnly(undefined)
+    expect(d.tools).toBeDefined()
+    expect(d.tools).not.toContain("write_file")
+    expect(d.tools).not.toContain("edit_file")
+    expect(d.tools).not.toContain("Bash")
+    expect(d.tools).toContain("read_file")
+    expect(d.tools).toContain("search_web")
+    expect(d.role).toBe("general")
+  })
+
+  test("an inline definition keeps its read tools but loses every mutating tool", () => {
+    const inline: AgentDefinition = {
+      name: "inline",
+      description: "x",
+      body: "fix it",
+      role: "code",
+      tools: ["read_file", "grep", "write_file", "edit_file", "Bash"],
+      sourcePath: "<inline>",
+    }
+    const d = constrainToReadOnly(inline)
+    expect(d.tools).toEqual(["read_file", "grep"]) // write_file/edit_file/Bash stripped
+    expect(d.role).toBe("general") // code tier downgraded
+  })
+
+  test("the read-only worker carries no write/exec tool at all", () => {
+    const tools = constrainToReadOnly(undefined).tools ?? []
+    for (const banned of ["write_file", "edit_file", "Bash", "kill_bash", "session_send"]) {
+      expect(tools).not.toContain(banned)
+    }
   })
 })
 
