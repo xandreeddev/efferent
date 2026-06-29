@@ -2,17 +2,37 @@ import { Effect, Layer, Ref } from "effect"
 import { DefaultSettings, type Settings, SettingsStore } from "@xandreed/sdk-core"
 import type { RunConfig } from "./RunConfig.js"
 
-/** Apply a `RunConfig`'s knobs onto a base `Settings` (start from defaults). */
-export const settingsFromConfig = (base: Settings, c: RunConfig): Settings => ({
-  ...base,
-  model: c.main,
-  ...(c.fast !== undefined ? { fastModel: c.fast } : {}),
-  ...(c.code !== undefined ? { codeModel: c.code } : {}),
-  ...(c.maxSteps !== undefined ? { maxSteps: c.maxSteps } : {}),
-  ...(c.toolResultMaxTokens !== undefined
-    ? { toolResultMaxTokens: c.toolResultMaxTokens }
-    : {}),
+/** Eval determinism defaults: greedy decoding + a fixed seed, so a measured
+ *  delta reflects the CHANGE, not sampling noise. A RunConfig can override
+ *  `samplingTemperature` (e.g. to deliberately measure pass^k consistency). */
+export const EVAL_DEFAULT_TEMPERATURE = 0
+export const EVAL_DEFAULT_SEED = 0x5eed
+
+/** Force the eval determinism defaults onto a Settings unless already pinned.
+ *  Applied on BOTH eval paths (a `--config` run and a bare local run), so every
+ *  eval is reproducible by default. */
+export const withEvalDeterminism = (s: Settings): Settings => ({
+  ...s,
+  samplingTemperature: s.samplingTemperature ?? EVAL_DEFAULT_TEMPERATURE,
+  samplingSeed: s.samplingSeed ?? EVAL_DEFAULT_SEED,
 })
+
+/** Apply a `RunConfig`'s knobs onto a base `Settings` (start from defaults). */
+export const settingsFromConfig = (base: Settings, c: RunConfig): Settings =>
+  withEvalDeterminism({
+    ...base,
+    model: c.main,
+    ...(c.fast !== undefined ? { fastModel: c.fast } : {}),
+    ...(c.code !== undefined ? { codeModel: c.code } : {}),
+    ...(c.maxSteps !== undefined ? { maxSteps: c.maxSteps } : {}),
+    ...(c.toolResultMaxTokens !== undefined
+      ? { toolResultMaxTokens: c.toolResultMaxTokens }
+      : {}),
+    ...(c.samplingTemperature !== undefined
+      ? { samplingTemperature: c.samplingTemperature }
+      : {}),
+    ...(c.samplingSeed !== undefined ? { samplingSeed: c.samplingSeed } : {}),
+  })
 
 /**
  * A `SettingsStore` pinned to one `Settings` value. `load()` ignores cwd/home

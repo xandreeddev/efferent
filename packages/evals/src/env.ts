@@ -7,7 +7,7 @@ import {
   type FileSystem,
   type Http,
   selectionFromString,
-  type SettingsStore,
+  SettingsStore,
   type Shell,
   type UtilityLlm,
   type WebSearch,
@@ -27,7 +27,12 @@ import {
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
 import type { RunConfig } from "./config/RunConfig.js"
-import { settingsLayerForConfig } from "./config/settingsLayer.js"
+import { homedir } from "node:os"
+import {
+  FixedSettingsStoreLive,
+  settingsLayerForConfig,
+  withEvalDeterminism,
+} from "./config/settingsLayer.js"
 import { JudgeModel } from "./framework/judge.js"
 import { InMemoryConversationStoreLive } from "./support/inMemoryConversationStore.js"
 import { InMemoryContextTreeStoreLive } from "./support/inMemoryContextTreeStore.js"
@@ -122,11 +127,19 @@ const JudgeModelLive = (
     }),
   ).pipe(Layer.provide(FetchHttpClientLive))
 
+// Bare `bun run eval` (no --config / --main): read local settings ONCE, then
+// pin them with the eval determinism overlay (temperature 0 + seed) so even the
+// no-config path is reproducible by default — mirroring the config path.
+const DeterministicLocalSettingsLive: Layer.Layer<SettingsStore> = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const loaded = yield* (yield* SettingsStore).load(process.cwd(), homedir())
+    return FixedSettingsStoreLive(withEvalDeterminism(loaded))
+  }).pipe(Effect.provide(LocalSettingsStoreLive.pipe(Layer.provide(FsLive)))),
+)
+
 export const makeEvalEnv = (config?: RunConfig): Layer.Layer<EvalEnv> => {
   const settingsLive =
-    config === undefined
-      ? LocalSettingsStoreLive.pipe(Layer.provide(FsLive))
-      : settingsLayerForConfig(config)
+    config === undefined ? DeterministicLocalSettingsLive : settingsLayerForConfig(config)
   const authLive = hasEnvKey() ? EnvAuthStoreLive : LocalAuthStoreLive
   // provideMerge (not merge): feeds AuthStore + SettingsStore *into* the model
   // tier / WebSearch AND keeps SettingsStore in the output (runAgent reads it).
