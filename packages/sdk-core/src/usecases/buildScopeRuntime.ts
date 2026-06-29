@@ -51,7 +51,6 @@ import {
   removeJob,
   type ScheduledJob,
 } from "./schedule.js"
-import { persistArtifact } from "./persistArtifact.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
@@ -609,61 +608,12 @@ const CancelScheduledJobTool = Tool.make("cancel_scheduled_job", {
   failureMode: "return",
 })
 
-/**
- * The self-improving loop tools (docs/self-improving-loop.md): the coordinator's
- * **validate → learn → retry** verbs. `verify_with_gate` is the independent Opus
- * deliverable gate (the final sign-off); `note_constraint` persists a lesson the
- * gate's feedback taught so it auto-loads on the retry and on future runs.
- */
-const VerifyWithGateTool = Tool.make("verify_with_gate", {
-  description:
-    "Submit the swarm's finished work to the INDEPENDENT Opus validation gate — the final sign-off before you call a task done. " +
-    "Opus reads the changed files in the repo and validates the deliverable against the task; it ONLY judges, it never edits. " +
-    "Returns a verdict: 'sound' (ship it), 'needs_work' (the reasons are concrete fixes — apply them, retry the failed pieces, then call this again), or 'blocked'. " +
-    "If 'available' is false the gate could not run (no claude binary / error) — fall back to the architect's verdict and do NOT block the task. " +
-    "Call this ONCE per attempt, after the architect has approved the pieces. Stop and report when it returns 'sound' or you hit the attempt cap.",
-  parameters: {
-    task: Schema.String.annotations({
-      description: "The ORIGINAL task the swarm was given — the spec to validate against.",
-    }),
-    summary: Schema.String.annotations({
-      description: "What the swarm did — the deliverable to validate (be concrete).",
-    }),
-    files: Schema.optional(
-      Schema.String.annotations({
-        description: "Comma/newline-separated list of files changed, so the gate focuses there.",
-      }),
-    ),
-  },
-  success: Schema.Struct({
-    available: Schema.Boolean,
-    verdict: Schema.String,
-    reasons: Schema.Array(Schema.String),
-  }),
-  failure: Failure,
-  failureMode: "return",
-})
-
-const NoteConstraintTool = Tool.make("note_constraint", {
-  description:
-    "Record a LEARNED hard rule so it's never re-learned — typically a lesson from a gate failure ('the work was wrong because X → always do Y'). " +
-    "Writes a delta-item bullet to .efferent/CONSTRAINTS.md, which auto-loads into every future run. " +
-    "State it as a GENERAL, reusable instruction ('when editing a schema, also update its decoder'), never a one-off about this exact file. Use it right before you retry, then put the same lesson in the retry brief.",
-  parameters: {
-    rule: Schema.String.annotations({
-      description: "The reusable rule, one line — what to always do / never do.",
-    }),
-  },
-  success: Schema.Struct({ saved: Schema.Boolean, path: Schema.String }),
-  failure: Failure,
-  failureMode: "return",
-})
-
-/** `[name, def]` entries for the loop tools — for the toolkit + role allowlists. */
-const loopToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
-  ["verify_with_gate", VerifyWithGateTool],
-  ["note_constraint", NoteConstraintTool],
-]
+// The self-improving loop is now STRUCTURAL, not a set of tools the model drives:
+// the mandatory Opus gate runs in `driveLoop` (root) and in `runSpawnedAgent` for
+// any lead (coordinator-tier, see `gateOnce`), and the distiller runs the same way
+// — gate → learn → re-fire happens automatically, with no `verify_with_gate` /
+// `note_constraint` tool to remember. So those tools (and their handlers) are gone;
+// the architect role stays as the in-fleet, fine-grained per-piece review.
 
 /** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
@@ -685,7 +635,6 @@ const genericToolkit = Toolkit.make(
   ...([
     ...baseToolDefs,
     ...commsToolEntries.map(([, d]) => d),
-    ...loopToolEntries.map(([, d]) => d),
     RunAgentTool,
   ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
@@ -693,12 +642,14 @@ const genericToolkit = Toolkit.make(
 /**
  * The **orchestration-only** toolkit — what the ROOT gets when a fleet is in the
  * roster (always-orchestrate mode). It carries delegation + gather + comms +
- * planning + the gate/learn tools, and **deliberately NO work tools** (no
- * read/edit/write/grep/glob/ls/Bash/search/fetch/sessions). A prompt rule alone
- * didn't stop the root from reading and editing itself (live-verified), so this
- * is the mechanical guarantee: if the root *can't* call a work tool, it *must*
- * route the work to a lead. Handlers still exist in the full layer — this only
- * narrows what the model is offered, so the subset's handler layer agrees.
+ * planning + scheduling, and **deliberately NO work tools** (no
+ * read/edit/write/grep/glob/ls/Bash/search/fetch/sessions) and **no gate tools**
+ * (gating is structural — `driveLoop` runs the Opus gate after the root's run, so
+ * the root never drives it). A prompt rule alone didn't stop the root from reading
+ * and editing itself (live-verified), so this is the mechanical guarantee: if the
+ * root *can't* call a work tool, it *must* route the work to a lead. Handlers still
+ * exist in the full layer — this only narrows what the model is offered, so the
+ * subset's handler layer agrees.
  */
 const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "run_agent",
@@ -707,8 +658,6 @@ const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "blackboard_post",
   "blackboard_read",
   "update_plan",
-  "verify_with_gate",
-  "note_constraint",
   "schedule",
   "list_scheduled_jobs",
   "cancel_scheduled_job",
@@ -746,7 +695,6 @@ export const roleToolEntries = (
   const all: ReadonlyArray<readonly [string, Tool.Any]> = [
     ...base,
     ...commsToolEntries,
-    ...loopToolEntries,
     ["run_agent", RunAgentTool] as const,
   ]
   return all.filter(([name]) => allow.has(name))
@@ -1632,63 +1580,7 @@ const buildGenericHandlers = <R>(
     const http = yield* Http
     const fs = yield* FileSystem
     const approval = yield* Approval
-    const verifier = yield* Verifier
     const run_agent = makeRunAgentHandler(store, shell, bus, binding.displayRoot, opts, hooks)
-
-    // The Opus deliverable gate (docs/self-improving-loop.md). FAIL-SOFT: a missing
-    // `claude` / gate error is returned as `available: false` so the coordinator
-    // falls back to the architect's verdict and the user's task never blocks.
-    const verify_with_gate = (params: {
-      readonly task: string
-      readonly summary: string
-      readonly files?: string
-    }) =>
-      verifier
-        .gate({
-          task: params.task,
-          summary: params.summary,
-          filesChanged:
-            params.files !== undefined && params.files.trim().length > 0
-              ? params.files
-                  .split(/[,\n]/)
-                  .map((f) => f.trim())
-                  .filter((f) => f.length > 0)
-              : [],
-          repoDir: binding.displayRoot,
-        })
-        .pipe(
-          Effect.map((v) => ({
-            available: true,
-            verdict: v.verdict,
-            reasons: v.reasons,
-          })),
-          Effect.catchAll((e) =>
-            Effect.succeed({
-              available: false,
-              verdict: "unavailable",
-              reasons: [e.message],
-            }),
-          ),
-        )
-
-    // Persist a learned constraint as a delta item (the Curator path). Reuses the
-    // workspace `fs` so the handler's requirement set stays clean.
-    const note_constraint = (params: { readonly rule: string }) =>
-      persistArtifact(binding.displayRoot, {
-        kind: "constraint",
-        // The coordinator learns this mid-task from the gate's feedback — project-scoped
-        // (this repo's work) + inferred (the loop deduced it, not a human correction).
-        scope: "project",
-        source: "inferred",
-        name: params.rule.slice(0, 50),
-        description: params.rule,
-        body: params.rule,
-        evidence: { conversationId: "in-loop", positions: [] },
-      }).pipe(
-        Effect.provideService(FileSystem, fs),
-        Effect.map((r) => ({ saved: true, path: r.path })),
-        Effect.catchAll((e) => Effect.fail(toFailure(e))),
-      )
 
     // Cron as a tool: the orchestrator schedules its own follow-up / recurring
     // work. Validates the expression, writes the job to the shared cron list
@@ -1913,8 +1805,6 @@ const buildGenericHandlers = <R>(
       schedule,
       list_scheduled_jobs,
       cancel_scheduled_job,
-      verify_with_gate,
-      note_constraint,
     } as never
   })
 

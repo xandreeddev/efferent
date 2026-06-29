@@ -101,23 +101,21 @@ export const RESEARCHER_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-/** The Opus validate→learn→retry phase for research, inserted before REPORT when
- *  `autoLoop` is on. The deliverable is PROSE (a sourced answer, no files), so the
- *  gate judges the answer itself (`files: ""` → the gate's prose branch). */
-const RESEARCH_GATE_STEP = (maxAttempts: number) =>
-  `4a. VALIDATE → LEARN → RETRY (the Opus sign-off — how you KNOW the answer is good). Before you report, submit your synthesized answer to the INDEPENDENT Opus gate: verify_with_gate({ task: "<the original research question>", summary: "<your full synthesized answer, including the source URLs>", files: "" }). It only validates, never edits. This is your in-run self-check, AND your returned answer is INDEPENDENTLY re-gated by the same Opus gate the moment you return — so do not report until it returns "sound" (or you have used ${maxAttempts} rounds).
-   - "sound" → report it.
-   - "needs_work" → its \`reasons\` are concrete gaps (a part of the question left unanswered, an unsourced or likely-wrong claim, an unsupported conclusion). For each reason that is a reusable lesson about HOW to research, call note_constraint({ rule: "<general rule, e.g. 'cite a primary source for any version/date claim'>" }) so it sticks for future tasks. THEN fix it: re-spawn a researcher for the weak angle with the gate's EXACT reason in its brief (sharper than the last attempt), wait_for_agents until allDone, re-synthesize, and gate again.
-   - "blocked", or the gate is unavailable (\`available\` is false / no claude) → report your best sourced answer with its caveats; never hang on the gate.
-   Stop after ${maxAttempts} gate rounds regardless — deliver the best sourced answer you have, honest about any remaining gaps.
+/** Inserted before REPORT when `autoLoop` is on. The gate is STRUCTURAL now — the
+ *  research-coordinator's synthesized answer is validated by the Opus gate the
+ *  moment it returns (no `verify_with_gate` tool, no manual loop); on "needs work"
+ *  the runtime feeds the reasons back and re-runs it. The deliverable is PROSE (a
+ *  sourced answer, no files), so the gate judges the answer itself. The prompt's
+ *  job is just to make it report honestly and expect that automatic retry. */
+const RESEARCH_GATE_NOTE = `4a. EXPECT THE GATE. Your synthesized answer is validated by an INDEPENDENT Opus gate the moment you return — automatically; you don't call it. If it comes back "needs work", you'll be re-run with its concrete reasons (a part of the question left unanswered, an unsourced or likely-wrong claim, an unsupported conclusion) to fix — re-research the weak angle and re-synthesize; the retry and the learning are automatic. So report HONESTLY: a fully sourced answer, with any remaining gaps stated plainly.
 `
 
 /**
- * Build the research-coordinator for the current settings. `autoLoop` adds the
- * Opus deliverable gate + learn/retry phase (and the `verify_with_gate` /
- * `note_constraint` tools); off → today's synthesize-and-report single pass.
- * Mirrors {@link coordinatorAgent} for the coding fleet — the research fleet had
- * no validation step at all before this.
+ * Build the research-coordinator for the current settings. The Opus deliverable
+ * gate + learn + retry are STRUCTURAL (run by the runtime when it returns — see
+ * `buildScopeRuntime`/`gateOnce`), NOT tools the model drives, so it carries no
+ * `verify_with_gate`/`note_constraint`. `autoLoop` only shapes whether the prompt
+ * tells it to expect the gate; off → today's synthesize-and-report single pass.
  */
 export const researchCoordinatorAgent = (
   opts: { readonly autoLoop: boolean; readonly maxLoopAttempts: number } = {
@@ -128,14 +126,9 @@ export const researchCoordinatorAgent = (
   opts.autoLoop
     ? {
         ...RESEARCH_COORDINATOR_AGENT,
-        tools: [
-          ...(RESEARCH_COORDINATOR_AGENT.tools ?? []),
-          "verify_with_gate",
-          "note_constraint",
-        ],
         body: (RESEARCH_COORDINATOR_AGENT.body ?? "").replace(
           "5. REPORT.",
-          `${RESEARCH_GATE_STEP(opts.maxLoopAttempts)}5. REPORT.`,
+          `${RESEARCH_GATE_NOTE}5. REPORT.`,
         ),
       }
     : RESEARCH_COORDINATOR_AGENT
