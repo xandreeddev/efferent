@@ -7,11 +7,15 @@ import type { AgentDefinition } from "../entities/AgentDefinition.js"
 import type { Scope } from "../entities/Scope.js"
 import { ApprovalAllowAllLive } from "../ports/Approval.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+import { ConversationStore } from "../ports/ConversationStore.js"
+import type { DeliverableVerdict } from "../entities/Distillation.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
+import { SettingsStore } from "../ports/SettingsStore.js"
 import { Shell } from "../ports/Shell.js"
 import { TerminalSession } from "../ports/TerminalSession.js"
-import { Verifier } from "../ports/Verifier.js"
+import { type GateInput, Verifier } from "../ports/Verifier.js"
+import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { WebSearch } from "../ports/WebSearch.js"
 
 /** Stub Verifier for the scope-runtime handler layer (these tests never call the
@@ -672,6 +676,227 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
     expect(inbox.length).toBeGreaterThan(0)
     expect(inbox.some((m) => m.content.includes("[interrupted — run did not finish]"))).toBe(true)
     expect(inbox[0]?.content.startsWith("failed:")).toBe(true)
+  })
+})
+
+// --- the STRUCTURAL coordinator gate (B-1): a LEAD gates its own subtree -------
+
+describe("runSpawnedAgent — a coordinator structurally gates its subtree before returning", () => {
+  // A tree store that, for the FIRST spawned node (the coordinator), synthesizes
+  // one finished CHILD on `listTree` — standing in for a worker the coordinator
+  // spawned (a stubbed model can't trigger the real spawn side-effect). So the
+  // lead's `settleChildren` finds a deliverable and the gate fires over it.
+  const leadTreeStore = () => {
+    const entries = new Map<string, Entry>()
+    let firstId: string | undefined
+    const childId = crypto.randomUUID() as ContextNodeId
+    const layer = Layer.succeed(
+      ContextTreeStore,
+      ContextTreeStore.of({
+        spawn: (input) =>
+          Effect.sync(() => {
+            const id = crypto.randomUUID() as ContextNodeId
+            if (firstId === undefined) firstId = id // the coordinator (first spawn)
+            entries.set(id, {
+              node: {
+                id,
+                parentId: input.parentId,
+                rootConversationId: input.rootConversationId,
+                edgeKind: input.edgeKind,
+                folder: input.folder,
+                displayRoot: input.displayRoot,
+                seed: input.seed,
+                seedMessageCount: input.seedMessages.length,
+                status: "running",
+                filesChanged: [],
+                createdAt: Date.now(),
+              },
+              messages: [...input.seedMessages],
+            })
+            return id
+          }),
+        append: (id, msg) => Effect.sync(() => void entries.get(id)?.messages.push(msg)),
+        listMessages: (id) => Effect.sync(() => entries.get(id)?.messages ?? []),
+        recordReturn: (id, result) =>
+          Effect.sync(() => {
+            const e = entries.get(id)
+            if (e === undefined) return
+            e.node = {
+              ...e.node,
+              status: result.status,
+              returnSummary: result.summary,
+              filesChanged: result.filesChanged,
+              endedAt: Date.now(),
+            }
+          }),
+        get: (id) => Effect.sync(() => entries.get(id)!.node),
+        // Real nodes + the synthetic worker child (once the coordinator exists),
+        // built fresh each call so its parentId points at the coordinator.
+        listTree: () =>
+          Effect.sync(() => {
+            const real = [...entries.values()].map((e) => e.node)
+            if (firstId === undefined) return real
+            const child: AgentContextNode = {
+              id: childId,
+              parentId: firstId as ContextNodeId,
+              rootConversationId: null,
+              edgeKind: "spawned",
+              folder: "/tmp/ws/pkg",
+              displayRoot: "/tmp/ws",
+              seed: { kind: "task", preview: "worker" },
+              status: "ok",
+              filesChanged: ["worker.ts"],
+              returnSummary: "did the work",
+              createdAt: Date.now(),
+            }
+            return [...real, child]
+          }),
+        drop: (id) => Effect.sync(() => void entries.delete(id)),
+      }),
+    )
+    return { entries, layer, coordinatorId: () => firstId }
+  }
+
+  const finishingModel = Layer.succeed(
+    LanguageModel.LanguageModel,
+    LanguageModel.LanguageModel.of({
+      generateText: () =>
+        Effect.succeed({ content: [], text: "coordinated", finishReason: "stop", usage: undefined }),
+      generateObject: () => Effect.die("unused"),
+      streamText: () => Effect.die("unused"),
+    } as never),
+  )
+
+  // A Verifier whose `gate` returns a scripted sequence (clamped to the last),
+  // recording each call — so we can prove it fired and drove a retry.
+  const recordingVerifier = (verdicts: ReadonlyArray<DeliverableVerdict>, calls: GateInput[]) =>
+    Layer.succeed(
+      Verifier,
+      Verifier.of({
+        refute: () => Effect.die("unused"),
+        gate: (input: GateInput) =>
+          Effect.sync(() => {
+            calls.push(input)
+            return verdicts[Math.min(calls.length - 1, verdicts.length - 1)]!
+          }),
+      } as never),
+    )
+
+  // autoLoop on (gate runs), autoDistill OFF (keep the test off the distiller).
+  const settingsStub = Layer.succeed(
+    SettingsStore,
+    SettingsStore.of({
+      get: () => Effect.succeed({ autoLoop: true, autoDistill: false, maxLoopAttempts: 3 }),
+    } as never),
+  )
+
+  const coordinator: AgentDefinition = {
+    name: "coordinator",
+    description: "the lead",
+    body: "drive the team",
+    sourcePath: "<test>",
+  }
+
+  const portsFor = (calls: GateInput[], verdicts: ReadonlyArray<DeliverableVerdict>) =>
+    Layer.mergeAll(
+      Layer.succeed(
+        FileSystem,
+        FileSystem.of({
+          read: () => Effect.fail({ _tag: "FileNotFound" }),
+          write: () => Effect.void,
+          list: () => Effect.succeed([]),
+          glob: () => Effect.succeed([]),
+        } as never),
+      ),
+      Layer.succeed(
+        Shell,
+        Shell.of({ exec: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0 }) } as never),
+      ),
+      Layer.succeed(Http, Http.of({ get: () => Effect.die("unused") } as never)),
+      Layer.succeed(WebSearch, WebSearch.of({ search: () => Effect.die("unused") } as never)),
+      // Present (the gate's R names them) but never called when autoDistill is off.
+      Layer.succeed(ConversationStore, ConversationStore.of({} as never)),
+      Layer.succeed(UtilityLlm, UtilityLlm.of({} as never)),
+      ApprovalAllowAllLive,
+      terminalStub,
+      settingsStub,
+      recordingVerifier(verdicts, calls),
+      finishingModel,
+    )
+
+  const spawnCoordinatorAndWait = (
+    calls: GateInput[],
+    verdicts: ReadonlyArray<DeliverableVerdict>,
+  ) => {
+    const { entries, layer, coordinatorId } = leadTreeStore()
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [coordinator],
+      tools: [],
+      allowBash: true,
+    })
+    const rootConvId = crypto.randomUUID() as ConversationId
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      // The orchestrator routes work to a LEAD (coordinator-only rail allows it).
+      const spawned = yield* call("run_agent", {
+        name: "the lead",
+        folder: "pkg",
+        task: "build the feature across the codebase",
+        agent: "coordinator",
+      })
+      const handle = spawned.result as { nodeId: string; status: string }
+      expect(handle.status).toBe("running")
+      // Poll until the lead's background fiber records its terminal return — the
+      // gate (and any retry) has fully run by then (it precedes recordReturn).
+      yield* Effect.gen(function* () {
+        while (entries.get(handle.nodeId)?.node.status === "running") {
+          yield* Effect.sleep("10 millis")
+        }
+      }).pipe(Effect.timeout("5 seconds"))
+      return { node: entries.get(handle.nodeId)!.node, coordinatorId: coordinatorId() }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, portsFor(calls, verdicts))),
+      Effect.locally(RunContextRef, {
+        rootConversationId: rootConvId,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    return Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "8 seconds", onTimeout: () => "coordinator gate HUNG" }),
+      ) as unknown as Effect.Effect<{ node: AgentContextNode; coordinatorId: string | undefined }>,
+    )
+  }
+
+  test("a `sound` verdict → the lead gates ONCE over its child's files, then returns ok", async () => {
+    const calls: GateInput[] = []
+    const { node } = await spawnCoordinatorAndWait(calls, [{ verdict: "sound", reasons: [] }])
+    expect(node.status).toBe("ok")
+    // The gate fired exactly once, judging the worker child's changed files.
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.filesChanged).toEqual(["worker.ts"])
+    expect(calls[0]?.task).toBe("build the feature across the codebase")
+  })
+
+  test("`needs_work` then `sound` → the lead RE-FIRES (gate runs twice) before returning ok", async () => {
+    const calls: GateInput[] = []
+    const { node } = await spawnCoordinatorAndWait(calls, [
+      { verdict: "needs_work", reasons: ["the limiter is missing tests"] },
+      { verdict: "sound", reasons: [] },
+    ])
+    expect(node.status).toBe("ok")
+    // Round 1 rejected → retry → round 2 accepted: the structural retry loop ran.
+    expect(calls).toHaveLength(2)
   })
 })
 

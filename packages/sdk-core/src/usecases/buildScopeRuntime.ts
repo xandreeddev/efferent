@@ -8,13 +8,17 @@ import type { Prompt } from "../entities/Prompt.js"
 import type { Scope } from "../entities/Scope.js"
 import { Approval, bashRuleKey } from "../ports/Approval.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+import { ConversationStore } from "../ports/ConversationStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
+import { SettingsStore } from "../ports/SettingsStore.js"
 import { Shell } from "../ports/Shell.js"
+import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
+import { gateOnce, settleChildren } from "./gateLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef, type RunContext } from "./runContext.js"
@@ -69,7 +73,19 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    FileSystem | Shell | Http | WebSearch | ContextTreeStore | Approval | Verifier
+    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports)
+    // are the per-coordinator structural gate's needs: it reads gate settings,
+    // distills lessons, and grounds the Opus verifier — see `runSpawnedAgent`.
+    | FileSystem
+    | Shell
+    | Http
+    | WebSearch
+    | ContextTreeStore
+    | ConversationStore
+    | SettingsStore
+    | UtilityLlm
+    | Approval
+    | Verifier
   >
   /**
    * **Human-driven resume**: continue an existing context-tree node in place —
@@ -947,6 +963,10 @@ interface RunSpawnedArgs<R> {
   /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
    *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
   readonly definition?: AgentDefinition
+  /** This run is a LEAD (coordinator / research-coordinator) — so it owns the
+   *  structural gate over its own subtree (gate → distill → re-fire its workers)
+   *  before returning to the root. Set from the resolved `agent` name at spawn. */
+  readonly isLead?: boolean
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -1150,34 +1170,95 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         : {}),
     }
 
-    const outcome = yield* runAgentLoop({
-      system,
-      messages: seedMessages,
-      toolkit: useToolkit,
-      maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
-      ...(args.toolResultMaxChars !== undefined
-        ? { toolResultMaxChars: args.toolResultMaxChars }
-        : {}),
-      hooks: innerHooks,
-    }).pipe(
-      Effect.provide(useLayer),
-      Effect.locally(RunContextRef, childRc),
-      Effect.map((r) => ({ ok: true as const, r })),
-      Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
-      // Name the sub-agent subtree in the trace waterfall. Its turns /
-      // llm.generate / tool spans already nest beneath via Effect span
-      // propagation; this labels the whole branch with its node + folder so
-      // parallel fan-outs are distinguishable.
-      Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
-        attributes: {
-          ...agentSpanAttributes("subagent", args.rootConversationId),
-          "agent.subagent.node_id": nodeId,
-          "agent.subagent.depth": args.parentDepth + 1,
-          "agent.subagent.folder": folder,
-          "agent.subagent.title": label,
-        },
-      }),
-    )
+    // One attempt of the scoped loop over a message buffer — reused verbatim for
+    // the first run AND each coordinator gate-driven retry, so a retry inherits
+    // the same toolkit, layer, pinned models (via childRc), and compaction policy.
+    const runAttempt = (msgs: ReadonlyArray<AgentMessage>) =>
+      runAgentLoop({
+        system,
+        messages: msgs,
+        toolkit: useToolkit,
+        maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
+        ...(args.toolResultMaxChars !== undefined
+          ? { toolResultMaxChars: args.toolResultMaxChars }
+          : {}),
+        hooks: innerHooks,
+      }).pipe(
+        Effect.provide(useLayer),
+        Effect.locally(RunContextRef, childRc),
+        Effect.map((r) => ({ ok: true as const, r })),
+        Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
+        // Name the sub-agent subtree in the trace waterfall. Its turns /
+        // llm.generate / tool spans already nest beneath via Effect span
+        // propagation; this labels the whole branch with its node + folder so
+        // parallel fan-outs are distinguishable.
+        Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
+          attributes: {
+            ...agentSpanAttributes("subagent", args.rootConversationId),
+            "agent.subagent.node_id": nodeId,
+            "agent.subagent.depth": args.parentDepth + 1,
+            "agent.subagent.folder": folder,
+            "agent.subagent.title": label,
+          },
+        }),
+      )
+
+    // Persist a produced tail to the node the moment it lands (incremental, so a
+    // gate retry's earlier attempts are durable; the terminal recordReturn no
+    // longer bulk-appends).
+    const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(nodeId, m))
+
+    let outcome = yield* runAttempt(seedMessages)
+    if (outcome.ok) yield* persistNodeTail(outcome.r.newTail)
+
+    // ===== Structural coordinator gate (the per-domain self-improving loop) =====
+    // A LEAD (coordinator / research-coordinator) owns the gate over ITS subtree:
+    // when its run finishes, the deliverable is judged by the SAME independent
+    // Opus gate the root uses (`gateOnce`) BEFORE the lead returns — so a
+    // coordinator can't ship unverified work, and the root's final aggregate gate
+    // (`driveLoop`) sees an already-gated piece. Mandatory + fail-closed, gated by
+    // `autoLoop` (default on). Skipped for plain workers and when there's no root
+    // conversation to ground the gate/distill. `needs_work` → LEARN → re-fire the
+    // workers with the reasons → re-gate, to `maxLoopAttempts`.
+    if (args.isLead === true && outcome.ok && args.rootConversationId !== null) {
+      const rootConvId = args.rootConversationId
+      const settings = yield* (yield* SettingsStore).get()
+      if (settings.autoLoop !== false) {
+        const maxAttempts = settings.maxLoopAttempts ?? 3
+        let attempt = 1
+        let current = outcome.r
+        while (true) {
+          // The lead's deliverable = its workers' aggregate work (a coordinator
+          // writes nothing itself), so the gate judges its CHILD nodes.
+          const freshChildren = yield* settleChildren(rootConvId, nodeId)
+          const step = yield* gateOnce({
+            task,
+            summary: current.finalText,
+            repoDir: args.displayRoot,
+            conversationId: rootConvId,
+            freshNodes: freshChildren,
+            attempt,
+            maxAttempts,
+            autoDistill: settings.autoDistill !== false,
+          })
+          if (step.kind === "no-subagents") break
+          if (hooks?.onGateResult) yield* hooks.onGateResult(step.event)
+          if (step.kind !== "retry") break
+
+          // RE-FIRE — feed the gate's reasons back so the lead fixes them, then
+          // re-gate. A failed re-run keeps the prior result; the root gate still
+          // catches what's left.
+          yield* persistNodeTail([step.feedback])
+          const next = yield* runAttempt([...current.messages, step.feedback])
+          if (!next.ok) break
+          yield* persistNodeTail(next.r.newTail)
+          current = next.r
+          attempt++
+        }
+        outcome = { ok: true as const, r: current }
+      }
+    }
 
     const files = yield* Ref.get(filesRef)
     const usage = yield* Ref.get(usageRef)
@@ -1192,7 +1273,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
 
     if (outcome.ok) {
-      for (const m of outcome.r.newTail) yield* store.append(nodeId, m)
+      // The produced tail was already persisted incrementally above (first
+      // attempt + each gate retry) — don't bulk-append it again here.
       // A budget OR step-cap stop is an *ok* outcome with a partial result —
       // say so, so the parent model (and the human in :tree) knows not to
       // trust it as complete. Without the step marker, a capped run's
@@ -1417,6 +1499,10 @@ const makeRunAgentHandler =
       // `role` is only the model TIER (general | code) — never a specific model.
       const baseDefinition = yield* resolveAgent(opts.agents, agent)
       const definition = applyInlineDefinition(baseDefinition, { instructions, tools, role })
+      // A spawn of a LEAD role owns the structural gate over its subtree. Keyed
+      // off the requested `agent` name (the canonical signal — `definition.name`
+      // collapses to `"inline"` once instructions/tools are layered on).
+      const isLead = agent !== undefined && LEAD_AGENT_NAMES.includes(agent)
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -1444,6 +1530,7 @@ const makeRunAgentHandler =
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
+            ...(isLead ? { isLead: true } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -1483,6 +1570,7 @@ const makeRunAgentHandler =
           store, shell, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
+          ...(isLead ? { isLead: true } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -1513,6 +1601,7 @@ const makeRunAgentHandler =
         store, shell, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
+        ...(isLead ? { isLead: true } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
