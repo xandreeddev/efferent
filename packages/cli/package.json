@@ -1,6 +1,6 @@
 {
   "name": "efferent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "efferent — an agent runtime on Effect.ts + Bun. One CLI to run agents: an interactive TUI, headless (print/json/rpc), or a persistent per-workspace daemon that thin clients attach to. Multi-provider (Anthropic/OpenAI/Gemini), persistent sub-agent context tree, cache-safe context compression, zero-config SQLite history. No React.",
   "license": "MIT",
   "author": "Xand Reed <xandreed@proton.me>",

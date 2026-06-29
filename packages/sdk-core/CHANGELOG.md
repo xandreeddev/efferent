@@ -1,5 +1,25 @@
 # @xandreed/sdk-core
 
+## 0.3.0
+
+### Minor Changes
+
+- 434194b: Gate every swarm objective through the Opus verifier (mandatory, fail-closed).
+
+  When a run uses sub-agents, the finished objective is now validated by the independent Opus gate in `driveLoop` — the single use case every mode funnels through — before the run is done, regardless of whether a coordinator was used or the model called a tool. On `needs_work` the loop distills reusable lessons, re-runs with the gate's reasons fed back, and re-gates, up to `maxLoopAttempts`; an unavailable verifier is surfaced loudly (a new `gate` `AgentEvent`), never a silent pass. Gated by the existing `autoLoop` setting (default on); a run with no sub-agents is unaffected.
+
+- f03483e: Make the root a pure orchestrator: it routes all real work to a coordinator / research-coordinator and does no coding/research itself.
+
+  - The root prompt is rewritten to "always orchestrate" (route code → coordinator, investigation → research-coordinator; only pure conversation stays direct).
+  - Mechanical guarantees (a prompt rule alone didn't hold): when a fleet lead is in the roster the root gets an **orchestration-only toolkit** (no read/edit/write/grep/Bash/search tools), and its `run_agent` is **hard-railed** so it can only delegate to a coordinator/research-coordinator (no bare-worker spawn), with a runtime backstop.
+  - New `orchestration` eval + `orchestratorPurityScore` assert the root delegates through a lead and keeps its hands off the work (the harness now captures root-only `rootTools` / `rootSpawnedAgents`).
+
+- f03483e: Make the gate structural at both tiers, remove the gate tools, and add a Claude-style fleet UX.
+
+  - **Coordinator-tier gate is now structural.** Each lead (coordinator / research-coordinator) validates its own subtree through the same independent Opus gate the root uses — extracted into one shared `gateOnce` helper (`core/usecases/gateLoop.ts`) used by both `driveLoop` (root aggregate pass) and `runSpawnedAgent` (per-lead, before it returns). On `needs_work` it distills + re-runs the lead's loop with the gate's reasons, to `maxLoopAttempts`. Gating no longer depends on the model remembering to call a tool.
+  - **Gate tools removed.** Because gating/distilling/retrying is fully structural, `verify_with_gate` and `note_constraint` are gone from the root's orchestration toolkit and the coordinator/research-coordinator toolsets (defs + handlers deleted). The coordinator prompts drop the manual `GATE → LEARN → RETRY` phase; `autoLoop` only shapes whether DELIVER is gate-aware. The architect role stays as the in-fleet, fine-grained per-piece review.
+  - **Claude-style fleet UX.** The running loader now shows `waiting for N agents` once the root's turn ends but background agents run on (not a dead idle screen), and each top-level lead gets one clean `✓ name — summary` / `✗ …` completion line on the root rail when it finishes. Sub-agent tool calls still never leak to the main rail (they route to the fleet tree / node log).
+
 ## 0.2.0
 
 ### Minor Changes
