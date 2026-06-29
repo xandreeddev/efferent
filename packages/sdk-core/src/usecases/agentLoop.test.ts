@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Exit } from "effect"
 import { LanguageModel, type Toolkit } from "@effect/ai"
-import { recoverMalformedToolCalls, runAgentLoop, safeArgsSummary } from "./agentLoop.js"
+import {
+  DEGENERATE_LOOP_STOP,
+  DEGENERATE_REPEAT_NUDGE,
+  recoverMalformedToolCalls,
+  runAgentLoop,
+  safeArgsSummary,
+} from "./agentLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 
@@ -134,6 +140,104 @@ describe("runAgentLoop malformed-response recovery", () => {
     // the loop gives up ON the 3rd, so the model is called exactly 3 times.
     expect(Exit.isFailure(exit)).toBe(true)
     expect(model.calls()).toBe(3)
+  })
+})
+
+/**
+ * A model that returns the SAME tool call + result on every turn — the
+ * degenerate spin (live: a root that called `list_scheduled_jobs` ~30× before
+ * doing anything). `finishReason: "tool-calls"` keeps the loop wanting more, so
+ * without the breaker it would run all the way to `maxSteps`.
+ */
+const repeatingToolModel = (toolName: string, args: unknown, result: unknown) => {
+  let calls = 0
+  const service = {
+    generateText: () => {
+      calls++
+      return Effect.succeed({
+        content: [
+          { type: "tool-call", id: `c${calls}`, name: toolName, params: args },
+          { type: "tool-result", id: `c${calls}`, name: toolName, isFailure: false, result },
+        ],
+        text: "",
+        finishReason: "tool-calls",
+        usage: undefined,
+      })
+    },
+    generateObject: () => Effect.die("unused"),
+    streamText: () => Effect.die("unused"),
+  }
+  return { layer: LanguageModel.LanguageModel.of(service as never), calls: () => calls }
+}
+
+describe("runAgentLoop degenerate-repeat circuit breaker", () => {
+  it("breaks a same-call/same-result spin instead of running to maxSteps", async () => {
+    const model = repeatingToolModel("list_scheduled_jobs", { folder: "." }, { jobs: [] })
+    const res = await Effect.runPromise(
+      runAgentLoop({ system: "s", messages: seed, toolkit: oneToolToolkit, maxSteps: 50 }).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, model.layer),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    // Stopped FAR short of maxSteps (50) — broke within a handful of repeats.
+    expect(model.calls()).toBeLessThanOrEqual(7)
+    expect(model.calls()).toBeGreaterThanOrEqual(5)
+    // The run is marked as a loop-stop, not a real answer.
+    expect(res.finalText).toBe(DEGENERATE_LOOP_STOP)
+    // The one-shot nudge was injected before the break (a chance to recover).
+    const userMsgs = res.messages.filter((m) => m.role === "user")
+    expect(userMsgs.some((m) => String(m.content) === DEGENERATE_REPEAT_NUDGE)).toBe(true)
+  })
+
+  it("does NOT break a legitimate repeated POLL (wait_for_agents) — that runs to maxSteps", async () => {
+    // Re-polling wait_for_agents with the same args while the fleet is still
+    // running is CORRECT, not a spin — it must never trip the breaker.
+    const model = repeatingToolModel(
+      "wait_for_agents",
+      { nodeIds: ["n"] },
+      { agents: [{ status: "running" }], allDone: false },
+    )
+    const res = await Effect.runPromise(
+      runAgentLoop({ system: "s", messages: seed, toolkit: oneToolToolkit, maxSteps: 8 }).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, model.layer),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    // Ran the full budget — the poll was never mistaken for a degenerate loop.
+    expect(model.calls()).toBe(8)
+    expect(res.finalText).not.toBe(DEGENERATE_LOOP_STOP)
+  })
+
+  it("does NOT break when each call returns DIFFERENT results (real progress)", async () => {
+    // Same tool, but a new result every turn → different signature → no trip.
+    let n = 0
+    const service = {
+      generateText: () => {
+        n++
+        return Effect.succeed({
+          content: [
+            { type: "tool-call", id: `c${n}`, name: "read_file", params: { path: "a.ts" } },
+            { type: "tool-result", id: `c${n}`, name: "read_file", isFailure: false, result: { line: n } },
+          ],
+          text: "",
+          finishReason: n >= 6 ? "stop" : "tool-calls",
+          usage: undefined,
+        })
+      },
+      generateObject: () => Effect.die("unused"),
+      streamText: () => Effect.die("unused"),
+    }
+    const res = await Effect.runPromise(
+      runAgentLoop({
+        system: "s",
+        messages: seed,
+        toolkit: oneToolToolkit,
+        maxSteps: 50,
+      }).pipe(
+        Effect.provideService(LanguageModel.LanguageModel, LanguageModel.LanguageModel.of(service as never)),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    // Ran to its natural stop at 6 turns, never loop-stopped.
+    expect(n).toBe(6)
+    expect(res.finalText).not.toBe(DEGENERATE_LOOP_STOP)
   })
 })
 

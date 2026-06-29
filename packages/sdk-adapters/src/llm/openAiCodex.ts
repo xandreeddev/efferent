@@ -1,5 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response, Tool, type Toolkit } from "@effect/ai"
 import { Chunk, Effect, Option, Stream } from "effect"
+import { LLM_REQUEST_TIMEOUT_MS } from "./retry.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 export const OPENAI_CODEX_RESPONSES_URL = `${OPENAI_CODEX_API_URL}/responses`
@@ -256,7 +257,7 @@ const postResponse = (
             "x-codex-installation-id": auth.installationId,
           },
         }),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       }),
     catch: (e) => aiUnknown("createResponseStream", e),
   }).pipe(

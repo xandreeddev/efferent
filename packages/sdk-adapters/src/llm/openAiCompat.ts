@@ -1,5 +1,6 @@
 import { AiError, LanguageModel, Prompt, Response, Tool } from "@effect/ai"
 import { Chunk, Effect, Option, Stream } from "effect"
+import { LLM_REQUEST_TIMEOUT_MS } from "./retry.js"
 
 /**
  * A generic OpenAI-compatible chat-completions `LanguageModel` over raw
@@ -244,7 +245,7 @@ const postChat = (
         method: "POST",
         headers: headers(apiKey),
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       }),
     catch: (e) => aiUnknown(moduleName, "chatCompletion", e),
   }).pipe(
