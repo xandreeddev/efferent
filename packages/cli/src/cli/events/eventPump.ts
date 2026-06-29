@@ -1,7 +1,7 @@
 import { Effect, Queue } from "effect"
 import { batch } from "solid-js"
 import type { AgentEvent } from "../../events.js"
-import { reduceAgentState } from "../presentation/agentState.js"
+import { fleetCompletionLine, reduceAgentState } from "../presentation/agentState.js"
 import { messageKey } from "../presentation/conversation.js"
 import {
   describeToolCall,
@@ -63,6 +63,10 @@ export const makeEventReducer = (
   const previewToolIds = new Map<string, string[]>() // matchKey → FIFO of node-log pill ids
   const toolNodeId = new Map<string, string>() // matchKey → the node a logged tool pill belongs to
   const subTreeByNode = new Map<string, number>() // context-node id → Activity tree id
+  // Top-level sub-agents (the leads the root orchestrates — spawned with no
+  // parent node). Only these get a clean completion line on the root rail;
+  // deeper workers are the lead's concern and surface in the fleet tree only.
+  const topLevelNodes = new Set<string>()
   let toolSeq = 0
 
   /** Prevent unbounded growth when end events are lost (crashes, transport drops). */
@@ -265,6 +269,15 @@ export const makeEventReducer = (
         // pill — the run isn't the parent conversation's doing.
         const anchor =
           event.parentNodeId !== undefined ? subTreeByNode.get(event.parentNodeId) : undefined
+        // No parent node ⇒ a TOP-LEVEL lead the root spawned — it earns a clean
+        // completion line on the root rail when it finishes (see subagent_end).
+        if (event.nodeId !== undefined && event.parentNodeId === undefined) {
+          topLevelNodes.add(event.nodeId)
+          if (topLevelNodes.size > MAX_SUBTREE_SIZE) {
+            const oldest = topLevelNodes.values().next().value
+            if (oldest !== undefined) topLevelNodes.delete(oldest)
+          }
+        }
         const startTree = (t: ExecutionTree): ExecutionTree => {
           const { tree, id } = treeSubAgentStartKeyed(
             t,
@@ -334,6 +347,16 @@ export const makeEventReducer = (
         )
         if (ownTreeId !== undefined) {
           store.setTree((t) => treeSubAgentEndKeyed(t, ownTreeId, event.ok, nodeDetail, now))
+        }
+        // ONE clean completion line on the root rail for a TOP-LEVEL lead — the
+        // Claude-style "● agent finished" update. Deeper workers stay in the tree
+        // only. The orchestrator still reports the full result in its own voice
+        // (onTopLevelDone auto-resume); this is the quick progress beat alongside.
+        if (event.nodeId !== undefined && topLevelNodes.delete(event.nodeId)) {
+          store.pushBlock({
+            kind: "info",
+            text: fleetCompletionLine(event.name, event.ok, event.summary),
+          })
         }
         return
       }

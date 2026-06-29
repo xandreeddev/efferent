@@ -8,13 +8,17 @@ import type { Prompt } from "../entities/Prompt.js"
 import type { Scope } from "../entities/Scope.js"
 import { Approval, bashRuleKey } from "../ports/Approval.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+import { ConversationStore } from "../ports/ConversationStore.js"
 import { FileSystem } from "../ports/FileSystem.js"
 import { Http } from "../ports/Http.js"
+import { SettingsStore } from "../ports/SettingsStore.js"
 import { Shell } from "../ports/Shell.js"
+import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
+import { gateOnce, settleChildren } from "./gateLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef, type RunContext } from "./runContext.js"
@@ -47,7 +51,6 @@ import {
   removeJob,
   type ScheduledJob,
 } from "./schedule.js"
-import { persistArtifact } from "./persistArtifact.js"
 import { buildStalenessBrief, getWorkspaceRef } from "./staleness.js"
 import { getScopePromptBody } from "./discoverScopeTree.js"
 import { type ToolDefinition, shellEscape, substituteTemplate } from "./loadTools.js"
@@ -69,7 +72,19 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    FileSystem | Shell | Http | WebSearch | ContextTreeStore | Approval | Verifier
+    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports)
+    // are the per-coordinator structural gate's needs: it reads gate settings,
+    // distills lessons, and grounds the Opus verifier — see `runSpawnedAgent`.
+    | FileSystem
+    | Shell
+    | Http
+    | WebSearch
+    | ContextTreeStore
+    | ConversationStore
+    | SettingsStore
+    | UtilityLlm
+    | Approval
+    | Verifier
   >
   /**
    * **Human-driven resume**: continue an existing context-tree node in place —
@@ -339,6 +354,54 @@ const RunAgentTool = Tool.make("run_agent", {
 })
 
 /**
+ * The ROOT's delegation tool — a **hard-railed `run_agent`**. Same tool name and
+ * handler as {@link RunAgentTool}, but the schema only lets the root express a
+ * spawn to a fleet LEAD (coordinator / research-coordinator) with a brief — no
+ * `role`, no inline `instructions`/`tools`, no bare-worker spawn, no resume. The
+ * lead owns staffing, sequencing, the gate, and the retry loop. A prompt rule
+ * alone didn't hold (the root still spawned direct `role:code` workers, live-
+ * verified), so this is the mechanical guarantee at the SCHEMA level: the root
+ * literally cannot express anything but "delegate to a coordinator".
+ */
+const RootDelegateTool = Tool.make("run_agent", {
+  description:
+    "Delegate this objective to a fleet LEAD — the only way you, the orchestrator, get work done. " +
+    'Returns { nodeId, name, status: "running" } IMMEDIATELY (non-blocking); gather the result with ' +
+    "wait_for_agents or from your inbox at a turn boundary, then relay/aggregate it. The lead plans, " +
+    "staffs and SEQUENCES the specialists (one writer at a time), validates with the architect, and " +
+    "GATES the deliverable before returning — you never spawn, sequence, or gate workers yourself, and " +
+    "you never read or edit files yourself. Write a COMPLETE brief in 'task'.",
+  parameters: {
+    name: Schema.String.annotations({
+      description: "Short display name for this delegation (2-5 words, task-specific).",
+    }),
+    folder: Schema.String.annotations({
+      description: "Folder to scope the work to, relative to the workspace root (e.g. 'packages/cli').",
+    }),
+    task: Schema.String.annotations({
+      description:
+        "The full brief for the lead — it starts fresh and sees ONLY this text (not your conversation or " +
+        "the user's request). Include: OBJECTIVE (what to achieve, concretely), CONTEXT (background, " +
+        "constraints, prior decisions/findings — paste them, don't reference them), OUTPUT (what to deliver " +
+        "or report), and BOUNDARIES (what's out of scope).",
+    }),
+    agent: Schema.Literal("coordinator", "research-coordinator").annotations({
+      description:
+        "Which lead to route to — the ONLY delegation choice: 'coordinator' for ANY code work (it staffs + " +
+        "sequences coders, validates with the architect, and gates the result); 'research-coordinator' for " +
+        "investigation (it fans out parallel read-only researchers and synthesizes one sourced answer).",
+    }),
+  },
+  success: Schema.Struct({
+    nodeId: ContextNodeId,
+    name: Schema.String,
+    status: Schema.Literal("running"),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
  * The non-blocking **gather** tool. A coordinator spawns its fleet (each
  * `run_agent` returns immediately) and then calls this to wait for results
  * WITHOUT freezing: it blocks only the caller's own fiber, interruptibly, and
@@ -545,61 +608,12 @@ const CancelScheduledJobTool = Tool.make("cancel_scheduled_job", {
   failureMode: "return",
 })
 
-/**
- * The self-improving loop tools (docs/self-improving-loop.md): the coordinator's
- * **validate → learn → retry** verbs. `verify_with_gate` is the independent Opus
- * deliverable gate (the final sign-off); `note_constraint` persists a lesson the
- * gate's feedback taught so it auto-loads on the retry and on future runs.
- */
-const VerifyWithGateTool = Tool.make("verify_with_gate", {
-  description:
-    "Submit the swarm's finished work to the INDEPENDENT Opus validation gate — the final sign-off before you call a task done. " +
-    "Opus reads the changed files in the repo and validates the deliverable against the task; it ONLY judges, it never edits. " +
-    "Returns a verdict: 'sound' (ship it), 'needs_work' (the reasons are concrete fixes — apply them, retry the failed pieces, then call this again), or 'blocked'. " +
-    "If 'available' is false the gate could not run (no claude binary / error) — fall back to the architect's verdict and do NOT block the task. " +
-    "Call this ONCE per attempt, after the architect has approved the pieces. Stop and report when it returns 'sound' or you hit the attempt cap.",
-  parameters: {
-    task: Schema.String.annotations({
-      description: "The ORIGINAL task the swarm was given — the spec to validate against.",
-    }),
-    summary: Schema.String.annotations({
-      description: "What the swarm did — the deliverable to validate (be concrete).",
-    }),
-    files: Schema.optional(
-      Schema.String.annotations({
-        description: "Comma/newline-separated list of files changed, so the gate focuses there.",
-      }),
-    ),
-  },
-  success: Schema.Struct({
-    available: Schema.Boolean,
-    verdict: Schema.String,
-    reasons: Schema.Array(Schema.String),
-  }),
-  failure: Failure,
-  failureMode: "return",
-})
-
-const NoteConstraintTool = Tool.make("note_constraint", {
-  description:
-    "Record a LEARNED hard rule so it's never re-learned — typically a lesson from a gate failure ('the work was wrong because X → always do Y'). " +
-    "Writes a delta-item bullet to .efferent/CONSTRAINTS.md, which auto-loads into every future run. " +
-    "State it as a GENERAL, reusable instruction ('when editing a schema, also update its decoder'), never a one-off about this exact file. Use it right before you retry, then put the same lesson in the retry brief.",
-  parameters: {
-    rule: Schema.String.annotations({
-      description: "The reusable rule, one line — what to always do / never do.",
-    }),
-  },
-  success: Schema.Struct({ saved: Schema.Boolean, path: Schema.String }),
-  failure: Failure,
-  failureMode: "return",
-})
-
-/** `[name, def]` entries for the loop tools — for the toolkit + role allowlists. */
-const loopToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
-  ["verify_with_gate", VerifyWithGateTool],
-  ["note_constraint", NoteConstraintTool],
-]
+// The self-improving loop is now STRUCTURAL, not a set of tools the model drives:
+// the mandatory Opus gate runs in `driveLoop` (root) and in `runSpawnedAgent` for
+// any lead (coordinator-tier, see `gateOnce`), and the distiller runs the same way
+// — gate → learn → re-fire happens automatically, with no `verify_with_gate` /
+// `note_constraint` tool to remember. So those tools (and their handlers) are gone;
+// the architect role stays as the in-fleet, fine-grained per-piece review.
 
 /** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
@@ -621,10 +635,47 @@ const genericToolkit = Toolkit.make(
   ...([
     ...baseToolDefs,
     ...commsToolEntries.map(([, d]) => d),
-    ...loopToolEntries.map(([, d]) => d),
     RunAgentTool,
   ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/**
+ * The **orchestration-only** toolkit — what the ROOT gets when a fleet is in the
+ * roster (always-orchestrate mode). It carries delegation + gather + comms +
+ * planning + scheduling, and **deliberately NO work tools** (no
+ * read/edit/write/grep/glob/ls/Bash/search/fetch/sessions) and **no gate tools**
+ * (gating is structural — `driveLoop` runs the Opus gate after the root's run, so
+ * the root never drives it). A prompt rule alone didn't stop the root from reading
+ * and editing itself (live-verified), so this is the mechanical guarantee: if the
+ * root *can't* call a work tool, it *must* route the work to a lead. Handlers still
+ * exist in the full layer — this only narrows what the model is offered, so the
+ * subset's handler layer agrees.
+ */
+const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "run_agent",
+  "wait_for_agents",
+  "send_message",
+  "blackboard_post",
+  "blackboard_read",
+  "update_plan",
+  "schedule",
+  "list_scheduled_jobs",
+  "cancel_scheduled_job",
+])
+
+const orchestrationToolkit = Toolkit.make(
+  ...((Object.entries(genericToolkit.tools) as Array<[string, Tool.Any]>)
+    // Drop the full `run_agent` — the root gets the hard-railed RootDelegateTool
+    // (same name) instead, so it can only delegate to a lead.
+    .filter(([name]) => ORCHESTRATION_TOOL_NAMES.has(name) && name !== "run_agent")
+    .map(([, d]) => d) as ReadonlyArray<Tool.Any>),
+  RootDelegateTool,
+) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/** The fleet LEADS the root may delegate to. The root (depth 0, orchestrate mode)
+ *  must route through one of these — never a bare-role worker — so the lead owns
+ *  staffing, sequencing, and the gate. */
+const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
 
 /**
  * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
@@ -644,7 +695,6 @@ export const roleToolEntries = (
   const all: ReadonlyArray<readonly [string, Tool.Any]> = [
     ...base,
     ...commsToolEntries,
-    ...loopToolEntries,
     ["run_agent", RunAgentTool] as const,
   ]
   return all.filter(([name]) => allow.has(name))
@@ -861,6 +911,10 @@ interface RunSpawnedArgs<R> {
   /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
    *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
   readonly definition?: AgentDefinition
+  /** This run is a LEAD (coordinator / research-coordinator) — so it owns the
+   *  structural gate over its own subtree (gate → distill → re-fire its workers)
+   *  before returning to the root. Set from the resolved `agent` name at spawn. */
+  readonly isLead?: boolean
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -1064,34 +1118,95 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         : {}),
     }
 
-    const outcome = yield* runAgentLoop({
-      system,
-      messages: seedMessages,
-      toolkit: useToolkit,
-      maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
-      ...(args.toolResultMaxChars !== undefined
-        ? { toolResultMaxChars: args.toolResultMaxChars }
-        : {}),
-      hooks: innerHooks,
-    }).pipe(
-      Effect.provide(useLayer),
-      Effect.locally(RunContextRef, childRc),
-      Effect.map((r) => ({ ok: true as const, r })),
-      Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
-      // Name the sub-agent subtree in the trace waterfall. Its turns /
-      // llm.generate / tool spans already nest beneath via Effect span
-      // propagation; this labels the whole branch with its node + folder so
-      // parallel fan-outs are distinguishable.
-      Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
-        attributes: {
-          ...agentSpanAttributes("subagent", args.rootConversationId),
-          "agent.subagent.node_id": nodeId,
-          "agent.subagent.depth": args.parentDepth + 1,
-          "agent.subagent.folder": folder,
-          "agent.subagent.title": label,
-        },
-      }),
-    )
+    // One attempt of the scoped loop over a message buffer — reused verbatim for
+    // the first run AND each coordinator gate-driven retry, so a retry inherits
+    // the same toolkit, layer, pinned models (via childRc), and compaction policy.
+    const runAttempt = (msgs: ReadonlyArray<AgentMessage>) =>
+      runAgentLoop({
+        system,
+        messages: msgs,
+        toolkit: useToolkit,
+        maxSteps: args.maxSteps ?? opts.maxSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS,
+        ...(args.toolResultMaxChars !== undefined
+          ? { toolResultMaxChars: args.toolResultMaxChars }
+          : {}),
+        hooks: innerHooks,
+      }).pipe(
+        Effect.provide(useLayer),
+        Effect.locally(RunContextRef, childRc),
+        Effect.map((r) => ({ ok: true as const, r })),
+        Effect.catchAll((e) => Effect.succeed({ ok: false as const, e })),
+        // Name the sub-agent subtree in the trace waterfall. Its turns /
+        // llm.generate / tool spans already nest beneath via Effect span
+        // propagation; this labels the whole branch with its node + folder so
+        // parallel fan-outs are distinguishable.
+        Effect.withSpan(subagentSpanName(label, folder, args.parentDepth + 1), {
+          attributes: {
+            ...agentSpanAttributes("subagent", args.rootConversationId),
+            "agent.subagent.node_id": nodeId,
+            "agent.subagent.depth": args.parentDepth + 1,
+            "agent.subagent.folder": folder,
+            "agent.subagent.title": label,
+          },
+        }),
+      )
+
+    // Persist a produced tail to the node the moment it lands (incremental, so a
+    // gate retry's earlier attempts are durable; the terminal recordReturn no
+    // longer bulk-appends).
+    const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(nodeId, m))
+
+    let outcome = yield* runAttempt(seedMessages)
+    if (outcome.ok) yield* persistNodeTail(outcome.r.newTail)
+
+    // ===== Structural coordinator gate (the per-domain self-improving loop) =====
+    // A LEAD (coordinator / research-coordinator) owns the gate over ITS subtree:
+    // when its run finishes, the deliverable is judged by the SAME independent
+    // Opus gate the root uses (`gateOnce`) BEFORE the lead returns — so a
+    // coordinator can't ship unverified work, and the root's final aggregate gate
+    // (`driveLoop`) sees an already-gated piece. Mandatory + fail-closed, gated by
+    // `autoLoop` (default on). Skipped for plain workers and when there's no root
+    // conversation to ground the gate/distill. `needs_work` → LEARN → re-fire the
+    // workers with the reasons → re-gate, to `maxLoopAttempts`.
+    if (args.isLead === true && outcome.ok && args.rootConversationId !== null) {
+      const rootConvId = args.rootConversationId
+      const settings = yield* (yield* SettingsStore).get()
+      if (settings.autoLoop !== false) {
+        const maxAttempts = settings.maxLoopAttempts ?? 3
+        let attempt = 1
+        let current = outcome.r
+        while (true) {
+          // The lead's deliverable = its workers' aggregate work (a coordinator
+          // writes nothing itself), so the gate judges its CHILD nodes.
+          const freshChildren = yield* settleChildren(rootConvId, nodeId)
+          const step = yield* gateOnce({
+            task,
+            summary: current.finalText,
+            repoDir: args.displayRoot,
+            conversationId: rootConvId,
+            freshNodes: freshChildren,
+            attempt,
+            maxAttempts,
+            autoDistill: settings.autoDistill !== false,
+          })
+          if (step.kind === "no-subagents") break
+          if (hooks?.onGateResult) yield* hooks.onGateResult(step.event)
+          if (step.kind !== "retry") break
+
+          // RE-FIRE — feed the gate's reasons back so the lead fixes them, then
+          // re-gate. A failed re-run keeps the prior result; the root gate still
+          // catches what's left.
+          yield* persistNodeTail([step.feedback])
+          const next = yield* runAttempt([...current.messages, step.feedback])
+          if (!next.ok) break
+          yield* persistNodeTail(next.r.newTail)
+          current = next.r
+          attempt++
+        }
+        outcome = { ok: true as const, r: current }
+      }
+    }
 
     const files = yield* Ref.get(filesRef)
     const usage = yield* Ref.get(usageRef)
@@ -1106,7 +1221,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
 
     if (outcome.ok) {
-      for (const m of outcome.r.newTail) yield* store.append(nodeId, m)
+      // The produced tail was already persisted incrementally above (first
+      // attempt + each gate retry) — don't bulk-append it again here.
       // A budget OR step-cap stop is an *ok* outcome with a partial result —
       // say so, so the parent model (and the human in :tree) knows not to
       // trust it as complete. Without the step marker, a capped run's
@@ -1300,6 +1416,29 @@ const makeRunAgentHandler =
       const title =
         typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
 
+      // Coordinator-only routing: when the ROOT (depth 0) is an orchestrator (a
+      // lead is in the roster), it may only spawn a LEAD — never a bare-role
+      // worker. The lead owns staffing, sequencing, the gate, and the retry loop.
+      // (A resume/branch of an existing node is exempt — that targets a node, not
+      // a fresh worker.) Model-readable failure so it re-routes through a coordinator.
+      const hasLead = opts.agents.some((a) => LEAD_AGENT_NAMES.includes(a.name))
+      const isResume = seedFromNode !== undefined && seedFromNode.trim().length > 0
+      if (
+        rc.depth === 0 &&
+        hasLead &&
+        !isResume &&
+        (agent === undefined || !LEAD_AGENT_NAMES.includes(agent))
+      ) {
+        return yield* Effect.fail({
+          error: "RouteThroughCoordinator",
+          message:
+            "You are the orchestrator — route work through a lead, not a bare worker. " +
+            'Spawn `run_agent({ agent: "coordinator", folder, task })` for code work, or ' +
+            '`run_agent({ agent: "research-coordinator", folder, task })` for investigation, ' +
+            "and let IT staff and sequence the specialists. Re-issue this spawn with `agent` set to a coordinator.",
+        })
+      }
+
       // Resolve the requested role (if any). A named-but-unknown agent is a
       // model-facing failure — silently ignoring a requested role hides a real
       // mistake (mirrors read_skill's UnknownSkill). Absent ⇒ generic spawn.
@@ -1308,6 +1447,10 @@ const makeRunAgentHandler =
       // `role` is only the model TIER (general | code) — never a specific model.
       const baseDefinition = yield* resolveAgent(opts.agents, agent)
       const definition = applyInlineDefinition(baseDefinition, { instructions, tools, role })
+      // A spawn of a LEAD role owns the structural gate over its subtree. Keyed
+      // off the requested `agent` name (the canonical signal — `definition.name`
+      // collapses to `"inline"` once instructions/tools are layered on).
+      const isLead = agent !== undefined && LEAD_AGENT_NAMES.includes(agent)
 
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
@@ -1335,6 +1478,7 @@ const makeRunAgentHandler =
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
+            ...(isLead ? { isLead: true } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -1374,6 +1518,7 @@ const makeRunAgentHandler =
           store, shell, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
+          ...(isLead ? { isLead: true } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -1404,6 +1549,7 @@ const makeRunAgentHandler =
         store, shell, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
+        ...(isLead ? { isLead: true } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
@@ -1434,63 +1580,7 @@ const buildGenericHandlers = <R>(
     const http = yield* Http
     const fs = yield* FileSystem
     const approval = yield* Approval
-    const verifier = yield* Verifier
     const run_agent = makeRunAgentHandler(store, shell, bus, binding.displayRoot, opts, hooks)
-
-    // The Opus deliverable gate (docs/self-improving-loop.md). FAIL-SOFT: a missing
-    // `claude` / gate error is returned as `available: false` so the coordinator
-    // falls back to the architect's verdict and the user's task never blocks.
-    const verify_with_gate = (params: {
-      readonly task: string
-      readonly summary: string
-      readonly files?: string
-    }) =>
-      verifier
-        .gate({
-          task: params.task,
-          summary: params.summary,
-          filesChanged:
-            params.files !== undefined && params.files.trim().length > 0
-              ? params.files
-                  .split(/[,\n]/)
-                  .map((f) => f.trim())
-                  .filter((f) => f.length > 0)
-              : [],
-          repoDir: binding.displayRoot,
-        })
-        .pipe(
-          Effect.map((v) => ({
-            available: true,
-            verdict: v.verdict,
-            reasons: v.reasons,
-          })),
-          Effect.catchAll((e) =>
-            Effect.succeed({
-              available: false,
-              verdict: "unavailable",
-              reasons: [e.message],
-            }),
-          ),
-        )
-
-    // Persist a learned constraint as a delta item (the Curator path). Reuses the
-    // workspace `fs` so the handler's requirement set stays clean.
-    const note_constraint = (params: { readonly rule: string }) =>
-      persistArtifact(binding.displayRoot, {
-        kind: "constraint",
-        // The coordinator learns this mid-task from the gate's feedback — project-scoped
-        // (this repo's work) + inferred (the loop deduced it, not a human correction).
-        scope: "project",
-        source: "inferred",
-        name: params.rule.slice(0, 50),
-        description: params.rule,
-        body: params.rule,
-        evidence: { conversationId: "in-loop", positions: [] },
-      }).pipe(
-        Effect.provideService(FileSystem, fs),
-        Effect.map((r) => ({ saved: true, path: r.path })),
-        Effect.catchAll((e) => Effect.fail(toFailure(e))),
-      )
 
     // Cron as a tool: the orchestrator schedules its own follow-up / recurring
     // work. Validates the expression, writes the job to the shared cron list
@@ -1715,8 +1805,6 @@ const buildGenericHandlers = <R>(
       schedule,
       list_scheduled_jobs,
       cancel_scheduled_job,
-      verify_with_gate,
-      note_constraint,
     } as never
   })
 
@@ -1742,8 +1830,33 @@ export const buildScopeRuntime = <R = never>(
   // on by send_message / blackboard_* and drained into each agent's context.
   // The daemon's `onBusEvent` sink mirrors messages onto the event ledger.
   const bus = makeAgentBus(opts.onBusEvent)
-  const handlerLayer = genericToolkit.toLayer(
-    buildGenericHandlers(binding, opts, hooks, bus),
+
+  // When a fleet lead is in the roster the ROOT is a pure orchestrator: it gets
+  // the orchestration-only toolkit (no work tools), so it CANNOT read/edit/grep
+  // itself and must route work to a coordinator/research-coordinator. With no
+  // fleet present the root keeps the full toolkit (the direct fast path for a
+  // single-model, no-fleet setup). Sub-agents are unaffected — they build their
+  // own per-spawn toolkit from `roleToolEntries`.
+  const orchestrate = opts.agents.some(
+    (a) => a.name === "coordinator" || a.name === "research-coordinator",
+  )
+  const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus)
+  const rootToolkit = orchestrate ? orchestrationToolkit : genericToolkit
+  const handlerLayer = (
+    orchestrate
+      ? orchestrationToolkit.toLayer(
+          rootHandlers.pipe(
+            Effect.map(
+              (full) =>
+                Object.fromEntries(
+                  Object.entries(full as Record<string, unknown>).filter(([k]) =>
+                    ORCHESTRATION_TOOL_NAMES.has(k),
+                  ),
+                ) as never,
+            ),
+          ),
+        )
+      : genericToolkit.toLayer(rootHandlers)
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
@@ -1866,5 +1979,5 @@ export const buildScopeRuntime = <R = never>(
       ScopeRuntime["spawnAgent"]
     >
 
-  return { toolkit: genericToolkit, handlerLayer, resumeNode, spawnAgent, bus }
+  return { toolkit: rootToolkit, handlerLayer, resumeNode, spawnAgent, bus }
 }

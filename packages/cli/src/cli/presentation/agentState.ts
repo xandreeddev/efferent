@@ -137,6 +137,23 @@ export const reduceAgentState = (
   }
 }
 
+/**
+ * The running-loader line (bottom chrome, above the input). While the root's OWN
+ * turn is in flight it's `thinking` (with the elapsed clock). When the root turn
+ * has ended but background agents are still running, it becomes
+ * `waiting for N agents` — so "it just works, we keep waiting" is visible instead
+ * of a dead idle screen. Returns undefined when there's nothing to show (idle +
+ * empty fleet). Pure — the view binds the spinner/colour around it.
+ */
+export const loaderState = (
+  s: AgentState,
+): { readonly label: string; readonly showElapsed: boolean } | undefined => {
+  if (s.phase !== "idle") return { label: "thinking", showElapsed: true }
+  const n = s.fleet.length
+  if (n > 0) return { label: `waiting for ${n} agent${n === 1 ? "" : "s"}`, showElapsed: false }
+  return undefined
+}
+
 /** The header's phase text: `idle` · `thinking` · the running tool's label. */
 export const agentStateLabel = (s: AgentState): string => {
   switch (s.phase) {
@@ -156,6 +173,27 @@ export const formatElapsed = (ms: number): string => {
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
   return `${m}m${s - m * 60}s`
+}
+
+/**
+ * A single clean completion line for a TOP-LEVEL agent the root orchestrated —
+ * the Claude-style "● agent finished" update the user asked for. `✓ name — <one
+ * line>` on success, `✗ name — <reason>` on failure; the summary is reduced to
+ * its first non-empty line and clipped, so the rail gets ONE tidy update per
+ * lead, never a wall of the agent's full prose (that streams in the orchestrator's
+ * own voice + the fleet tree). Workers (non-top-level) are the lead's concern and
+ * surface only in the tree, so the root rail stays uncluttered. Pure + testable;
+ * matches the `gate` rail line's glyph convention.
+ */
+export const fleetCompletionLine = (name: string, ok: boolean, summary: string): string => {
+  const mark = ok ? "✓" : "✗"
+  const firstLine =
+    summary
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ""
+  const clipped = firstLine.length > 100 ? `${firstLine.slice(0, 99)}…` : firstLine
+  return clipped.length > 0 ? `${mark} ${name} — ${clipped}` : `${mark} ${name}`
 }
 
 /** The fleet chip: `2 agents · haiku, audit` (names clipped to fit). */

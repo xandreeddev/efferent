@@ -116,7 +116,7 @@ export const Settings = Schema.Struct({
   autoLoop: Schema.optional(
     Schema.Boolean.annotations({
       description:
-        "The self-improving task loop: when the fleet handles a substantial task, the coordinator submits the deliverable to the independent Opus gate, learns from a 'needs work' verdict (note_constraint), and retries until it passes (capped). Unset → on; false → the coordinator just reports the architect's verdict (today's single-cycle behavior).",
+        "The self-improving task loop (structural): when a run used sub-agents, the runtime submits the deliverable to the independent Opus gate at BOTH tiers — each coordinator's subtree before it returns, and the whole run at the root — learns from a 'needs work' verdict (distill), and re-runs with the gate's reasons until it passes (capped by maxLoopAttempts). Unset → on; false → no gate, the coordinator just reports the architect's verdict (single-cycle behavior).",
     }),
   ),
   autoDistill: Schema.optional(

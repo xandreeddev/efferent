@@ -95,25 +95,23 @@ Protocol:
 /** The roster footer, shared by both variants. */
 const COORD_ROSTER = `Your roster: frontend (UI/client) · backend (server/data/API) · qa (tests) · product (clarify requirements) · implementer (generic coder) · architect (read-only reviewer). When a job needs a specialist no role covers, define one INLINE: run_agent({ folder, task, instructions: "<persona + approach>", tools?: [...] }) — give a read-only tools allowlist when it only investigates.`
 
-/** Phases 6–7 when the self-improving loop is ON: the independent Opus gate +
- *  learn + retry. `maxAttempts` is the soft round cap (budget + depth are hard). */
-const coordGateSteps = (maxAttempts: number) => `6. GATE → LEARN → RETRY (the final sign-off — this is how you know it's actually good). Once the architect has approved the pieces, submit the WHOLE deliverable to the INDEPENDENT Opus gate: verify_with_gate({ task: "<the original task you were given>", summary: "<what the team built>", files: "<comma-separated files changed>" }). It only validates — it never edits — and it is the LAST WORD: you may not declare the task done until it returns "sound".
-   - "sound" → done; go to DELIVER.
-   - "needs_work" → its \`reasons\` are concrete, fixable problems, and they are exactly what to learn from. For each reason that's a reusable lesson, call note_constraint({ rule: "<general rule, e.g. 'when editing a schema, update its decoder in the same change'>" }) so it auto-loads on the retry AND on future tasks. THEN re-run the failed pieces — paste those exact reasons into the coder's brief so the retry is SMARTER than the last attempt (never just re-send the same instructions). Re-validate with the architect, then call verify_with_gate again.
-   - "blocked" → stop and report what's missing; don't guess.
-   - If \`available\` is false the gate couldn't run (no claude / error) — fall back to the architect's verdict and proceed; never block the user's task on a missing gate.
-   - CAP: at most ${maxAttempts} gate round${maxAttempts === 1 ? "" : "s"}. If it still isn't "sound" after that, DELIVER what you have and say plainly it didn't fully pass, listing the remaining reasons. Never loop forever — your token budget and spawn depth are hard ceilings regardless.
-
-7. DELIVER. Report to your caller: a short summary of what changed, the files touched, the gate verdict (and the architect's), and any constraints you learned this run. If something is partial or blocked, say so plainly with evidence — don't dress it up.`
+/** Phase 6 when the self-improving loop is ON. The gate is STRUCTURAL now — it
+ *  runs automatically the moment the coordinator returns (no `verify_with_gate`
+ *  tool to call, no manual loop): on a `needs_work` verdict the runtime feeds the
+ *  reasons back and re-runs the coordinator. So the prompt's job is just to make
+ *  it deliver HONESTLY and expect that feedback-driven retry. */
+const COORD_DELIVER_GATED = `6. DELIVER — then expect the gate. When the architect has approved the pieces, assemble the result, run the project's checks if you can, and report to your caller: a short summary of what changed, the files touched, and the architect's verdict. Your finished deliverable is then validated by an INDEPENDENT Opus gate before it's accepted — automatically, the moment you return; you don't call it. If it comes back "needs work", you'll be re-run with the gate's concrete reasons and the failed pieces to fix (the retry and the learning are automatic). So deliver HONESTLY: never claim done what isn't, and if something is partial or blocked, say so plainly with evidence — don't dress it up.`
 
 /** Phase 6 when the loop is OFF: deliver on the architect's verdict (no Opus gate). */
 const COORD_DELIVER_PLAIN = `6. DELIVER. When the pieces pass the architect's review, assemble the result, run the project's checks if you can, and report to your caller: a short summary of what changed, the files touched, and the architect's verdict. If something is partial or blocked, say so plainly with evidence — don't dress it up.`
 
 /**
- * Build the coordinator definition for the current settings. `autoLoop` adds the
- * Opus gate + learn/retry phase (and the `verify_with_gate`/`note_constraint`
- * tools); off → the architect-only single cycle. `maxLoopAttempts` is injected as
- * the gate-round cap so `:set maxLoopAttempts` is reflected in the prompt.
+ * Build the coordinator definition for the current settings. The Opus gate +
+ * learn + retry are STRUCTURAL (run by the runtime when the coordinator returns —
+ * see `buildScopeRuntime`/`gateOnce`), NOT tools the model drives, so the
+ * coordinator carries no `verify_with_gate`/`note_constraint`. `autoLoop` only
+ * shapes the DELIVER phase (gate-aware vs the plain architect-only cycle);
+ * `maxLoopAttempts` is the runtime's cap, not the prompt's.
  */
 export const coordinatorAgent = (
   opts: { readonly autoLoop: boolean; readonly maxLoopAttempts: number } = {
@@ -135,12 +133,11 @@ export const coordinatorAgent = (
     "update_plan",
     "run_agent",
     "wait_for_agents",
-    ...(opts.autoLoop ? (["verify_with_gate", "note_constraint"] as const) : []),
     ...COMMS_TOOLS,
   ],
   body: [
     COORD_PHASES_1_TO_5,
-    opts.autoLoop ? coordGateSteps(opts.maxLoopAttempts) : COORD_DELIVER_PLAIN,
+    opts.autoLoop ? COORD_DELIVER_GATED : COORD_DELIVER_PLAIN,
     COORD_ROSTER,
   ].join("\n\n"),
   sourcePath: "<builtin>",

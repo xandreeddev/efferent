@@ -1,25 +1,18 @@
 import type { Tool } from "@effect/ai"
-import { Clock, Effect, Either } from "effect"
-import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
+import { Effect } from "effect"
+import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentGateEvent, AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
-import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
-import { Verifier } from "../ports/Verifier.js"
 import { recordError } from "../telemetry/metrics.js"
 import { agentSpanAttributes, runSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
-import { runAutoDistill } from "./autoDistill.js"
+import { gateOnce, listTreeSafe, settleNewNodes } from "./gateLoop.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
 import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
 import type { AgentConfig } from "./agentConfig.js"
-
-/** Max rounds the swarm gate's settle-wait polls for the run's new sub-agent
- *  nodes to reach a terminal status (2s each → ~30s ceiling) before it judges
- *  the objective on whatever has finished. */
-const GATE_SETTLE_MAX_ROUNDS = 15
 
 interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
   readonly config: AgentConfig<Tools>
@@ -34,38 +27,6 @@ interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
   readonly mission: string | undefined
 }
 
-/** The tree for a conversation, or `[]` on any store error (best-effort: a tree
- *  read must never break the gate). */
-const listTreeSafe = (
-  conversationId: ConversationId,
-): Effect.Effect<ReadonlyArray<AgentContextNode>, never, ContextTreeStore> =>
-  Effect.gen(function* () {
-    const ct = yield* ContextTreeStore
-    return yield* ct
-      .listTree(conversationId)
-      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AgentContextNode>)))
-  })
-
-/** Poll (bounded) until the run's NEW sub-agent nodes have all left `running`, so
- *  the gate judges the finished objective rather than a mid-flight one. Returns
- *  the fresh nodes (those not present before the run). */
-const settleNewNodes = (
-  conversationId: ConversationId,
-  beforeIds: ReadonlySet<ContextNodeId>,
-): Effect.Effect<ReadonlyArray<AgentContextNode>, never, ContextTreeStore> =>
-  Effect.gen(function* () {
-    let round = 0
-    while (true) {
-      const all = yield* listTreeSafe(conversationId)
-      const fresh = all.filter((n) => !beforeIds.has(n.id))
-      if (!fresh.some((n) => n.status === "running") || round >= GATE_SETTLE_MAX_ROUNDS) {
-        return fresh
-      }
-      yield* Clock.sleep("2 seconds")
-      round++
-    }
-  })
-
 /** Emit a swarm-gate verdict through the caller's hook, if any (no-op otherwise). */
 const emitGate = <Tools extends Record<string, Tool.Any>, R>(
   input: DriveLoopInput<Tools, R>,
@@ -78,7 +39,6 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const settingsStore = yield* SettingsStore
-    const verifier = yield* Verifier
     const settings = yield* settingsStore.get()
 
     yield* store.ensure(input.conversationId, input.workspaceDir)
@@ -182,69 +142,29 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
       const repoDir = input.workspaceDir
       const maxAttempts = settings.maxLoopAttempts ?? 3
       let attempt = 1
-      let gating = true
-      while (gating) {
+      while (true) {
         const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
-        // No sub-agents this run → the gate is the swarm case only; nothing to do.
-        if (freshNodes.length === 0) break
+        // The SAME gate the coordinator tier uses (`gateOnce`) — one decision in
+        // one place. The root pass aggregates the WHOLE run's sub-agent subtree
+        // (every node this run created), the final sign-off over already-gated
+        // coordinator pieces.
+        const step = yield* gateOnce({
+          task: input.mission ?? input.promptLabel,
+          summary: result.finalText,
+          repoDir,
+          conversationId: input.conversationId,
+          freshNodes,
+          attempt,
+          maxAttempts,
+          autoDistill: settings.autoDistill !== false,
+        })
+        if (step.kind === "no-subagents") break
+        yield* emitGate(input, step.event)
+        if (step.kind !== "retry") break
 
-        const filesChanged = Array.from(new Set(freshNodes.flatMap((n) => n.filesChanged)))
-        const verdict = yield* verifier
-          .gate({
-            task: input.mission ?? input.promptLabel,
-            summary: result.finalText,
-            filesChanged,
-            repoDir,
-          })
-          .pipe(Effect.either)
-
-        if (Either.isLeft(verdict)) {
-          // No verdict was possible (no `claude` / verifier error). Surface it —
-          // never a silent pass — but don't spin on a broken gate.
-          yield* emitGate(input, {
-            verdict: "unavailable",
-            reasons: [verdict.left.message],
-            attempt,
-            filesChanged,
-          })
-          break
-        }
-
-        const v = verdict.right
-        if (v.verdict === "sound") {
-          yield* emitGate(input, { verdict: "sound", reasons: [], attempt, filesChanged })
-          break
-        }
-
-        // needs_work / blocked — the deliverable is NOT accepted as-is.
-        yield* emitGate(input, { verdict: v.verdict, reasons: v.reasons, attempt, filesChanged })
-        if (v.verdict === "blocked" || attempt >= maxAttempts) {
-          gating = false
-          break
-        }
-
-        // LEARN — mine + Opus-verify reusable skills/memories/constraints from this
-        // failed attempt so they persist for future runs. Fail-soft by construction
-        // (`runAutoDistill` never fails); gated by the same `autoDistill` knob.
-        if (settings.autoDistill !== false) {
-          yield* runAutoDistill({
-            conversationId: input.conversationId,
-            repoDir,
-            existing: [],
-          })
-        }
-
-        // RUN AGAIN — feed the gate's concrete reasons back as the next turn so the
-        // swarm fixes them (not a blind re-send), then re-gate.
-        const feedback: AgentMessage = {
-          role: "user",
-          content:
-            "The independent verifier reviewed the swarm's work and it is NOT acceptable yet. " +
-            "Address each issue below, then the work will be re-checked:\n" +
-            v.reasons.map((r) => `- ${r}`).join("\n"),
-        }
-        yield* persistTail([feedback])
-        result = yield* runOneAttempt([...result.messages, feedback])
+        // RUN AGAIN — feed the gate's reasons back as the next turn, then re-gate.
+        yield* persistTail([step.feedback])
+        result = yield* runOneAttempt([...result.messages, step.feedback])
         attempt++
       }
     }

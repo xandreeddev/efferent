@@ -3,8 +3,10 @@ import type { AgentEvent } from "../../events.js"
 import {
   agentStateForPhase,
   agentStateLabel,
+  fleetCompletionLine,
   fleetLabel,
   idleAgentState,
+  loaderState,
   reduceAgentState,
   submittedAgentState,
   type AgentState,
@@ -104,6 +106,47 @@ describe("agentState — the live state machine", () => {
     expect(afterDrain.fleet).toEqual([])
     expect(fleetLabel(afterDrain)).toBeUndefined()
     expect(agentStateLabel(idleAgentState)).toBe("idle")
+  })
+
+  test("loaderState: thinking while the root runs, 'waiting for N agents' while the fleet runs on, hidden when idle", () => {
+    // Root's own turn in flight → thinking + the elapsed clock.
+    expect(loaderState(submittedAgentState(1000))).toEqual({ label: "thinking", showElapsed: true })
+
+    // Root turn ended (idle) but background agents run on → the waiting status,
+    // no elapsed (there's no single root clock for the fleet).
+    const waiting: AgentState = {
+      phase: "idle",
+      since: 1000,
+      openToolCount: 0,
+      fleet: [{ nodeId: "n1", name: "a" }, { nodeId: "n2", name: "b" }],
+    }
+    expect(loaderState(waiting)).toEqual({ label: "waiting for 2 agents", showElapsed: false })
+    expect(loaderState({ ...waiting, fleet: [{ nodeId: "n1", name: "a" }] })).toEqual({
+      label: "waiting for 1 agent",
+      showElapsed: false,
+    })
+
+    // Idle + empty fleet → nothing to show (the loader hides).
+    expect(loaderState(idleAgentState)).toBeUndefined()
+  })
+
+  test("fleetCompletionLine: one tidy ✓/✗ line, summary reduced to its first non-empty line and clipped", () => {
+    expect(fleetCompletionLine("backend", true, "added a timeout wrapper")).toBe(
+      "✓ backend — added a timeout wrapper",
+    )
+    // Failure → ✗.
+    expect(fleetCompletionLine("qa", false, "tests still red")).toBe("✗ qa — tests still red")
+    // Multi-line summary → just the first non-empty line (no wall of prose).
+    expect(fleetCompletionLine("research", true, "\n\nLibraries compared.\nMore detail…")).toBe(
+      "✓ research — Libraries compared.",
+    )
+    // No summary → name only.
+    expect(fleetCompletionLine("lead", true, "   ")).toBe("✓ lead")
+    // Over-long first line is clipped with an ellipsis.
+    const long = "x".repeat(200)
+    const out = fleetCompletionLine("lead", true, long)
+    expect(out.endsWith("…")).toBe(true)
+    expect(out.length).toBeLessThan(120)
   })
 
   test("a new turn settles any dangling root tools (interrupt-safety)", () => {
