@@ -139,9 +139,15 @@ const RESEARCH_FORBIDDEN_TOOLS: ReadonlySet<string> = new Set([
 /**
  * Guard for Fix 3 — a research investigation must stay READ-ONLY across the whole
  * fleet. Even when the prompt says "find AND fix", a research-coordinator
- * investigates and recommends; it must not write code or spawn a coder. Scores 1
- * when the fleet-wide tool trajectory has zero mutating tools, 0 otherwise. Only
+ * investigates and recommends; it must not write code or spawn a coder. Only
  * checked when `expected.researchReadOnly === true`.
+ *
+ * NOT VACUOUS: a run that never delegated (no fleet ran) trivially has no writes,
+ * but it didn't EXERCISE the read-only constraint — scoring it 1 would be a false
+ * pass (the failure mode we actually hit live). So the guard scores 1 ONLY when
+ * the fleet ran AND wrote nothing; no-delegation scores 0 with a clear detail, so
+ * the property is never claimed without being tested. (Routing is scored
+ * separately by `routingScore`.)
  */
 export const researchReadOnlyScore = <
   I,
@@ -153,9 +159,15 @@ export const researchReadOnlyScore = <
   score: ({ output, expected }) =>
     Effect.sync(() => {
       if (expected.researchReadOnly !== true) return 1
+      if (!output.trajectory.delegated) {
+        return {
+          score: 0,
+          detail: "no delegation — the read-only constraint was never exercised (not a vacuous pass)",
+        }
+      }
       const mutated = output.tools.filter((t) => RESEARCH_FORBIDDEN_TOOLS.has(t))
       return mutated.length === 0
-        ? { score: 1, detail: "no writes in the research fleet" }
+        ? { score: 1, detail: "fleet ran and wrote nothing" }
         : { score: 0, detail: `research fleet used mutating tools: ${mutated.join(", ")}` }
     }),
 })
