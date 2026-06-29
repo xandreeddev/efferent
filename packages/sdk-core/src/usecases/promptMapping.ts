@@ -58,28 +58,40 @@ type AnyPart = {
  * a call and its result share the synthesized id and the assistant
  * tool-call ↔ tool-result pairing the loop relies on stays valid.
  *
- * MUTATES the parts in place (they are this turn's fresh response objects, not
- * shared) so every downstream read of `content` sees the same id. A non-empty
- * provider id is always left untouched — today's good path is unchanged.
+ * Returns a NEW content array (and a fresh ordinal counter) so the original
+ * array and any tracking state are never mutated. A non-empty provider id is
+ * always left untouched — today's good path is unchanged.
  */
 export const ensureToolCallIds = (
   content: ReadonlyArray<unknown>,
   turnIndex: number,
-): void => {
+): { readonly content: ReadonlyArray<unknown> } => {
   const parts = content as ReadonlyArray<Record<string, unknown>>
+  const out: Array<Record<string, unknown>> = []
   let callOrd = 0
   let resultOrd = 0
   for (const part of parts) {
     const id = part["id"]
     const name = typeof part["name"] === "string" ? (part["name"] as string) : ""
     if (part["type"] === "tool-call") {
-      if (id === undefined || id === "") part["id"] = `${turnIndex}:${name}:${callOrd}`
+      if (id === undefined || id === "") {
+        out.push({ ...part, id: `${turnIndex}:${name}:${callOrd}` })
+      } else {
+        out.push(part)
+      }
       callOrd++
     } else if (part["type"] === "tool-result") {
-      if (id === undefined || id === "") part["id"] = `${turnIndex}:${name}:${resultOrd}`
+      if (id === undefined || id === "") {
+        out.push({ ...part, id: `${turnIndex}:${name}:${resultOrd}` })
+      } else {
+        out.push(part)
+      }
       resultOrd++
+    } else {
+      out.push(part)
     }
   }
+  return { content: out }
 }
 
 const hasKeys = (o: unknown): o is Record<string, unknown> =>

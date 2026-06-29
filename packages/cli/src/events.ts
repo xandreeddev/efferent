@@ -114,6 +114,7 @@ export const makeAgentEventHooks = <R = never>(
       verdict: event.verdict,
       reasons: event.reasons,
       attempt: event.attempt,
+      maxAttempts: event.maxAttempts,
       filesChanged: event.filesChanged,
     }),
   onLlmRetry: (event) =>

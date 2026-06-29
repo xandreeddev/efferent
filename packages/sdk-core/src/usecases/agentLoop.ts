@@ -1,12 +1,10 @@
 import { LanguageModel, Prompt, type Tool, type Toolkit } from "@effect/ai"
-import { Clock, Effect, FiberRef } from "effect"
+import { Clock, Effect, FiberRef, Option } from "effect"
 import { Compression, type CompressionBudget, type CompressionPolicy } from "../entities/Compression.js"
 import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 import { recordError, recordToolCall, recordTurn, usageAttributes } from "../telemetry/metrics.js"
 import { agentSpanAttributes, toolSpanName, turnSpanName } from "../telemetry/spanNames.js"
-import { RunContextRef } from "./runContext.js"
-import { DEFAULT_TOOL_RESULT_MAX_CHARS, Compaction } from "./compaction.js"
 import {
   attachUsageToAssistant,
   ensureToolCallIds,
@@ -17,6 +15,13 @@ import {
   responseToolResults,
   toPromptMessages,
 } from "./promptMapping.js"
+import { RunContextRef } from "./runContext.js"
+import {
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
+  Compaction,
+  estimateTokens,
+  shouldAutoHandoff,
+} from "./compaction.js"
 
 /**
  * Provider-agnostic agent loop on `@effect/ai`. `@effect/ai` resolves the
@@ -59,12 +64,26 @@ export interface RunAgentLoopInput<
    */
   readonly toolResultMaxChars?: number
   /**
+   * Per-tool-call timeout in ms. A tool that exceeds this is killed and its
+   * result becomes a synthetic failure (`ToolTimeout`) so the model sees the
+   * error and can retry. Default {@link DEFAULT_TOOL_TIMEOUT_MS}; 0 disables.
+   */
+  readonly toolTimeoutMs?: number
+  /**
    * The agent's compression policy (moment 1 tail + moment 2 context). When
    * omitted, the loop reads it from `RunContextRef` (so sub-agents inherit the
    * root agent's policy), falling back to `Compaction.default()`. An explicit
    * value here overrides both — handy for direct/test callers.
    */
   readonly compression?: CompressionPolicy
+  /**
+   * Proactive context-window handoff trigger. `contextWindow` is the model's
+   * input-token limit; `autoHandoffPct` is the threshold at which the loop asks
+   * the caller to fold context before generation. Both must be set for the
+   * check to run; omitting them keeps the loop's historical behavior.
+   */
+  readonly contextWindow?: number
+  readonly autoHandoffPct?: number
   /**
    * Persist each turn's appended messages the moment they land (incremental
    * persistence) instead of the caller bulk-appending `newTail` at the very
@@ -80,6 +99,10 @@ export interface RunAgentLoopInput<
 
 /** Tool calls resolved concurrently per step (interruption-safe via Effect). */
 export const DEFAULT_TOOL_CONCURRENCY = 4
+
+/** Default per-tool-call timeout — generous enough for a big compile/test, but
+ *  short enough that a hung tool can't stall a turn forever. 0 disables. */
+export const DEFAULT_TOOL_TIMEOUT_MS = 180_000
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
 
@@ -137,6 +160,20 @@ export const safeResultSummary = (value: unknown, max: number): string => {
     return parts.join("\n")
   }
   return clip(walk(value, 0), max)
+}
+
+const toolTimeoutMessage = (name: unknown, timeoutMs: number): string =>
+  `Tool "${String(name)}" timed out after ${timeoutMs}ms. Consider narrowing the operation (e.g., grep instead of glob, read_file with offset/limit, or break into smaller steps).`
+
+const makeTimeoutFailure = (
+  name: unknown,
+  timeoutMs: number,
+): { isFailure: true; result: { error: "ToolTimeout"; message: string }; encodedResult: { error: "ToolTimeout"; message: string } } => {
+  const failure = {
+    error: "ToolTimeout" as const,
+    message: toolTimeoutMessage(name, timeoutMs),
+  }
+  return { isFailure: true, result: failure, encodedResult: failure }
 }
 
 /**
@@ -219,6 +256,64 @@ export const recoverMalformedToolCalls = <Tools extends Record<string, Tool.Any>
   return { tools: base.tools, handle } as unknown as Toolkit.WithHandler<Tools>
 }
 
+/**
+ * Wrap a toolkit handler with a per-call timeout. If `rawHandle` does not finish
+ * within `timeoutMs`, the call is interrupted and returned as a synthetic
+ * `ToolTimeout` failure result — the model sees the error and can retry.
+ * `timeoutMs = 0` disables the timeout. The timeout is applied BEFORE the
+ * malformed-call recovery so both protections compose.
+ */
+export const wrapToolHandlerWithTimeout = <Tools extends Record<string, Tool.Any>>(
+  base: Toolkit.WithHandler<Tools>,
+  timeoutMs: number,
+  onToolTimeout?: (event: {
+    readonly turnIndex: number
+    readonly toolName: string
+    readonly toolCallId: string
+    readonly timeoutMs: number
+  }) => Effect.Effect<void, never, unknown>,
+  getTurnIndex?: () => number,
+): Toolkit.WithHandler<Tools> => {
+  const rawHandle = base.handle as (
+    name: unknown,
+    params: unknown,
+  ) => Effect.Effect<unknown, unknown, unknown>
+  const effectiveTimeout = timeoutMs > 0 ? timeoutMs : Number.POSITIVE_INFINITY
+  const handle = (name: unknown, params: unknown) => {
+    const call =
+      effectiveTimeout === Number.POSITIVE_INFINITY
+        ? rawHandle(name, params)
+        : rawHandle(name, params).pipe(
+            Effect.timeoutOption(effectiveTimeout),
+            Effect.flatMap((opt) =>
+              Option.match(opt, {
+                onNone: () => Effect.succeed(makeTimeoutFailure(name, timeoutMs)),
+                onSome: (value) => Effect.succeed(value),
+              }),
+            ),
+          )
+    if (onToolTimeout === undefined) return call
+    return call.pipe(
+      Effect.tap((r) => {
+        if (
+          (r as { readonly isFailure?: boolean; readonly result?: { readonly error?: string } } | null)?.isFailure !== true ||
+          (r as { readonly result?: { readonly error?: string } } | null)?.result?.error !== "ToolTimeout"
+        ) {
+          return Effect.void
+        }
+        const toolCallId = (params as { readonly toolCallId?: string } | null)?.toolCallId ?? ""
+        return onToolTimeout({
+          turnIndex: getTurnIndex?.() ?? -1,
+          toolName: String(name),
+          toolCallId,
+          timeoutMs,
+        })
+      }),
+    )
+  }
+  return { tools: base.tools, handle } as unknown as Toolkit.WithHandler<Tools>
+}
+
 export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
   input: RunAgentLoopInput<Tools, R>,
 ) =>
@@ -231,25 +326,33 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     const maxSteps = input.maxSteps ?? 100
     let messages: ReadonlyArray<AgentMessage> = input.messages
     let finalText = ""
-    let turnIndex = 0
+    let nextTurnIndex = 0
     // Everything the loop appends — model responses AND its own synthetic
     // correctives — tracked explicitly so callers persist exactly this,
     // never an index-arithmetic slice of the (transformable) buffer.
     const newTail: AgentMessage[] = []
-
-    // Resolve the toolkit's handler once (it reads the handler Layer from
-    // context), then wrap it so a malformed tool call is fed back as a tool
-    // *result* the model can correct on the next turn — instead of a decode
-    // failure aborting the turn. Handlers are stable across turns, so this is
-    // resolved a single time, not per request.
-    const toolkit = recoverMalformedToolCalls(yield* input.toolkit)
-    const toolNames = Object.keys(toolkit.tools)
 
     // The root conversation id is ambient on `RunContextRef` (seeded by
     // `runAgent`, re-seeded per sub-agent). Stamp it on every turn span so
     // dashboards scope turns to a conversation by a stable attribute, not by
     // the (renamable) span name.
     const runContext = yield* FiberRef.get(RunContextRef)
+
+    // Resolve the toolkit's handler once (it reads the handler Layer from
+    // context), then wrap it so a malformed tool call is fed back as a tool
+    // *result* the model can correct on the next turn — instead of a decode
+    // failure aborting the turn. Handlers are stable across turns, so this is
+    // resolved a single time, not per request.
+    const toolTimeoutMs = input.toolTimeoutMs ?? runContext.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS
+    const toolkit = recoverMalformedToolCalls(
+      wrapToolHandlerWithTimeout(
+        yield* input.toolkit,
+        toolTimeoutMs,
+        hooks?.onToolTimeout,
+        () => nextTurnIndex,
+      ),
+    )
+    const toolNames = Object.keys(toolkit.tools)
 
     // Compression is an agent property: an explicit override on the input wins,
     // else the policy threaded on RunContext (so a sub-agent inherits its root's
@@ -275,7 +378,9 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     let totalOut = 0
     let totalCache = 0
 
-    while (turnIndex < maxSteps) {
+    while (nextTurnIndex < maxSteps) {
+      const turnIndex = nextTurnIndex
+
       // Moment 2 — in-memory whole-context transform before the prompt is built.
       // The agent's policy runs first, then the driver's hook (both respected;
       // neither is persisted). Default policy context is identity (off).
@@ -287,6 +392,32 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       }
       if (hooks?.onTurnStart) {
         yield* hooks.onTurnStart({ turnIndex, messages })
+      }
+
+      const estimatedInputTokens = estimateTokens(
+        messages.reduce(
+          (acc, m) => acc + (typeof m.content === "string" ? m.content.length : 0),
+          0,
+        ),
+      )
+      if (
+        input.contextWindow !== undefined &&
+        input.autoHandoffPct !== undefined &&
+        input.autoHandoffPct > 0 &&
+        shouldAutoHandoff(estimatedInputTokens, input.contextWindow, input.autoHandoffPct)
+      ) {
+        if (hooks?.onProactiveHandoff) {
+          const folded = yield* hooks.onProactiveHandoff({
+            turnIndex,
+            estimatedInputTokens,
+            contextWindow: input.contextWindow,
+            pct: input.autoHandoffPct,
+          })
+          if (folded) {
+            continue
+          }
+        }
+        yield* Effect.logWarning("Context window threshold crossed — consider handoff")
       }
 
       const prompt = Prompt.make([
@@ -350,19 +481,19 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         messages = [...messages, corrective]
         newTail.push(corrective)
         if (input.onTail) yield* input.onTail([corrective])
-        turnIndex++
+        nextTurnIndex++
         continue
       }
       consecutiveMalformed = 0
       const res = outcome.res
 
-      const content = res.content as ReadonlyArray<unknown>
+      let content = res.content as ReadonlyArray<unknown>
       // Mint a deterministic id for any tool call/result the provider returned
-      // WITHOUT one (Gemini does this), in place on the response content BEFORE
-      // it fans out into the persisted tail AND the emitted events — so the live
-      // pump and a later re-projection compute the SAME rail-pill key (no
-      // duplicate / jump-to-end on re-attach). A real provider id is left as-is.
-      ensureToolCallIds(content, turnIndex)
+      // WITHOUT one (Gemini does this) on a fresh copy of the response content
+      // BEFORE it fans out into the persisted tail AND the emitted events — so
+      // the live pump and a later re-projection compute the SAME rail-pill key
+      // (no duplicate / jump-to-end on re-attach). A real provider id is left as-is.
+      content = ensureToolCallIds(content, turnIndex).content
       const rawTail = responseToAgentMessages(content)
       // Moment 1 — the agent's tail compressor runs HERE, the only moment a
       // tool result enters the buffer, so the persisted history and every
@@ -370,7 +501,10 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       // stay warm; nothing is ever rewritten). Hooks below still emit the RAW
       // results, so the human-facing rail shows the full output.
       const budget: CompressionBudget = {
-        maxChars: input.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+        maxChars:
+          input.toolResultMaxChars ??
+          runContext.toolResultMaxChars ??
+          DEFAULT_TOOL_RESULT_MAX_CHARS,
       }
       const compressed = yield* tailCompressor(rawTail, budget)
       const tail = [...compressed.messages]
@@ -456,7 +590,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           ` · ${usage.totalTokens} tok`,
       )
 
-      turnIndex++
+      nextTurnIndex++
 
       const wantsMore = res.finishReason === "tool-calls" && toolCalls.length > 0
       if (!wantsMore) {
@@ -476,7 +610,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // Run-level rollup on the enclosing `agent.run` span (the turn spans have
     // closed, so the current span is the run). Distinct `agent.total_*` keys.
     yield* Effect.annotateCurrentSpan({
-      "agent.turns": turnIndex,
+      "agent.turns": nextTurnIndex,
       "agent.total_input_tokens": totalIn,
       "agent.total_output_tokens": totalOut,
       "agent.total_cache_read_tokens": totalCache,
@@ -488,7 +622,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
     // Exhausted the step cap while the model still asked for tools → the last
     // text is mid-thought, not a final answer. Tell the caller.
-    const stoppedAtMaxSteps = turnIndex >= maxSteps && stillWantedMore
+    const stoppedAtMaxSteps = nextTurnIndex >= maxSteps && stillWantedMore
     return {
       finalText,
       messages,

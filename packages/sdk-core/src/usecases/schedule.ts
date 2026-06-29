@@ -142,6 +142,29 @@ export const markJobRun = (id: string, atMs: number): Effect.Effect<void, never,
     ),
   )
 
+const NIGHTLY_DISTILL_CRON = "0 2 * * *"
+const NIGHTLY_DISTILL_ID = "__nightly_distill"
+
+export const ensureNightlyDistillJob = (
+  cwd: string,
+): Effect.Effect<void, never, FileSystem> =>
+  Effect.gen(function* () {
+    const jobs = yield* loadJobs()
+    const exists = jobs.some((j) => j.id === NIGHTLY_DISTILL_ID && j.cwd === cwd)
+    if (!exists) {
+      yield* addJob({
+        id: NIGHTLY_DISTILL_ID,
+        cron: NIGHTLY_DISTILL_CRON,
+        cwd,
+        folder: ".",
+        prompt:
+          "Run the self-improving distiller over all finished conversations in this workspace. " +
+          "Mine for reusable skills, constraints, and memories. Persist survivors.",
+        createdAt: Date.now(),
+      })
+    }
+  })
+
 /** Parse `:schedule add` arg: `<cron> :: <folder> :: <prompt> [:: <agent>]`. */
 export const parseScheduleArg = (
   arg: string,

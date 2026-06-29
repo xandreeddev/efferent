@@ -72,9 +72,23 @@ export interface AgentAfterToolCallEvent {
   readonly subAgentNodeId?: ContextNodeId
 }
 
+export interface AgentToolTimeoutEvent {
+  readonly turnIndex: number
+  readonly toolName: string
+  readonly toolCallId: string
+  readonly timeoutMs: number
+}
+
 export interface AgentShouldStopEvent {
   readonly turnIndex: number
   readonly finishReason: string
+}
+
+export interface AgentProactiveHandoffEvent {
+  readonly turnIndex: number
+  readonly estimatedInputTokens: number
+  readonly contextWindow: number
+  readonly pct: number
 }
 
 export interface AgentEndEvent {
@@ -160,6 +174,7 @@ export interface AgentGateEvent {
   readonly verdict: "sound" | "needs_work" | "blocked" | "unavailable"
   readonly reasons: ReadonlyArray<string>
   readonly attempt: number
+  readonly maxAttempts: number
   readonly filesChanged: ReadonlyArray<string>
 }
 
@@ -187,11 +202,17 @@ export interface AgentHooks<R = never> {
   readonly onAfterToolCall?: (
     event: AgentAfterToolCallEvent,
   ) => Effect.Effect<void, never, R>
+  readonly onToolTimeout?: (
+    event: AgentToolTimeoutEvent,
+  ) => Effect.Effect<void, never, R>
   readonly onTransformContext?: (
     messages: ReadonlyArray<AgentMessage>,
   ) => Effect.Effect<ReadonlyArray<AgentMessage>, never, R>
   readonly onShouldStopAfterTurn?: (
     event: AgentShouldStopEvent,
+  ) => Effect.Effect<boolean, never, R>
+  readonly onProactiveHandoff?: (
+    event: AgentProactiveHandoffEvent,
   ) => Effect.Effect<boolean, never, R>
   readonly onAgentEnd?: (event: AgentEndEvent) => Effect.Effect<void, never, R>
   readonly onSubAgentStart?: (

@@ -1,6 +1,6 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import { Clock, Effect, FiberRef, Layer, Option, Ref, Schema } from "effect"
 import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
 import type { AgentAfterToolCallEvent, AgentHooks } from "../entities/AgentHooks.js"
 import { type AgentMessage, ConversationId } from "../entities/Conversation.js"
@@ -16,6 +16,7 @@ import { Shell } from "../ports/Shell.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
+import { CounterFeedback } from "../ports/CounterFeedback.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { gateOnce, settleChildren } from "./gateLoop.js"
@@ -1582,6 +1583,129 @@ const buildGenericHandlers = <R>(
     const approval = yield* Approval
     const run_agent = makeRunAgentHandler(store, shell, bus, binding.displayRoot, opts, hooks)
 
+<<<<<<< Updated upstream
+||||||| Stash base
+    // The Opus deliverable gate (docs/self-improving-loop.md). FAIL-SOFT: a missing
+    // `claude` / gate error is returned as `available: false` so the coordinator
+    // falls back to the architect's verdict and the user's task never blocks.
+    const verify_with_gate = (params: {
+      readonly task: string
+      readonly summary: string
+      readonly files?: string
+    }) =>
+      verifier
+        .gate({
+          task: params.task,
+          summary: params.summary,
+          filesChanged:
+            params.files !== undefined && params.files.trim().length > 0
+              ? params.files
+                  .split(/[,\n]/)
+                  .map((f) => f.trim())
+                  .filter((f) => f.length > 0)
+              : [],
+          repoDir: binding.displayRoot,
+        })
+        .pipe(
+          Effect.map((v) => ({
+            available: true,
+            verdict: v.verdict,
+            reasons: v.reasons,
+          })),
+          Effect.catchAll((e) =>
+            Effect.succeed({
+              available: false,
+              verdict: "unavailable",
+              reasons: [e.message],
+            }),
+          ),
+        )
+
+    // Persist a learned constraint as a delta item (the Curator path). Reuses the
+    // workspace `fs` so the handler's requirement set stays clean.
+    const note_constraint = (params: { readonly rule: string }) =>
+      persistArtifact(binding.displayRoot, {
+        kind: "constraint",
+        // The coordinator learns this mid-task from the gate's feedback — project-scoped
+        // (this repo's work) + inferred (the loop deduced it, not a human correction).
+        scope: "project",
+        source: "inferred",
+        name: params.rule.slice(0, 50),
+        description: params.rule,
+        body: params.rule,
+        evidence: { conversationId: "in-loop", positions: [] },
+      }).pipe(
+        Effect.provideService(FileSystem, fs),
+        Effect.map((r) => ({ saved: true, path: r.path })),
+        Effect.catchAll((e) => Effect.fail(toFailure(e))),
+      )
+
+=======
+    // The Opus deliverable gate (docs/self-improving-loop.md). FAIL-SOFT: a missing
+    // `claude` / gate error is returned as `available: false` so the coordinator
+    // falls back to the architect's verdict and the user's task never blocks.
+    const verify_with_gate = (params: {
+      readonly task: string
+      readonly summary: string
+      readonly files?: string
+    }) =>
+      verifier
+        .gate({
+          task: params.task,
+          summary: params.summary,
+          filesChanged:
+            params.files !== undefined && params.files.trim().length > 0
+              ? params.files
+                  .split(/[,\n]/)
+                  .map((f) => f.trim())
+                  .filter((f) => f.length > 0)
+              : [],
+          repoDir: binding.displayRoot,
+        })
+        .pipe(
+          Effect.map((v) => ({
+            available: true,
+            verdict: v.verdict,
+            reasons: v.reasons,
+          })),
+          Effect.catchAll((e) =>
+            Effect.succeed({
+              available: false,
+              verdict: "unavailable",
+              reasons: [e.message],
+            }),
+          ),
+        )
+
+    // Persist a learned constraint as a delta item (the Curator path). Reuses the
+    // workspace `fs` so the handler's requirement set stays clean.
+    const note_constraint = (params: { readonly rule: string }) =>
+      persistArtifact(binding.displayRoot, {
+        kind: "constraint",
+        // The coordinator learns this mid-task from the gate's feedback — project-scoped
+        // (this repo's work) + inferred (the loop deduced it, not a human correction).
+        scope: "project",
+        source: "inferred",
+        name: params.rule.slice(0, 50),
+        description: params.rule,
+        body: params.rule,
+        evidence: { conversationId: "in-loop", positions: [] },
+      }).pipe(
+        Effect.provideService(FileSystem, fs),
+        Effect.tap((r) =>
+          Effect.gen(function* () {
+            const optional = yield* Effect.serviceOption(CounterFeedback)
+            yield* Option.match(optional, {
+              onNone: () => Effect.void,
+              onSome: (counterFeedback) => counterFeedback.recordConstraintNoted(r.name),
+            })
+          }),
+        ),
+        Effect.map((r) => ({ saved: true, path: r.path })),
+        Effect.catchAll((e) => Effect.fail(toFailure(e))),
+      )
+
+>>>>>>> Stashed changes
     // Cron as a tool: the orchestrator schedules its own follow-up / recurring
     // work. Validates the expression, writes the job to the shared cron list
     // (the same one :schedule + the tick read), returns the id.

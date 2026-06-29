@@ -133,6 +133,7 @@ export const AgentEvent = Schema.Union(
     verdict: Schema.Literal("sound", "needs_work", "blocked", "unavailable"),
     reasons: Schema.Array(Schema.String),
     attempt: Schema.Number,
+    maxAttempts: Schema.Number,
     filesChanged: Schema.Array(Schema.String),
   }),
   Schema.Struct({

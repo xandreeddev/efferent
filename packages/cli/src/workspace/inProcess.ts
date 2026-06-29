@@ -48,6 +48,7 @@ import {
 } from "@xandreed/sdk-core"
 import { buildScopeRuntime, inboxToMessages } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
+import { loadConstraintIds } from "../usecases/loadConstraintIds.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
@@ -476,29 +477,33 @@ export const makeInProcessWorkspace = (
           const settings = yield* settingsStore.get()
           if (settings.autoDistill !== false) {
             const cid = fleet.rootCid
-            const existing = [
-              ...deps.skills.map((s) => s.name),
-              ...deps.memory.map((m) => m.name),
-            ]
-            const distillEffect = runAutoDistill({
-              conversationId: cid,
-              repoDir: deps.cwd,
-              globalDir: homedir(),
-              existing,
-            }).pipe(
-              Effect.flatMap((saved) =>
-                saved.length === 0
-                  ? Effect.void
-                  : publish({
-                      type: "learned",
-                      lessons: saved.map((r) => ({
-                        name: r.candidate.name,
-                        kind: r.candidate.kind,
-                      })),
-                    }),
-              ),
-              Effect.ignore,
-            )
+            const distillEffect = Effect.gen(function* () {
+              const constraintIds = yield* loadConstraintIds(deps.cwd)
+              const existing = [
+                ...deps.skills.map((s) => s.name),
+                ...deps.memory.map((m) => m.name),
+                ...constraintIds,
+              ]
+              return yield* runAutoDistill({
+                conversationId: cid,
+                repoDir: deps.cwd,
+                globalDir: homedir(),
+                existing,
+              }).pipe(
+                Effect.flatMap((saved) =>
+                  saved.length === 0
+                    ? Effect.void
+                    : publish({
+                        type: "learned",
+                        lessons: saved.map((r) => ({
+                          name: r.candidate.name,
+                          kind: r.candidate.kind,
+                        })),
+                      }),
+                ),
+                Effect.ignore,
+              )
+            })
             yield* Effect.sync(() => {
               Runtime.runFork(rt)(distillEffect)
             })

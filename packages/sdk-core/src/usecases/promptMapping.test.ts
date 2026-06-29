@@ -363,9 +363,9 @@ describe("ensureToolCallIds", () => {
       { type: "tool-call", id: "call_abc", name: "Bash", params: { command: "ls" } },
       { type: "tool-result", id: "call_abc", name: "Bash", result: { exitCode: 0 } },
     ]
-    ensureToolCallIds(content, 0)
-    expect(content[0]!.id).toBe("call_abc")
-    expect(content[1]!.id).toBe("call_abc")
+    const { content: out } = ensureToolCallIds(content, 0)
+    expect((out[0]! as Record<string, unknown>)["id"]).toBe("call_abc")
+    expect((out[1]! as Record<string, unknown>)["id"]).toBe("call_abc")
   })
 
   it("mints <turn>:<name>:<ordinal> for an id-less call AND its matching result, identically", () => {
@@ -378,17 +378,17 @@ describe("ensureToolCallIds", () => {
       { type: "tool-call", id: "", name: "grep", params: { pattern: "x" } },
       { type: "tool-result", id: "", name: "grep", result: "no matches" },
     ]
-    ensureToolCallIds(content, 2)
-    expect(content[1]!.id).toBe("2:grep:0")
-    expect(content[2]!.id).toBe("2:grep:0") // same id → pairing intact
+    const { content: out } = ensureToolCallIds(content, 2)
+    expect((out[1]! as Record<string, unknown>)["id"]).toBe("2:grep:0")
+    expect((out[2]! as Record<string, unknown>)["id"]).toBe("2:grep:0") // same id → pairing intact
   })
 
   it("handles a missing `id` field (not just empty string)", () => {
     const content = [{ type: "tool-call", name: "ls", params: {} }] as Array<
       Record<string, unknown>
     >
-    ensureToolCallIds(content, 1)
-    expect(content[0]!["id"]).toBe("1:ls:0")
+    const { content: out } = ensureToolCallIds(content, 1)
+    expect((out[0]! as Record<string, unknown>)["id"]).toBe("1:ls:0")
   })
 
   it("gives parallel id-less calls in one turn distinct ids, each paired to its result", () => {
@@ -398,12 +398,12 @@ describe("ensureToolCallIds", () => {
       { type: "tool-result", id: "", name: "read", result: "A" },
       { type: "tool-result", id: "", name: "read", result: "B" },
     ]
-    ensureToolCallIds(content, 0)
-    expect(content[0]!.id).toBe("0:read:0")
-    expect(content[1]!.id).toBe("0:read:1")
+    const { content: out } = ensureToolCallIds(content, 0)
+    expect((out[0]! as Record<string, unknown>)["id"]).toBe("0:read:0")
+    expect((out[1]! as Record<string, unknown>)["id"]).toBe("0:read:1")
     // results pair by ordinal-among-results → match their call's id in order
-    expect(content[2]!.id).toBe("0:read:0")
-    expect(content[3]!.id).toBe("0:read:1")
+    expect((out[2]! as Record<string, unknown>)["id"]).toBe("0:read:0")
+    expect((out[3]! as Record<string, unknown>)["id"]).toBe("0:read:1")
   })
 
   it("the synthesized id is the SAME across event-path and persisted-path reads", () => {
@@ -416,10 +416,10 @@ describe("ensureToolCallIds", () => {
       { type: "tool-call", id: "", name: "edit_file", params: { path: "f" } },
       { type: "tool-result", id: "", name: "edit_file", result: "ok" },
     ]
-    ensureToolCallIds(content, 3)
+    const { content: out } = ensureToolCallIds(content, 3)
 
-    const emittedId = responseToolCalls(content)[0]!.id // the event's `id`
-    const msgs = responseToAgentMessages(content)
+    const emittedId = responseToolCalls(out)[0]!.id // the event's `id`
+    const msgs = responseToAgentMessages(out)
     const assistant = msgs.find((m) => m.role === "assistant")!
     const persistedCall = (
       assistant.content as unknown as Array<{ type: string; toolCallId?: string }>
@@ -430,5 +430,18 @@ describe("ensureToolCallIds", () => {
     expect(emittedId).toBe("3:edit_file:0")
     expect(persistedCall.toolCallId).toBe("3:edit_file:0")
     expect(persistedResult.toolCallId).toBe("3:edit_file:0")
+  })
+
+  it("does not mutate the input array or its objects", () => {
+    const content = [
+      { type: "tool-call", id: "", name: "ls", params: {} },
+      { type: "tool-result", id: "", name: "ls", result: "ok" },
+    ] as Array<Record<string, unknown>>
+    const original = content.map((p) => ({ ...p }))
+    const { content: out } = ensureToolCallIds(content, 0)
+    expect(out).not.toBe(content)
+    expect(content).toEqual(original)
+    expect((out[0]! as Record<string, unknown>)["id"]).toBe("0:ls:0")
+    expect((out[1]! as Record<string, unknown>)["id"]).toBe("0:ls:0")
   })
 })

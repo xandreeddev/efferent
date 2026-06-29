@@ -25,6 +25,7 @@ export interface PersistResult {
   readonly path: string
   readonly created: boolean
   readonly kind: Candidate["kind"]
+  readonly name: Candidate["name"]
 }
 
 type PersistError = FileSystemError | PermissionDenied | FileNotFound
@@ -91,7 +92,7 @@ const persistProcess = (
     const exists = yield* fs.exists(abs)
     if (!exists) {
       yield* fs.write(abs, `- [${id}] ${rule}\n`)
-      return { path: abs, created: true, kind: "process" as const }
+      return { path: abs, created: true, kind: "process" as const, name: c.name }
     }
     const before = (yield* fs.read(abs)).content
     const lines = before.split("\n")
@@ -99,10 +100,10 @@ const persistProcess = (
     if (idx >= 0) {
       lines[idx] = `- [${id}] ${rule}`
       yield* fs.write(abs, lines.join("\n"))
-      return { path: abs, created: false, kind: "process" as const }
+      return { path: abs, created: false, kind: "process" as const, name: c.name }
     }
     yield* fs.write(abs, `${before.replace(/\n+$/, "")}\n- [${id}] ${rule}\n`)
-    return { path: abs, created: false, kind: "process" as const }
+    return { path: abs, created: false, kind: "process" as const, name: c.name }
   })
 
 // --- constraint: a delta-item bullet, append/update-in-place, never rewrite ---
@@ -124,7 +125,7 @@ const persistConstraint = (
         `Each line is a delta item: \`[id] (✓helpful ✗harmful) rule\`.\n\n` +
         `- [${id}] (✓0 ✗0) ${rule}\n`
       yield* fs.write(abs, doc)
-      return { path: abs, created: true, kind: "constraint" as const }
+      return { path: abs, created: true, kind: "constraint" as const, name: c.name }
     }
     const before = (yield* fs.read(abs)).content
     const lines = before.split("\n")
@@ -134,11 +135,11 @@ const persistConstraint = (
       const counters = lines[idx]?.match(/\((✓\d+\s*✗\d+)\)/)?.[0] ?? "(✓0 ✗0)"
       lines[idx] = `- [${id}] ${counters} ${rule}`
       yield* fs.write(abs, lines.join("\n"))
-      return { path: abs, created: false, kind: "constraint" as const }
+      return { path: abs, created: false, kind: "constraint" as const, name: c.name }
     }
     const next = `${before.replace(/\n+$/, "")}\n- [${id}] (✓0 ✗0) ${rule}\n`
     yield* fs.write(abs, next)
-    return { path: abs, created: false, kind: "constraint" as const }
+    return { path: abs, created: false, kind: "constraint" as const, name: c.name }
   })
 
 // --- skill: one file per skill; grow-and-refine never clobbers an existing one ---
@@ -156,7 +157,7 @@ const persistSkill = (
     // Grow-and-refine: a name collision means we already learned this — don't
     // clobber a (possibly human-edited) skill. A real conflict is a supersede
     // decision for the maintenance pass, not a blind overwrite here.
-    if (exists) return { path: abs, created: false, kind: "skill" as const }
+    if (exists) return { path: abs, created: false, kind: "skill" as const, name: c.name }
     const doc =
       `---\n` +
       `name: ${slug}\n` +
@@ -169,7 +170,7 @@ const persistSkill = (
       `---\n\n` +
       `${c.body.trim()}\n`
     yield* fs.write(abs, doc)
-    return { path: abs, created: true, kind: "skill" as const }
+    return { path: abs, created: true, kind: "skill" as const, name: c.name }
   })
 
 // --- memory: the `remember` tool's append-not-clobber shape ---
@@ -190,11 +191,11 @@ const persistMemory = (
       const before = (yield* fs.read(abs)).content
       const entry = `\n## ${stamp} — ${title}\n\n${c.body.trim()}\n`
       yield* fs.write(abs, `${before.replace(/\n+$/, "")}\n${entry}`)
-      return { path: abs, created: false, kind: "memory" as const }
+      return { path: abs, created: false, kind: "memory" as const, name: c.name }
     }
     const doc =
       `---\ntitle: ${title}\nsummary: ${firstLine(c.body)}\n---\n\n` +
       `# ${title}\n\n## ${stamp}\n\n${c.body.trim()}\n`
     yield* fs.write(abs, doc)
-    return { path: abs, created: true, kind: "memory" as const }
+    return { path: abs, created: true, kind: "memory" as const, name: c.name }
   })

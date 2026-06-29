@@ -107,6 +107,12 @@ export const Settings = Schema.Struct({
         "Compaction: per-string token budget for a tool result entering the context (≈chars/4). Oversized results are clipped head+tail with a reversible marker (+ a fast-tier digest of the dropped middle). Unset → 4000; 0 disables.",
     }),
   ),
+  toolTimeoutMs: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Per-tool-call timeout in ms. A tool that exceeds this is killed and its result becomes a synthetic failure (ToolTimeout) so the model sees the error and can retry. Unset → 180000; 0 disables.",
+    }),
+  ),
   autoHandoffPct: Schema.optional(
     Schema.Number.annotations({
       description:

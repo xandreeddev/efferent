@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Exit } from "effect"
 import { LanguageModel, type Toolkit } from "@effect/ai"
-import { recoverMalformedToolCalls, runAgentLoop, safeArgsSummary } from "./agentLoop.js"
+import { recoverMalformedToolCalls, runAgentLoop, safeArgsSummary, wrapToolHandlerWithTimeout } from "./agentLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import type { AgentMessage, AgentResult } from "../entities/Conversation.js"
 
@@ -92,6 +92,62 @@ describe("recoverMalformedToolCalls", () => {
     const ok = { isFailure: false, result: { path: "a.ts" }, encodedResult: { path: "a.ts" } }
     const base = fakeToolkit(() => Effect.succeed(ok))
     const out = Effect.runSync(callHandle(recoverMalformedToolCalls(base)))
+    expect(out).toBe(ok)
+  })
+})
+
+describe("wrapToolHandlerWithTimeout", () => {
+  it("kills a slow handler and returns a ToolTimeout failure shape", async () => {
+    const slowBase = fakeToolkit(() => Effect.sleep("10 seconds"))
+    const wrapped = wrapToolHandlerWithTimeout(slowBase, 20)
+    const out = (await Effect.runPromise(
+      callHandle(wrapped) as Effect.Effect<unknown, unknown, never>,
+    )) as {
+      isFailure: boolean
+      result: { error: string; message: string }
+      encodedResult: { error: string; message: string }
+    }
+    expect(out.isFailure).toBe(true)
+    expect(out.result.error).toBe("ToolTimeout")
+    expect(out.result.message).toContain("edit_file")
+    expect(out.result.message).toContain("20ms")
+    expect(out.encodedResult).toEqual(out.result)
+  })
+
+  it("emits onToolTimeout when a call times out", async () => {
+    const slowBase = fakeToolkit(() => Effect.sleep("10 seconds"))
+    const events: Array<{ toolName: string; timeoutMs: number }> = []
+    const wrapped = wrapToolHandlerWithTimeout(
+      slowBase,
+      20,
+      (event) =>
+        Effect.sync(() => {
+          events.push(event)
+        }),
+      () => 7,
+    )
+    await Effect.runPromise(callHandle(wrapped) as Effect.Effect<unknown, unknown, never>)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ toolName: "edit_file", timeoutMs: 20, turnIndex: 7, toolCallId: "" })
+  })
+
+  it("lets fast results pass through unchanged", async () => {
+    const ok = { isFailure: false, result: { path: "a.ts" }, encodedResult: { path: "a.ts" } }
+    const base = fakeToolkit(() => Effect.succeed(ok))
+    const wrapped = wrapToolHandlerWithTimeout(base, 20)
+    const out = await Effect.runPromise(
+      callHandle(wrapped) as Effect.Effect<unknown, unknown, never>,
+    )
+    expect(out).toBe(ok)
+  })
+
+  it("disables the timeout when set to 0", async () => {
+    const ok = { isFailure: false, result: { path: "a.ts" }, encodedResult: { path: "a.ts" } }
+    const slowBase = fakeToolkit(() => Effect.sleep(20).pipe(Effect.map(() => ok)))
+    const wrapped = wrapToolHandlerWithTimeout(slowBase, 0)
+    const out = await Effect.runPromise(
+      callHandle(wrapped) as Effect.Effect<unknown, unknown, never>,
+    )
     expect(out).toBe(ok)
   })
 })

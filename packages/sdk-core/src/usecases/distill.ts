@@ -152,6 +152,27 @@ const MinerOutput = Schema.parseJson(
   }),
 )
 
+/**
+ * Extract the outermost balanced `{}` pair from `text`.
+ * Returns `null` if no balanced pair is found.
+ */
+const extractBalancedBraces = (text: string): string | null => {
+  let start = -1
+  let depth = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "{") {
+      if (depth === 0) start = i
+      depth++
+    } else if (ch === "}") {
+      if (depth === 0) continue
+      depth--
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
 /** Parse the miner's reply into stamped candidates. Strict by construction:
  *  malformed JSON / wrong shape collapses to `[]` (no candidates, never a throw).
  *  We stamp `evidence.conversationId` ourselves — the model never invents it. */
@@ -159,9 +180,9 @@ export const parseCandidates = (
   text: string,
   conversationId: string,
 ): ReadonlyArray<Candidate> => {
-  const match = text.match(/\{[\s\S]*\}/)
+  const match = extractBalancedBraces(text)
   if (match === null) return []
-  return Either.match(Schema.decodeUnknownEither(MinerOutput)(match[0]), {
+  return Either.match(Schema.decodeUnknownEither(MinerOutput)(match), {
     onLeft: (): ReadonlyArray<Candidate> => [],
     onRight: ({ candidates }): ReadonlyArray<Candidate> =>
       candidates.flatMap((c) => {

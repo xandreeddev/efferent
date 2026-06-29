@@ -3,6 +3,13 @@ import { Effect } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentGateEvent, AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
+<<<<<<< Updated upstream
+||||||| Stash base
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+=======
+import { parseModel, contextWindowFor } from "../entities/Model.js"
+import { ContextTreeStore } from "../ports/ContextTreeStore.js"
+>>>>>>> Stashed changes
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { recordError } from "../telemetry/metrics.js"
@@ -51,6 +58,11 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
 
     const toolResultMaxChars =
       settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
+    const toolTimeoutMs =
+      settings.toolTimeoutMs !== undefined ? settings.toolTimeoutMs : undefined
+
+    const { provider, modelId } = parseModel(settings.model)
+    const contextWindow = contextWindowFor(provider, modelId)
 
     // Persist each turn's tail the moment it lands (incremental persistence) — so
     // the session is restorable to its last completed turn, and a mid-run nav/state
@@ -58,6 +70,9 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
     // safely continue without durable history).
     const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
       Effect.forEach(msgs, (m) => store.append(input.conversationId, m)).pipe(Effect.orDie)
+
+    const autoHandoffPct =
+      settings.autoHandoffPct !== undefined ? settings.autoHandoffPct : undefined
 
     // One run of the loop over a message buffer — reused verbatim for the first
     // attempt AND each gate-driven retry, so a retry inherits the same pinned
@@ -70,6 +85,9 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         maxSteps: settings.maxSteps,
         onTail: persistTail,
         ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+        ...(toolTimeoutMs !== undefined ? { toolTimeoutMs } : {}),
+        ...(autoHandoffPct !== undefined ? { autoHandoffPct } : {}),
+        contextWindow,
         ...(input.extraHooks !== undefined ? { hooks: input.extraHooks } : {}),
       }).pipe(
         Effect.locally(RunContextRef, {
@@ -78,6 +96,7 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
           depth: 0,
           tokenPool,
           prompt: input.config.prompt,
+          contextWindow,
           ...(settings.subAgentMaxSteps !== undefined
             ? { subAgentMaxSteps: settings.subAgentMaxSteps }
             : {}),
@@ -88,6 +107,7 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
             ? { subAgentFetchBudget: settings.subAgentFetchBudget }
             : {}),
           ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
+          ...(toolTimeoutMs !== undefined ? { toolTimeoutMs } : {}),
           ...(input.config.compression !== undefined ? { compression: input.config.compression } : {}),
           pinnedModels: {
             general: input.pinnedGeneral ?? settings.model,
@@ -120,27 +140,22 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         Effect.annotateLogs({ conversationId: input.conversationId }),
       )
 
-    // Snapshot the tree BEFORE the run so we can tell which sub-agent nodes THIS
-    // run created (a resumed conversation already carries prior turns' nodes).
-    const nodeIdsBefore: ReadonlySet<ContextNodeId> = new Set(
+    // Snapshot node IDs before the run so the gate can distinguish new nodes.
+    const beforeIds = new Set<ContextNodeId>(
       (yield* listTreeSafe(input.conversationId)).map((n) => n.id),
     )
 
+    // ── First attempt ───────────────────────────────────────────────────────
     let result = yield* runOneAttempt(input.messages)
 
-    // ===== Mandatory swarm gate (the self-improving loop's enforcement point) =====
-    // If THIS run used sub-agents, the objective is NOT done until the independent
-    // Opus gate validates the deliverable. This lives in `driveLoop` — the one path
-    // `runAgent`/`resumeAgent` (and thus every mode) funnels through — so it is
-    // structurally impossible to fan out a swarm and skip verification. It depends
-    // on NEITHER the model calling a tool NOR a coordinator; only `autoLoop`
-    // (default on) gates it. Fail-closed: needs_work → LEARN (distill skills /
-    // memories / constraints) → RUN AGAIN with the gate's reasons → re-gate, to
-    // `maxLoopAttempts`. A genuinely unavailable verifier is surfaced LOUDLY (never
-    // a silent pass) and does not loop. `repoDir` is required to ground the gate.
-    if (settings.autoLoop !== false && input.workspaceDir !== undefined) {
-      const repoDir = input.workspaceDir
+    // ── Mandatory swarm gate (auto-loop) ────────────────────────────────────
+    // When the user says "execute everything now" we don't just trust the
+    // model — we gate the objective through the Opus verifier. If the gate
+    // says "needs_work" we distill learnings, append feedback, and retry
+    // (bounded). This closes the loop on fleet quality.
+    if (input.workspaceDir !== undefined && settings.autoLoop !== false) {
       const maxAttempts = settings.maxLoopAttempts ?? 3
+<<<<<<< Updated upstream
       let attempt = 1
       while (true) {
         const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
@@ -161,11 +176,146 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         if (step.kind === "no-subagents") break
         yield* emitGate(input, step.event)
         if (step.kind !== "retry") break
+||||||| Stash base
+      let attempt = 1
+      let gating = true
+      while (gating) {
+        const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
+        // No sub-agents this run → the gate is the swarm case only; nothing to do.
+        if (freshNodes.length === 0) break
+=======
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const fresh = yield* settleNewNodes(input.conversationId, beforeIds)
+        // No sub-agents this run → nothing to gate; proceed normally.
+        if (fresh.length === 0) break
+>>>>>>> Stashed changes
 
+<<<<<<< Updated upstream
         // RUN AGAIN — feed the gate's reasons back as the next turn, then re-gate.
         yield* persistTail([step.feedback])
         result = yield* runOneAttempt([...result.messages, step.feedback])
         attempt++
+||||||| Stash base
+        const filesChanged = Array.from(new Set(freshNodes.flatMap((n) => n.filesChanged)))
+        const verdict = yield* verifier
+          .gate({
+            task: input.mission ?? input.promptLabel,
+            summary: result.finalText,
+            filesChanged,
+            repoDir,
+          })
+          .pipe(Effect.either)
+
+        if (Either.isLeft(verdict)) {
+          // No verdict was possible (no `claude` / verifier error). Surface it —
+          // never a silent pass — but don't spin on a broken gate.
+          yield* emitGate(input, {
+            verdict: "unavailable",
+            reasons: [verdict.left.message],
+            attempt,
+            filesChanged,
+          })
+          break
+        }
+
+        const v = verdict.right
+        if (v.verdict === "sound") {
+          yield* emitGate(input, { verdict: "sound", reasons: [], attempt, filesChanged })
+          break
+        }
+
+        // needs_work / blocked — the deliverable is NOT accepted as-is.
+        yield* emitGate(input, { verdict: v.verdict, reasons: v.reasons, attempt, filesChanged })
+        if (v.verdict === "blocked" || attempt >= maxAttempts) {
+          gating = false
+          break
+        }
+
+        // LEARN — mine + Opus-verify reusable skills/memories/constraints from this
+        // failed attempt so they persist for future runs. Fail-soft by construction
+        // (`runAutoDistill` never fails); gated by the same `autoDistill` knob.
+        if (settings.autoDistill !== false) {
+          yield* runAutoDistill({
+            conversationId: input.conversationId,
+            repoDir,
+            existing: [],
+          })
+        }
+
+        // RUN AGAIN — feed the gate's concrete reasons back as the next turn so the
+        // swarm fixes them (not a blind re-send), then re-gate.
+        const feedback: AgentMessage = {
+          role: "user",
+          content:
+            "The independent verifier reviewed the swarm's work and it is NOT acceptable yet. " +
+            "Address each issue below, then the work will be re-checked:\n" +
+            v.reasons.map((r) => `- ${r}`).join("\n"),
+        }
+        yield* persistTail([feedback])
+        result = yield* runOneAttempt([...result.messages, feedback])
+        attempt++
+=======
+        const gateResult = yield* verifier
+          .gate({
+            task: input.mission ?? input.promptLabel,
+            summary: result.finalText,
+            filesChanged: fresh.flatMap((n) => n.filesChanged ?? []),
+            repoDir: input.workspaceDir,
+          })
+          .pipe(
+            Effect.map((v) => ({ ...v, available: true as const })),
+            Effect.catchAll((e) =>
+              Effect.succeed({
+                verdict: "unavailable" as const,
+                reasons: [e.message],
+                available: false as const,
+              }),
+            ),
+          )
+
+        yield* emitGate(input, {
+          attempt,
+          maxAttempts,
+          verdict: gateResult.verdict,
+          reasons: gateResult.reasons,
+          filesChanged: fresh.flatMap((n) => n.filesChanged ?? []),
+        })
+
+        if (gateResult.verdict === "sound") break
+        if (gateResult.verdict === "blocked" || !gateResult.available) break
+        if (attempt >= maxAttempts) break
+
+        // needs_work → learn + retry
+        if (gateResult.verdict === "needs_work") {
+          const feedback =
+            `The objective needs more work. ${gateResult.reasons.join("; ")}`
+          yield* store.append(input.conversationId, {
+            role: "user",
+            content: feedback,
+          })
+          const active2 = yield* store.listActive(input.conversationId)
+          const checkpoint2 = yield* store.getLatestCheckpoint(input.conversationId)
+          const prefix2: ReadonlyArray<AgentMessage> =
+            checkpoint2 !== undefined ? [handoffToMessage(checkpoint2.summary)] : []
+
+          // Turn-boundary distillation: mine the just-finished conversation for
+          // reusable lessons before the retry starts. Fail-soft — a distiller
+          // error must never abort the gate-driven retry.
+          if (settings.autoDistill !== false) {
+            yield* runAutoDistill({
+              conversationId: input.conversationId,
+              repoDir: input.workspaceDir,
+              existing: [],
+            }).pipe(Effect.catchAll(() => Effect.void))
+          }
+
+          result = yield* runOneAttempt([...prefix2, ...active2])
+          continue
+        }
+
+        // Any other verdict → stop
+        break
+>>>>>>> Stashed changes
       }
     }
 
