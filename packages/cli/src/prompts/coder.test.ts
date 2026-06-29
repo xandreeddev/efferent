@@ -17,21 +17,23 @@ const mem = (name: string, title: string, summary = ""): Memory => ({
   sourcePath: `/w/.efferent/memory/${name}.md`,
 })
 
-describe("coderSystemPrompt delegation policy", () => {
-  it("offers a coding fleet when the coordinator is present — but defaults to doing the work itself", () => {
+describe("coderSystemPrompt orchestration policy", () => {
+  it("routes code work through the coordinator and forbids the root coding itself", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).toContain("# When to delegate")
+    expect(p).toContain("# Your role: orchestrate")
     expect(p).toContain('run_agent({ agent: "coordinator"')
-    expect(p).toContain("Do the work yourself by default")
-    // The forced-delegation "thin router" mandate is gone.
-    expect(p).not.toContain("thin router")
-    expect(p).not.toContain("When in doubt, DISPATCH")
+    expect(p).toContain("Size is never an excuse")
+    // The old "do it yourself by default" stance + the standalone `# Writing code`
+    // section are gone — orchestration is unconditional now.
+    expect(p).not.toContain("Do the work yourself by default")
+    expect(p).not.toContain("# Writing code")
   })
 
-  it("offers a research fleet when the research-coordinator is present", () => {
+  it("routes investigation through the research-coordinator (no standalone research section)", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
-    expect(p).toContain("# When to delegate")
+    expect(p).toContain("# Your role: orchestrate")
     expect(p).toContain('run_agent({ agent: "research-coordinator"')
+    expect(p).not.toContain("# Investigating & researching")
   })
 
   it("names both leads when both are loaded", () => {
@@ -47,72 +49,22 @@ describe("coderSystemPrompt delegation policy", () => {
     expect(p).toContain('run_agent({ agent: "research-coordinator"')
   })
 
-  it("omits the delegation policy when no lead role is loaded", () => {
+  it("stays direct only for pure interaction", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("pure interaction")
+  })
+
+  it("omits the policy when no lead role is loaded", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [], [])
-    expect(p).not.toContain("# When to delegate")
-  })
-})
-
-describe("coderSystemPrompt code-delegation policy", () => {
-  it("routes code-writing to the code tier when a distinct code model is configured", () => {
-    // 8th positional arg = codeModelConfigured.
-    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [], [], true)
-    expect(p).toContain("# Writing code")
-    expect(p).toContain('run_agent({ folder, task, role: "code" })')
-    // The fleet "do it yourself" default is reframed to defer code-writing.
-    expect(p).toContain("Do the investigating, planning, running, and reviewing yourself")
-    expect(p).not.toContain("Do the work yourself by default")
+    expect(p).not.toContain("# Your role: orchestrate")
   })
 
-  it("omits the code-delegation policy when no distinct code model is configured", () => {
-    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).not.toContain("# Writing code")
-    // …and the original all-yourself fast path stands.
-    expect(p).toContain("Do the work yourself by default")
-  })
-
-  it("the code-delegation policy is independent of the fleet roster", () => {
-    // No coordinator ⇒ no `# When to delegate`, but `# Writing code` still shows
-    // (a distinct code model routes writing to the code tier regardless).
-    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [], [], true)
-    expect(p).not.toContain("# When to delegate")
-    expect(p).toContain("# Writing code")
-  })
-})
-
-describe("coderSystemPrompt research-delegation policy", () => {
-  it("adds the `# Investigating & researching` section when the research fleet is present", () => {
-    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
-    expect(p).toContain("# Investigating & researching")
-    expect(p).toContain('run_agent({ agent: "research-coordinator"')
-    // The broad/focused split — the read-side mirror of `# Writing code`.
-    expect(p).toContain("broad investigation")
-    expect(p).toContain("focused lookups")
-    // …and `# When to delegate`'s self-policy points at it.
-    expect(p).toContain("research fleet (see `# Investigating & researching`")
-  })
-
-  it("omits the research-delegation section when no research-coordinator is loaded", () => {
-    // A coding fleet alone ⇒ `# When to delegate` shows, but not the research section.
-    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
-    expect(p).toContain("# When to delegate")
-    expect(p).not.toContain("# Investigating & researching")
-  })
-
-  it("the research section is independent of the code tier (shows with or without a code model)", () => {
-    const withCode = coderSystemPrompt(
-      "/w",
-      new Date(0),
-      [],
-      [],
-      [role("research-coordinator")],
-      [],
-      [],
-      true,
-    )
-    expect(withCode).toContain("# Investigating & researching")
-    const noCode = coderSystemPrompt("/w", new Date(0), [], [], [role("research-coordinator")], [])
-    expect(noCode).toContain("# Investigating & researching")
+  it("always orchestrates regardless of a distinct code model", () => {
+    const withCode = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [], [], true)
+    expect(withCode).toContain("# Your role: orchestrate")
+    expect(withCode).not.toContain("# Writing code")
+    const noCode = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(noCode).toContain("# Your role: orchestrate")
   })
 })
 
