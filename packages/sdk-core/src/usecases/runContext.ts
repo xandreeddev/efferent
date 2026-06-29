@@ -84,6 +84,17 @@ export interface RunContext {
    * scheduled subtree knows it is unattended. */
   readonly interactionPolicy?: "interactive" | "headless"
   /**
+   * Marks a READ-ONLY research subtree — set when a research-coordinator is
+   * spawned, inherited down. A research lead investigates and RETURNS a sourced
+   * report; it must not bleed into implementation. While set, the `run_agent`
+   * handler constrains every spawn to read-only (strips write/exec tools, a bare
+   * spawn becomes a read-only research worker instead of the full coding toolkit)
+   * and refuses spawning a code `coordinator` — so "fix the findings" comes back
+   * as a recommendation for the ROOT to implement in a fresh turn, not work done
+   * inline on the research lead. (Without this, a research-coordinator spawned a
+   * full-toolkit worker that wrote code and then starved on the budget.) */
+  readonly researchSubtree?: boolean
+  /**
    * Sink for transient-LLM-retry notices, seeded by `runAgent` from
    * `AgentHooks.onLlmRetry` and inherited by the whole subtree. The provider
    * adapter (`retryableLlm`) runs BELOW the loop, so it can't reach the loop's

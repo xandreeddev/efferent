@@ -71,7 +71,7 @@ describe("RunContextRef", () => {
         yield* drainPool(grandchild.tokenPool, {
           inputTokens: 300,
           outputTokens: 200,
-          cacheReadTokens: 50, // cache reads are free — never billed to the pool
+          cacheReadTokens: 50, // 50 of the 300 input were cache hits → billed at 0.1×
         }).pipe(Effect.locally(RunContextRef, grandchild))
         return grandchild.depth
       })
@@ -83,7 +83,8 @@ describe("RunContextRef", () => {
     })
     const { depth, remaining, exhausted } = await Effect.runPromise(program)
     expect(depth).toBe(1)
-    expect(remaining).toBe(500) // 1000 - (300 input + 200 output); cacheRead free
+    // 1000 − (fresh 250 + cached 50×0.1 + output 200) = 1000 − 455 = 545.
+    expect(remaining).toBe(545)
     expect(exhausted).toBe(false)
   })
 

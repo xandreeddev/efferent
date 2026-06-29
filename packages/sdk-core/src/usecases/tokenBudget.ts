@@ -34,9 +34,32 @@ export const makeTokenPool = (
 ): Effect.Effect<TokenPool> =>
   budget > 0 ? Ref.make(budget) : Effect.succeed(null)
 
-/** Tokens a single LLM call costs the pool: what the provider bills. */
-export const usageCost = (u: ContextUsage): number =>
-  u.inputTokens + u.outputTokens
+/**
+ * What a provider bills cache-read (cached-prefix) tokens, as a fraction of a
+ * fresh input token. Providers charge a steep discount for cache hits — Anthropic
+ * ~0.1×, OpenAI ~0.25–0.5×, the opencode/Kimi gateway ~0.1×. We use 0.1× as a
+ * conservative single factor (it slightly UNDER-counts on OpenAI, which is the
+ * safe direction for a spend brake).
+ */
+export const CACHE_READ_COST_FACTOR = 0.1
+
+/**
+ * Tokens a single LLM call costs the pool — what the provider ACTUALLY bills.
+ *
+ * `u.inputTokens` is the WHOLE prompt for the call, and `u.cacheReadTokens` is
+ * the cached-prefix portion of it (a subset). Billing the cached portion at full
+ * price is the bug that drained a multi-turn fleet's budget ~8× too fast: every
+ * turn re-sends the (byte-stable, cached) prefix, and counting it as fresh spend
+ * penalizes exactly the prompt-cache design that makes the fleet cheap. So we
+ * charge the fresh portion at 1× and the cached portion at {@link
+ * CACHE_READ_COST_FACTOR}. A genuine runaway (lots of NEW context / fetches /
+ * output) still trips the brake — only efficient cache reuse stops being taxed.
+ */
+export const usageCost = (u: ContextUsage): number => {
+  const cached = Math.min(Math.max(0, u.cacheReadTokens), u.inputTokens)
+  const fresh = u.inputTokens - cached
+  return fresh + cached * CACHE_READ_COST_FACTOR + u.outputTokens
+}
 
 /** Drain one call's usage from the pool (no-op when disabled). */
 export const drainPool = (
@@ -49,11 +72,16 @@ export const drainPool = (
 export const poolExhausted = (pool: TokenPool): Effect.Effect<boolean> =>
   pool === null ? Effect.succeed(false) : Ref.get(pool).pipe(Effect.map((n) => n <= 0))
 
-/** The model-facing failure for a spawn attempted on a drained pool. */
+/** The model-facing failure for a spawn attempted on a drained pool.
+ *  Deliberately does NOT say "do it yourself": that collapsed an entire fleet
+ *  onto the root/coordinator when the budget ran out (un-delegated implementation
+ *  on the lead). Instead it tells the lead to WRAP UP with what's already in hand
+ *  and hand any remaining work back to its caller, who can resume with a fresh
+ *  per-turn budget — keeping the work where it belongs. */
 export const budgetExhaustedFailure = {
   error: "BudgetExhausted",
   message:
-    "the sub-agent token budget for this turn is exhausted — do the remaining work yourself instead of spawning.",
+    "the sub-agent token budget for this turn is exhausted — stop spawning. Synthesize and return the best result you can from the work already completed, and note in your summary any remaining work so the caller can pick it up in a fresh turn (do NOT switch to doing that remaining work inline here).",
 } as const
 
 /** Appended to a sub-agent's summary when the pool stopped it early. */
