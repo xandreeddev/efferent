@@ -339,6 +339,54 @@ const RunAgentTool = Tool.make("run_agent", {
 })
 
 /**
+ * The ROOT's delegation tool — a **hard-railed `run_agent`**. Same tool name and
+ * handler as {@link RunAgentTool}, but the schema only lets the root express a
+ * spawn to a fleet LEAD (coordinator / research-coordinator) with a brief — no
+ * `role`, no inline `instructions`/`tools`, no bare-worker spawn, no resume. The
+ * lead owns staffing, sequencing, the gate, and the retry loop. A prompt rule
+ * alone didn't hold (the root still spawned direct `role:code` workers, live-
+ * verified), so this is the mechanical guarantee at the SCHEMA level: the root
+ * literally cannot express anything but "delegate to a coordinator".
+ */
+const RootDelegateTool = Tool.make("run_agent", {
+  description:
+    "Delegate this objective to a fleet LEAD — the only way you, the orchestrator, get work done. " +
+    'Returns { nodeId, name, status: "running" } IMMEDIATELY (non-blocking); gather the result with ' +
+    "wait_for_agents or from your inbox at a turn boundary, then relay/aggregate it. The lead plans, " +
+    "staffs and SEQUENCES the specialists (one writer at a time), validates with the architect, and " +
+    "GATES the deliverable before returning — you never spawn, sequence, or gate workers yourself, and " +
+    "you never read or edit files yourself. Write a COMPLETE brief in 'task'.",
+  parameters: {
+    name: Schema.String.annotations({
+      description: "Short display name for this delegation (2-5 words, task-specific).",
+    }),
+    folder: Schema.String.annotations({
+      description: "Folder to scope the work to, relative to the workspace root (e.g. 'packages/cli').",
+    }),
+    task: Schema.String.annotations({
+      description:
+        "The full brief for the lead — it starts fresh and sees ONLY this text (not your conversation or " +
+        "the user's request). Include: OBJECTIVE (what to achieve, concretely), CONTEXT (background, " +
+        "constraints, prior decisions/findings — paste them, don't reference them), OUTPUT (what to deliver " +
+        "or report), and BOUNDARIES (what's out of scope).",
+    }),
+    agent: Schema.Literal("coordinator", "research-coordinator").annotations({
+      description:
+        "Which lead to route to — the ONLY delegation choice: 'coordinator' for ANY code work (it staffs + " +
+        "sequences coders, validates with the architect, and gates the result); 'research-coordinator' for " +
+        "investigation (it fans out parallel read-only researchers and synthesizes one sourced answer).",
+    }),
+  },
+  success: Schema.Struct({
+    nodeId: ContextNodeId,
+    name: Schema.String,
+    status: Schema.Literal("running"),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/**
  * The non-blocking **gather** tool. A coordinator spawns its fleet (each
  * `run_agent` returns immediately) and then calls this to wait for results
  * WITHOUT freezing: it blocks only the caller's own fiber, interruptibly, and
@@ -652,9 +700,17 @@ const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 const orchestrationToolkit = Toolkit.make(
   ...((Object.entries(genericToolkit.tools) as Array<[string, Tool.Any]>)
-    .filter(([name]) => ORCHESTRATION_TOOL_NAMES.has(name))
+    // Drop the full `run_agent` — the root gets the hard-railed RootDelegateTool
+    // (same name) instead, so it can only delegate to a lead.
+    .filter(([name]) => ORCHESTRATION_TOOL_NAMES.has(name) && name !== "run_agent")
     .map(([, d]) => d) as ReadonlyArray<Tool.Any>),
+  RootDelegateTool,
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
+/** The fleet LEADS the root may delegate to. The root (depth 0, orchestrate mode)
+ *  must route through one of these — never a bare-role worker — so the lead owns
+ *  staffing, sequencing, and the gate. */
+const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
 
 /**
  * Resolve a role's tool allowlist to `[name, def]` entries. A definition WITH
@@ -1329,6 +1385,29 @@ const makeRunAgentHandler =
       // an old-schema call) degrades to the folder basename.
       const title =
         typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
+
+      // Coordinator-only routing: when the ROOT (depth 0) is an orchestrator (a
+      // lead is in the roster), it may only spawn a LEAD — never a bare-role
+      // worker. The lead owns staffing, sequencing, the gate, and the retry loop.
+      // (A resume/branch of an existing node is exempt — that targets a node, not
+      // a fresh worker.) Model-readable failure so it re-routes through a coordinator.
+      const hasLead = opts.agents.some((a) => LEAD_AGENT_NAMES.includes(a.name))
+      const isResume = seedFromNode !== undefined && seedFromNode.trim().length > 0
+      if (
+        rc.depth === 0 &&
+        hasLead &&
+        !isResume &&
+        (agent === undefined || !LEAD_AGENT_NAMES.includes(agent))
+      ) {
+        return yield* Effect.fail({
+          error: "RouteThroughCoordinator",
+          message:
+            "You are the orchestrator — route work through a lead, not a bare worker. " +
+            'Spawn `run_agent({ agent: "coordinator", folder, task })` for code work, or ' +
+            '`run_agent({ agent: "research-coordinator", folder, task })` for investigation, ' +
+            "and let IT staff and sequence the specialists. Re-issue this spawn with `agent` set to a coordinator.",
+        })
+      }
 
       // Resolve the requested role (if any). A named-but-unknown agent is a
       // model-facing failure — silently ignoring a requested role hides a real
