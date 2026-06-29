@@ -18,7 +18,7 @@ import {
   CLAUDE_CODE_SYSTEM,
 } from "../auth/oauth/anthropic.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
-import { makeOpenCodeLanguageModel } from "./openCode.js"
+import { makeOpenCodeLanguageModel, type SamplingConfig } from "./openCode.js"
 import { makeOllamaLanguageModel, OLLAMA_DEFAULT_BASE_URL } from "./ollama.js"
 
 // Anthropic OAuth authenticates as a subscription: Bearer + Claude Code beta
@@ -165,6 +165,34 @@ const googleThinkingConfig = (
   }
 }
 
+/** Sampling controls for the opencode adapter (our own request body). */
+const samplingConfig = (settings: Settings): SamplingConfig | undefined =>
+  settings.samplingTemperature === undefined && settings.samplingSeed === undefined
+    ? undefined
+    : {
+        ...(settings.samplingTemperature !== undefined
+          ? { temperature: settings.samplingTemperature }
+          : {}),
+        ...(settings.samplingSeed !== undefined ? { seed: settings.samplingSeed } : {}),
+      }
+
+/** Google generationConfig — merges thinking + sampling (temperature/seed are
+ *  real Google `generationConfig` fields even where the typed surface omits them). */
+const googleGenerationConfig = (
+  model: string,
+  settings: Settings,
+): Record<string, unknown> | undefined => {
+  const thinking = googleThinkingConfig(model, settings.geminiThinkingLevel)
+  const cfg: Record<string, unknown> = {
+    ...(thinking !== undefined ? { thinkingConfig: thinking } : {}),
+    ...(settings.samplingTemperature !== undefined
+      ? { temperature: settings.samplingTemperature }
+      : {}),
+    ...(settings.samplingSeed !== undefined ? { seed: settings.samplingSeed } : {}),
+  }
+  return Object.keys(cfg).length > 0 ? cfg : undefined
+}
+
 const supportsOpenAiReasoning = (model: string): boolean =>
   /^gpt-5/i.test(model) || /^o\d/i.test(model)
 
@@ -195,8 +223,8 @@ export const makeProviderLanguageModel = (
             model: sel.modelId,
             config: {
               toolConfig: {},
-              ...(googleThinkingConfig(sel.modelId, settings.geminiThinkingLevel) !== undefined
-                ? { generationConfig: { thinkingConfig: googleThinkingConfig(sel.modelId, settings.geminiThinkingLevel) } }
+              ...(googleGenerationConfig(sel.modelId, settings) !== undefined
+                ? { generationConfig: googleGenerationConfig(sel.modelId, settings) }
                 : {}),
             },
           }).pipe(
@@ -218,6 +246,9 @@ export const makeProviderLanguageModel = (
           AnthropicLanguageModel.make({
             model: sel.modelId,
             config: {
+              ...(settings.samplingTemperature !== undefined
+                ? { temperature: settings.samplingTemperature }
+                : {}),
               ...(anthropicThinkingConfig(settings.anthropicThinkingEffort) !== undefined
                 ? { thinking: anthropicThinkingConfig(settings.anthropicThinkingEffort) }
                 : {}),
@@ -233,6 +264,7 @@ export const makeProviderLanguageModel = (
         sel.modelId,
         key !== undefined ? Redacted.value(key) : "",
         settings.openCodeThinkingMode,
+        samplingConfig(settings),
       ).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
     case "openai":
       if (oauth && key !== undefined) {
@@ -251,6 +283,10 @@ export const makeProviderLanguageModel = (
             model: sel.modelId,
             config: {
               prompt_cache_key: "efferent",
+              ...(settings.samplingTemperature !== undefined
+                ? { temperature: settings.samplingTemperature }
+                : {}),
+              ...(settings.samplingSeed !== undefined ? { seed: settings.samplingSeed } : {}),
               ...(openAiReasoningConfig(sel.modelId, settings.openAiReasoningEffort) !== undefined
                 ? { reasoning: openAiReasoningConfig(sel.modelId, settings.openAiReasoningEffort) }
                 : {}),

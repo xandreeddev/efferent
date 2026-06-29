@@ -33,6 +33,14 @@ export interface RunConfig {
   readonly maxSteps?: number
   /** Per-tool-result compaction budget (tokens) → `settings.toolResultMaxTokens`. */
   readonly toolResultMaxTokens?: number
+  /**
+   * Sampling temperature → `settings.samplingTemperature`. Unset ⇒ the eval
+   * default (0 = deterministic, so a delta is the CHANGE, not dice). Set > 0 to
+   * deliberately measure consistency (pass^k) under stochastic sampling.
+   */
+  readonly samplingTemperature?: number
+  /** Determinism seed → `settings.samplingSeed`. Unset ⇒ the eval default seed. */
+  readonly samplingSeed?: number
 }
 
 /**
@@ -49,6 +57,8 @@ export const configHash = (c: RunConfig): string => {
     promptVariant: c.promptVariant ?? null,
     maxSteps: c.maxSteps ?? null,
     toolResultMaxTokens: c.toolResultMaxTokens ?? null,
+    samplingTemperature: c.samplingTemperature ?? null,
+    samplingSeed: c.samplingSeed ?? null,
   })
   let h = 0x811c9dc5
   for (let i = 0; i < canonical.length; i++) {

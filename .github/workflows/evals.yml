@@ -1,0 +1,69 @@
+# Eval regression gate — COST-GATED, opt-in.
+#
+# Evals call a real LLM provider, so they do NOT run on every PR. Trigger them
+# explicitly: add the `run-evals` label to a PR, or run this workflow manually
+# (Actions → evals → Run workflow). Requires an `OPENCODE_API_KEY` repo secret
+# (Settings → Secrets and variables → Actions). When a committed baseline exists
+# (`packages/evals/baseline.json`, produced by `bun run eval … --save`), the run
+# FAILS on a statistically significant regression (paired bootstrap CI, Bonferroni
+# corrected — the same stat `bun run eval --compare` prints). No baseline yet ⇒ it
+# runs and reports but can't gate. A missing secret ⇒ it skips cleanly.
+name: evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: "Space-separated suite names (blank = the default gate set)"
+        required: false
+        default: ""
+      samples:
+        description: "Samples per case (blank = runner default)"
+        required: false
+        default: ""
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    # Never on every PR — only the explicit label or a manual dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-evals')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Eval regression gate
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -z "$OPENCODE_API_KEY" ]; then
+            echo "::warning::OPENCODE_API_KEY not set — skipping the eval gate."
+            exit 0
+          fi
+          SUITES="${{ github.event.inputs.suites }}"
+          # Default gate set: the cheap, fast-signal suites. Heavier fleet suites
+          # (researchDelegation/swarm/wholeTask) are opt-in via the dispatch input.
+          if [ -z "$SUITES" ]; then
+            SUITES="tool-selection coder-edit delegationDecision judge-approval"
+          fi
+          SAMPLES_FLAG=""
+          if [ -n "${{ github.event.inputs.samples }}" ]; then
+            SAMPLES_FLAG="--samples ${{ github.event.inputs.samples }}"
+          fi
+          echo "Running eval gate on: $SUITES"
+          bun run eval $SUITES \
+            --main opencode:kimi-k2.6 \
+            --fast opencode:deepseek-v4-flash \
+            $SAMPLES_FLAG \
+            --compare packages/evals/baseline.json
