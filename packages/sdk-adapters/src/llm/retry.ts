@@ -32,6 +32,20 @@ const MAX_BACKOFF_MS = 8_000
 /** Honor a provider's `Retry-After` only up to a minute. Longer ⇒ not a
  *  transient blip but a rate/quota wall — fail fast rather than park the turn. */
 export const MAX_HONORED_RETRY_AFTER_MS = 60_000
+/**
+ * Wall-clock ceiling on a single LLM request (connect + the full non-streamed
+ * response). Was 5 min — far too long: a silently stalled gateway connection
+ * (socket open, no bytes, no error) parked a *backgrounded* sub-agent for
+ * minutes before this abort fired, with nothing on screen — the node sat
+ * `running` with zero turns while its parent's `wait_for_agents` looped blind. 2
+ * min bounds a real hang while leaving ample room for a slow-but-valid
+ * completion; the abort is classified transient and RETRIED, so a genuine blip
+ * recovers. The harder backstop is the sub-agent stall watchdog
+ * (`SUBAGENT_STALL_DEADLINE_MS` in `buildScopeRuntime`), which interrupts a run
+ * that makes no progress at all — covering a freeze this per-request timeout
+ * can't (e.g. a deadlock that never even reaches the fetch).
+ */
+export const LLM_REQUEST_TIMEOUT_MS = 120_000
 
 /** 429 (rate limit) + the retryable 5xx (overload / gateway / unavailable). */
 const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504])

@@ -4,6 +4,7 @@ import { type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
 import { Effect, Option, Ref } from "effect"
 import {
   isTransientAiError,
+  LLM_REQUEST_TIMEOUT_MS,
   MAX_HONORED_RETRY_AFTER_MS,
   parseRetryAfter,
   planDelay,
@@ -37,6 +38,17 @@ const unknown = (description: string): AiError.UnknownError =>
 
 const malformed = (): AiError.MalformedOutput =>
   new AiError.MalformedOutput({ module: "Test", method: "decode", description: "bad json" })
+
+describe("LLM_REQUEST_TIMEOUT_MS", () => {
+  it("is a tight 2-minute per-request ceiling (was 5 min) so a silent stall surfaces fast", () => {
+    // Pinned so nobody silently restores the 5-min value the regression had: a
+    // backgrounded sub-agent on a stalled connection sat invisible for minutes.
+    expect(LLM_REQUEST_TIMEOUT_MS).toBe(120_000)
+    // Must stay BELOW the sub-agent stall watchdog deadline (180s) so a single
+    // hung call aborts + retries (recoverable) before the watchdog kills the run.
+    expect(LLM_REQUEST_TIMEOUT_MS).toBeLessThan(180_000)
+  })
+})
 
 describe("isTransientAiError", () => {
   it("treats 429 and the retryable 5xx as transient", () => {
