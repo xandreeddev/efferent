@@ -1,5 +1,15 @@
 # @xandreed/evals
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [434194b]
+- Updated dependencies [f03483e]
+- Updated dependencies [f03483e]
+  - @xandreed/sdk-core@0.3.0
+  - @xandreed/sdk-adapters@0.2.1
+
 ## 0.1.1
 
 ### Patch Changes

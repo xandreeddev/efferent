@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/sdk-core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "efferent SDK — the pure Effect.ts domain: agent loop, context tree, compaction, multi-provider router contracts, approval. Ports + use cases, no IO. Runtime-agnostic.",
   "license": "MIT",
