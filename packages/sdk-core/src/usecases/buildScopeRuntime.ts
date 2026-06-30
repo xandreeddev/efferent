@@ -4,8 +4,10 @@ import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
 import type {
   AgentAfterToolCallEvent,
+  AgentBeforeToolCallEvent,
   AgentHooks,
   AgentLlmRetryEvent,
+  BeforeToolCallDecision,
 } from "../entities/AgentHooks.js"
 import { type AgentMessage, ConversationId } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
@@ -948,12 +950,21 @@ const makeInnerHooks = <R>(
     // watchdog fires after the deadline. Not forwarded to the parent driver
     // (sub-agent turn-starts never were) — it only feeds the local watchdog.
     onTurnStart: () => bumpProgress,
-    ...(parentBefore !== undefined
-      ? {
-          onBeforeToolCall: (e: Parameters<typeof parentBefore>[0]) =>
-            parentBefore({ ...e, subAgentNodeId: nodeId }),
-        }
-      : {}),
+    // Stamp liveness at the START of every tool call too — not just on completion
+    // (onAfterToolCall). A turn's LLM phase (bounded by LLM_REQUEST_TIMEOUT_MS,
+    // which retries+bumps) plus a long tool can together exceed the stall
+    // deadline while each phase is fine; bumping at the tool boundary resets the
+    // clock so the watchdog measures time-since-the-last-step, not time-since-
+    // turn-start, and a working agent isn't killed mid-tool. Still forwards the
+    // parent's allow/deny decision (or a default continue when there's no parent).
+    onBeforeToolCall: (e: AgentBeforeToolCallEvent) =>
+      bumpProgress.pipe(
+        Effect.zipRight(
+          parentBefore !== undefined
+            ? parentBefore({ ...e, subAgentNodeId: nodeId })
+            : Effect.succeed<BeforeToolCallDecision>({ action: "continue" }),
+        ),
+      ),
     onAfterToolCall: (e) =>
       Effect.gen(function* () {
         yield* bumpProgress
