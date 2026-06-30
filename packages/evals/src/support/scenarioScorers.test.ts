@@ -107,6 +107,21 @@ describe("orchestratorPurityScore — root must orchestrate, not do the work its
       purity(run({ rootTools: ["read_file", "run_agent"], rootSpawnedAgents: ["coordinator"] }), exp),
     ).toBeCloseTo(0.875)
   })
+  it("the live regression: root looped on housekeeping (no work tools) but NEVER delegated → 0", () => {
+    // The exact orchestrate-mode failure: update_plan/blackboard_read/
+    // list_scheduled_jobs over and over, zero work tools (it has none), zero
+    // spawns. The OLD scorer gave this a clean 1.0 ("touched no work tools") and
+    // masked it; now an orchestrate root that never delegates scores 0.
+    expect(
+      purity(
+        run({
+          rootTools: ["update_plan", "blackboard_read", "list_scheduled_jobs", "update_plan"],
+          rootSpawnedAgents: [],
+        }),
+        { rootMustNotCode: true },
+      ),
+    ).toBe(0)
+  })
   it("no purity expectation ⇒ neutral 1", () => {
     expect(purity(run({ rootTools: ["edit_file"] }), {})).toBe(1)
   })

@@ -106,7 +106,9 @@ export const researchEfficiencyEval = defineEval<Input, ScenarioRun, Expected, E
   threshold: 0.6,
   concurrency: 1, // a full fleet per case — don't fan out
   data: CASES,
-  task: (input) => runScenario(input.files, input.prompt, {}),
+  // includeFleet: the prompts force a research-coordinator — without the roster the
+  // lead is UnknownAgent and nothing spawns, so the fleet-efficiency measure is moot.
+  task: (input) => runScenario(input.files, input.prompt, { includeFleet: true }),
   scorers: [
     // Quality floor: the budget can't be "won" by doing nothing — a sourced answer.
     predicate("delivered", ({ output }) => output.finalText.toLowerCase().includes("http")),

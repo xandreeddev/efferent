@@ -188,6 +188,62 @@ describe("runAgentLoop degenerate-repeat circuit breaker", () => {
     expect(userMsgs.some((m) => String(m.content) === DEGENERATE_REPEAT_NUDGE)).toBe(true)
   })
 
+  it("breaks an INTERLEAVED no-progress spin that update_plan's churning args used to hide", async () => {
+    // The real production loop: the root alternated [list_scheduled_jobs +
+    // blackboard_read] with update_plan — and update_plan rewrites its whole step
+    // list every turn, so the OLD (args-keyed, consecutive) breaker reset every
+    // other turn and never fired. The result-keyed, novelty-over-the-run breaker
+    // catches it: once each signature has been seen, every turn is no-progress.
+    let n = 0
+    const service = {
+      generateText: () => {
+        n++
+        const content =
+          n % 2 === 1
+            ? [
+                { type: "tool-call", id: `c${n}`, name: "list_scheduled_jobs", params: {} },
+                {
+                  type: "tool-result",
+                  id: `c${n}`,
+                  name: "list_scheduled_jobs",
+                  isFailure: false,
+                  result: { jobs: [] },
+                },
+              ]
+            : [
+                // DIFFERENT args every time — the old breaker reset on this.
+                {
+                  type: "tool-call",
+                  id: `c${n}`,
+                  name: "update_plan",
+                  params: { steps: [{ step: `step ${n}`, status: "active" }] },
+                },
+                {
+                  type: "tool-result",
+                  id: `c${n}`,
+                  name: "update_plan",
+                  isFailure: false,
+                  result: { total: 1, done: 0 },
+                },
+              ]
+        return Effect.succeed({ content, text: "", finishReason: "tool-calls", usage: undefined })
+      },
+      generateObject: () => Effect.die("unused"),
+      streamText: () => Effect.die("unused"),
+    }
+    const res = await Effect.runPromise(
+      runAgentLoop({ system: "s", messages: seed, toolkit: oneToolToolkit, maxSteps: 50 }).pipe(
+        Effect.provideService(
+          LanguageModel.LanguageModel,
+          LanguageModel.LanguageModel.of(service as never),
+        ),
+      ) as Effect.Effect<AgentResult, unknown, never>,
+    )
+    // Caught despite the interleave + churning args — nowhere near maxSteps (50).
+    expect(n).toBeLessThanOrEqual(9)
+    expect(res.finalText).toBe(DEGENERATE_LOOP_STOP)
+  })
+
   it("does NOT break a legitimate repeated POLL (wait_for_agents) — that runs to maxSteps", async () => {
     // Re-polling wait_for_agents with the same args while the fleet is still
     // running is CORRECT, not a spin — it must never trip the breaker.

@@ -22,11 +22,40 @@ describe("coderSystemPrompt orchestration policy", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
     expect(p).toContain("# Your role: orchestrate")
     expect(p).toContain('run_agent({ agent: "coordinator"')
-    expect(p).toContain("Size is never an excuse")
+    expect(p).toContain("any size")
     // The old "do it yourself by default" stance + the standalone `# Writing code`
     // section are gone — orchestration is unconditional now.
     expect(p).not.toContain("Do the work yourself by default")
     expect(p).not.toContain("# Writing code")
+  })
+
+  it("the orchestrate prompt is HONEST about its tools — only the four it has, no work tools", () => {
+    // The regression this guards: a stripped (no-work-tools) toolkit under a prompt
+    // that still advertised read_file/grep/edit_file and told the root to "read the
+    // workspace" / "Read the blackboard FIRST". A weak model couldn't reconcile that
+    // and looped on the housekeeping tools instead of delegating.
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("You have NO work tools")
+    for (const t of ["run_agent(", "wait_for_agents(", "send_message(", "update_plan("]) {
+      expect(p).toContain(t)
+    }
+    for (const gone of [
+      "read_file",
+      "edit_file",
+      "write_file",
+      "grep(",
+      "glob(",
+      "Bash(",
+      "search_web",
+      "web_fetch",
+      "blackboard",
+      "Read the blackboard FIRST",
+      "list_scheduled_jobs",
+      "schedule(",
+      "Use tools to read the workspace",
+    ]) {
+      expect(p).not.toContain(gone)
+    }
   })
 
   it("routes investigation through the research-coordinator (no standalone research section)", () => {
@@ -34,6 +63,16 @@ describe("coderSystemPrompt orchestration policy", () => {
     expect(p).toContain("# Your role: orchestrate")
     expect(p).toContain('run_agent({ agent: "research-coordinator"')
     expect(p).not.toContain("# Investigating & researching")
+  })
+
+  it("direct mode (no lead loaded) keeps the full work toolkit", () => {
+    // The non-orchestrate path is unchanged: a no-fleet roster gets the hands-on
+    // coder with real work tools and no orchestrate block.
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [], [])
+    expect(p).toContain("read_file(")
+    expect(p).toContain("edit_file(")
+    expect(p).not.toContain("# Your role: orchestrate")
+    expect(p).not.toContain("You have NO work tools")
   })
 
   it("names both leads when both are loaded", () => {
