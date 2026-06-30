@@ -113,8 +113,15 @@ export interface AgentBus {
   readonly isRunning: (nodeId: string) => Effect.Effect<boolean>
   /** Running agents with mailboxes, for addressing + the cockpit. */
   readonly listRunning: () => Effect.Effect<ReadonlyArray<{ nodeId: string; label: string }>>
-  /** Node ids of the agents `parentKey` spawned that are still running. */
+  /** Node ids of the agents `parentKey` spawned — running AND recently finished —
+   *  so a gather's "watch everything I spawned" default still reports a child that
+   *  completed before the parent looked. For "is the fleet still working?" use
+   *  {@link runningChildrenOf}, not this. */
   readonly childrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
+  /** Node ids of the agents `parentKey` spawned that are STILL RUNNING — for
+   *  fleet-idle detection (`length === 0` ⇒ idle) and a fleet-scoped interrupt; a
+   *  finished child needs neither and must not keep these sets non-empty forever. */
+  readonly runningChildrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
   /** Interrupt one running agent's fiber. False when it isn't running / has no fiber. */
   readonly interrupt: (nodeId: string) => Effect.Effect<boolean>
   /** Interrupt every running agent (Esc / process teardown — no orphans). */
@@ -207,9 +214,6 @@ export const makeAgentBus = (
   })
   const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
     onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
-
-  const statusOf = (s: BusState, nodeId: string): AgentRunStatus =>
-    s.running.has(nodeId) ? "running" : s.done.get(nodeId)?.status ?? "running"
 
   const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot => {
     const run = s.running.get(nodeId)
@@ -372,6 +376,15 @@ export const makeAgentBus = (
         }),
       ),
 
+    runningChildrenOf: (parentKey) =>
+      Ref.get(ref).pipe(
+        Effect.map((s) =>
+          [...s.running.entries()]
+            .filter(([, e]) => e.parentKey === parentKey)
+            .map(([nodeId]) => nodeId),
+        ),
+      ),
+
     interrupt: (nodeId) =>
       Effect.gen(function* () {
         const fiber = yield* Ref.get(ref).pipe(
@@ -443,10 +456,21 @@ export const makeAgentBus = (
     awaitChange: ({ waiterKey, watch, timeoutMs }) =>
       Effect.gen(function* () {
         const s0 = yield* Ref.get(ref)
-        // Already-finished watched agent, or mail already waiting → return now.
-        const someDone = watch.some((id) => statusOf(s0, id) !== "running")
+        // Block on the *transition* of a still-running watched agent to done —
+        // NOT on the done *level*. The old `watch.some(statusOf !== "running")`
+        // was a level check: once any watched child had finished it stayed true
+        // forever, so every later gather returned in ~1s (a busy-spin), and a
+        // forced orchestrator "resolved" the early return by spawning more
+        // agents. A finished child instead lands a completion message in the
+        // waiter's inbox (see `complete`) — caught by `haveMail` below.
+        const running = watch.filter((id) => s0.running.has(id))
         const haveMail = (s0.running.get(waiterKey)?.inbox.length ?? 0) > 0
-        if (someDone || haveMail) return
+        // Return now if there's mail to report, or every watched agent is
+        // already done (nothing left to wait for). With NO watched agents at
+        // all, fall through and park — a `post` can still wake us (reach a busy
+        // agent / a human steer), bounded by the timeout.
+        const allWatchedDone = watch.length > 0 && running.length === 0
+        if (haveMail || allWatchedDone) return
 
         // Park: set the waiter's wake latch, race it against the watched
         // completions and a timeout, then clear the latch on every exit path.
@@ -465,7 +489,7 @@ export const makeAgentBus = (
           running.set(waiterKey, { ...e, wake: undefined })
           return { ...s, running }
         })
-        const completions = watch
+        const completions = running
           .map((id) => s0.running.get(id)?.completion)
           .filter((d): d is Deferred.Deferred<void> => d !== undefined)
           .map((d) => Deferred.await(d))
