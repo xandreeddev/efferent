@@ -86,11 +86,13 @@ export const swarmEval = defineEval<SwarmInput, ScenarioRun, SwarmExpected, Eval
   concurrency: 1, // a full fleet per case — don't fan out
   data: CASES,
   task: (input) =>
-    runScenario(
-      input.files,
-      input.prompt,
-      input.readback !== undefined ? { readback: input.readback } : {},
-    ),
+    runScenario(input.files, input.prompt, {
+      // The prompts command run_agent({ agent: "coordinator"/"research-coordinator" }),
+      // so the fleet roster MUST be loaded — else the lead is UnknownAgent, nothing
+      // spawns, and the whole suite scores 0 (the bug this opt-in fixes).
+      includeFleet: true,
+      ...(input.readback !== undefined ? { readback: input.readback } : {}),
+    }),
   scorers: [
     // The fleet actually engaged (the root delegated and sub-agents spawned).
     predicate(

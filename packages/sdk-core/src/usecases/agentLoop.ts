@@ -90,33 +90,31 @@ const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.sli
 const POLLABLE_REPEAT_TOOLS = new Set(["wait_for_agents", "bash_output"])
 
 /**
- * A stable signature of one turn's tool activity: the (sorted) multiset of
- * `tool(args)` calls paired with their `ok:result`. Identical signatures on
- * consecutive turns mean the model is repeating the SAME call and getting the
- * SAME result — zero progress (live: a root that called `list_scheduled_jobs`
- * ~30× before doing anything). Returns "" for turns that must NOT count: no
- * tool calls (plain narration), or purely polling calls. Including the RESULT is
- * deliberate — a call that returns new info each time (different result) yields a
- * different signature and never trips the breaker.
+ * A stable signature of one turn's PROGRESS — the (sorted) multiset of each
+ * non-polling tool's `name:ok:result`. Deliberately keyed on the RESULT, NOT the
+ * args: a tool that returns the same thing regardless of its args (`update_plan` →
+ * {total,done}, `blackboard_read` → {notes:[]}, `list_scheduled_jobs` → {jobs:[]})
+ * yields the SAME signature every call — so re-issuing it, even with churning args,
+ * registers as no progress. (Keying on args was the gap that let `update_plan`,
+ * which rewrites its whole step list every turn, defeat the breaker.) Returns ""
+ * for turns that must NOT count: no tool calls (plain narration) or purely polling
+ * calls. A turn that surfaces NEW info (a different file read, a fresh search,
+ * a spawned agent) produces a signature not seen before.
  */
-const repeatSignature = (content: ReadonlyArray<unknown>): string => {
+const progressSignature = (content: ReadonlyArray<unknown>): string => {
   const calls = responseToolCalls(content)
   if (calls.length === 0) return ""
   if (calls.every((c) => POLLABLE_REPEAT_TOOLS.has(c.toolName))) return ""
-  const callPart = calls
-    .map((c) => `${c.toolName}(${JSON.stringify(c.args)})`)
+  return responseToolResults(content)
+    .filter((r) => !POLLABLE_REPEAT_TOOLS.has(r.toolName))
+    .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${clip(JSON.stringify(r.result ?? null), 300)}`)
     .sort()
     .join("|")
-  const resultPart = responseToolResults(content)
-    .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${clip(JSON.stringify(r.result ?? null), 200)}`)
-    .sort()
-    .join("|")
-  return `${callPart}=>${resultPart}`
 }
 
-/** Consecutive identical-signature turns before the breaker NUDGES (injects a
- *  corrective) and, failing that, BREAKS the loop. Generous enough that a normal
- *  2–3× retry never trips, tight enough that a true spin stops by the 6th turn. */
+/** How many consecutive NO-PROGRESS turns (a signature already seen this run)
+ *  before the breaker NUDGES once, then force-STOPS. Generous enough that a normal
+ *  2–3× revisit never trips, tight enough that a true spin stops by the 6th turn. */
 const REPEAT_NUDGE_AT = 3
 const REPEAT_BREAK_AT = 5
 
@@ -315,11 +313,14 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // bounded so a persistently-broken model can't spin forever.
     let consecutiveMalformed = 0
     const MAX_MALFORMED = 3
-    // Degenerate-repeat circuit breaker state: the previous turn's tool-activity
-    // signature and how many consecutive turns have matched it (see the loop
-    // body and `repeatSignature`).
-    let consecutiveRepeats = 0
-    let lastRepeatSig = ""
+    // Degenerate-loop circuit breaker state: every progress-signature seen this
+    // run, and how many consecutive turns have produced NOTHING new (a signature
+    // already in the set). A novel signature resets the counter — so the breaker
+    // fires only on sustained no-progress, and survives the model interleaving a
+    // few no-op signatures (the `[list+blackboard] ↔ update_plan` spin) instead of
+    // repeating one verbatim. See the loop body and `progressSignature`.
+    const seenSignatures = new Set<string>()
+    let staleTurns = 0
     // Whether the latest response still asked for tool calls — at loop exit
     // this distinguishes "finished" from "cut off by the step cap".
     let stillWantedMore = false
@@ -513,26 +514,34 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
 
       turnIndex++
 
-      // --- Degenerate-repeat circuit breaker (mirrors the malformed breaker) ---
-      // Same call(s) + same result(s) as the previous turn ⇒ no progress. Nudge
-      // once at the threshold (a chance to course-correct), then force-stop if it
-      // keeps repeating — so a fixating model (e.g. `list_scheduled_jobs` ×30)
-      // can't spin the loop to its step cap, burning tokens and saturating the
-      // provider. Pollable tools never count (see `repeatSignature`).
-      const repeatSig = repeatSignature(content)
-      if (repeatSig !== "" && repeatSig === lastRepeatSig) consecutiveRepeats++
-      else consecutiveRepeats = 0
-      lastRepeatSig = repeatSig
-      if (repeatSig !== "" && consecutiveRepeats >= REPEAT_BREAK_AT) {
+      // --- Degenerate-loop circuit breaker (mirrors the malformed breaker) ---
+      // A turn whose progress-signature was already seen this run produced nothing
+      // new. Count consecutive no-progress turns; a novel signature resets it. Nudge
+      // once at the threshold (a chance to course-correct), then force-stop — so a
+      // fixating model can't spin the loop to its step cap, burning tokens and
+      // saturating the provider. Keyed on results (not args) and counted over the
+      // whole run, so a model that interleaves a few no-op signatures (the
+      // `[list_scheduled_jobs+blackboard_read] ↔ update_plan` spin) is still caught
+      // once each one has been seen. Pollable tools never count (see
+      // `progressSignature`).
+      const sig = progressSignature(content)
+      if (sig !== "") {
+        if (seenSignatures.has(sig)) staleTurns++
+        else {
+          seenSignatures.add(sig)
+          staleTurns = 0
+        }
+      }
+      if (sig !== "" && staleTurns >= REPEAT_BREAK_AT) {
         yield* recordError("turn", "degenerate-loop")
         yield* Effect.logWarning(
-          `breaking a degenerate tool-call loop: ${consecutiveRepeats + 1} identical no-progress turns`,
+          `breaking a degenerate tool-call loop: ${staleTurns + 1} no-progress turns`,
         )
         if (finalText.length === 0) finalText = DEGENERATE_LOOP_STOP
         stillWantedMore = false
         break
       }
-      if (repeatSig !== "" && consecutiveRepeats === REPEAT_NUDGE_AT) {
+      if (sig !== "" && staleTurns === REPEAT_NUDGE_AT) {
         const corrective: AgentMessage = { role: "user", content: DEGENERATE_REPEAT_NUDGE }
         messages = [...messages, corrective]
         newTail.push(corrective)
