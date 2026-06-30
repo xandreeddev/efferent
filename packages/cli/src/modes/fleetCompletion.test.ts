@@ -27,7 +27,7 @@ const runPhases = (phases: number) =>
     ).pipe(Effect.flatMap((spawned) => Ref.set(running, spawned)))
 
     const bus = {
-      childrenOf: () =>
+      runningChildrenOf: () =>
         Ref.get(running).pipe(Effect.map((r) => (r ? (["a"] as const) : []))),
       awaitChange: () => Ref.set(running, false),
     } as unknown as AgentBus
