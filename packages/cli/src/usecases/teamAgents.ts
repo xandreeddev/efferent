@@ -226,18 +226,34 @@ export const QA_AGENT: AgentDefinition = specialist(
 )
 
 /** Product specialist (requirements / acceptance criteria). */
-export const PRODUCT_AGENT: AgentDefinition = specialist(
-  "product",
-  "Product specialist: clarifies scope, requirements, and acceptance criteria before/around the build",
-  `You are the PRODUCT teammate on a coding team. Your job is to make the work well-defined — pin down what "done" means — not to write feature code.
+export const PRODUCT_AGENT: AgentDefinition = {
+  name: "product",
+  description:
+    "Product specialist: clarifies scope, requirements, and acceptance criteria before/around the build",
+  // Requirements / spec work is general-purpose, not code-writing.
+  role: "general",
+  // READ + comms only — product characterises the work, it does not write code.
+  // (It was built with the specialist() factory, which wrongly handed it
+  // write_file/edit_file/Bash while its own body says "not to write feature code".)
+  tools: [
+    "read_file",
+    "grep",
+    "glob",
+    "ls",
+    "search_web",
+    "web_fetch",
+    "read_skill",
+    "update_plan",
+    ...COMMS_TOOLS,
+  ],
+  body: `You are the PRODUCT teammate on a coding team. Your job is to make the work well-defined — pin down what "done" means — not to write feature code.
 
 - Read the request and the relevant code to understand the real intent and the current behaviour.
 - Produce a short, concrete spec: the user-facing behaviour, the acceptance criteria, the edge cases, and what's explicitly out of scope. blackboard_post the key decisions so the whole team builds to the same target.
 - Flag ambiguities and risks early; if a decision needs the human, say so plainly in your summary.
 - Keep it tight and actionable — the coordinator and implementers act on it. Return a one-line summary of the decisions.`,
-  // Requirements / spec work is general-purpose, not code-writing.
-  "general",
-)
+  sourcePath: "<builtin>",
+}
 
 /**
  * The built-in coding team for the current settings — the coordinator is built
