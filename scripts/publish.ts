@@ -206,7 +206,14 @@ for (const { dir, kind } of PUBLISHABLE) {
       writeManifest(dir, mirror)
       const mcode = npmPublish(dir)
       if (mcode === 0) {
-        console.log(`New tag: @xandreed/cli@${version}`)
+        // Log WITHOUT the magic `New tag:` prefix: changesets/action greps that
+        // prefix to create a git tag + GitHub release per line, then looks the
+        // name up in the workspace. `@xandreed/cli` is only a publish-time alias
+        // of `efferent` (not a workspace package), so emitting `New tag:` for it
+        // makes the action fail with `Package "@xandreed/cli" not found` AFTER a
+        // successful npm publish — turning a green release red and skipping the
+        // real packages' GitHub releases. The bundle is identical to efferent's.
+        console.log(`Mirrored: @xandreed/cli@${version} (alias of efferent, same bundle)`)
         published.push(`@xandreed/cli@${version}`)
       } else {
         console.error(`⚠ @xandreed/cli mirror publish failed (exit ${mcode}) — primary efferent is published; configure its trusted publisher on npmjs.com`)
