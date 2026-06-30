@@ -4,6 +4,7 @@ import { FileSystem, type DirEntry } from "../ports/FileSystem.js"
 import type { Scope } from "../entities/Scope.js"
 import { parseFrontmatter } from "./parseFrontmatter.js"
 import { renderScopeSystemPrompt } from "../prompts/scopeAgent.js"
+import { GENERIC_AGENT_TOOL_NAMES } from "../prompts/toolList.js"
 
 /**
  * Walk bounds. SCOPE.md discovery runs at every boot, so the walk must stay
@@ -143,6 +144,8 @@ export const discoverScopeTree = (
           displayRoot: workspaceRoot,
           body: raw.body,
           now,
+          // A SCOPE.md folder agent runs on the generic toolkit.
+          toolNames: GENERIC_AGENT_TOOL_NAMES,
         }),
         isRoot: false,
         enforceWrite: true,

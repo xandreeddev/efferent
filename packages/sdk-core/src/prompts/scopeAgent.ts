@@ -11,6 +11,7 @@ import {
   renderMemorySection,
   subAgentsSection,
 } from "./sections.js"
+import { renderToolsFor } from "./toolList.js"
 
 export interface RenderScopeSystemPromptArgs {
   readonly name: string
@@ -19,9 +20,16 @@ export interface RenderScopeSystemPromptArgs {
   readonly body: string
   readonly now: Date
   /**
+   * The tool names this role ACTUALLY has (its `roleToolEntries`). The `# Tools`
+   * block and the fleet/coordination sections are rendered from exactly this set,
+   * so the prompt can never advertise a tool the toolkit lacks. Pass
+   * `GENERIC_AGENT_TOOL_NAMES` for a no-role generic agent.
+   */
+  readonly toolNames: ReadonlyArray<string>
+  /**
    * The agent roster, so a sub-agent that can delegate (a coordinator — a role
-   * whose allowlist includes `run_agent`) knows its specialists by name. Absent
-   * ⇒ no roster section (a leaf worker doesn't need it).
+   * whose allowlist includes `run_agent`) knows its specialists by name. Only
+   * emitted for a role that can actually spawn (`run_agent` in `toolNames`).
    */
   readonly agents?: ReadonlyArray<AgentDefinition>
   /**
@@ -40,8 +48,13 @@ export interface RenderScopeSystemPromptArgs {
  */
 export const renderScopeSystemPrompt = (
   args: RenderScopeSystemPromptArgs,
-): string =>
-  `You are the **${args.name}** sub-agent, invoked by a parent agent on a focused task.
+): string => {
+  const has = (name: string): boolean => args.toolNames.includes(name)
+  const canSpawn = has("run_agent")
+  const canWait = has("wait_for_agents")
+  const hasComms =
+    has("send_message") || has("blackboard_post") || has("blackboard_read")
+  return `You are the **${args.name}** sub-agent, invoked by a parent agent on a focused task.
 
 # Scope
 - Workspace root: ${args.displayRoot}
@@ -54,22 +67,7 @@ You can **only write inside your scope**. write_file or edit_file on a path outs
 
 Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for tests/builds/checks local to your package. It can't write through the file tools outside your scope.
 
-# Tools
-- read_file({ path, offset?, limit? }) — read anywhere.
-- write_file({ path, content }) — write only within your scope.
-- edit_file({ path, edits: [{ oldText, newText }] }) — edit only within your scope.
-- Bash({ command, timeout? }) — runs in your scope dir.
-- grep({ pattern, dir?, flags?, context? }) — search anywhere.
-- glob({ pattern, dir? }) — find files anywhere.
-- ls({ path?, recursive? }) — list anywhere.
-- search_web({ query }) — search the web; returns a synthesized answer plus source URLs.
-- web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use only URLs the user gave you or that a tool surfaced.
-- run_agent({ name, folder, task }) — spawn a folder-scoped sub-agent for localized work; returns immediately, the agent runs in the background (see Sub-agents).
-- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather spawned agents' results without blocking (see Coordination).
-- send_message({ to, content }) / blackboard_post({ note }) / blackboard_read({ limit? }) — coordinate with sibling agents (see Coordination).
-- schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron).
-- update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole.${(args.memory ?? []).length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below).\n- remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer." : ""}
-${subAgentsSection}${renderAgentsSection(args.agents ?? [])}${renderMemorySection(args.memory ?? [])}${coordinationSection}
+${renderToolsFor(args.toolNames)}${canSpawn ? subAgentsSection : ""}${canSpawn ? renderAgentsSection(args.agents ?? []) : ""}${renderMemorySection(args.memory ?? [])}${coordinationSection({ canWait, hasComms })}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - Before a tool call (or a short batch of them), write ONE short line on what you're about to do and why — it streams live, so the user (and your parent) can follow your reasoning between steps. Keep it to a sentence; skip it only for a single trivial read, and never turn it into a play-by-play.
@@ -87,3 +85,4 @@ Your final assistant message is a **one-line summary** of what you changed (or w
 ## Scope-specific instructions
 
 ${args.body}`
+}
