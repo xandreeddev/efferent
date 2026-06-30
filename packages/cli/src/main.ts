@@ -14,7 +14,7 @@ import {
 } from "@xandreed/sdk-core"
 import {
   AuthFlowLive,
-  StructuredVerifierLive,
+  ClaudeHeadlessVerifierLive,
   HttpLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
@@ -86,16 +86,15 @@ const AppLive = Layer.mergeAll(
     Layer.provide(ModelRegistryLive),
     Layer.provide(FetchHttpClient.layer),
   ),
-  // The self-improving loop's verify gate — Opus via `generateObject` (a
-  // PROVIDER-ENFORCED structured verdict, so no free-text parsing can fail; see
-  // structured.ts). Pinned to EFFERENT_VERIFY_MODEL (default anthropic:claude-opus-4-8),
-  // judged under a controlled validator system prompt for independence. Needs its
-  // own FileSystem (to read changed files on a code gate) + HTTP client; AuthStore
-  // + SettingsStore flow from the bottom provideMerge like the other model tiers.
-  StructuredVerifierLive.pipe(
-    Layer.provide(LocalFileSystemLive),
-    Layer.provide(FetchHttpClient.layer),
-  ),
+  // The self-improving loop's verify gate — an INDEPENDENT Opus referee run via
+  // the real `claude` Claude Code headless CLI (`claude -p … --output-format json`)
+  // in a clean-room sandbox, over the `Shell` port. Provider-agnostic of the
+  // engine's own model (works on a headless opencode setup), uses the Claude
+  // subscription rate, and a robust balanced-brace parse means a brace-heavy or
+  // oddly-shaped verdict degrades gracefully, never to a silent "unavailable".
+  // Pinned to EFFERENT_VERIFY_MODEL (default claude-opus-4-8). Needs only `Shell`
+  // (LocalShellLive is already in AppLive, so it memoises).
+  ClaudeHeadlessVerifierLive.pipe(Layer.provide(LocalShellLive)),
 ).pipe(Layer.provideMerge(CredentialsLive))
 
 /**
