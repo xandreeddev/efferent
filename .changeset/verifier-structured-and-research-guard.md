@@ -1,7 +1,7 @@
 ---
 "@xandreed/sdk-core": patch
 "@xandreed/sdk-adapters": minor
-"@xandreed/cli": patch
+"efferent": patch
 "@xandreed/evals": patch
 ---
 

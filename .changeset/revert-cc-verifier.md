@@ -1,7 +1,7 @@
 ---
 "@xandreed/sdk-core": patch
 "@xandreed/sdk-adapters": patch
-"@xandreed/cli": patch
+"efferent": patch
 ---
 
 fix(verifier): revert to the Claude Code (`claude -p`) gate with a robust parse — no more "verifier UNAVAILABLE".
