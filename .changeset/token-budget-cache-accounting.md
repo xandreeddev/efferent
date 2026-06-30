@@ -1,6 +1,6 @@
 ---
 "@xandreed/sdk-core": patch
-"@xandreed/cli": patch
+"efferent": patch
 ---
 
 fix(budget): the sub-agent token budget no longer bills cached context at full price — and a research subtree can't bleed into implementation.
