@@ -97,6 +97,24 @@ const CASES: ReadonlyArray<{
     },
     expected: { budget: { maxWebFetch: 10, maxTotalTokens: 400_000, maxSpawns: 3 }, minSpawns: 1 },
   },
+  {
+    // A BROAD, multi-part question — the shape that tempts the over-fan-out the
+    // live failure showed (root spawning 9 overlapping leads for one 6-part
+    // mission). It must still hand the whole thing to ONE research-coordinator
+    // that fans out a RIGHT-SIZED set (≈ one researcher per framework) and
+    // converges — not a committee, and never the root re-spawning leads on an
+    // early wait. A 9-lead runaway tanks spawn_budget (9 >> 6).
+    name: "broad-multi-part",
+    input: {
+      files: { "NOTES.md": "# scratch\n" },
+      prompt: tightResearch(
+        "compare THREE open-source AI-agent frameworks (e.g. LangGraph, CrewAI, AutoGen): for each, " +
+          "name its core orchestration primitive and one distinctive design choice — one short " +
+          "paragraph per framework, with a source each.",
+      ),
+    },
+    expected: { budget: { maxWebFetch: 30, maxTotalTokens: 1_200_000, maxSpawns: 6 }, minSpawns: 2 },
+  },
 ]
 
 export const researchEfficiencyEval = defineEval<Input, ScenarioRun, Expected, EvalEnv>({
