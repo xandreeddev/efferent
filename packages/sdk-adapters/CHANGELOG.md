@@ -1,5 +1,49 @@
 # @xandreed/sdk-adapters
 
+## 0.4.0
+
+### Minor Changes
+
+- 14027e4: fix(verifier): structured (provider-enforced) verdicts — no more "could not parse a verdict"; plus a non-vacuous research-read-only guard.
+
+  A live run hit `⚠ verifier UNAVAILABLE — work NOT verified: could not parse a deliverable verdict`. claude had answered fine (43–56s, three times) — the failure was the **extractor**: the gate ran the `claude` CLI (`--output-format json`, a free-text answer) and scraped the verdict with a greedy `/\{[\s\S]*\}/`. An Opus assessment of CODE is full of braces, so the greedy span swallowed the prose into an unparseable blob. The CLI has no schema-enforced output mode, so _some_ parsing was unavoidable on that path.
+
+  - **Structured verdicts (the real fix).** A new `StructuredVerifierLive` judges with Opus via `generateObject` and a Schema — a **provider-enforced** `{ verdict, assessment, reasons }`. A parse error is structurally impossible. Independence is preserved by a controlled validator system prompt (no project narrative) + a pinned model (`EFFERENT_VERIFY_MODEL`, default `anthropic:claude-opus-4-8`); a code gate embeds the changed-file contents in the prompt to check against ground truth. **Prose feedback is preserved, not lost** — `assessment` is a first-class field that leads the `reasons` fed back to the retry loop. Fail-soft as before (any error → `VerifierError` → caller falls back to the architect). The old `claude`-CLI verifier (`ClaudeHeadlessVerifierLive`) is removed.
+  - **Research read-only guard, de-vacuumed.** The `researchReadOnly` eval scorer scored 1 whenever the fleet wrote nothing — which is trivially true when the root never delegated (the live run's actual behavior), a false pass. It now scores 1 only when the fleet ran AND wrote nothing; a no-delegation run scores 0 with a clear detail, so the read-only property is never claimed without being exercised.
+  - **Deterministic Fix-3 wiring test.** `constrainToReadOnly` was unit-tested, but the `researchSubtree` flag → handler path wasn't. New tests drive the real `run_agent` handler: with `researchSubtree` set, `agent:"coordinator"` is refused (`ResearchStaysReadOnly`); without it, the same spawn proceeds — proving the flag is what gates it.
+
+### Patch Changes
+
+- 9df3e4d: fix(verifier): revert to the Claude Code (`claude -p`) gate with a robust parse — no more "verifier UNAVAILABLE".
+
+  The verify gate fell open ("⚠ verifier UNAVAILABLE — work NOT verified") on a live headless run. #88 had swapped the `claude -p` subprocess verifier for `StructuredVerifierLive`, which calls the **Anthropic API** via `generateObject` on a pinned `anthropic:claude-opus-4-8`. That is wrong for a headless opencode setup: it's not the engine's model, the opencode provider has no `generateObject` at all, and Anthropic's `generateObject` is a _forced tool call + client-side decode_ — Anthropic treats the schema as a hint, not a contract. Opus returned `reasons: ""` (string), the strict `Schema.Array(Schema.String)` decode rejected it, and the gate surfaced `unavailable` → the work shipped unverified.
+
+  - **Restore `ClaudeHeadlessVerifierLive`** — an INDEPENDENT Opus referee run via the real `claude` Claude Code CLI in a clean-room sandbox (verified empirically: with `HOME=<sandbox>` + a controlled cwd, **no project/global `CLAUDE.md`/`AGENT.md` leaks into the judgment, even with `--add-dir`**). Provider-agnostic of the engine's model; uses the Claude subscription rate. Re-wired in `main.ts` (needs only `Shell`); `StructuredVerifierLive` removed.
+  - **Robust parse (the reason #88 dropped the CC verifier).** The old greedy `/\{[\s\S]*\}/` grabbed first-brace-to-last and broke on a brace-heavy Opus assessment. New shared `extractJsonObjects` (sdk-core) does a string-aware **balanced-brace scan**, returning objects last-first so the trailing verdict wins past pages of code-laden prose. The verdict schema is **tolerant** (`reasons` accepts an array, a bare string, or missing — the exact `reasons: ""` shape that broke the structured verifier). A present-but-unparseable reply degrades to `needs_work` (**fail-closed**, re-check the work) via a keyword fallback — `unavailable` now means only its true cause: `claude` absent, a non-zero exit, or no output.
+
+  Verified live: the real `claude` gate returns a parsed `sound` for a well-sourced answer and `needs_work` (with concrete reasons) for a vague one — no decode failure, no "unavailable". Guarded by unit tests for the brace-heavy and `reasons:""` cases that the old tests never covered.
+
+- 916c43f: fix(swarm): a hung sub-agent no longer strands the fleet "checking for agents that never ran" — three layered recoveries + the degenerate-loop breaker that wasted the run.
+
+  A real `efferent code` run looked completely dead: the root spawned a sub-agent (`run_agent` → `{ status: "running" }`), then looped `wait_for_agents` forever while the node sat `running` with **zero** turns. Root cause was two compounding failures, both fixed:
+
+  - **The spawned sub-agent's first model call silently stalled** (a gateway connection that returns no bytes and no error). Nothing caught it: the exit finalizer only fires when the fiber EXITS (a parked fiber hasn't), and the mid-session sweeper only flips a node whose fiber is no longer on the bus (a parked fiber still is). So the node stranded `running` for up to ~20 min while the parent's `wait_for_agents` looped blind. Now a **stall watchdog** races every spawned run: no progress (no turn start, tool result, narration, or LLM retry) for `SUBAGENT_STALL_DEADLINE_MS` (180s) → interrupt → record a clear `STALL_NOTE` error → notify the parent, which unblocks. Retries count as progress, so a call weathering a transient overload is never killed; a tiny injected deadline unit-tests it without a real wait.
+  - **The per-request LLM timeout was 5 min** — far too long for a backgrounded run with nothing on screen. Cut to **2 min** (`LLM_REQUEST_TIMEOUT_MS`, all four custom adapters), below the watchdog deadline, so a stalled connect aborts → retries (visible) before the watchdog has to kill the run.
+  - **The root burned ~30 turns calling the same tool** (`list_scheduled_jobs`, identical args, identical empty result) before doing anything — saturating the gateway and wasting the run. A **degenerate-repeat circuit breaker** in the agent loop (mirroring the existing malformed-output breaker) detects an identical call+result signature repeating: it nudges once, then force-stops. Pollable tools (`wait_for_agents`, `bash_output`) and calls that return new info each time never trip it.
+
+  Guarded by deterministic tests that run in CI (`bun test`): the watchdog kills a hung sub-agent and records the stall (and does NOT kill a healthy one); the breaker stops a same-call/same-result spin (and does NOT stop a legitimate poll or a progressing loop); the request timeout is pinned at 2 min, below the watchdog deadline.
+
+- Updated dependencies [d4405b2]
+- Updated dependencies [f9f20ed]
+- Updated dependencies [870d1f1]
+- Updated dependencies [ea310fc]
+- Updated dependencies [9df3e4d]
+- Updated dependencies [a171060]
+- Updated dependencies [916c43f]
+- Updated dependencies [1146133]
+- Updated dependencies [14027e4]
+  - @xandreed/sdk-core@0.4.1
+
 ## 0.3.0
 
 ### Minor Changes
