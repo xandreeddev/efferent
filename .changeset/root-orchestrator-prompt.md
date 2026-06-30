@@ -1,6 +1,6 @@
 ---
 "@xandreed/sdk-core": patch
-"@xandreed/cli": patch
+"efferent": patch
 ---
 
 fix(root): the orchestrator root finally matches its toolkit — a dedicated delegate-first prompt, trimmed tools, and a loop breaker that catches the real spin.

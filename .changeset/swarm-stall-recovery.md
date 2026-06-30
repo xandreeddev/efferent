@@ -1,7 +1,7 @@
 ---
 "@xandreed/sdk-core": patch
 "@xandreed/sdk-adapters": patch
-"@xandreed/cli": patch
+"efferent": patch
 ---
 
 fix(swarm): a hung sub-agent no longer strands the fleet "checking for agents that never ran" — three layered recoveries + the degenerate-loop breaker that wasted the run.
