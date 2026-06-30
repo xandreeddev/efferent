@@ -1141,12 +1141,22 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const combinedBody = [definition?.body, scopeBody]
       .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
       .join("\n\n")
+    // The role's ACTUAL tools — so the prompt's `# Tools` block and the fleet /
+    // coordination sections render from exactly what this agent has (no role ⇒
+    // the full generic toolkit). Reused below to build the matching toolkit, so
+    // prompt and toolkit can't drift.
+    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
+    const toolNames =
+      roleEntries !== undefined
+        ? roleEntries.map(([n]) => n)
+        : Object.keys(genericToolkit.tools)
     const system = renderScopeSystemPrompt({
       name: label,
       rootDir: folder,
       displayRoot,
       body: combinedBody,
       now: new Date(),
+      toolNames,
       // Give a coordinator (a role with run_agent) the roster so it can name its
       // specialists; leaf workers ignore it.
       agents: opts.agents,
@@ -1168,7 +1178,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     // the same full handler record), so the two never disagree. No role ⇒ the
     // full generic toolkit (base tools + run_agent).
     const handlers = buildGenericHandlers(binding, opts, hooks, args.bus)
-    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
     const useToolkit =
       roleEntries !== undefined
         ? (Toolkit.make(

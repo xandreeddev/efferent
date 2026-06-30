@@ -48,12 +48,44 @@ You can offload work to a sub-agent with run_agent({ folder, task }). It runs sc
 All sub-agents in a turn share one token budget: a BudgetExhausted failure means stop spawning and do the remaining work yourself, and a summary marked "stopped early" is a partial result — verify before building on it.
 `
 
-export const coordinationSection = `
+/**
+ * The `# Coordination` section, gated by the role's ACTUAL capabilities — so a
+ * read-only reviewer (architect: no comms, no spawn) gets nothing, a leaf coder
+ * with comms but no fleet (implementer) gets the blackboard/message guidance but
+ * not the `wait_for_agents` loop, and a lead gets all of it. The old static
+ * version told every sub-agent to "Read the blackboard FIRST" even when it had
+ * no blackboard tool.
+ */
+export const coordinationSection = (caps: {
+  readonly canWait: boolean
+  readonly hasComms: boolean
+}): string => {
+  if (!caps.canWait && !caps.hasComms) return ""
+  const bullets: Array<string> = []
+  if (caps.hasComms) {
+    bullets.push(
+      "- **Read the blackboard FIRST.** Before you start your work, call blackboard_read — a sibling may have already posted a finding, decision, or contract that changes what you should do (so you don't duplicate or contradict their work). You start with only your task in context; the blackboard is how you see the rest of the fleet's progress.",
+    )
+  }
+  if (caps.canWait) {
+    bullets.push(
+      "- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather results without blocking: returns as soon as a watched agent finishes, someone messages you, or it times out, with each agent's status + finished summaries + your inbox. Loop it until your agents are done. Omit nodeIds to watch everyone you spawned. **Wait quietly** — don't narrate each poll (\"still running, let me wait again\"); either do other useful work between gathers or just loop, and speak up when there's a real result, a problem, or a decision the human needs.",
+    )
+  }
+  if (caps.hasComms) {
+    bullets.push(
+      "- blackboard_post({ note }) / blackboard_read({ limit? }) — a shared scratchpad every agent in the fleet reads and writes. Post findings, decisions, and warnings (e.g. an API contract the frontend needs); read it before and during work so siblings don't duplicate or clobber each other.",
+    )
+    bullets.push(
+      "- send_message({ to, content }) — message a specific RUNNING agent by its run_agent nodeId; it reads the message at its next turn. Use it to steer, unblock, or ask a sibling something.",
+    )
+    bullets.push(
+      `Messages addressed to YOU — from the human, the root, or a sibling — arrive automatically at the start of a turn${caps.canWait ? " (and in wait_for_agents)" : ""}, marked "[inbox · message from …]". You are ALWAYS reachable this way: read them and act, whether it's a status request, an alignment check, or a changed deliverable.`,
+    )
+  }
+  return `
 # Coordination
 The fleet runs like a team: agents work in parallel, in the background, and coordinate instead of guessing. Nobody blocks anyone — an agent that needs another's output keeps working and reconciles over the bus.
-- **Read the blackboard FIRST.** Before you start your work, call blackboard_read — a sibling may have already posted a finding, decision, or contract that changes what you should do (so you don't duplicate or contradict their work). You start with only your task in context; the blackboard is how you see the rest of the fleet's progress.
-- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather results without blocking: returns as soon as a watched agent finishes, someone messages you, or it times out, with each agent's status + finished summaries + your inbox. Loop it until your agents are done. Omit nodeIds to watch everyone you spawned. **Wait quietly** — don't narrate each poll ("still running, let me wait again"); either do other useful work between gathers or just loop, and speak up when there's a real result, a problem, or a decision the human needs.
-- blackboard_post({ note }) / blackboard_read({ limit? }) — a shared scratchpad every agent in the fleet reads and writes. Post findings, decisions, and warnings (e.g. an API contract the frontend needs); read it before and during work so siblings don't duplicate or clobber each other.
-- send_message({ to, content }) — message a specific RUNNING agent by its run_agent nodeId; it reads the message at its next turn. Use it to steer, unblock, or ask a sibling something.
-Messages addressed to YOU — from the human, the root, or a sibling — arrive automatically at the start of a turn (and in wait_for_agents), marked "[inbox · message from …]". You are ALWAYS reachable this way: read them and act, whether it's a status request, an alignment check, or a changed deliverable.
+${bullets.join("\n")}
 `
+}
