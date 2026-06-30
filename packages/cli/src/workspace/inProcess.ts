@@ -704,7 +704,7 @@ export const makeInProcessWorkspace = (
         while (frontier.length > 0) {
           const next: string[] = []
           for (const k of frontier) {
-            const kids = yield* scopeRuntime.bus.childrenOf(k)
+            const kids = yield* scopeRuntime.bus.runningChildrenOf(k)
             for (const c of kids) if (!seen.has(c)) { seen.add(c); next.push(c) }
           }
           frontier = next

@@ -78,7 +78,7 @@ describe("the built-in coding team", () => {
   })
 
   it("implementing specialists are leaf coders: full coding toolkit + comms, but no run_agent/wait_for_agents", () => {
-    for (const agent of [IMPLEMENTER_AGENT, FRONTEND_AGENT, BACKEND_AGENT, QA_AGENT, PRODUCT_AGENT]) {
+    for (const agent of [IMPLEMENTER_AGENT, FRONTEND_AGENT, BACKEND_AGENT, QA_AGENT]) {
       const tools = agent.tools ?? []
       expect(tools).toContain("read_file")
       expect(tools).toContain("edit_file")
@@ -90,5 +90,19 @@ describe("the built-in coding team", () => {
       expect(tools).not.toContain("run_agent")
       expect(tools).not.toContain("wait_for_agents")
     }
+  })
+
+  it("product is READ-ONLY: it clarifies requirements, it does not write code", () => {
+    const tools = PRODUCT_AGENT.tools ?? []
+    expect(tools).toContain("read_file")
+    expect(tools).toContain("grep")
+    // coordinates its spec decisions…
+    expect(tools).toContain("blackboard_post")
+    expect(tools).toContain("send_message")
+    // …but cannot mint code (its body says "not to write feature code").
+    expect(tools).not.toContain("write_file")
+    expect(tools).not.toContain("edit_file")
+    expect(tools).not.toContain("Bash")
+    expect(tools).not.toContain("run_agent")
   })
 })
