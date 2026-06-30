@@ -78,7 +78,7 @@ const waitFleetIdle = (
   Effect.gen(function* () {
     const start = yield* Clock.currentTimeMillis
     while (true) {
-      const running = yield* bus.childrenOf(rootKey)
+      const running = yield* bus.runningChildrenOf(rootKey)
       if (running.length === 0) return true
       const elapsed = (yield* Clock.currentTimeMillis) - start
       if (elapsed >= budgetMs) return false
@@ -104,7 +104,7 @@ export const runFleetToCompletion = <R>(args: {
     let result = yield* args.runTurn(args.firstPrompt)
     let rounds = 0
     while (rounds < MAX_SYNTHESIS_ROUNDS) {
-      const running = yield* args.bus.childrenOf(args.rootKey)
+      const running = yield* args.bus.runningChildrenOf(args.rootKey)
       if (running.length === 0) break // no outstanding fleet — the run is complete
       const remaining = deadline - ((yield* Clock.currentTimeMillis) - start)
       const idled =

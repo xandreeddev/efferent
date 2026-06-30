@@ -43,6 +43,7 @@ export * from "./prompts/title.js"
 export * from "./prompts/handoff.js"
 export * from "./prompts/sections.js"
 export * from "./prompts/scopeAgent.js"
+export * from "./prompts/toolList.js"
 
 // Use cases
 export * from "./usecases/parseFrontmatter.js"
