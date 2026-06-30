@@ -22,10 +22,12 @@ export interface RoutingExpectation {
    *  0 (with `shouldDelegate`) rather than a soft pass. Only checked when
    *  `shouldDelegate === true`. */
   readonly minSpawns?: number
-  /** The root must do **NIL coding/research itself** — only orchestrate
-   *  (`run_agent`/`wait_for_agents`/`update_plan`/comms). Any root-issued
-   *  `read_file`/`edit_file`/`write_file`/`grep`/`glob`/`ls`/`Bash`/`search_web`/
-   *  `web_fetch` is impurity. Scored by {@link orchestratorPurityScore}. */
+  /** The root must ORCHESTRATE: do NIL coding/research itself AND actually
+   *  delegate. Any root-issued work tool is impurity — but since the orchestrate
+   *  root mechanically *can't* call one, "didn't code" is trivially true; the real
+   *  failure mode is the root spinning on housekeeping (`update_plan`/`blackboard`/
+   *  `list_scheduled_jobs`) and never spawning a lead. So this also requires a
+   *  delegation. Scored by {@link orchestratorPurityScore}. */
   readonly rootMustNotCode?: boolean
   /** The LEAD the root must route through — `run_agent({ agent })`: `"coordinator"`
    *  for code work, `"research-coordinator"` for investigation. The root spawning
@@ -88,8 +90,11 @@ export const routingScore = <I, T extends { readonly routing?: RoutingExpectatio
  * nil coding/research itself" property. Deterministic, from the trajectory's
  * root-only signals (`rootTools`, `rootSpawnedAgents`). Averages the applicable
  * checks; returns 1 when no purity expectation is set.
- *   - `rootMustNotCode` → the root's own tool calls must be orchestration-only
- *     (1 when it touched zero {@link WORK_TOOLS}; decays per work-call).
+ *   - `rootMustNotCode` → the root must have orchestrated: zero {@link WORK_TOOLS}
+ *     calls AND at least one delegation. Coding itself decays per work-call;
+ *     looping on housekeeping with NO spawn scores 0 (the live failure — the root
+ *     can't code anymore, so "no work tools" alone is meaningless and used to mask
+ *     a root that spun on `update_plan`/`blackboard_read` and never delegated).
  *   - `expectLead` → the root must have routed through that lead (coordinator /
  *     research-coordinator), not spawned workers directly.
  */
@@ -105,7 +110,14 @@ export const orchestratorPurityScore = <I, T extends { readonly routing?: Routin
       const checks: number[] = []
       if (exp.rootMustNotCode === true) {
         const workCalls = t.rootTools.filter((n) => WORK_TOOLS.has(n)).length
-        checks.push(workCalls === 0 ? 1 : Math.max(0, 1 - workCalls * 0.25))
+        const delegated = t.rootSpawnedAgents.length > 0
+        checks.push(
+          workCalls > 0
+            ? Math.max(0, 1 - workCalls * 0.25) // coded itself → impure
+            : delegated
+              ? 1 // orchestrated cleanly: no work tools, and it delegated
+              : 0, // looped on housekeeping and never spawned a lead — the bug
+        )
       }
       if (exp.expectLead !== undefined) {
         checks.push(t.rootSpawnedAgents.includes(exp.expectLead) ? 1 : 0)

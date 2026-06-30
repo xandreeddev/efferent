@@ -675,26 +675,29 @@ const genericToolkit = Toolkit.make(
 
 /**
  * The **orchestration-only** toolkit — what the ROOT gets when a fleet is in the
- * roster (always-orchestrate mode). It carries delegation + gather + comms +
- * planning + scheduling, and **deliberately NO work tools** (no
- * read/edit/write/grep/glob/ls/Bash/search/fetch/sessions) and **no gate tools**
- * (gating is structural — `driveLoop` runs the Opus gate after the root's run, so
- * the root never drives it). A prompt rule alone didn't stop the root from reading
- * and editing itself (live-verified), so this is the mechanical guarantee: if the
- * root *can't* call a work tool, it *must* route the work to a lead. Handlers still
- * exist in the full layer — this only narrows what the model is offered, so the
- * subset's handler layer agrees.
+ * roster (always-orchestrate mode). It carries ONLY the four tools an interactive
+ * orchestrator needs — delegate, gather, steer, plan — and **deliberately NO work
+ * tools** (no read/edit/write/grep/glob/ls/Bash/search/fetch/sessions) and **no
+ * gate tools** (gating is structural — `driveLoop` runs the Opus gate after the
+ * root's run, so the root never drives it). A prompt rule alone didn't stop the
+ * root from reading and editing itself (live-verified), so this is the mechanical
+ * guarantee: if the root *can't* call a work tool, it *must* route the work to a
+ * lead. Handlers still exist in the full layer — this only narrows what the model
+ * is offered, so the subset's handler layer agrees.
+ *
+ * Deliberately trimmed (2026-06-30): the scheduling tools (`schedule`/
+ * `list_scheduled_jobs`/`cancel_scheduled_job`) and the blackboard tools
+ * (`blackboard_post`/`blackboard_read`) were REMOVED from the root — a weak model
+ * fixated on them (`list_scheduled_jobs`/`blackboard_read` in a loop) instead of
+ * delegating. Scheduling is a daemon/cron concern; the blackboard is for sibling
+ * coordination (the root briefs each lead via the `run_agent` task). Both remain
+ * available to sub-agents/leaves; only the root stops being handed them.
  */
 const ORCHESTRATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "run_agent",
   "wait_for_agents",
   "send_message",
-  "blackboard_post",
-  "blackboard_read",
   "update_plan",
-  "schedule",
-  "list_scheduled_jobs",
-  "cancel_scheduled_job",
 ])
 
 const orchestrationToolkit = Toolkit.make(
@@ -710,6 +713,17 @@ const orchestrationToolkit = Toolkit.make(
  *  must route through one of these — never a bare-role worker — so the lead owns
  *  staffing, sequencing, and the gate. */
 const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
+
+/**
+ * Is the ROOT a pure orchestrator for this roster? True iff a fleet lead
+ * (`coordinator`/`research-coordinator`) is present — then the root gets the
+ * orchestration-only toolkit (no work tools) and must delegate. The SINGLE source
+ * of truth for this decision: both the toolkit gate (here) and the root system
+ * prompt (`coderSystemPrompt` in the CLI) call this, so the prompt and the toolkit
+ * can never disagree about whether the root can do work.
+ */
+export const isOrchestrateMode = (agents: ReadonlyArray<{ readonly name: string }>): boolean =>
+  agents.some((a) => LEAD_AGENT_NAMES.includes(a.name))
 
 /** The research lead — its whole subtree stays read-only (see RunContext.researchSubtree). */
 const RESEARCH_COORDINATOR_NAME = "research-coordinator"
@@ -2034,9 +2048,7 @@ export const buildScopeRuntime = <R = never>(
   // fleet present the root keeps the full toolkit (the direct fast path for a
   // single-model, no-fleet setup). Sub-agents are unaffected — they build their
   // own per-spawn toolkit from `roleToolEntries`.
-  const orchestrate = opts.agents.some(
-    (a) => a.name === "coordinator" || a.name === "research-coordinator",
-  )
+  const orchestrate = isOrchestrateMode(opts.agents)
   const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus)
   const rootToolkit = orchestrate ? orchestrationToolkit : genericToolkit
   const handlerLayer = (

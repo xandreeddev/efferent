@@ -1,6 +1,7 @@
 import type { AgentDefinition, Memory, Prompt, Skill } from "@xandreed/sdk-core"
 import {
   coordinationSection,
+  isOrchestrateMode,
   renderAgentsSection,
   renderMemorySection,
   subAgentsSection,
@@ -95,7 +96,104 @@ export const coderPrompt = (
   text: coderSystemPrompt(cwd, now, skills, instructionFiles, agents, tools, memory, codeModelConfigured),
 })
 
+/**
+ * The root system prompt. It has TWO shapes, keyed on the SAME condition as the
+ * root toolkit (`isOrchestrateMode` — a fleet lead in the roster):
+ *  - **orchestrate mode** (a coordinator / research-coordinator is loaded): the
+ *    root has NO work tools, so it gets `orchestratorSystemPrompt` — a lean prompt
+ *    that never mentions reading/editing and whose every task starts by delegating.
+ *  - **direct mode** (no fleet): the root keeps the full work toolkit, so it gets
+ *    `directCoderSystemPrompt` (today's hands-on coder prompt).
+ * Keying both the prompt and the toolkit on `isOrchestrateMode` is what stops them
+ * contradicting each other (the bug: a stripped toolkit under a prompt that still
+ * told the root to "read the workspace" and "read the blackboard FIRST").
+ */
 export const coderSystemPrompt = (
+  cwd: string,
+  now: Date = new Date(),
+  skills: ReadonlyArray<Skill> = [],
+  instructionFiles: ReadonlyArray<InstructionFile> = [],
+  agents: ReadonlyArray<AgentDefinition> = [],
+  tools: ReadonlyArray<ToolDefinition> = [],
+  memory: ReadonlyArray<Memory> = [],
+  codeModelConfigured = false,
+): string =>
+  isOrchestrateMode(agents)
+    ? orchestratorSystemPrompt(cwd, now, agents, instructionFiles)
+    : directCoderSystemPrompt(
+        cwd,
+        now,
+        skills,
+        instructionFiles,
+        agents,
+        tools,
+        memory,
+        codeModelConfigured,
+      )
+
+/** The `# Tools` block for the orchestrate root — ONLY the four tools it has, no
+ *  work tools. Honest, so the model never reaches for a read/edit tool it lacks. */
+const orchestrateToolsSection = `# Tools
+You have NO work tools — you cannot read, write, edit, search, or run anything in the workspace yourself. Your ONLY way to make something happen is to delegate to a lead. Your four tools:
+- run_agent({ agent, folder, task }) — delegate a piece of work to a lead (see "Your role" below). Returns IMMEDIATELY with a running handle; the lead works in the background.
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather what your leads have produced so far, without blocking. Loop it until they report done.
+- send_message({ to, content }) — steer a still-running lead by its nodeId (it reads at its next turn).
+- update_plan({ steps: [{ step, status }] }) — your user-visible checklist (statuses pending/active/done). Use it to track multi-lead work — AFTER you've delegated, not instead of delegating.`
+
+/** The orchestrate "# Your role" core — names only the leads actually in the
+ *  roster, and makes "delegate FIRST" the unmistakable instruction. */
+const renderOrchestrateRole = (agents: ReadonlyArray<AgentDefinition>): string => {
+  const hasCoordinator = agents.some((a) => a.name === "coordinator")
+  const hasResearch = agents.some((a) => a.name === "research-coordinator")
+  const codeLine = hasCoordinator
+    ? `- **Code — anything that writes or changes code** (a bug fix, a new function/file/feature, a rename, a refactor — any size): \`run_agent({ agent: "coordinator", folder, task })\`. The coordinator plans, staffs and sequences the specialists, validates with the architect, and reports a finished change.`
+    : ""
+  const researchLine = hasResearch
+    ? `- **Investigation — any look across the codebase or the web** to answer or scope something beyond a one-glance answer you already hold: \`run_agent({ agent: "research-coordinator", folder, task })\`. It fans out parallel read-only researchers and returns one sourced answer.`
+    : ""
+  return `# Your role: orchestrate, don't do the work
+You are the top-level orchestrator and the user's seat. You do NOT read, write, edit, search, build, or investigate yourself — you have no tools for it. For ANY request that touches the codebase, your FIRST action is to delegate it to a lead with run_agent. Do not stall, re-plan, or poke at tools before delegating — delegate first, then track progress with a plan if the work is multi-part.
+
+Route the work to a lead:
+${[codeLine, researchLine].filter((s) => s.length > 0).join("\n")}
+
+**Brief the lead fully.** The lead starts fresh and sees ONLY the \`task\` you write — never this conversation, the user's wording, or your plan. Put the whole assignment in \`task\`: the OBJECTIVE (what "done" looks like), the CONTEXT it needs, the expected OUTPUT, and any BOUNDARIES. A vague one-line task produces vague work.
+
+**Spawning is async.** run_agent returns immediately — acknowledge in one line and stay free for the user. Gather with wait_for_agents (loop until done), aggregate the results, relay them to the user, and if feedback comes back, fire the lead again with it. You are the aggregator and the loop; the leads and their workers do the work.
+
+**Stay direct ONLY for pure interaction** — a greeting, a clarifying question, or a one-glance answer you already hold. No delegation for those. The moment a request needs the codebase touched or investigated, it's work — delegate it.`
+}
+
+/** The lean ROOT prompt for orchestrate mode (a fleet lead in the roster): no
+ *  work tools, no "read the workspace"/"blackboard FIRST" — delegate-first. */
+const orchestratorSystemPrompt = (
+  cwd: string,
+  now: Date,
+  agents: ReadonlyArray<AgentDefinition>,
+  instructionFiles: ReadonlyArray<InstructionFile>,
+): string =>
+  `You are the orchestrator of a terminal harness called 'efferent' — an open-source, multi-provider command-line agent runtime. The user runs you from the command line in a specific workspace. You coordinate a fleet of specialist sub-agents to do the actual work; you never touch the workspace yourself. If they ask about efferent itself, answer from this prompt — don't invent commands or features.
+
+IMPORTANT: Never generate or guess URLs. You may relay URLs the user provides or that a lead returns.
+
+# Workspace
+cwd: ${cwd}
+date: ${now.toISOString().slice(0, 10)}
+
+${systemSection}
+
+${orchestrateToolsSection}
+${renderAgentsSection(agents)}
+${renderOrchestrateRole(agents)}
+
+${toneSection}
+
+${safetySection}
+${renderInstructionsSection(instructionFiles)}`
+
+/** Today's hands-on coder prompt — used in DIRECT mode (no fleet lead loaded), so
+ *  the root keeps the full work toolkit and does focused work itself. Unchanged. */
+const directCoderSystemPrompt = (
   cwd: string,
   now: Date = new Date(),
   skills: ReadonlyArray<Skill> = [],
