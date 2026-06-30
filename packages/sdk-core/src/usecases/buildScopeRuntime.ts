@@ -452,8 +452,9 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
     "their status. Returns as soon as any watched agent finishes, someone messages you, or the " +
     "timeout passes — whichever first. Use it after spawning a fleet with run_agent to collect " +
     "results: it gives each agent's status (running/ok/error) with the summary + files of finished " +
-    "ones, plus any messages sent to you and recent blackboard notes. Loop it until your agents are " +
-    "all done. Omit 'nodeIds' to watch every agent you spawned.",
+    "ones, plus any messages sent to you and recent blackboard notes. A return with allDone:false and " +
+    "agents still running is NORMAL — just call it again; it is NOT a signal that they are stuck or " +
+    "that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch every agent you spawned.",
   parameters: {
     nodeIds: Schema.optional(Schema.Array(Schema.String)).annotations({
       description:
