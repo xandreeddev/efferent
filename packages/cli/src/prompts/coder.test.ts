@@ -93,6 +93,15 @@ describe("coderSystemPrompt orchestration policy", () => {
     expect(p).toContain("pure interaction")
   })
 
+  it("instructs fan-out discipline: decompose once, gather by looping, never re-spawn on an early wait", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("decompose ONCE")
+    expect(p).toContain("NEVER re-spawn")
+    // an early wait return is normal — keep looping, don't escalate
+    expect(p).toContain("allDone: false")
+    expect(p).toContain("Loop wait_for_agents until")
+  })
+
   it("omits the policy when no lead role is loaded", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [], [])
     expect(p).not.toContain("# Your role: orchestrate")
