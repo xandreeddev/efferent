@@ -4,8 +4,10 @@ import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
 import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
 import type {
   AgentAfterToolCallEvent,
+  AgentBeforeToolCallEvent,
   AgentHooks,
   AgentLlmRetryEvent,
+  BeforeToolCallDecision,
 } from "../entities/AgentHooks.js"
 import { type AgentMessage, ConversationId } from "../entities/Conversation.js"
 import type { Prompt } from "../entities/Prompt.js"
@@ -452,8 +454,9 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
     "their status. Returns as soon as any watched agent finishes, someone messages you, or the " +
     "timeout passes — whichever first. Use it after spawning a fleet with run_agent to collect " +
     "results: it gives each agent's status (running/ok/error) with the summary + files of finished " +
-    "ones, plus any messages sent to you and recent blackboard notes. Loop it until your agents are " +
-    "all done. Omit 'nodeIds' to watch every agent you spawned.",
+    "ones, plus any messages sent to you and recent blackboard notes. A return with allDone:false and " +
+    "agents still running is NORMAL — just call it again; it is NOT a signal that they are stuck or " +
+    "that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch every agent you spawned.",
   parameters: {
     nodeIds: Schema.optional(Schema.Array(Schema.String)).annotations({
       description:
@@ -948,12 +951,21 @@ const makeInnerHooks = <R>(
     // watchdog fires after the deadline. Not forwarded to the parent driver
     // (sub-agent turn-starts never were) — it only feeds the local watchdog.
     onTurnStart: () => bumpProgress,
-    ...(parentBefore !== undefined
-      ? {
-          onBeforeToolCall: (e: Parameters<typeof parentBefore>[0]) =>
-            parentBefore({ ...e, subAgentNodeId: nodeId }),
-        }
-      : {}),
+    // Stamp liveness at the START of every tool call too — not just on completion
+    // (onAfterToolCall). A turn's LLM phase (bounded by LLM_REQUEST_TIMEOUT_MS,
+    // which retries+bumps) plus a long tool can together exceed the stall
+    // deadline while each phase is fine; bumping at the tool boundary resets the
+    // clock so the watchdog measures time-since-the-last-step, not time-since-
+    // turn-start, and a working agent isn't killed mid-tool. Still forwards the
+    // parent's allow/deny decision (or a default continue when there's no parent).
+    onBeforeToolCall: (e: AgentBeforeToolCallEvent) =>
+      bumpProgress.pipe(
+        Effect.zipRight(
+          parentBefore !== undefined
+            ? parentBefore({ ...e, subAgentNodeId: nodeId })
+            : Effect.succeed<BeforeToolCallDecision>({ action: "continue" }),
+        ),
+      ),
     onAfterToolCall: (e) =>
       Effect.gen(function* () {
         yield* bumpProgress
@@ -1141,12 +1153,22 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const combinedBody = [definition?.body, scopeBody]
       .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
       .join("\n\n")
+    // The role's ACTUAL tools — so the prompt's `# Tools` block and the fleet /
+    // coordination sections render from exactly what this agent has (no role ⇒
+    // the full generic toolkit). Reused below to build the matching toolkit, so
+    // prompt and toolkit can't drift.
+    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
+    const toolNames =
+      roleEntries !== undefined
+        ? roleEntries.map(([n]) => n)
+        : Object.keys(genericToolkit.tools)
     const system = renderScopeSystemPrompt({
       name: label,
       rootDir: folder,
       displayRoot,
       body: combinedBody,
       now: new Date(),
+      toolNames,
       // Give a coordinator (a role with run_agent) the roster so it can name its
       // specialists; leaf workers ignore it.
       agents: opts.agents,
@@ -1168,7 +1190,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     // the same full handler record), so the two never disagree. No role ⇒ the
     // full generic toolkit (base tools + run_agent).
     const handlers = buildGenericHandlers(binding, opts, hooks, args.bus)
-    const roleEntries = definition !== undefined ? roleToolEntries(definition) : undefined
     const useToolkit =
       roleEntries !== undefined
         ? (Toolkit.make(

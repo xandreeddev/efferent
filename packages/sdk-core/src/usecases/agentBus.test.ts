@@ -160,6 +160,26 @@ describe("AgentBus — supervision (the async fleet)", () => {
     expect([...ids].sort()).toEqual(["c1", "c2"])
   })
 
+  it("runningChildrenOf returns ONLY still-running children (the fleet-idle signal)", async () => {
+    const r = await run((bus) =>
+      Effect.gen(function* () {
+        yield* bus.markRunning("p", "parent")
+        yield* bus.markRunning("c1", "one", { parentKey: "p" })
+        yield* bus.markRunning("c2", "two", { parentKey: "p" })
+        yield* bus.complete("c1", { status: "ok", summary: "s", filesChanged: [] })
+        const stillRunning = yield* bus.runningChildrenOf("p")
+        // When the last one finishes, runningChildrenOf must reach length 0 — the
+        // signal fleetCompletion relies on. childrenOf (the report set) keeps the
+        // finished children, which is why fleet-idle detection needs this method.
+        yield* bus.complete("c2", { status: "ok", summary: "s", filesChanged: [] })
+        const afterAllDone = yield* bus.runningChildrenOf("p")
+        return { stillRunning: [...stillRunning].sort(), afterAllDone: [...afterAllDone] }
+      }),
+    )
+    expect(r.stillRunning).toEqual(["c2"]) // c1 finished → excluded
+    expect(r.afterAllDone).toEqual([]) // fleet idle → the termination signal fires
+  })
+
   it("awaitChange returns immediately when a watched agent is already finished", async () => {
     const r = await run((bus) =>
       Effect.gen(function* () {
@@ -219,6 +239,63 @@ describe("AgentBus — supervision (the async fleet)", () => {
       }),
     )
     expect(r).toBe("timedout")
+  })
+
+  it("does NOT busy-return once a sibling has finished — the no-ids gather spin (regression)", async () => {
+    // The forced-orchestrator loop: a parent spawns two children, one finishes
+    // and is harvested (its completion drained from the inbox), then the parent
+    // gathers again with no nodeIds (watch = ALL children incl. the finished
+    // one, since `childrenOf` reports done children too). This MUST block on the
+    // still-running child — not return in ~0 ms because a previously-harvested
+    // child now sits in the done *state*. The old `watch.some(done)` level check
+    // returned instantly here, which is the ~1s busy-spin the orchestrator saw.
+    const outcome = await run((bus) =>
+      Effect.gen(function* () {
+        yield* bus.markRunning("p", "parent")
+        yield* bus.markRunning("a", "child-a", { parentKey: "p" })
+        yield* bus.markRunning("b", "child-b", { parentKey: "p" })
+        yield* bus.complete("a", { status: "ok", summary: "a done", filesChanged: [] })
+        yield* bus.drain("p") // parent already harvested a's completion message
+        const watch = yield* bus.childrenOf("p") // running + done
+        return yield* Effect.race(
+          bus
+            .awaitChange({ waiterKey: "p", watch, timeoutMs: 5_000 })
+            .pipe(Effect.as("returned-early")),
+          Effect.sleep("100 millis").pipe(Effect.as("still-blocked")),
+        )
+      }),
+    )
+    expect(outcome).toBe("still-blocked")
+  })
+
+  it("a no-ids gather still wakes the instant the last running sibling finishes", async () => {
+    const outcome = await run((bus) =>
+      Effect.gen(function* () {
+        yield* bus.markRunning("p", "parent")
+        yield* bus.markRunning("a", "child-a", { parentKey: "p" })
+        yield* bus.markRunning("b", "child-b", { parentKey: "p" })
+        yield* bus.complete("a", { status: "ok", summary: "a done", filesChanged: [] })
+        yield* bus.drain("p")
+        yield* Effect.forkDaemon(
+          Effect.sleep("30 millis").pipe(
+            Effect.zipRight(
+              bus.complete("b", { status: "ok", summary: "b done", filesChanged: [] }),
+            ),
+          ),
+        )
+        const watch = yield* bus.childrenOf("p")
+        return yield* bus
+          .awaitChange({ waiterKey: "p", watch, timeoutMs: 5_000 })
+          .pipe(
+            Effect.timeoutTo({
+              duration: "2 seconds",
+              onTimeout: () => "HUNG",
+              onSuccess: () => "woke",
+            }),
+          )
+      }),
+    )
+    expect(outcome).toBe("woke")
   })
 
   it("interruptAll interrupts every registered fiber (no orphans on teardown)", async () => {

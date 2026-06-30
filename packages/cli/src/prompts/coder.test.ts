@@ -93,6 +93,15 @@ describe("coderSystemPrompt orchestration policy", () => {
     expect(p).toContain("pure interaction")
   })
 
+  it("instructs fan-out discipline: decompose once, gather by looping, never re-spawn on an early wait", () => {
+    const p = coderSystemPrompt("/w", new Date(0), [], [], [role("coordinator")], [])
+    expect(p).toContain("decompose ONCE")
+    expect(p).toContain("NEVER re-spawn")
+    // an early wait return is normal — keep looping, don't escalate
+    expect(p).toContain("allDone: false")
+    expect(p).toContain("Loop wait_for_agents until")
+  })
+
   it("omits the policy when no lead role is loaded", () => {
     const p = coderSystemPrompt("/w", new Date(0), [], [], [], [])
     expect(p).not.toContain("# Your role: orchestrate")
@@ -108,29 +117,102 @@ describe("coderSystemPrompt orchestration policy", () => {
 })
 
 describe("renderScopeSystemPrompt", () => {
-  it("includes the agent roster so a coordinator can name its specialists", () => {
+  // A lead (coordinator) holds run_agent + wait_for_agents + comms.
+  const LEAD_TOOLS = [
+    "read_file",
+    "grep",
+    "glob",
+    "ls",
+    "Bash",
+    "update_plan",
+    "run_agent",
+    "wait_for_agents",
+    "send_message",
+    "blackboard_post",
+    "blackboard_read",
+  ]
+  // A leaf coder: coding + comms, no spawn/wait.
+  const LEAF_TOOLS = [
+    "read_file",
+    "write_file",
+    "edit_file",
+    "Bash",
+    "grep",
+    "glob",
+    "ls",
+    "update_plan",
+    "send_message",
+    "blackboard_post",
+    "blackboard_read",
+  ]
+  // A read-only reviewer (architect): no write, no spawn, no comms.
+  const READONLY_TOOLS = ["read_file", "grep", "glob", "ls", "Bash"]
+
+  it("includes the agent roster so a coordinator (a role that can spawn) can name its specialists", () => {
     const p = renderScopeSystemPrompt({
       name: "coordinator",
       rootDir: "/w/pkg",
       displayRoot: "/w",
       body: "drive the team",
       now: new Date(0),
+      toolNames: LEAD_TOOLS,
       agents: [role("implementer"), role("architect")],
     })
     expect(p).toContain("# Agent roles")
     expect(p).toContain("implementer")
-    expect(p).toContain("architect")
+    expect(p).toContain("# Sub-agents")
   })
 
-  it("omits the roster for a leaf worker (no agents)", () => {
+  it("omits the roster + sub-agents doctrine for a leaf worker that can't spawn", () => {
     const p = renderScopeSystemPrompt({
       name: "implementer",
       rootDir: "/w/pkg",
       displayRoot: "/w",
       body: "do the piece",
       now: new Date(0),
+      toolNames: LEAF_TOOLS,
+      // Even if a roster is passed, a non-spawner doesn't get it.
+      agents: [role("architect")],
     })
     expect(p).not.toContain("# Agent roles")
+    expect(p).not.toContain("# Sub-agents")
+  })
+
+  it("a read-only role's prompt advertises ONLY its tools and no fleet doctrine (drift guard)", () => {
+    const p = renderScopeSystemPrompt({
+      name: "architect",
+      rootDir: "/w/pkg",
+      displayRoot: "/w",
+      body: "review it",
+      now: new Date(0),
+      toolNames: READONLY_TOOLS,
+      agents: [role("implementer")],
+    })
+    expect(p).toContain("- read_file(")
+    expect(p).toContain("- grep(")
+    // the old static block lied — these must NOT appear for a read-only reviewer:
+    expect(p).not.toContain("- write_file(")
+    expect(p).not.toContain("- edit_file(")
+    expect(p).not.toContain("- run_agent(")
+    expect(p).not.toContain("- wait_for_agents(")
+    expect(p).not.toContain("- blackboard_post(")
+    expect(p).not.toContain("# Sub-agents")
+    expect(p).not.toContain("# Agent roles")
+    expect(p).not.toContain("Read the blackboard FIRST")
+  })
+
+  it("a comms-capable leaf gets the blackboard guidance but not the wait_for_agents loop", () => {
+    const p = renderScopeSystemPrompt({
+      name: "implementer",
+      rootDir: "/w/pkg",
+      displayRoot: "/w",
+      body: "do the piece",
+      now: new Date(0),
+      toolNames: LEAF_TOOLS,
+    })
+    expect(p).toContain("Read the blackboard FIRST")
+    expect(p).toContain("- send_message(")
+    expect(p).not.toContain("- wait_for_agents(")
   })
 
   it("injects the project-knowledge index when memory is present", () => {
@@ -140,6 +222,7 @@ describe("renderScopeSystemPrompt", () => {
       displayRoot: "/w",
       body: "do the piece",
       now: new Date(0),
+      toolNames: LEAF_TOOLS,
       memory: [mem("router-policy", "Per-request provider routing", "why we resolve keys per turn")],
     })
     expect(p).toContain("# Project knowledge")
@@ -155,9 +238,9 @@ describe("renderScopeSystemPrompt", () => {
       displayRoot: "/w",
       body: "do the piece",
       now: new Date(0),
+      toolNames: LEAF_TOOLS,
     })
     expect(p).not.toContain("# Project knowledge")
-    expect(p).not.toContain("read_memory({ name })")
   })
 })
 

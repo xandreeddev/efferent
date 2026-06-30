@@ -136,7 +136,7 @@ export const coderSystemPrompt = (
 const orchestrateToolsSection = `# Tools
 You have NO work tools — you cannot read, write, edit, search, or run anything in the workspace yourself. Your ONLY way to make something happen is to delegate to a lead. Your four tools:
 - run_agent({ agent, folder, task }) — delegate a piece of work to a lead (see "Your role" below). Returns IMMEDIATELY with a running handle; the lead works in the background.
-- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather what your leads have produced so far, without blocking. Loop it until they report done.
+- wait_for_agents({ nodeIds?, timeoutSeconds? }) — gather what your leads have produced so far, without blocking. It returns the moment anything changes (or the timeout); a return with leads still running is normal — keep looping it until allDone, don't spawn more.
 - send_message({ to, content }) — steer a still-running lead by its nodeId (it reads at its next turn).
 - update_plan({ steps: [{ step, status }] }) — your user-visible checklist (statuses pending/active/done). Use it to track multi-lead work — AFTER you've delegated, not instead of delegating.`
 
@@ -159,7 +159,9 @@ ${[codeLine, researchLine].filter((s) => s.length > 0).join("\n")}
 
 **Brief the lead fully.** The lead starts fresh and sees ONLY the \`task\` you write — never this conversation, the user's wording, or your plan. Put the whole assignment in \`task\`: the OBJECTIVE (what "done" looks like), the CONTEXT it needs, the expected OUTPUT, and any BOUNDARIES. A vague one-line task produces vague work.
 
-**Spawning is async.** run_agent returns immediately — acknowledge in one line and stay free for the user. Gather with wait_for_agents (loop until done), aggregate the results, relay them to the user, and if feedback comes back, fire the lead again with it. You are the aggregator and the loop; the leads and their workers do the work.
+**Hand over the whole objective — decompose ONCE, don't pre-split.** A broad job goes to ONE lead: the coordinator and research-coordinator decompose it and fan out their OWN workers, so you give one of them the entire objective rather than spawning several leads for the same task. Split across leads only when the request has genuinely separate parts (e.g. "investigate X *and also* implement Y") — and then spawn that set in a single turn. Spawning the same mission to many leads, or adding more as you go, just piles on redundant, overlapping work.
+
+**Gather by looping wait_for_agents — NEVER re-spawn to "unstick" a lead.** run_agent returns immediately; acknowledge in one line and stay free. wait_for_agents returns the moment anything changes — a lead finishing, a message, or the timeout — **NOT** when everyone is done. A return with \`allDone: false\` and leads still running is NORMAL: just call it again. Do **not** spawn more agents, fire status-check messages, or re-delegate the same work because a wait came back early — that is the failure mode that floods the fleet. Loop wait_for_agents until \`allDone\`, then aggregate and relay; if real feedback comes back, fire the lead again with it. To read a lead's result, use wait_for_agents — a finished lead is gone from the bus, so send_message only steers a STILL-RUNNING one.
 
 **Stay direct ONLY for pure interaction** — a greeting, a clarifying question, or a one-glance answer you already hold. No delegation for those. The moment a request needs the codebase touched or investigated, it's work — delegate it.`
 }
@@ -230,7 +232,7 @@ ${systemSection}
 - schedule({ cron, task, folder?, agent? }) — schedule a future/recurring run (5-field cron); the job fires as a fresh agent run when due. Use it to defer follow-up work or set recurring checks.
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done).${skills.length > 0 ? "\n- read_skill({ name }) — read the full body of a named skill (see Skills below)." : ""}${memory.length > 0 ? "\n- read_memory({ name }) — read a project-knowledge record's full body (see Project knowledge below)." : ""}
 - remember({ title, content }) — record a durable decision/convention/gotcha into the workspace knowledge layer (see Project knowledge).${tools.length > 0 ? "\n- run_tool({ name, args }) — run a project-defined custom tool (see Custom tools below)." : ""}
-${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection}${renderDelegationPolicy(agents, codeModelConfigured)}${renderResearchDelegationPolicy(agents)}${renderCodeDelegationPolicy(codeModelConfigured)}
+${renderSkillsSection(skills)}${renderMemorySection(memory)}${subAgentsSection}${renderAgentsSection(agents)}${renderToolsSection(tools)}${coordinationSection({ canWait: true, hasComms: true })}${renderDelegationPolicy(agents, codeModelConfigured)}${renderResearchDelegationPolicy(agents)}${renderCodeDelegationPolicy(codeModelConfigured)}
 ${doingTasksSection}
 
 ${toneSection}
