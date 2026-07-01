@@ -32,6 +32,7 @@ import { researchDelegationEval } from "./suites/researchDelegation.eval.js"
 import { researchEfficiencyEval } from "./suites/researchEfficiency.eval.js"
 import { sessionTitleEval } from "./suites/sessionTitle.eval.js"
 import { swarmEval } from "./suites/swarm.eval.js"
+import { swarmCompileEval } from "./suites/swarmCompile.eval.js"
 import { toolSelectionEval } from "./suites/toolSelection.eval.js"
 import { wholeTaskEval } from "./suites/wholeTask.eval.js"
 
@@ -55,6 +56,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   delegationDecisionEval,
   orchestrationEval,
   swarmEval,
+  swarmCompileEval,
   researchDelegationEval,
   researchEfficiencyEval,
 ]

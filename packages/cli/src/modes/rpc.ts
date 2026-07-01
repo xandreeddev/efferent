@@ -23,6 +23,7 @@ import {
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
 
@@ -69,6 +70,7 @@ export interface RpcModeInput {
   readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly rootScope: Scope
   readonly allowBash: boolean
 }
@@ -154,7 +156,14 @@ const handleSend = (
           })
     const runtime = buildScopeRuntime(
       rootScope,
-      { skills: defaults.skills, memory: defaults.memory, agents: defaults.agents, tools: defaults.tools, allowBash },
+      {
+        skills: defaults.skills,
+        memory: defaults.memory,
+        agents: defaults.agents,
+        tools: defaults.tools,
+        instructions: renderInstructionsSection(defaults.instructionFiles),
+        allowBash,
+      },
       hooks,
     )
     const coderPromptObj = coderPrompt(cwd, new Date(), defaults.skills, [], defaults.agents, defaults.tools, undefined, defaults.memory)

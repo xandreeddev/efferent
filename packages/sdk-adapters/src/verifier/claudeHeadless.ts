@@ -43,8 +43,13 @@ import {
  * - `EFFERENT_CLAUDE_BIN` — the binary (default `claude`).
  * - `EFFERENT_VERIFY_MODEL` — the model (default PINNED `claude-opus-4-8`; set to
  *   `opus` if a `claude` install doesn't recognize the pinned id).
- * - `EFFERENT_VERIFY_ARGS` — extra CLI args (default `--permission-mode plan`,
- *   Claude Code's read-only mode: it may read/grep the repo to verify, never edit).
+ * - `EFFERENT_VERIFY_ARGS` — extra CLI args. Default ALLOWS the read + Bash tools
+ *   and DENIES the edit tools: the gate may read/grep AND actually RUN the repo's
+ *   own read-only checks (build / typecheck / tests) to confirm the work truly
+ *   builds — but can never edit anything. (Before, this was `--permission-mode plan`,
+ *   which is read-only and structurally CANNOT run a check, so the gate rubber-
+ *   stamped code that didn't compile.) Set it back to `--permission-mode plan` to
+ *   forbid running checks, or to `--dangerously-skip-permissions` to allow all.
  * - `EFFERENT_VERIFY_TIMEOUT_MS` — hard cap on one claude review (default 30 min).
  *   An Opus multi-file review is genuinely slow; cut it off too early and the gate
  *   returns "unavailable", so the loop can't validate → can't iterate. Raise it
@@ -144,7 +149,7 @@ export const buildGatePrompt = (input: GateInput): string => {
   // deliverable — a research answer / report — which IS the summary itself.
   const lead = hasFiles
     ? `You are the FINAL validation gate for a coding swarm's work. Your ONLY job is to VALIDATE the deliverable against the task — judge, never edit. Be skeptical; check against the ACTUAL code, do not take the summary on faith.\n\n` +
-      `You are running inside the repository at ${input.repoDir}. READ the changed files and run read-only checks (the repo's build / typecheck / tests) to confirm the work is correct and complete.\n\n`
+      `The repository is at ${input.repoDir} (added read-only). To confirm the work actually BUILDS, cd into it and run the project's OWN checks — its build / typecheck / tests, found the way a developer would (package.json scripts, a Makefile, the README, CI config), e.g. \`cd ${input.repoDir} && <the project's check command>\`. READ the changed files too. **A deliverable that does not compile / build, or that fails the project's checks, is needs_work — no matter how good the summary reads.** Judge on the ACTUAL result of running the checks, never on the summary alone.\n\n`
     : `You are the FINAL validation gate for a research/analysis swarm's work. Your ONLY job is to VALIDATE the deliverable against the task — judge, never edit. The deliverable is the answer below (no files were changed); judge IT.\n\n` +
       `You are running inside ${input.repoDir} and MAY read files there if the task references the workspace, but the answer itself is what you are grading.\n\n`
   const judge = hasFiles
@@ -298,8 +303,15 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     const model = yield* Config.string("EFFERENT_VERIFY_MODEL").pipe(
       Config.withDefault("claude-opus-4-8"),
     )
+    // Allow the read + Bash tools so the gate can actually RUN the repo's own
+    // read-only checks (build/typecheck/tests) — the fix for a gate that used to
+    // rubber-stamp non-compiling code because `--permission-mode plan` forbade
+    // running anything. Edit tools stay denied, so it judges + runs checks but
+    // never mutates. Fully overridable via EFFERENT_VERIFY_ARGS.
     const extraArgs = yield* Config.string("EFFERENT_VERIFY_ARGS").pipe(
-      Config.withDefault("--permission-mode plan"),
+      Config.withDefault(
+        "--allowedTools Bash Read Grep Glob LS --disallowedTools Edit Write MultiEdit NotebookEdit",
+      ),
     )
     const timeoutMs = yield* Config.integer("EFFERENT_VERIFY_TIMEOUT_MS").pipe(
       Config.withDefault(DEFAULT_VERIFY_TIMEOUT_MS),

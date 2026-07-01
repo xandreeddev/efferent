@@ -238,6 +238,14 @@ export interface BuildScopeRuntimeOptions {
    * like `skills`/`agents` — pass `[]` when there are none.
    */
   readonly tools: ReadonlyArray<ToolDefinition>
+  /**
+   * The workspace's instruction files (`AGENT.md`, `.efferent/CONSTRAINTS.md`, …)
+   * PRE-RENDERED into a prompt block by the driver (the CLI's
+   * `renderInstructionsSection`). Threaded into EVERY spawned sub-agent's prompt
+   * so the fleet inherits the project's own conventions — its build/verify
+   * command, its hard rules — instead of guessing. Absent ⇒ nothing injected.
+   */
+  readonly instructions?: string
   /** Step budget for each (nested) sub-agent loop. Default 80. */
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
@@ -1175,6 +1183,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       // The project-knowledge index rides into every sub-agent too — they read
       // the distilled rationale and can record new decisions via `remember`.
       memory: opts.memory,
+      // The project's own conventions (AGENT.md / CONSTRAINTS.md, pre-rendered by
+      // the driver) ride down too — so a coder inherits *this* project's
+      // build/verify command and hard rules instead of guessing.
+      ...(opts.instructions !== undefined ? { instructions: opts.instructions } : {}),
     })
     const parentPrompt = args.runContext.prompt
     const childPrompt: Prompt | undefined =
