@@ -134,6 +134,10 @@ export const AgentEvent = Schema.Union(
     reasons: Schema.Array(Schema.String),
     attempt: Schema.Number,
     filesChanged: Schema.Array(Schema.String),
+    // A non-sound verdict on a research/prose deliverable (no files changed) that
+    // was DELIVERED anyway with these reasons as advisory notes — not fail-closed.
+    // The UI renders it as notes, not a red failure.
+    advisory: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("agent_end"),
