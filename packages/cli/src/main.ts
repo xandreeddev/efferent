@@ -399,6 +399,7 @@ const root = Command.make(
             memory,
             agents,
             tools,
+            instructionFiles,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -422,6 +423,7 @@ const root = Command.make(
             memory,
             agents,
             tools,
+            instructionFiles,
             rootScope,
             allowBash: effectiveAllowBash,
             ...(resumeId !== undefined ? { resumeConversationId: resumeId } : {}),
@@ -435,6 +437,7 @@ const root = Command.make(
             memory,
             agents,
             tools,
+            instructionFiles,
             rootScope,
             allowBash: effectiveAllowBash,
           }).pipe(Effect.provide(stderrLoggerLayer))
@@ -449,6 +452,7 @@ const root = Command.make(
             memory,
             agents,
             tools,
+            instructionFiles,
             rootScope,
             allowBash: effectiveAllowBash,
           }).pipe(Effect.provide(fileLoggerLayer))
