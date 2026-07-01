@@ -1,5 +1,12 @@
 # @xandreed/sdk-adapters
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [b8bc864]
+  - @xandreed/sdk-core@0.5.1
+
 ## 0.4.1
 
 ### Patch Changes
