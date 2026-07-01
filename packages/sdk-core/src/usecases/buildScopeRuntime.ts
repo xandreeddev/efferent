@@ -24,7 +24,6 @@ import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
-import { gateOnce, settleChildren } from "./gateLoop.js"
 import { generateHandoffBrief } from "./handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef, type RunContext } from "./runContext.js"
@@ -78,9 +77,12 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports)
-    // are the per-coordinator structural gate's needs: it reads gate settings,
-    // distills lessons, and grounds the Opus verifier — see `runSpawnedAgent`.
+    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports):
+    // the handoff-brief seed (`generateHandoffBrief`) runs on the utility tier,
+    // and the store/settings stay provided for the scheduled-run gate (the
+    // root-tier `gateOnce` moving onto the `spawnAgent` cron path). The
+    // per-coordinator gate that first widened this R is gone — gating is
+    // root-only now (one tier).
     | FileSystem
     | Shell
     | Http
@@ -204,12 +206,13 @@ export const STALL_NOTE =
   "[stalled — the run made no progress within the watchdog deadline and was stopped]"
 
 /** No-progress deadline for a SPAWNED sub-agent: if no turn starts, no tool
- *  result lands, and no LLM retry fires for this long, the run is interrupted and
- *  recorded as an error (so the parent unblocks). Generous on purpose — it must
- *  exceed any single legitimate blocking op: one LLM request (capped at the
- *  adapter request timeout, 2 min) and one structural gate verifier call.
- *  A live, working sub-agent emits a turn-start before every model call, so it
- *  never approaches this; only a genuine freeze does. */
+ *  result lands, and no LLM retry fires for this long, the run is interrupted
+ *  (so the parent unblocks). Generous on purpose — it must exceed the longest
+ *  single legitimate blocking op, one LLM request (capped at the adapter request
+ *  timeout, 2 min). A live, working sub-agent emits a turn-start before every
+ *  model call, so it never approaches this; only a genuine freeze does. A run
+ *  that already produced assistant text is finalized WITH that text preserved
+ *  (see the exit finalizer) — the watchdog must never discard finished work. */
 export const SUBAGENT_STALL_DEADLINE_MS = 180_000
 
 /** How often the stall watchdog wakes to compare now − last-progress against the
@@ -653,12 +656,13 @@ const CancelScheduledJobTool = Tool.make("cancel_scheduled_job", {
   failureMode: "return",
 })
 
-// The self-improving loop is now STRUCTURAL, not a set of tools the model drives:
-// the mandatory Opus gate runs in `driveLoop` (root) and in `runSpawnedAgent` for
-// any lead (coordinator-tier, see `gateOnce`), and the distiller runs the same way
-// — gate → learn → re-fire happens automatically, with no `verify_with_gate` /
-// `note_constraint` tool to remember. So those tools (and their handlers) are gone;
-// the architect role stays as the in-fleet, fine-grained per-piece review.
+// The self-improving loop is STRUCTURAL, not a set of tools the model drives:
+// the mandatory Opus gate runs ONCE, at the root (`driveLoop`), and the distiller
+// runs at the turn boundary — with no `verify_with_gate` / `note_constraint` tool
+// to remember. (The old per-coordinator gate tier is gone: it ran a 30-min Opus
+// subprocess inside the sub-agent watchdog's 180s window, which killed finished
+// leads as "stalled" — one gate tier, at the root, judges the aggregate.) The
+// architect role stays as the in-fleet, fine-grained per-piece review.
 
 /** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
@@ -937,6 +941,10 @@ const makeInnerHooks = <R>(
    *  tool result, narration) so a parked run — and only a parked run — crosses
    *  the no-progress deadline. */
   bumpProgress: Effect.Effect<void>,
+  /** THIS run's latest assistant text (never a nested child's — those arrive
+   *  with `subAgentNodeId` already stamped). The exit finalizer reads it so an
+   *  interrupted/stalled run keeps its produced work instead of discarding it. */
+  lastTextRef: Ref.Ref<string>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -990,10 +998,18 @@ const makeInnerHooks = <R>(
               cacheReadTokens: u.cacheReadTokens,
             })).pipe(Effect.zipRight(drainPool(pool, u)))
           : Effect.void
+      // Keep THIS run's latest narration for the exit finalizer — only its own
+      // (a nested child's forwarded event carries `subAgentNodeId`; stamping it
+      // here would credit the parent with the child's text).
+      const noteText =
+        event.subAgentNodeId === undefined && event.text.trim().length > 0
+          ? Ref.set(lastTextRef, event.text)
+          : Effect.void
       // Forward inner narration to the parent's event stream too — the TUI
       // shows it live when this node's session is open in the preview (the
       // pump keeps it off the parent rail; usage stays node-local).
       return bumpProgress.pipe(
+        Effect.zipRight(noteText),
         Effect.zipRight(
           parentAssistant !== undefined
             ? parentAssistant({ ...event, subAgentNodeId: nodeId, subAgentRole: role }).pipe(
@@ -1049,10 +1065,6 @@ interface RunSpawnedArgs<R> {
   /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
    *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
   readonly definition?: AgentDefinition
-  /** This run is a LEAD (coordinator / research-coordinator) — so it owns the
-   *  structural gate over its own subtree (gate → distill → re-fire its workers)
-   *  before returning to the root. Set from the resolved `agent` name at spawn. */
-  readonly isLead?: boolean
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -1090,25 +1102,29 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // stays `running` forever and the parent is never told (markDone only tears
   // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
   const returnRecordedRef = Ref.unsafeMake(false)
-  // Stall watchdog state, both OUTSIDE the body so the watchdog fiber (which
+  // Stall watchdog state, all OUTSIDE the body so the watchdog fiber (which
   // races the body) and the finalizer can read them.
   //  - progressRef: epoch-ms of the last observable step (turn start / tool
   //    result / narration / LLM retry). Initialised at body start; the watchdog
   //    compares now − this against the deadline.
   //  - stalledRef: set true iff the watchdog tripped, so the finalizer records
   //    STALL_NOTE (a deliberate stop) rather than the generic INTERRUPTED_NOTE.
+  //  - lastTextRef / filesRef / usageRef: the run's produced work so far — the
+  //    finalizer preserves them on an abnormal exit instead of recording an
+  //    empty error (the watchdog once discarded FINISHED work as "[stalled]").
   const progressRef = Ref.unsafeMake(0)
   const stalledRef = Ref.unsafeMake(false)
+  const lastTextRef = Ref.unsafeMake("")
+  const filesRef = Ref.unsafeMake<ReadonlyArray<string>>([])
+  const usageRef = Ref.unsafeMake<ContextUsage>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+  })
   const bumpProgress = Clock.currentTimeMillis.pipe(Effect.flatMap((t) => Ref.set(progressRef, t)))
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
     const label = args.title ?? (basename(folder) || folder)
-    const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
-    const usageRef = yield* Ref.make<ContextUsage>({
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-    })
 
     if (hooks?.onSubAgentStart) {
       yield* hooks.onSubAgentStart({
@@ -1142,6 +1158,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       budgetStopRef,
       args.bus,
       bumpProgress,
+      lastTextRef,
     )
 
     const binding: ScopeBinding = {
@@ -1335,60 +1352,13 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
       Effect.forEach(msgs, (m) => store.append(nodeId, m))
 
-    let outcome = yield* runAttempt(seedMessages)
+    const outcome = yield* runAttempt(seedMessages)
     if (outcome.ok) yield* persistNodeTail(outcome.r.newTail)
-
-    // ===== Structural coordinator gate (the per-domain self-improving loop) =====
-    // A LEAD (coordinator / research-coordinator) owns the gate over ITS subtree:
-    // when its run finishes, the deliverable is judged by the SAME independent
-    // Opus gate the root uses (`gateOnce`) BEFORE the lead returns — so a
-    // coordinator can't ship unverified work, and the root's final aggregate gate
-    // (`driveLoop`) sees an already-gated piece. Mandatory + fail-closed, gated by
-    // `autoLoop` (default on). Skipped for plain workers and when there's no root
-    // conversation to ground the gate/distill. `needs_work` → LEARN → re-fire the
-    // workers with the reasons → re-gate, to `maxLoopAttempts`.
-    if (args.isLead === true && outcome.ok && args.rootConversationId !== null) {
-      const rootConvId = args.rootConversationId
-      const settings = yield* (yield* SettingsStore).get()
-      if (settings.autoLoop !== false) {
-        const maxAttempts = settings.maxLoopAttempts ?? 3
-        let attempt = 1
-        let current = outcome.r
-        while (true) {
-          // The gate's verifier + child-settling are blocking ops OUTSIDE the
-          // inner loop (no turn-start hook fires), so stamp progress here too — a
-          // legitimately slow gate must not look like a stall to the watchdog.
-          yield* bumpProgress
-          // The lead's deliverable = its workers' aggregate work (a coordinator
-          // writes nothing itself), so the gate judges its CHILD nodes.
-          const freshChildren = yield* settleChildren(rootConvId, nodeId)
-          const step = yield* gateOnce({
-            task,
-            summary: current.finalText,
-            repoDir: args.displayRoot,
-            conversationId: rootConvId,
-            freshNodes: freshChildren,
-            attempt,
-            maxAttempts,
-            autoDistill: settings.autoDistill !== false,
-          })
-          if (step.kind === "no-subagents") break
-          if (hooks?.onGateResult) yield* hooks.onGateResult(step.event)
-          if (step.kind !== "retry") break
-
-          // RE-FIRE — feed the gate's reasons back so the lead fixes them, then
-          // re-gate. A failed re-run keeps the prior result; the root gate still
-          // catches what's left.
-          yield* persistNodeTail([step.feedback])
-          const next = yield* runAttempt([...current.messages, step.feedback])
-          if (!next.ok) break
-          yield* persistNodeTail(next.r.newTail)
-          current = next.r
-          attempt++
-        }
-        outcome = { ok: true as const, r: current }
-      }
-    }
+    // (No per-coordinator gate here any more — gating is ONE tier, at the root
+    // (`driveLoop`), judging the aggregate deliverable. The old lead-tier gate
+    // ran a multi-minute Opus subprocess inside this run's 180s stall-watchdog
+    // window with no progress stamps, so finished leads were killed as
+    // "[stalled]" and their work discarded.)
 
     const files = yield* Ref.get(filesRef)
     const usage = yield* Ref.get(usageRef)
@@ -1488,8 +1458,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   //  - Interrupted / died before a terminal path ⇒ the Ref is still false: the
   //    DB node would otherwise stay `running` forever and the parent would never
   //    hear about it (markDone only tears down the mailbox without notifying).
-  //    So record an `error` return AND `bus.complete` — mirroring the normal
-  //    error path's parent notification (inbox + blackboard + terminal record).
+  //    So record the return AND `bus.complete` — PRESERVING the run's produced
+  //    work (last assistant text, filesChanged, usage). The old finalizer
+  //    hardcoded an empty error, so a watchdog kill discarded FINISHED work as
+  //    "[stalled]" — the single biggest failure bucket in the run forensics.
+  //    A stalled run WITH text is an ok-with-caveat (the note marks it partial);
+  //    everything else stays an error, but keeps whatever text/files existed.
   // Everything here is failure-safe (Effect.ignore / catchAll) so teardown never
   // throws — the finalizer must always complete even mid-interruption.
   const finalize = Effect.gen(function* () {
@@ -1498,23 +1472,32 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
       return
     }
-    // Interrupted / died / stalled before a terminal path ⇒ the Ref is still
-    // false. The watchdog distinguishes a deliberate stall-stop (STALL_NOTE)
-    // from a generic interruption (Esc / teardown / death → INTERRUPTED_NOTE),
-    // so the parent + `:tree` read WHY the node ended.
-    const note = (yield* Ref.get(stalledRef)) ? STALL_NOTE : INTERRUPTED_NOTE
+    const stalled = yield* Ref.get(stalledRef)
+    const lastText = yield* Ref.get(lastTextRef)
+    const files = yield* Ref.get(filesRef)
+    const usage = yield* Ref.get(usageRef)
+    const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
+    const note = stalled ? STALL_NOTE : INTERRUPTED_NOTE
+    const hasText = lastText.trim().length > 0
+    const summary = hasText ? `${lastText}\n\n${note}` : note
+    // A run the watchdog stopped AFTER it produced narration finished its
+    // thinking — deliver the text as a partial ok (the note carries the caveat)
+    // instead of throwing the work away. A silent stall / an interrupt stays an
+    // error, but still reports any text + files it managed to land.
+    const status = stalled && hasText ? ("ok" as const) : ("error" as const)
     yield* args.store
       .recordReturn(args.nodeId, {
-        status: "error",
-        summary: note,
-        filesChanged: [],
+        status,
+        summary,
+        filesChanged: files,
+        ...(hasUsage ? { usage } : {}),
       })
       .pipe(Effect.ignore)
     yield* args.bus
       .complete(args.nodeId, {
-        status: "error",
-        summary: note,
-        filesChanged: [],
+        status,
+        summary,
+        filesChanged: files,
       })
       .pipe(Effect.ignore)
   }).pipe(Effect.catchAll(() => Effect.void))
@@ -1691,11 +1674,6 @@ const makeRunAgentHandler =
         definition = constrainToReadOnly(definition)
       }
 
-      // A spawn of a LEAD role owns the structural gate over its subtree. Keyed
-      // off the requested `agent` name (the canonical signal — `definition.name`
-      // collapses to `"inline"` once instructions/tools are layered on).
-      const isLead = agent !== undefined && LEAD_AGENT_NAMES.includes(agent)
-
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
         const nodeId = yield* Schema.decodeUnknown(ContextNodeId)(seedFromNode.trim()).pipe(
@@ -1722,7 +1700,6 @@ const makeRunAgentHandler =
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
-            ...(isLead ? { isLead: true } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -1762,7 +1739,6 @@ const makeRunAgentHandler =
           store, shell, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
-          ...(isLead ? { isLead: true } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -1793,7 +1769,6 @@ const makeRunAgentHandler =
         store, shell, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
-        ...(isLead ? { isLead: true } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
