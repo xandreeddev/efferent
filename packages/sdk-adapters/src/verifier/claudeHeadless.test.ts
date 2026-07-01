@@ -252,7 +252,9 @@ describe("ClaudeHeadlessVerifierLive.gate (full adapter path)", () => {
     expect(calls.length).toBe(2)
     for (const c of calls) {
       expect(c.command).toContain("--model 'claude-opus-4-8'") // pinned
-      expect(c.command).toContain("--permission-mode plan") // read-only
+      // Read + Bash allowed (so it can RUN the repo's checks), edits denied.
+      expect(c.command).toContain("--allowedTools Bash Read")
+      expect(c.command).toContain("--disallowedTools Edit Write")
       expect(c.cwd).toMatch(/efferent-verify-/) // isolated sandbox, NOT the repo
       expect(c.cwd).not.toBe("/repo")
     }

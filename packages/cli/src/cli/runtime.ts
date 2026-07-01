@@ -17,6 +17,7 @@ import {
   buildScopeRuntime,
 } from "@xandreed/sdk-core"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
+import { renderInstructionsSection } from "../usecases/discoverInstructionFiles.js"
 import type { TuiModeInput } from "../modes/tui.js"
 import { makeEventHooks, type AgentEvent } from "../events.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
@@ -105,7 +106,15 @@ export const runTuiModeSolid = (
       const baseHooks = makeEventHooks(eventQueue)
       const scopeRuntime = buildScopeRuntime(
         input.rootScope,
-        { skills: input.skills, memory: input.memory, agents: input.agents, tools: input.tools, allowBash: true },
+        {
+          skills: input.skills,
+          memory: input.memory,
+          agents: input.agents,
+          tools: input.tools,
+          // Fleet inherits the project's own conventions (build/verify + rules).
+          instructions: renderInstructionsSection(input.instructionFiles),
+          allowBash: true,
+        },
         baseHooks,
       )
 

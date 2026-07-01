@@ -22,6 +22,7 @@ import {
 } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import { runFleetToCompletion, withInboxDrain } from "./fleetCompletion.js"
 import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
@@ -84,6 +85,7 @@ export interface PrintModeInput {
   readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly rootScope: Scope
   readonly allowBash: boolean
   readonly resumeConversationId?: string
@@ -117,7 +119,14 @@ export const runPrintMode = (
     const hooks = makeEventHooks(queue)
     const runtime = buildScopeRuntime(
       input.rootScope,
-      { skills: input.skills, memory: input.memory, agents: input.agents, tools: input.tools, allowBash: input.allowBash },
+      {
+        skills: input.skills,
+        memory: input.memory,
+        agents: input.agents,
+        tools: input.tools,
+        instructions: renderInstructionsSection(input.instructionFiles),
+        allowBash: input.allowBash,
+      },
       hooks,
     )
 

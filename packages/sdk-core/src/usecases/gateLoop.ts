@@ -55,14 +55,61 @@ export const settleNewNodes = (
 ): Effect.Effect<ReadonlyArray<AgentContextNode>, never, ContextTreeStore> =>
   settleBy(conversationId, (n) => !beforeIds.has(n.id))
 
-/** Settle a parent node's CHILD nodes — the workers a coordinator spawned this
- *  run. Used by the per-COORDINATOR gate (a fresh coordinator owns all its
- *  children; the root only ever spawns leads fresh, never resumes them). */
+/** All transitive descendants of `rootId` within `nodes` (excludes `rootId`
+ *  itself). Built from the parent links so the whole subtree — not just direct
+ *  children — is returned, which is what makes the per-coordinator gate's
+ *  `filesChanged` union cover a writer nested below an intermediate node (e.g. a
+ *  coordinator → implementer → helper chain, or any depth > 1). Without this the
+ *  gate could see a coordinator's subtree as file-less and judge it as prose. */
+const descendantsOf = (
+  nodes: ReadonlyArray<AgentContextNode>,
+  rootId: ContextNodeId,
+): ReadonlyArray<AgentContextNode> => {
+  const childrenByParent = new Map<ContextNodeId, AgentContextNode[]>()
+  for (const n of nodes) {
+    if (n.parentId === null) continue
+    const arr = childrenByParent.get(n.parentId) ?? []
+    arr.push(n)
+    childrenByParent.set(n.parentId, arr)
+  }
+  const out: AgentContextNode[] = []
+  const seen = new Set<ContextNodeId>()
+  const stack = [...(childrenByParent.get(rootId) ?? [])]
+  while (stack.length > 0) {
+    const n = stack.pop()!
+    if (seen.has(n.id)) continue
+    seen.add(n.id)
+    out.push(n)
+    stack.push(...(childrenByParent.get(n.id) ?? []))
+  }
+  return out
+}
+
+/** Settle a parent node's whole SUBTREE — every worker a coordinator spawned this
+ *  run, transitively. Used by the per-COORDINATOR gate (a fresh coordinator owns
+ *  its whole subtree; the root only ever spawns leads fresh, never resumes them).
+ *  Returns the subtree (not just direct children) so `gateOnce`'s `filesChanged`
+ *  union sees code written anywhere beneath the coordinator — otherwise a nested
+ *  writer looks file-less and the gate judges the deliverable as prose. */
 export const settleChildren = (
   conversationId: ConversationId,
   parentNodeId: ContextNodeId,
 ): Effect.Effect<ReadonlyArray<AgentContextNode>, never, ContextTreeStore> =>
-  settleBy(conversationId, (n) => n.parentId === parentNodeId)
+  Effect.gen(function* () {
+    let round = 0
+    while (true) {
+      const all = yield* listTreeSafe(conversationId)
+      const subtree = descendantsOf(all, parentNodeId)
+      if (
+        !subtree.some((n) => n.status === "running") ||
+        round >= GATE_SETTLE_MAX_ROUNDS
+      ) {
+        return subtree
+      }
+      yield* Clock.sleep("2 seconds")
+      round++
+    }
+  })
 
 /** Prefix the verifier's reasons are fed back to the swarm under, the same at
  *  both tiers so a retry reads identically wherever it fires. */
