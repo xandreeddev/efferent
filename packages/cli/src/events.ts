@@ -115,6 +115,7 @@ export const makeAgentEventHooks = <R = never>(
       reasons: event.reasons,
       attempt: event.attempt,
       filesChanged: event.filesChanged,
+      ...(event.advisory !== undefined ? { advisory: event.advisory } : {}),
     }),
   onLlmRetry: (event) =>
     publish({

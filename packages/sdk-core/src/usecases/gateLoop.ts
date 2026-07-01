@@ -200,6 +200,19 @@ export const gateOnce = (params: {
       attempt: params.attempt,
       filesChanged,
     }
+
+    // Research/prose deliverable (nothing was written): the answer IS the
+    // deliverable. A subjective needs_work/blocked is the reviewer's OPINION, not a
+    // hard failure like a red typecheck — deliver it WITH the reviewer's notes
+    // (advisory), and NEVER retry-to-cap (which re-runs the whole research fleet and
+    // can end with nothing delivered). The fail-closed retry loop below is reserved
+    // for file-changing (code) deliverables, which genuinely either build or don't.
+    // (A coding run that landed NO files is intentionally handled here too: don't
+    // re-run a fleet that isn't landing changes — hand back its result + the notes.)
+    if (filesChanged.length === 0) {
+      return { kind: "stop", event: { ...event, advisory: true } }
+    }
+
     if (v.verdict === "blocked" || params.attempt >= params.maxAttempts) {
       return { kind: "stop", event }
     }

@@ -147,6 +147,34 @@ describe("gateOnce — the shared swarm-gate decision (root + coordinator tiers)
     if (step.kind === "stop") expect(step.event.verdict).toBe("blocked")
   })
 
+  test("needs_work on a research/prose deliverable (NO files changed) → stop with advisory notes, NOT retry (even below the cap)", async () => {
+    const { step, calls } = await run(
+      // freshNodes changed nothing → prose/research: the report IS the deliverable.
+      { ...base, attempt: 1, maxAttempts: 3, freshNodes: [node(), node()] },
+      { verdict: "needs_work", reasons: ["one source is unverified", "ignores part 2"] },
+    )
+    expect(step.kind).toBe("stop") // NOT "retry" — no fail-closed loop for prose
+    if (step.kind === "stop") {
+      expect(step.event.verdict).toBe("needs_work")
+      expect(step.event.advisory).toBe(true) // delivered WITH the reviewer's notes
+      expect([...step.event.reasons]).toEqual(["one source is unverified", "ignores part 2"])
+      expect(step.event.filesChanged).toHaveLength(0)
+    }
+    expect(calls).toHaveLength(1) // gated once, never re-ran the fleet
+  })
+
+  test("blocked on a prose deliverable → stop advisory (delivered, not re-run)", async () => {
+    const { step } = await run(
+      { ...base, attempt: 1, freshNodes: [node()] },
+      { verdict: "blocked", reasons: ["the question is contradictory"] },
+    )
+    expect(step.kind).toBe("stop")
+    if (step.kind === "stop") {
+      expect(step.event.verdict).toBe("blocked")
+      expect(step.event.advisory).toBe(true)
+    }
+  })
+
   test("a verifier error → stop with an `unavailable` verdict (surfaced, never a silent pass)", async () => {
     const { step } = await run(
       { ...base, freshNodes: [node({ filesChanged: ["x.ts"] })] },

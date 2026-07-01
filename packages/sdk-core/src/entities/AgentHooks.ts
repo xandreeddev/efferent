@@ -161,6 +161,15 @@ export interface AgentGateEvent {
   readonly reasons: ReadonlyArray<string>
   readonly attempt: number
   readonly filesChanged: ReadonlyArray<string>
+  /**
+   * The verdict was not `sound`, but the deliverable was **delivered anyway** with
+   * these `reasons` as advisory notes — because it's a research/prose deliverable
+   * (no files changed), where a `needs_work` is the reviewer's opinion, not a hard
+   * failure. The fail-closed retry-to-cap loop only runs for file-changing (code)
+   * deliverables; a prose deliverable is delivered-with-notes, never re-run. The UI
+   * renders an advisory verdict as notes rather than a red failure.
+   */
+  readonly advisory?: boolean
 }
 
 /**

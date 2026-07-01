@@ -151,6 +151,7 @@ const run = (args: {
 const sound: DeliverableVerdict = { verdict: "sound", reasons: [] }
 const needsWork: DeliverableVerdict = { verdict: "needs_work", reasons: ["fix it"] }
 const oneNode = [{ id: "n1", files: ["a.txt"] }]
+const proseNode = [{ id: "n1", files: [] as string[] }] // a research/prose deliverable: nothing written
 
 describe("driveLoop — mandatory swarm gate", () => {
   it("does NOT gate a run that used no sub-agents", async () => {
@@ -190,5 +191,13 @@ describe("driveLoop — mandatory swarm gate", () => {
     expect(r.gateCalls).toBe(1)
     expect(r.attempts).toBe(1)
     expect(r.events.map((e) => e.verdict)).toEqual(["unavailable"])
+  })
+
+  it("research/prose deliverable (no files changed) is delivered WITH advisory notes, NOT re-run", async () => {
+    const r = await run({ tree: treeThatSpawns(proseNode), verdicts: [needsWork] })
+    expect(r.gateCalls).toBe(1) // gated once
+    expect(r.attempts).toBe(1) // NOT re-run — no fail-closed loop for prose
+    expect(r.events.map((e) => e.verdict)).toEqual(["needs_work"])
+    expect(r.events[0]?.advisory).toBe(true) // delivered with the reviewer's notes
   })
 })
