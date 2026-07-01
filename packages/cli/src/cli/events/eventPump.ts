@@ -397,7 +397,11 @@ export const makeEventReducer = (
             ? `✓ verifier: deliverable SOUND (attempt ${event.attempt})${files}`
             : event.verdict === "unavailable"
               ? `⚠ verifier UNAVAILABLE — work NOT verified: ${event.reasons.join("; ")}`
-              : `✗ verifier: ${event.verdict.toUpperCase().replace("_", " ")} (attempt ${event.attempt})${files} — ${event.reasons.join("; ")}`
+              : event.advisory === true
+                ? // Research/prose deliverable delivered WITH the reviewer's notes —
+                  // not a failure, so render as advisory notes, not a red ✗.
+                  `⚑ verifier notes (delivered): ${event.reasons.join("; ")}`
+                : `✗ verifier: ${event.verdict.toUpperCase().replace("_", " ")} (attempt ${event.attempt})${files} — ${event.reasons.join("; ")}`
         store.pushBlock({ kind: "info", text })
         return
       }
