@@ -114,6 +114,11 @@ export const runTuiModeSolid = (
           // Fleet inherits the project's own conventions (build/verify + rules).
           instructions: renderInstructionsSection(input.instructionFiles),
           allowBash: true,
+          // Bus-published events (board notes, inter-agent messages — and the
+          // health stream to come) land on the SAME queue the pump drains. The
+          // daemon path wires this via its ledger (`inProcess.ts`); without it
+          // the in-process driver silently dropped every bus event.
+          onBusEvent: (e) => Queue.offer(eventQueue, e).pipe(Effect.asVoid),
         },
         baseHooks,
       )
@@ -242,10 +247,14 @@ export const runTuiModeSolid = (
           void Runtime.runPromise(rt)(submit(text))
         },
         interrupt: () => {
-          // Esc cancels EVERYTHING in flight: the root turn AND every background
-          // fleet agent (spawning is non-blocking, so the fleet are daemons the
-          // root fiber no longer encloses — interrupt them explicitly, no orphans).
-          Runtime.runFork(rt)(scopeRuntime.bus.interruptAll())
+          // Esc cancels THIS session's work: the root turn AND the background
+          // fleet it spawned (spawning is non-blocking, so the fleet are daemons
+          // the root fiber no longer encloses — interrupt its SUBTREE explicitly,
+          // no orphans). Scoped to the active conversation's descendants; a full
+          // `interruptAll` is reserved for process teardown (finalizer below).
+          Runtime.runFork(rt)(
+            scopeRuntime.bus.interruptSubtree(store.run.getConversationId()),
+          )
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },

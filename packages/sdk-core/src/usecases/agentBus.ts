@@ -124,7 +124,14 @@ export interface AgentBus {
   readonly runningChildrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
   /** Interrupt one running agent's fiber. False when it isn't running / has no fiber. */
   readonly interrupt: (nodeId: string) => Effect.Effect<boolean>
-  /** Interrupt every running agent (Esc / process teardown — no orphans). */
+  /** Interrupt ONE fleet's running subtree — every running descendant of
+   *  `parentKey` (BFS over the parent links), never the rest of the bus. This is
+   *  the scoped kill for Esc / a headless deadline / a parent stopping its own
+   *  fleet; `interruptAll` stays reserved for process shutdown. */
+  readonly interruptSubtree: (parentKey: string) => Effect.Effect<void>
+  /** Interrupt every running agent (process teardown ONLY — no orphans). A
+   *  user-facing cancel must use {@link interruptSubtree}: this kills every
+   *  fleet on the bus, including ones the canceller doesn't own. */
   readonly interruptAll: () => Effect.Effect<void>
   /** Post to an agent's inbox + wake it. Returns false when the target isn't running. */
   readonly post: (nodeId: string, msg: InboxMessage) => Effect.Effect<boolean>
@@ -393,6 +400,39 @@ export const makeAgentBus = (
         if (fiber === undefined) return false
         yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
         return true
+      }),
+
+    interruptSubtree: (parentKey) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref)
+        // BFS over the running entries' parent links from `parentKey` — a
+        // snapshot walk (a child spawned mid-interrupt is orphan-proofed by its
+        // parent's interruption landing before the next spawn can register).
+        const byParent = new Map<string, Array<{ nodeId: string; fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined }>>()
+        for (const [nodeId, e] of s.running.entries()) {
+          if (e.parentKey === null) continue
+          const arr = byParent.get(e.parentKey) ?? []
+          arr.push({ nodeId, fiber: e.fiber })
+          byParent.set(e.parentKey, arr)
+        }
+        const seen = new Set<string>()
+        const fibers: Array<Fiber.RuntimeFiber<unknown, unknown>> = []
+        let frontier = [parentKey]
+        while (frontier.length > 0) {
+          const next: string[] = []
+          for (const key of frontier) {
+            for (const child of byParent.get(key) ?? []) {
+              if (seen.has(child.nodeId)) continue
+              seen.add(child.nodeId)
+              next.push(child.nodeId)
+              if (child.fiber !== undefined) fibers.push(child.fiber)
+            }
+          }
+          frontier = next
+        }
+        yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
+          discard: true,
+        })
       }),
 
     interruptAll: () =>

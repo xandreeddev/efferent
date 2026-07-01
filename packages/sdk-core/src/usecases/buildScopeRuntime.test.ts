@@ -699,6 +699,96 @@ describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ e
     expect(node.returnSummary).toBe(STALL_NOTE)
   })
 
+  test("a stalled run that already PRODUCED text keeps it — recorded ok-with-note, never an empty [stalled] error", async () => {
+    // The forensic regression: agents finished their work ("all changes
+    // complete, tests green"), then hung on a later blocking op — and the old
+    // finalizer recorded `error` + STALL_NOTE + filesChanged:[] — DISCARDING the
+    // finished work. Now the finalizer preserves the run's last narration and
+    // returns it as an ok-with-caveat.
+    const { entries, layer } = stubTreeStore()
+    // Turn 1: narrates the completed work and asks to continue (tool-calls);
+    // turn 2: hangs forever — the watchdog kills it mid-call.
+    let calls = 0
+    const talkThenHangModel = Layer.succeed(
+      LanguageModel.LanguageModel,
+      LanguageModel.LanguageModel.of({
+        generateText: () => {
+          calls++
+          if (calls === 1) {
+            return Effect.succeed({
+              content: [
+                { type: "tool-call", id: "c1", name: "ls", params: { path: "." } },
+                { type: "tool-result", id: "c1", name: "ls", isFailure: false, result: {} },
+              ],
+              text: "All changes are complete and validated — 3 files updated.",
+              finishReason: "tool-calls",
+              usage: undefined,
+            })
+          }
+          return Effect.never
+        },
+        generateObject: () => Effect.die("unused"),
+        streamText: () => Effect.die("unused"),
+      } as never),
+    )
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [],
+      memory: [],
+      agents: [],
+      tools: [],
+      stallDeadlineMs: 150,
+    })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const spawned = yield* call("run_agent", {
+        name: "worker",
+        folder: "pkg",
+        task: "finish the work, then hang on the next model call",
+      })
+      const handle = spawned.result as { nodeId: string }
+      const gathered = yield* call("wait_for_agents", {
+        nodeIds: [handle.nodeId],
+        timeoutSeconds: 5,
+      })
+      return gathered.result as {
+        agents: ReadonlyArray<{ status: string; summary?: string }>
+        allDone: boolean
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPortsWith(talkThenHangModel))),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "watchdog FAILED to fire" }),
+      ) as unknown as Effect.Effect<{
+        agents: ReadonlyArray<{ status: string; summary?: string }>
+        allDone: boolean
+      }>,
+    )
+
+    expect(result.allDone).toBe(true)
+    // The produced work survives: an ok-with-caveat, not an empty error.
+    expect(result.agents[0]?.status).toBe("ok")
+    expect(result.agents[0]?.summary).toContain("All changes are complete and validated")
+    expect(result.agents[0]?.summary).toContain(STALL_NOTE)
+    const node = [...entries.values()][0]!.node
+    expect(node.status).toBe("ok")
+    expect(node.returnSummary).toContain("All changes are complete and validated")
+    expect(node.returnSummary).toContain(STALL_NOTE)
+  })
+
   test("a healthy (fast) sub-agent is NOT killed by the watchdog — it finishes ok", async () => {
     // Same tiny deadline, but the model returns immediately: the body wins the
     // race long before the deadline, so the watchdog never trips.
@@ -933,13 +1023,14 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
   })
 })
 
-// --- the STRUCTURAL coordinator gate (B-1): a LEAD gates its own subtree -------
+// --- ONE gate tier: a LEAD must NOT gate its own subtree (root-only gating) ----
 
-describe("runSpawnedAgent — a coordinator structurally gates its subtree before returning", () => {
+describe("runSpawnedAgent — a coordinator returns WITHOUT gating its subtree", () => {
   // A tree store that, for the FIRST spawned node (the coordinator), synthesizes
   // one finished CHILD on `listTree` — standing in for a worker the coordinator
-  // spawned (a stubbed model can't trigger the real spawn side-effect). So the
-  // lead's `settleChildren` finds a deliverable and the gate fires over it.
+  // spawned (a stubbed model can't trigger the real spawn side-effect). If a
+  // lead-tier gate existed, it would find that deliverable and call the
+  // verifier; the test asserts it never does.
   const leadTreeStore = () => {
     const entries = new Map<string, Entry>()
     let firstId: string | undefined
@@ -1132,25 +1223,20 @@ describe("runSpawnedAgent — a coordinator structurally gates its subtree befor
     )
   }
 
-  test("a `sound` verdict → the lead gates ONCE over its child's files, then returns ok", async () => {
-    const calls: GateInput[] = []
-    const { node } = await spawnCoordinatorAndWait(calls, [{ verdict: "sound", reasons: [] }])
-    expect(node.status).toBe("ok")
-    // The gate fired exactly once, judging the worker child's changed files.
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.filesChanged).toEqual(["worker.ts"])
-    expect(calls[0]?.task).toBe("build the feature across the codebase")
-  })
-
-  test("`needs_work` then `sound` → the lead RE-FIRES (gate runs twice) before returning ok", async () => {
+  test("a lead does NOT gate its own subtree — it returns ok without invoking the verifier", async () => {
+    // Gating is ONE tier, at the root (`driveLoop`). The old per-coordinator
+    // gate ran a multi-minute Opus subprocess inside the sub-agent watchdog's
+    // 180s window with no progress stamps, so finished leads were killed as
+    // "[stalled]" and their work discarded — the top failure bucket in the run
+    // forensics. This pins its absence: the lead's run finishes and records ok
+    // with ZERO verifier calls, even with verdicts queued up.
     const calls: GateInput[] = []
     const { node } = await spawnCoordinatorAndWait(calls, [
-      { verdict: "needs_work", reasons: ["the limiter is missing tests"] },
+      { verdict: "needs_work", reasons: ["would have re-fired the fleet"] },
       { verdict: "sound", reasons: [] },
     ])
     expect(node.status).toBe("ok")
-    // Round 1 rejected → retry → round 2 accepted: the structural retry loop ran.
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(0)
   })
 })
 

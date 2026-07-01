@@ -3,11 +3,7 @@ import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.j
 import type { AgentGateEvent } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ContextTreeStore } from "../ports/ContextTreeStore.js"
-import { ConversationStore } from "../ports/ConversationStore.js"
-import type { FileSystem } from "../ports/FileSystem.js"
-import type { UtilityLlm } from "../ports/UtilityLlm.js"
 import { Verifier } from "../ports/Verifier.js"
-import { runAutoDistill } from "./autoDistill.js"
 
 /** Max rounds the settle-wait polls for a run's NEW sub-agent nodes to reach a
  *  terminal status (2s each → ~30s ceiling) before the gate judges the objective
@@ -136,26 +132,21 @@ export type GateStep =
  *   - verifier unavailable → `stop` with an `unavailable` event (surfaced LOUDLY, never a silent pass)
  *   - `sound` → `accept`
  *   - `blocked`, or `needs_work` at the attempt cap → `stop` (emit the verdict, accept as-is)
- *   - `needs_work` under the cap → DISTILL (mine + Opus-verify reusable lessons), then `retry` with the reasons
+ *   - `needs_work` under the cap → `retry` with the reasons
  *
- * Pure decision + the learn side-effect; the caller owns the loop (settle →
- * gateOnce → emit → maybe retry → repeat) because the settle predicate, the
- * retry mechanism, and the emit hook all differ per tier.
+ * Pure decision; the caller owns the loop (settle → gateOnce → emit → maybe
+ * retry → repeat). Learning is NOT here any more — the turn-boundary distill
+ * (`runAutoDistill` in the drivers) is the single distillation per run; the old
+ * in-gate distill mined the same conversation a second time.
  */
 export const gateOnce = (params: {
   readonly task: string
   readonly summary: string
   readonly repoDir: string
-  readonly conversationId: ConversationId
   readonly freshNodes: ReadonlyArray<AgentContextNode>
   readonly attempt: number
   readonly maxAttempts: number
-  readonly autoDistill: boolean
-}): Effect.Effect<
-  GateStep,
-  never,
-  Verifier | ConversationStore | ContextTreeStore | UtilityLlm | FileSystem
-> =>
+}): Effect.Effect<GateStep, never, Verifier> =>
   Effect.gen(function* () {
     // No sub-agents this run → the gate is the swarm case only; nothing to do.
     if (params.freshNodes.length === 0) return { kind: "no-subagents" }
@@ -217,19 +208,9 @@ export const gateOnce = (params: {
       return { kind: "stop", event }
     }
 
-    // LEARN — mine + Opus-verify reusable skills/memories/constraints from this
-    // failed attempt so they persist for future runs. Fail-soft by construction
-    // (`runAutoDistill` never fails); gated by the caller's `autoDistill` knob.
-    if (params.autoDistill) {
-      yield* runAutoDistill({
-        conversationId: params.conversationId,
-        repoDir: params.repoDir,
-        existing: [],
-      })
-    }
-
     // RUN AGAIN — feed the gate's concrete reasons back as the next turn so the
-    // swarm fixes them (not a blind re-send), then re-gate.
+    // swarm fixes them (not a blind re-send), then re-gate. (Learning happens
+    // once, at the turn boundary — the drivers' `runAutoDistill` — not here.)
     const feedback: AgentMessage = {
       role: "user",
       content: GATE_FEEDBACK_PREAMBLE + v.reasons.map((r) => `- ${r}`).join("\n"),

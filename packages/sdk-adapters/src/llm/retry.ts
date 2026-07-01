@@ -158,6 +158,37 @@ const emitRetryNotice = (event: AgentLlmRetryEvent): Effect.Effect<void> =>
   )
 
 /**
+ * Bound ONE LLM request at {@link LLM_REQUEST_TIMEOUT_MS} at the fiber level.
+ * The custom adapters (`openCode`/`openAiCodex`/`openAiCompat`) already abort
+ * their fetch with an `AbortSignal`; the official `@effect/ai-*` providers
+ * (Google / OpenAI / Anthropic) had NO timeout at all, so a silently hung
+ * socket parked the calling fiber forever — the root turn has no watchdog, so
+ * this was the "root hangs indefinitely on a dead connection" primitive. The
+ * timeout failure is an `UnknownError` whose description matches the transient
+ * sniffer, so wrapping BEFORE {@link retryableLlm} makes each attempt bounded
+ * AND retried — a genuine blip recovers, a dead provider surfaces in ~6 min
+ * worst-case instead of never.
+ *
+ * E is preserved rather than widened: the failure is a real `AiError` at
+ * runtime, but `ExtractError<Options>` is a generic the router's service
+ * signature can't widen — same cast class as its `resolveKey` mapError.
+ */
+export const withLlmTimeout = <A, E, R>(
+  eff: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  eff.pipe(
+    Effect.timeoutFail({
+      duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
+      onTimeout: () =>
+        new AiError.UnknownError({
+          module: "llm",
+          method: "request",
+          description: `request timed out after ${Math.round(LLM_REQUEST_TIMEOUT_MS / 1000)}s`,
+        }) as never,
+    }),
+  )
+
+/**
  * Wrap an LLM call so a transient provider failure is retried with backoff.
  * Honors `Retry-After` (clamped — see {@link MAX_HONORED_RETRY_AFTER_MS}), else
  * exponential backoff, up to {@link MAX_RETRIES} retries. Each retry emits a

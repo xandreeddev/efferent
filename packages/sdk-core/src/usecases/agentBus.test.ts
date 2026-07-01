@@ -312,6 +312,44 @@ describe("AgentBus — supervision (the async fleet)", () => {
     expect(interrupted).toBe(true)
   })
 
+  it("interruptSubtree kills ONE fleet's whole subtree and leaves another fleet's agents alive", async () => {
+    // The cascade-interrupt regression: the headless deadline (and Esc in the
+    // in-process TUI) called `interruptAll`, so ONE stuck fleet's cutoff killed
+    // every agent on the bus — 13/13 nodes `[interrupted]` in the run forensics.
+    // `interruptSubtree` is the scoped kill: root1's child AND grandchild die,
+    // root2's agent is untouched.
+    const r = await run((bus) =>
+      Effect.gen(function* () {
+        // Fleet 1: root1 → child → grandchild.
+        yield* bus.markRunning("child", "c", { parentKey: "root1" })
+        yield* bus.markRunning("grandchild", "g", { parentKey: "child" })
+        // Fleet 2: an unrelated root's agent.
+        yield* bus.markRunning("other", "o", { parentKey: "root2" })
+        const childFiber = yield* Effect.forkDaemon(Effect.never)
+        const grandFiber = yield* Effect.forkDaemon(Effect.never)
+        const otherFiber = yield* Effect.forkDaemon(Effect.never)
+        yield* bus.setFiber("child", childFiber)
+        yield* bus.setFiber("grandchild", grandFiber)
+        yield* bus.setFiber("other", otherFiber)
+
+        yield* bus.interruptSubtree("root1")
+        const childExit = yield* Fiber.await(childFiber)
+        const grandExit = yield* Fiber.await(grandFiber)
+        // The other fleet's fiber must still be running — poll, don't await.
+        const otherAlive = (yield* Fiber.poll(otherFiber))._tag === "None"
+        yield* Fiber.interrupt(otherFiber)
+        return {
+          childInterrupted: Exit.isInterrupted(childExit),
+          grandInterrupted: Exit.isInterrupted(grandExit),
+          otherAlive,
+        }
+      }),
+    )
+    expect(r.childInterrupted).toBe(true)
+    expect(r.grandInterrupted).toBe(true)
+    expect(r.otherAlive).toBe(true)
+  })
+
   it("markRunning is idempotent: a re-register keeps the original completion latch", async () => {
     const r = await run((bus) =>
       Effect.gen(function* () {

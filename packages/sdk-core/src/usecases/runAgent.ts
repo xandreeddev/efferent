@@ -134,29 +134,25 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
     // `runAgent`/`resumeAgent` (and thus every mode) funnels through — so it is
     // structurally impossible to fan out a swarm and skip verification. It depends
     // on NEITHER the model calling a tool NOR a coordinator; only `autoLoop`
-    // (default on) gates it. Fail-closed: needs_work → LEARN (distill skills /
-    // memories / constraints) → RUN AGAIN with the gate's reasons → re-gate, to
-    // `maxLoopAttempts`. A genuinely unavailable verifier is surfaced LOUDLY (never
-    // a silent pass) and does not loop. `repoDir` is required to ground the gate.
+    // (default on) gates it. This is the ONE gate tier: the whole run's aggregate
+    // deliverable, judged once here (the old per-coordinator tier is gone).
+    // Fail-closed: needs_work → RUN AGAIN with the gate's reasons → re-gate, to
+    // `maxLoopAttempts` (learning happens at the turn boundary, not in-gate). A
+    // genuinely unavailable verifier is surfaced LOUDLY (never a silent pass) and
+    // does not loop. `repoDir` is required to ground the gate.
     if (settings.autoLoop !== false && input.workspaceDir !== undefined) {
       const repoDir = input.workspaceDir
       const maxAttempts = settings.maxLoopAttempts ?? 3
       let attempt = 1
       while (true) {
         const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
-        // The SAME gate the coordinator tier uses (`gateOnce`) — one decision in
-        // one place. The root pass aggregates the WHOLE run's sub-agent subtree
-        // (every node this run created), the final sign-off over already-gated
-        // coordinator pieces.
         const step = yield* gateOnce({
           task: input.mission ?? input.promptLabel,
           summary: result.finalText,
           repoDir,
-          conversationId: input.conversationId,
           freshNodes,
           attempt,
           maxAttempts,
-          autoDistill: settings.autoDistill !== false,
         })
         if (step.kind === "no-subagents") break
         yield* emitGate(input, step.event)

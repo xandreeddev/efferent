@@ -22,7 +22,7 @@ import {
 } from "@xandreed/sdk-core"
 import { Effect, FiberRef, Layer, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
-import { retryableLlm } from "./retry.js"
+import { retryableLlm, withLlmTimeout } from "./retry.js"
 import {
   makeProviderLanguageModel,
   prependClaudeCode,
@@ -231,6 +231,9 @@ export const RouterLanguageModelLive = Layer.effect(
                 svc
                   .generateText(shapeOptions(sel, shouldPrepend, options))
                   .pipe(
+                    // Bound each attempt (official providers ship no timeout),
+                    // THEN retry — a timeout is classified transient.
+                    withLlmTimeout,
                     retryableLlm,
                     Effect.tap((res) => observe(sel, options, res)),
                     Effect.tapError(observeError),
@@ -251,6 +254,7 @@ export const RouterLanguageModelLive = Layer.effect(
                 svc
                   .generateObject(shapeOptions(sel, shouldPrepend, options))
                   .pipe(
+                    withLlmTimeout,
                     retryableLlm,
                     Effect.tap((res) => observe(sel, options, res)),
                     Effect.tapError(observeError),

@@ -34,8 +34,10 @@ const FLEET_WAIT_TIMEOUT_MS = 30_000
  *  terminate with a deliverable; a fleet that won't converge (some models
  *  over-research) is cut off here and the root synthesizes from partial results.
  *  Override with `EFFERENT_FLEET_DEADLINE_MS`; genuine long-running work belongs
- *  in the daemon/TUI, not one-shot headless. */
-const DEFAULT_DEADLINE_MS = 6 * 60_000
+ *  in the daemon/TUI, not one-shot headless. 20 min — the old 6 min could not
+ *  fit a real multi-agent fleet, so the deadline routinely mass-killed healthy
+ *  cohorts mid-work (13/13 nodes `[interrupted]` in the run forensics). */
+const DEFAULT_DEADLINE_MS = 20 * 60_000
 
 const deadlineMs = (): number => {
   const raw = Number(process.env["EFFERENT_FLEET_DEADLINE_MS"])
@@ -112,10 +114,12 @@ export const runFleetToCompletion = <R>(args: {
           ? yield* waitFleetIdle(args.bus, args.rootKey, remaining)
           : false
       if (!idled) {
-        // Deadline hit: stop the runaway fleet and force one synthesis from
-        // whatever finished (interrupted children record an error return + post
-        // to the root's inbox, which the synthesis turn drains).
-        yield* args.bus.interruptAll()
+        // Deadline hit: stop THIS run's fleet — the root's own subtree, never
+        // the whole bus — and force one synthesis from whatever finished
+        // (interrupted children record their return + post to the root's inbox,
+        // which the synthesis turn drains). `interruptAll` here once killed
+        // every fleet on the bus, including other runs' healthy agents.
+        yield* args.bus.interruptSubtree(args.rootKey)
         result = yield* args.runTurn(FINALIZE_PROMPT)
         break
       }

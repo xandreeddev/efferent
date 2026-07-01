@@ -698,23 +698,6 @@ export const makeInProcessWorkspace = (
         return out
       })
 
-    /** Collect a fleet's running descendant keys (BFS via the bus), for a
-     *  fleet-scoped interrupt that cancels only THAT deployment. */
-    const fleetSubtree = (rootKey: string): Effect.Effect<ReadonlyArray<string>> =>
-      Effect.gen(function* () {
-        const seen = new Set<string>()
-        let frontier = [rootKey]
-        while (frontier.length > 0) {
-          const next: string[] = []
-          for (const k of frontier) {
-            const kids = yield* scopeRuntime.bus.runningChildrenOf(k)
-            for (const c of kids) if (!seen.has(c)) { seen.add(c); next.push(c) }
-          }
-          frontier = next
-        }
-        return [...seen]
-      })
-
     // --- the Workspace service ----------------------------------------------
 
     const service = Workspace.of({
@@ -828,10 +811,7 @@ export const makeInProcessWorkspace = (
           if (yield* isFleetRoot(key)) {
             // Cancel only THIS fleet's subtree (not interruptAll — that would
             // kill every fleet; reserved for daemon shutdown).
-            const subtree = yield* fleetSubtree(key)
-            yield* Effect.forEach(subtree, (k) => scopeRuntime.bus.interrupt(k).pipe(Effect.asVoid), {
-              discard: true,
-            })
+            yield* scopeRuntime.bus.interruptSubtree(key)
           } else {
             yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
           }
