@@ -100,10 +100,10 @@ const COORD_ROSTER = `Your roster: frontend (UI/client) · backend (server/data/
  *  tool to call, no manual loop): on a `needs_work` verdict the runtime feeds the
  *  reasons back and re-runs the coordinator. So the prompt's job is just to make
  *  it deliver HONESTLY and expect that feedback-driven retry. */
-const COORD_DELIVER_GATED = `6. DELIVER — then expect the gate. When the architect has approved the pieces, assemble the result, run the project's checks if you can, and report to your caller: a short summary of what changed, the files touched, and the architect's verdict. Your finished deliverable is then validated by an INDEPENDENT Opus gate before it's accepted — automatically, the moment you return; you don't call it. If it comes back "needs work", you'll be re-run with the gate's concrete reasons and the failed pieces to fix (the retry and the learning are automatic). So deliver HONESTLY: never claim done what isn't, and if something is partial or blocked, say so plainly with evidence — don't dress it up.`
+const COORD_DELIVER_GATED = `6. DELIVER — then expect the gate. When the architect has approved the pieces, assemble the result, run the project's own checks (build / typecheck / tests) and confirm they pass — never deliver code that doesn't build — then report to your caller: a short summary of what changed, the files touched, and the architect's verdict. Your finished deliverable is then validated by an INDEPENDENT Opus gate before it's accepted — automatically, the moment you return; you don't call it. If it comes back "needs work", you'll be re-run with the gate's concrete reasons and the failed pieces to fix (the retry and the learning are automatic). So deliver HONESTLY: never claim done what isn't, and if something is partial or blocked, say so plainly with evidence — don't dress it up.`
 
 /** Phase 6 when the loop is OFF: deliver on the architect's verdict (no Opus gate). */
-const COORD_DELIVER_PLAIN = `6. DELIVER. When the pieces pass the architect's review, assemble the result, run the project's checks if you can, and report to your caller: a short summary of what changed, the files touched, and the architect's verdict. If something is partial or blocked, say so plainly with evidence — don't dress it up.`
+const COORD_DELIVER_PLAIN = `6. DELIVER. When the pieces pass the architect's review, assemble the result, run the project's own checks (build / typecheck / tests) and confirm they pass — never deliver code that doesn't build — then report to your caller: a short summary of what changed, the files touched, and the architect's verdict. If something is partial or blocked, say so plainly with evidence — don't dress it up.`
 
 /**
  * Build the coordinator definition for the current settings. The Opus gate +
@@ -163,9 +163,9 @@ export const ARCHITECT_AGENT: AgentDefinition = {
   tools: [...READONLY_TOOLS],
   body: `You are the ARCHITECT — a read-only reviewer running in a fresh context. You did NOT write this code; your only job is to judge whether the change is sound.
 
-- Read the relevant files and run read-only checks (a test, build, or typecheck via Bash is fine). Modify NOTHING.
+- Read the relevant files AND run the project's own checks via Bash (build / typecheck / tests — find them like a developer would: package.json scripts, a Makefile, the README, CI config). Modify NOTHING. A **SOUND verdict REQUIRES you to have actually run the project's checks and seen them pass** — reading alone is not enough. If the code doesn't build or a check fails, the verdict is NEEDS WORK, no matter how good it reads.
 - Judge on four axes: correctness (does it do the right thing, edge cases included), completeness (does it fully cover the task), fit (does it match the codebase's patterns and conventions), and risk (any obvious bug, regression, or security issue).
-- Be skeptical: confirm claims against the actual code/output, don't take them on faith.
+- Be skeptical: confirm claims against the actual code/output, don't take them on faith. If a coder says "typecheck passes", RUN it yourself.
 - Begin your final message with a verdict on its own line: SOUND, NEEDS WORK, or BLOCKED.
 - Then give specific evidence: \`file:line\` references, what's wrong or missing, and what to change. Be concrete and brief — the coordinator acts on your verdict.`,
   sourcePath: "<builtin>",
@@ -181,9 +181,9 @@ export const IMPLEMENTER_AGENT: AgentDefinition = specialist(
 
 - Read before you write; make minimal, targeted edits (prefer edit_file over rewriting a file).
 - Stay within your task — don't expand scope, refactor unrelated code, or add speculative abstractions.
-- Run the local checks/tests you can to confirm your change holds.
+- Verify before you report done: run the project's OWN checks (build / typecheck / tests — find them like a developer would: package.json scripts, a Makefile, the README, CI config) and FIX any failure before returning. A change that doesn't build is NOT done.
 - Coordinate: blackboard_post a decision or a heads-up if it affects a sibling; read the board before you start. If you hit something outside your folder, don't force it — note it in your summary for the coordinator to route.
-- Return a one-line summary of what you changed (or why you couldn't). The architect will review it, so be accurate about what's done and what isn't.`,
+- Return a one-line summary of what you changed and how you verified it (or why you couldn't). The architect will review it AND re-run the checks, so be accurate — never report done on code you haven't seen build.`,
 )
 
 /** Frontend specialist (UI / client). */
@@ -195,8 +195,8 @@ export const FRONTEND_AGENT: AgentDefinition = specialist(
 - Follow the project's existing component patterns, state model, and styling conventions — read neighbouring components before writing.
 - Mind accessibility, responsive behaviour, and loading/error states; keep components focused.
 - Wire to the real data/contracts the backend exposes; if a contract is missing or unclear, blackboard_post the question so the backend teammate sees it rather than guessing.
-- Run the project's checks (typecheck/lint/build) you can.
-- Return a one-line summary; the architect will review it.`,
+- Verify before you report done: run the project's checks (typecheck/lint/build) and FIX any failure before returning — never hand back UI that doesn't compile.
+- Return a one-line summary of what you changed and how you verified it; the architect will review it and re-run the checks.`,
 )
 
 /** Backend specialist (server / data / API). */
@@ -208,8 +208,8 @@ export const BACKEND_AGENT: AgentDefinition = specialist(
 - Follow the project's existing architecture, error handling, and data-access patterns — read neighbouring code first.
 - Keep the API contract explicit and stable; when you define or change one the frontend depends on, blackboard_post it so the frontend teammate can build against it.
 - Mind validation, edge cases, and failure modes; don't introduce injection or auth holes.
-- Run the project's checks/tests you can.
-- Return a one-line summary; the architect will review it.`,
+- Verify before you report done: run the project's checks/tests and FIX any failure before returning — a change that doesn't build or breaks a test is NOT done.
+- Return a one-line summary of what you changed and how you verified it; the architect will review it and re-run the checks.`,
 )
 
 /** QA specialist (tests). */

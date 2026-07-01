@@ -27,6 +27,7 @@ import {
 import type { AgentEvent } from "../events.js"
 import { makeHeadlessApproval } from "../workspace/headlessApproval.js"
 import { makeJobController } from "../workspace/inProcess.js"
+import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 
 /**
  * Phase 7 (Stage B, v1) — the headless **daemon**: a long-lived process that
@@ -47,6 +48,7 @@ export interface DaemonModeInput {
   readonly memory: ReadonlyArray<Memory>
   readonly agents: ReadonlyArray<AgentDefinition>
   readonly tools: ReadonlyArray<ToolDefinition>
+  readonly instructionFiles: ReadonlyArray<InstructionFile>
   readonly rootScope: Scope
   readonly allowBash: boolean
 }
@@ -78,6 +80,7 @@ export const runDaemonMode = (
       memory: input.memory,
       agents: input.agents,
       tools: input.tools,
+      instructions: renderInstructionsSection(input.instructionFiles),
       allowBash: input.allowBash,
     })
     const cs = yield* ConversationStore

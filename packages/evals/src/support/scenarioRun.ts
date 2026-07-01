@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import ts from "typescript"
 import { Effect, Ref } from "effect"
 import {
   type AgentHooks,
@@ -84,6 +85,21 @@ export interface TestResult {
   readonly output: string
 }
 
+/** Whether the code the swarm produced actually TYPE-CHECKS — the discriminator
+ *  `bun test` can't provide, because Bun strips types at load, so a module with a
+ *  type error (or a hallucinated import) still "runs". Run in-process via the
+ *  TypeScript compiler API over the produced files (no code execution → safe on
+ *  the host even for a sandboxed scenario). This is the objective proof that the
+ *  self-verifying swarm (Part A) actually delivers compiling code. */
+export interface TypecheckResult {
+  /** No TypeScript errors across the produced `.ts` files. */
+  readonly ok: boolean
+  /** Formatted diagnostics (clipped) — the reason on failure. */
+  readonly output: string
+  /** Count of error-level diagnostics. */
+  readonly errors: number
+}
+
 export interface ScenarioRun {
   readonly tools: ReadonlyArray<string>
   readonly finalText: string
@@ -91,6 +107,8 @@ export interface ScenarioRun {
   readonly trajectory: Trajectory
   /** Present only when the scenario shipped `hiddenTests`. */
   readonly testResult?: TestResult
+  /** Present only when the scenario asked for a `typecheck`. */
+  readonly typecheckResult?: TypecheckResult
 }
 
 export interface RunScenarioOptions {
@@ -120,6 +138,13 @@ export interface RunScenarioOptions {
    *  `run_agent({ agent: "research-coordinator" })` fails `UnknownAgent`. Defaults
    *  off so the focused-behaviour suites keep their lean prompt. */
   readonly includeFleet?: boolean
+  /** After the run, TYPE-CHECK the produced `.ts` files with the TypeScript
+   *  compiler (in-process, no execution) and surface {@link ScenarioRun.typecheckResult}.
+   *  This is what catches a swarm that shipped non-compiling code — `bun test`
+   *  can't, since Bun strips types. The fixture must be self-contained TS (no
+   *  external package imports), so a compile failure means the swarm's code is
+   *  genuinely broken, not a missing dependency. */
+  readonly typecheck?: boolean
 }
 
 const billed = (u?: { readonly inputTokens: number; readonly outputTokens: number }): number =>
@@ -147,6 +172,47 @@ const parseTestOutput = (out: string, exitCode: number): TestResult => {
   const total = pass + fail
   const ratio = total > 0 ? pass / total : exitCode === 0 ? 1 : 0
   return { pass, fail, ratio, allPass: exitCode === 0 && fail === 0 && pass > 0, output: out.slice(0, 4000) }
+}
+
+/** All `.ts` files under `root` (skipping hidden dirs + node_modules), absolute. */
+const collectTsFiles = (root: string): ReadonlyArray<string> => {
+  const out: string[] = []
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue
+      const p = join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith(".ts") || e.name.endsWith(".tsx")) out.push(p)
+    }
+  }
+  walk(root)
+  return out
+}
+
+/** Type-check the produced files IN-PROCESS with the TypeScript compiler API —
+ *  no subprocess, no `node_modules` needed (the fixture is self-contained TS), no
+ *  code execution. Errors mean the swarm's code doesn't compile. */
+const runTypecheck = (dir: string): TypecheckResult => {
+  const files = collectTsFiles(dir)
+  if (files.length === 0) return { ok: true, output: "(no .ts files produced)", errors: 0 }
+  const program = ts.createProgram(files, {
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    lib: ["lib.es2022.d.ts"],
+  })
+  const diagnostics = ts
+    .getPreEmitDiagnostics(program)
+    .filter((d) => d.category === ts.DiagnosticCategory.Error)
+  const output = ts.formatDiagnostics(diagnostics, {
+    getCanonicalFileName: (f) => f,
+    getCurrentDirectory: () => dir,
+    getNewLine: () => "\n",
+  })
+  return { ok: diagnostics.length === 0, output: output.slice(0, 4000), errors: diagnostics.length }
 }
 
 const writeTests = (dir: string, tests: Record<string, string>): void => {
@@ -280,6 +346,11 @@ export const runScenario = (
       const readback: Record<string, string> = {}
       for (const rel of opts.readback ?? []) readback[rel] = readWorkspaceFile(dir, rel)
 
+      // Objective compile discriminator: type-check the produced files BEFORE the
+      // hidden tests are written (so only the swarm's own code is checked, not the
+      // injected tests). Catches non-compiling deliverables that `bun test` misses.
+      const typecheckResult = opts.typecheck === true ? runTypecheck(dir) : undefined
+
       // Objective discriminator: run the hidden test suite against what the agent
       // built (after the run, so it could never see or edit the tests).
       const testResult =
@@ -313,6 +384,7 @@ export const runScenario = (
           rootSpawnedAgents,
         },
         ...(testResult !== undefined ? { testResult } : {}),
+        ...(typecheckResult !== undefined ? { typecheckResult } : {}),
       }
       })
     return opts.sandbox === true ? withSandbox(dir, body) : body()

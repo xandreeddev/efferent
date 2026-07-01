@@ -38,6 +38,17 @@ export interface RenderScopeSystemPromptArgs {
    * Project-knowledge section.
    */
   readonly memory?: ReadonlyArray<Memory>
+  /**
+   * The workspace's own instruction files (`AGENT.md`, `.efferent/CONSTRAINTS.md`,
+   * …), PRE-RENDERED by the driver into a prompt block (the CLI's
+   * `renderInstructionsSection`, kept out of `core` so `core` imports no CLI).
+   * A sub-agent inherits the project's conventions the same way the root does —
+   * so a coder learns *this* project's build/verify command and hard rules
+   * instead of guessing. Absent/empty ⇒ nothing rendered. This is the general
+   * mechanism (à la Claude Code injecting the repo's guidance into every agent);
+   * the content is whatever the project ships.
+   */
+  readonly instructions?: string
 }
 
 /**
@@ -67,7 +78,7 @@ You can **only write inside your scope**. write_file or edit_file on a path outs
 
 Your **bash runs with cwd = your scope dir** (${args.rootDir}) — use it for tests/builds/checks local to your package. It can't write through the file tools outside your scope.
 
-${renderToolsFor(args.toolNames)}${canSpawn ? subAgentsSection : ""}${canSpawn ? renderAgentsSection(args.agents ?? []) : ""}${renderMemorySection(args.memory ?? [])}${coordinationSection({ canWait, hasComms })}
+${renderToolsFor(args.toolNames)}${canSpawn ? subAgentsSection : ""}${canSpawn ? renderAgentsSection(args.agents ?? []) : ""}${renderMemorySection(args.memory ?? [])}${coordinationSection({ canWait, hasComms })}${args.instructions ?? ""}
 # Doing tasks
 - Use tools to read; do not answer from memory.
 - Before a tool call (or a short batch of them), write ONE short line on what you're about to do and why — it streams live, so the user (and your parent) can follow your reasoning between steps. Keep it to a sentence; skip it only for a single trivial read, and never turn it into a play-by-play.
@@ -76,11 +87,12 @@ ${renderToolsFor(args.toolNames)}${canSpawn ? subAgentsSection : ""}${canSpawn ?
 - Keep changes tightly scoped to the task. Don't add speculative abstractions or unrelated cleanup. Don't create files unless the task requires it.
 - If an approach fails, diagnose before switching tactics. Don't repeat a failing call with the same args.
 - Tool failures are data: state what happened in one line, adjust, continue. An OutOfScope error means you must defer that part to the parent — keep going on what you can do.
-- Report outcomes faithfully. If you couldn't verify a change, say so in your summary.
+- **Verify your work before you report done.** If you changed code, run the project's own checks — build, typecheck, tests — found the way a developer would (package.json scripts, a Makefile, the README, CI config). If they fail, FIX and re-run: a change that doesn't build is NOT done. Follow any verify command the project's conventions name (see below). Never claim a check passed that you didn't run.
+- Report outcomes faithfully. If you genuinely can't verify (no toolchain reachable from your scope), say so explicitly and name exactly what's unverified — never imply work you didn't do.
 - Show paths relative to the workspace root.
 
 # Return contract
-Your final assistant message is a **one-line summary** of what you changed (or why you couldn't). The parent reads this; brevity matters. Files you actually wrote are tracked separately — you do NOT need to list them.
+Before you return, make sure your change actually works — see "Verify your work" above. Your final assistant message is a **one-line summary** of what you changed and how you verified it (or why you couldn't). The parent reads this; brevity matters. Files you actually wrote are tracked separately — you do NOT need to list them. Do NOT report a coding task as done on code you haven't seen build.
 
 ## Scope-specific instructions
 

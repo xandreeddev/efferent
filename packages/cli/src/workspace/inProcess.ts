@@ -50,7 +50,7 @@ import { buildScopeRuntime, inboxToMessages } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
-import type { InstructionFile } from "../usecases/discoverInstructionFiles.js"
+import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { FleetSupervisor } from "../cli/state/fleet.js"
 import { makeAgentEventHooks, type AgentEvent } from "../events.js"
@@ -314,6 +314,9 @@ export const makeInProcessWorkspace = (
         memory: deps.memory,
         agents: deps.agents,
         tools: deps.tools,
+        // The project's own conventions ride into every sub-agent so the fleet
+        // inherits this project's build/verify command + hard rules.
+        instructions: renderInstructionsSection(deps.instructionFiles),
         allowBash: deps.allowBash ?? true,
         // Mirror inter-agent messages onto the ledger as `board_note` events —
         // the dashboard's "messages flying" stream is then just the SSE stream.
