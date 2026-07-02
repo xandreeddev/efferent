@@ -15,13 +15,14 @@ import {
   recordLlmCall,
   responseText,
   roleIsConfigured,
+  parseRetryAfterMs,
   RunContextRef,
   selectionFromString,
   SettingsStore,
   usageAttributes,
   type ModelSelection,
 } from "@xandreed/sdk-core"
-import { Effect, FiberRef, Layer, Ref, Stream } from "effect"
+import { Clock, Duration, Effect, FiberRef, Layer, Ref, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import { retryableLlm, withLlmTimeout } from "./retry.js"
 import {
@@ -34,6 +35,65 @@ import {
 const llmErrorTag = (e: unknown): string => {
   const t = (e as { readonly _tag?: unknown } | null)?._tag
   return typeof t === "string" ? t : "unknown"
+}
+
+/**
+ * ===== Quota park ("sleep till it's ready") =====
+ * When a QUOTA wall has a knowable reset time and there is no fallback model,
+ * failing the turn is strictly worse than what Claude Code does: announce the
+ * reset time, sleep until it, and resume. The park is interactive-only, ROOT-
+ * only (a parked fleet would burn its stall budget for nothing — the root
+ * respawns workers after it wakes), always visible (a countdown notice every
+ * slice), and interruptible (Esc cancels the sleep like any fiber).
+ */
+export const QUOTA_PARK_CEILING_MS = 24 * 60 * 60_000
+const QUOTA_PARK_SLICE_MS = 10 * 60_000
+/** Wake a touch late, never a touch early. */
+const QUOTA_PARK_MARGIN_MS = 5_000
+
+/**
+ * The provider's own reset delay for a quota error, when it names one:
+ * `Retry-After` (opencode's daily quota = seconds until the midnight-UTC
+ * reset) or Anthropic's `anthropic-ratelimit-unified-reset` (epoch seconds —
+ * the subscription session-cap header). Undefined ⇒ no knowable reset (e.g.
+ * "insufficient balance" — money, not time; a human must act).
+ */
+export const quotaResetDelayMs = (e: unknown, nowMs: number): number | undefined => {
+  if (!AiError.isAiError(e) || e._tag !== "HttpResponseError") return undefined
+  const h = e.response.headers
+  const ra = parseRetryAfterMs(h["retry-after"] ?? h["Retry-After"], nowMs)
+  if (ra !== undefined && ra > 0) return ra
+  const unified = h["anthropic-ratelimit-unified-reset"]
+  if (unified !== undefined) {
+    const at = Number(unified)
+    if (Number.isFinite(at)) {
+      const delta = Math.round(at * 1000 - nowMs)
+      return delta > 0 ? delta : undefined
+    }
+  }
+  return undefined
+}
+
+/** The park decision, pure — pinned by tests. */
+export const planQuotaPark = (input: {
+  readonly cls: string | undefined
+  readonly policy: "interactive" | "headless" | undefined
+  readonly depth: number
+  readonly resetDelayMs: number | undefined
+  readonly parkedMs: number
+}): { readonly park: boolean; readonly delayMs: number } =>
+  input.cls === "quota" &&
+  input.policy === "interactive" &&
+  input.depth === 0 &&
+  input.resetDelayMs !== undefined &&
+  input.resetDelayMs > 0 &&
+  input.parkedMs + input.resetDelayMs <= QUOTA_PARK_CEILING_MS
+    ? { park: true, delayMs: input.resetDelayMs + QUOTA_PARK_MARGIN_MS }
+    : { park: false, delayMs: 0 }
+
+const clockTime = (ms: number): string => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
 /**
@@ -292,6 +352,65 @@ export const RouterLanguageModelLive = Layer.effect(
      * fails over (credentials are the human's); `model` (malformed output) is
      * the loop's recovery to own.
      */
+    /**
+     * The quota park: no fallback to switch to, but the wall names its own
+     * reset time — so wait it out (in visible slices) and re-attempt. Loops
+     * while the provider keeps answering quota-with-reset, up to the 24h
+     * ceiling; any other failure (or an unknowable reset) surfaces. The sleep
+     * is ordinary fiber sleep — Esc interrupts it like any running turn.
+     */
+    const parkThroughQuota = <A, E, R>(
+      sel: ModelSelection,
+      attempt: (s: ModelSelection) => Effect.Effect<A, E, R>,
+      firstError: E,
+    ): Effect.Effect<A, E, R> =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        let err = firstError
+        let parkedMs = 0
+        while (true) {
+          const now = yield* Clock.currentTimeMillis
+          const plan = planQuotaPark({
+            cls: classifyProviderError(err),
+            policy: rc.interactionPolicy,
+            depth: rc.depth,
+            resetDelayMs: quotaResetDelayMs(err, now),
+            parkedMs,
+          })
+          if (!plan.park) return yield* Effect.fail(err)
+          const resetsAt = clockTime(now + plan.delayMs)
+          yield* Effect.logWarning(
+            `LLM quota wall on ${sel.provider}:${sel.modelId} — parking until ≈${resetsAt} (${Math.round(plan.delayMs / 60_000)}m); Esc cancels, :model switches`,
+          )
+          yield* Effect.annotateCurrentSpan({
+            "llm.quota_park": true,
+            "llm.quota_park.delay_ms": plan.delayMs,
+          })
+          // Sleep in slices, announcing each — the countdown stays alive in
+          // the rail without flooding it (one line per 10 min).
+          let remaining = plan.delayMs
+          while (remaining > 0) {
+            const slice = Math.min(remaining, QUOTA_PARK_SLICE_MS)
+            if (rc.onLlmRetry !== undefined) {
+              yield* rc.onLlmRetry({
+                reason: `quota on ${sel.provider}:${sel.modelId} — resets ≈${resetsAt}`,
+                attempt: 1,
+                maxAttempts: 1,
+                delayMs: slice,
+                elapsedMs: parkedMs,
+                budgetMs: QUOTA_PARK_CEILING_MS,
+              })
+            }
+            yield* Effect.sleep(Duration.millis(slice))
+            parkedMs += slice
+            remaining -= slice
+          }
+          const res = yield* Effect.either(attempt(sel))
+          if (res._tag === "Right") return res.right
+          err = res.left
+        }
+      })
+
     const withFailover = <A, E, R>(
       sel: ModelSelection,
       attempt: (s: ModelSelection) => Effect.Effect<A, E, R>,
@@ -302,7 +421,10 @@ export const RouterLanguageModelLive = Layer.effect(
           if (cls !== "quota" && cls !== "config" && cls !== "transient") return Effect.fail(e)
           return fallbackSelection(sel).pipe(
             Effect.flatMap((fb) => {
-              if (fb === undefined) return Effect.fail(e)
+              // No fallback configured ⇒ the quota park is the last resort
+              // (non-quota classes, unknowable resets, headless runs, and
+              // sub-agents fall straight through to the failure).
+              if (fb === undefined) return parkThroughQuota(sel, attempt, e)
               const from = `${sel.provider}:${sel.modelId}`
               const to = `${fb.provider}:${fb.modelId}`
               const announce = Effect.gen(function* () {
@@ -329,7 +451,13 @@ export const RouterLanguageModelLive = Layer.effect(
                   "llm.failover.class": cls,
                 })
               })
-              return announce.pipe(Effect.zipRight(attempt(fb)))
+              return announce.pipe(
+                Effect.zipRight(attempt(fb)),
+                // Both selections down: if the SECOND failure is a quota wall
+                // with a knowable reset, park and re-attempt the original
+                // selection after it — the last resort behind the failover.
+                Effect.catchAll((e2: E) => parkThroughQuota(sel, attempt, e2)),
+              )
             }),
           )
         }),

@@ -514,11 +514,13 @@ export const makeEventReducer = (
         // to ITS log (the fleet tree's health suffix shows it live) — the root
         // rail only carries the root's own retries.
         const secs = Math.max(1, Math.round(event.delayMs / 1000))
-        // Patient ladder (waiting out an outage) → elapsed/budget wording;
-        // fast retries → the attempt counter.
+        const budgetMins = Math.round((event.budgetMs ?? 0) / 60_000)
+        const budgetLabel = budgetMins >= 120 ? `${Math.round(budgetMins / 60)}h` : `${budgetMins}m`
+        // Patient ladder / quota park (waiting out an outage or a usage-limit
+        // reset) → elapsed/budget wording; fast retries → the attempt counter.
         const text =
           event.elapsedMs !== undefined
-            ? `provider ${event.reason} — down ${Math.max(1, Math.round(event.elapsedMs / 60_000))}m, retrying in ${secs}s (waits up to ${Math.round((event.budgetMs ?? 0) / 60_000)}m; esc cancels)`
+            ? `provider ${event.reason} — waited ${Math.round(event.elapsedMs / 60_000)}m, retrying in ${secs}s (waits up to ${budgetLabel}; esc cancels)`
             : `provider ${event.reason} — retrying in ${secs}s (attempt ${event.attempt}/${event.maxAttempts})`
         if (event.nodeId !== undefined) {
           store.appendNodeLog(event.nodeId, { kind: "info", text })

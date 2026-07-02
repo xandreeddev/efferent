@@ -14,3 +14,4 @@ Four fixes:
 - **Empty responses are errors**: the router rejects a response with no text, no tool call, no reasoning as a transient failure that rides the same ladder, instead of fake-completing the turn.
 - **Failover on exhausted transients**: `withFailover` now also fires when the ladder runs dry (provider genuinely down) — one shot on the configured fallback selection, loudly annotated.
 - **No lost work**: spawned/resumed sub-agent runs persist their tail incrementally per turn (`onTail`), so a run that dies mid-flight keeps every completed turn. Timeout errors name the `provider:model`.
+- **The quota park**: when a quota wall names its own reset (opencode's daily Retry-After, Anthropic's session-cap `anthropic-ratelimit-unified-reset`) and no fallback works, an interactive root turn **sleeps until the reset and resumes** — visible countdown, Esc cancels, `:model` switches, 24h ceiling. Headless runs and sub-agents never park.
