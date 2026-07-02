@@ -1,5 +1,5 @@
 import { AiError } from "@effect/ai"
-import { type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
+import { classifyProviderError, type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
 import { Duration, Effect, FiberRef } from "effect"
 
 /**
@@ -47,49 +47,16 @@ export const MAX_HONORED_RETRY_AFTER_MS = 60_000
  */
 export const LLM_REQUEST_TIMEOUT_MS = 120_000
 
-/** 429 (rate limit) + the retryable 5xx (overload / gateway / unavailable). */
-const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504])
-
 /**
- * The custom adapters (`openCode`/`ollama`/`openAiCodex`) wrap a fetch
- * network/timeout failure as `AiError.UnknownError` with the cause stringified
- * into `description`. Sniff that for the transient transport signatures so an
- * aborted/timed-out/connection-reset fetch retries too.
+ * Worth retrying? Exactly the `transient` class of the shared taxonomy
+ * (`classifyProviderError` in sdk-core): provider overload / rate-limit,
+ * transport failures, fetch timeouts — the request itself is fine, the
+ * provider just couldn't serve it now. `quota`/`config`/`auth`/`model`
+ * failures are PERMANENT here and fail fast — the router decides whether a
+ * failover applies (quota/config) or the human must act (auth).
  */
-const transientUnknown = (description: string): boolean => {
-  const d = description.toLowerCase()
-  return (
-    d.includes("timeout") ||
-    d.includes("timed out") ||
-    d.includes("aborted") ||
-    d.includes("fetch failed") ||
-    d.includes("network") ||
-    d.includes("econnreset") ||
-    d.includes("econnrefused") ||
-    d.includes("etimedout") ||
-    d.includes("socket hang up")
-  )
-}
-
-/**
- * Worth retrying? Provider overload / rate-limit (429, retryable 5xx), transport
- * failures, and fetch timeouts — the request itself is fine, the provider just
- * couldn't serve it now. NEVER a 4xx client error (bad request / bad or expired
- * key) or a decode bug (`MalformedInput`/`MalformedOutput`) — those are permanent
- * and retrying only wastes tokens and hides the real fault.
- */
-export const isTransientAiError = (e: AiError.AiError): boolean => {
-  switch (e._tag) {
-    case "HttpResponseError":
-      return TRANSIENT_STATUS.has(e.response.status)
-    case "HttpRequestError":
-      return true
-    case "UnknownError":
-      return transientUnknown(`${e.description}`)
-    default:
-      return false
-  }
-}
+export const isTransientAiError = (e: AiError.AiError): boolean =>
+  classifyProviderError(e) === "transient"
 
 const reasonLabel = (e: AiError.AiError): string =>
   e._tag === "HttpResponseError" ? `HTTP ${e.response.status}` : e._tag

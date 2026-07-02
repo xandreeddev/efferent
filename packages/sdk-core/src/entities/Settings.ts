@@ -101,6 +101,12 @@ export const Settings = Schema.Struct({
         "The CODE role: model the spawned coding sub-agents (the fleet) run on, as '<provider>:<modelId>'. Sub-agents never choose their own model — this is the single knob for the whole fleet. Unset → the main model.",
     }),
   ),
+  fallbackModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Failover model as '<provider>:<modelId>': when a run's model hits a PERSISTENT provider defect (quota exhausted, invalid-request config error — never a transient blip), the router retries the call ONCE on this selection, loudly annotated. The code role falls back to the general model first; this is the general role's own fallback. Unset → no failover (the error surfaces).",
+    }),
+  ),
   toolResultMaxTokens: Schema.optional(
     Schema.Number.annotations({
       description:
