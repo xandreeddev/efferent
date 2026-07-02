@@ -1,5 +1,58 @@
 # @xandreed/sdk-core
 
+## 0.6.0
+
+### Minor Changes
+
+- 590ee3d: The one gate: persisted, bounded, honest — and the learning loop's counters finally move.
+
+  Every gate round now lands in a `gate_verdicts` audit table (sqlite 0011 / pg 0015) — verdict, reasons, files, advisory flag, duration, and, for `unavailable`, the verifier's error text. The forensic "claude exited 1 after 2s ×3 → silent bypass" class is traceable after the fact, and `ConversationStore.listGateVerdicts` answers "was this actually verified?".
+
+  The gate is bounded now: the verifier subprocess default drops 30 → 10 minutes, `maxLoopAttempts` defaults to 2 (one retry — each retry re-runs the whole fleet), and a 15-minute wall clock caps the whole gate phase (persisting a budget-exhausted row instead of spinning). The settle-before-judging wait flips the other way: the old ~30s ceiling judged still-RUNNING fleets mid-flight (and the retry then spawned a duplicate fleet beside the live one); with every run now guaranteed to reach a terminal status, settle waits properly (5s polls, a ~10-min never-hit backstop).
+
+  Scheduled (cron) runs stop being gate-free: `submitJob`'s scheduled path runs a one-shot gate over the spawned deliverable, persists the verdict, and folds a `needs_work`/`blocked` into a `partial` outcome — no retry loop (nobody is watching to steer one), but never silent.
+
+  Reinforcement is wired: re-learning an existing constraint bumps its ✓ (the miner + gate re-surfacing it IS the signal it keeps mattering), and the gate prompt now lists the loaded CONSTRAINTS.md ids so a violated one is cited by id in the verdict (`constraintsViolated`) and gets its ✗ bumped. Before this every persisted constraint sat at `(✓0 ✗0)` forever — the "self-improving" loop had never once reinforced a lesson.
+
+- 590ee3d: Stop the fleet bleeding: one gate tier, scoped interrupts, work-preserving watchdog, kimi thinking fix, uniform LLM timeouts.
+
+  Run forensics over ten days of fleet runs (376 sub-agent nodes, 29% error rate — 56% on the worst day) traced most failures to five mechanisms, all fixed here:
+
+  - **The per-coordinator gate tier is deleted.** A lead's structural gate ran settle polls plus a `claude -p` Opus subprocess (30-min cap) inside the sub-agent stall watchdog's 180s no-progress window, with no progress stamps — so finished leads were routinely killed mid-gate and recorded `[stalled]`, discarding completed, test-green work. Gating is now ONE tier, at the root (`driveLoop`), judging the aggregate deliverable; `isLead` and the lead-gate block are gone, and `gateOnce` is a pure decision requiring only `Verifier`.
+  - **The exit finalizer preserves produced work.** An interrupted/stalled run keeps its last assistant text, `filesChanged`, and usage instead of an empty `[stalled]`/`[interrupted]` error; a stall AFTER text is recorded as ok-with-note (the work survives, the caveat is attached).
+  - **Fleet kills are subtree-scoped.** New `AgentBus.interruptSubtree(parentKey)`: the headless deadline and Esc in the in-process TUI now interrupt only THAT run's descendants — `interruptAll` (which killed every fleet on the bus, 13/13 nodes `[interrupted]` in one forensic run) is reserved for process teardown. The headless fleet deadline default rises 6 → 20 minutes.
+  - **Kimi K2.7+ thinking 400 fixed.** Those models reject `thinking: { type: "disabled" }` outright; thinking-mode "off" now omits the param for them (K2.6/DeepSeek keep the explicit disable).
+  - **Every LLM request is time-bounded.** The router wraps `generateText`/`generateObject` in a 120s fiber-level timeout (the official Google/OpenAI/Anthropic paths had none), classified transient so it retries — a silently hung socket can no longer park the root turn forever.
+  - **Distill runs once per run.** `gateOnce` no longer mines the conversation on `needs_work`; the turn-boundary distill is the single invocation.
+  - The in-process TUI driver now wires `onBusEvent`, so bus-published events (inter-agent messages, and the upcoming health stream) reach its event queue at all.
+
+- 590ee3d: One terminal path + an honest outcome vocabulary for every agent run.
+
+  Every run (root turn or spawned node, any exit shape) now funnels through ONE idempotent, infallible terminal path — `finalizeRun`: durable `recordReturn` (terminal-once at the store: only a `running` row closes, so a racing sweeper can't overwrite the first outcome) → `bus.complete` (parent inbox + waiter wake) → the `subagent_end` event. Abnormal exits (interrupt, watchdog stall, crash) can no longer skip the terminal event — the gap that made dead agents look alive in every UI surface.
+
+  The status vocabulary is honest now: `running | ok | partial | error | killed` plus a typed `stopReason` (`budget` / `step-cap` / `degenerate-loop` / `stall` / `interrupt(by: human|parent|shutdown|deadline)` / `provider` / `error`), persisted on the node (new `stop_reason` column, sqlite migration 0010 / pg 0014) and carried on `subagent_end`/`agent_end` (`outcome`/`reason`, schema-optional so stale daemon/client pairs still decode; the legacy `ok` boolean stays). Budget/step-cap stops were previously recorded as plain `ok` 25× in the run forensics; they are `partial` now — usable but incomplete, and `wait_for_agents` tells the orchestrator exactly that. A step-capped or breaker-stopped ROOT turn also reports `partial` instead of shipping its mid-thought last sentence as a success, and the gate no longer ships a wholly-failed fleet as "advisory success" (a majority error/killed fleet with no files stops non-advisory).
+
+  Spawned runs are **supervised fibers**: `bus.forkSupervised` replaces `forkDaemon(...catchAll(() => void))` (which discarded every exit), and `bus.shutdown()` — wired into TUI, print, json, rpc, and daemon teardown — interrupts and AWAITS the fleet so each run records `killed(shutdown)` before the process exits; no more rows stranded `running` forever. Interrupt APIs stamp WHO killed a run (`human`/`parent`/`shutdown`/`deadline`) so the persisted reason says so.
+
+  Headless modes are exit-code honest: print/json exit 1 when the run itself failed (error event, root error/killed), 0-with-stderr-notes for partial results, failed sub-agents on a delivered run, and gate degradation; rpc's resolve payload carries `outcome`. `agent_end` no longer ships the full `messages` array on the wire (zero consumers, megabytes per turn on SSE).
+
+- f563406: Survive provider outages like Claude Code: the patient retry ladder, empty-response rejection, and no-lost-work persistence.
+
+  The July 2 forensics: the opencode gateway melted for ~2.5h (429s, 503s, silent 120s hangs). A fleet finished all 7 audits — then the root's synthesis turn burned its 3 fast retries (4×120s timeouts, ~8 min) and died, so the deliverable was never shown; a manual node resume died the same way and lost its 2 completed turns; and two agents "completed" on HTTP-200-empty responses (`turn N: unknown · 0 tok`), recording mid-thought sentences as deliverables.
+
+  Four fixes:
+
+  - **The patient ladder** (`retryableLlm`): after the fast retries, a transient failure keeps retrying on slow rungs (15s → 30s → 60s…) bounded by the run's `interactionPolicy` — interactive 30 min (visible "provider down 6m — retrying" in the rail/health; Esc cancels), headless 10 min, bare calls (evals) unchanged. Helper tiers (titles, digests, approval judge, web search) use `retryableLlmFast` so a garnish can never park a turn.
+  - **Empty responses are errors**: the router rejects a response with no text, no tool call, no reasoning as a transient failure that rides the same ladder, instead of fake-completing the turn.
+  - **Failover on exhausted transients**: `withFailover` now also fires when the ladder runs dry (provider genuinely down) — one shot on the configured fallback selection, loudly annotated.
+  - **No lost work**: spawned/resumed sub-agent runs persist their tail incrementally per turn (`onTail`), so a run that dies mid-flight keeps every completed turn. Timeout errors name the `provider:model`.
+
+- 590ee3d: Provider-defect taxonomy + role-scoped failover: the runtime now understands WHY a model call died and heals what it can.
+
+  New shared classifier (`classifyProviderError` → `transient | quota | config | auth | model`) gives a typed home to every anonymous node-killer from the run forensics: opencode `CreditsError: Insufficient balance`, weekly/daily usage limits, the multi-hour daily-quota `Retry-After` (now `quota`, never slept on), kimi's `invalid thinking` 400 and provider-endpoint 404s (`config`), credential rejections (`auth`), and undecodable model output (`model`). `retryableLlm` consumes the same taxonomy for its transient decision — one classification, two consumers.
+
+  On a **persistent** defect (`quota`/`config`) the router now fails over ONCE to a human-configured selection instead of dying: the code role falls back to the run's pinned general model, the general role to the new `Settings.fallbackModel` (unset ⇒ no failover). Loud by construction — the notice rides the retry sink into the rail/node log/health suffix, spans carry `llm.failover.*`, and a `[failover: … → … after quota]` annotation is folded into the run's terminal outcome notes. `auth` never fails over (credentials are the human's — surfaces with the `:login` hint); `transient` still retries in place; `model` stays with the loop's corrective recovery. A running agent still never picks its own model.
+
 ## 0.5.1
 
 ### Patch Changes

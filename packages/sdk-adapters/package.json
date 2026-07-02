@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/sdk-adapters",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "description": "efferent SDK — Layer implementations of the sdk-core ports: multi-provider LLM router, auth, conversation/context stores (SQLite + Postgres), settings, fs/shell/http. Side effects live here.",
   "license": "MIT",
