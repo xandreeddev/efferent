@@ -156,6 +156,10 @@ export const runPrintMode = (
         tools: input.tools,
         instructions: renderInstructionsSection(input.instructionFiles),
         allowBash: input.allowBash,
+        // Bus-published events (agent_health, board notes) ride the same
+        // queue as the hook events — without this the headless stream
+        // silently dropped them.
+        onBusEvent: (e) => Queue.offer(queue, e).pipe(Effect.asVoid),
       },
       hooks,
     )

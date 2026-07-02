@@ -163,6 +163,9 @@ const handleSend = (
         tools: defaults.tools,
         instructions: renderInstructionsSection(defaults.instructionFiles),
         allowBash,
+        // Bus-published events (agent_health, board notes) ride the same queue
+        // as hook events — the rpc notification stream carries them too.
+        onBusEvent: (e) => Queue.offer(queue, e).pipe(Effect.asVoid),
       },
       hooks,
     )
