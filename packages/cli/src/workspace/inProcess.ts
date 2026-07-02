@@ -595,6 +595,10 @@ export const makeInProcessWorkspace = (
           rootHooksFor(rootKey),
           deps.cwd,
           model,
+          // A human is at the seat: LLM transients ride the PATIENT retry
+          // ladder (wait out a provider outage visibly; Esc cancels anytime)
+          // instead of killing the turn after the fast retries.
+          "interactive",
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.provide(approvalLayer),
@@ -645,6 +649,7 @@ export const makeInProcessWorkspace = (
           rootHooksFor(rootKey),
           deps.cwd,
           model,
+          "interactive",
         ).pipe(
           Effect.provide(scopeRuntime.handlerLayer),
           Effect.provide(approvalLayer),

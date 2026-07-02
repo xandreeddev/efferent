@@ -37,6 +37,46 @@ const llmErrorTag = (e: unknown): string => {
 }
 
 /**
+ * True when a "successful" response carries NOTHING — no text, no tool call,
+ * no reasoning. The opencode gateway under load answers HTTP 200 with an empty
+ * body and `finishReason: "unknown"` (`turn N: unknown · 0 tok` in the July
+ * forensics); the loop read that as a completed turn, so agents "finished"
+ * mid-thought and a mid-sentence line became the recorded deliverable.
+ */
+export const isEmptyResponseContent = (
+  content: ReadonlyArray<{ readonly type?: string; readonly text?: string }>,
+): boolean =>
+  !content.some(
+    (p) =>
+      (p.type === "text" && (p.text ?? "").trim().length > 0) ||
+      p.type === "tool-call" ||
+      (p.type === "reasoning" && (p.text ?? "").trim().length > 0),
+  )
+
+/**
+ * Fail an empty response as a *transient* provider error. Placed INSIDE the
+ * retry wrap, so an empty body is retried like any other blip instead of
+ * fake-completing the turn. E is preserved via the router's established cast
+ * class (the failure is a real AiError at runtime).
+ */
+const rejectEmptyResponse =
+  (label: string) =>
+  <A extends { readonly content: ReadonlyArray<{ readonly type?: string; readonly text?: string }> }, E, R>(
+    eff: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.flatMap(eff, (res) =>
+      isEmptyResponseContent(res.content)
+        ? Effect.fail(
+            new AiError.UnknownError({
+              module: "llm",
+              method: "generateText",
+              description: `empty model response from ${label} (no text, no tool calls)`,
+            }) as never,
+          )
+        : Effect.succeed(res),
+    )
+
+/**
  * Flatten an `@effect/ai` Prompt (array of messages, or `{ content: [...] }`)
  * to readable `### role\n<text>` blocks for the opt-in `gen_ai.prompt` span
  * attribute. Defensive over the runtime shape; non-text parts show as `[type]`.
@@ -241,14 +281,16 @@ export const RouterLanguageModelLive = Layer.effect(
       })
 
     /**
-     * Self-healing failover: when a call dies with a PERSISTENT defect —
-     * `quota` (out of credits/daily budget for hours) or `config` (this model
-     * rejects the request shape) — retrying in place is pointless, so retry the
-     * call ONCE on the fallback selection, loudly: the notice rides the retry
-     * sink (rail/node log + health), and a per-run annotation is folded into
-     * the terminal outcome's notes. `auth` never fails over (credentials are
-     * the human's); `model` (malformed output) is the loop's recovery to own;
-     * `transient` already retried in place.
+     * Self-healing failover: when a call dies with a defect that retrying in
+     * place can't fix — `quota` (out of credits/daily budget for hours),
+     * `config` (this model rejects the request shape), or a `transient` that
+     * EXHAUSTED the retry ladder (the provider is genuinely down; by the time a
+     * transient escapes `retryableLlm` it has been retried for the run's whole
+     * patience budget) — retry the call ONCE on the fallback selection, loudly:
+     * the notice rides the retry sink (rail/node log + health), and a per-run
+     * annotation is folded into the terminal outcome's notes. `auth` never
+     * fails over (credentials are the human's); `model` (malformed output) is
+     * the loop's recovery to own.
      */
     const withFailover = <A, E, R>(
       sel: ModelSelection,
@@ -257,7 +299,7 @@ export const RouterLanguageModelLive = Layer.effect(
       attempt(sel).pipe(
         Effect.catchAll((e: E) => {
           const cls = classifyProviderError(e)
-          if (cls !== "quota" && cls !== "config") return Effect.fail(e)
+          if (cls !== "quota" && cls !== "config" && cls !== "transient") return Effect.fail(e)
           return fallbackSelection(sel).pipe(
             Effect.flatMap((fb) => {
               if (fb === undefined) return Effect.fail(e)
@@ -303,9 +345,11 @@ export const RouterLanguageModelLive = Layer.effect(
                   svc
                     .generateText(shapeOptions(s, shouldPrepend, options))
                     .pipe(
-                      // Bound each attempt (official providers ship no timeout),
-                      // THEN retry — a timeout is classified transient.
-                      withLlmTimeout,
+                      // Bound each attempt (official providers ship no timeout)
+                      // and reject an empty body, THEN retry — both are
+                      // classified transient and ride the same ladder.
+                      withLlmTimeout(`${s.provider}:${s.modelId}`),
+                      rejectEmptyResponse(`${s.provider}:${s.modelId}`),
                       retryableLlm,
                       Effect.tap((res) => observe(s, options, res)),
                       Effect.tapError(observeError),
@@ -328,7 +372,7 @@ export const RouterLanguageModelLive = Layer.effect(
                   svc
                     .generateObject(shapeOptions(s, shouldPrepend, options))
                     .pipe(
-                      withLlmTimeout,
+                      withLlmTimeout(`${s.provider}:${s.modelId}`),
                       retryableLlm,
                       Effect.tap((res) => observe(s, options, res)),
                       Effect.tapError(observeError),
