@@ -148,6 +148,8 @@ const stubConv = () =>
         markPending: (_id, prompt) => Ref.set(pending, prompt),
         clearPending: () => Ref.set(pending, undefined),
         listPending: () => Effect.succeed([]),
+        recordGateVerdict: () => Effect.void,
+        listGateVerdicts: () => Effect.succeed([]),
       })
     }),
   )

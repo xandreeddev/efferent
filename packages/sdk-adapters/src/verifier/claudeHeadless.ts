@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -56,10 +57,12 @@ import {
  *   rather than lower it.
  */
 
-// Default generously: an Opus review reads several files and reasons, which can
-// take many minutes. A 30 min ceiling guards against a true hang without cutting
-// off a legitimate long review (the old 3 min cap killed real reviews mid-flight).
-const DEFAULT_VERIFY_TIMEOUT_MS = 1_800_000
+// 10 minutes: with gating root-only (one deliverable per run, retries capped at
+// 2 attempts + a 15-min gate wall clock in driveLoop), a legitimate Opus review
+// completes in 25–110s in practice (forensic timings); 10 min guards a slow one
+// without letting a hang eat the whole gate budget. (History: 3 min killed real
+// reviews; 30 min × per-coordinator tiers wedged runs for most of an hour.)
+const DEFAULT_VERIFY_TIMEOUT_MS = 600_000
 
 /** Single-quote a token for safe embedding in a `bash -c` command. */
 const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
@@ -90,6 +93,9 @@ const DeliverableReply = Schema.parseJson(
   Schema.Struct({
     verdict: Schema.Literal("sound", "needs_work", "blocked"),
     reasons: Schema.optional(Schema.Union(Schema.Array(Schema.String), Schema.String)),
+    constraintsViolated: Schema.optional(
+      Schema.Union(Schema.Array(Schema.String), Schema.String),
+    ),
   }),
 )
 
@@ -143,8 +149,20 @@ export const buildRefutePrompt = (
  * The **deliverable gate** prompt: Opus validates the swarm's output against the
  * task — judge only, never edit. Runs in the repo so it reads the changed files.
  */
-export const buildGatePrompt = (input: GateInput): string => {
+export const buildGatePrompt = (
+  input: GateInput,
+  /** Ids of the loaded CONSTRAINTS.md rules — the gate cites the ones the
+   *  deliverable violates, which drives the ✗ reinforcement counters. */
+  constraintIds: ReadonlyArray<string> = [],
+): string => {
   const hasFiles = input.filesChanged.length > 0
+  const constraintsBlock =
+    constraintIds.length > 0
+      ? `The project carries these standing constraints (by id): ${constraintIds.join(", ")}. ` +
+        `If the deliverable VIOLATES any of them, cite the violated ids in "constraintsViolated" (else omit or leave it empty).\n\n`
+      : ""
+  const constraintsField =
+    constraintIds.length > 0 ? `, "constraintsViolated": ["<id>", ...]` : ""
   // The deliverable is either a CODE change (files to read + check) or a PROSE
   // deliverable — a research answer / report — which IS the summary itself.
   const lead = hasFiles
@@ -157,6 +175,7 @@ export const buildGatePrompt = (input: GateInput): string => {
     : `Judge on: does it actually ANSWER the task (every part addressed, not dodged); is it SUPPORTED (concrete sources/citations present, claims specific and plausible, not vague hand-waving); is it HONEST about gaps and uncertainty; is it COHERENT (synthesized, not a pile of contradictions). A confident answer with no sources, or that ignores part of the question, is needs_work.`
   return (
     lead +
+    constraintsBlock +
     `TASK the swarm was given:\n<task>\n${input.task}\n</task>\n\n` +
     `What it reports it did:\n<summary>\n${input.summary}\n</summary>\n\n` +
     (hasFiles ? `Files changed: ${input.filesChanged.join(", ")}\n\n` : "") +
@@ -166,7 +185,7 @@ export const buildGatePrompt = (input: GateInput): string => {
     `- "blocked" — cannot proceed (missing info, contradictory task).\n\n` +
     `End your reply with the verdict as a single fenced \`\`\`json code block, and nothing after it:\n` +
     "```json\n" +
-    `{"verdict": "sound"|"needs_work"|"blocked", "reasons": ["<concrete actionable reason>", ...]}\n` +
+    `{"verdict": "sound"|"needs_work"|"blocked", "reasons": ["<concrete actionable reason>", ...]${constraintsField}}\n` +
     "```"
   )
 }
@@ -220,7 +239,14 @@ export const parseDeliverableVerdict = (
   if (text.length === 0) return undefined
   for (const candidate of extractJsonObjects(text)) {
     const v = Either.getOrUndefined(Schema.decodeUnknownEither(DeliverableReply)(candidate))
-    if (v !== undefined) return { verdict: v.verdict, reasons: normReasons(v.reasons) }
+    if (v !== undefined) {
+      const violated = normReasons(v.constraintsViolated)
+      return {
+        verdict: v.verdict,
+        reasons: normReasons(v.reasons),
+        ...(violated.length > 0 ? { constraintsViolated: violated } : {}),
+      }
+    }
   }
   // Present but unparseable as JSON → don't go "unavailable": extract a verdict
   // from the prose and carry the text as the reason so the retry has the judgment.
@@ -397,6 +423,19 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
         }),
       )
 
+    // The project's standing constraint ids (best-effort): listed in the gate
+    // prompt so a violation is CITED by id — the ✗-reinforcement signal that
+    // finally moves the (✓0 ✗0) counters.
+    const loadConstraintIds = (repoDir: string): Effect.Effect<ReadonlyArray<string>> =>
+      Effect.try(() => readFileSync(join(repoDir, ".efferent", "CONSTRAINTS.md"), "utf8")).pipe(
+        Effect.map((doc) =>
+          [...doc.matchAll(/^- \[([^\]]+)\]/gm)]
+            .map((m) => m[1] ?? "")
+            .filter((id) => id.length > 0),
+        ),
+        Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+      )
+
     // The deliverable gate (fail-soft at the caller — the coordinator falls back to
     // the architect verdict on a VerifierError, so a missing `claude` never blocks).
     const gate = (
@@ -404,7 +443,14 @@ export const ClaudeHeadlessVerifierLive = Layer.effect(
     ): Effect.Effect<DeliverableVerdict, VerifierError> =>
       // A coding deliverable (files changed) gets repo access to read the actual
       // diff; a prose/research deliverable (no files) is self-contained — no repo.
-      runClaude(buildGatePrompt(input), input.repoDir, input.filesChanged.length > 0).pipe(
+      loadConstraintIds(input.repoDir).pipe(
+        Effect.flatMap((constraintIds) =>
+          runClaude(
+            buildGatePrompt(input, constraintIds),
+            input.repoDir,
+            input.filesChanged.length > 0,
+          ),
+        ),
         Effect.flatMap((text) => {
           // `undefined` now means ONLY "claude produced no output" — a present but
           // oddly-shaped reply is handled by the keyword fallback inside the parser,

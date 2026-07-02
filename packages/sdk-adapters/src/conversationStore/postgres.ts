@@ -326,6 +326,54 @@ export const PostgresConversationStoreLive = Layer.effect(
           }
           return results
         }),
+
+      recordGateVerdict: (record) =>
+        wrapSql(
+          sql`
+            INSERT INTO gate_verdicts (
+              id, conversation_id, attempt, verdict, reasons, files_changed,
+              advisory, duration_ms, error, created_at
+            )
+            VALUES (
+              ${crypto.randomUUID()}::uuid, ${record.conversationId}::uuid, ${record.attempt},
+              ${record.verdict}, ${JSON.stringify(record.reasons)}::jsonb,
+              ${JSON.stringify(record.filesChanged)}::jsonb, ${record.advisory},
+              ${record.durationMs}, ${record.error ?? null}, ${Date.now()}
+            )
+          `,
+          "Failed to record gate verdict",
+        ).pipe(Effect.asVoid),
+
+      listGateVerdicts: (id) =>
+        Effect.gen(function* () {
+          const rows = yield* wrapSql(
+            sql<{
+              readonly attempt: number
+              readonly verdict: string
+              readonly reasons: unknown
+              readonly files_changed: unknown
+              readonly advisory: boolean
+              readonly duration_ms: number
+              readonly error: string | null
+              readonly created_at: string
+            }>`
+              SELECT attempt, verdict, reasons, files_changed, advisory, duration_ms, error, created_at
+              FROM gate_verdicts WHERE conversation_id = ${id}::uuid ORDER BY created_at ASC
+            `,
+            "Failed to list gate verdicts",
+          )
+          return rows.map((r) => ({
+            conversationId: id,
+            attempt: Number(r.attempt),
+            verdict: r.verdict as "sound" | "needs_work" | "blocked" | "unavailable",
+            reasons: (Array.isArray(r.reasons) ? r.reasons : []) as string[],
+            filesChanged: (Array.isArray(r.files_changed) ? r.files_changed : []) as string[],
+            advisory: r.advisory,
+            durationMs: Number(r.duration_ms),
+            ...(r.error !== null ? { error: r.error } : {}),
+            createdAt: Number(r.created_at),
+          }))
+        }),
     })
 
     return store

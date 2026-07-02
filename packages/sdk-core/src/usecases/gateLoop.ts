@@ -6,9 +6,15 @@ import { ContextTreeStore } from "../ports/ContextTreeStore.js"
 import { Verifier } from "../ports/Verifier.js"
 
 /** Max rounds the settle-wait polls for a run's NEW sub-agent nodes to reach a
- *  terminal status (2s each → ~30s ceiling) before the gate judges the objective
- *  on whatever has finished. */
-const GATE_SETTLE_MAX_ROUNDS = 15
+ *  terminal status (5s each → ~10 min ceiling) before the gate judges the
+ *  objective on whatever has finished. Generous ON PURPOSE: the old ~30s
+ *  ceiling judged still-RUNNING fleets mid-flight, and the retry then spawned a
+ *  duplicate fleet beside the live one. Waiting is safe now — every run is
+ *  GUARANTEED to reach a terminal status (the one terminal path + supervised
+ *  fibers), and a vanished fiber is swept `killed` within ~2.5 min — so this
+ *  ceiling is a never-hit backstop, not the working bound. */
+const GATE_SETTLE_MAX_ROUNDS = 120
+const GATE_SETTLE_POLL_MS = 5_000
 
 /** The tree for a conversation, or `[]` on any store error (best-effort: a tree
  *  read must never break the gate). */
@@ -37,7 +43,7 @@ const settleBy = (
       if (!fresh.some((n) => n.status === "running") || round >= GATE_SETTLE_MAX_ROUNDS) {
         return fresh
       }
-      yield* Clock.sleep("2 seconds")
+      yield* Clock.sleep(`${GATE_SETTLE_POLL_MS} millis`)
       round++
     }
   })
@@ -102,7 +108,7 @@ export const settleChildren = (
       ) {
         return subtree
       }
-      yield* Clock.sleep("2 seconds")
+      yield* Clock.sleep(`${GATE_SETTLE_POLL_MS} millis`)
       round++
     }
   })
@@ -190,6 +196,9 @@ export const gateOnce = (params: {
       reasons: v.reasons,
       attempt: params.attempt,
       filesChanged,
+      ...(v.constraintsViolated !== undefined && v.constraintsViolated.length > 0
+        ? { constraintsViolated: v.constraintsViolated }
+        : {}),
     }
 
     // Research/prose deliverable (nothing was written): the answer IS the

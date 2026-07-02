@@ -178,6 +178,9 @@ export interface AgentGateEvent {
   readonly reasons: ReadonlyArray<string>
   readonly attempt: number
   readonly filesChanged: ReadonlyArray<string>
+  /** Ids of loaded CONSTRAINTS.md rules the gate cited as VIOLATED — drives the
+   *  ✗ reinforcement counters (see `reinforceConstraints`). */
+  readonly constraintsViolated?: ReadonlyArray<string>
   /**
    * The verdict was not `sound`, but the deliverable was **delivered anyway** with
    * these `reasons` as advisory notes — because it's a research/prose deliverable
