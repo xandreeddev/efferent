@@ -120,9 +120,10 @@ describe("finalizeRun — the ONE terminal path", () => {
     } as unknown as ContextTreeStore["Type"]
 
     // Must complete without failing — teardown can never throw.
-    await Effect.runPromise(
+    const r = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* bus.markRunning(nodeId, "worker")
+        yield* bus.markRunning("parent", "the lead")
+        yield* bus.markRunning(nodeId, "worker", { parentKey: "parent" })
         yield* finalizeRun({
           nodeId,
           label: "worker",
@@ -140,11 +141,16 @@ describe("finalizeRun — the ONE terminal path", () => {
             reason: { kind: "error", error: "Boom" },
           },
         })
+        // The bus completion still happened despite the dying store/hook:
+        // the run is off the bus and the parent got the failure line.
+        const running = yield* bus.isRunning(nodeId)
+        const inbox = yield* bus.drain("parent")
+        return { running, inbox }
       }),
     )
-    // The bus completion still happened despite the dying store/hook.
-    const snap = await Effect.runPromise(bus.snapshot([nodeId]))
-    expect(snap[0]?.status).toBe("error")
+    expect(r.running).toBe(false)
+    expect(r.inbox).toHaveLength(1)
+    expect(r.inbox[0]?.content).toContain("boom")
   })
 
   test("notes ride the summary into record, inbox, and event", async () => {

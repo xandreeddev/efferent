@@ -7,6 +7,34 @@ import type { AgentEvent } from "../entities/AgentEvent.js"
 export type InterruptBy = "human" | "parent" | "shutdown" | "deadline"
 
 /**
+ * What a running agent is DOING right now — the health state behind the
+ * watchdog, the fleet tree's live suffix, and `wait_for_agents`' per-agent
+ * detail. The watchdog kills only a zero-activity `starting`/`generating` run
+ * (a hung model call — the original silent-stall class); every other state is
+ * bounded elsewhere (tools by their own timeouts, retries by the retry cap,
+ * waits by the gather timeout, approval by the human who owns it) and must
+ * never be killed as "stalled".
+ */
+export type RunState =
+  | "starting"
+  | "generating"
+  | "tool-running"
+  | "retrying"
+  | "awaiting-approval"
+  | "waiting-on-agents"
+
+export interface RunHealth {
+  readonly state: RunState
+  /** Epoch ms of the last observable signal (turn start / tool boundary /
+   *  narration / retry notice). Staleness is computed by readers. */
+  readonly lastActivityAt: number
+  /** Short human line: the running tool's name, `429 2/3 — next in 8s`, … */
+  readonly detail?: string
+  /** Billed tokens so far (input+output), when known. */
+  readonly tokens?: number
+}
+
+/**
  * The in-memory agent **comms + supervision bus** — the spine of the async
  * fleet. The whole fleet is fibers in one runtime (no IPC), so the bus is plain
  * Effect state over a `Ref`; what it carries is everything the fleet needs to
@@ -22,10 +50,12 @@ export type InterruptBy = "human" | "parent" | "shutdown" | "deadline"
  *  - **Blackboard** — a shared scratchpad every agent `post`s/`read`s, so
  *    parallel siblings see each other's findings without direct addressing.
  *  - **Supervision** — each running agent registers its **fiber** (so `:stop`
- *    and teardown can interrupt it) and a **completion** `Deferred` (so a parent
- *    can await it without polling). When it finishes the bus keeps a small
- *    terminal **result** record (status + summary + files) so a gather can read
- *    a just-finished agent's outcome even after its mailbox is gone.
+ *    and a subtree kill can interrupt it), a **completion** `Deferred` (so a
+ *    parent can await it without polling), and its live **health** (state +
+ *    last-activity — the watchdog's and the UI's shared truth). Spawned runs
+ *    are forked into the bus's fleet scope (`forkSupervised`); `shutdown`
+ *    interrupts + awaits them all. Finished-run RECORDS live in the durable
+ *    context tree, not here — the bus carries only live state.
  *
  * Nothing blocks structurally: spawning forks a fiber and returns immediately;
  * gathering (`awaitChange`) races completions against the waiter's own inbox and
@@ -78,6 +108,8 @@ export interface AgentSnapshot {
   readonly status: AgentRunStatus
   readonly summary?: string
   readonly filesChanged?: ReadonlyArray<string>
+  /** Live health, for RUNNING entries only (what it's doing + last activity). */
+  readonly health?: RunHealth
 }
 
 /** Options for registering a running agent. */
@@ -148,6 +180,23 @@ export interface AgentBus {
     nodeId: string,
   ) => Effect.Effect<InterruptBy | undefined>
   /**
+   * Stamp a running agent's live health (state transition and/or activity).
+   * Edge-triggered `agent_health` events ride the bus sink: one on every state
+   * CHANGE, plus a re-stamp when `lastActivityAt` jumps a bucket — never a
+   * heartbeat stream. No-op for an unregistered id.
+   */
+  readonly setHealth: (
+    nodeId: string,
+    patch: {
+      readonly state?: RunState
+      readonly detail?: string
+      readonly at: number
+      readonly tokens?: number
+    },
+  ) => Effect.Effect<void>
+  /** The live health of a RUNNING agent (undefined once finished/unknown). */
+  readonly healthOf: (nodeId: string) => Effect.Effect<RunHealth | undefined>
+  /**
    * Fork a spawned run as a SUPERVISED fiber in the bus's fleet scope — the
    * replacement for the old `forkDaemon(...catchAll(() => void))`, whose exits
    * were discarded and whose fibers outlived teardown (stranding DB rows
@@ -201,19 +250,14 @@ interface AgentEntry {
   readonly fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined
   /** WHO interrupted this run (stamped by the interrupt APIs, read by finalize). */
   readonly interruptedBy: InterruptBy | undefined
-}
-
-interface DoneEntry {
-  readonly label: string
-  readonly parentKey: string | null
-  readonly status: "ok" | "partial" | "error" | "killed"
-  readonly summary: string
-  readonly filesChanged: ReadonlyArray<string>
+  /** Live health (what it's doing + last activity) — see {@link RunHealth}. */
+  readonly health: RunHealth | undefined
+  /** When an `agent_health` event last rode the sink (edge-trigger bookkeeping). */
+  readonly healthEmittedAt: number | undefined
 }
 
 interface BusState {
   readonly running: ReadonlyMap<string, AgentEntry>
-  readonly done: ReadonlyMap<string, DoneEntry>
   readonly board: ReadonlyArray<BoardNote>
   /**
    * Completion notes for a parent that ISN'T currently running — keyed by the
@@ -222,14 +266,17 @@ interface BusState {
    * merged into the parent's inbox the next time it registers a mailbox
    * (`markRunning`, including the auto-resume). Without this, an auto-resumed
    * orchestrator drains an empty inbox and reports nothing ("no ping back").
+   *
+   * (There is NO `done` map any more: finished-run records live in the DURABLE
+   * store — the context tree — which never ages out. The old bounded map's
+   * aging made `wait_for_agents` synthesize finished children as
+   * phantom-`running`, so a big fleet's gather could spin forever.)
    */
   readonly pending: ReadonlyMap<string, ReadonlyArray<InboxMessage>>
 }
 
 /** Keep the blackboard bounded — oldest notes fall off (the agent re-reads). */
 const MAX_BOARD = 200
-/** Keep recently-finished results bounded — a gather reads them, then they age out. */
-const MAX_DONE = 200
 /** Cap buffered completions per idle parent (a parent that never resumes). */
 const MAX_PENDING = 100
 
@@ -250,7 +297,6 @@ export const makeAgentBus = (
 ): AgentBus => {
   const ref = Ref.unsafeMake<BusState>({
     running: new Map(),
-    done: new Map(),
     board: [],
     pending: new Map(),
   })
@@ -259,23 +305,34 @@ export const makeAgentBus = (
   // this scope, which interrupts AND awaits each supervised fiber (their exit
   // finalizers record honest terminal returns before the process exits).
   const fleetScope = Effect.runSync(Scope.make())
-  const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
-    onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
+  const emit = (
+    from: string,
+    note: string,
+    at: number,
+    to?: string,
+  ): Effect.Effect<void> =>
+    onEvent !== undefined
+      ? onEvent({
+          type: "board_note",
+          from,
+          note,
+          at,
+          ...(to !== undefined ? { to } : {}),
+        })
+      : Effect.void
 
-  const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot => {
+  // LIVE entries only — a finished/unknown id yields nothing (its terminal
+  // record lives in the durable store; the old phantom-`running` fallback here
+  // is what made aged-out children look alive forever).
+  const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot | undefined => {
     const run = s.running.get(nodeId)
-    if (run !== undefined) return { nodeId, label: run.label, status: "running" }
-    const fin = s.done.get(nodeId)
-    if (fin !== undefined) {
-      return {
-        nodeId,
-        label: fin.label,
-        status: fin.status,
-        summary: fin.summary,
-        filesChanged: fin.filesChanged,
-      }
+    if (run === undefined) return undefined
+    return {
+      nodeId,
+      label: run.label,
+      status: "running",
+      ...(run.health !== undefined ? { health: run.health } : {}),
     }
-    return { nodeId, label: shortKey(nodeId), status: "running" }
   }
 
   /** Stamp `interruptedBy` on the given running entries (first stamp wins) and
@@ -318,6 +375,9 @@ export const makeAgentBus = (
             wake: existing?.wake,
             fiber: existing?.fiber,
             interruptedBy: existing?.interruptedBy,
+            health:
+              existing?.health ?? { state: "starting", lastActivityAt: Date.now() },
+            healthEmittedAt: existing?.healthEmittedAt,
           })
           if (buffered.length === 0) return { ...s, running }
           const pending = new Map(s.pending)
@@ -341,21 +401,10 @@ export const makeAgentBus = (
           const e = s.running.get(nodeId)
           const running = new Map(s.running)
           running.delete(nodeId)
-          const done = new Map(s.done)
-          done.set(nodeId, {
-            label: e?.label ?? shortKey(nodeId),
-            parentKey: e?.parentKey ?? null,
-            status: result.status,
-            summary: result.summary,
-            filesChanged: result.filesChanged,
-          })
-          // Bound the done map — drop the oldest insertions.
-          while (done.size > MAX_DONE) {
-            const oldest = done.keys().next().value
-            if (oldest === undefined) break
-            done.delete(oldest)
-          }
-          return [e, { ...s, running, done }]
+          // No done-record kept here: the terminal outcome is already durable
+          // in the context tree (recordReturn precedes complete on the one
+          // terminal path); the bus only wakes + delivers.
+          return [e, { ...s, running }]
         })
         if (entry === undefined) return
         // Wake anyone awaiting this run (parent gather) and its own park latch.
@@ -410,7 +459,7 @@ export const makeAgentBus = (
           ...s,
           board: [...s.board, { from: entry.label, note: line, at }].slice(-MAX_BOARD),
         }))
-        yield* emit(entry.label, line, at)
+        yield* emit(entry.label, line, at, entry.parentKey ?? undefined)
       }),
 
     markDone: (nodeId) =>
@@ -438,19 +487,17 @@ export const makeAgentBus = (
         ),
       ),
 
+    // RUNNING children only — a finished child's record is in the durable
+    // store; gathers union this with the tree (`wait_for_agents`), so "watch
+    // everything I spawned" still reports long-finished agents without the bus
+    // holding a bounded, aging done-map.
     childrenOf: (parentKey) =>
       Ref.get(ref).pipe(
-        Effect.map((s) => {
-          const running = [...s.running.entries()]
+        Effect.map((s) =>
+          [...s.running.entries()]
             .filter(([, e]) => e.parentKey === parentKey)
-            .map(([nodeId]) => nodeId)
-          // Finished children too, so a gather's "watch all I spawned" default
-          // still reports an agent that completed before the parent looked.
-          const done = [...s.done.entries()]
-            .filter(([, e]) => e.parentKey === parentKey)
-            .map(([nodeId]) => nodeId)
-          return [...new Set([...running, ...done])]
-        }),
+            .map(([nodeId]) => nodeId),
+        ),
       ),
 
     runningChildrenOf: (parentKey) =>
@@ -516,6 +563,58 @@ export const makeAgentBus = (
     interruptReasonOf: (nodeId) =>
       Ref.get(ref).pipe(Effect.map((s) => s.running.get(nodeId)?.interruptedBy)),
 
+    setHealth: (nodeId, patch) =>
+      Effect.gen(function* () {
+        const emit = yield* Ref.modify(ref, (s) => {
+          const e = s.running.get(nodeId)
+          if (e === undefined) {
+            return [undefined as RunHealth | undefined, s] as const
+          }
+          const prev = e.health
+          const health: RunHealth = {
+            state: patch.state ?? prev?.state ?? "starting",
+            lastActivityAt: patch.at,
+            ...(patch.detail !== undefined
+              ? { detail: patch.detail }
+              : patch.state === undefined && prev?.detail !== undefined
+                ? { detail: prev.detail }
+                : {}),
+            ...(patch.tokens !== undefined
+              ? { tokens: patch.tokens }
+              : prev?.tokens !== undefined
+                ? { tokens: prev.tokens }
+                : {}),
+          }
+          // Edge-triggered: a state CHANGE always emits; same-state activity
+          // re-emits only when the last emission is a bucket (15s) old — so the
+          // ledger sees transitions, never a per-token heartbeat.
+          const stateChanged = prev?.state !== health.state
+          const stale =
+            e.healthEmittedAt === undefined || patch.at - e.healthEmittedAt >= 15_000
+          const doEmit = stateChanged || stale
+          const running = new Map(s.running)
+          running.set(nodeId, {
+            ...e,
+            health,
+            healthEmittedAt: doEmit ? patch.at : e.healthEmittedAt,
+          })
+          return [doEmit ? health : undefined, { ...s, running }] as const
+        })
+        if (emit !== undefined && onEvent !== undefined) {
+          yield* onEvent({
+            type: "agent_health",
+            nodeId,
+            state: emit.state,
+            lastActivityAt: emit.lastActivityAt,
+            ...(emit.detail !== undefined ? { detail: emit.detail } : {}),
+            ...(emit.tokens !== undefined ? { tokens: emit.tokens } : {}),
+          }).pipe(Effect.catchAllCause(() => Effect.void))
+        }
+      }),
+
+    healthOf: (nodeId) =>
+      Ref.get(ref).pipe(Effect.map((s) => s.running.get(nodeId)?.health)),
+
     forkSupervised: (effect) => Effect.forkIn(effect, fleetScope),
 
     shutdown: () =>
@@ -541,7 +640,7 @@ export const makeAgentBus = (
         if (entry.wake !== undefined) {
           yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
         }
-        yield* emit(msg.from, msg.content, msg.at)
+        yield* emit(msg.from, msg.content, msg.at, nodeId)
         return true
       }),
 
@@ -567,8 +666,11 @@ export const makeAgentBus = (
           const ids =
             nodeIds !== undefined && nodeIds.length > 0
               ? nodeIds
-              : [...new Set([...s.running.keys(), ...s.done.keys()])]
-          return ids.map((id) => snapshotOne(s, id))
+              : [...s.running.keys()]
+          return ids.flatMap((id) => {
+            const snap = snapshotOne(s, id)
+            return snap !== undefined ? [snap] : []
+          })
         }),
       ),
 

@@ -163,12 +163,34 @@ export const AgentEvent = Schema.Union(
   // A transient LLM failure (rate-limit / overload / transport) is being retried
   // with backoff — surfaced so a wait shows up live instead of a silent hang.
   // `attempt`/`maxAttempts` are 1-based; `delayMs` is the (clamped) wait.
+  // `nodeId` attributes a SUB-AGENT's retry storm to its node (absent = root).
   Schema.Struct({
     type: Schema.Literal("llm_retry"),
     reason: Schema.String,
     attempt: Schema.Number,
     maxAttempts: Schema.Number,
     delayMs: Schema.Number,
+    nodeId: Schema.optional(Schema.String),
+  }),
+  // A running agent's live health — EDGE-TRIGGERED (state transitions + a
+  // ≥15s activity re-stamp), never a heartbeat. Published by the bus sink, so
+  // it covers arbitrarily nested runs on every driver. The client computes
+  // staleness itself from `lastActivityAt`.
+  Schema.Struct({
+    type: Schema.Literal("agent_health"),
+    nodeId: Schema.String,
+    state: Schema.Literal(
+      "starting",
+      "generating",
+      "tool-running",
+      "retrying",
+      "awaiting-approval",
+      "waiting-on-agents",
+    ),
+    lastActivityAt: Schema.Number,
+    detail: Schema.optional(Schema.String),
+    /** Billed tokens so far (input+output), when known. */
+    tokens: Schema.optional(Schema.Number),
   }),
   // A chunk of output from a background shell process (`run_in_background`) —
   // surfaced live so a long-running background command is visible in the rail
@@ -219,12 +241,16 @@ export const AgentEvent = Schema.Union(
   }),
   // An inter-agent message hit the bus (blackboard post, a direct inbox message,
   // or a completion note) — the "messages flying" stream the control dashboard
-  // tails. Rides the ledger so it replays like any event.
+  // tails. Rides the ledger so it replays like any event. `to` is the recipient
+  // bus key when the message was ADDRESSED (an inbox post / a completion to a
+  // parent) — the pump routes root-addressed notes onto the rail; a broadcast
+  // (blackboard) has no `to`.
   Schema.Struct({
     type: Schema.Literal("board_note"),
     from: Schema.String,
     note: Schema.String,
     at: Schema.Number,
+    to: Schema.optional(Schema.String),
   }),
 )
 export type AgentEvent = typeof AgentEvent.Type

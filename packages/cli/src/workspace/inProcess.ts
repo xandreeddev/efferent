@@ -46,7 +46,12 @@ import {
   type SessionSummary,
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime, inboxToMessages } from "@xandreed/sdk-core"
+import {
+  buildScopeRuntime,
+  inboxToMessages,
+  SWEEP_INTERVAL_MS,
+  sweepStrandedRuns,
+} from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
@@ -143,34 +148,8 @@ interface FleetState {
 
 const wsError = (message: string): WorkspaceError => new WorkspaceError({ message })
 
-/** How often the stranded-node sweeper ticks. */
-export const SWEEP_INTERVAL_MS = 30_000
-/**
- * Grace window before a `running` DB node with no live bus fiber is declared
- * stranded. Bus liveness is the primary signal (a wedged/dead fiber has already
- * left the bus); the window is a belt-and-braces guard against a brief race
- * where a node is persisted `running` a beat before its bus mailbox registers
- * (or just after `markDone`/`complete` removed it but before `recordReturn`).
- */
-export const SWEEP_GRACE_MS = 120_000
-
-/**
- * The PURE sweep decision for one node — extracted so it's unit-testable without
- * a daemon. A node is stranded (and should be flipped to `error`) iff it's still
- * `running` in the DB, the orchestration bus does NOT know it as running (its
- * fiber wedged or died, taking its mailbox with it), AND it's older than the
- * grace window (so a legitimately slow turn or a just-spawned node isn't killed).
- */
-export const shouldSweepNode = (input: {
-  readonly status: AgentContextNode["status"]
-  readonly isRunningOnBus: boolean
-  readonly createdAt: number
-  readonly now: number
-  readonly graceMs?: number
-}): boolean =>
-  input.status === "running" &&
-  !input.isRunningOnBus &&
-  input.now - input.createdAt >= (input.graceMs ?? SWEEP_GRACE_MS)
+// (The stranded-node sweeper lives in @xandreed/sdk-core now —
+// `sweepStrandedRuns` — shared by BOTH drivers; this file only forks it.)
 
 export type InProcessWorkspace = ReturnType<typeof Workspace.of> & {
   /** Supervised-fleet teardown: interrupt + AWAIT every running fleet fiber so
@@ -1055,89 +1034,29 @@ export const makeInProcessWorkspace = (
       yield* startResumeTurn(p.id)
     }
 
-    // --- mid-session stranded-node sweeper ----------------------------------
+    // --- mid-session stranded-node sweeper (the SHARED core one) ------------
     // The daemon's startup reconcile (server/daemon.ts) only flips nodes left
-    // `running` by a PRIOR crash. A node whose fiber wedges or dies WHILE the
-    // daemon lives would otherwise stay `running` forever in the UI. This
-    // background sweeper closes that gap using the bus as ground truth.
-    const sweepNode = (node: AgentContextNode): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        // Re-check liveness right before acting — the periodic snapshot may have
-        // gone stale (a node could have started since the tick began).
-        const live = yield* scopeRuntime.bus.isRunning(node.id as string)
-        const now = yield* Clock.currentTimeMillis
-        if (
-          !shouldSweepNode({
-            status: node.status,
-            isRunningOnBus: live,
-            createdAt: node.createdAt,
-            now,
-          })
-        ) {
-          return
-        }
-        const summary = "[stalled — no longer running]"
-        // 1) Persist the terminal status, so :tree/activity stop showing it live.
-        //    `killed(stall)` — the fiber vanished without finalizing; there is no
-        //    deliverable to preserve here (a live run's own finalizer keeps its
-        //    text — this path only fires when that never ran).
-        yield* tree
-          .recordReturn(node.id, {
-            status: "killed",
-            summary,
-            stopReason: { kind: "stall" },
-            filesChanged: [],
-          })
-          .pipe(Effect.ignore)
-        // 2) Notify via the SAME bus path a normal completion uses — registering
-        //    the (now-absent) node first so `complete` has an entry to read,
-        //    which then delivers the failure to the parent's inbox (or buffers it
-        //    for the parent's next resume) + the blackboard + wakes any waiter.
-        const parentKey = (node.parentId ?? node.rootConversationId ?? null) as string | null
-        const label = node.title ?? node.folder
-        yield* scopeRuntime.bus.markRunning(node.id as string, label, { parentKey })
-        yield* scopeRuntime.bus.complete(node.id as string, {
-          status: "killed",
-          summary,
-          filesChanged: [],
-        })
-        // 3) Publish subagent_end so the UI flips status live AND a TOP-LEVEL
-        //    node's parent root auto-resumes to report it (onTopLevelDone).
-        yield* publish({
-          type: "subagent_end",
-          name: label,
-          nodeId: node.id as string,
-          ok: false,
-          outcome: "killed",
-          reason: "stall",
-          summary,
-          filesChanged: [],
-        })
-      }).pipe(Effect.ignore)
-
+    // `running` by a PRIOR crash. A node whose fiber vanishes WITHOUT exiting
+    // while the daemon lives is swept here — through the same `finalizeRun`
+    // terminal path as every other exit, so the parent is notified and the
+    // terminal `subagent_end` event reaches the UI (`baseHooks` publishes it).
     const sweepOnce = Effect.gen(function* () {
       const fleetMap = yield* Ref.get(fleets)
-      yield* Effect.forEach(
-        [...fleetMap.values()],
-        (f) =>
-          tree.listTree(f.rootCid).pipe(
-            Effect.flatMap((nodes) =>
-              Effect.forEach(nodes.filter((n) => n.status === "running"), sweepNode, {
-                discard: true,
-              }),
-            ),
-            Effect.ignore,
-          ),
-        { discard: true },
-      )
+      yield* sweepStrandedRuns({
+        store: tree,
+        bus: scopeRuntime.bus,
+        hooks: baseHooks,
+        roots: [...fleetMap.values()].map((f) => f.rootCid),
+      })
     }).pipe(Effect.ignore)
 
     // forkDaemon under the runtime scope → interrupted on teardown; never throws
-    // (every step is `Effect.ignore`-guarded), so a transient store error just
-    // skips a tick.
+    // (the sweeper is cause-guarded), so a transient store error just skips a tick.
     yield* Effect.forkDaemon(
       Effect.forever(Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(Effect.zipRight(sweepOnce))),
     )
 
-    return { ...service, shutdown: scopeRuntime.bus.shutdown().pipe(Effect.ignore) }
+    return Object.assign(service, {
+      shutdown: scopeRuntime.bus.shutdown().pipe(Effect.ignore),
+    })
   })
