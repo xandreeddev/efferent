@@ -259,3 +259,119 @@ describe("eventPump — needs_human surfaces a pending-decision roster", () => {
     expect(ds.map((d) => d.summary).sort()).toEqual(["live s1", "parked s2"])
   })
 })
+
+describe("eventPump — honest terminal outcomes + live health (the UI-never-lies contract)", () => {
+  test("agent_health populates the node-health map and never touches the rail", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({
+      type: "agent_health",
+      nodeId: "n1",
+      state: "retrying",
+      lastActivityAt: 1000,
+      detail: "HTTP 429 2/3 — next in 8s",
+    })
+    expect(store.nodeHealth().get("n1")).toEqual({
+      state: "retrying",
+      lastActivityAt: 1000,
+      detail: "HTTP 429 2/3 — next in 8s",
+    })
+    expect(store.blocks()).toHaveLength(0)
+  })
+
+  test("a PARTIAL top-level subagent_end renders ◐ (never plain ✓), logs the caveat, clears health", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "subagent_start", name: "coder", task: "build it", nodeId: "n1" })
+    reduce({
+      type: "agent_health",
+      nodeId: "n1",
+      state: "generating",
+      lastActivityAt: 1000,
+    })
+    reduce({
+      type: "subagent_end",
+      name: "coder",
+      nodeId: "n1",
+      ok: true,
+      outcome: "partial",
+      reason: "budget",
+      summary: "half the endpoints done",
+      filesChanged: ["a.ts"],
+    })
+    const info = store.blocks().filter((b) => b.kind === "info") as Array<{ text: string }>
+    const line = info.find((b) => b.text.includes("coder"))
+    expect(line?.text).toContain("◐")
+    expect(line?.text).toContain("partial — budget")
+    // The node's own log carries the stopped-early caveat.
+    const log = store.nodeLog("n1")
+    expect(log.some((b) => b.kind === "info" && b.text.includes("stopped early (budget)"))).toBe(
+      true,
+    )
+    // Terminal ⇒ the live health entry is gone.
+    expect(store.nodeHealth().has("n1")).toBe(false)
+  })
+
+  test("a KILLED subagent_end renders ✗ with the reason — an interrupt is never silent", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "subagent_start", name: "worker", task: "t", nodeId: "n2" })
+    reduce({
+      type: "subagent_end",
+      name: "worker",
+      nodeId: "n2",
+      ok: false,
+      outcome: "killed",
+      reason: "interrupt",
+      summary: "[interrupted — run did not finish]",
+      filesChanged: [],
+    })
+    const info = store.blocks().filter((b) => b.kind === "info") as Array<{ text: string }>
+    const line = info.find((b) => b.text.includes("worker"))
+    expect(line?.text).toContain("✗")
+    expect(line?.text).toContain("interrupt")
+  })
+
+  test("a sub-agent's llm_retry goes to ITS log, not the root rail", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({
+      type: "llm_retry",
+      reason: "HTTP 429",
+      attempt: 2,
+      maxAttempts: 3,
+      delayMs: 4000,
+      nodeId: "n3",
+    })
+    expect(store.blocks()).toHaveLength(0)
+    expect(
+      store.nodeLog("n3").some((b) => b.kind === "info" && b.text.includes("HTTP 429")),
+    ).toBe(true)
+  })
+
+  test("a ROOT-addressed board_note lands as one dim rail line; agent-addressed goes to that node's log", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({
+      type: "board_note",
+      from: "agent 1234 (coder)",
+      note: "finished: did the thing",
+      at: 1,
+      to: String(cid),
+    })
+    reduce({ type: "board_note", from: "you", note: "please hurry", at: 2, to: "n4" })
+    const info = store.blocks().filter((b) => b.kind === "info") as Array<{ text: string }>
+    expect(info.some((b) => b.text.includes("finished: did the thing"))).toBe(true)
+    expect(
+      store.nodeLog("n4").some((b) => b.kind === "info" && b.text.includes("please hurry")),
+    ).toBe(true)
+  })
+
+  test("a KILLED agent_end says 'turn interrupted' instead of silence", () => {
+    const store = newStore()
+    const reduce = makeEventReducer(store)
+    reduce({ type: "agent_end", finalText: "", outcome: "killed", reason: "interrupt" })
+    const info = store.blocks().filter((b) => b.kind === "info") as Array<{ text: string }>
+    expect(info.some((b) => b.text === "turn interrupted")).toBe(true)
+  })
+})

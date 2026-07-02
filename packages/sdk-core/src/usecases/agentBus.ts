@@ -162,6 +162,9 @@ export interface AgentBus {
    *  fleet-idle detection (`length === 0` ⇒ idle) and a fleet-scoped interrupt; a
    *  finished child needs neither and must not keep these sets non-empty forever. */
   readonly runningChildrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
+  /** ALL running descendants of `parentKey` (BFS over the parent links) — the
+   *  live fleet subtree, for attach snapshots and scoped views. */
+  readonly runningSubtreeOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
   /** Interrupt one running agent's fiber. False when it isn't running / has no
    *  fiber. `by` (default `"parent"`) stamps WHO killed it for the finalizer. */
   readonly interrupt: (nodeId: string, by?: InterruptBy) => Effect.Effect<boolean>
@@ -333,6 +336,32 @@ export const makeAgentBus = (
       status: "running",
       ...(run.health !== undefined ? { health: run.health } : {}),
     }
+  }
+
+  /** All running descendants of `parentKey` — BFS over the running entries'
+   *  parent links (shared by the subtree kill and the attach snapshot). */
+  const subtreeIds = (s: BusState, parentKey: string): ReadonlyArray<string> => {
+    const byParent = new Map<string, Array<string>>()
+    for (const [nodeId, e] of s.running.entries()) {
+      if (e.parentKey === null) continue
+      const arr = byParent.get(e.parentKey) ?? []
+      arr.push(nodeId)
+      byParent.set(e.parentKey, arr)
+    }
+    const seen = new Set<string>()
+    let frontier = [parentKey]
+    while (frontier.length > 0) {
+      const next: string[] = []
+      for (const key of frontier) {
+        for (const child of byParent.get(key) ?? []) {
+          if (seen.has(child)) continue
+          seen.add(child)
+          next.push(child)
+        }
+      }
+      frontier = next
+    }
+    return [...seen]
   }
 
   /** Stamp `interruptedBy` on the given running entries (first stamp wins) and
@@ -521,35 +550,18 @@ export const makeAgentBus = (
 
     interruptSubtree: (parentKey, by) =>
       Effect.gen(function* () {
+        // BFS over a snapshot walk (a child spawned mid-interrupt is
+        // orphan-proofed by its parent's interruption landing before the next
+        // spawn can register).
         const s = yield* Ref.get(ref)
-        // BFS over the running entries' parent links from `parentKey` — a
-        // snapshot walk (a child spawned mid-interrupt is orphan-proofed by its
-        // parent's interruption landing before the next spawn can register).
-        const byParent = new Map<string, Array<string>>()
-        for (const [nodeId, e] of s.running.entries()) {
-          if (e.parentKey === null) continue
-          const arr = byParent.get(e.parentKey) ?? []
-          arr.push(nodeId)
-          byParent.set(e.parentKey, arr)
-        }
-        const seen = new Set<string>()
-        let frontier = [parentKey]
-        while (frontier.length > 0) {
-          const next: string[] = []
-          for (const key of frontier) {
-            for (const child of byParent.get(key) ?? []) {
-              if (seen.has(child)) continue
-              seen.add(child)
-              next.push(child)
-            }
-          }
-          frontier = next
-        }
-        const fibers = yield* stampInterrupted([...seen], by ?? "parent")
+        const fibers = yield* stampInterrupted(subtreeIds(s, parentKey), by ?? "parent")
         yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
           discard: true,
         })
       }),
+
+    runningSubtreeOf: (parentKey) =>
+      Ref.get(ref).pipe(Effect.map((s) => subtreeIds(s, parentKey))),
 
     interruptAll: (by) =>
       Effect.gen(function* () {

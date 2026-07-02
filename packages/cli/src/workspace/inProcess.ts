@@ -787,14 +787,36 @@ export const makeInProcessWorkspace = (
             parentId: null,
           }
           // The authoritative phase. A root reads its folded phase ledger; an
-          // agent node has no per-event phase, so derive it from the bus (live →
-          // thinking, else idle) — enough for a paired client to seed correctly.
+          // agent node derives it from its live HEALTH (tool-running → tool,
+          // any other live state → thinking, off the bus → idle).
+          const nodeHealth =
+            kind === "root"
+              ? undefined
+              : yield* scopeRuntime.bus.healthOf(id as string)
           const phase: AgentPhase =
             kind === "root"
               ? yield* getPhase(id as string)
-              : (yield* scopeRuntime.bus.isRunning(id as string))
-                ? "thinking"
+              : nodeHealth !== undefined
+                ? nodeHealth.state === "tool-running"
+                  ? "tool"
+                  : "thinking"
                 : "idle"
+          // The session's LIVE fleet + health — the (re)attach truth the client
+          // reconciles its event-fed membership against.
+          const fleetIds =
+            kind === "root"
+              ? yield* scopeRuntime.bus.runningSubtreeOf(id as string)
+              : []
+          // (snapshot() with an EMPTY list means "all running" — guard it.)
+          const fleetSnaps =
+            fleetIds.length > 0 ? yield* scopeRuntime.bus.snapshot(fleetIds) : []
+          const fleet = fleetSnaps.map((s) => ({
+            nodeId: s.nodeId,
+            name: s.label,
+            state: s.health?.state ?? "starting",
+            lastActivityAt: s.health?.lastActivityAt ?? 0,
+            ...(s.health?.detail !== undefined ? { detail: s.health.detail } : {}),
+          }))
           return {
             session: session ?? fallback,
             log,
@@ -802,6 +824,7 @@ export const makeInProcessWorkspace = (
             busy,
             phase,
             queue: run.queue,
+            fleet,
             pendingApproval,
             cursor,
           } satisfies SessionState

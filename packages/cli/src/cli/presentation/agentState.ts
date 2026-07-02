@@ -33,6 +33,45 @@ export interface FleetMember {
   readonly role?: "general" | "code"
 }
 
+/** A running agent's live health, mirrored from `agent_health` events (and the
+ *  daemon's fleet snapshot on attach). Pure display data — staleness is
+ *  computed by the reader from `lastActivityAt`. */
+export interface NodeHealthInfo {
+  readonly state: string
+  readonly lastActivityAt: number
+  readonly detail?: string
+}
+
+/** Idle threshold past which a running agent's health suffix escalates to an
+ *  alert tint in the fleet tree ("⚠ idle 2m" — likely wedged). */
+export const HEALTH_STALE_MS = 90_000
+
+/** The fleet-tree suffix for a running row: the live state (with detail), plus
+ *  an idle escalation once the last signal is older than HEALTH_STALE_MS. */
+export const healthSuffix = (
+  h: NodeHealthInfo,
+  now: number,
+): { readonly line: string; readonly severity: "info" | "alert" } => {
+  const idleMs = Math.max(0, now - h.lastActivityAt)
+  if (idleMs >= HEALTH_STALE_MS) {
+    const mins = Math.floor(idleMs / 60_000)
+    const label = mins >= 1 ? `${mins}m` : `${Math.round(idleMs / 1000)}s`
+    return { line: `idle ${label}`, severity: "alert" }
+  }
+  return {
+    line: h.detail !== undefined ? `${h.state}: ${h.detail}` : h.state,
+    severity: "info",
+  }
+}
+
+/** Reconcile the fleet membership wholesale from the daemon's snapshot (the
+ *  attach/resync truth) — the event-fed machine can be missing a terminal event
+ *  after a stream blip; the snapshot says who is ACTUALLY still running. */
+export const reconcileFleet = (
+  prev: AgentState,
+  members: ReadonlyArray<FleetMember>,
+): AgentState => ({ ...prev, fleet: members })
+
 export interface AgentState {
   readonly phase: AgentPhase
   /** ms timestamp when the phase last changed; 0 = never ran. */
@@ -185,15 +224,29 @@ export const formatElapsed = (ms: number): string => {
  * surface only in the tree, so the root rail stays uncluttered. Pure + testable;
  * matches the `gate` rail line's glyph convention.
  */
-export const fleetCompletionLine = (name: string, ok: boolean, summary: string): string => {
-  const mark = ok ? "✓" : "✗"
+export const fleetCompletionLine = (
+  name: string,
+  outcome: "ok" | "partial" | "error" | "killed",
+  summary: string,
+  reason?: string,
+): string => {
+  const mark =
+    outcome === "ok" ? "✓" : outcome === "partial" ? "◐" : "✗"
+  const qualifier =
+    outcome === "partial"
+      ? ` (partial${reason !== undefined ? ` — ${reason}` : ""})`
+      : outcome === "killed"
+        ? ` (${reason ?? "killed"})`
+        : ""
   const firstLine =
     summary
       .split("\n")
       .map((l) => l.trim())
       .find((l) => l.length > 0) ?? ""
   const clipped = firstLine.length > 100 ? `${firstLine.slice(0, 99)}…` : firstLine
-  return clipped.length > 0 ? `${mark} ${name} — ${clipped}` : `${mark} ${name}`
+  return clipped.length > 0
+    ? `${mark} ${name}${qualifier} — ${clipped}`
+    : `${mark} ${name}${qualifier}`
 }
 
 /** The fleet chip: `2 agents · haiku, audit` (names clipped to fit). */

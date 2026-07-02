@@ -226,17 +226,16 @@ export const runTuiModeSolid = (
       // (session-scoped — persisting across resume is a follow-up), injected into
       // every turn's prompt by `submit`, and checked by the built-in verifier role.
       const directiveRef: { current: Directive | undefined } = { current: undefined }
-      const reduce = makeEventReducer(store, {
-        // Live navigator reload on sub-agent spawn/end (current session — it
-        // can change via the sessions view, so resolve the id per call).
-        refreshNav: () => {
-          Runtime.runFork(rt)(
-            refreshNav(store, store.run.getConversationId(), navOpts).pipe(
-              Effect.catchAll(() => Effect.void),
-            ),
-          )
-        },
-      })
+      // Live navigator reload on sub-agent spawn/end (current session — it
+      // can change via the sessions view, so resolve the id per call).
+      const refreshNavCb = (): void => {
+        Runtime.runFork(rt)(
+          refreshNav(store, store.run.getConversationId(), navOpts).pipe(
+            Effect.catchAll(() => Effect.void),
+          ),
+        )
+      }
+      const reduce = makeEventReducer(store, { refreshNav: refreshNavCb })
 
       // 5. Exit signal + the context the JSX consumes.
       const exitDeferred = yield* Deferred.make<void>()
@@ -432,6 +431,23 @@ export const runTuiModeSolid = (
                   roots: [store.run.getConversationId()],
                 })
               }).pipe(Effect.catchAllCause(() => Effect.void)),
+            ),
+          ),
+        ),
+      )
+
+      // 7a-ter. Belt-and-braces fleet-tree reconcile: a 30s DB re-read that runs
+      //     ONLY while something claims to be running. Status flips are event-
+      //     driven by construction now (guaranteed terminal events); this catches
+      //     a write the events missed (e.g. the sweeper on another driver).
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep("30 seconds").pipe(
+            Effect.zipRight(
+              Effect.sync(() => {
+                const st = store.agentState()
+                if (st.phase !== "idle" || st.fleet.length > 0) refreshNavCb()
+              }),
             ),
           ),
         ),

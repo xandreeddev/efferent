@@ -1,5 +1,6 @@
 import { createSignal, type Accessor } from "solid-js"
 import { messageKey, type ScrollbackBlock, type SearchHit } from "../presentation/conversation.js"
+import type { NodeHealthInfo } from "../presentation/agentState.js"
 import type { NodePreview } from "../presentation/nodePreview.js"
 
 /**
@@ -161,6 +162,19 @@ export interface ConversationSlice {
    *  live log. */
   readonly seedNodeLog: (nodeId: string, blocks: ReadonlyArray<ScrollbackBlock>) => void
   /**
+   * Per-node LIVE health (what each running agent is doing + when it last
+   * showed a sign of life), fed by `agent_health` events. The fleet tree
+   * renders it as the running row's suffix (`↻ retrying 429 2/3`, `⚠ idle 2m`);
+   * a terminal `subagent_end` clears the entry. Reconciled wholesale on
+   * (re)attach from the daemon's fleet snapshot.
+   */
+  readonly nodeHealth: Accessor<ReadonlyMap<string, NodeHealthInfo>>
+  readonly setNodeHealth: (nodeId: string, health: NodeHealthInfo) => void
+  readonly clearNodeHealth: (nodeId: string) => void
+  readonly reconcileNodeHealth: (
+    entries: ReadonlyArray<readonly [string, NodeHealthInfo]>,
+  ) => void
+  /**
    * What the conversation pane currently shows: the preview overlay when one is
    * open, else the live blocks. Every conversation-pane *reader* (view, fold
    * cursor, search) goes through this; *writers* (pump, actions) keep targeting
@@ -189,6 +203,9 @@ export const createConversationSlice = (): ConversationSlice => {
   const [search, setSearchSig] = createSignal<SearchState | undefined>(undefined)
   const [nodePreview, setNodePreviewSig] = createSignal<NodePreview | undefined>(undefined)
   const [nodeLogs, setNodeLogs] = createSignal<ReadonlyMap<string, ScrollbackBlock[]>>(new Map())
+  const [nodeHealthSig, setNodeHealthSig] = createSignal<ReadonlyMap<string, NodeHealthInfo>>(
+    new Map(),
+  )
   const [searchPane, setSearchPaneSig] = createSignal<"conversation" | "side">("conversation")
   const convScroller: { current?: ConvScroller } = {}
   const inputControl: { current?: InputControl } = {}
@@ -300,6 +317,21 @@ export const createConversationSlice = (): ConversationSlice => {
         next.set(nodeId, [...blocks])
         return next
       }),
+    nodeHealth: nodeHealthSig,
+    setNodeHealth: (nodeId, health) =>
+      setNodeHealthSig((m) => {
+        const next = new Map(m)
+        next.set(nodeId, health)
+        return next
+      }),
+    clearNodeHealth: (nodeId) =>
+      setNodeHealthSig((m) => {
+        if (!m.has(nodeId)) return m
+        const next = new Map(m)
+        next.delete(nodeId)
+        return next
+      }),
+    reconcileNodeHealth: (entries) => setNodeHealthSig(new Map(entries)),
     // The LEFT pane always shows the orchestrator (the lead conversation). A
     // selected agent no longer overlays it — it opens as the RIGHT pane
     // (`AgentPane`, reading `nodePreview().blocks` directly), so the two are

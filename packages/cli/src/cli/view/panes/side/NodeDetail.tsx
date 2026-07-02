@@ -18,9 +18,29 @@ import type { TuiContext } from "../../../state/store.js"
  */
 
 const statusColor = (s: AgentContextNode["status"]): string =>
-  s === "ok" ? tokens.state.ok : s === "error" ? tokens.state.error : tokens.state.running
+  s === "ok"
+    ? tokens.state.ok
+    : s === "error" || s === "killed"
+      ? tokens.state.error
+      : tokens.state.running
 const statusGlyph = (s: AgentContextNode["status"]): string =>
-  s === "ok" ? glyph.ok : s === "error" ? glyph.error : glyph.railDot
+  s === "ok"
+    ? glyph.ok
+    : s === "partial"
+      ? glyph.partial
+      : s === "error" || s === "killed"
+        ? glyph.error
+        : glyph.railDot
+
+/** The honest stopped-early banner for a finished node: WHY it stopped, from
+ *  the typed stopReason (falling back to the status word). */
+const stopBanner = (n: AgentContextNode): string | undefined => {
+  if (n.status !== "partial" && n.status !== "killed") return undefined
+  const why = n.stopReason?.kind ?? n.status
+  return n.status === "partial"
+    ? `${glyph.partial} partial — stopped early (${why}); the result below is usable but incomplete`
+    : `${glyph.error} killed (${why}) — the run did not finish`
+}
 
 const NodeView = (props: { ctx: TuiContext; node: AgentContextNode }) => {
   const { store } = props.ctx
@@ -72,6 +92,16 @@ const NodeView = (props: { ctx: TuiContext; node: AgentContextNode }) => {
           <Show when={liveTools().length === 0}>
             <text fg={tokens.text.dim}>{"  thinking…"}</text>
           </Show>
+        </box>
+      </Show>
+      <Show when={stopBanner(n()) !== undefined}>
+        <box marginTop={1} flexShrink={0}>
+          <text
+            fg={n().status === "partial" ? tokens.state.running : tokens.state.error}
+            wrapMode="word"
+          >
+            {stopBanner(n())}
+          </text>
         </box>
       </Show>
       <Show when={n().returnSummary !== undefined && n().status !== "running"}>
