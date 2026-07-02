@@ -73,7 +73,7 @@ describe("AgentBus — blackboard", () => {
 })
 
 describe("AgentBus — supervision (the async fleet)", () => {
-  it("complete records the result, posts to the parent inbox + board, ends the run", async () => {
+  it("complete posts to the parent inbox + board and ends the run (no bus-side terminal record — that's the store's)", async () => {
     const r = await run((bus) =>
       Effect.gen(function* () {
         yield* bus.markRunning("p", "parent")
@@ -86,9 +86,10 @@ describe("AgentBus — supervision (the async fleet)", () => {
         return { snap, parentInbox, board, running }
       }),
     )
-    expect(r.snap).toEqual([
-      { nodeId: "c", label: "child", status: "ok", summary: "did it", filesChanged: ["a.ts"] },
-    ])
+    // The bus carries only LIVE runs: a finished node yields no snapshot (its
+    // terminal record lives in the context tree — the old bounded done-map aged
+    // out and made finished children look phantom-running forever).
+    expect(r.snap).toEqual([])
     expect(r.parentInbox).toHaveLength(1)
     expect(r.parentInbox[0]?.content).toContain("did it")
     expect(r.board).toHaveLength(1)
@@ -147,7 +148,7 @@ describe("AgentBus — supervision (the async fleet)", () => {
     expect(r.inboxAfterRegister[0]?.content).toContain("stalled — no longer running")
   })
 
-  it("childrenOf includes both running and finished children of a parent", async () => {
+  it("childrenOf returns only RUNNING children — finished ones live in the durable store", async () => {
     const ids = await run((bus) =>
       Effect.gen(function* () {
         yield* bus.markRunning("p", "parent")
@@ -157,7 +158,10 @@ describe("AgentBus — supervision (the async fleet)", () => {
         return yield* bus.childrenOf("p")
       }),
     )
-    expect([...ids].sort()).toEqual(["c1", "c2"])
+    // c1 finished → off the bus; the gather (`wait_for_agents`) unions this
+    // with the context tree, so finished children are still reported — from
+    // the store, which never ages out (unlike the old bounded done-map).
+    expect([...ids]).toEqual(["c2"])
   })
 
   it("runningChildrenOf returns ONLY still-running children (the fleet-idle signal)", async () => {
@@ -361,16 +365,21 @@ describe("AgentBus — supervision (the async fleet)", () => {
         yield* Effect.sleep("10 millis")
         // …then runSpawnedAgent re-affirms the registration (no parentKey arg).
         yield* bus.markRunning("c", "child")
+        // parentKey must survive the re-register: the completion line lands in
+        // p's inbox only if the entry still knows its parent.
         yield* bus.complete("c", { status: "ok", summary: "s", filesChanged: [] })
         const exit = yield* Fiber.await(waiter).pipe(
           Effect.timeoutTo({ duration: "2 seconds", onTimeout: () => "HUNG", onSuccess: () => "woke" }),
         )
-        const children = yield* bus.childrenOf("p")
-        return { exit, children: [...children] }
+        // p was never registered live, so the completion was BUFFERED for it;
+        // registering p merges the buffer into its inbox.
+        yield* bus.markRunning("p", "parent")
+        const parentInbox = yield* bus.drain("p")
+        return { exit, parentInbox }
       }),
     )
     expect(r.exit).toBe("woke") // re-register didn't replace the latch the waiter holds
-    expect(r.children).toEqual(["c"]) // parentKey survived the re-register
+    expect(r.parentInbox).toHaveLength(1) // parentKey survived the re-register
   })
 })
 

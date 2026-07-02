@@ -146,6 +146,10 @@ export interface AgentLlmRetryEvent {
   readonly attempt: number
   readonly maxAttempts: number
   readonly delayMs: number
+  /** The sub-agent (context-tree node id) whose call is retrying — stamped by
+   *  the spawned run's sink so the UI attributes the storm to the agent, not
+   *  the root rail. Absent = the root's own call. */
+  readonly nodeId?: string
 }
 
 /**

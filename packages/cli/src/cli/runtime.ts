@@ -7,12 +7,15 @@ import { Clock, Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
   connLabel,
+  ContextTreeStore,
   ConversationId,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
   Shell,
   StoreSwitch,
+  SWEEP_INTERVAL_MS,
+  sweepStrandedRuns,
   TerminalSession,
   buildScopeRuntime,
 } from "@xandreed/sdk-core"
@@ -411,6 +414,28 @@ export const runTuiModeSolid = (
 
       // 7. Drain the agent event queue into the signal store (scoped fiber).
       yield* Effect.forkScoped(runEventPump(eventQueue, reduce))
+
+      // 7a-bis. Crash-recovery sweeper (the SHARED core one — this driver had
+      //     none before, so a vanished fiber left its node spinning `running`
+      //     forever on `efferent code`). Sweeps the ACTIVE conversation's tree;
+      //     baseHooks publishes the terminal `subagent_end` onto the queue.
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(
+            Effect.zipRight(
+              Effect.gen(function* () {
+                const tree = yield* ContextTreeStore
+                yield* sweepStrandedRuns({
+                  store: tree,
+                  bus: scopeRuntime.bus,
+                  hooks: baseHooks,
+                  roots: [store.run.getConversationId()],
+                })
+              }).pipe(Effect.catchAllCause(() => Effect.void)),
+            ),
+          ),
+        ),
+      )
 
       // 7b. Spinner ticker — advances running tree-node glyphs while a turn is in
       //     flight (no signal write when idle → no idle re-renders). Scoped.
