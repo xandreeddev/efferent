@@ -48,7 +48,11 @@ const transientText = (d: string): boolean => {
     t.includes("econnreset") ||
     t.includes("econnrefused") ||
     t.includes("etimedout") ||
-    t.includes("socket hang up")
+    t.includes("socket hang up") ||
+    // The router's empty-body rejection (HTTP 200, zero content, the
+    // "turn N: unknown · 0 tok" forensic class) — the gateway is degraded,
+    // retry like any other blip.
+    t.includes("empty model response")
   )
 }
 

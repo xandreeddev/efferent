@@ -177,6 +177,8 @@ const handleSend = (
       prompt,
       hooks,
       cwd,
+      undefined,
+      "headless",
     ).pipe(
       Effect.provide(runtime.handlerLayer),
       // Headless: allow-all behind the --allow-bash gate (no prompts).

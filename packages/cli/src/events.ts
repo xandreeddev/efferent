@@ -127,6 +127,8 @@ export const makeAgentEventHooks = <R = never>(
       maxAttempts: event.maxAttempts,
       delayMs: event.delayMs,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
+      ...(event.elapsedMs !== undefined ? { elapsedMs: event.elapsedMs } : {}),
+      ...(event.budgetMs !== undefined ? { budgetMs: event.budgetMs } : {}),
     }),
   onBgOutput: (event) =>
     publish({

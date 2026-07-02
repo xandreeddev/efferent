@@ -52,6 +52,14 @@ describe("classifyProviderError — the provider-defect taxonomy", () => {
     expect(classifyProviderError(unknown("OpenCode.readStream: TimeoutError: The operation timed out."), NOW)).toBe(
       "transient",
     )
+    // The router's empty-body rejection — HTTP 200, zero content, the
+    // "turn N: unknown · 0 tok" forensic class. Degraded gateway ⇒ retry.
+    expect(
+      classifyProviderError(
+        unknown("empty model response from opencode:kimi-k2.6 (no text, no tool calls)"),
+        NOW,
+      ),
+    ).toBe("transient")
   })
 
   test("quota: the opencode daily-quota 429 (multi-hour Retry-After) — the value that must NOT retry in place", () => {
