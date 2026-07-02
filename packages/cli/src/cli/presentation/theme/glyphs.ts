@@ -20,8 +20,11 @@ export const glyph = {
   /** Handoff flag + its summary star (context viewer / checkpoints). */
   handoff: "⚑",
   summary: "✦",
-  /** Terminal status ticks for completed tree nodes. */
+  /** Terminal status ticks for completed tree nodes. `partial` marks a run
+   *  that stopped early but left a usable deliverable (budget / step-cap /
+   *  stall-after-text — see `entities/Outcome.ts`). */
   ok: "✓",
+  partial: "◐",
   error: "✗",
   /** Theme-preview sample markers (`view/ui/ThemePreview.tsx`): a warning sign,
    *  a link arrow, an accent star, a dim bullet, and unified-diff gutter signs. */

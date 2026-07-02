@@ -28,6 +28,13 @@ import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
+import {
+  foldOutcomeEvent,
+  initialOutcomeFold,
+  outcomeExitCode,
+  outcomeNotes,
+  type OutcomeFold,
+} from "./outcome.js"
 import { ansi } from "../terminal.js"
 
 const truncate = (s: string, n: number): string =>
@@ -47,11 +54,16 @@ const writeStderr = (line: string): Effect.Effect<void> =>
     process.stderr.write(line + "\n")
   })
 
-const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
+const consumeEvents = (
+  queue: Queue.Queue<AgentEvent>,
+  foldBox: { current: OutcomeFold },
+) =>
   Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue)
       if (event.type === "flush") return // drain sentinel — never rendered
+      // Honesty fold: exit code + caveat notes derive from the full stream.
+      foldBox.current = foldOutcomeEvent(foldBox.current, event)
       switch (event.type) {
         case "tool_call_start":
           yield* writeStderr(
@@ -67,6 +79,23 @@ const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
           yield* writeStderr(`${ansi.dim}       ${tag}${ansi.reset}`)
           break
         }
+        case "subagent_end": {
+          const outcome = event.outcome ?? (event.ok ? "ok" : "error")
+          if (outcome !== "ok") {
+            const colour = outcome === "partial" ? ansi.fgYellow : ansi.fgRed
+            yield* writeStderr(
+              `${colour}[agent ${outcome}] ${event.name}${event.reason !== undefined ? ` (${event.reason})` : ""}${ansi.reset}`,
+            )
+          }
+          break
+        }
+        case "gate":
+          if (event.verdict === "unavailable" || event.verdict === "blocked") {
+            yield* writeStderr(
+              `${ansi.fgBrightRed}[gate] ${event.verdict}: ${event.reasons.join("; ")}${ansi.reset}`,
+            )
+          }
+          break
         case "error":
           yield* writeStderr(`${ansi.fgBrightRed}[error] ${event.message}${ansi.reset}`)
           break
@@ -114,7 +143,8 @@ export const runPrintMode = (
       Effect.orDie,
     )
     const queue = yield* Queue.unbounded<AgentEvent>()
-    const consumer = yield* Effect.forkDaemon(consumeEvents(queue))
+    const foldBox = { current: initialOutcomeFold }
+    const consumer = yield* Effect.forkDaemon(consumeEvents(queue, foldBox))
 
     const hooks = makeEventHooks(queue)
     const runtime = buildScopeRuntime(
@@ -170,6 +200,10 @@ export const runPrintMode = (
       // Approval port answers allow-all behind that gate (no prompts in CI).
       Effect.provide(ApprovalAllowAllLive),
       Effect.ensuring(runtime.bus.markDone(rootKey)),
+      // Supervised-fleet teardown: on EVERY exit path (done, error, Ctrl-C)
+      // interrupt + AWAIT the fleet fibers so each records killed(shutdown) —
+      // and so live fibers can't keep the process alive past the run.
+      Effect.ensuring(runtime.bus.shutdown().pipe(Effect.ignore)),
     )
 
     // Deterministic drain: sentinel + join (the run is done, nothing else
@@ -178,6 +212,14 @@ export const runPrintMode = (
     yield* Fiber.join(consumer)
 
     process.stdout.write(result.finalText + "\n")
+
+    // Headless honesty: the exit code + stderr caveats carry the run's real
+    // outcome (the old print mode exited 0 no matter what died inside).
+    const fold = foldBox.current
+    for (const note of outcomeNotes(fold)) {
+      yield* writeStderr(`${ansi.fgYellow}[outcome] ${note}${ansi.reset}`)
+    }
+    process.exitCode = outcomeExitCode(fold)
 
     // Learn for next runs: the answer is already on stdout, so distillation runs
     // after delivery (gated/bounded/fail-soft in headlessDistill). It delays exit,

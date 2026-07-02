@@ -119,7 +119,7 @@ export const runFleetToCompletion = <R>(args: {
         // (interrupted children record their return + post to the root's inbox,
         // which the synthesis turn drains). `interruptAll` here once killed
         // every fleet on the bus, including other runs' healthy agents.
-        yield* args.bus.interruptSubtree(args.rootKey)
+        yield* args.bus.interruptSubtree(args.rootKey, "deadline")
         result = yield* args.runTurn(FINALIZE_PROMPT)
         break
       }

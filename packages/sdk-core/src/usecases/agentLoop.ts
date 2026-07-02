@@ -324,6 +324,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
     // Whether the latest response still asked for tool calls — at loop exit
     // this distinguishes "finished" from "cut off by the step cap".
     let stillWantedMore = false
+    let brokeDegenerateLoop = false
 
     // Cumulative token usage across the whole run — annotated onto the enclosing
     // `agent.run` span at the end so the run total reads at a glance.
@@ -539,6 +540,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
         )
         if (finalText.length === 0) finalText = DEGENERATE_LOOP_STOP
         stillWantedMore = false
+        brokeDegenerateLoop = true
         break
       }
       if (sig !== "" && staleTurns === REPEAT_NUDGE_AT) {
@@ -572,17 +574,29 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
       "agent.total_cache_read_tokens": totalCache,
     })
 
-    if (hooks?.onAgentEnd) {
-      yield* hooks.onAgentEnd({ messages, finalText })
-    }
-
     // Exhausted the step cap while the model still asked for tools → the last
-    // text is mid-thought, not a final answer. Tell the caller.
+    // text is mid-thought, not a final answer. Tell the caller — and the event
+    // stream: a step-capped or breaker-stopped root is a PARTIAL outcome, never
+    // a silent "success" (the old loop dropped this on the floor and a capped
+    // root shipped its mid-thought last sentence as the answer).
     const stoppedAtMaxSteps = turnIndex >= maxSteps && stillWantedMore
+    if (hooks?.onAgentEnd) {
+      yield* hooks.onAgentEnd({
+        messages,
+        finalText,
+        outcome: stoppedAtMaxSteps || brokeDegenerateLoop ? "partial" : "ok",
+        reason: stoppedAtMaxSteps
+          ? "step-cap"
+          : brokeDegenerateLoop
+            ? "degenerate-loop"
+            : "completed",
+      })
+    }
     return {
       finalText,
       messages,
       newTail,
       ...(stoppedAtMaxSteps ? { stoppedAtMaxSteps } : {}),
+      ...(brokeDegenerateLoop ? { stoppedByLoopBreaker: true } : {}),
     } satisfies AgentResult as AgentResult
   })

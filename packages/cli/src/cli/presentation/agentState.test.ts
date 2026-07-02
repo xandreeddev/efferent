@@ -91,7 +91,7 @@ describe("agentState — the live state machine", () => {
     // agent's own subagent_end removes it.
     const afterEnd = run([
       { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
-      { e: { type: "agent_end", finalText: "done", messages: [] } },
+      { e: { type: "agent_end", finalText: "done" } },
     ])
     expect(afterEnd.phase).toBe("idle")
     expect(afterEnd.fleet).toEqual([{ nodeId: "1", name: "a" }])
@@ -100,7 +100,7 @@ describe("agentState — the live state machine", () => {
     // When that agent finishes, the fleet drains and the chip clears.
     const afterDrain = run([
       { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
-      { e: { type: "agent_end", finalText: "done", messages: [] } },
+      { e: { type: "agent_end", finalText: "done" } },
       { e: { type: "subagent_end", name: "a", nodeId: "1", ok: true, summary: "s", filesChanged: [] } },
     ])
     expect(afterDrain.fleet).toEqual([])

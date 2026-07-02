@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AgentMessage } from "./Conversation.js"
+import { OutcomeStatus, StopReasonKindSchema } from "./Outcome.js"
 
 /**
  * The mode-agnostic event vocabulary the agent loop emits via hooks — and, once
@@ -95,11 +95,18 @@ export const AgentEvent = Schema.Union(
     /** The model role this run uses (`general` | `code`) — for the active-tier UI. */
     role: Schema.optional(Schema.Literal("general", "code")),
   }),
+  // THE terminal signal for a sub-agent run — emitted on EVERY exit shape by
+  // `finalizeRun` (ok / partial / error / killed), never skipped. `ok` is the
+  // legacy boolean (`outcome ∈ {ok, partial}`) kept for stale daemon/client
+  // pairs; consumers read `outcome ?? (ok ? "ok" : "error")`. `reason` is the
+  // compact WHY label (budget / step-cap / stall / interrupt / …).
   Schema.Struct({
     type: Schema.Literal("subagent_end"),
     name: Schema.String,
     nodeId: Schema.optional(Schema.String),
     ok: Schema.Boolean,
+    outcome: Schema.optional(OutcomeStatus),
+    reason: Schema.optional(StopReasonKindSchema),
     summary: Schema.String,
     filesChanged: Schema.Array(Schema.String),
     usage: Schema.optional(SubAgentUsage),
@@ -139,10 +146,15 @@ export const AgentEvent = Schema.Union(
     // The UI renders it as notes, not a red failure.
     advisory: Schema.optional(Schema.Boolean),
   }),
+  // The root turn's terminal event. `messages` is GONE from the wire — it had
+  // zero consumers and could be megabytes per turn on SSE. `outcome`/`reason`
+  // carry root honesty (a step-capped root is `partial`, an interrupted one
+  // `killed` — never a silent "success").
   Schema.Struct({
     type: Schema.Literal("agent_end"),
     finalText: Schema.String,
-    messages: Schema.Array(AgentMessage),
+    outcome: Schema.optional(OutcomeStatus),
+    reason: Schema.optional(StopReasonKindSchema),
   }),
   Schema.Struct({
     type: Schema.Literal("error"),

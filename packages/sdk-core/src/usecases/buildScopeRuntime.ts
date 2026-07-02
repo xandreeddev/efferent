@@ -1,7 +1,8 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
+import { Cause, Clock, Effect, Exit, FiberRef, Layer, Ref, Schema } from "effect"
 import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
+import { outcomeStatus, type OutcomeStatus, type StopReason } from "../entities/Outcome.js"
 import type {
   AgentAfterToolCallEvent,
   AgentBeforeToolCallEvent,
@@ -24,6 +25,7 @@ import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
+import { finalizeRun } from "./finalizeRun.js"
 import { generateHandoffBrief } from "./handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef, type RunContext } from "./runContext.js"
@@ -110,7 +112,13 @@ export interface ScopeRuntime {
     /** Compaction budget (chars) per tool-result string for the resumed run. */
     readonly toolResultMaxChars?: number
   }) => Effect.Effect<
-    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    {
+      summary: string
+      filesChanged: ReadonlyArray<string>
+      nodeId: ContextNodeId
+      /** ok | partial — an errored run FAILS instead (see `entities/Outcome.ts`). */
+      outcome: OutcomeStatus
+    },
     Failure,
     | FileSystem
     | Shell
@@ -147,7 +155,13 @@ export interface ScopeRuntime {
      *  an absent human; inherited down the subtree. */
     readonly interactionPolicy?: "interactive" | "headless"
   }) => Effect.Effect<
-    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    {
+      summary: string
+      filesChanged: ReadonlyArray<string>
+      nodeId: ContextNodeId
+      /** ok | partial — an errored run FAILS instead (see `entities/Outcome.ts`). */
+      outcome: OutcomeStatus
+    },
     Failure,
     | FileSystem
     | Shell
@@ -464,10 +478,13 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
     "Wait (without blocking anyone else) for sub-agents you spawned to make progress, then read " +
     "their status. Returns as soon as any watched agent finishes, someone messages you, or the " +
     "timeout passes — whichever first. Use it after spawning a fleet with run_agent to collect " +
-    "results: it gives each agent's status (running/ok/error) with the summary + files of finished " +
-    "ones, plus any messages sent to you and recent blackboard notes. A return with allDone:false and " +
-    "agents still running is NORMAL — just call it again; it is NOT a signal that they are stuck or " +
-    "that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch every agent you spawned.",
+    "results: it gives each agent's status (running/ok/partial/error/killed) with the summary + files " +
+    "of finished ones, plus any messages sent to you and recent blackboard notes. 'partial' means the " +
+    "agent stopped early (budget/step cap) but its summary IS usable — treat it as an incomplete " +
+    "deliverable, not a failure. 'killed' means it was interrupted and produced nothing. A return with " +
+    "allDone:false and agents still running is NORMAL — just call it again; it is NOT a signal that " +
+    "they are stuck or that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch " +
+    "every agent you spawned.",
   parameters: {
     nodeIds: Schema.optional(Schema.Array(Schema.String)).annotations({
       description:
@@ -482,7 +499,7 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
       Schema.Struct({
         nodeId: Schema.String,
         name: Schema.String,
-        status: Schema.Literal("running", "ok", "error"),
+        status: Schema.Literal("running", "ok", "partial", "error", "killed"),
         summary: Schema.optional(Schema.String),
         filesChanged: Schema.optional(Schema.Array(Schema.String)),
       }),
@@ -1095,13 +1112,11 @@ interface RunSpawnedArgs<R> {
  */
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   const definition = args.definition
-  // Set true the moment EITHER terminal path records its return (ok / error).
-  // The exit finalizer reads it: a run that exits WITHOUT having recorded one
-  // was interrupted (Esc / :stop / teardown) or died, so the finalizer records
-  // an `error` return + notifies the parent itself — otherwise the DB node
-  // stays `running` forever and the parent is never told (markDone only tears
-  // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
-  const returnRecordedRef = Ref.unsafeMake(false)
+  const label = args.title ?? (basename(args.folder) || args.folder)
+  // The one-shot guard behind `finalizeRun`: the FIRST terminal path (ok /
+  // error / exit-finalizer) records + notifies + emits; later callers no-op.
+  // Created OUTSIDE the body so the exit finalizer can share it.
+  const finalizedRef = Ref.unsafeMake(false)
   // Stall watchdog state, all OUTSIDE the body so the watchdog fiber (which
   // races the body) and the finalizer can read them.
   //  - progressRef: epoch-ms of the last observable step (turn start / tool
@@ -1124,7 +1139,6 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   const bumpProgress = Clock.currentTimeMillis.pipe(Effect.flatMap((t) => Ref.set(progressRef, t)))
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
-    const label = args.title ?? (basename(folder) || folder)
 
     if (hooks?.onSubAgentStart) {
       yield* hooks.onSubAgentStart({
@@ -1370,16 +1384,20 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const wsRef = yield* getWorkspaceRef(args.displayRoot).pipe(
       Effect.provideService(Shell, args.shell),
     )
-    const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
 
     if (outcome.ok) {
-      // The produced tail was already persisted incrementally above (first
-      // attempt + each gate retry) — don't bulk-append it again here.
-      // A budget OR step-cap stop is an *ok* outcome with a partial result —
-      // say so, so the parent model (and the human in :tree) knows not to
-      // trust it as complete. Without the step marker, a capped run's
-      // mid-thought last sentence reads as the deliverable.
+      // The produced tail was already persisted incrementally above — don't
+      // bulk-append it again here. A budget / step-cap / breaker stop is a
+      // PARTIAL outcome: the status carries the truth now, and the note keeps
+      // the caveat readable in the summary for the parent model + `:tree`.
       const stoppedByBudget = yield* Ref.get(budgetStopRef)
+      const reason: StopReason = stoppedByBudget
+        ? { kind: "budget" }
+        : outcome.r.stoppedAtMaxSteps === true
+          ? { kind: "step-cap" }
+          : outcome.r.stoppedByLoopBreaker === true
+            ? { kind: "degenerate-loop" }
+            : { kind: "completed" }
       const stopNote = stoppedByBudget
         ? BUDGET_STOP_NOTE
         : outcome.r.stoppedAtMaxSteps === true
@@ -1389,59 +1407,49 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         stopNote !== undefined
           ? `${outcome.r.finalText}\n\n${stopNote}`.trim()
           : outcome.r.finalText
-      yield* store.recordReturn(nodeId, {
-        status: "ok",
-        summary,
-        filesChanged: files,
-        ...(hasUsage ? { usage } : {}),
-        ...stamp,
-      })
-      // Mark the return recorded so the exit finalizer doesn't double-record it.
-      yield* Ref.set(returnRecordedRef, true)
-      // Deliver the outcome to the bus FIRST: wakes a parent's `wait_for_agents`,
-      // delivers/buffers a completion in the parent's inbox + the blackboard, and
-      // records the terminal result. This MUST precede `onSubAgentEnd` — that
-      // event triggers the daemon's `onTopLevelDone` auto-resume, which drains the
-      // parent's inbox; deliver after, and the resume races an empty inbox.
-      // (`markDone` below is then a no-op — `complete` already removed the entry.)
-      yield* args.bus.complete(nodeId, { status: "ok", summary, filesChanged: files })
-      if (hooks?.onSubAgentEnd) {
-        yield* hooks.onSubAgentEnd({
-          name: label,
-          nodeId,
-          ok: true,
+      const status = outcomeStatus(reason, true)
+      yield* finalizeRun({
+        nodeId,
+        label,
+        store,
+        bus: args.bus,
+        hooks,
+        once: finalizedRef,
+        outcome: {
+          status,
           summary,
           filesChanged: files,
+          reason,
           ...(hasUsage ? { usage } : {}),
-        })
-      }
-      return { summary, filesChanged: files, nodeId }
+        },
+        ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
+      })
+      return { summary, filesChanged: files, nodeId, outcome: status }
     }
 
     const f = toFailure(outcome.e)
     const summary = f.message ? `${f.error}: ${f.message}` : f.error
-    yield* store.recordReturn(nodeId, {
-      status: "error",
-      summary,
-      filesChanged: files,
-      ...(hasUsage ? { usage } : {}),
-      ...stamp,
-    })
-    // Mark the return recorded so the exit finalizer doesn't double-record it.
-    yield* Ref.set(returnRecordedRef, true)
-    // Same ordering as the ok path: deliver to the bus before the event that
-    // triggers the auto-resume, so a parent draining its inbox sees the failure.
-    yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
-    if (hooks?.onSubAgentEnd) {
-      yield* hooks.onSubAgentEnd({
-        name: label,
-        nodeId,
-        ok: false,
+    const reason: StopReason = {
+      kind: "error",
+      error: f.error,
+      ...(f.message !== undefined && f.message !== "" ? { message: f.message } : {}),
+    }
+    yield* finalizeRun({
+      nodeId,
+      label,
+      store,
+      bus: args.bus,
+      hooks,
+      once: finalizedRef,
+      outcome: {
+        status: "error",
         summary,
         filesChanged: files,
+        reason,
         ...(hasUsage ? { usage } : {}),
-      })
-    }
+      },
+      ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
+    })
     return yield* Effect.fail(f)
   })
   // No folder lock: writers are sequenced at the ORCHESTRATOR (it spawns coders
@@ -1450,57 +1458,59 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // (a hung agent stranded its same-folder siblings); sequencing lives where it's
   // observable (wait_for_agents timeouts).
   //
-  // Exit finalizer (runs on EVERY exit — success, failure, interrupt, defect):
-  //  - Normal terminal paths (ok / error) already recorded the return AND
-  //    notified the parent via `bus.complete`, so `returnRecordedRef` is true:
-  //    just tear the mailbox down (markDone is a no-op — complete already
-  //    removed the running entry).
-  //  - Interrupted / died before a terminal path ⇒ the Ref is still false: the
-  //    DB node would otherwise stay `running` forever and the parent would never
-  //    hear about it (markDone only tears down the mailbox without notifying).
-  //    So record the return AND `bus.complete` — PRESERVING the run's produced
-  //    work (last assistant text, filesChanged, usage). The old finalizer
-  //    hardcoded an empty error, so a watchdog kill discarded FINISHED work as
-  //    "[stalled]" — the single biggest failure bucket in the run forensics.
-  //    A stalled run WITH text is an ok-with-caveat (the note marks it partial);
-  //    everything else stays an error, but keeps whatever text/files existed.
-  // Everything here is failure-safe (Effect.ignore / catchAll) so teardown never
-  // throws — the finalizer must always complete even mid-interruption.
-  const finalize = Effect.gen(function* () {
-    const recorded = yield* Ref.get(returnRecordedRef)
-    if (recorded) {
-      yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
-      return
-    }
-    const stalled = yield* Ref.get(stalledRef)
-    const lastText = yield* Ref.get(lastTextRef)
-    const files = yield* Ref.get(filesRef)
-    const usage = yield* Ref.get(usageRef)
-    const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
-    const note = stalled ? STALL_NOTE : INTERRUPTED_NOTE
-    const hasText = lastText.trim().length > 0
-    const summary = hasText ? `${lastText}\n\n${note}` : note
-    // A run the watchdog stopped AFTER it produced narration finished its
-    // thinking — deliver the text as a partial ok (the note carries the caveat)
-    // instead of throwing the work away. A silent stall / an interrupt stays an
-    // error, but still reports any text + files it managed to land.
-    const status = stalled && hasText ? ("ok" as const) : ("error" as const)
-    yield* args.store
-      .recordReturn(args.nodeId, {
-        status,
-        summary,
-        filesChanged: files,
-        ...(hasUsage ? { usage } : {}),
+  // Exit finalizer (runs on EVERY exit — success, failure, interrupt, defect).
+  // The normal terminal paths already ran `finalizeRun`, so its once-guard makes
+  // this a mailbox-teardown no-op there. A run that exits WITHOUT finalizing —
+  // interrupted (Esc / a parent / shutdown / the headless deadline), watchdog-
+  // stalled, or crashed — is finalized HERE, with an honest reason read off the
+  // Exit + the bus's interrupt stamp, PRESERVING the run's produced work (last
+  // assistant text, filesChanged, usage). The old finalizer hardcoded an empty
+  // error, so a watchdog kill discarded FINISHED work as "[stalled]" — the
+  // single biggest failure bucket in the run forensics. And crucially it emits
+  // the terminal `subagent_end` event on these paths too (via finalizeRun) —
+  // its absence is why dead agents looked alive in every UI surface.
+  const finalize = (exit: Exit.Exit<unknown, unknown>) =>
+    Effect.gen(function* () {
+      const stalled = yield* Ref.get(stalledRef)
+      const lastText = yield* Ref.get(lastTextRef)
+      const files = yield* Ref.get(filesRef)
+      const usage = yield* Ref.get(usageRef)
+      const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
+      const hasText = lastText.trim().length > 0
+      const interrupted =
+        Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+      const reason: StopReason = stalled
+        ? { kind: "stall" }
+        : interrupted
+          ? {
+              kind: "interrupt",
+              by: (yield* args.bus.interruptReasonOf(args.nodeId)) ?? "parent",
+            }
+          : { kind: "error", error: "RunDied", message: "run crashed before finishing" }
+      const note = stalled
+        ? STALL_NOTE
+        : interrupted
+          ? INTERRUPTED_NOTE
+          : "[crashed — the run died before finishing]"
+      const summary = hasText ? `${lastText}\n\n${note}` : note
+      yield* finalizeRun({
+        nodeId: args.nodeId,
+        label,
+        store: args.store,
+        bus: args.bus,
+        hooks: args.hooks,
+        once: finalizedRef,
+        outcome: {
+          // stall-with-text ⇒ partial (the thinking finished — keep the work);
+          // interrupt ⇒ killed; crash ⇒ error. One rule, in Outcome.ts.
+          status: outcomeStatus(reason, hasText),
+          summary,
+          filesChanged: files,
+          reason,
+          ...(hasUsage ? { usage } : {}),
+        },
       })
-      .pipe(Effect.ignore)
-    yield* args.bus
-      .complete(args.nodeId, {
-        status,
-        summary,
-        filesChanged: files,
-      })
-      .pipe(Effect.ignore)
-  }).pipe(Effect.catchAll(() => Effect.void))
+    }).pipe(Effect.catchAllCause(() => Effect.void))
 
   // The stall watchdog: a fiber that wakes every WATCHDOG_TICK_MS and fails the
   // moment the run has gone SUBAGENT_STALL_DEADLINE_MS without progress (no turn
@@ -1541,7 +1551,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // errors), so nothing leaks.
   return body.pipe(
     Effect.raceFirst(watchdog),
-    Effect.onExit(() => finalize),
+    Effect.onExit((exit) => finalize(exit)),
   )
 }
 
@@ -1567,20 +1577,26 @@ const makeRunAgentHandler =
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
   ) => {
-    // Fork a built run as a background fiber and return its handle. Pre-registers
-    // the child on the bus (so a sibling can address it the instant we return)
-    // and records its fiber (so `:stop` / teardown can interrupt it). The run
-    // itself records its return + completion on every exit path, so a failure is
-    // already captured there — swallow it from the daemon to avoid an unhandled
-    // fiber error.
+    // Fork a built run as a SUPERVISED background fiber and return its handle.
+    // Pre-registers the child on the bus (so a sibling can address it the
+    // instant we return) and records its fiber (so `:stop` / a subtree kill can
+    // interrupt it). The run's exit finalizer records its return + completion +
+    // terminal event on EVERY exit path (`finalizeRun`), so failures are fully
+    // captured there — the cause is swallowed here only to keep the fiber's own
+    // exit quiet. `forkSupervised` (the bus's fleet scope — no more forkDaemon)
+    // means teardown interrupts AND AWAITS the run, so an exiting process can't
+    // strand the node `running`.
     const launch = (spawnArgs: RunSpawnedArgs<R>) =>
       Effect.gen(function* () {
         const label = spawnArgs.title ?? (basename(spawnArgs.folder) || spawnArgs.folder)
         const parentKey: string | null =
           spawnArgs.parentNodeId ?? spawnArgs.rootConversationId ?? null
         yield* bus.markRunning(spawnArgs.nodeId, label, { parentKey })
-        const fiber = yield* Effect.forkDaemon(
-          runSpawnedAgent(spawnArgs).pipe(Effect.catchAll(() => Effect.void), Effect.asVoid),
+        const fiber = yield* bus.forkSupervised(
+          runSpawnedAgent(spawnArgs).pipe(
+            Effect.catchAllCause(() => Effect.void),
+            Effect.asVoid,
+          ),
         )
         yield* bus.setFiber(spawnArgs.nodeId, fiber)
         const handle: SpawnHandle = {

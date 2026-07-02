@@ -53,13 +53,18 @@ export type SessionKind = typeof SessionKind.Type
 
 /**
  * A session's lifecycle status. `running` while a turn/run is in flight; `idle`
- * for a root with no turn running; `ok`/`error`/`interrupted` are terminal for
- * an agent node (root sessions are never terminal — they idle).
+ * for a root with no turn running; `ok`/`partial`/`error`/`killed` are terminal
+ * for an agent node (root sessions are never terminal — they idle). `partial` =
+ * a usable deliverable that stopped early; `killed` = interrupted / stalled
+ * with nothing produced (see `entities/Outcome.ts`). `interrupted` is the
+ * legacy spelling of `killed`, kept for stale daemon/client pairs.
  */
 export const SessionStatus = Schema.Literal(
   "running",
   "ok",
+  "partial",
   "error",
+  "killed",
   "idle",
   "interrupted",
 )

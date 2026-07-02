@@ -253,7 +253,7 @@ export const runTuiModeSolid = (
           // no orphans). Scoped to the active conversation's descendants; a full
           // `interruptAll` is reserved for process teardown (finalizer below).
           Runtime.runFork(rt)(
-            scopeRuntime.bus.interruptSubtree(store.run.getConversationId()),
+            scopeRuntime.bus.interruptSubtree(store.run.getConversationId(), "human"),
           )
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
@@ -393,10 +393,11 @@ export const runTuiModeSolid = (
       //     the forgotten one. No-op when no login is in flight.
       yield* Effect.addFinalizer(() => stopOAuthSession(store).pipe(Effect.ignore))
 
-      // 6d. Background fleet agents are daemons (non-blocking spawning) — they'd
-      //     keep Bun alive past exit. Interrupt the whole fleet on every teardown
-      //     path so the process can quit cleanly. No-op when nothing is running.
-      yield* Effect.addFinalizer(() => scopeRuntime.bus.interruptAll().pipe(Effect.ignore))
+      // 6d. Background fleet agents are supervised fibers in the bus's fleet
+      //     scope — they'd keep Bun alive past exit. `shutdown` stamps them
+      //     `killed(shutdown)`, interrupts, and AWAITS each one's finalizer, so
+      //     no node is ever stranded `running` by quitting the app.
+      yield* Effect.addFinalizer(() => scopeRuntime.bus.shutdown().pipe(Effect.ignore))
 
       // 6e. Background shell processes (Bash run_in_background) + tmux sessions are
       //     DETACHED — they outlive turns on purpose, but must not outlive the app.
