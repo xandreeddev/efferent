@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { Clock, Effect, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
+import { Cause, Clock, Effect, Exit, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
 import type { LanguageModel } from "@effect/ai"
 import {
   ContextTreeStore,
@@ -46,7 +46,13 @@ import {
   type SessionSummary,
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
-import { buildScopeRuntime, inboxToMessages } from "@xandreed/sdk-core"
+import {
+  buildScopeRuntime,
+  gateOnce,
+  inboxToMessages,
+  SWEEP_INTERVAL_MS,
+  sweepStrandedRuns,
+} from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
@@ -143,36 +149,15 @@ interface FleetState {
 
 const wsError = (message: string): WorkspaceError => new WorkspaceError({ message })
 
-/** How often the stranded-node sweeper ticks. */
-export const SWEEP_INTERVAL_MS = 30_000
-/**
- * Grace window before a `running` DB node with no live bus fiber is declared
- * stranded. Bus liveness is the primary signal (a wedged/dead fiber has already
- * left the bus); the window is a belt-and-braces guard against a brief race
- * where a node is persisted `running` a beat before its bus mailbox registers
- * (or just after `markDone`/`complete` removed it but before `recordReturn`).
- */
-export const SWEEP_GRACE_MS = 120_000
+// (The stranded-node sweeper lives in @xandreed/sdk-core now —
+// `sweepStrandedRuns` — shared by BOTH drivers; this file only forks it.)
 
-/**
- * The PURE sweep decision for one node — extracted so it's unit-testable without
- * a daemon. A node is stranded (and should be flipped to `error`) iff it's still
- * `running` in the DB, the orchestration bus does NOT know it as running (its
- * fiber wedged or died, taking its mailbox with it), AND it's older than the
- * grace window (so a legitimately slow turn or a just-spawned node isn't killed).
- */
-export const shouldSweepNode = (input: {
-  readonly status: AgentContextNode["status"]
-  readonly isRunningOnBus: boolean
-  readonly createdAt: number
-  readonly now: number
-  readonly graceMs?: number
-}): boolean =>
-  input.status === "running" &&
-  !input.isRunningOnBus &&
-  input.now - input.createdAt >= (input.graceMs ?? SWEEP_GRACE_MS)
-
-export type InProcessWorkspace = ReturnType<typeof Workspace.of>
+export type InProcessWorkspace = ReturnType<typeof Workspace.of> & {
+  /** Supervised-fleet teardown: interrupt + AWAIT every running fleet fiber so
+   *  each records an honest `killed(shutdown)` before the process exits. The
+   *  daemon runs it on its way out (graceful `POST /shutdown` AND SIGINT). */
+  readonly shutdown: Effect.Effect<void>
+}
 
 /**
  * The **JobController** — the one entry that unifies how a turn starts. The three
@@ -195,7 +180,14 @@ export interface JobController {
   readonly submitJob: (
     job: Job,
   ) => Effect.Effect<
-    { readonly conversationId: ConversationId; readonly nodeId?: ContextNodeId },
+    {
+      readonly conversationId: ConversationId
+      readonly nodeId?: ContextNodeId
+      /** How the scheduled run ended (ok | partial | error). Absent on the
+       *  interactive `send` path, which resolves asynchronously. The old
+       *  controller swallowed failures into a success-shaped return. */
+      readonly outcome?: "ok" | "partial" | "error"
+    },
     never,
     WorkspaceRunServices
   >
@@ -221,6 +213,52 @@ export const makeJobController = (input: {
    *  no client surface (the cron-only daemon). */
   readonly send?: (cid: ConversationId, prompt: string) => Effect.Effect<void>
 }): JobController => {
+  // A one-shot gate over the scheduled run's deliverable: cron runs were the
+  // one path with NO verification at all (`spawnAgent` bypasses `driveLoop`).
+  // No retry loop here — unattended runs have no one to steer a re-run — but
+  // the verdict is judged, PERSISTED to the audit trail, and folded into the
+  // returned outcome, so a scheduled run can never silently ship junk.
+  const gateScheduled = (
+    job: Job,
+    r: { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+  ) =>
+    Effect.gen(function* () {
+      const settings = yield* (yield* SettingsStore).get()
+      if (settings.autoLoop === false) return undefined
+      const tree = yield* ContextTreeStore
+      const conv = yield* ConversationStore
+      const all = yield* tree
+        .listTree(job.conversationId)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AgentContextNode>))
+      const self = all.filter((n) => n.id === r.nodeId)
+      const step = yield* gateOnce({
+        task: job.prompt,
+        summary: r.summary,
+        repoDir: job.folder,
+        freshNodes: self,
+        attempt: 1,
+        maxAttempts: 1,
+      })
+      if (step.kind === "no-subagents") return undefined
+      yield* conv
+        .recordGateVerdict({
+          conversationId: job.conversationId,
+          attempt: 1,
+          verdict: step.event.verdict,
+          reasons: step.event.reasons,
+          filesChanged: step.event.filesChanged,
+          advisory: step.event.advisory === true,
+          durationMs: 0,
+          ...(step.event.verdict === "unavailable"
+            ? { error: step.event.reasons.join("; ") }
+            : {}),
+        })
+        .pipe(Effect.ignore)
+      return step.event.verdict
+      // Cause-proof (defects too): the gate is an observer here — an audit
+      // hiccup must never turn a finished scheduled run into a failure.
+    }).pipe(Effect.catchAllCause(() => Effect.succeed(undefined)))
+
   const spawnScheduled = (job: Job) =>
     input.runtime
       .spawnAgent({
@@ -236,13 +274,42 @@ export const makeJobController = (input: {
       })
       .pipe(
         Effect.provide(input.scheduledApproval),
-        Effect.map((r) => ({ conversationId: job.conversationId, nodeId: r.nodeId })),
-        // A scheduled job's failure is already recorded on its context node; the
-        // controller never fails (the daemon logs around it).
-        Effect.catchAll(() => Effect.succeed({ conversationId: job.conversationId })),
-        Effect.catchAllDefect(() => Effect.succeed({ conversationId: job.conversationId })),
+        Effect.flatMap((r) =>
+          gateScheduled(job, r).pipe(
+            Effect.map((verdict) => ({ ...r, gateVerdict: verdict })),
+          ),
+        ),
+        Effect.map((r) => ({
+          conversationId: job.conversationId,
+          nodeId: r.nodeId,
+          outcome:
+            r.gateVerdict === "needs_work" || r.gateVerdict === "blocked"
+              ? ("partial" as const)
+              : r.outcome === "partial"
+                ? ("partial" as const)
+                : ("ok" as const),
+        })),
+        // A scheduled job's failure is recorded on its context node — but the
+        // RETURN must say so too (the old success-shaped swallow made a failed
+        // cron run indistinguishable from a clean one). Never fails.
+        Effect.catchAll((e) =>
+          Effect.logWarning(
+            `scheduled job failed: ${e.error}${e.message !== undefined ? ` — ${e.message}` : ""}`,
+          ).pipe(
+            Effect.as({ conversationId: job.conversationId, outcome: "error" as const }),
+          ),
+        ),
+        Effect.catchAllDefect((d) =>
+          Effect.logError(`scheduled job crashed: ${String(d)}`).pipe(
+            Effect.as({ conversationId: job.conversationId, outcome: "error" as const }),
+          ),
+        ),
       ) as Effect.Effect<
-        { conversationId: ConversationId; nodeId?: ContextNodeId },
+        {
+          conversationId: ConversationId
+          nodeId?: ContextNodeId
+          outcome?: "ok" | "partial" | "error"
+        },
         never,
         WorkspaceRunServices
       >
@@ -542,6 +609,19 @@ export const makeInProcessWorkspace = (
             ),
           ),
           Effect.asVoid,
+          // An INTERRUPTED root turn (Esc / :stop) never reaches the loop's own
+          // agent_end — emit the honest terminal event here so clients settle on
+          // `killed(interrupt)` instead of inferring from silence.
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+              ? publish({
+                  type: "agent_end",
+                  finalText: "",
+                  outcome: "killed",
+                  reason: "interrupt",
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
         // Optimistically flip to thinking the instant the turn starts, so a
@@ -579,6 +659,16 @@ export const makeInProcessWorkspace = (
             ),
           ),
           Effect.asVoid,
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+              ? publish({
+                  type: "agent_end",
+                  finalText: "",
+                  outcome: "killed",
+                  reason: "interrupt",
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
         yield* setPhase(rootKey, submittedPhaseState)
@@ -698,23 +788,6 @@ export const makeInProcessWorkspace = (
         return out
       })
 
-    /** Collect a fleet's running descendant keys (BFS via the bus), for a
-     *  fleet-scoped interrupt that cancels only THAT deployment. */
-    const fleetSubtree = (rootKey: string): Effect.Effect<ReadonlyArray<string>> =>
-      Effect.gen(function* () {
-        const seen = new Set<string>()
-        let frontier = [rootKey]
-        while (frontier.length > 0) {
-          const next: string[] = []
-          for (const k of frontier) {
-            const kids = yield* scopeRuntime.bus.runningChildrenOf(k)
-            for (const c of kids) if (!seen.has(c)) { seen.add(c); next.push(c) }
-          }
-          frontier = next
-        }
-        return [...seen]
-      })
-
     // --- the Workspace service ----------------------------------------------
 
     const service = Workspace.of({
@@ -771,14 +844,36 @@ export const makeInProcessWorkspace = (
             parentId: null,
           }
           // The authoritative phase. A root reads its folded phase ledger; an
-          // agent node has no per-event phase, so derive it from the bus (live →
-          // thinking, else idle) — enough for a paired client to seed correctly.
+          // agent node derives it from its live HEALTH (tool-running → tool,
+          // any other live state → thinking, off the bus → idle).
+          const nodeHealth =
+            kind === "root"
+              ? undefined
+              : yield* scopeRuntime.bus.healthOf(id as string)
           const phase: AgentPhase =
             kind === "root"
               ? yield* getPhase(id as string)
-              : (yield* scopeRuntime.bus.isRunning(id as string))
-                ? "thinking"
+              : nodeHealth !== undefined
+                ? nodeHealth.state === "tool-running"
+                  ? "tool"
+                  : "thinking"
                 : "idle"
+          // The session's LIVE fleet + health — the (re)attach truth the client
+          // reconciles its event-fed membership against.
+          const fleetIds =
+            kind === "root"
+              ? yield* scopeRuntime.bus.runningSubtreeOf(id as string)
+              : []
+          // (snapshot() with an EMPTY list means "all running" — guard it.)
+          const fleetSnaps =
+            fleetIds.length > 0 ? yield* scopeRuntime.bus.snapshot(fleetIds) : []
+          const fleet = fleetSnaps.map((s) => ({
+            nodeId: s.nodeId,
+            name: s.label,
+            state: s.health?.state ?? "starting",
+            lastActivityAt: s.health?.lastActivityAt ?? 0,
+            ...(s.health?.detail !== undefined ? { detail: s.health.detail } : {}),
+          }))
           return {
             session: session ?? fallback,
             log,
@@ -786,6 +881,7 @@ export const makeInProcessWorkspace = (
             busy,
             phase,
             queue: run.queue,
+            fleet,
             pendingApproval,
             cursor,
           } satisfies SessionState
@@ -827,13 +923,12 @@ export const makeInProcessWorkspace = (
           const key = id as string
           if (yield* isFleetRoot(key)) {
             // Cancel only THIS fleet's subtree (not interruptAll — that would
-            // kill every fleet; reserved for daemon shutdown).
-            const subtree = yield* fleetSubtree(key)
-            yield* Effect.forEach(subtree, (k) => scopeRuntime.bus.interrupt(k).pipe(Effect.asVoid), {
-              discard: true,
-            })
+            // kill every fleet; reserved for daemon shutdown). The client's
+            // interrupt is a human action — stamp it so the finalizer records
+            // `killed(interrupt: human)`, not a guessed parent kill.
+            yield* scopeRuntime.bus.interruptSubtree(key, "human")
           } else {
-            yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
+            yield* scopeRuntime.bus.interrupt(key, "human").pipe(Effect.asVoid)
           }
           const fiber = (yield* getRun(key)).fiber
           if (fiber !== undefined) yield* Fiber.interrupt(fiber)
@@ -1019,79 +1114,29 @@ export const makeInProcessWorkspace = (
       yield* startResumeTurn(p.id)
     }
 
-    // --- mid-session stranded-node sweeper ----------------------------------
+    // --- mid-session stranded-node sweeper (the SHARED core one) ------------
     // The daemon's startup reconcile (server/daemon.ts) only flips nodes left
-    // `running` by a PRIOR crash. A node whose fiber wedges or dies WHILE the
-    // daemon lives would otherwise stay `running` forever in the UI. This
-    // background sweeper closes that gap using the bus as ground truth.
-    const sweepNode = (node: AgentContextNode): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        // Re-check liveness right before acting — the periodic snapshot may have
-        // gone stale (a node could have started since the tick began).
-        const live = yield* scopeRuntime.bus.isRunning(node.id as string)
-        const now = yield* Clock.currentTimeMillis
-        if (
-          !shouldSweepNode({
-            status: node.status,
-            isRunningOnBus: live,
-            createdAt: node.createdAt,
-            now,
-          })
-        ) {
-          return
-        }
-        const summary = "[stalled — no longer running]"
-        // 1) Persist the terminal status, so :tree/activity stop showing it live.
-        yield* tree
-          .recordReturn(node.id, { status: "error", summary, filesChanged: [] })
-          .pipe(Effect.ignore)
-        // 2) Notify via the SAME bus path a normal completion uses — registering
-        //    the (now-absent) node first so `complete` has an entry to read,
-        //    which then delivers the failure to the parent's inbox (or buffers it
-        //    for the parent's next resume) + the blackboard + wakes any waiter.
-        const parentKey = (node.parentId ?? node.rootConversationId ?? null) as string | null
-        const label = node.title ?? node.folder
-        yield* scopeRuntime.bus.markRunning(node.id as string, label, { parentKey })
-        yield* scopeRuntime.bus.complete(node.id as string, {
-          status: "error",
-          summary,
-          filesChanged: [],
-        })
-        // 3) Publish subagent_end so the UI flips status live AND a TOP-LEVEL
-        //    node's parent root auto-resumes to report it (onTopLevelDone).
-        yield* publish({
-          type: "subagent_end",
-          name: label,
-          nodeId: node.id as string,
-          ok: false,
-          summary,
-          filesChanged: [],
-        })
-      }).pipe(Effect.ignore)
-
+    // `running` by a PRIOR crash. A node whose fiber vanishes WITHOUT exiting
+    // while the daemon lives is swept here — through the same `finalizeRun`
+    // terminal path as every other exit, so the parent is notified and the
+    // terminal `subagent_end` event reaches the UI (`baseHooks` publishes it).
     const sweepOnce = Effect.gen(function* () {
       const fleetMap = yield* Ref.get(fleets)
-      yield* Effect.forEach(
-        [...fleetMap.values()],
-        (f) =>
-          tree.listTree(f.rootCid).pipe(
-            Effect.flatMap((nodes) =>
-              Effect.forEach(nodes.filter((n) => n.status === "running"), sweepNode, {
-                discard: true,
-              }),
-            ),
-            Effect.ignore,
-          ),
-        { discard: true },
-      )
+      yield* sweepStrandedRuns({
+        store: tree,
+        bus: scopeRuntime.bus,
+        hooks: baseHooks,
+        roots: [...fleetMap.values()].map((f) => f.rootCid),
+      })
     }).pipe(Effect.ignore)
 
     // forkDaemon under the runtime scope → interrupted on teardown; never throws
-    // (every step is `Effect.ignore`-guarded), so a transient store error just
-    // skips a tick.
+    // (the sweeper is cause-guarded), so a transient store error just skips a tick.
     yield* Effect.forkDaemon(
       Effect.forever(Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(Effect.zipRight(sweepOnce))),
     )
 
-    return service
+    return Object.assign(service, {
+      shutdown: scopeRuntime.bus.shutdown().pipe(Effect.ignore),
+    })
   })

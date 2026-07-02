@@ -88,7 +88,6 @@ describe("agentPhase — daemon-authoritative phase derivation", () => {
     const afterEnd = reducePhase(submittedPhaseState, {
       type: "agent_end",
       finalText: "done",
-      messages: [],
     })
     expect(afterEnd).toEqual(initialPhaseState)
 

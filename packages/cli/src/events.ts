@@ -92,6 +92,8 @@ export const makeAgentEventHooks = <R = never>(
       type: "subagent_end",
       name: event.name,
       ok: event.ok,
+      ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
+      ...(event.reason !== undefined ? { reason: event.reason } : {}),
       summary: event.summary,
       filesChanged: event.filesChanged,
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
@@ -124,6 +126,7 @@ export const makeAgentEventHooks = <R = never>(
       attempt: event.attempt,
       maxAttempts: event.maxAttempts,
       delayMs: event.delayMs,
+      ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
     }),
   onBgOutput: (event) =>
     publish({
@@ -132,11 +135,14 @@ export const makeAgentEventHooks = <R = never>(
       stream: event.stream,
       chunk: event.chunk,
     }),
+  // `messages` no longer rides the wire (zero consumers; megabytes per turn on
+  // SSE) — `outcome`/`reason` carry the root turn's honesty instead.
   onAgentEnd: (event) =>
     publish({
       type: "agent_end",
       finalText: event.finalText,
-      messages: event.messages,
+      ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
+      ...(event.reason !== undefined ? { reason: event.reason } : {}),
     }),
 })
 

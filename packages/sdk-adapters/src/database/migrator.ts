@@ -27,6 +27,8 @@ import pg0010 from "./migrations/0010_node_title.js"
 import pg0011 from "./migrations/0011_pending_turn.js"
 import pg0012 from "./migrations/0012_conversation_model.js"
 import pg0013 from "./migrations/0013_node_kind.js"
+import pg0014 from "./migrations/0014_node_outcome.js"
+import pg0015 from "./migrations/0015_gate_verdicts.js"
 import sqlite0001 from "./migrations-sqlite/0001_init.js"
 import sqlite0002 from "./migrations-sqlite/0002_context_tree.js"
 import sqlite0003 from "./migrations-sqlite/0003_workspace_ref.js"
@@ -36,6 +38,8 @@ import sqlite0006 from "./migrations-sqlite/0006_node_title.js"
 import sqlite0007 from "./migrations-sqlite/0007_pending_turn.js"
 import sqlite0008 from "./migrations-sqlite/0008_conversation_model.js"
 import sqlite0009 from "./migrations-sqlite/0009_node_kind.js"
+import sqlite0010 from "./migrations-sqlite/0010_node_outcome.js"
+import sqlite0011 from "./migrations-sqlite/0011_gate_verdicts.js"
 
 /**
  * Database layer + ConversationStore, selected at runtime from a single
@@ -135,6 +139,8 @@ const pgLoader = Migrator.fromRecord({
   "0011_pending_turn": pg0011,
   "0012_conversation_model": pg0012,
   "0013_node_kind": pg0013,
+  "0014_node_outcome": pg0014,
+  "0015_gate_verdicts": pg0015,
 })
 
 const sqliteLoader = Migrator.fromRecord({
@@ -147,6 +153,8 @@ const sqliteLoader = Migrator.fromRecord({
   "0007_pending_turn": sqlite0007,
   "0008_conversation_model": sqlite0008,
   "0009_node_kind": sqlite0009,
+  "0010_node_outcome": sqlite0010,
+  "0011_gate_verdicts": sqlite0011,
 })
 
 /** Postgres client + migrator (only built when EFFERENT_DB_URL is set). */

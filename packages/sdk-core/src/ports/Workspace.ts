@@ -53,13 +53,18 @@ export type SessionKind = typeof SessionKind.Type
 
 /**
  * A session's lifecycle status. `running` while a turn/run is in flight; `idle`
- * for a root with no turn running; `ok`/`error`/`interrupted` are terminal for
- * an agent node (root sessions are never terminal — they idle).
+ * for a root with no turn running; `ok`/`partial`/`error`/`killed` are terminal
+ * for an agent node (root sessions are never terminal — they idle). `partial` =
+ * a usable deliverable that stopped early; `killed` = interrupted / stalled
+ * with nothing produced (see `entities/Outcome.ts`). `interrupted` is the
+ * legacy spelling of `killed`, kept for stale daemon/client pairs.
  */
 export const SessionStatus = Schema.Literal(
   "running",
   "ok",
+  "partial",
   "error",
+  "killed",
   "idle",
   "interrupted",
 )
@@ -128,6 +133,24 @@ export const SessionState = Schema.Struct({
    * stale daemon that predates the field still decodes (client reads `?? []`).
    */
   queue: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * The session's LIVE fleet — every running descendant on the bus, with its
+   * health. The (re)attach truth the client reconciles its event-fed fleet
+   * membership + health map against: a dropped terminal event or a daemon
+   * restart can no longer wedge the loader at "waiting for N agents".
+   * `optional` so a stale daemon still decodes (client leaves state as-is).
+   */
+  fleet: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        nodeId: Schema.String,
+        name: Schema.String,
+        state: Schema.String,
+        lastActivityAt: Schema.Number,
+        detail: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   pendingApproval: Schema.NullOr(ApprovalRequest),
   cursor: Schema.Number,
 })

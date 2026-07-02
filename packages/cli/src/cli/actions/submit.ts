@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { Cause, Clock, Effect, Queue, Schema, type Layer } from "effect"
+import { Cause, Clock, Effect, Exit, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
   ContextNodeId,
@@ -428,6 +428,19 @@ export const makeSubmit = (
           )
         }),
         Effect.asVoid,
+        // An INTERRUPTED root turn (Esc) never reaches the loop's own agent_end —
+        // emit the honest terminal event so the pump settles on killed(interrupt)
+        // instead of relying on the driver-side state hacks in finishTurn.
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+            ? Queue.offer(eventQueue, {
+                type: "agent_end",
+                finalText: "",
+                outcome: "killed",
+                reason: "interrupt",
+              }).pipe(Effect.ignore)
+            : Effect.void,
+        ),
         Effect.ensuring(finishTurn),
       )
 

@@ -303,6 +303,10 @@ export const makeEventReducer = (
       case "subagent_end": {
         // Status glyph / summary / tokens just landed on the persisted node.
         opts.refreshNav?.()
+        // Honest 4-valued outcome (legacy emitters carry only `ok`).
+        const outcome = event.outcome ?? (event.ok ? "ok" : "error")
+        // The run is terminal — its live health entry is done.
+        if (event.nodeId !== undefined) store.clearNodeHealth(event.nodeId)
         const filesDetail =
           event.filesChanged.length > 0
             ? `${event.filesChanged.length} file${event.filesChanged.length === 1 ? "" : "s"}`
@@ -329,19 +333,30 @@ export const makeEventReducer = (
           if (!dup) {
             store.appendNodeLog(
               event.nodeId,
-              event.ok
+              outcome === "ok"
                 ? { kind: "assistant", text: event.summary }
-                : { kind: "error", text: event.summary },
+                : outcome === "partial"
+                  ? { kind: "assistant", text: event.summary }
+                  : { kind: "error", text: event.summary },
             )
+          }
+          if (outcome === "partial") {
+            store.appendNodeLog(event.nodeId, {
+              kind: "info",
+              text: `stopped early (${event.reason ?? "partial"}) — the result above is usable but incomplete`,
+            })
           }
         }
         // A sub-agent surfaces ONLY in the fleet (the tree + the navigator + its
         // own live log) — never on the root rail. A top-level lead's result is
         // reported by the orchestrator IN ITS OWN VOICE (the `onTopLevelDone`
         // auto-resume folds its inbox and streams normal assistant prose); a
-        // specialist's outcome is the lead's concern (✓/✗ in the tree). So here
-        // we only close the tree node — no rail block, no Task pill.
+        // specialist's outcome is the lead's concern (✓/◐/✗ in the tree). So
+        // here we only close the tree node — no rail block, no Task pill.
         const nodeDetail = joinDetail(
+          outcome === "partial" || outcome === "killed"
+            ? (event.reason ?? outcome)
+            : undefined,
           filesDetail,
           event.usage !== undefined ? `${formatTokens(event.usage.inputTokens)} ctx` : undefined,
         )
@@ -355,7 +370,7 @@ export const makeEventReducer = (
         if (event.nodeId !== undefined && topLevelNodes.delete(event.nodeId)) {
           store.pushBlock({
             kind: "info",
-            text: fleetCompletionLine(event.name, event.ok, event.summary),
+            text: fleetCompletionLine(event.name, outcome, event.summary, event.reason),
           })
         }
         return
@@ -467,15 +482,26 @@ export const makeEventReducer = (
         return
       }
 
-      case "agent_end":
+      case "agent_end": {
         store.setTree((t) => treeAgentEnd(t, now))
-        if (event.finalText.trim().length === 0) {
+        const outcome = event.outcome ?? "ok"
+        if (outcome === "killed") {
+          // The turn was interrupted — the honest terminal event replaces the
+          // old silence + driver-side state guessing.
+          store.pushBlock({ kind: "info", text: "turn interrupted" })
+        } else if (outcome === "partial") {
+          store.pushBlock({
+            kind: "info",
+            text: `◐ the turn stopped early (${event.reason ?? "partial"}) — the answer above is incomplete`,
+          })
+        } else if (event.finalText.trim().length === 0) {
           store.pushBlock({
             kind: "info",
             text: "(agent stopped without a final answer — see ~/.efferent/efferent.log)",
           })
         }
         return
+      }
 
       case "error":
         store.pushBlock({ kind: "error", text: event.message })
@@ -484,12 +510,16 @@ export const makeEventReducer = (
       case "llm_retry": {
         // A transient provider failure is backing off — show the wait live so a
         // pause reads as "retrying", not a hang. (The hard failure, if retries
-        // exhaust, still arrives as an `error` block.)
+        // exhaust, still arrives as an `error` block.) A SUB-AGENT's retry goes
+        // to ITS log (the fleet tree's health suffix shows it live) — the root
+        // rail only carries the root's own retries.
         const secs = Math.max(1, Math.round(event.delayMs / 1000))
-        store.pushBlock({
-          kind: "info",
-          text: `provider ${event.reason} — retrying in ${secs}s (attempt ${event.attempt}/${event.maxAttempts})`,
-        })
+        const text = `provider ${event.reason} — retrying in ${secs}s (attempt ${event.attempt}/${event.maxAttempts})`
+        if (event.nodeId !== undefined) {
+          store.appendNodeLog(event.nodeId, { kind: "info", text })
+        } else {
+          store.pushBlock({ kind: "info", text })
+        }
         return
       }
 
@@ -559,10 +589,39 @@ export const makeEventReducer = (
         return
       }
 
-      // The inter-agent message stream (`board_note`) is tailed by the control
-      // dashboard, not the TUI rail — no-op here (keeps the switch total).
-      case "board_note":
+      case "agent_health": {
+        // A running agent's live state — pure signal write (the fleet tree's
+        // running rows read the map for their suffix). Never a rail line.
+        store.setNodeHealth(event.nodeId, {
+          state: event.state,
+          lastActivityAt: event.lastActivityAt,
+          ...(event.detail !== undefined ? { detail: event.detail } : {}),
+        })
         return
+      }
+
+      // The inter-agent message stream: no longer dropped. Every note lands in
+      // the SENDER-adjacent surfaces (a root-addressed note also gets ONE dim
+      // rail line, so the human sees fleet→root traffic without opening panes).
+      case "board_note": {
+        const clipped =
+          event.note.length > 200 ? `${event.note.slice(0, 199)}…` : event.note
+        const rootKey = String(store.run.getConversationId())
+        if (event.to !== undefined && event.to === rootKey) {
+          // Root-addressed (a completion note / a message to the lead) → one
+          // dim rail line, so fleet→root traffic is visible without panes.
+          store.pushBlock({ kind: "info", text: `✉ ${event.from}: ${clipped}` })
+        } else if (event.to !== undefined) {
+          // Addressed to an agent's inbox → that node's log shows it.
+          store.appendNodeLog(event.to, {
+            kind: "info",
+            text: `✉ from ${event.from}: ${clipped}`,
+          })
+        }
+        // Broadcasts (no `to`) stay off the rail — the blackboard is ambient
+        // chatter the agents read themselves.
+        return
+      }
     }
   }
 }

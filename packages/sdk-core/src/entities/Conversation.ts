@@ -118,5 +118,8 @@ export const AgentResult = Schema.Struct({
    *  `finalText` is mid-thought narration, NOT a deliverable. Callers
    *  surfacing the result should mark it partial. */
   stoppedAtMaxSteps: Schema.optional(Schema.Boolean),
+  /** The degenerate-loop circuit breaker force-stopped the run (repeated
+   *  no-progress turns). Like `stoppedAtMaxSteps`, the result is partial. */
+  stoppedByLoopBreaker: Schema.optional(Schema.Boolean),
 })
 export type AgentResult = typeof AgentResult.Type

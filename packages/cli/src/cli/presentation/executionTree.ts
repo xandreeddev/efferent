@@ -359,12 +359,25 @@ export const onSkillLoad = (
     endedAt: now,
   }).tree
 
-/** Mark every still-running node ok and collapse the open path. */
+/**
+ * Close the ROOT turn's own spine (turns/tools) and collapse the open path —
+ * but LEAVE running keyed sub-agent nodes (and their subtrees) open: in the
+ * async fleet the root turn ends while background agents keep working, and
+ * each has a GUARANTEED terminal `subagent_end` of its own now. The old
+ * blanket "mark everything ok" painted still-running agents green the moment
+ * the root turn ended — the execution tree and the DB-driven fleet tree then
+ * contradicted each other.
+ */
 export const onAgentEnd = (
   tree: ExecutionTree,
   now: number,
 ): ExecutionTree => {
   const closeRunning = (n: TreeNode): TreeNode => {
+    // A keyed sub-agent still running belongs to a live background fiber — its
+    // own subagent_end will close it (and its subtree stays live with it).
+    if (n.kind === "subagent" && n.status === "running" && n.nodeId !== undefined) {
+      return n
+    }
     const children = n.children.map(closeRunning)
     if (n.status === "running") {
       return { ...n, status: "ok", endedAt: now, children }

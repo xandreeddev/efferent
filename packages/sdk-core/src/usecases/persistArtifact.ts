@@ -130,9 +130,13 @@ const persistConstraint = (
     const lines = before.split("\n")
     const idx = lines.findIndex((l) => l.includes(`[${id}]`))
     if (idx >= 0) {
-      // Update in place: keep the existing counters, refresh the rule text.
-      const counters = lines[idx]?.match(/\((✓\d+\s*✗\d+)\)/)?.[0] ?? "(✓0 ✗0)"
-      lines[idx] = `- [${id}] ${counters} ${rule}`
+      // Update in place: refresh the rule text AND bump ✓ — the miner
+      // re-surfacing (and the gate re-verifying) a constraint that already
+      // exists IS the reinforcement signal that it keeps mattering. Before
+      // this, every persisted constraint sat at (✓0 ✗0) forever — the
+      // "self-improving" loop never once reinforced a lesson.
+      const bumped = bumpCounter(lines[idx] ?? "", "✓")
+      lines[idx] = `- [${id}] ${bumped} ${rule}`
       yield* fs.write(abs, lines.join("\n"))
       return { path: abs, created: false, kind: "constraint" as const }
     }
@@ -140,6 +144,48 @@ const persistConstraint = (
     yield* fs.write(abs, next)
     return { path: abs, created: false, kind: "constraint" as const }
   })
+
+/** Bump one side of a `(✓N ✗M)` counter pair in a constraint line — the
+ *  mechanical reinforcement signal (re-learned ⇒ ✓; gate-cited ⇒ ✗). */
+export const bumpCounter = (line: string, side: "✓" | "✗"): string => {
+  const m = line.match(/\(✓(\d+)\s*✗(\d+)\)/)
+  const helpful = m !== null ? Number(m[1]) : 0
+  const harmful = m !== null ? Number(m[2]) : 0
+  return side === "✓" ? `(✓${helpful + 1} ✗${harmful})` : `(✓${helpful} ✗${harmful + 1})`
+}
+
+/**
+ * Bump ✗ for every constraint the gate CITED as violated (by id) — the harmful
+ * half of the reinforcement loop. Called by `driveLoop` after a gate round
+ * whose verdict listed `constraintsViolated`. Best-effort: a missing file or
+ * unknown id is silently skipped (the audit row already carries the citation).
+ */
+export const reinforceConstraints = (
+  displayRoot: string,
+  violatedIds: ReadonlyArray<string>,
+): Effect.Effect<void, never, FileSystem> =>
+  Effect.gen(function* () {
+    if (violatedIds.length === 0) return
+    const fs = yield* FileSystem
+    const abs = resolve(displayRoot, ".efferent/CONSTRAINTS.md")
+    const exists = yield* fs.exists(abs)
+    if (!exists) return
+    const before = (yield* fs.read(abs)).content
+    const lines = before.split("\n")
+    let changed = false
+    for (const id of violatedIds) {
+      const idx = lines.findIndex((l) => l.includes(`[${id}]`))
+      if (idx < 0) continue
+      const line = lines[idx] ?? ""
+      const counters = bumpCounter(line, "✗")
+      const next = line.replace(/\(✓\d+\s*✗\d+\)/, counters)
+      if (next !== line) {
+        lines[idx] = next
+        changed = true
+      }
+    }
+    if (changed) yield* fs.write(abs, lines.join("\n"))
+  }).pipe(Effect.catchAll(() => Effect.void))
 
 // --- skill: one file per skill; grow-and-refine never clobbers an existing one ---
 

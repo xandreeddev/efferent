@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { ConversationId } from "./Conversation.js"
+import { StopReason } from "./Outcome.js"
 
 /** Identity of a node in the branching agent-context tree. */
 export const ContextNodeId = Schema.UUID.pipe(Schema.brand("ContextNodeId"))
@@ -41,8 +42,25 @@ export type ContextSeed = typeof ContextSeed.Type
 export const EdgeKind = Schema.Literal("spawned", "branched", "resumed")
 export type EdgeKind = typeof EdgeKind.Type
 
-export const ContextNodeStatus = Schema.Literal("running", "ok", "error")
+/**
+ * A node's live/terminal status — `running` plus the honest terminal vocabulary
+ * (see `entities/Outcome.ts`): `ok` (complete) · `partial` (a deliverable
+ * exists but the run stopped early — budget / step-cap / stall-after-text) ·
+ * `error` (the run failed) · `killed` (interrupted or stalled with nothing
+ * produced). Old rows only ever carry running/ok/error — no data migration.
+ */
+export const ContextNodeStatus = Schema.Literal(
+  "running",
+  "ok",
+  "partial",
+  "error",
+  "killed",
+)
 export type ContextNodeStatus = typeof ContextNodeStatus.Type
+
+/** Statuses a finished node can carry (everything but `running`). */
+export const TERMINAL_NODE_STATUSES = ["ok", "partial", "error", "killed"] as const
+export type TerminalNodeStatus = (typeof TERMINAL_NODE_STATUSES)[number]
 
 /**
  * The tier a context node occupies, making the SESSION → FLEET → AGENT model
@@ -107,6 +125,12 @@ export const AgentContextNode = Schema.Struct({
   seedMessageCount: Schema.optional(Schema.Number),
   status: ContextNodeStatus,
   returnSummary: Schema.optional(Schema.String),
+  /**
+   * WHY the run stopped (typed — budget / step-cap / stall / interrupt /
+   * provider / error; see `entities/Outcome.ts`). Written by the one terminal
+   * path; absent on running nodes and rows created before the column existed.
+   */
+  stopReason: Schema.optional(StopReason),
   filesChanged: Schema.Array(Schema.String),
   usage: Schema.optional(ContextUsage),
   /**

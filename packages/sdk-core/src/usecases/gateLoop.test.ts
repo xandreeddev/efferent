@@ -3,10 +3,6 @@ import { Effect, Layer } from "effect"
 import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
 import type { ConversationId } from "../entities/Conversation.js"
 import type { DeliverableVerdict } from "../entities/Distillation.js"
-import { ContextTreeStore } from "../ports/ContextTreeStore.js"
-import { ConversationStore } from "../ports/ConversationStore.js"
-import { FileSystem } from "../ports/FileSystem.js"
-import { UtilityLlm } from "../ports/UtilityLlm.js"
 import { type GateInput, Verifier, VerifierError } from "../ports/Verifier.js"
 import { GATE_FEEDBACK_PREAMBLE, gateOnce, type GateStep } from "./gateLoop.js"
 
@@ -48,16 +44,6 @@ const scriptedVerifier = (
     } as never),
   )
 
-/** Ports gateOnce names in its `R` only because the distill step *might* run.
- *  With `autoDistill: false` (or the no-gate branches) they're never touched, so
- *  dying stubs both satisfy the types AND prove they weren't called. */
-const inertPorts = Layer.mergeAll(
-  Layer.succeed(ContextTreeStore, ContextTreeStore.of({} as never)),
-  Layer.succeed(ConversationStore, ConversationStore.of({} as never)),
-  Layer.succeed(UtilityLlm, UtilityLlm.of({} as never)),
-  Layer.succeed(FileSystem, FileSystem.of({} as never)),
-)
-
 const run = (
   params: Parameters<typeof gateOnce>[0],
   verdict: DeliverableVerdict | VerifierError,
@@ -65,23 +51,23 @@ const run = (
   const calls: GateInput[] = []
   return Effect.runPromise(
     gateOnce(params).pipe(
-      Effect.provide(Layer.mergeAll(scriptedVerifier(verdict, calls), inertPorts)),
+      Effect.provide(scriptedVerifier(verdict, calls)),
       Effect.map((step) => ({ step, calls })),
     ),
   )
 }
 
+// gateOnce's R is just `Verifier` now — the in-gate distill (and the ports it
+// dragged in) is gone; learning happens once, at the turn boundary.
 const base = {
   task: "ship the rate limiter",
   summary: "added a token-bucket limiter",
   repoDir: "/ws",
-  conversationId: CONV,
   attempt: 1,
   maxAttempts: 3,
-  autoDistill: false,
 }
 
-describe("gateOnce — the shared swarm-gate decision (root + coordinator tiers)", () => {
+describe("gateOnce — the swarm-gate decision (the ONE root-tier gate)", () => {
   test("no fresh sub-agent nodes → no-subagents, the verifier is never called", async () => {
     const { step, calls } = await run(
       { ...base, freshNodes: [] },
