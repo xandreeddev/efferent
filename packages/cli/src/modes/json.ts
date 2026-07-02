@@ -28,17 +28,27 @@ import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
+import {
+  foldOutcomeEvent,
+  initialOutcomeFold,
+  outcomeExitCode,
+  type OutcomeFold,
+} from "./outcome.js"
 
 const writeJson = (event: AgentEvent): Effect.Effect<void> =>
   Effect.sync(() => {
     process.stdout.write(JSON.stringify(event) + "\n")
   })
 
-const consumeEvents = (queue: Queue.Queue<AgentEvent>) =>
+const consumeEvents = (
+  queue: Queue.Queue<AgentEvent>,
+  foldBox: { current: OutcomeFold },
+) =>
   Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue)
       if (event.type === "flush") return // drain sentinel — never emitted
+      foldBox.current = foldOutcomeEvent(foldBox.current, event)
       yield* writeJson(event)
     }
   })
@@ -81,7 +91,8 @@ export const runJsonMode = (
       Effect.orDie,
     )
     const queue = yield* Queue.unbounded<AgentEvent>()
-    const consumer = yield* Effect.forkDaemon(consumeEvents(queue))
+    const foldBox = { current: initialOutcomeFold }
+    const consumer = yield* Effect.forkDaemon(consumeEvents(queue, foldBox))
 
     const hooks = makeEventHooks(queue)
     const runtime = buildScopeRuntime(
@@ -93,6 +104,10 @@ export const runJsonMode = (
         tools: input.tools,
         instructions: renderInstructionsSection(input.instructionFiles),
         allowBash: input.allowBash,
+        // Bus-published events (agent_health, board notes) ride the same
+        // queue as the hook events — without this the headless stream
+        // silently dropped them.
+        onBusEvent: (e) => Queue.offer(queue, e).pipe(Effect.asVoid),
       },
       hooks,
     )
@@ -131,6 +146,10 @@ export const runJsonMode = (
       // Approval port answers allow-all behind that gate (no prompts in CI).
       Effect.provide(ApprovalAllowAllLive),
       Effect.ensuring(runtime.bus.markDone(rootKey)),
+      // Supervised-fleet teardown: on EVERY exit path (done, error, Ctrl-C)
+      // interrupt + AWAIT the fleet fibers so each records killed(shutdown) —
+      // and so live fibers can't keep the process alive past the run.
+      Effect.ensuring(runtime.bus.shutdown().pipe(Effect.ignore)),
     )
 
     // Learn for next runs: mine + persist reusable lessons, emitted as a final
@@ -154,4 +173,8 @@ export const runJsonMode = (
     // event) hit stdout before the process exits. No sleep, no race.
     yield* Queue.offer(queue, { type: "flush" })
     yield* Fiber.join(consumer)
+
+    // Headless honesty: the exit code carries the run's real outcome (the
+    // stream already carries the detail — every event is on stdout).
+    process.exitCode = outcomeExitCode(foldBox.current)
   })

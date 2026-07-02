@@ -56,7 +56,7 @@ describe("SSE codec", () => {
 
   test("parser yields multiple frames from one chunk, in order", () => {
     const a = encodeSeqEvent(seqEvent(1, { type: "turn_start", turnIndex: 0 }))
-    const b = encodeSeqEvent(seqEvent(2, { type: "agent_end", finalText: "done", messages: [] }))
+    const b = encodeSeqEvent(seqEvent(2, { type: "agent_end", finalText: "done" }))
     const frames = makeSseParser().push(a + b)
     expect(frames.map((f) => f.id)).toEqual(["1", "2"])
     expect(frameToSeqEvent(frames[1]!)?.event.type).toBe("agent_end")

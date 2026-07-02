@@ -1,5 +1,37 @@
 import { describe, expect, it } from "bun:test"
-import { eventParts } from "./openCode.js"
+import { eventParts, thinkingParams } from "./openCode.js"
+
+/**
+ * The thinking-param shape per model family. The regression these lock: Kimi
+ * K2.7+ are always-thinking and 400 on `thinking: { type: "disabled" }`
+ * (`invalid thinking: only type=enabled is allowed for this model`) — with
+ * `openCodeThinkingMode: off` that killed EVERY code-tier node (11 error nodes
+ * in the run forensics). "off" on those models must omit the param entirely;
+ * K2.6/DeepSeek keep the explicit disable (their default is thinking ON).
+ */
+describe("opencode thinkingParams", () => {
+  it("kimi-k2.7 + off ⇒ NO thinking key (the model rejects type=disabled)", () => {
+    expect(thinkingParams("kimi-k2.7-code", "off")).toEqual({})
+  })
+
+  it("kimi-k2.7 + high ⇒ explicit enabled", () => {
+    expect(thinkingParams("kimi-k2.7-code", "high")).toEqual({
+      thinking: { type: "enabled" },
+    })
+  })
+
+  it("kimi-k2.6 + off ⇒ explicit disabled (still accepted there)", () => {
+    expect(thinkingParams("kimi-k2.6", "off")).toEqual({
+      thinking: { type: "disabled" },
+    })
+  })
+
+  it("deepseek + off ⇒ explicit disabled", () => {
+    expect(thinkingParams("deepseek-v4-flash", "off")).toEqual({
+      thinking: { type: "disabled" },
+    })
+  })
+})
 
 /**
  * The opencode SSE decoder turns OpenAI-shaped streaming deltas into Response

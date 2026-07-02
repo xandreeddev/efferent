@@ -91,6 +91,8 @@ export const stubConv = (rootCid: string) =>
         markPending: () => Effect.void,
         clearPending: () => Effect.void,
         listPending: () => Effect.succeed([]),
+        recordGateVerdict: () => Effect.void,
+        listGateVerdicts: () => Effect.succeed([]),
       })
     }),
   )

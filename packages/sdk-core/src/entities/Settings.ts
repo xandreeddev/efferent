@@ -101,6 +101,12 @@ export const Settings = Schema.Struct({
         "The CODE role: model the spawned coding sub-agents (the fleet) run on, as '<provider>:<modelId>'. Sub-agents never choose their own model — this is the single knob for the whole fleet. Unset → the main model.",
     }),
   ),
+  fallbackModel: Schema.optional(
+    Schema.String.annotations({
+      description:
+        "Failover model as '<provider>:<modelId>': when a run's model hits a PERSISTENT provider defect (quota exhausted, invalid-request config error — never a transient blip), the router retries the call ONCE on this selection, loudly annotated. The code role falls back to the general model first; this is the general role's own fallback. Unset → no failover (the error surfaces).",
+    }),
+  ),
   toolResultMaxTokens: Schema.optional(
     Schema.Number.annotations({
       description:
@@ -116,7 +122,7 @@ export const Settings = Schema.Struct({
   autoLoop: Schema.optional(
     Schema.Boolean.annotations({
       description:
-        "The self-improving task loop (structural): when a run used sub-agents, the runtime submits the deliverable to the independent Opus gate at BOTH tiers — each coordinator's subtree before it returns, and the whole run at the root — learns from a 'needs work' verdict (distill), and re-runs with the gate's reasons until it passes (capped by maxLoopAttempts). Unset → on; false → no gate, the coordinator just reports the architect's verdict (single-cycle behavior).",
+        "The mandatory swarm gate (structural, ONE tier): when a run used sub-agents, the runtime submits the aggregate deliverable to the independent Opus gate at the ROOT, and on 'needs work' re-runs with the gate's reasons (capped by maxLoopAttempts + a 15-min gate wall clock). Every round is persisted to gate_verdicts (including 'unavailable'), so verification is auditable. Unset → on; false → no gate, deliver on the architect's in-fleet verdict alone.",
     }),
   ),
   autoDistill: Schema.optional(
@@ -128,7 +134,7 @@ export const Settings = Schema.Struct({
   maxLoopAttempts: Schema.optional(
     Schema.Number.annotations({
       description:
-        "Self-improving loop: max Opus-gate rounds before the coordinator delivers what it has. Unset → 3 (the article's typical convergence). 1 disables the retry (gate once, deliver). Token budget + spawn depth are the hard ceilings regardless.",
+        "Max Opus-gate rounds before the run delivers what it has. Unset → 2 (one retry — each retry re-runs the whole fleet, expensive by construction). 1 disables the retry (gate once, deliver). The 15-min gate wall clock + token budget + spawn depth are the hard ceilings regardless.",
     }),
   ),
   theme: Schema.optional(

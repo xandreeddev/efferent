@@ -1,6 +1,7 @@
 import { basename } from "node:path"
 import { type AgentContextNode, type NodeKind, nodeKind } from "@xandreed/sdk-core"
 import { glyph } from "./theme/index.js"
+import { healthSuffix, type NodeHealthInfo } from "./agentState.js"
 import { formatTokens } from "./statusBar.js"
 
 /**
@@ -26,7 +27,12 @@ export interface TreeNodeDisplay {
   readonly label: string
   /** Scope dir basename — shown dim after a title so the scope stays visible. */
   readonly folder: string
-  readonly status: "running" | "ok" | "error"
+  /** Live/terminal status — `partial` (usable but stopped early) and `killed`
+   *  (interrupted / stalled empty) join ok/error; see `entities/Outcome.ts`. */
+  readonly status: "running" | "ok" | "partial" | "error" | "killed"
+  /** A RUNNING row's live health suffix (`retrying: 429 2/3` · `idle 2m`);
+   *  `alert` severity = no sign of life past the stale threshold. */
+  readonly health?: { readonly line: string; readonly severity: "info" | "alert" }
   readonly edgeKind: "spawned" | "branched" | "resumed"
   readonly seedKind: "task" | "selection" | "handoff"
   readonly summary?: string
@@ -160,6 +166,12 @@ export const buildNavRows = (
     /** The active root's own turn is in flight — stamps `rootRunning` on the
      *  active conversation row so the lead shows a live running glyph. */
     readonly rootRunning?: boolean
+    /** Live per-node health (from `agent_health` events) — running rows get a
+     *  pre-formatted suffix (`generating` / `retrying: 429 2/3` / `idle 2m`). */
+    readonly health?: ReadonlyMap<string, NodeHealthInfo>
+    /** "Now" for staleness math (quantized by the caller so rows don't rebuild
+     *  per frame). */
+    readonly now?: number
   } = {},
 ): ReadonlyArray<TreeRowData> => {
   const byParent = childrenByParent(nodes)
@@ -187,6 +199,12 @@ export const buildNavRows = (
         label: node.title ?? (basename(node.folder) || node.folder),
         folder: basename(node.folder) || node.folder,
         status: node.status,
+        ...(() => {
+          if (node.status !== "running") return {}
+          const h = opts.health?.get(node.id as string)
+          if (h === undefined) return {}
+          return { health: healthSuffix(h, opts.now ?? h.lastActivityAt) }
+        })(),
         edgeKind: node.edgeKind,
         seedKind: node.seed.kind,
         ...(node.returnSummary !== undefined ? { summary: firstLine(node.returnSummary) } : {}),
@@ -277,7 +295,7 @@ const rowSignature = (r: TreeRowData): string => {
   const base = `${r.depth}|${r.rail.prefix}|${r.rail.connector}|${r.foldId ?? ""}|${r.head ? 1 : 0}`
   return d.kind === "conversation"
     ? `c|${base}|${d.label}|${d.active ? 1 : 0}|${d.nodeCount}|${d.folded ? 1 : 0}|${d.hasChildren ? 1 : 0}|${d.rootRunning ? 1 : 0}`
-    : `n|${base}|${d.tier}|${d.label}|${d.folder}|${d.status}|${d.edgeKind}|${d.seedKind}|${d.summary ?? ""}|${d.filesCount}|${d.tokens ?? ""}|${d.stale ? 1 : 0}|${d.active ? 1 : 0}|${d.folded ? 1 : 0}|${d.hasChildren ? 1 : 0}`
+    : `n|${base}|${d.tier}|${d.label}|${d.folder}|${d.status}|${d.health !== undefined ? `${d.health.line}~${d.health.severity}` : ""}|${d.edgeKind}|${d.seedKind}|${d.summary ?? ""}|${d.filesCount}|${d.tokens ?? ""}|${d.stale ? 1 : 0}|${d.active ? 1 : 0}|${d.folded ? 1 : 0}|${d.hasChildren ? 1 : 0}`
 }
 
 /**

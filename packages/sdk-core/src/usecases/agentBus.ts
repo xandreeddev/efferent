@@ -1,5 +1,38 @@
-import { Deferred, Effect, Fiber, Ref } from "effect"
+import { Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect"
 import type { AgentEvent } from "../entities/AgentEvent.js"
+
+/** WHO killed a run — stamped on the entry when an interrupt API fires, read by
+ *  the exit finalizer so the persisted StopReason says `interrupt(by: …)`
+ *  instead of guessing. Mirrors `StopReason`'s interrupt `by` in Outcome.ts. */
+export type InterruptBy = "human" | "parent" | "shutdown" | "deadline"
+
+/**
+ * What a running agent is DOING right now — the health state behind the
+ * watchdog, the fleet tree's live suffix, and `wait_for_agents`' per-agent
+ * detail. The watchdog kills only a zero-activity `starting`/`generating` run
+ * (a hung model call — the original silent-stall class); every other state is
+ * bounded elsewhere (tools by their own timeouts, retries by the retry cap,
+ * waits by the gather timeout, approval by the human who owns it) and must
+ * never be killed as "stalled".
+ */
+export type RunState =
+  | "starting"
+  | "generating"
+  | "tool-running"
+  | "retrying"
+  | "awaiting-approval"
+  | "waiting-on-agents"
+
+export interface RunHealth {
+  readonly state: RunState
+  /** Epoch ms of the last observable signal (turn start / tool boundary /
+   *  narration / retry notice). Staleness is computed by readers. */
+  readonly lastActivityAt: number
+  /** Short human line: the running tool's name, `429 2/3 — next in 8s`, … */
+  readonly detail?: string
+  /** Billed tokens so far (input+output), when known. */
+  readonly tokens?: number
+}
 
 /**
  * The in-memory agent **comms + supervision bus** — the spine of the async
@@ -17,10 +50,12 @@ import type { AgentEvent } from "../entities/AgentEvent.js"
  *  - **Blackboard** — a shared scratchpad every agent `post`s/`read`s, so
  *    parallel siblings see each other's findings without direct addressing.
  *  - **Supervision** — each running agent registers its **fiber** (so `:stop`
- *    and teardown can interrupt it) and a **completion** `Deferred` (so a parent
- *    can await it without polling). When it finishes the bus keeps a small
- *    terminal **result** record (status + summary + files) so a gather can read
- *    a just-finished agent's outcome even after its mailbox is gone.
+ *    and a subtree kill can interrupt it), a **completion** `Deferred` (so a
+ *    parent can await it without polling), and its live **health** (state +
+ *    last-activity — the watchdog's and the UI's shared truth). Spawned runs
+ *    are forked into the bus's fleet scope (`forkSupervised`); `shutdown`
+ *    interrupts + awaits them all. Finished-run RECORDS live in the durable
+ *    context tree, not here — the bus carries only live state.
  *
  * Nothing blocks structurally: spawning forks a fiber and returns immediately;
  * gathering (`awaitChange`) races completions against the waiter's own inbox and
@@ -53,12 +88,15 @@ export interface BoardNote {
   readonly at: number
 }
 
-/** Live status of an agent the bus knows about. */
-export type AgentRunStatus = "running" | "ok" | "error"
+/** Live status of an agent the bus knows about — `running` plus the honest
+ *  terminal vocabulary (see `entities/Outcome.ts`). */
+export type AgentRunStatus = "running" | "ok" | "partial" | "error" | "killed"
 
-/** The terminal outcome of a finished run — what a gather reports to a parent. */
+/** The terminal outcome of a finished run — what a gather reports to a parent.
+ *  `partial` = a usable deliverable that stopped early (budget / step-cap /
+ *  stall-after-text); `killed` = interrupted / stalled with nothing produced. */
 export interface AgentResultRecord {
-  readonly status: "ok" | "error"
+  readonly status: "ok" | "partial" | "error" | "killed"
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
 }
@@ -70,6 +108,8 @@ export interface AgentSnapshot {
   readonly status: AgentRunStatus
   readonly summary?: string
   readonly filesChanged?: ReadonlyArray<string>
+  /** Live health, for RUNNING entries only (what it's doing + last activity). */
+  readonly health?: RunHealth
 }
 
 /** Options for registering a running agent. */
@@ -122,10 +162,62 @@ export interface AgentBus {
    *  fleet-idle detection (`length === 0` ⇒ idle) and a fleet-scoped interrupt; a
    *  finished child needs neither and must not keep these sets non-empty forever. */
   readonly runningChildrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
-  /** Interrupt one running agent's fiber. False when it isn't running / has no fiber. */
-  readonly interrupt: (nodeId: string) => Effect.Effect<boolean>
-  /** Interrupt every running agent (Esc / process teardown — no orphans). */
-  readonly interruptAll: () => Effect.Effect<void>
+  /** ALL running descendants of `parentKey` (BFS over the parent links) — the
+   *  live fleet subtree, for attach snapshots and scoped views. */
+  readonly runningSubtreeOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
+  /** Interrupt one running agent's fiber. False when it isn't running / has no
+   *  fiber. `by` (default `"parent"`) stamps WHO killed it for the finalizer. */
+  readonly interrupt: (nodeId: string, by?: InterruptBy) => Effect.Effect<boolean>
+  /** Interrupt ONE fleet's running subtree — every running descendant of
+   *  `parentKey` (BFS over the parent links), never the rest of the bus. This is
+   *  the scoped kill for Esc / a headless deadline / a parent stopping its own
+   *  fleet; `interruptAll` stays reserved for process shutdown. */
+  readonly interruptSubtree: (parentKey: string, by?: InterruptBy) => Effect.Effect<void>
+  /** Interrupt every running agent (process teardown ONLY — no orphans). A
+   *  user-facing cancel must use {@link interruptSubtree}: this kills every
+   *  fleet on the bus, including ones the canceller doesn't own. */
+  readonly interruptAll: (by?: InterruptBy) => Effect.Effect<void>
+  /** WHO interrupted this run, if an interrupt API stamped it — read by the exit
+   *  finalizer (the entry is still registered at that point). */
+  readonly interruptReasonOf: (
+    nodeId: string,
+  ) => Effect.Effect<InterruptBy | undefined>
+  /**
+   * Stamp a running agent's live health (state transition and/or activity).
+   * Edge-triggered `agent_health` events ride the bus sink: one on every state
+   * CHANGE, plus a re-stamp when `lastActivityAt` jumps a bucket — never a
+   * heartbeat stream. No-op for an unregistered id.
+   */
+  readonly setHealth: (
+    nodeId: string,
+    patch: {
+      readonly state?: RunState
+      readonly detail?: string
+      readonly at: number
+      readonly tokens?: number
+    },
+  ) => Effect.Effect<void>
+  /** The live health of a RUNNING agent (undefined once finished/unknown). */
+  readonly healthOf: (nodeId: string) => Effect.Effect<RunHealth | undefined>
+  /**
+   * Fork a spawned run as a SUPERVISED fiber in the bus's fleet scope — the
+   * replacement for the old `forkDaemon(...catchAll(() => void))`, whose exits
+   * were discarded and whose fibers outlived teardown (stranding DB rows
+   * `running` forever on process exit). Supervised fibers are interrupted AND
+   * AWAITED by {@link shutdown}, so every run's exit finalizer gets to record
+   * an honest `killed(shutdown)` before the process quits.
+   */
+  readonly forkSupervised: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Fiber.RuntimeFiber<A, E>, never, R>
+  /**
+   * Process-teardown: stamp every running entry `interruptedBy: "shutdown"`,
+   * then close the fleet scope — interrupting every supervised fiber and
+   * WAITING for each one's finalizer to record its terminal return. The one
+   * sanctioned "kill everything" (drivers' exit finalizers); a user-facing
+   * cancel uses {@link interruptSubtree}.
+   */
+  readonly shutdown: () => Effect.Effect<void>
   /** Post to an agent's inbox + wake it. Returns false when the target isn't running. */
   readonly post: (nodeId: string, msg: InboxMessage) => Effect.Effect<boolean>
   /** Take + clear a mailbox (the recipient drains it at a turn boundary). */
@@ -159,19 +251,16 @@ interface AgentEntry {
   /** Set while the agent is parked in awaitChange; a post fulfils it to wake it. */
   readonly wake: Deferred.Deferred<void> | undefined
   readonly fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined
-}
-
-interface DoneEntry {
-  readonly label: string
-  readonly parentKey: string | null
-  readonly status: "ok" | "error"
-  readonly summary: string
-  readonly filesChanged: ReadonlyArray<string>
+  /** WHO interrupted this run (stamped by the interrupt APIs, read by finalize). */
+  readonly interruptedBy: InterruptBy | undefined
+  /** Live health (what it's doing + last activity) — see {@link RunHealth}. */
+  readonly health: RunHealth | undefined
+  /** When an `agent_health` event last rode the sink (edge-trigger bookkeeping). */
+  readonly healthEmittedAt: number | undefined
 }
 
 interface BusState {
   readonly running: ReadonlyMap<string, AgentEntry>
-  readonly done: ReadonlyMap<string, DoneEntry>
   readonly board: ReadonlyArray<BoardNote>
   /**
    * Completion notes for a parent that ISN'T currently running — keyed by the
@@ -180,14 +269,17 @@ interface BusState {
    * merged into the parent's inbox the next time it registers a mailbox
    * (`markRunning`, including the auto-resume). Without this, an auto-resumed
    * orchestrator drains an empty inbox and reports nothing ("no ping back").
+   *
+   * (There is NO `done` map any more: finished-run records live in the DURABLE
+   * store — the context tree — which never ages out. The old bounded map's
+   * aging made `wait_for_agents` synthesize finished children as
+   * phantom-`running`, so a big fleet's gather could spin forever.)
    */
   readonly pending: ReadonlyMap<string, ReadonlyArray<InboxMessage>>
 }
 
 /** Keep the blackboard bounded — oldest notes fall off (the agent re-reads). */
 const MAX_BOARD = 200
-/** Keep recently-finished results bounded — a gather reads them, then they age out. */
-const MAX_DONE = 200
 /** Cap buffered completions per idle parent (a parent that never resumes). */
 const MAX_PENDING = 100
 
@@ -208,28 +300,88 @@ export const makeAgentBus = (
 ): AgentBus => {
   const ref = Ref.unsafeMake<BusState>({
     running: new Map(),
-    done: new Map(),
     board: [],
     pending: new Map(),
   })
-  const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
-    onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
+  // The fleet scope every spawned run is forked into (`forkSupervised`) — the
+  // bus IS the supervisor, so it owns the fibers' lifetime: `shutdown` closes
+  // this scope, which interrupts AND awaits each supervised fiber (their exit
+  // finalizers record honest terminal returns before the process exits).
+  const fleetScope = Effect.runSync(Scope.make())
+  const emit = (
+    from: string,
+    note: string,
+    at: number,
+    to?: string,
+  ): Effect.Effect<void> =>
+    onEvent !== undefined
+      ? onEvent({
+          type: "board_note",
+          from,
+          note,
+          at,
+          ...(to !== undefined ? { to } : {}),
+        })
+      : Effect.void
 
-  const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot => {
+  // LIVE entries only — a finished/unknown id yields nothing (its terminal
+  // record lives in the durable store; the old phantom-`running` fallback here
+  // is what made aged-out children look alive forever).
+  const snapshotOne = (s: BusState, nodeId: string): AgentSnapshot | undefined => {
     const run = s.running.get(nodeId)
-    if (run !== undefined) return { nodeId, label: run.label, status: "running" }
-    const fin = s.done.get(nodeId)
-    if (fin !== undefined) {
-      return {
-        nodeId,
-        label: fin.label,
-        status: fin.status,
-        summary: fin.summary,
-        filesChanged: fin.filesChanged,
-      }
+    if (run === undefined) return undefined
+    return {
+      nodeId,
+      label: run.label,
+      status: "running",
+      ...(run.health !== undefined ? { health: run.health } : {}),
     }
-    return { nodeId, label: shortKey(nodeId), status: "running" }
   }
+
+  /** All running descendants of `parentKey` — BFS over the running entries'
+   *  parent links (shared by the subtree kill and the attach snapshot). */
+  const subtreeIds = (s: BusState, parentKey: string): ReadonlyArray<string> => {
+    const byParent = new Map<string, Array<string>>()
+    for (const [nodeId, e] of s.running.entries()) {
+      if (e.parentKey === null) continue
+      const arr = byParent.get(e.parentKey) ?? []
+      arr.push(nodeId)
+      byParent.set(e.parentKey, arr)
+    }
+    const seen = new Set<string>()
+    let frontier = [parentKey]
+    while (frontier.length > 0) {
+      const next: string[] = []
+      for (const key of frontier) {
+        for (const child of byParent.get(key) ?? []) {
+          if (seen.has(child)) continue
+          seen.add(child)
+          next.push(child)
+        }
+      }
+      frontier = next
+    }
+    return [...seen]
+  }
+
+  /** Stamp `interruptedBy` on the given running entries (first stamp wins) and
+   *  return their fibers — one atomic step so the finalizer always sees the
+   *  reason before the interrupt lands. */
+  const stampInterrupted = (
+    nodeIds: ReadonlyArray<string>,
+    by: InterruptBy,
+  ): Effect.Effect<ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>>> =>
+    Ref.modify(ref, (s) => {
+      const running = new Map(s.running)
+      const fibers: Array<Fiber.RuntimeFiber<unknown, unknown>> = []
+      for (const id of nodeIds) {
+        const e = running.get(id)
+        if (e === undefined) continue
+        running.set(id, { ...e, interruptedBy: e.interruptedBy ?? by })
+        if (e.fiber !== undefined) fibers.push(e.fiber)
+      }
+      return [fibers, { ...s, running }]
+    })
 
   return {
     markRunning: (nodeId, label, opts) =>
@@ -251,6 +403,10 @@ export const makeAgentBus = (
             completion: existing?.completion ?? completion,
             wake: existing?.wake,
             fiber: existing?.fiber,
+            interruptedBy: existing?.interruptedBy,
+            health:
+              existing?.health ?? { state: "starting", lastActivityAt: Date.now() },
+            healthEmittedAt: existing?.healthEmittedAt,
           })
           if (buffered.length === 0) return { ...s, running }
           const pending = new Map(s.pending)
@@ -274,21 +430,10 @@ export const makeAgentBus = (
           const e = s.running.get(nodeId)
           const running = new Map(s.running)
           running.delete(nodeId)
-          const done = new Map(s.done)
-          done.set(nodeId, {
-            label: e?.label ?? shortKey(nodeId),
-            parentKey: e?.parentKey ?? null,
-            status: result.status,
-            summary: result.summary,
-            filesChanged: result.filesChanged,
-          })
-          // Bound the done map — drop the oldest insertions.
-          while (done.size > MAX_DONE) {
-            const oldest = done.keys().next().value
-            if (oldest === undefined) break
-            done.delete(oldest)
-          }
-          return [e, { ...s, running, done }]
+          // No done-record kept here: the terminal outcome is already durable
+          // in the context tree (recordReturn precedes complete on the one
+          // terminal path); the bus only wakes + delivers.
+          return [e, { ...s, running }]
         })
         if (entry === undefined) return
         // Wake anyone awaiting this run (parent gather) and its own park latch.
@@ -299,7 +444,17 @@ export const makeAgentBus = (
         // Deliver the outcome to the parent's inbox + the blackboard, so a parent
         // not actively waiting still picks it up at its next turn, and siblings
         // see it on the board. Best-effort: a finished/absent parent just drops it.
-        const line = `${result.status === "ok" ? "finished" : "failed"}: ${clip(result.summary, 600)}`
+        // The label carries the honest status — a partial result must read as
+        // usable-but-incomplete, never as plain "finished" or "failed".
+        const verb =
+          result.status === "ok"
+            ? "finished"
+            : result.status === "partial"
+              ? "finished (partial — stopped early)"
+              : result.status === "killed"
+                ? "killed (did not finish)"
+                : "failed"
+        const line = `${verb}: ${clip(result.summary, 600)}`
         if (entry.parentKey !== null && entry.parentKey.length > 0) {
           const at = Date.now()
           const msg = { from: `agent ${shortKey(nodeId)} (${entry.label})`, content: line, at }
@@ -333,7 +488,7 @@ export const makeAgentBus = (
           ...s,
           board: [...s.board, { from: entry.label, note: line, at }].slice(-MAX_BOARD),
         }))
-        yield* emit(entry.label, line, at)
+        yield* emit(entry.label, line, at, entry.parentKey ?? undefined)
       }),
 
     markDone: (nodeId) =>
@@ -361,19 +516,17 @@ export const makeAgentBus = (
         ),
       ),
 
+    // RUNNING children only — a finished child's record is in the durable
+    // store; gathers union this with the tree (`wait_for_agents`), so "watch
+    // everything I spawned" still reports long-finished agents without the bus
+    // holding a bounded, aging done-map.
     childrenOf: (parentKey) =>
       Ref.get(ref).pipe(
-        Effect.map((s) => {
-          const running = [...s.running.entries()]
+        Effect.map((s) =>
+          [...s.running.entries()]
             .filter(([, e]) => e.parentKey === parentKey)
-            .map(([nodeId]) => nodeId)
-          // Finished children too, so a gather's "watch all I spawned" default
-          // still reports an agent that completed before the parent looked.
-          const done = [...s.done.entries()]
-            .filter(([, e]) => e.parentKey === parentKey)
-            .map(([nodeId]) => nodeId)
-          return [...new Set([...running, ...done])]
-        }),
+            .map(([nodeId]) => nodeId),
+        ),
       ),
 
     runningChildrenOf: (parentKey) =>
@@ -385,28 +538,105 @@ export const makeAgentBus = (
         ),
       ),
 
-    interrupt: (nodeId) =>
+    interrupt: (nodeId, by) =>
       Effect.gen(function* () {
-        const fiber = yield* Ref.get(ref).pipe(
-          Effect.map((s) => s.running.get(nodeId)?.fiber),
+        const fiber = yield* stampInterrupted([nodeId], by ?? "parent").pipe(
+          Effect.map((fibers) => fibers[0]),
         )
         if (fiber === undefined) return false
         yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
         return true
       }),
 
-    interruptAll: () =>
+    interruptSubtree: (parentKey, by) =>
       Effect.gen(function* () {
-        const fibers = yield* Ref.get(ref).pipe(
-          Effect.map((s) =>
-            [...s.running.values()]
-              .map((e) => e.fiber)
-              .filter((f): f is Fiber.RuntimeFiber<unknown, unknown> => f !== undefined),
-          ),
-        )
+        // BFS over a snapshot walk (a child spawned mid-interrupt is
+        // orphan-proofed by its parent's interruption landing before the next
+        // spawn can register).
+        const s = yield* Ref.get(ref)
+        const fibers = yield* stampInterrupted(subtreeIds(s, parentKey), by ?? "parent")
         yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
           discard: true,
         })
+      }),
+
+    runningSubtreeOf: (parentKey) =>
+      Ref.get(ref).pipe(Effect.map((s) => subtreeIds(s, parentKey))),
+
+    interruptAll: (by) =>
+      Effect.gen(function* () {
+        const ids = yield* Ref.get(ref).pipe(Effect.map((s) => [...s.running.keys()]))
+        const fibers = yield* stampInterrupted(ids, by ?? "shutdown")
+        yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
+          discard: true,
+        })
+      }),
+
+    interruptReasonOf: (nodeId) =>
+      Ref.get(ref).pipe(Effect.map((s) => s.running.get(nodeId)?.interruptedBy)),
+
+    setHealth: (nodeId, patch) =>
+      Effect.gen(function* () {
+        const emit = yield* Ref.modify(ref, (s) => {
+          const e = s.running.get(nodeId)
+          if (e === undefined) {
+            return [undefined as RunHealth | undefined, s] as const
+          }
+          const prev = e.health
+          const health: RunHealth = {
+            state: patch.state ?? prev?.state ?? "starting",
+            lastActivityAt: patch.at,
+            ...(patch.detail !== undefined
+              ? { detail: patch.detail }
+              : patch.state === undefined && prev?.detail !== undefined
+                ? { detail: prev.detail }
+                : {}),
+            ...(patch.tokens !== undefined
+              ? { tokens: patch.tokens }
+              : prev?.tokens !== undefined
+                ? { tokens: prev.tokens }
+                : {}),
+          }
+          // Edge-triggered: a state CHANGE always emits; same-state activity
+          // re-emits only when the last emission is a bucket (15s) old — so the
+          // ledger sees transitions, never a per-token heartbeat.
+          const stateChanged = prev?.state !== health.state
+          const stale =
+            e.healthEmittedAt === undefined || patch.at - e.healthEmittedAt >= 15_000
+          const doEmit = stateChanged || stale
+          const running = new Map(s.running)
+          running.set(nodeId, {
+            ...e,
+            health,
+            healthEmittedAt: doEmit ? patch.at : e.healthEmittedAt,
+          })
+          return [doEmit ? health : undefined, { ...s, running }] as const
+        })
+        if (emit !== undefined && onEvent !== undefined) {
+          yield* onEvent({
+            type: "agent_health",
+            nodeId,
+            state: emit.state,
+            lastActivityAt: emit.lastActivityAt,
+            ...(emit.detail !== undefined ? { detail: emit.detail } : {}),
+            ...(emit.tokens !== undefined ? { tokens: emit.tokens } : {}),
+          }).pipe(Effect.catchAllCause(() => Effect.void))
+        }
+      }),
+
+    healthOf: (nodeId) =>
+      Ref.get(ref).pipe(Effect.map((s) => s.running.get(nodeId)?.health)),
+
+    forkSupervised: (effect) => Effect.forkIn(effect, fleetScope),
+
+    shutdown: () =>
+      Effect.gen(function* () {
+        const ids = yield* Ref.get(ref).pipe(Effect.map((s) => [...s.running.keys()]))
+        yield* stampInterrupted(ids, "shutdown")
+        // Close the fleet scope: every supervised fiber is interrupted and
+        // AWAITED, so each run's finalizer records `killed(shutdown)` — no more
+        // rows stranded `running` by a process exit.
+        yield* Scope.close(fleetScope, Exit.void)
       }),
 
     post: (nodeId, msg) =>
@@ -422,7 +652,7 @@ export const makeAgentBus = (
         if (entry.wake !== undefined) {
           yield* Deferred.succeed(entry.wake, undefined).pipe(Effect.ignore)
         }
-        yield* emit(msg.from, msg.content, msg.at)
+        yield* emit(msg.from, msg.content, msg.at, nodeId)
         return true
       }),
 
@@ -448,8 +678,11 @@ export const makeAgentBus = (
           const ids =
             nodeIds !== undefined && nodeIds.length > 0
               ? nodeIds
-              : [...new Set([...s.running.keys(), ...s.done.keys()])]
-          return ids.map((id) => snapshotOne(s, id))
+              : [...s.running.keys()]
+          return ids.flatMap((id) => {
+            const snap = snapshotOne(s, id)
+            return snap !== undefined ? [snap] : []
+          })
         }),
       ),
 

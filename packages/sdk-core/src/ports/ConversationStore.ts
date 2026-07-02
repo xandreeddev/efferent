@@ -5,6 +5,25 @@ import type {
   ConversationId,
 } from "../entities/Conversation.js"
 
+/**
+ * One persisted gate round — the audit trail behind the mandatory swarm gate.
+ * BEFORE this table existed a flaky verifier degraded to a SILENT bypass
+ * ("claude exited 1 after 2s" ×3 in the forensics, no trace anywhere): every
+ * round now lands a row, INCLUDING `unavailable` (with the error text), so
+ * "was this deliverable actually verified?" is answerable after the fact.
+ */
+export interface GateVerdictRecord {
+  readonly conversationId: ConversationId
+  readonly attempt: number
+  readonly verdict: "sound" | "needs_work" | "blocked" | "unavailable"
+  readonly reasons: ReadonlyArray<string>
+  readonly filesChanged: ReadonlyArray<string>
+  readonly advisory: boolean
+  readonly durationMs: number
+  /** The verifier's failure detail when `unavailable` (subprocess stderr/exit). */
+  readonly error?: string
+}
+
 export class ConversationStoreError extends Data.TaggedError(
   "ConversationStoreError",
 )<{
@@ -124,6 +143,18 @@ export class ConversationStore extends Context.Tag(
       workspaceDir: string,
     ) => Effect.Effect<
       ReadonlyArray<{ readonly id: ConversationId; readonly prompt: string }>,
+      ConversationStoreError
+    >
+    /** Persist one gate round (see {@link GateVerdictRecord}) — best-effort
+     *  callers `Effect.ignore` failures; the gate must never break on audit IO. */
+    readonly recordGateVerdict: (
+      record: GateVerdictRecord,
+    ) => Effect.Effect<void, ConversationStoreError>
+    /** The conversation's gate rounds, oldest first — the audit view. */
+    readonly listGateVerdicts: (
+      id: ConversationId,
+    ) => Effect.Effect<
+      ReadonlyArray<GateVerdictRecord & { readonly createdAt: number }>,
       ConversationStoreError
     >
   }

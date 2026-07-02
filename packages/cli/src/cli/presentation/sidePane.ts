@@ -8,6 +8,7 @@ import {
 } from "./contextView.js"
 import { clampCursor, foldAt, rowToEnd, rowToTop, stepHead, stepRow } from "./paneNav.js"
 import { buildNavRows, type NavConversation, type TreeRowData } from "./contextTreeView.js"
+import type { NodeHealthInfo } from "./agentState.js"
 import type { AgentContextNode, PlanStep } from "@xandreed/sdk-core"
 
 export interface SidePaneInstruction {
@@ -504,6 +505,10 @@ export const treeRows = (
   /** The root's own turn is running — stamps the live `rootRunning` glyph on
    *  the active root row. Display-only, so cursor-mapping callers may omit it. */
   rootRunning?: boolean,
+  /** Live per-node health + a quantized "now" for the running rows' suffix
+   *  (`retrying: 429 2/3` · `idle 2m`). Display-only; callers may omit. */
+  health?: ReadonlyMap<string, NodeHealthInfo>,
+  now?: number,
 ): ReadonlyArray<TreeRowData> => {
   // The fleet tree shows ONLY the current session: a single always-expanded
   // root (the active session) with its persisted agent subtree railed beneath.
@@ -528,6 +533,8 @@ export const treeRows = (
       adoptAll,
       ...(activeNodeId !== undefined ? { activeNodeId } : {}),
       ...(rootRunning !== undefined ? { rootRunning } : {}),
+      ...(health !== undefined ? { health } : {}),
+      ...(now !== undefined ? { now } : {}),
     },
   )
 }

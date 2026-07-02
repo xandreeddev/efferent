@@ -7,12 +7,15 @@ import { Clock, Deferred, Effect, Fiber, Queue, Runtime, Schema } from "effect"
 import {
   AuthStore,
   connLabel,
+  ContextTreeStore,
   ConversationId,
   LlmInfo,
   ModelRegistry,
   SettingsStore,
   Shell,
   StoreSwitch,
+  SWEEP_INTERVAL_MS,
+  sweepStrandedRuns,
   TerminalSession,
   buildScopeRuntime,
 } from "@xandreed/sdk-core"
@@ -114,6 +117,11 @@ export const runTuiModeSolid = (
           // Fleet inherits the project's own conventions (build/verify + rules).
           instructions: renderInstructionsSection(input.instructionFiles),
           allowBash: true,
+          // Bus-published events (board notes, inter-agent messages — and the
+          // health stream to come) land on the SAME queue the pump drains. The
+          // daemon path wires this via its ledger (`inProcess.ts`); without it
+          // the in-process driver silently dropped every bus event.
+          onBusEvent: (e) => Queue.offer(eventQueue, e).pipe(Effect.asVoid),
         },
         baseHooks,
       )
@@ -218,17 +226,16 @@ export const runTuiModeSolid = (
       // (session-scoped — persisting across resume is a follow-up), injected into
       // every turn's prompt by `submit`, and checked by the built-in verifier role.
       const directiveRef: { current: Directive | undefined } = { current: undefined }
-      const reduce = makeEventReducer(store, {
-        // Live navigator reload on sub-agent spawn/end (current session — it
-        // can change via the sessions view, so resolve the id per call).
-        refreshNav: () => {
-          Runtime.runFork(rt)(
-            refreshNav(store, store.run.getConversationId(), navOpts).pipe(
-              Effect.catchAll(() => Effect.void),
-            ),
-          )
-        },
-      })
+      // Live navigator reload on sub-agent spawn/end (current session — it
+      // can change via the sessions view, so resolve the id per call).
+      const refreshNavCb = (): void => {
+        Runtime.runFork(rt)(
+          refreshNav(store, store.run.getConversationId(), navOpts).pipe(
+            Effect.catchAll(() => Effect.void),
+          ),
+        )
+      }
+      const reduce = makeEventReducer(store, { refreshNav: refreshNavCb })
 
       // 5. Exit signal + the context the JSX consumes.
       const exitDeferred = yield* Deferred.make<void>()
@@ -242,10 +249,14 @@ export const runTuiModeSolid = (
           void Runtime.runPromise(rt)(submit(text))
         },
         interrupt: () => {
-          // Esc cancels EVERYTHING in flight: the root turn AND every background
-          // fleet agent (spawning is non-blocking, so the fleet are daemons the
-          // root fiber no longer encloses — interrupt them explicitly, no orphans).
-          Runtime.runFork(rt)(scopeRuntime.bus.interruptAll())
+          // Esc cancels THIS session's work: the root turn AND the background
+          // fleet it spawned (spawning is non-blocking, so the fleet are daemons
+          // the root fiber no longer encloses — interrupt its SUBTREE explicitly,
+          // no orphans). Scoped to the active conversation's descendants; a full
+          // `interruptAll` is reserved for process teardown (finalizer below).
+          Runtime.runFork(rt)(
+            scopeRuntime.bus.interruptSubtree(store.run.getConversationId(), "human"),
+          )
           const fiber = store.run.getFiber()
           if (fiber !== undefined) Runtime.runFork(rt)(Fiber.interrupt(fiber))
         },
@@ -384,10 +395,11 @@ export const runTuiModeSolid = (
       //     the forgotten one. No-op when no login is in flight.
       yield* Effect.addFinalizer(() => stopOAuthSession(store).pipe(Effect.ignore))
 
-      // 6d. Background fleet agents are daemons (non-blocking spawning) — they'd
-      //     keep Bun alive past exit. Interrupt the whole fleet on every teardown
-      //     path so the process can quit cleanly. No-op when nothing is running.
-      yield* Effect.addFinalizer(() => scopeRuntime.bus.interruptAll().pipe(Effect.ignore))
+      // 6d. Background fleet agents are supervised fibers in the bus's fleet
+      //     scope — they'd keep Bun alive past exit. `shutdown` stamps them
+      //     `killed(shutdown)`, interrupts, and AWAITS each one's finalizer, so
+      //     no node is ever stranded `running` by quitting the app.
+      yield* Effect.addFinalizer(() => scopeRuntime.bus.shutdown().pipe(Effect.ignore))
 
       // 6e. Background shell processes (Bash run_in_background) + tmux sessions are
       //     DETACHED — they outlive turns on purpose, but must not outlive the app.
@@ -401,6 +413,45 @@ export const runTuiModeSolid = (
 
       // 7. Drain the agent event queue into the signal store (scoped fiber).
       yield* Effect.forkScoped(runEventPump(eventQueue, reduce))
+
+      // 7a-bis. Crash-recovery sweeper (the SHARED core one — this driver had
+      //     none before, so a vanished fiber left its node spinning `running`
+      //     forever on `efferent code`). Sweeps the ACTIVE conversation's tree;
+      //     baseHooks publishes the terminal `subagent_end` onto the queue.
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(
+            Effect.zipRight(
+              Effect.gen(function* () {
+                const tree = yield* ContextTreeStore
+                yield* sweepStrandedRuns({
+                  store: tree,
+                  bus: scopeRuntime.bus,
+                  hooks: baseHooks,
+                  roots: [store.run.getConversationId()],
+                })
+              }).pipe(Effect.catchAllCause(() => Effect.void)),
+            ),
+          ),
+        ),
+      )
+
+      // 7a-ter. Belt-and-braces fleet-tree reconcile: a 30s DB re-read that runs
+      //     ONLY while something claims to be running. Status flips are event-
+      //     driven by construction now (guaranteed terminal events); this catches
+      //     a write the events missed (e.g. the sweeper on another driver).
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep("30 seconds").pipe(
+            Effect.zipRight(
+              Effect.sync(() => {
+                const st = store.agentState()
+                if (st.phase !== "idle" || st.fleet.length > 0) refreshNavCb()
+              }),
+            ),
+          ),
+        ),
+      )
 
       // 7b. Spinner ticker — advances running tree-node glyphs while a turn is in
       //     flight (no signal write when idle → no idle re-renders). Scoped.

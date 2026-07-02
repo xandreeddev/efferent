@@ -104,5 +104,9 @@ export const DeliverableVerdict = Schema.Struct({
   verdict: DeliverableVerdictLevel,
   /** Concrete, actionable reasons — empty on SOUND; the retry's lessons on NEEDS WORK. */
   reasons: Schema.Array(Schema.String),
+  /** Ids of loaded CONSTRAINTS.md rules the deliverable VIOLATED (the gate
+   *  prompt lists the ids) — the mechanical ✗-reinforcement signal. Optional:
+   *  absent when no constraints were loaded or the reply omitted it. */
+  constraintsViolated: Schema.optional(Schema.Array(Schema.String)),
 })
 export type DeliverableVerdict = typeof DeliverableVerdict.Type

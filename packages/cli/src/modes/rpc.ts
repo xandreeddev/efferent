@@ -163,6 +163,9 @@ const handleSend = (
         tools: defaults.tools,
         instructions: renderInstructionsSection(defaults.instructionFiles),
         allowBash,
+        // Bus-published events (agent_health, board notes) ride the same queue
+        // as hook events — the rpc notification stream carries them too.
+        onBusEvent: (e) => Queue.offer(queue, e).pipe(Effect.asVoid),
       },
       hooks,
     )
@@ -179,6 +182,9 @@ const handleSend = (
       // Headless: allow-all behind the --allow-bash gate (no prompts).
       Effect.provide(ApprovalAllowAllLive),
       Effect.either,
+      // Per-request runtime: interrupt + await any fleet fibers this turn left
+      // behind so each records killed(shutdown) and nothing outlives the reply.
+      Effect.ensuring(runtime.bus.shutdown().pipe(Effect.ignore)),
     )
 
     // Deterministic drain: sentinel + join so every agent.event notification
@@ -202,7 +208,16 @@ const handleSend = (
     writeLine({
       jsonrpc: "2.0",
       id,
-      result: { conversationId: cid, finalText: ran.right.finalText },
+      result: {
+        conversationId: cid,
+        finalText: ran.right.finalText,
+        // Honest terminal status: a step-capped/breaker-stopped turn resolves
+        // `partial`, never a silent success (see `entities/Outcome.ts`).
+        outcome:
+          ran.right.stoppedAtMaxSteps === true || ran.right.stoppedByLoopBreaker === true
+            ? "partial"
+            : "ok",
+      },
     } satisfies JsonRpcResponse)
   })
 

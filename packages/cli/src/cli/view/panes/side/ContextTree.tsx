@@ -11,12 +11,26 @@ import { glyph, tokens } from "../../../state/theme.js"
 import { foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 
-type Status = "running" | "ok" | "error"
+type Status = "running" | "ok" | "partial" | "error" | "killed"
 
+// `partial` = a usable deliverable that stopped early (half-moon, attention
+// tint); `killed` = interrupted / stalled empty (reads as a failure).
 const statusGlyph = (s: Status): string =>
-  s === "ok" ? glyph.ok : s === "error" ? glyph.error : glyph.railDot
+  s === "ok"
+    ? glyph.ok
+    : s === "partial"
+      ? glyph.partial
+      : s === "error" || s === "killed"
+        ? glyph.error
+        : glyph.railDot
 const statusColor = (s: Status): string =>
-  s === "ok" ? tokens.state.ok : s === "error" ? tokens.state.error : tokens.state.running
+  s === "ok"
+    ? tokens.state.ok
+    : s === "partial"
+      ? tokens.state.running
+      : s === "error" || s === "killed"
+        ? tokens.state.error
+        : tokens.state.running
 
 /**
  * One navigator row, styled from its structured `display` — the same shape
@@ -124,6 +138,17 @@ const renderNode = (props: { d: () => TreeNodeDisplay; foldable: boolean; store:
       <Show when={v.active}>
         <text fg={tokens.accent.side} wrapMode="none" flexShrink={0}>{`  ${glyph.activeTag} active`}</text>
       </Show>
+      {/* Live health suffix on a running row: what it's DOING (generating /
+          tool-running: Bash / retrying: 429 2/3) — escalating to a red idle
+          alert when it shows no sign of life, so a dying fleet is obvious
+          without opening any preview. */}
+      <Show when={v.health !== undefined}>
+        <text
+          fg={v.health!.severity === "alert" ? tokens.state.error : tokens.text.dim}
+          wrapMode="none"
+          flexShrink={0}
+        >{`  ${v.health!.severity === "alert" ? `${glyph.warn} ` : ""}${v.health!.line}`}</text>
+      </Show>
       <Show when={meta.length > 0}>
         <text fg={tokens.text.dim} wrapMode="none">{`  ${meta}`}</text>
       </Show>
@@ -167,6 +192,12 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
     ...store.treeData(),
     ...store.nav(),
   }))
+  // A coarse "now" for the health suffixes' staleness math, quantized to ~5s
+  // off the spinner tick so idle labels advance without per-frame row rebuilds.
+  const coarseNow = createMemo(() => {
+    store.spinner() // subscribe to the tick
+    return Math.floor(Date.now() / 5000) * 5000
+  })
   // Memoised + reconciled: a real fleet change re-renders only the rows that
   // actually changed; an unchanged rebuild returns the SAME array reference, so
   // the `<For>` does nothing. Mirrors the conversation rail's `reconcileItems`.
@@ -174,7 +205,14 @@ export const ContextTreeView = (props: { ctx: TuiContext }) => {
     (prev) =>
       reconcileTreeRows(
         prev,
-        treeRows(treeState(), treeState(), store.nodePreview()?.nodeId, rootRunning()),
+        treeRows(
+          treeState(),
+          treeState(),
+          store.nodePreview()?.nodeId,
+          rootRunning(),
+          store.nodeHealth(),
+          coarseNow(),
+        ),
       ),
     [],
   )

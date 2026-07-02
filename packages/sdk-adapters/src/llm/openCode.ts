@@ -162,11 +162,19 @@ const responseTextFormat = (format: LanguageModel.ProviderOptions["responseForma
 const isDeepseekThinking = (model: string): boolean =>
   /kimi-k2\.[1-9]/i.test(model) || /deepseek/i.test(model)
 
+// Always-thinking models that REJECT `thinking: { type: "disabled" }` outright —
+// Kimi K2.7+ 400s with `invalid thinking: only type=enabled is allowed for this
+// model`, which killed every "off"-mode node on the code tier (11 error nodes in
+// the run forensics). For these, "off" must OMIT the param entirely (thinking
+// stays on — the model simply can't turn it off).
+const rejectsDisabledThinking = (model: string): boolean => /kimi-k2\.(7|8|9)/i.test(model)
+
 // Qwen-style: enable_thinking: boolean
 const isQwenThinking = (model: string): boolean => /qwen/i.test(model)
 
-const thinkingParams = (model: string, mode: "off" | "high"): Json => {
+export const thinkingParams = (model: string, mode: "off" | "high"): Json => {
   if (isDeepseekThinking(model)) {
+    if (mode === "off" && rejectsDisabledThinking(model)) return {}
     return { thinking: { type: mode === "off" ? "disabled" : "enabled" } }
   }
   if (isQwenThinking(model)) {

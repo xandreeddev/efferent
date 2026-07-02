@@ -1,5 +1,5 @@
 import { AiError } from "@effect/ai"
-import { type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
+import { classifyProviderError, type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
 import { Duration, Effect, FiberRef } from "effect"
 
 /**
@@ -47,49 +47,16 @@ export const MAX_HONORED_RETRY_AFTER_MS = 60_000
  */
 export const LLM_REQUEST_TIMEOUT_MS = 120_000
 
-/** 429 (rate limit) + the retryable 5xx (overload / gateway / unavailable). */
-const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504])
-
 /**
- * The custom adapters (`openCode`/`ollama`/`openAiCodex`) wrap a fetch
- * network/timeout failure as `AiError.UnknownError` with the cause stringified
- * into `description`. Sniff that for the transient transport signatures so an
- * aborted/timed-out/connection-reset fetch retries too.
+ * Worth retrying? Exactly the `transient` class of the shared taxonomy
+ * (`classifyProviderError` in sdk-core): provider overload / rate-limit,
+ * transport failures, fetch timeouts — the request itself is fine, the
+ * provider just couldn't serve it now. `quota`/`config`/`auth`/`model`
+ * failures are PERMANENT here and fail fast — the router decides whether a
+ * failover applies (quota/config) or the human must act (auth).
  */
-const transientUnknown = (description: string): boolean => {
-  const d = description.toLowerCase()
-  return (
-    d.includes("timeout") ||
-    d.includes("timed out") ||
-    d.includes("aborted") ||
-    d.includes("fetch failed") ||
-    d.includes("network") ||
-    d.includes("econnreset") ||
-    d.includes("econnrefused") ||
-    d.includes("etimedout") ||
-    d.includes("socket hang up")
-  )
-}
-
-/**
- * Worth retrying? Provider overload / rate-limit (429, retryable 5xx), transport
- * failures, and fetch timeouts — the request itself is fine, the provider just
- * couldn't serve it now. NEVER a 4xx client error (bad request / bad or expired
- * key) or a decode bug (`MalformedInput`/`MalformedOutput`) — those are permanent
- * and retrying only wastes tokens and hides the real fault.
- */
-export const isTransientAiError = (e: AiError.AiError): boolean => {
-  switch (e._tag) {
-    case "HttpResponseError":
-      return TRANSIENT_STATUS.has(e.response.status)
-    case "HttpRequestError":
-      return true
-    case "UnknownError":
-      return transientUnknown(`${e.description}`)
-    default:
-      return false
-  }
-}
+export const isTransientAiError = (e: AiError.AiError): boolean =>
+  classifyProviderError(e) === "transient"
 
 const reasonLabel = (e: AiError.AiError): string =>
   e._tag === "HttpResponseError" ? `HTTP ${e.response.status}` : e._tag
@@ -155,6 +122,37 @@ const decide = <E>(e: E, n: number): Decision => {
 const emitRetryNotice = (event: AgentLlmRetryEvent): Effect.Effect<void> =>
   FiberRef.get(RunContextRef).pipe(
     Effect.flatMap((rc) => (rc.onLlmRetry !== undefined ? rc.onLlmRetry(event) : Effect.void)),
+  )
+
+/**
+ * Bound ONE LLM request at {@link LLM_REQUEST_TIMEOUT_MS} at the fiber level.
+ * The custom adapters (`openCode`/`openAiCodex`/`openAiCompat`) already abort
+ * their fetch with an `AbortSignal`; the official `@effect/ai-*` providers
+ * (Google / OpenAI / Anthropic) had NO timeout at all, so a silently hung
+ * socket parked the calling fiber forever — the root turn has no watchdog, so
+ * this was the "root hangs indefinitely on a dead connection" primitive. The
+ * timeout failure is an `UnknownError` whose description matches the transient
+ * sniffer, so wrapping BEFORE {@link retryableLlm} makes each attempt bounded
+ * AND retried — a genuine blip recovers, a dead provider surfaces in ~6 min
+ * worst-case instead of never.
+ *
+ * E is preserved rather than widened: the failure is a real `AiError` at
+ * runtime, but `ExtractError<Options>` is a generic the router's service
+ * signature can't widen — same cast class as its `resolveKey` mapError.
+ */
+export const withLlmTimeout = <A, E, R>(
+  eff: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  eff.pipe(
+    Effect.timeoutFail({
+      duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
+      onTimeout: () =>
+        new AiError.UnknownError({
+          module: "llm",
+          method: "request",
+          description: `request timed out after ${Math.round(LLM_REQUEST_TIMEOUT_MS / 1000)}s`,
+        }) as never,
+    }),
   )
 
 /**

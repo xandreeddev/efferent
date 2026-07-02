@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { shouldSweepNode, SWEEP_GRACE_MS } from "./inProcess.js"
+import { shouldSweepNode, SWEEP_GRACE_MS } from "./sweepStrandedRuns.js"
 
 // The mid-session stranded-node sweeper's DECISION is pure (status + bus
 // liveness + age → should-sweep). The effectful wiring around it (recordReturn +

@@ -1,7 +1,12 @@
 import { basename, resolve } from "node:path"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Clock, Effect, FiberRef, Layer, Ref, Schema } from "effect"
-import { ContextNodeId, type ContextUsage } from "../entities/AgentContext.js"
+import { Cause, Clock, Effect, Exit, FiberRef, Layer, Ref, Schema } from "effect"
+import {
+  ContextNodeId,
+  type AgentContextNode,
+  type ContextUsage,
+} from "../entities/AgentContext.js"
+import { outcomeStatus, type OutcomeStatus, type StopReason } from "../entities/Outcome.js"
 import type {
   AgentAfterToolCallEvent,
   AgentBeforeToolCallEvent,
@@ -24,7 +29,7 @@ import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
-import { gateOnce, settleChildren } from "./gateLoop.js"
+import { finalizeRun } from "./finalizeRun.js"
 import { generateHandoffBrief } from "./handoff.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef, type RunContext } from "./runContext.js"
@@ -49,7 +54,7 @@ import {
   makeCodingHandlers,
   type ScopeBinding,
 } from "./codingToolkit.js"
-import { type AgentBus, inboxToMessages, makeAgentBus } from "./agentBus.js"
+import { type AgentBus, type RunState, inboxToMessages, makeAgentBus } from "./agentBus.js"
 import {
   addJob,
   loadJobs,
@@ -78,9 +83,12 @@ export interface ScopeRuntime {
   readonly handlerLayer: Layer.Layer<
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
-    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports)
-    // are the per-coordinator structural gate's needs: it reads gate settings,
-    // distills lessons, and grounds the Opus verifier — see `runSpawnedAgent`.
+    // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports):
+    // the handoff-brief seed (`generateHandoffBrief`) runs on the utility tier,
+    // and the store/settings stay provided for the scheduled-run gate (the
+    // root-tier `gateOnce` moving onto the `spawnAgent` cron path). The
+    // per-coordinator gate that first widened this R is gone — gating is
+    // root-only now (one tier).
     | FileSystem
     | Shell
     | Http
@@ -108,7 +116,13 @@ export interface ScopeRuntime {
     /** Compaction budget (chars) per tool-result string for the resumed run. */
     readonly toolResultMaxChars?: number
   }) => Effect.Effect<
-    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    {
+      summary: string
+      filesChanged: ReadonlyArray<string>
+      nodeId: ContextNodeId
+      /** ok | partial — an errored run FAILS instead (see `entities/Outcome.ts`). */
+      outcome: OutcomeStatus
+    },
     Failure,
     | FileSystem
     | Shell
@@ -145,7 +159,13 @@ export interface ScopeRuntime {
      *  an absent human; inherited down the subtree. */
     readonly interactionPolicy?: "interactive" | "headless"
   }) => Effect.Effect<
-    { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+    {
+      summary: string
+      filesChanged: ReadonlyArray<string>
+      nodeId: ContextNodeId
+      /** ok | partial — an errored run FAILS instead (see `entities/Outcome.ts`). */
+      outcome: OutcomeStatus
+    },
     Failure,
     | FileSystem
     | Shell
@@ -203,13 +223,13 @@ export const INTERRUPTED_NOTE = "[interrupted — run did not finish]"
 export const STALL_NOTE =
   "[stalled — the run made no progress within the watchdog deadline and was stopped]"
 
-/** No-progress deadline for a SPAWNED sub-agent: if no turn starts, no tool
- *  result lands, and no LLM retry fires for this long, the run is interrupted and
- *  recorded as an error (so the parent unblocks). Generous on purpose — it must
- *  exceed any single legitimate blocking op: one LLM request (capped at the
- *  adapter request timeout, 2 min) and one structural gate verifier call.
- *  A live, working sub-agent emits a turn-start before every model call, so it
- *  never approaches this; only a genuine freeze does. */
+/** No-progress deadline for a SPAWNED sub-agent in a KILLABLE health state
+ *  (`starting`/`generating` — a hung model call). Exceeds one LLM request (the
+ *  2-min adapter timeout) with margin; the exempt states (tool-running /
+ *  retrying / waiting-on-agents / awaiting-approval) are bounded by their own
+ *  mechanisms and are never watchdog-killed. A run that already produced
+ *  assistant text is finalized WITH that text preserved (see the exit
+ *  finalizer) — the watchdog must never discard finished work. */
 export const SUBAGENT_STALL_DEADLINE_MS = 180_000
 
 /** How often the stall watchdog wakes to compare now − last-progress against the
@@ -461,10 +481,13 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
     "Wait (without blocking anyone else) for sub-agents you spawned to make progress, then read " +
     "their status. Returns as soon as any watched agent finishes, someone messages you, or the " +
     "timeout passes — whichever first. Use it after spawning a fleet with run_agent to collect " +
-    "results: it gives each agent's status (running/ok/error) with the summary + files of finished " +
-    "ones, plus any messages sent to you and recent blackboard notes. A return with allDone:false and " +
-    "agents still running is NORMAL — just call it again; it is NOT a signal that they are stuck or " +
-    "that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch every agent you spawned.",
+    "results: it gives each agent's status (running/ok/partial/error/killed) with the summary + files " +
+    "of finished ones, plus any messages sent to you and recent blackboard notes. 'partial' means the " +
+    "agent stopped early (budget/step cap) but its summary IS usable — treat it as an incomplete " +
+    "deliverable, not a failure. 'killed' means it was interrupted and produced nothing. A return with " +
+    "allDone:false and agents still running is NORMAL — just call it again; it is NOT a signal that " +
+    "they are stuck or that you should spawn more. Loop it until allDone. Omit 'nodeIds' to watch " +
+    "every agent you spawned.",
   parameters: {
     nodeIds: Schema.optional(Schema.Array(Schema.String)).annotations({
       description:
@@ -479,7 +502,13 @@ const WaitForAgentsTool = Tool.make("wait_for_agents", {
       Schema.Struct({
         nodeId: Schema.String,
         name: Schema.String,
-        status: Schema.Literal("running", "ok", "error"),
+        status: Schema.Literal("running", "ok", "partial", "error", "killed"),
+        /** A RUNNING agent's live activity ("generating", "tool-running: Bash",
+         *  "retrying: HTTP 429 2/3") — decide from THIS, not from a blind
+         *  timeout, whether an agent is working or wedged. */
+        state: Schema.optional(Schema.String),
+        /** Seconds since the running agent's last observable signal. */
+        idleSeconds: Schema.optional(Schema.Number),
         summary: Schema.optional(Schema.String),
         filesChanged: Schema.optional(Schema.Array(Schema.String)),
       }),
@@ -653,12 +682,13 @@ const CancelScheduledJobTool = Tool.make("cancel_scheduled_job", {
   failureMode: "return",
 })
 
-// The self-improving loop is now STRUCTURAL, not a set of tools the model drives:
-// the mandatory Opus gate runs in `driveLoop` (root) and in `runSpawnedAgent` for
-// any lead (coordinator-tier, see `gateOnce`), and the distiller runs the same way
-// — gate → learn → re-fire happens automatically, with no `verify_with_gate` /
-// `note_constraint` tool to remember. So those tools (and their handlers) are gone;
-// the architect role stays as the in-fleet, fine-grained per-piece review.
+// The self-improving loop is STRUCTURAL, not a set of tools the model drives:
+// the mandatory Opus gate runs ONCE, at the root (`driveLoop`), and the distiller
+// runs at the turn boundary — with no `verify_with_gate` / `note_constraint` tool
+// to remember. (The old per-coordinator gate tier is gone: it ran a 30-min Opus
+// subprocess inside the sub-agent watchdog's 180s window, which killed finished
+// leads as "stalled" — one gate tier, at the root, judges the aggregate.) The
+// architect role stays as the in-fleet, fine-grained per-piece review.
 
 /** `[name, def]` entries for the comms + run_tool + schedule tools — for the toolkit + role allowlists. */
 const commsToolEntries: ReadonlyArray<readonly [string, Tool.Any]> = [
@@ -933,10 +963,15 @@ const makeInnerHooks = <R>(
   pool: TokenPool,
   budgetStopRef: Ref.Ref<boolean>,
   bus: AgentBus,
-  /** Stall-watchdog liveness: stamp "now" on every observable step (turn start,
-   *  tool result, narration) so a parked run — and only a parked run — crosses
-   *  the no-progress deadline. */
-  bumpProgress: Effect.Effect<void>,
+  /** Health stamp: state transition + "now" on every observable step (turn
+   *  start, tool boundary, narration). The watchdog + the UI read it — a run is
+   *  killed only when a zero-activity `starting`/`generating` crosses the
+   *  deadline; every other state is bounded elsewhere. */
+  touch: (state?: RunState, detail?: string) => Effect.Effect<void>,
+  /** THIS run's latest assistant text (never a nested child's — those arrive
+   *  with `subAgentNodeId` already stamped). The exit finalizer reads it so an
+   *  interrupted/stalled run keeps its produced work instead of discarding it. */
+  lastTextRef: Ref.Ref<string>,
 ): AgentHooks<R> => {
   const trackFiles = (event: AgentAfterToolCallEvent) =>
     Effect.gen(function* () {
@@ -954,20 +989,18 @@ const makeInnerHooks = <R>(
   // fan-out the consumer attributes interleaved events to the right sub-agent
   // by key, not by "whichever opened last".
   return {
-    // Stall-watchdog liveness signal. onTurnStart fires immediately BEFORE each
-    // model call, so a hung `generateText` leaves this as the last stamp and the
-    // watchdog fires after the deadline. Not forwarded to the parent driver
-    // (sub-agent turn-starts never were) — it only feeds the local watchdog.
-    onTurnStart: () => bumpProgress,
-    // Stamp liveness at the START of every tool call too — not just on completion
-    // (onAfterToolCall). A turn's LLM phase (bounded by LLM_REQUEST_TIMEOUT_MS,
-    // which retries+bumps) plus a long tool can together exceed the stall
-    // deadline while each phase is fine; bumping at the tool boundary resets the
-    // clock so the watchdog measures time-since-the-last-step, not time-since-
-    // turn-start, and a working agent isn't killed mid-tool. Still forwards the
+    // Health signal. onTurnStart fires immediately BEFORE each model call, so a
+    // hung `generateText` leaves `generating` as the last state and the watchdog
+    // fires after the deadline. Not forwarded to the parent driver (sub-agent
+    // turn-starts never were) — it only feeds the health map.
+    onTurnStart: () => touch("generating"),
+    // Tool boundary → `tool-running` (with the tool's name for the UI). Tools
+    // are bounded by their OWN timeouts (bash cap, LLM request timeout, fetch
+    // caps), so the watchdog never kills a tool-running state — the health line
+    // tells the human/orchestrator what it's doing meanwhile. Still forwards the
     // parent's allow/deny decision (or a default continue when there's no parent).
     onBeforeToolCall: (e: AgentBeforeToolCallEvent) =>
-      bumpProgress.pipe(
+      touch("tool-running", e.toolName).pipe(
         Effect.zipRight(
           parentBefore !== undefined
             ? parentBefore({ ...e, subAgentNodeId: nodeId })
@@ -976,7 +1009,7 @@ const makeInnerHooks = <R>(
       ),
     onAfterToolCall: (e) =>
       Effect.gen(function* () {
-        yield* bumpProgress
+        yield* touch("generating")
         if (parentAfter !== undefined) yield* parentAfter({ ...e, subAgentNodeId: nodeId })
         yield* trackFiles(e)
       }),
@@ -990,10 +1023,18 @@ const makeInnerHooks = <R>(
               cacheReadTokens: u.cacheReadTokens,
             })).pipe(Effect.zipRight(drainPool(pool, u)))
           : Effect.void
+      // Keep THIS run's latest narration for the exit finalizer — only its own
+      // (a nested child's forwarded event carries `subAgentNodeId`; stamping it
+      // here would credit the parent with the child's text).
+      const noteText =
+        event.subAgentNodeId === undefined && event.text.trim().length > 0
+          ? Ref.set(lastTextRef, event.text)
+          : Effect.void
       // Forward inner narration to the parent's event stream too — the TUI
       // shows it live when this node's session is open in the preview (the
       // pump keeps it off the parent rail; usage stays node-local).
-      return bumpProgress.pipe(
+      return touch("generating").pipe(
+        Effect.zipRight(noteText),
         Effect.zipRight(
           parentAssistant !== undefined
             ? parentAssistant({ ...event, subAgentNodeId: nodeId, subAgentRole: role }).pipe(
@@ -1049,10 +1090,6 @@ interface RunSpawnedArgs<R> {
   /** The agent ROLE this run plays — overrides prompt body, toolkit, model.
    *  Absent ⇒ the generic folder-scoped coder (base tools + `run_agent`). */
   readonly definition?: AgentDefinition
-  /** This run is a LEAD (coordinator / research-coordinator) — so it owns the
-   *  structural gate over its own subtree (gate → distill → re-fire its workers)
-   *  before returning to the root. Set from the resolved `agent` name at spawn. */
-  readonly isLead?: boolean
   readonly seedMessages: ReadonlyArray<AgentMessage>
   readonly parentDepth: number
   /** The node's parent in the context tree (for consumer-side nesting). */
@@ -1083,32 +1120,46 @@ interface RunSpawnedArgs<R> {
  */
 const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   const definition = args.definition
-  // Set true the moment EITHER terminal path records its return (ok / error).
-  // The exit finalizer reads it: a run that exits WITHOUT having recorded one
-  // was interrupted (Esc / :stop / teardown) or died, so the finalizer records
-  // an `error` return + notifies the parent itself — otherwise the DB node
-  // stays `running` forever and the parent is never told (markDone only tears
-  // the mailbox down). Created OUTSIDE the body so the finalizer can read it.
-  const returnRecordedRef = Ref.unsafeMake(false)
-  // Stall watchdog state, both OUTSIDE the body so the watchdog fiber (which
+  const label = args.title ?? (basename(args.folder) || args.folder)
+  // The one-shot guard behind `finalizeRun`: the FIRST terminal path (ok /
+  // error / exit-finalizer) records + notifies + emits; later callers no-op.
+  // Created OUTSIDE the body so the exit finalizer can share it.
+  const finalizedRef = Ref.unsafeMake(false)
+  // Stall watchdog state, all OUTSIDE the body so the watchdog fiber (which
   // races the body) and the finalizer can read them.
-  //  - progressRef: epoch-ms of the last observable step (turn start / tool
-  //    result / narration / LLM retry). Initialised at body start; the watchdog
-  //    compares now − this against the deadline.
+  //  - health lives on the BUS (state + last-activity — `touch` stamps it): the
+  //    watchdog reads it and kills only a zero-activity starting/generating run;
+  //    tool-running / retrying / waiting states are bounded elsewhere and the
+  //    UI reads the same map for the live fleet suffixes.
   //  - stalledRef: set true iff the watchdog tripped, so the finalizer records
   //    STALL_NOTE (a deliberate stop) rather than the generic INTERRUPTED_NOTE.
-  const progressRef = Ref.unsafeMake(0)
+  //  - lastTextRef / filesRef / usageRef: the run's produced work so far — the
+  //    finalizer preserves them on an abnormal exit instead of recording an
+  //    empty error (the watchdog once discarded FINISHED work as "[stalled]").
   const stalledRef = Ref.unsafeMake(false)
-  const bumpProgress = Clock.currentTimeMillis.pipe(Effect.flatMap((t) => Ref.set(progressRef, t)))
+  const lastTextRef = Ref.unsafeMake("")
+  const filesRef = Ref.unsafeMake<ReadonlyArray<string>>([])
+  const usageRef = Ref.unsafeMake<ContextUsage>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+  })
+  // Router-appended failover annotations ("[failover: kimi → glm after quota]")
+  // — folded into the terminal outcome's notes so the record says which model
+  // actually did the work.
+  const failoverNotesRef = Ref.unsafeMake<ReadonlyArray<string>>([])
+  const touch = (state?: RunState, detail?: string): Effect.Effect<void> =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((at) =>
+        args.bus.setHealth(args.nodeId, {
+          at,
+          ...(state !== undefined ? { state } : {}),
+          ...(detail !== undefined ? { detail } : {}),
+        }),
+      ),
+    )
   const body = Effect.gen(function* () {
     const { store, displayRoot, opts, hooks, nodeId, folder, task, seedMessages } = args
-    const label = args.title ?? (basename(folder) || folder)
-    const filesRef = yield* Ref.make<ReadonlyArray<string>>([])
-    const usageRef = yield* Ref.make<ContextUsage>({
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-    })
 
     if (hooks?.onSubAgentStart) {
       yield* hooks.onSubAgentStart({
@@ -1129,9 +1180,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     // down on every exit path (success, failure, interrupt) by the ensuring below.
     yield* args.bus.markRunning(nodeId, label, { parentKey })
     const budgetStopRef = yield* Ref.make(false)
-    // Seed the progress clock NOW, before any model call, so the watchdog
-    // measures from a real timestamp (not epoch 0) on its first tick.
-    yield* bumpProgress
+    // Seed the health clock NOW (state `starting`), before any model call, so
+    // the watchdog measures from a real timestamp on its first tick.
+    yield* touch("starting")
     const innerHooks = makeInnerHooks(
       hooks,
       nodeId,
@@ -1141,7 +1192,8 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       args.tokenPool,
       budgetStopRef,
       args.bus,
-      bumpProgress,
+      touch,
+      lastTextRef,
     )
 
     const binding: ScopeBinding = {
@@ -1258,6 +1310,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       // inherited) so a deeper spawn picks its own role. The router reads it off
       // RunContextRef to resolve the role's pinned model.
       modelRole: (definition?.role ?? "general") satisfies AgentModelRole,
+      // The router appends failover annotations here; the terminal path folds
+      // them into the outcome's notes. Per-run, never inherited.
+      failoverNotes: failoverNotesRef,
       // Carry the run's frozen role→model map + the mission down the subtree, so
       // the fleet stays on the models pinned at run start (cache-safe) and every
       // sub-agent can be reminded of the overall goal.
@@ -1274,15 +1329,20 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         ? { interactionPolicy: args.runContext.interactionPolicy }
         : {}),
       // Carry the retry-notice sink down so a sub-agent's backoff is visible too,
-      // and count each retry as PROGRESS for the stall watchdog: a call weathering
-      // a transient overload (429s, slow gateway) is working, not frozen, so it
-      // must not be killed. Always wrapped (even with no parent sink) so the bump
-      // happens; the forward is conditional.
+      // and flip health to `retrying` (watchdog-exempt — a call weathering a
+      // transient overload is working, not frozen) with the wait as the detail.
+      // The forwarded event is stamped with this node's id so the UI attributes
+      // the retry storm to the AGENT, not the root rail. Always wrapped (even
+      // with no parent sink) so the health stamp happens.
       onLlmRetry: (e: AgentLlmRetryEvent) => {
         const parentSink = args.runContext.onLlmRetry
+        const stamp = touch(
+          "retrying",
+          `${e.reason} ${e.attempt}/${e.maxAttempts} — next in ${Math.round(e.delayMs / 1000)}s`,
+        )
         return parentSink !== undefined
-          ? bumpProgress.pipe(Effect.zipRight(parentSink(e)))
-          : bumpProgress
+          ? stamp.pipe(Effect.zipRight(parentSink({ ...e, nodeId })))
+          : stamp
       },
       // And the background-output sink, so a sub-agent's bg process is visible too.
       ...(args.runContext.onBgOutput !== undefined
@@ -1335,60 +1395,13 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
       Effect.forEach(msgs, (m) => store.append(nodeId, m))
 
-    let outcome = yield* runAttempt(seedMessages)
+    const outcome = yield* runAttempt(seedMessages)
     if (outcome.ok) yield* persistNodeTail(outcome.r.newTail)
-
-    // ===== Structural coordinator gate (the per-domain self-improving loop) =====
-    // A LEAD (coordinator / research-coordinator) owns the gate over ITS subtree:
-    // when its run finishes, the deliverable is judged by the SAME independent
-    // Opus gate the root uses (`gateOnce`) BEFORE the lead returns — so a
-    // coordinator can't ship unverified work, and the root's final aggregate gate
-    // (`driveLoop`) sees an already-gated piece. Mandatory + fail-closed, gated by
-    // `autoLoop` (default on). Skipped for plain workers and when there's no root
-    // conversation to ground the gate/distill. `needs_work` → LEARN → re-fire the
-    // workers with the reasons → re-gate, to `maxLoopAttempts`.
-    if (args.isLead === true && outcome.ok && args.rootConversationId !== null) {
-      const rootConvId = args.rootConversationId
-      const settings = yield* (yield* SettingsStore).get()
-      if (settings.autoLoop !== false) {
-        const maxAttempts = settings.maxLoopAttempts ?? 3
-        let attempt = 1
-        let current = outcome.r
-        while (true) {
-          // The gate's verifier + child-settling are blocking ops OUTSIDE the
-          // inner loop (no turn-start hook fires), so stamp progress here too — a
-          // legitimately slow gate must not look like a stall to the watchdog.
-          yield* bumpProgress
-          // The lead's deliverable = its workers' aggregate work (a coordinator
-          // writes nothing itself), so the gate judges its CHILD nodes.
-          const freshChildren = yield* settleChildren(rootConvId, nodeId)
-          const step = yield* gateOnce({
-            task,
-            summary: current.finalText,
-            repoDir: args.displayRoot,
-            conversationId: rootConvId,
-            freshNodes: freshChildren,
-            attempt,
-            maxAttempts,
-            autoDistill: settings.autoDistill !== false,
-          })
-          if (step.kind === "no-subagents") break
-          if (hooks?.onGateResult) yield* hooks.onGateResult(step.event)
-          if (step.kind !== "retry") break
-
-          // RE-FIRE — feed the gate's reasons back so the lead fixes them, then
-          // re-gate. A failed re-run keeps the prior result; the root gate still
-          // catches what's left.
-          yield* persistNodeTail([step.feedback])
-          const next = yield* runAttempt([...current.messages, step.feedback])
-          if (!next.ok) break
-          yield* persistNodeTail(next.r.newTail)
-          current = next.r
-          attempt++
-        }
-        outcome = { ok: true as const, r: current }
-      }
-    }
+    // (No per-coordinator gate here any more — gating is ONE tier, at the root
+    // (`driveLoop`), judging the aggregate deliverable. The old lead-tier gate
+    // ran a multi-minute Opus subprocess inside this run's 180s stall-watchdog
+    // window with no progress stamps, so finished leads were killed as
+    // "[stalled]" and their work discarded.)
 
     const files = yield* Ref.get(filesRef)
     const usage = yield* Ref.get(usageRef)
@@ -1400,16 +1413,20 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     const wsRef = yield* getWorkspaceRef(args.displayRoot).pipe(
       Effect.provideService(Shell, args.shell),
     )
-    const stamp = wsRef !== undefined ? { workspaceRef: wsRef } : {}
 
     if (outcome.ok) {
-      // The produced tail was already persisted incrementally above (first
-      // attempt + each gate retry) — don't bulk-append it again here.
-      // A budget OR step-cap stop is an *ok* outcome with a partial result —
-      // say so, so the parent model (and the human in :tree) knows not to
-      // trust it as complete. Without the step marker, a capped run's
-      // mid-thought last sentence reads as the deliverable.
+      // The produced tail was already persisted incrementally above — don't
+      // bulk-append it again here. A budget / step-cap / breaker stop is a
+      // PARTIAL outcome: the status carries the truth now, and the note keeps
+      // the caveat readable in the summary for the parent model + `:tree`.
       const stoppedByBudget = yield* Ref.get(budgetStopRef)
+      const reason: StopReason = stoppedByBudget
+        ? { kind: "budget" }
+        : outcome.r.stoppedAtMaxSteps === true
+          ? { kind: "step-cap" }
+          : outcome.r.stoppedByLoopBreaker === true
+            ? { kind: "degenerate-loop" }
+            : { kind: "completed" }
       const stopNote = stoppedByBudget
         ? BUDGET_STOP_NOTE
         : outcome.r.stoppedAtMaxSteps === true
@@ -1419,59 +1436,53 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         stopNote !== undefined
           ? `${outcome.r.finalText}\n\n${stopNote}`.trim()
           : outcome.r.finalText
-      yield* store.recordReturn(nodeId, {
-        status: "ok",
-        summary,
-        filesChanged: files,
-        ...(hasUsage ? { usage } : {}),
-        ...stamp,
-      })
-      // Mark the return recorded so the exit finalizer doesn't double-record it.
-      yield* Ref.set(returnRecordedRef, true)
-      // Deliver the outcome to the bus FIRST: wakes a parent's `wait_for_agents`,
-      // delivers/buffers a completion in the parent's inbox + the blackboard, and
-      // records the terminal result. This MUST precede `onSubAgentEnd` — that
-      // event triggers the daemon's `onTopLevelDone` auto-resume, which drains the
-      // parent's inbox; deliver after, and the resume races an empty inbox.
-      // (`markDone` below is then a no-op — `complete` already removed the entry.)
-      yield* args.bus.complete(nodeId, { status: "ok", summary, filesChanged: files })
-      if (hooks?.onSubAgentEnd) {
-        yield* hooks.onSubAgentEnd({
-          name: label,
-          nodeId,
-          ok: true,
+      const status = outcomeStatus(reason, true)
+      const notes = yield* Ref.get(failoverNotesRef)
+      yield* finalizeRun({
+        nodeId,
+        label,
+        store,
+        bus: args.bus,
+        hooks,
+        once: finalizedRef,
+        outcome: {
+          status,
           summary,
           filesChanged: files,
+          reason,
           ...(hasUsage ? { usage } : {}),
-        })
-      }
-      return { summary, filesChanged: files, nodeId }
+          ...(notes.length > 0 ? { notes } : {}),
+        },
+        ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
+      })
+      return { summary, filesChanged: files, nodeId, outcome: status }
     }
 
     const f = toFailure(outcome.e)
     const summary = f.message ? `${f.error}: ${f.message}` : f.error
-    yield* store.recordReturn(nodeId, {
-      status: "error",
-      summary,
-      filesChanged: files,
-      ...(hasUsage ? { usage } : {}),
-      ...stamp,
-    })
-    // Mark the return recorded so the exit finalizer doesn't double-record it.
-    yield* Ref.set(returnRecordedRef, true)
-    // Same ordering as the ok path: deliver to the bus before the event that
-    // triggers the auto-resume, so a parent draining its inbox sees the failure.
-    yield* args.bus.complete(nodeId, { status: "error", summary, filesChanged: files })
-    if (hooks?.onSubAgentEnd) {
-      yield* hooks.onSubAgentEnd({
-        name: label,
-        nodeId,
-        ok: false,
+    const reason: StopReason = {
+      kind: "error",
+      error: f.error,
+      ...(f.message !== undefined && f.message !== "" ? { message: f.message } : {}),
+    }
+    const notes = yield* Ref.get(failoverNotesRef)
+    yield* finalizeRun({
+      nodeId,
+      label,
+      store,
+      bus: args.bus,
+      hooks,
+      once: finalizedRef,
+      outcome: {
+        status: "error",
         summary,
         filesChanged: files,
+        reason,
         ...(hasUsage ? { usage } : {}),
-      })
-    }
+        ...(notes.length > 0 ? { notes } : {}),
+      },
+      ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
+    })
     return yield* Effect.fail(f)
   })
   // No folder lock: writers are sequenced at the ORCHESTRATOR (it spawns coders
@@ -1480,55 +1491,76 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // (a hung agent stranded its same-folder siblings); sequencing lives where it's
   // observable (wait_for_agents timeouts).
   //
-  // Exit finalizer (runs on EVERY exit — success, failure, interrupt, defect):
-  //  - Normal terminal paths (ok / error) already recorded the return AND
-  //    notified the parent via `bus.complete`, so `returnRecordedRef` is true:
-  //    just tear the mailbox down (markDone is a no-op — complete already
-  //    removed the running entry).
-  //  - Interrupted / died before a terminal path ⇒ the Ref is still false: the
-  //    DB node would otherwise stay `running` forever and the parent would never
-  //    hear about it (markDone only tears down the mailbox without notifying).
-  //    So record an `error` return AND `bus.complete` — mirroring the normal
-  //    error path's parent notification (inbox + blackboard + terminal record).
-  // Everything here is failure-safe (Effect.ignore / catchAll) so teardown never
-  // throws — the finalizer must always complete even mid-interruption.
-  const finalize = Effect.gen(function* () {
-    const recorded = yield* Ref.get(returnRecordedRef)
-    if (recorded) {
-      yield* args.bus.markDone(args.nodeId).pipe(Effect.ignore)
-      return
-    }
-    // Interrupted / died / stalled before a terminal path ⇒ the Ref is still
-    // false. The watchdog distinguishes a deliberate stall-stop (STALL_NOTE)
-    // from a generic interruption (Esc / teardown / death → INTERRUPTED_NOTE),
-    // so the parent + `:tree` read WHY the node ended.
-    const note = (yield* Ref.get(stalledRef)) ? STALL_NOTE : INTERRUPTED_NOTE
-    yield* args.store
-      .recordReturn(args.nodeId, {
-        status: "error",
-        summary: note,
-        filesChanged: [],
+  // Exit finalizer (runs on EVERY exit — success, failure, interrupt, defect).
+  // The normal terminal paths already ran `finalizeRun`, so its once-guard makes
+  // this a mailbox-teardown no-op there. A run that exits WITHOUT finalizing —
+  // interrupted (Esc / a parent / shutdown / the headless deadline), watchdog-
+  // stalled, or crashed — is finalized HERE, with an honest reason read off the
+  // Exit + the bus's interrupt stamp, PRESERVING the run's produced work (last
+  // assistant text, filesChanged, usage). The old finalizer hardcoded an empty
+  // error, so a watchdog kill discarded FINISHED work as "[stalled]" — the
+  // single biggest failure bucket in the run forensics. And crucially it emits
+  // the terminal `subagent_end` event on these paths too (via finalizeRun) —
+  // its absence is why dead agents looked alive in every UI surface.
+  const finalize = (exit: Exit.Exit<unknown, unknown>) =>
+    Effect.gen(function* () {
+      const stalled = yield* Ref.get(stalledRef)
+      const lastText = yield* Ref.get(lastTextRef)
+      const files = yield* Ref.get(filesRef)
+      const usage = yield* Ref.get(usageRef)
+      const hasUsage = usage.outputTokens > 0 || usage.inputTokens > 0
+      const hasText = lastText.trim().length > 0
+      const interrupted =
+        Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+      const reason: StopReason = stalled
+        ? { kind: "stall" }
+        : interrupted
+          ? {
+              kind: "interrupt",
+              by: (yield* args.bus.interruptReasonOf(args.nodeId)) ?? "parent",
+            }
+          : { kind: "error", error: "RunDied", message: "run crashed before finishing" }
+      const note = stalled
+        ? STALL_NOTE
+        : interrupted
+          ? INTERRUPTED_NOTE
+          : "[crashed — the run died before finishing]"
+      const summary = hasText ? `${lastText}\n\n${note}` : note
+      const notes = yield* Ref.get(failoverNotesRef)
+      yield* finalizeRun({
+        nodeId: args.nodeId,
+        label,
+        store: args.store,
+        bus: args.bus,
+        hooks: args.hooks,
+        once: finalizedRef,
+        outcome: {
+          // stall-with-text ⇒ partial (the thinking finished — keep the work);
+          // interrupt ⇒ killed; crash ⇒ error. One rule, in Outcome.ts.
+          status: outcomeStatus(reason, hasText),
+          summary,
+          filesChanged: files,
+          reason,
+          ...(hasUsage ? { usage } : {}),
+          ...(notes.length > 0 ? { notes } : {}),
+        },
       })
-      .pipe(Effect.ignore)
-    yield* args.bus
-      .complete(args.nodeId, {
-        status: "error",
-        summary: note,
-        filesChanged: [],
-      })
-      .pipe(Effect.ignore)
-  }).pipe(Effect.catchAll(() => Effect.void))
+    }).pipe(Effect.catchAllCause(() => Effect.void))
 
-  // The stall watchdog: a fiber that wakes every WATCHDOG_TICK_MS and fails the
-  // moment the run has gone SUBAGENT_STALL_DEADLINE_MS without progress (no turn
-  // start, tool result, narration, or LLM retry — all stamp `progressRef`). It
-  // fails (never succeeds), so racing it against `body` interrupts a parked body;
-  // the body's exit then runs `finalize`, which reads `stalledRef` and records a
-  // clear STALL error so the parent's `wait_for_agents` unblocks. This closes the
-  // hole BOTH other backstops miss: the exit finalizer needs the fiber to EXIT (a
-  // parked fiber hasn't), and the sweeper needs it OFF the bus (a parked fiber is
-  // still on it). Without this a hung first model call stranded the node `running`
-  // with zero turns while its parent looped blind.
+  // The stall watchdog, ON HEALTH: a fiber that wakes every WATCHDOG_TICK_MS
+  // and fails only when the run is in a zero-activity `starting`/`generating`
+  // state past the deadline — i.e. a hung model call, the original silent-stall
+  // class. Every other state is EXEMPT because it's bounded elsewhere:
+  // `tool-running` by the tool's own timeout (bash cap, fetch caps),
+  // `retrying` by the retry cap + request timeout, `waiting-on-agents` by the
+  // gather timeout, `awaiting-approval` by the human who owns the decision.
+  // (The old progress-clock watchdog killed a parent parked in a legitimate
+  // 300s `wait_for_agents` and an agent mid-4-minute bash run.) It fails (never
+  // succeeds), so racing it against `body` interrupts a parked body; the body's
+  // exit then runs `finalize`, which reads `stalledRef` and preserves any
+  // produced work. This closes the hole BOTH other backstops miss: the exit
+  // finalizer needs the fiber to EXIT (a parked fiber hasn't), and the sweeper
+  // needs it OFF the bus (a parked fiber is still on it).
   const deadlineMs = args.opts.stallDeadlineMs ?? SUBAGENT_STALL_DEADLINE_MS
   // Tick often enough to land the kill promptly once stalled, capped at the
   // standard cadence (so a tiny injected deadline ticks proportionally fast).
@@ -1537,12 +1569,15 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     while (true) {
       yield* Effect.sleep(`${tickMs} millis`)
       const now = yield* Clock.currentTimeMillis
-      const last = yield* Ref.get(progressRef)
-      if (now - last >= deadlineMs) {
+      const h = yield* args.bus.healthOf(args.nodeId)
+      const killable =
+        h === undefined || h.state === "starting" || h.state === "generating"
+      const last = h?.lastActivityAt ?? 0
+      if (killable && last > 0 && now - last >= deadlineMs) {
         yield* Ref.set(stalledRef, true)
         return yield* Effect.fail<Failure>({
           error: "SubAgentStalled",
-          message: `no progress for ${Math.round((now - last) / 1000)}s`,
+          message: `no progress for ${Math.round((now - last) / 1000)}s (state: ${h?.state ?? "unknown"})`,
         })
       }
     }
@@ -1558,7 +1593,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // errors), so nothing leaks.
   return body.pipe(
     Effect.raceFirst(watchdog),
-    Effect.onExit(() => finalize),
+    Effect.onExit((exit) => finalize(exit)),
   )
 }
 
@@ -1584,20 +1619,26 @@ const makeRunAgentHandler =
     opts: BuildScopeRuntimeOptions,
     hooks: AgentHooks<R> | undefined,
   ) => {
-    // Fork a built run as a background fiber and return its handle. Pre-registers
-    // the child on the bus (so a sibling can address it the instant we return)
-    // and records its fiber (so `:stop` / teardown can interrupt it). The run
-    // itself records its return + completion on every exit path, so a failure is
-    // already captured there — swallow it from the daemon to avoid an unhandled
-    // fiber error.
+    // Fork a built run as a SUPERVISED background fiber and return its handle.
+    // Pre-registers the child on the bus (so a sibling can address it the
+    // instant we return) and records its fiber (so `:stop` / a subtree kill can
+    // interrupt it). The run's exit finalizer records its return + completion +
+    // terminal event on EVERY exit path (`finalizeRun`), so failures are fully
+    // captured there — the cause is swallowed here only to keep the fiber's own
+    // exit quiet. `forkSupervised` (the bus's fleet scope — no more forkDaemon)
+    // means teardown interrupts AND AWAITS the run, so an exiting process can't
+    // strand the node `running`.
     const launch = (spawnArgs: RunSpawnedArgs<R>) =>
       Effect.gen(function* () {
         const label = spawnArgs.title ?? (basename(spawnArgs.folder) || spawnArgs.folder)
         const parentKey: string | null =
           spawnArgs.parentNodeId ?? spawnArgs.rootConversationId ?? null
         yield* bus.markRunning(spawnArgs.nodeId, label, { parentKey })
-        const fiber = yield* Effect.forkDaemon(
-          runSpawnedAgent(spawnArgs).pipe(Effect.catchAll(() => Effect.void), Effect.asVoid),
+        const fiber = yield* bus.forkSupervised(
+          runSpawnedAgent(spawnArgs).pipe(
+            Effect.catchAllCause(() => Effect.void),
+            Effect.asVoid,
+          ),
         )
         yield* bus.setFiber(spawnArgs.nodeId, fiber)
         const handle: SpawnHandle = {
@@ -1691,11 +1732,6 @@ const makeRunAgentHandler =
         definition = constrainToReadOnly(definition)
       }
 
-      // A spawn of a LEAD role owns the structural gate over its subtree. Keyed
-      // off the requested `agent` name (the canonical signal — `definition.name`
-      // collapses to `"inline"` once instructions/tools are layered on).
-      const isLead = agent !== undefined && LEAD_AGENT_NAMES.includes(agent)
-
       // Resume / branch an existing node.
       if (seedFromNode !== undefined && seedFromNode.trim().length > 0) {
         const nodeId = yield* Schema.decodeUnknown(ContextNodeId)(seedFromNode.trim()).pipe(
@@ -1722,7 +1758,6 @@ const makeRunAgentHandler =
             // The fresh name describes the follow-up; the node keeps its own.
             ...(title !== undefined ? { title } : node.title !== undefined ? { title: node.title } : {}),
             ...(definition !== undefined ? { definition } : {}),
-            ...(isLead ? { isLead: true } : {}),
             parentDepth: rc.depth, parentNodeId: node.parentId,
             rootConversationId: rc.rootConversationId,
             tokenPool: rc.tokenPool,
@@ -1762,7 +1797,6 @@ const makeRunAgentHandler =
           store, shell, bus, displayRoot, opts, hooks, nodeId: childId, folder: node.folder, task, seedMessages,
           ...(title !== undefined ? { title } : {}),
           ...(definition !== undefined ? { definition } : {}),
-          ...(isLead ? { isLead: true } : {}),
           parentDepth: rc.depth, parentNodeId: nodeId,
           rootConversationId: rc.rootConversationId,
           tokenPool: rc.tokenPool,
@@ -1793,7 +1827,6 @@ const makeRunAgentHandler =
         store, shell, bus, displayRoot, opts, hooks, nodeId, folder: folderAbs, task, seedMessages,
         ...(title !== undefined ? { title } : {}),
         ...(definition !== undefined ? { definition } : {}),
-        ...(isLead ? { isLead: true } : {}),
         parentDepth: rc.depth, parentNodeId: rc.parentNodeId,
         rootConversationId: rc.rootConversationId,
         tokenPool: rc.tokenPool,
@@ -2001,6 +2034,12 @@ const buildGenericHandlers = <R>(
     // finishes / someone messages me / the timeout, then report a full snapshot
     // + my drained inbox + the board. The waiter's bus key is its own node (the
     // key its children registered as `parentKey`), else the root conversation.
+    //
+    // TERMINAL TRUTH COMES FROM THE STORE: the bus only carries LIVE runs now
+    // (its old bounded `done` map aged finished children out, after which the
+    // gather synthesized them as phantom-`running` and `allDone` could never
+    // become true — a spin the model rode to its step cap). The durable tree is
+    // the record of everything ever spawned; the bus adds live health on top.
     const wait_for_agents = (params: {
       readonly nodeIds?: ReadonlyArray<string>
       readonly timeoutSeconds?: number
@@ -2011,26 +2050,97 @@ const buildGenericHandlers = <R>(
         const requested = (params.nodeIds ?? [])
           .map((s) => s.trim())
           .filter((s) => s.length > 0)
+        // My children in the durable tree (finished AND running), keyed off the
+        // same parent link the bus uses: a node waiter's children carry its id;
+        // the root's top-level children carry a null parentId. A null root is a
+        // DETACHED tree (listTree(null) returns exactly those nodes).
+        const treeNodes = yield* store
+          .listTree(rc.rootConversationId)
+          .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<AgentContextNode>)))
+        const isRootWaiter = rc.parentNodeId === null
+        const treeChildren = treeNodes.filter((n) =>
+          isRootWaiter ? n.parentId === null : (n.parentId as string | null) === waiterKey,
+        )
         const watch =
-          requested.length > 0 ? requested : yield* bus.childrenOf(waiterKey)
+          requested.length > 0
+            ? requested
+            : [
+                ...new Set([
+                  ...(yield* bus.runningChildrenOf(waiterKey)),
+                  ...treeChildren.map((n) => n.id as string),
+                ]),
+              ]
         // Default 10s, not 60: awaitChange wakes the instant a child finishes or
         // mail lands, so the timeout is only the idle floor — a 60s floor stranded
         // a polling orchestrator for a full minute when nothing had happened yet.
         const timeoutMs =
           Math.min(300, Math.max(1, Math.floor(params.timeoutSeconds ?? 10))) * 1000
+        // Flip health to `waiting-on-agents` for the park (watchdog-exempt —
+        // the gather timeout bounds it) and back after, so the fleet tree says
+        // WHY this agent is quiet instead of showing a dead-looking spinner.
+        const parkStart = yield* Clock.currentTimeMillis
+        yield* bus.setHealth(waiterKey, {
+          state: "waiting-on-agents",
+          detail: `${watch.length} agent${watch.length === 1 ? "" : "s"}`,
+          at: parkStart,
+        })
         yield* bus.awaitChange({ waiterKey, watch, timeoutMs })
-        const snaps = yield* bus.snapshot(watch.length > 0 ? watch : undefined)
+        const now = yield* Clock.currentTimeMillis
+        yield* bus.setHealth(waiterKey, { state: "generating", at: now })
+        // RE-read the tree AFTER the park: a child that finished while we
+        // waited has its terminal status recorded by now (recordReturn precedes
+        // the completion wake on the one terminal path) — the pre-park snapshot
+        // would still say `running`.
+        const settledNodes = yield* store
+          .listTree(rc.rootConversationId)
+          .pipe(Effect.catchAll(() => Effect.succeed(treeNodes)))
+        const byId = new Map(settledNodes.map((n) => [n.id as string, n]))
+        const live = yield* bus.snapshot(watch)
+        const liveById = new Map(live.map((s) => [s.nodeId, s]))
+        interface GatherRow {
+          readonly nodeId: string
+          readonly name: string
+          readonly status: "running" | "ok" | "partial" | "error" | "killed"
+          readonly state?: string
+          readonly idleSeconds?: number
+          readonly summary?: string
+          readonly filesChanged?: ReadonlyArray<string>
+        }
+        const agents: GatherRow[] = []
+        for (const id of watch) {
+          const l = liveById.get(id)
+          if (l !== undefined) {
+            // Running: live status + WHAT it's doing + how stale that signal is,
+            // so the orchestrator can tell "retrying 429 2/3" from a dead fiber.
+            const h = l.health
+            agents.push({
+              nodeId: id,
+              name: l.label,
+              status: "running",
+              ...(h !== undefined
+                ? {
+                    state: h.detail !== undefined ? `${h.state}: ${h.detail}` : h.state,
+                    idleSeconds: Math.max(0, Math.round((now - h.lastActivityAt) / 1000)),
+                  }
+                : {}),
+            })
+            continue
+          }
+          const n = byId.get(id)
+          if (n === undefined) continue // unknown id (hallucinated / other tree)
+          agents.push({
+            nodeId: id,
+            name: n.title ?? (basename(n.folder) || n.folder),
+            status: n.status,
+            ...(n.returnSummary !== undefined ? { summary: n.returnSummary } : {}),
+            filesChanged: n.filesChanged,
+          })
+        }
         const inbox = yield* bus.drain(waiterKey)
         const board = yield* bus.boardRead()
-        const allDone = snaps.length > 0 && snaps.every((s) => s.status !== "running")
+        const allDone = agents.length > 0 && agents.every((s) => s.status !== "running")
         return {
-          agents: snaps.map((s) => ({
-            nodeId: s.nodeId,
-            name: s.label,
-            status: s.status,
-            ...(s.summary !== undefined ? { summary: s.summary } : {}),
-            ...(s.filesChanged !== undefined ? { filesChanged: s.filesChanged } : {}),
-          })),
+          agents,
           messages: inbox.map((m) => ({ from: m.from, content: m.content })),
           notes: board.slice(-20).map((n) => ({ from: n.from, note: n.note })),
           timedOut: !allDone && inbox.length === 0,

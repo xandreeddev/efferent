@@ -91,7 +91,7 @@ describe("agentState — the live state machine", () => {
     // agent's own subagent_end removes it.
     const afterEnd = run([
       { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
-      { e: { type: "agent_end", finalText: "done", messages: [] } },
+      { e: { type: "agent_end", finalText: "done" } },
     ])
     expect(afterEnd.phase).toBe("idle")
     expect(afterEnd.fleet).toEqual([{ nodeId: "1", name: "a" }])
@@ -100,7 +100,7 @@ describe("agentState — the live state machine", () => {
     // When that agent finishes, the fleet drains and the chip clears.
     const afterDrain = run([
       { e: { type: "subagent_start", name: "a", task: "t", nodeId: "1" } },
-      { e: { type: "agent_end", finalText: "done", messages: [] } },
+      { e: { type: "agent_end", finalText: "done" } },
       { e: { type: "subagent_end", name: "a", nodeId: "1", ok: true, summary: "s", filesChanged: [] } },
     ])
     expect(afterDrain.fleet).toEqual([])
@@ -130,21 +130,29 @@ describe("agentState — the live state machine", () => {
     expect(loaderState(idleAgentState)).toBeUndefined()
   })
 
-  test("fleetCompletionLine: one tidy ✓/✗ line, summary reduced to its first non-empty line and clipped", () => {
-    expect(fleetCompletionLine("backend", true, "added a timeout wrapper")).toBe(
+  test("fleetCompletionLine: one tidy ✓/◐/✗ line, summary reduced to its first non-empty line and clipped", () => {
+    expect(fleetCompletionLine("backend", "ok", "added a timeout wrapper")).toBe(
       "✓ backend — added a timeout wrapper",
     )
     // Failure → ✗.
-    expect(fleetCompletionLine("qa", false, "tests still red")).toBe("✗ qa — tests still red")
+    expect(fleetCompletionLine("qa", "error", "tests still red")).toBe("✗ qa — tests still red")
+    // Partial → half-moon with the reason, so stopped-early never reads as ok.
+    expect(fleetCompletionLine("coder", "partial", "half the endpoints done", "budget")).toBe(
+      "◐ coder (partial — budget) — half the endpoints done",
+    )
+    // Killed → ✗ with the reason qualifier (an interrupt is not the run's fault).
+    expect(fleetCompletionLine("worker", "killed", "", "interrupt")).toBe(
+      "✗ worker (interrupt)",
+    )
     // Multi-line summary → just the first non-empty line (no wall of prose).
-    expect(fleetCompletionLine("research", true, "\n\nLibraries compared.\nMore detail…")).toBe(
+    expect(fleetCompletionLine("research", "ok", "\n\nLibraries compared.\nMore detail…")).toBe(
       "✓ research — Libraries compared.",
     )
     // No summary → name only.
-    expect(fleetCompletionLine("lead", true, "   ")).toBe("✓ lead")
+    expect(fleetCompletionLine("lead", "ok", "   ")).toBe("✓ lead")
     // Over-long first line is clipped with an ellipsis.
     const long = "x".repeat(200)
-    const out = fleetCompletionLine("lead", true, long)
+    const out = fleetCompletionLine("lead", "ok", long)
     expect(out.endsWith("…")).toBe(true)
     expect(out.length).toBeLessThan(120)
   })
