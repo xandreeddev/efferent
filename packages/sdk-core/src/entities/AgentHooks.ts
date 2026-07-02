@@ -150,6 +150,12 @@ export interface AgentLlmRetryEvent {
    *  the spawned run's sink so the UI attributes the storm to the agent, not
    *  the root rail. Absent = the root's own call. */
   readonly nodeId?: string
+  /** Present only on the PATIENT ladder (the fast retries exhausted, the run is
+   *  waiting out a provider outage): how long it has been waiting, and the
+   *  wall-clock budget it will wait up to. Consumers should render
+   *  "provider down Nm — retrying" instead of "attempt n/3". */
+  readonly elapsedMs?: number
+  readonly budgetMs?: number
 }
 
 /**

@@ -405,6 +405,10 @@ export const makeSubmit = (
         text,
         rootHooks,
         cwd,
+        undefined,
+        // A human is at the seat: transients ride the patient retry ladder
+        // (visible waits, Esc cancels) instead of killing the turn.
+        "interactive",
       ).pipe(
         Effect.provide(scopeRuntime.handlerLayer),
         // Approval provided AFTER the handler layer so it satisfies both the

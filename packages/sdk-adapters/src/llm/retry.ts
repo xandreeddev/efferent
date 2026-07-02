@@ -1,6 +1,6 @@
 import { AiError } from "@effect/ai"
 import { classifyProviderError, type AgentLlmRetryEvent, RunContextRef } from "@xandreed/sdk-core"
-import { Duration, Effect, FiberRef } from "effect"
+import { Clock, Duration, Effect, FiberRef } from "effect"
 
 /**
  * Retry-with-backoff for LLM calls. The default provider (Kimi via the opencode
@@ -29,6 +29,38 @@ import { Duration, Effect, FiberRef } from "effect"
 const MAX_RETRIES = 3
 const BASE_MS = 1_000
 const MAX_BACKOFF_MS = 8_000
+
+/**
+ * The PATIENT phase — how a session survives a real provider outage instead of
+ * dying at the finish line. The July forensics: the opencode gateway went down
+ * for ~2.5h; the root's synthesis turn (the fleet's 7 finished audits, waiting
+ * to be delivered) burned the 3 fast retries in ~8 min and killed the run —
+ * the deliverable was never shown. Claude Code survives the same outage by
+ * simply *waiting it out visibly*. So after the fast retries, a transient
+ * failure keeps retrying on a slow ladder (15s → 30s → 60s → 60s …), bounded
+ * by a wall-clock budget chosen by the run's interaction policy:
+ *
+ *   - `interactive` — a human is watching and can Esc anytime; wait up to
+ *     30 min (every wait is on-screen: "provider down 6m — retrying").
+ *   - `headless`    — unattended; 10 min, inside the fleet deadline.
+ *   - none          — bare calls (evals, tests, helper tiers outside a run):
+ *     fast retries only, exactly the old behavior.
+ *
+ * Only `transient` failures ride the ladder — quota/config/auth/model still
+ * fail fast to the router's failover / the human.
+ */
+export const PATIENT_BUDGET_INTERACTIVE_MS = 30 * 60_000
+export const PATIENT_BUDGET_HEADLESS_MS = 10 * 60_000
+const PATIENT_LADDER_MS = [15_000, 30_000, 60_000] as const
+
+export const patientBudgetFor = (
+  policy: "interactive" | "headless" | undefined,
+): number =>
+  policy === "interactive"
+    ? PATIENT_BUDGET_INTERACTIVE_MS
+    : policy === "headless"
+      ? PATIENT_BUDGET_HEADLESS_MS
+      : 0
 /** Honor a provider's `Retry-After` only up to a minute. Longer ⇒ not a
  *  transient blip but a rate/quota wall — fail fast rather than park the turn. */
 export const MAX_HONORED_RETRY_AFTER_MS = 60_000
@@ -106,16 +138,33 @@ interface Decision {
   readonly wait: boolean
   readonly delayMs: number
   readonly reason: string
+  readonly phase: "fast" | "patient"
 }
 
-/** The full retry decision for a failure on attempt `n` (0-based): transient?
- *  under the attempt cap? a sleepable wait? Combines the transient classifier
- *  with {@link planDelay}'s clamp. */
-const decide = <E>(e: E, n: number): Decision => {
-  if (n >= MAX_RETRIES || !AiError.isAiError(e) || !isTransientAiError(e))
-    return { wait: false, delayMs: 0, reason: "" }
-  const plan = planDelay(retryAfterMs(e), n)
-  return { wait: plan.wait, delayMs: plan.delayMs, reason: reasonLabel(e) }
+const NO_RETRY: Decision = { wait: false, delayMs: 0, reason: "", phase: "fast" }
+
+/**
+ * The full retry decision for a failure on attempt `n` (0-based): transient?
+ * fast phase (attempt cap + {@link planDelay}'s clamp) or patient phase
+ * (slow ladder while the wall-clock budget lasts)? Pure — pinned by tests.
+ */
+export const planRetry = <E>(
+  e: E,
+  n: number,
+  elapsedMs: number,
+  budgetMs: number,
+): Decision => {
+  if (!AiError.isAiError(e) || !isTransientAiError(e)) return NO_RETRY
+  if (n < MAX_RETRIES) {
+    const plan = planDelay(retryAfterMs(e), n)
+    // A refused fast-phase wait (a Retry-After over the ceiling) is a quota
+    // wall, never worth the patient ladder either.
+    return { wait: plan.wait, delayMs: plan.delayMs, reason: reasonLabel(e), phase: "fast" }
+  }
+  if (budgetMs <= 0 || elapsedMs >= budgetMs) return NO_RETRY
+  const rung = PATIENT_LADDER_MS[Math.min(n - MAX_RETRIES, PATIENT_LADDER_MS.length - 1)] ?? 60_000
+  const delay = Math.round(rung * (0.75 + Math.random() * 0.5))
+  return { wait: true, delayMs: delay, reason: reasonLabel(e), phase: "patient" }
 }
 
 /** Push a retry notice to the driver's sink (FiberRef), if one is wired. */
@@ -140,20 +189,22 @@ const emitRetryNotice = (event: AgentLlmRetryEvent): Effect.Effect<void> =>
  * runtime, but `ExtractError<Options>` is a generic the router's service
  * signature can't widen — same cast class as its `resolveKey` mapError.
  */
-export const withLlmTimeout = <A, E, R>(
-  eff: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  eff.pipe(
-    Effect.timeoutFail({
-      duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
-      onTimeout: () =>
-        new AiError.UnknownError({
-          module: "llm",
-          method: "request",
-          description: `request timed out after ${Math.round(LLM_REQUEST_TIMEOUT_MS / 1000)}s`,
-        }) as never,
-    }),
-  )
+export const withLlmTimeout =
+  (label?: string) =>
+  <A, E, R>(eff: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    eff.pipe(
+      Effect.timeoutFail({
+        duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
+        onTimeout: () =>
+          new AiError.UnknownError({
+            module: "llm",
+            method: "request",
+            // Name the culprit — a surfaced timeout should read "kimi via
+            // opencode is down", not an anonymous "request timed out".
+            description: `request${label !== undefined ? ` to ${label}` : ""} timed out after ${Math.round(LLM_REQUEST_TIMEOUT_MS / 1000)}s`,
+          }) as never,
+      }),
+    )
 
 /**
  * Wrap an LLM call so a transient provider failure is retried with backoff.
@@ -165,40 +216,70 @@ export const withLlmTimeout = <A, E, R>(
  */
 export const retryableLlm = <A, E, R>(
   eff: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> => {
-  // E is wider than AiError (a provider's generateText folds in toolkit-handler
-  // errors), so retry stays polymorphic and only fires on a transient AiError;
-  // every other failure propagates unchanged.
-  const attempt = (n: number): Effect.Effect<A, E, R> =>
-    eff.pipe(
-      Effect.catchIf(
-        (e: E) => decide(e, n).wait,
-        (e: E) => {
-          const { delayMs, reason } = decide(e, n)
-          return emitRetryNotice({
-            reason,
-            attempt: n + 1,
-            maxAttempts: MAX_RETRIES,
-            delayMs,
-          }).pipe(
-            Effect.zipRight(
-              Effect.annotateCurrentSpan({
+): Effect.Effect<A, E, R> =>
+  Effect.gen(function* () {
+    // The patient budget follows the run's interaction policy (RunContextRef —
+    // seeded by the driver, inherited down the fleet); bare calls get 0.
+    const rc = yield* FiberRef.get(RunContextRef)
+    const budgetMs = patientBudgetFor(rc.interactionPolicy)
+    return yield* retryWithBudget(eff, budgetMs)
+  })
+
+/**
+ * Fast retries ONLY — for the helper tiers (session titles, compaction
+ * digests, the approval judge, web search). They are best-effort work that
+ * must never park a turn: the digest runs INLINE in the loop's append path, so
+ * riding the main tier's 30-min patient ladder would stall the whole session
+ * for a garnish. A helper that can't get through degrades gracefully instead.
+ */
+export const retryableLlmFast = <A, E, R>(
+  eff: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => retryWithBudget(eff, 0)
+
+const retryWithBudget = <A, E, R>(
+  eff: Effect.Effect<A, E, R>,
+  budgetMs: number,
+): Effect.Effect<A, E, R> =>
+  Effect.gen(function* () {
+    const startMs = yield* Clock.currentTimeMillis
+
+    // E is wider than AiError (a provider's generateText folds in toolkit-handler
+    // errors), so retry stays polymorphic and only fires on a transient AiError;
+    // every other failure propagates unchanged.
+    const attempt = (n: number): Effect.Effect<A, E, R> =>
+      eff.pipe(
+        Effect.catchAll(
+          (e: E) =>
+            Effect.gen(function* () {
+              const elapsedMs = (yield* Clock.currentTimeMillis) - startMs
+              const d = planRetry(e, n, elapsedMs, budgetMs)
+              if (!d.wait) return yield* Effect.fail(e)
+              const patient = d.phase === "patient"
+              yield* emitRetryNotice({
+                reason: d.reason,
+                attempt: n + 1,
+                maxAttempts: MAX_RETRIES,
+                delayMs: d.delayMs,
+                // Present only on the patient ladder — consumers render
+                // "provider down Nm — retrying" instead of "n/3".
+                ...(patient ? { elapsedMs, budgetMs } : {}),
+              })
+              yield* Effect.annotateCurrentSpan({
                 "llm.retry": true,
                 "llm.retry.attempt": n + 1,
-                "llm.retry.reason": reason,
-                "llm.retry.delay_ms": delayMs,
-              }),
-            ),
-            Effect.zipRight(
-              Effect.logWarning(
-                `LLM ${reason} — retrying in ${delayMs}ms (attempt ${n + 1}/${MAX_RETRIES})`,
-              ),
-            ),
-            Effect.zipRight(Effect.sleep(Duration.millis(delayMs))),
-            Effect.zipRight(Effect.suspend(() => attempt(n + 1))),
-          )
-        },
-      ),
-    )
-  return attempt(0)
-}
+                "llm.retry.reason": d.reason,
+                "llm.retry.delay_ms": d.delayMs,
+                "llm.retry.phase": d.phase,
+              })
+              yield* Effect.logWarning(
+                patient
+                  ? `LLM ${d.reason} — provider unavailable ${Math.round(elapsedMs / 60_000)}m, retrying in ${Math.round(d.delayMs / 1000)}s (budget ${Math.round(budgetMs / 60_000)}m)`
+                  : `LLM ${d.reason} — retrying in ${d.delayMs}ms (attempt ${n + 1}/${MAX_RETRIES})`,
+              )
+              yield* Effect.sleep(Duration.millis(d.delayMs))
+              return yield* attempt(n + 1)
+            }),
+        ),
+      )
+    return yield* attempt(0)
+  })
