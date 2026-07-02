@@ -171,6 +171,10 @@ export const AgentEvent = Schema.Union(
     maxAttempts: Schema.Number,
     delayMs: Schema.Number,
     nodeId: Schema.optional(Schema.String),
+    // Present only on the PATIENT ladder (waiting out a provider outage):
+    // render "provider down Nm — retrying" instead of "attempt n/3".
+    elapsedMs: Schema.optional(Schema.Number),
+    budgetMs: Schema.optional(Schema.Number),
   }),
   // A running agent's live health — EDGE-TRIGGERED (state transitions + a
   // ≥15s activity re-stamp), never a heartbeat. Published by the bus sink, so

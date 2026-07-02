@@ -13,7 +13,7 @@ import {
   type WebSearchSource,
 } from "@xandreed/sdk-core"
 import { Config, Effect, Layer, Option } from "effect"
-import { retryableLlm } from "./retry.js"
+import { retryableLlmFast } from "./retry.js"
 
 /**
  * `WebSearch` backed by a provider's **server-side** search tool — Gemini
@@ -161,7 +161,7 @@ export const WebSearchLive = Layer.effect(
                       prompt,
                       toolkit: Toolkit.make(GoogleTool.GoogleSearch({})),
                     })
-                    .pipe(retryableLlm)
+                    .pipe(retryableLlmFast)
                   return {
                     answer: res.text,
                     sources: extractSources(res.content),
@@ -180,7 +180,7 @@ export const WebSearchLive = Layer.effect(
                       prompt,
                       toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
                     })
-                    .pipe(retryableLlm)
+                    .pipe(retryableLlmFast)
                   return {
                     answer: res.text,
                     sources: extractSources(res.content),

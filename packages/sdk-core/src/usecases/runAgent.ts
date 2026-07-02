@@ -26,6 +26,10 @@ interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
   readonly promptLabel: string
   /** Seeded onto RunContext.mission when present. */
   readonly mission: string | undefined
+  /** Seeded onto RunContext.interactionPolicy and inherited down the fleet.
+   *  Governs how patiently LLM transients are retried (adapter ladder) and
+   *  whether approvals can prompt a human. Absent ⇒ fast retries only. */
+  readonly interactionPolicy: "interactive" | "headless" | undefined
 }
 
 /** Emit a swarm-gate verdict through the caller's hook, if any (no-op otherwise). */
@@ -96,6 +100,9 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
             fast: settings.fastModel ?? input.pinnedGeneral ?? settings.model,
           },
           ...(input.mission !== undefined ? { mission: input.mission } : {}),
+          ...(input.interactionPolicy !== undefined
+            ? { interactionPolicy: input.interactionPolicy }
+            : {}),
           // Thread the retry-notice sink down to the provider adapter (it runs
           // below the loop and can't see hooks) so a backoff surfaces live.
           ...(input.extraHooks?.onLlmRetry !== undefined
@@ -252,6 +259,11 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
    *  and a mid-run `/model` / `:set` can't move a running fleet. Absent ⇒ the
    *  session's main model. */
   pinnedGeneral?: string,
+  /** Whether a human is at the seat (`"interactive"`) or the run is unattended
+   *  (`"headless"`). Drives the adapter's patient retry ladder — an interactive
+   *  run waits out a provider outage visibly (Esc cancels anytime) instead of
+   *  dying with the deliverable in hand. Absent ⇒ fast retries only (evals). */
+  interactionPolicy?: "interactive" | "headless",
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -290,6 +302,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R>(
       pinnedGeneral,
       promptLabel: userPrompt,
       mission: userPrompt,
+      interactionPolicy,
     })
   })
 
@@ -312,6 +325,8 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
   workspaceDir?: string,
   /** The GENERAL model to pin for this run (see {@link runAgent}). */
   pinnedGeneral?: string,
+  /** See {@link runAgent}. */
+  interactionPolicy?: "interactive" | "headless",
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
@@ -334,5 +349,6 @@ export const resumeAgent = <Tools extends Record<string, Tool.Any>, R>(
       pinnedGeneral,
       promptLabel: "[resume in-flight turn]",
       mission: undefined,
+      interactionPolicy,
     })
   })

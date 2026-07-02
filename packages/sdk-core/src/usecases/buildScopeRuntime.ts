@@ -1338,7 +1338,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         const parentSink = args.runContext.onLlmRetry
         const stamp = touch(
           "retrying",
-          `${e.reason} ${e.attempt}/${e.maxAttempts} — next in ${Math.round(e.delayMs / 1000)}s`,
+          // Patient ladder → "provider down Nm"; fast retries → "n/3".
+          e.elapsedMs !== undefined
+            ? `${e.reason} — provider down ${Math.max(1, Math.round(e.elapsedMs / 60_000))}m, retrying (next in ${Math.round(e.delayMs / 1000)}s)`
+            : `${e.reason} ${e.attempt}/${e.maxAttempts} — next in ${Math.round(e.delayMs / 1000)}s`,
         )
         return parentSink !== undefined
           ? stamp.pipe(Effect.zipRight(parentSink({ ...e, nodeId })))
@@ -1356,6 +1359,19 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         : {}),
     }
 
+    // Persist a produced tail to the node the moment each turn lands
+    // (incremental — the loop's `onTail`). A run that dies mid-flight (provider
+    // outage, interrupt, crash) keeps every COMPLETED turn: the July forensics
+    // had a resumed node lose two finished turns of work because the old code
+    // bulk-appended only on success at the very end.
+    // (Returns no positions — the store's append is void; positions only key
+    // the ROOT rail's blocks.)
+    const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
+      Effect.forEach(msgs, (m) => store.append(nodeId, m)).pipe(
+        Effect.orDie,
+        Effect.map((): ReadonlyArray<number> => []),
+      )
+
     // One attempt of the scoped loop over a message buffer — reused verbatim for
     // the first run AND each coordinator gate-driven retry, so a retry inherits
     // the same toolkit, layer, pinned models (via childRc), and compaction policy.
@@ -1369,6 +1385,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           ? { toolResultMaxChars: args.toolResultMaxChars }
           : {}),
         hooks: innerHooks,
+        onTail: persistNodeTail,
       }).pipe(
         Effect.provide(useLayer),
         Effect.locally(RunContextRef, childRc),
@@ -1389,14 +1406,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         }),
       )
 
-    // Persist a produced tail to the node the moment it lands (incremental, so a
-    // gate retry's earlier attempts are durable; the terminal recordReturn no
-    // longer bulk-appends).
-    const persistNodeTail = (msgs: ReadonlyArray<AgentMessage>) =>
-      Effect.forEach(msgs, (m) => store.append(nodeId, m))
-
+    // (The tail is persisted incrementally per turn via `onTail` above — no
+    // end-of-run bulk append; a failed run keeps its completed turns.)
     const outcome = yield* runAttempt(seedMessages)
-    if (outcome.ok) yield* persistNodeTail(outcome.r.newTail)
     // (No per-coordinator gate here any more — gating is ONE tier, at the root
     // (`driveLoop`), judging the aggregate deliverable. The old lead-tier gate
     // ran a multi-minute Opus subprocess inside this run's 180s stall-watchdog

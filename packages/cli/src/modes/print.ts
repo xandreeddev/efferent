@@ -99,6 +99,15 @@ const consumeEvents = (
         case "error":
           yield* writeStderr(`${ansi.fgBrightRed}[error] ${event.message}${ansi.reset}`)
           break
+        case "llm_retry":
+          // The patient ladder can wait minutes — narrate it so the run reads
+          // as "waiting out an outage", never a hang. Fast retries stay quiet.
+          if (event.elapsedMs !== undefined) {
+            yield* writeStderr(
+              `${ansi.fgYellow}[provider] ${event.reason} — down ${Math.max(1, Math.round(event.elapsedMs / 60_000))}m, retrying in ${Math.round(event.delayMs / 1000)}s${ansi.reset}`,
+            )
+          }
+          break
         default:
           break
       }
@@ -174,7 +183,9 @@ export const runPrintMode = (
     // One root turn, error-handled so a failed turn can't break the completion
     // loop — emit the error as an event + stderr, return an empty result.
     const runTurn = (p: string) =>
-      runAgent(config, cid, p, drainHooks, input.cwd).pipe(
+      // headless: transients get the bounded patient ladder (10 min), inside
+      // the fleet deadline — an unattended run waits out a blip, not an outage.
+      runAgent(config, cid, p, drainHooks, input.cwd, undefined, "headless").pipe(
         Effect.catchAll((err) =>
           Effect.gen(function* () {
             const msg =

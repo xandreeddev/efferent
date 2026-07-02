@@ -7,7 +7,11 @@ import {
   LLM_REQUEST_TIMEOUT_MS,
   MAX_HONORED_RETRY_AFTER_MS,
   parseRetryAfter,
+  patientBudgetFor,
+  PATIENT_BUDGET_HEADLESS_MS,
+  PATIENT_BUDGET_INTERACTIVE_MS,
   planDelay,
+  planRetry,
   retryableLlm,
 } from "./retry.js"
 
@@ -167,6 +171,66 @@ describe("retryableLlm", () => {
     expect(notices.map((n) => n.attempt)).toEqual([1, 2])
     expect(notices[0]?.maxAttempts).toBe(3)
     expect(notices[0]?.reason).toBe("HTTP 429")
+  })
+})
+
+describe("planRetry (the patient ladder)", () => {
+  const transient = httpError(503)
+
+  it("fast phase: the first 3 failures back off short regardless of budget", () => {
+    const d = planRetry(transient, 0, 0, 0)
+    expect(d).toMatchObject({ wait: true, phase: "fast" })
+    expect(planRetry(transient, 2, 0, 0).wait).toBe(true)
+  })
+
+  it("with NO budget (bare calls / helper tiers) it gives up after the fast phase", () => {
+    expect(planRetry(transient, 3, 10_000, 0).wait).toBe(false)
+  })
+
+  it("with a budget it keeps retrying on the slow ladder while time remains", () => {
+    // The forensic case: the fleet finished, the synthesis turn hit a 20-min
+    // gateway outage. Attempt 4+ must WAIT (15s → 30s → 60s), not kill the run.
+    const budget = PATIENT_BUDGET_INTERACTIVE_MS
+    const d3 = planRetry(transient, 3, 8 * 60_000, budget)
+    expect(d3.wait).toBe(true)
+    expect(d3.phase).toBe("patient")
+    expect(d3.delayMs).toBeGreaterThanOrEqual(15_000 * 0.75)
+    expect(d3.delayMs).toBeLessThanOrEqual(15_000 * 1.25)
+    // Deep into the ladder the rung caps at ~60s.
+    const d9 = planRetry(transient, 9, 20 * 60_000, budget)
+    expect(d9.wait).toBe(true)
+    expect(d9.delayMs).toBeLessThanOrEqual(60_000 * 1.25)
+  })
+
+  it("stops when the wall-clock budget is exhausted", () => {
+    expect(planRetry(transient, 5, PATIENT_BUDGET_HEADLESS_MS, PATIENT_BUDGET_HEADLESS_MS).wait).toBe(
+      false,
+    )
+    expect(
+      planRetry(transient, 5, PATIENT_BUDGET_HEADLESS_MS + 1, PATIENT_BUDGET_HEADLESS_MS).wait,
+    ).toBe(false)
+  })
+
+  it("never ladders a non-transient failure", () => {
+    expect(planRetry(httpError(401), 4, 0, PATIENT_BUDGET_INTERACTIVE_MS).wait).toBe(false)
+    expect(planRetry(malformed(), 4, 0, PATIENT_BUDGET_INTERACTIVE_MS).wait).toBe(false)
+  })
+
+  it("the router's empty-response rejection rides the ladder (classified transient)", () => {
+    const empty = unknown("empty model response from opencode:kimi-k2.6 (no text, no tool calls)")
+    expect(isTransientAiError(empty)).toBe(true)
+    expect(planRetry(empty, 4, 60_000, PATIENT_BUDGET_INTERACTIVE_MS).wait).toBe(true)
+  })
+})
+
+describe("patientBudgetFor", () => {
+  it("interactive waits longest, headless bounded, bare calls not at all", () => {
+    expect(patientBudgetFor("interactive")).toBe(PATIENT_BUDGET_INTERACTIVE_MS)
+    expect(patientBudgetFor("headless")).toBe(PATIENT_BUDGET_HEADLESS_MS)
+    expect(patientBudgetFor(undefined)).toBe(0)
+    // Headless must stay inside the fleet deadline (20 min) with room for the
+    // failover's second ladder.
+    expect(PATIENT_BUDGET_HEADLESS_MS).toBeLessThan(20 * 60_000)
   })
 })
 

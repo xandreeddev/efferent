@@ -118,7 +118,9 @@ export const runJsonMode = (
     const drainHooks = withInboxDrain(hooks, runtime.bus, rootKey)
 
     const runTurn = (p: string) =>
-      runAgent(config, cid, p, drainHooks, input.cwd).pipe(
+      // headless: transients get the bounded patient ladder (10 min), inside
+      // the fleet deadline — an unattended run waits out a blip, not an outage.
+      runAgent(config, cid, p, drainHooks, input.cwd, undefined, "headless").pipe(
         Effect.catchAll((err) =>
           Effect.gen(function* () {
             const msg =
