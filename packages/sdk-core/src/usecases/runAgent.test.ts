@@ -54,10 +54,12 @@ const config: AgentConfig<Record<string, never>> = {
 }
 const cid = "conv-1" as unknown as ConversationId
 
-/** In-memory ConversationStore — only the methods runAgent/driveLoop touch. */
+/** In-memory ConversationStore — only the methods runAgent/driveLoop touch.
+ *  `verdicts` captures the gate's audit rows so tests can assert persistence. */
 const convStore = () => {
   let pos = -1
-  return Layer.succeed(ConversationStore, {
+  const verdicts: Array<{ verdict: string; attempt: number; error?: string }> = []
+  const layer = Layer.succeed(ConversationStore, {
     ensure: () => Effect.void,
     getLatestCheckpoint: () => Effect.succeed(undefined),
     listActive: () => Effect.succeed([] as ReadonlyArray<AgentMessage>),
@@ -65,7 +67,17 @@ const convStore = () => {
     append: () => Effect.sync(() => (pos += 1)),
     markPending: () => Effect.void,
     clearPending: () => Effect.void,
+    recordGateVerdict: (r: { verdict: string; attempt: number; error?: string }) =>
+      Effect.sync(() => {
+        verdicts.push({
+          verdict: r.verdict,
+          attempt: r.attempt,
+          ...(r.error !== undefined ? { error: r.error } : {}),
+        })
+      }),
+    listGateVerdicts: () => Effect.succeed([]),
   } as never)
+  return Object.assign(layer, { verdicts })
 }
 
 /** A tree that reports NO nodes before the run and `nodes` afterward — emulating
@@ -129,9 +141,10 @@ const run = (args: {
   const hooks: AgentHooks = {
     onGateResult: (e) => Effect.sync(() => events.push(e)),
   }
+  const store = convStore()
   const layers = Layer.mergeAll(
     model.layer,
-    convStore(),
+    store,
     args.tree,
     verifier.layer,
     settings(args.maxLoopAttempts !== undefined ? { maxLoopAttempts: args.maxLoopAttempts } : {}),
@@ -145,6 +158,8 @@ const run = (args: {
     attempts: model.attempts(),
     gateCalls: verifier.gateCalls(),
     events,
+    // The persisted audit rows — the gate can never silently bypass again.
+    persisted: store.verdicts,
   }))
 }
 
@@ -191,6 +206,16 @@ describe("driveLoop — mandatory swarm gate", () => {
     expect(r.gateCalls).toBe(1)
     expect(r.attempts).toBe(1)
     expect(r.events.map((e) => e.verdict)).toEqual(["unavailable"])
+    // AUDIT: even the unavailable round is PERSISTED, with the error detail —
+    // the "claude exited 1 after 2s" silent-bypass class is traceable now.
+    expect(r.persisted).toHaveLength(1)
+    expect(r.persisted[0]?.verdict).toBe("unavailable")
+    expect(r.persisted[0]?.error).toBeDefined()
+  })
+
+  it("persists every gate round to the audit trail (sound too)", async () => {
+    const r = await run({ tree: treeThatSpawns(oneNode), verdicts: [sound] })
+    expect(r.persisted.map((v) => v.verdict)).toEqual(["sound"])
   })
 
   it("research/prose deliverable (no files changed) is delivered WITH advisory notes, NOT re-run", async () => {

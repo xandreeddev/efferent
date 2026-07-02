@@ -1,5 +1,5 @@
 import type { Tool } from "@effect/ai"
-import { Effect } from "effect"
+import { Clock, Effect } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentGateEvent, AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
@@ -9,6 +9,7 @@ import { recordError } from "../telemetry/metrics.js"
 import { agentSpanAttributes, runSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
 import { gateOnce, listTreeSafe, settleNewNodes } from "./gateLoop.js"
+import { reinforceConstraints } from "./persistArtifact.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
 import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
@@ -128,6 +129,11 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
 
     let result = yield* runOneAttempt(input.messages)
 
+    // Wall-clock ceiling for the WHOLE gate phase (settle + every verifier
+    // round + every fleet retry). Bounds the "root wedged for tens of minutes
+    // with only a spinner" class regardless of attempt count.
+    const GATE_WALL_CLOCK_MS = 15 * 60_000
+
     // ===== Mandatory swarm gate (the self-improving loop's enforcement point) =====
     // If THIS run used sub-agents, the objective is NOT done until the independent
     // Opus gate validates the deliverable. This lives in `driveLoop` — the one path
@@ -142,10 +148,35 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
     // does not loop. `repoDir` is required to ground the gate.
     if (settings.autoLoop !== false && input.workspaceDir !== undefined) {
       const repoDir = input.workspaceDir
-      const maxAttempts = settings.maxLoopAttempts ?? 3
+      // Default ONE retry (2 attempts): each retry re-runs the whole fleet —
+      // expensive by construction — and the forensics showed retry-to-3 mostly
+      // burned tokens without converging. The wall-clock budget bounds the
+      // whole gate phase regardless of attempts (verifier calls used to run up
+      // to 30 min × attempts with only a spinner showing).
+      const maxAttempts = settings.maxLoopAttempts ?? 2
+      const gateStart = yield* Clock.currentTimeMillis
       let attempt = 1
       while (true) {
+        const elapsed = (yield* Clock.currentTimeMillis) - gateStart
+        if (elapsed > GATE_WALL_CLOCK_MS) {
+          yield* store
+            .recordGateVerdict({
+              conversationId: input.conversationId,
+              attempt,
+              verdict: "unavailable",
+              reasons: [
+                `gate wall-clock budget exhausted after ${Math.round(elapsed / 1000)}s — delivered as-is`,
+              ],
+              filesChanged: [],
+              advisory: false,
+              durationMs: elapsed,
+              error: "gate budget exhausted",
+            })
+            .pipe(Effect.ignore)
+          break
+        }
         const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
+        const roundStart = yield* Clock.currentTimeMillis
         const step = yield* gateOnce({
           task: input.mission ?? input.promptLabel,
           summary: result.finalText,
@@ -155,7 +186,35 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
           maxAttempts,
         })
         if (step.kind === "no-subagents") break
+        // AUDIT: every round lands a row — INCLUDING `unavailable` (with the
+        // verifier's error text), so a flaky gate can never again degrade to a
+        // silent, untraceable bypass ("claude exited 1 after 2s" ×3 in the
+        // forensics, invisible everywhere).
+        const roundMs = (yield* Clock.currentTimeMillis) - roundStart
+        yield* store
+          .recordGateVerdict({
+            conversationId: input.conversationId,
+            attempt,
+            verdict: step.event.verdict,
+            reasons: step.event.reasons,
+            filesChanged: step.event.filesChanged,
+            advisory: step.event.advisory === true,
+            durationMs: roundMs,
+            ...(step.event.verdict === "unavailable"
+              ? { error: step.event.reasons.join("; ") }
+              : {}),
+          })
+          .pipe(Effect.ignore)
         yield* emitGate(input, step.event)
+        // ✗-reinforcement: the gate cited standing constraints the deliverable
+        // violated — bump their harmful counters so the library's numbers mean
+        // something (every rule sat at (✓0 ✗0) forever before this).
+        if (
+          step.event.constraintsViolated !== undefined &&
+          step.event.constraintsViolated.length > 0
+        ) {
+          yield* reinforceConstraints(repoDir, step.event.constraintsViolated)
+        }
         if (step.kind !== "retry") break
 
         // RUN AGAIN — feed the gate's reasons back as the next turn, then re-gate.

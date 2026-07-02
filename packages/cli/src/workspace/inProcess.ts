@@ -48,6 +48,7 @@ import {
 } from "@xandreed/sdk-core"
 import {
   buildScopeRuntime,
+  gateOnce,
   inboxToMessages,
   SWEEP_INTERVAL_MS,
   sweepStrandedRuns,
@@ -212,6 +213,52 @@ export const makeJobController = (input: {
    *  no client surface (the cron-only daemon). */
   readonly send?: (cid: ConversationId, prompt: string) => Effect.Effect<void>
 }): JobController => {
+  // A one-shot gate over the scheduled run's deliverable: cron runs were the
+  // one path with NO verification at all (`spawnAgent` bypasses `driveLoop`).
+  // No retry loop here — unattended runs have no one to steer a re-run — but
+  // the verdict is judged, PERSISTED to the audit trail, and folded into the
+  // returned outcome, so a scheduled run can never silently ship junk.
+  const gateScheduled = (
+    job: Job,
+    r: { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
+  ) =>
+    Effect.gen(function* () {
+      const settings = yield* (yield* SettingsStore).get()
+      if (settings.autoLoop === false) return undefined
+      const tree = yield* ContextTreeStore
+      const conv = yield* ConversationStore
+      const all = yield* tree
+        .listTree(job.conversationId)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AgentContextNode>))
+      const self = all.filter((n) => n.id === r.nodeId)
+      const step = yield* gateOnce({
+        task: job.prompt,
+        summary: r.summary,
+        repoDir: job.folder,
+        freshNodes: self,
+        attempt: 1,
+        maxAttempts: 1,
+      })
+      if (step.kind === "no-subagents") return undefined
+      yield* conv
+        .recordGateVerdict({
+          conversationId: job.conversationId,
+          attempt: 1,
+          verdict: step.event.verdict,
+          reasons: step.event.reasons,
+          filesChanged: step.event.filesChanged,
+          advisory: step.event.advisory === true,
+          durationMs: 0,
+          ...(step.event.verdict === "unavailable"
+            ? { error: step.event.reasons.join("; ") }
+            : {}),
+        })
+        .pipe(Effect.ignore)
+      return step.event.verdict
+      // Cause-proof (defects too): the gate is an observer here — an audit
+      // hiccup must never turn a finished scheduled run into a failure.
+    }).pipe(Effect.catchAllCause(() => Effect.succeed(undefined)))
+
   const spawnScheduled = (job: Job) =>
     input.runtime
       .spawnAgent({
@@ -227,10 +274,20 @@ export const makeJobController = (input: {
       })
       .pipe(
         Effect.provide(input.scheduledApproval),
+        Effect.flatMap((r) =>
+          gateScheduled(job, r).pipe(
+            Effect.map((verdict) => ({ ...r, gateVerdict: verdict })),
+          ),
+        ),
         Effect.map((r) => ({
           conversationId: job.conversationId,
           nodeId: r.nodeId,
-          outcome: r.outcome === "partial" ? ("partial" as const) : ("ok" as const),
+          outcome:
+            r.gateVerdict === "needs_work" || r.gateVerdict === "blocked"
+              ? ("partial" as const)
+              : r.outcome === "partial"
+                ? ("partial" as const)
+                : ("ok" as const),
         })),
         // A scheduled job's failure is recorded on its context node — but the
         // RETURN must say so too (the old success-shaped swallow made a failed
