@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { Clock, Effect, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
+import { Cause, Clock, Effect, Exit, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
 import type { LanguageModel } from "@effect/ai"
 import {
   ContextTreeStore,
@@ -172,7 +172,12 @@ export const shouldSweepNode = (input: {
   !input.isRunningOnBus &&
   input.now - input.createdAt >= (input.graceMs ?? SWEEP_GRACE_MS)
 
-export type InProcessWorkspace = ReturnType<typeof Workspace.of>
+export type InProcessWorkspace = ReturnType<typeof Workspace.of> & {
+  /** Supervised-fleet teardown: interrupt + AWAIT every running fleet fiber so
+   *  each records an honest `killed(shutdown)` before the process exits. The
+   *  daemon runs it on its way out (graceful `POST /shutdown` AND SIGINT). */
+  readonly shutdown: Effect.Effect<void>
+}
 
 /**
  * The **JobController** — the one entry that unifies how a turn starts. The three
@@ -195,7 +200,14 @@ export interface JobController {
   readonly submitJob: (
     job: Job,
   ) => Effect.Effect<
-    { readonly conversationId: ConversationId; readonly nodeId?: ContextNodeId },
+    {
+      readonly conversationId: ConversationId
+      readonly nodeId?: ContextNodeId
+      /** How the scheduled run ended (ok | partial | error). Absent on the
+       *  interactive `send` path, which resolves asynchronously. The old
+       *  controller swallowed failures into a success-shaped return. */
+      readonly outcome?: "ok" | "partial" | "error"
+    },
     never,
     WorkspaceRunServices
   >
@@ -236,13 +248,32 @@ export const makeJobController = (input: {
       })
       .pipe(
         Effect.provide(input.scheduledApproval),
-        Effect.map((r) => ({ conversationId: job.conversationId, nodeId: r.nodeId })),
-        // A scheduled job's failure is already recorded on its context node; the
-        // controller never fails (the daemon logs around it).
-        Effect.catchAll(() => Effect.succeed({ conversationId: job.conversationId })),
-        Effect.catchAllDefect(() => Effect.succeed({ conversationId: job.conversationId })),
+        Effect.map((r) => ({
+          conversationId: job.conversationId,
+          nodeId: r.nodeId,
+          outcome: r.outcome === "partial" ? ("partial" as const) : ("ok" as const),
+        })),
+        // A scheduled job's failure is recorded on its context node — but the
+        // RETURN must say so too (the old success-shaped swallow made a failed
+        // cron run indistinguishable from a clean one). Never fails.
+        Effect.catchAll((e) =>
+          Effect.logWarning(
+            `scheduled job failed: ${e.error}${e.message !== undefined ? ` — ${e.message}` : ""}`,
+          ).pipe(
+            Effect.as({ conversationId: job.conversationId, outcome: "error" as const }),
+          ),
+        ),
+        Effect.catchAllDefect((d) =>
+          Effect.logError(`scheduled job crashed: ${String(d)}`).pipe(
+            Effect.as({ conversationId: job.conversationId, outcome: "error" as const }),
+          ),
+        ),
       ) as Effect.Effect<
-        { conversationId: ConversationId; nodeId?: ContextNodeId },
+        {
+          conversationId: ConversationId
+          nodeId?: ContextNodeId
+          outcome?: "ok" | "partial" | "error"
+        },
         never,
         WorkspaceRunServices
       >
@@ -542,6 +573,19 @@ export const makeInProcessWorkspace = (
             ),
           ),
           Effect.asVoid,
+          // An INTERRUPTED root turn (Esc / :stop) never reaches the loop's own
+          // agent_end — emit the honest terminal event here so clients settle on
+          // `killed(interrupt)` instead of inferring from silence.
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+              ? publish({
+                  type: "agent_end",
+                  finalText: "",
+                  outcome: "killed",
+                  reason: "interrupt",
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
         // Optimistically flip to thinking the instant the turn starts, so a
@@ -579,6 +623,16 @@ export const makeInProcessWorkspace = (
             ),
           ),
           Effect.asVoid,
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)
+              ? publish({
+                  type: "agent_end",
+                  finalText: "",
+                  outcome: "killed",
+                  reason: "interrupt",
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
           Effect.ensuring(finishTurn(rootKey)),
         ) as Effect.Effect<void, never, WorkspaceRunServices>
         yield* setPhase(rootKey, submittedPhaseState)
@@ -810,10 +864,12 @@ export const makeInProcessWorkspace = (
           const key = id as string
           if (yield* isFleetRoot(key)) {
             // Cancel only THIS fleet's subtree (not interruptAll — that would
-            // kill every fleet; reserved for daemon shutdown).
-            yield* scopeRuntime.bus.interruptSubtree(key)
+            // kill every fleet; reserved for daemon shutdown). The client's
+            // interrupt is a human action — stamp it so the finalizer records
+            // `killed(interrupt: human)`, not a guessed parent kill.
+            yield* scopeRuntime.bus.interruptSubtree(key, "human")
           } else {
-            yield* scopeRuntime.bus.interrupt(key).pipe(Effect.asVoid)
+            yield* scopeRuntime.bus.interrupt(key, "human").pipe(Effect.asVoid)
           }
           const fiber = (yield* getRun(key)).fiber
           if (fiber !== undefined) yield* Fiber.interrupt(fiber)
@@ -1022,8 +1078,16 @@ export const makeInProcessWorkspace = (
         }
         const summary = "[stalled — no longer running]"
         // 1) Persist the terminal status, so :tree/activity stop showing it live.
+        //    `killed(stall)` — the fiber vanished without finalizing; there is no
+        //    deliverable to preserve here (a live run's own finalizer keeps its
+        //    text — this path only fires when that never ran).
         yield* tree
-          .recordReturn(node.id, { status: "error", summary, filesChanged: [] })
+          .recordReturn(node.id, {
+            status: "killed",
+            summary,
+            stopReason: { kind: "stall" },
+            filesChanged: [],
+          })
           .pipe(Effect.ignore)
         // 2) Notify via the SAME bus path a normal completion uses — registering
         //    the (now-absent) node first so `complete` has an entry to read,
@@ -1033,7 +1097,7 @@ export const makeInProcessWorkspace = (
         const label = node.title ?? node.folder
         yield* scopeRuntime.bus.markRunning(node.id as string, label, { parentKey })
         yield* scopeRuntime.bus.complete(node.id as string, {
-          status: "error",
+          status: "killed",
           summary,
           filesChanged: [],
         })
@@ -1044,6 +1108,8 @@ export const makeInProcessWorkspace = (
           name: label,
           nodeId: node.id as string,
           ok: false,
+          outcome: "killed",
+          reason: "stall",
           summary,
           filesChanged: [],
         })
@@ -1073,5 +1139,5 @@ export const makeInProcessWorkspace = (
       Effect.forever(Effect.sleep(`${SWEEP_INTERVAL_MS} millis`).pipe(Effect.zipRight(sweepOnce))),
     )
 
-    return service
+    return { ...service, shutdown: scopeRuntime.bus.shutdown().pipe(Effect.ignore) }
   })

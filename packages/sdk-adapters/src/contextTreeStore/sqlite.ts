@@ -8,6 +8,8 @@ import {
   ContextNodeNotFound,
   ContextTreeStore,
   ContextTreeStoreError,
+  decodeStopReason,
+  encodeStopReason,
 } from "@xandreed/sdk-core"
 import {
   encodeMessageContent,
@@ -44,6 +46,7 @@ interface NodeRow {
   readonly seed: unknown
   readonly status: string
   readonly return_summary: string | null
+  readonly stop_reason: string | null
   readonly files_changed: unknown
   readonly usage: unknown
   readonly workspace_ref: string | null
@@ -79,6 +82,10 @@ const decodeNode = (row: NodeRow) => {
     status: row.status,
     filesChanged: parseJsonColumn(row.files_changed),
     ...(row.return_summary !== null ? { returnSummary: row.return_summary } : {}),
+    ...(() => {
+      const reason = decodeStopReason(row.stop_reason)
+      return reason !== undefined ? { stopReason: reason } : {}
+    })(),
     ...(row.usage !== null && row.usage !== undefined
       ? { usage: parseJsonColumn(row.usage) }
       : {}),
@@ -158,13 +165,13 @@ export const SqliteContextTreeStoreLive = Layer.effect(
                 sql`
                   INSERT INTO context_nodes (
                     id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                    seed, status, return_summary, files_changed, usage, workspace_ref,
+                    seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
                     seed_message_count, created_at, ended_at
                   )
                   VALUES (
                     ${id}, ${input.parentId ?? null}, ${kind}, ${input.rootConversationId ?? null},
                     ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
-                    ${JSON.stringify(input.seed)}, 'running', ${null}, '[]', ${null}, ${null},
+                    ${JSON.stringify(input.seed)}, 'running', ${null}, ${null}, '[]', ${null}, ${null},
                     ${input.seedMessages.length}, ${createdAt}, ${null}
                   )
                 `,
@@ -213,16 +220,20 @@ export const SqliteContextTreeStoreLive = Layer.effect(
       recordReturn: (id, result) =>
         Effect.gen(function* () {
           yield* requireNode(id)
+          // Terminal-once: only a `running` node is closed — a second record
+          // (a sweeper racing the live run, a double finalize) is a no-op, so
+          // the FIRST outcome written is the one that sticks.
           yield* wrapSql(
             sql`
               UPDATE context_nodes SET
                 status = ${result.status},
                 return_summary = ${result.summary},
+                stop_reason = ${result.stopReason !== undefined ? encodeStopReason(result.stopReason) : null},
                 files_changed = ${JSON.stringify(result.filesChanged)},
                 usage = ${result.usage !== undefined ? JSON.stringify(result.usage) : null},
                 workspace_ref = ${result.workspaceRef ?? null},
                 ended_at = ${Date.now()}
-              WHERE id = ${id}
+              WHERE id = ${id} AND status = 'running'
             `,
             "Failed to record context return",
           )
@@ -233,7 +244,7 @@ export const SqliteContextTreeStoreLive = Layer.effect(
           const rows = yield* wrapSql(
             sql<NodeRow>`
               SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                     seed, status, return_summary, files_changed, usage, workspace_ref,
+                     seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
                      seed_message_count, created_at, ended_at
               FROM context_nodes WHERE id = ${id}
             `,
@@ -251,13 +262,13 @@ export const SqliteContextTreeStoreLive = Layer.effect(
             rootConversationId === null
               ? sql<NodeRow>`
                   SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                         seed, status, return_summary, files_changed, usage, workspace_ref,
+                         seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
                          seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id IS NULL ORDER BY created_at ASC
                 `
               : sql<NodeRow>`
                   SELECT id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                         seed, status, return_summary, files_changed, usage, workspace_ref,
+                         seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
                          seed_message_count, created_at, ended_at
                   FROM context_nodes WHERE root_conversation_id = ${rootConversationId} ORDER BY created_at ASC
                 `,

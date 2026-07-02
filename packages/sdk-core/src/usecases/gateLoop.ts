@@ -200,7 +200,30 @@ export const gateOnce = (params: {
     // for file-changing (code) deliverables, which genuinely either build or don't.
     // (A coding run that landed NO files is intentionally handled here too: don't
     // re-run a fleet that isn't landing changes — hand back its result + the notes.)
+    //
+    // BUT advisory only applies when the fleet actually PRODUCED something: a
+    // run whose agents mostly errored/were killed and wrote no files is a
+    // FAILED fleet, not a prose deliverable — the old code shipped it as
+    // "advisory success" (the forensic 13/13-dead run would have gated clean).
+    // That stops non-advisory, so the caller's outcome reads partial/failed.
     if (filesChanged.length === 0) {
+      const settled = params.freshNodes.filter((n) => n.status !== "running")
+      const failed = settled.filter(
+        (n) => n.status === "error" || n.status === "killed",
+      )
+      const fleetFailed = settled.length > 0 && failed.length * 2 > settled.length
+      if (fleetFailed) {
+        return {
+          kind: "stop",
+          event: {
+            ...event,
+            reasons: [
+              `the fleet itself failed (${failed.length}/${settled.length} agents ended error/killed) — this is not a deliverable`,
+              ...event.reasons,
+            ],
+          },
+        }
+      }
       return { kind: "stop", event: { ...event, advisory: true } }
     }
 

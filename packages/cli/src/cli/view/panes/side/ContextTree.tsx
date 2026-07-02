@@ -11,12 +11,26 @@ import { glyph, tokens } from "../../../state/theme.js"
 import { foldCaret } from "../../ui/index.js"
 import type { TuiContext } from "../../../state/store.js"
 
-type Status = "running" | "ok" | "error"
+type Status = "running" | "ok" | "partial" | "error" | "killed"
 
+// `partial` = a usable deliverable that stopped early (half-moon, attention
+// tint); `killed` = interrupted / stalled empty (reads as a failure).
 const statusGlyph = (s: Status): string =>
-  s === "ok" ? glyph.ok : s === "error" ? glyph.error : glyph.railDot
+  s === "ok"
+    ? glyph.ok
+    : s === "partial"
+      ? glyph.partial
+      : s === "error" || s === "killed"
+        ? glyph.error
+        : glyph.railDot
 const statusColor = (s: Status): string =>
-  s === "ok" ? tokens.state.ok : s === "error" ? tokens.state.error : tokens.state.running
+  s === "ok"
+    ? tokens.state.ok
+    : s === "partial"
+      ? tokens.state.running
+      : s === "error" || s === "killed"
+        ? tokens.state.error
+        : tokens.state.running
 
 /**
  * One navigator row, styled from its structured `display` — the same shape

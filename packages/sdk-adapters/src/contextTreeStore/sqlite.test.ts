@@ -13,6 +13,7 @@ import sqlite0003 from "../database/migrations-sqlite/0003_workspace_ref.js"
 import sqlite0004 from "../database/migrations-sqlite/0004_seed_count.js"
 import sqlite0006 from "../database/migrations-sqlite/0006_node_title.js"
 import sqlite0009 from "../database/migrations-sqlite/0009_node_kind.js"
+import sqlite0010 from "../database/migrations-sqlite/0010_node_outcome.js"
 
 // Exercises the REAL SQLite context-tree store (the unit suites elsewhere use
 // the in-memory store, which never touches SQL). A fresh in-memory db per run;
@@ -33,6 +34,7 @@ const run = <A>(eff: Effect.Effect<A, unknown, ContextTreeStore>): Promise<A> =>
       yield* sqlite0004 // + seed_message_count boundary stamp
       yield* sqlite0006 // + the spawner-given display title
       yield* sqlite0009 // + the explicit fleet/agent node kind
+      yield* sqlite0010 // + the honest-outcome stop_reason column
       return yield* eff
     }).pipe(Effect.provide(Live)) as Effect.Effect<A>,
   )

@@ -6,7 +6,9 @@ import type {
   ContextSeed,
   ContextUsage,
   EdgeKind,
+  TerminalNodeStatus,
 } from "../entities/AgentContext.js"
+import type { StopReason } from "../entities/Outcome.js"
 
 export class ContextTreeStoreError extends Data.TaggedError(
   "ContextTreeStoreError",
@@ -37,9 +39,11 @@ export interface SpawnInput {
 
 /** Fields written when a node's run finishes — see {@link ContextTreeStore.recordReturn}. `endedAt` is stamped by the store. */
 export interface ContextReturn {
-  readonly status: "ok" | "error"
+  readonly status: TerminalNodeStatus
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
+  /** WHY it stopped (typed) — persisted to `stop_reason`; see `entities/Outcome.ts`. */
+  readonly stopReason?: StopReason
   readonly usage?: ContextUsage
   /** Workspace git ref (HEAD) at finish — the staleness stamp. Omit when not in git. */
   readonly workspaceRef?: string
@@ -69,7 +73,12 @@ export class ContextTreeStore extends Context.Tag(
     readonly listMessages: (
       id: ContextNodeId,
     ) => Effect.Effect<ReadonlyArray<AgentMessage>, ContextTreeStoreError>
-    /** Close a node: set status/summary/filesChanged/usage/endedAt. */
+    /**
+     * Close a node: set status/summary/filesChanged/stopReason/usage/endedAt.
+     * **Terminal-once**: only a `running` node is updated — a second call on an
+     * already-finished node is a silent no-op (the DB-level idempotence guard
+     * behind `finalizeRun`, protecting against a sweeper racing a live run).
+     */
     readonly recordReturn: (
       id: ContextNodeId,
       result: ContextReturn,

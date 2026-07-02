@@ -3,6 +3,7 @@ import type { TokenUsage } from "./TokenUsage.js"
 import type { ContextNodeId } from "./AgentContext.js"
 import type { AgentMessage, ToolCall } from "./Conversation.js"
 import type { AgentModelRole } from "./Model.js"
+import type { OutcomeStatus, StopReasonKind } from "./Outcome.js"
 
 /**
  * Decision returned by `onBeforeToolCall`: either let the call proceed
@@ -80,6 +81,11 @@ export interface AgentShouldStopEvent {
 export interface AgentEndEvent {
   readonly messages: ReadonlyArray<AgentMessage>
   readonly finalText: string
+  /** How the ROOT turn ended (see `entities/Outcome.ts`). Absent from legacy
+   *  emitters ⇒ consumers treat it as `ok`. */
+  readonly outcome?: OutcomeStatus
+  /** WHY it ended, when not simply completed (`step-cap`, `interrupt`, …). */
+  readonly reason?: StopReasonKind
 }
 
 export interface AgentSubAgentStartEvent {
@@ -98,7 +104,14 @@ export interface AgentSubAgentEndEvent {
   readonly name: string
   /** The persisted context-tree node id for this sub-agent run, when one exists. */
   readonly nodeId?: ContextNodeId
+  /** Legacy boolean — `outcome ∈ {ok, partial}`. Kept so a stale daemon/client
+   *  pair still agrees; new consumers read `outcome ?? (ok ? "ok" : "error")`. */
   readonly ok: boolean
+  /** How the run ended: ok | partial | error | killed (see `entities/Outcome.ts`).
+   *  THE terminal signal — emitted on EVERY exit shape by `finalizeRun`. */
+  readonly outcome?: OutcomeStatus
+  /** WHY it ended, when not simply completed (`budget`, `stall`, `interrupt`, …). */
+  readonly reason?: StopReasonKind
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
   /** Cumulative token usage across all turns of this sub-agent's run. Optional — only present when the sub-agent had at least one LLM turn. */

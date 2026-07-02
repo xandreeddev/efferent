@@ -26,7 +26,9 @@ export interface TreeNodeDisplay {
   readonly label: string
   /** Scope dir basename — shown dim after a title so the scope stays visible. */
   readonly folder: string
-  readonly status: "running" | "ok" | "error"
+  /** Live/terminal status — `partial` (usable but stopped early) and `killed`
+   *  (interrupted / stalled empty) join ok/error; see `entities/Outcome.ts`. */
+  readonly status: "running" | "ok" | "partial" | "error" | "killed"
   readonly edgeKind: "spawned" | "branched" | "resumed"
   readonly seedKind: "task" | "selection" | "handoff"
   readonly summary?: string

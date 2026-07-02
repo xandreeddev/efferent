@@ -122,7 +122,9 @@ export const runDaemonServe = (
         : [{ cid: yield* conv.create(input.workspace).pipe(Effect.orDie) }]
 
     // Reconcile: flip any node left `running` by a prior crash (across ALL
-    // fleets) to `error`, so the tree is honest after a restart. Best-effort.
+    // fleets) to `killed(shutdown)`, so the tree is honest after a restart.
+    // Best-effort. (With supervised fleet fibers a graceful exit finalizes
+    // every run itself — this catches hard crashes/kill -9.)
     yield* Effect.forEach(
       roots,
       (r) =>
@@ -133,8 +135,9 @@ export const runDaemonServe = (
               (n) =>
                 tree
                   .recordReturn(n.id, {
-                    status: "error",
+                    status: "killed",
                     summary: "[daemon restarted — this run was interrupted]",
+                    stopReason: { kind: "interrupt", by: "shutdown" },
                     filesChanged: [],
                   })
                   .pipe(Effect.ignore),
@@ -167,5 +170,10 @@ export const runDaemonServe = (
       workspace: input.workspace,
       version: input.version,
       ...(input.port !== undefined ? { port: input.port } : {}),
-    })
+    }).pipe(
+      // Supervised-fleet teardown on EVERY exit (graceful /shutdown AND
+      // SIGINT): interrupt + AWAIT the fleet so each run records an honest
+      // killed(shutdown) — instead of leaning on the next boot's reconcile.
+      Effect.ensuring(ws.shutdown),
+    )
   })

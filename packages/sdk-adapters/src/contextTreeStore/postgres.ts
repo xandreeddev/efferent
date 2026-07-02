@@ -8,6 +8,8 @@ import {
   ContextNodeNotFound,
   ContextTreeStore,
   ContextTreeStoreError,
+  decodeStopReason,
+  encodeStopReason,
 } from "@xandreed/sdk-core"
 import {
   encodeMessageContent,
@@ -43,6 +45,7 @@ interface NodeRow {
   readonly seed: unknown
   readonly status: string
   readonly return_summary: string | null
+  readonly stop_reason: string | null
   readonly files_changed: unknown
   readonly usage: unknown
   readonly workspace_ref: string | null
@@ -78,6 +81,10 @@ const decodeNode = (row: NodeRow) => {
     status: row.status,
     filesChanged: parseJsonColumn(row.files_changed),
     ...(row.return_summary !== null ? { returnSummary: row.return_summary } : {}),
+    ...(() => {
+      const reason = decodeStopReason(row.stop_reason)
+      return reason !== undefined ? { stopReason: reason } : {}
+    })(),
     ...(row.usage !== null && row.usage !== undefined
       ? { usage: parseJsonColumn(row.usage) }
       : {}),
@@ -105,7 +112,7 @@ const decodeNode = (row: NodeRow) => {
 
 const SELECT_NODE = (sql: SqlClient.SqlClient) => sql`
   SELECT id::text, parent_id::text, kind, root_conversation_id::text, edge_kind, folder,
-         display_root, title, seed, status, return_summary, files_changed, usage, workspace_ref,
+         display_root, title, seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
          seed_message_count, created_at, ended_at
 `
 
@@ -164,13 +171,13 @@ export const PostgresContextTreeStoreLive = Layer.effect(
                   sql`
                     INSERT INTO context_nodes (
                       id, parent_id, kind, root_conversation_id, edge_kind, folder, display_root, title,
-                      seed, status, return_summary, files_changed, usage, workspace_ref,
+                      seed, status, return_summary, stop_reason, files_changed, usage, workspace_ref,
                       seed_message_count, created_at, ended_at
                     )
                     VALUES (
                       ${id}::uuid, ${input.parentId ?? null}::uuid, ${kind}, ${input.rootConversationId ?? null}::uuid,
                       ${input.edgeKind}, ${input.folder}, ${input.displayRoot}, ${input.title ?? null},
-                      ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, '[]'::jsonb, ${null}::jsonb, ${null},
+                      ${JSON.stringify(input.seed)}::jsonb, 'running', ${null}, ${null}, '[]'::jsonb, ${null}::jsonb, ${null},
                       ${input.seedMessages.length}, ${createdAt}, ${null}
                     )
                   `,
@@ -225,11 +232,12 @@ export const PostgresContextTreeStoreLive = Layer.effect(
               UPDATE context_nodes SET
                 status = ${result.status},
                 return_summary = ${result.summary},
+                stop_reason = ${result.stopReason !== undefined ? encodeStopReason(result.stopReason) : null},
                 files_changed = ${JSON.stringify(result.filesChanged)}::jsonb,
                 usage = ${result.usage !== undefined ? JSON.stringify(result.usage) : null}::jsonb,
                 workspace_ref = ${result.workspaceRef ?? null},
                 ended_at = ${Date.now()}
-              WHERE id = ${id}::uuid
+              WHERE id = ${id}::uuid AND status = 'running'
             `,
             "Failed to record context return",
           )

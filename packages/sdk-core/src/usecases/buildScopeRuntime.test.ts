@@ -628,8 +628,8 @@ describe("run_agent — async, non-blocking spawn + wait_for_agents gather", () 
 // no progress within the deadline → interrupt → record a STALL error → notify
 // the parent. A tiny injected `stallDeadlineMs` exercises it without a real wait.
 
-describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ error)", () => {
-  test("a sub-agent whose model call hangs is interrupted, recorded `error` with STALL_NOTE, and gathered by the parent", async () => {
+describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ killed)", () => {
+  test("a sub-agent whose model call hangs is interrupted, recorded `killed` with STALL_NOTE, and gathered by the parent", async () => {
     const { entries, layer } = stubTreeStore()
     // 100ms no-progress deadline — the hanging model never produces a turn, so
     // the watchdog trips ~100ms in (vs. the 180s production default).
@@ -688,18 +688,19 @@ describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ e
       }>,
     )
 
-    // The parent unblocked with a terminal error — not a perpetual `running`.
+    // The parent unblocked with an honest terminal status — not a perpetual
+    // `running`. A zero-activity stall that produced NOTHING is `killed`.
     expect(result.gathered.allDone).toBe(true)
     expect(result.gathered.agents).toHaveLength(1)
-    expect(result.gathered.agents[0]?.status).toBe("error")
+    expect(result.gathered.agents[0]?.status).toBe("killed")
     expect(result.gathered.agents[0]?.summary).toBe(STALL_NOTE)
-    // And the persisted node is `error` (not stranded `running`).
+    // And the persisted node is `killed` with a typed reason (not stranded `running`).
     const node = [...entries.values()][0]!.node
-    expect(node.status).toBe("error")
+    expect(node.status).toBe("killed")
     expect(node.returnSummary).toBe(STALL_NOTE)
   })
 
-  test("a stalled run that already PRODUCED text keeps it — recorded ok-with-note, never an empty [stalled] error", async () => {
+  test("a stalled run that already PRODUCED text keeps it — recorded PARTIAL with the note, never an empty [stalled] error", async () => {
     // The forensic regression: agents finished their work ("all changes
     // complete, tests green"), then hung on a later blocking op — and the old
     // finalizer recorded `error` + STALL_NOTE + filesChanged:[] — DISCARDING the
@@ -779,12 +780,13 @@ describe("run_agent — the stall watchdog ends a hung sub-agent (no turns ⇒ e
     )
 
     expect(result.allDone).toBe(true)
-    // The produced work survives: an ok-with-caveat, not an empty error.
-    expect(result.agents[0]?.status).toBe("ok")
+    // The produced work survives: a PARTIAL (usable, stopped early) — never an
+    // empty error, never a fake plain ok.
+    expect(result.agents[0]?.status).toBe("partial")
     expect(result.agents[0]?.summary).toContain("All changes are complete and validated")
     expect(result.agents[0]?.summary).toContain(STALL_NOTE)
     const node = [...entries.values()][0]!.node
-    expect(node.status).toBe("ok")
+    expect(node.status).toBe("partial")
     expect(node.returnSummary).toContain("All changes are complete and validated")
     expect(node.returnSummary).toContain(STALL_NOTE)
   })
@@ -912,7 +914,7 @@ describe("run_agent — a research subtree refuses to spawn a coder (Fix 3 wirin
 
 // --- interruption finalizer: a wedged/killed run notifies the parent ----------
 
-describe("runSpawnedAgent — interruption records an error return + notifies the parent", () => {
+describe("runSpawnedAgent — interruption records a killed return + notifies the parent", () => {
   // A model that never returns — the spawned loop blocks on its first turn,
   // so the only way the run ends is interruption (Esc / :stop / teardown).
   const blockingModel = Layer.succeed(
@@ -946,7 +948,7 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
     blockingModel,
   )
 
-  test("an interrupted spawn → node status 'error' (INTERRUPTED_NOTE) + a completion in the parent's inbox", async () => {
+  test("an interrupted spawn → node status 'killed' (INTERRUPTED_NOTE) + a completion in the parent's inbox", async () => {
     const { entries, layer } = stubTreeStore()
     const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
     // A real root conversation id so the spawned node's parentKey is set and
@@ -1010,16 +1012,17 @@ describe("runSpawnedAgent — interruption records an error return + notifies th
       }>,
     )
 
-    // The DB node is no longer stuck `running` — the finalizer recorded an error.
+    // The DB node is no longer stuck `running` — the finalizer recorded an
+    // honest `killed` (an interrupt is a kill, not the run's own failure).
     const node = entries.get(nodeId)!.node
-    expect(node.status).toBe("error")
+    expect(node.status).toBe("killed")
     expect(node.returnSummary).toBe("[interrupted — run did not finish]")
 
-    // The parent was notified immediately (a "failed: …" completion line),
+    // The parent was notified immediately (a "killed: …" completion line),
     // instead of relying on the mid-session sweeper.
     expect(inbox.length).toBeGreaterThan(0)
     expect(inbox.some((m) => m.content.includes("[interrupted — run did not finish]"))).toBe(true)
-    expect(inbox[0]?.content.startsWith("failed:")).toBe(true)
+    expect(inbox[0]?.content.startsWith("killed")).toBe(true)
   })
 })
 

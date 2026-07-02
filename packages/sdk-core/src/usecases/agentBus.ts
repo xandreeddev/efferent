@@ -1,5 +1,10 @@
-import { Deferred, Effect, Fiber, Ref } from "effect"
+import { Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect"
 import type { AgentEvent } from "../entities/AgentEvent.js"
+
+/** WHO killed a run — stamped on the entry when an interrupt API fires, read by
+ *  the exit finalizer so the persisted StopReason says `interrupt(by: …)`
+ *  instead of guessing. Mirrors `StopReason`'s interrupt `by` in Outcome.ts. */
+export type InterruptBy = "human" | "parent" | "shutdown" | "deadline"
 
 /**
  * The in-memory agent **comms + supervision bus** — the spine of the async
@@ -53,12 +58,15 @@ export interface BoardNote {
   readonly at: number
 }
 
-/** Live status of an agent the bus knows about. */
-export type AgentRunStatus = "running" | "ok" | "error"
+/** Live status of an agent the bus knows about — `running` plus the honest
+ *  terminal vocabulary (see `entities/Outcome.ts`). */
+export type AgentRunStatus = "running" | "ok" | "partial" | "error" | "killed"
 
-/** The terminal outcome of a finished run — what a gather reports to a parent. */
+/** The terminal outcome of a finished run — what a gather reports to a parent.
+ *  `partial` = a usable deliverable that stopped early (budget / step-cap /
+ *  stall-after-text); `killed` = interrupted / stalled with nothing produced. */
 export interface AgentResultRecord {
-  readonly status: "ok" | "error"
+  readonly status: "ok" | "partial" | "error" | "killed"
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
 }
@@ -122,17 +130,42 @@ export interface AgentBus {
    *  fleet-idle detection (`length === 0` ⇒ idle) and a fleet-scoped interrupt; a
    *  finished child needs neither and must not keep these sets non-empty forever. */
   readonly runningChildrenOf: (parentKey: string) => Effect.Effect<ReadonlyArray<string>>
-  /** Interrupt one running agent's fiber. False when it isn't running / has no fiber. */
-  readonly interrupt: (nodeId: string) => Effect.Effect<boolean>
+  /** Interrupt one running agent's fiber. False when it isn't running / has no
+   *  fiber. `by` (default `"parent"`) stamps WHO killed it for the finalizer. */
+  readonly interrupt: (nodeId: string, by?: InterruptBy) => Effect.Effect<boolean>
   /** Interrupt ONE fleet's running subtree — every running descendant of
    *  `parentKey` (BFS over the parent links), never the rest of the bus. This is
    *  the scoped kill for Esc / a headless deadline / a parent stopping its own
    *  fleet; `interruptAll` stays reserved for process shutdown. */
-  readonly interruptSubtree: (parentKey: string) => Effect.Effect<void>
+  readonly interruptSubtree: (parentKey: string, by?: InterruptBy) => Effect.Effect<void>
   /** Interrupt every running agent (process teardown ONLY — no orphans). A
    *  user-facing cancel must use {@link interruptSubtree}: this kills every
    *  fleet on the bus, including ones the canceller doesn't own. */
-  readonly interruptAll: () => Effect.Effect<void>
+  readonly interruptAll: (by?: InterruptBy) => Effect.Effect<void>
+  /** WHO interrupted this run, if an interrupt API stamped it — read by the exit
+   *  finalizer (the entry is still registered at that point). */
+  readonly interruptReasonOf: (
+    nodeId: string,
+  ) => Effect.Effect<InterruptBy | undefined>
+  /**
+   * Fork a spawned run as a SUPERVISED fiber in the bus's fleet scope — the
+   * replacement for the old `forkDaemon(...catchAll(() => void))`, whose exits
+   * were discarded and whose fibers outlived teardown (stranding DB rows
+   * `running` forever on process exit). Supervised fibers are interrupted AND
+   * AWAITED by {@link shutdown}, so every run's exit finalizer gets to record
+   * an honest `killed(shutdown)` before the process quits.
+   */
+  readonly forkSupervised: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Fiber.RuntimeFiber<A, E>, never, R>
+  /**
+   * Process-teardown: stamp every running entry `interruptedBy: "shutdown"`,
+   * then close the fleet scope — interrupting every supervised fiber and
+   * WAITING for each one's finalizer to record its terminal return. The one
+   * sanctioned "kill everything" (drivers' exit finalizers); a user-facing
+   * cancel uses {@link interruptSubtree}.
+   */
+  readonly shutdown: () => Effect.Effect<void>
   /** Post to an agent's inbox + wake it. Returns false when the target isn't running. */
   readonly post: (nodeId: string, msg: InboxMessage) => Effect.Effect<boolean>
   /** Take + clear a mailbox (the recipient drains it at a turn boundary). */
@@ -166,12 +199,14 @@ interface AgentEntry {
   /** Set while the agent is parked in awaitChange; a post fulfils it to wake it. */
   readonly wake: Deferred.Deferred<void> | undefined
   readonly fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined
+  /** WHO interrupted this run (stamped by the interrupt APIs, read by finalize). */
+  readonly interruptedBy: InterruptBy | undefined
 }
 
 interface DoneEntry {
   readonly label: string
   readonly parentKey: string | null
-  readonly status: "ok" | "error"
+  readonly status: "ok" | "partial" | "error" | "killed"
   readonly summary: string
   readonly filesChanged: ReadonlyArray<string>
 }
@@ -219,6 +254,11 @@ export const makeAgentBus = (
     board: [],
     pending: new Map(),
   })
+  // The fleet scope every spawned run is forked into (`forkSupervised`) — the
+  // bus IS the supervisor, so it owns the fibers' lifetime: `shutdown` closes
+  // this scope, which interrupts AND awaits each supervised fiber (their exit
+  // finalizers record honest terminal returns before the process exits).
+  const fleetScope = Effect.runSync(Scope.make())
   const emit = (from: string, note: string, at: number): Effect.Effect<void> =>
     onEvent !== undefined ? onEvent({ type: "board_note", from, note, at }) : Effect.void
 
@@ -237,6 +277,25 @@ export const makeAgentBus = (
     }
     return { nodeId, label: shortKey(nodeId), status: "running" }
   }
+
+  /** Stamp `interruptedBy` on the given running entries (first stamp wins) and
+   *  return their fibers — one atomic step so the finalizer always sees the
+   *  reason before the interrupt lands. */
+  const stampInterrupted = (
+    nodeIds: ReadonlyArray<string>,
+    by: InterruptBy,
+  ): Effect.Effect<ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>>> =>
+    Ref.modify(ref, (s) => {
+      const running = new Map(s.running)
+      const fibers: Array<Fiber.RuntimeFiber<unknown, unknown>> = []
+      for (const id of nodeIds) {
+        const e = running.get(id)
+        if (e === undefined) continue
+        running.set(id, { ...e, interruptedBy: e.interruptedBy ?? by })
+        if (e.fiber !== undefined) fibers.push(e.fiber)
+      }
+      return [fibers, { ...s, running }]
+    })
 
   return {
     markRunning: (nodeId, label, opts) =>
@@ -258,6 +317,7 @@ export const makeAgentBus = (
             completion: existing?.completion ?? completion,
             wake: existing?.wake,
             fiber: existing?.fiber,
+            interruptedBy: existing?.interruptedBy,
           })
           if (buffered.length === 0) return { ...s, running }
           const pending = new Map(s.pending)
@@ -306,7 +366,17 @@ export const makeAgentBus = (
         // Deliver the outcome to the parent's inbox + the blackboard, so a parent
         // not actively waiting still picks it up at its next turn, and siblings
         // see it on the board. Best-effort: a finished/absent parent just drops it.
-        const line = `${result.status === "ok" ? "finished" : "failed"}: ${clip(result.summary, 600)}`
+        // The label carries the honest status — a partial result must read as
+        // usable-but-incomplete, never as plain "finished" or "failed".
+        const verb =
+          result.status === "ok"
+            ? "finished"
+            : result.status === "partial"
+              ? "finished (partial — stopped early)"
+              : result.status === "killed"
+                ? "killed (did not finish)"
+                : "failed"
+        const line = `${verb}: ${clip(result.summary, 600)}`
         if (entry.parentKey !== null && entry.parentKey.length > 0) {
           const at = Date.now()
           const msg = { from: `agent ${shortKey(nodeId)} (${entry.label})`, content: line, at }
@@ -392,61 +462,70 @@ export const makeAgentBus = (
         ),
       ),
 
-    interrupt: (nodeId) =>
+    interrupt: (nodeId, by) =>
       Effect.gen(function* () {
-        const fiber = yield* Ref.get(ref).pipe(
-          Effect.map((s) => s.running.get(nodeId)?.fiber),
+        const fiber = yield* stampInterrupted([nodeId], by ?? "parent").pipe(
+          Effect.map((fibers) => fibers[0]),
         )
         if (fiber === undefined) return false
         yield* Fiber.interrupt(fiber).pipe(Effect.ignore)
         return true
       }),
 
-    interruptSubtree: (parentKey) =>
+    interruptSubtree: (parentKey, by) =>
       Effect.gen(function* () {
         const s = yield* Ref.get(ref)
         // BFS over the running entries' parent links from `parentKey` — a
         // snapshot walk (a child spawned mid-interrupt is orphan-proofed by its
         // parent's interruption landing before the next spawn can register).
-        const byParent = new Map<string, Array<{ nodeId: string; fiber: Fiber.RuntimeFiber<unknown, unknown> | undefined }>>()
+        const byParent = new Map<string, Array<string>>()
         for (const [nodeId, e] of s.running.entries()) {
           if (e.parentKey === null) continue
           const arr = byParent.get(e.parentKey) ?? []
-          arr.push({ nodeId, fiber: e.fiber })
+          arr.push(nodeId)
           byParent.set(e.parentKey, arr)
         }
         const seen = new Set<string>()
-        const fibers: Array<Fiber.RuntimeFiber<unknown, unknown>> = []
         let frontier = [parentKey]
         while (frontier.length > 0) {
           const next: string[] = []
           for (const key of frontier) {
             for (const child of byParent.get(key) ?? []) {
-              if (seen.has(child.nodeId)) continue
-              seen.add(child.nodeId)
-              next.push(child.nodeId)
-              if (child.fiber !== undefined) fibers.push(child.fiber)
+              if (seen.has(child)) continue
+              seen.add(child)
+              next.push(child)
             }
           }
           frontier = next
         }
+        const fibers = yield* stampInterrupted([...seen], by ?? "parent")
         yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
           discard: true,
         })
       }),
 
-    interruptAll: () =>
+    interruptAll: (by) =>
       Effect.gen(function* () {
-        const fibers = yield* Ref.get(ref).pipe(
-          Effect.map((s) =>
-            [...s.running.values()]
-              .map((e) => e.fiber)
-              .filter((f): f is Fiber.RuntimeFiber<unknown, unknown> => f !== undefined),
-          ),
-        )
+        const ids = yield* Ref.get(ref).pipe(Effect.map((s) => [...s.running.keys()]))
+        const fibers = yield* stampInterrupted(ids, by ?? "shutdown")
         yield* Effect.forEach(fibers, (f) => Fiber.interrupt(f).pipe(Effect.ignore), {
           discard: true,
         })
+      }),
+
+    interruptReasonOf: (nodeId) =>
+      Ref.get(ref).pipe(Effect.map((s) => s.running.get(nodeId)?.interruptedBy)),
+
+    forkSupervised: (effect) => Effect.forkIn(effect, fleetScope),
+
+    shutdown: () =>
+      Effect.gen(function* () {
+        const ids = yield* Ref.get(ref).pipe(Effect.map((s) => [...s.running.keys()]))
+        yield* stampInterrupted(ids, "shutdown")
+        // Close the fleet scope: every supervised fiber is interrupted and
+        // AWAITED, so each run's finalizer records `killed(shutdown)` — no more
+        // rows stranded `running` by a process exit.
+        yield* Scope.close(fleetScope, Exit.void)
       }),
 
     post: (nodeId, msg) =>

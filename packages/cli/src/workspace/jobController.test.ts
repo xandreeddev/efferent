@@ -22,6 +22,7 @@ const captureRuntime = (sink: { args?: SpawnArgs }): Pick<ScopeRuntime, "spawnAg
         summary: "ok",
         filesChanged: [] as ReadonlyArray<string>,
         nodeId: "44444444-4444-4444-4444-444444444444" as ContextNodeId,
+        outcome: "ok" as const,
       }),
     ) as ReturnType<ScopeRuntime["spawnAgent"]>,
 })
