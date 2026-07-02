@@ -1,4 +1,4 @@
-import { type Effect, FiberRef } from "effect"
+import { type Effect, FiberRef, type Ref } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentBgOutputEvent, AgentLlmRetryEvent } from "../entities/AgentHooks.js"
 import type { CompressionPolicy } from "../entities/Compression.js"
@@ -109,6 +109,15 @@ export interface RunContext {
    * reads this off the FiberRef to surface a background proc's output live.
    * `R = never`. */
   readonly onBgOutput?: (event: AgentBgOutputEvent) => Effect.Effect<void>
+  /**
+   * Failover annotations for THIS run — the router appends a line here when a
+   * persistent provider defect (quota/config) made it retry the call on the
+   * fallback selection. The run's terminal path folds them into
+   * `RunOutcome.notes`, so the persisted summary says which model actually did
+   * the work. A per-run `Ref` (seeded by `runSpawnedAgent`), never inherited by
+   * children (each spawn gets its own).
+   */
+  readonly failoverNotes?: Ref.Ref<ReadonlyArray<string>>
 }
 
 export const initialRunContext: RunContext = {

@@ -1144,6 +1144,10 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
     outputTokens: 0,
     cacheReadTokens: 0,
   })
+  // Router-appended failover annotations ("[failover: kimi → glm after quota]")
+  // — folded into the terminal outcome's notes so the record says which model
+  // actually did the work.
+  const failoverNotesRef = Ref.unsafeMake<ReadonlyArray<string>>([])
   const touch = (state?: RunState, detail?: string): Effect.Effect<void> =>
     Clock.currentTimeMillis.pipe(
       Effect.flatMap((at) =>
@@ -1306,6 +1310,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       // inherited) so a deeper spawn picks its own role. The router reads it off
       // RunContextRef to resolve the role's pinned model.
       modelRole: (definition?.role ?? "general") satisfies AgentModelRole,
+      // The router appends failover annotations here; the terminal path folds
+      // them into the outcome's notes. Per-run, never inherited.
+      failoverNotes: failoverNotesRef,
       // Carry the run's frozen role→model map + the mission down the subtree, so
       // the fleet stays on the models pinned at run start (cache-safe) and every
       // sub-agent can be reminded of the overall goal.
@@ -1430,6 +1437,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           ? `${outcome.r.finalText}\n\n${stopNote}`.trim()
           : outcome.r.finalText
       const status = outcomeStatus(reason, true)
+      const notes = yield* Ref.get(failoverNotesRef)
       yield* finalizeRun({
         nodeId,
         label,
@@ -1443,6 +1451,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           filesChanged: files,
           reason,
           ...(hasUsage ? { usage } : {}),
+          ...(notes.length > 0 ? { notes } : {}),
         },
         ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
       })
@@ -1456,6 +1465,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       error: f.error,
       ...(f.message !== undefined && f.message !== "" ? { message: f.message } : {}),
     }
+    const notes = yield* Ref.get(failoverNotesRef)
     yield* finalizeRun({
       nodeId,
       label,
@@ -1469,6 +1479,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
         filesChanged: files,
         reason,
         ...(hasUsage ? { usage } : {}),
+        ...(notes.length > 0 ? { notes } : {}),
       },
       ...(wsRef !== undefined ? { workspaceRef: wsRef } : {}),
     })
@@ -1515,6 +1526,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           ? INTERRUPTED_NOTE
           : "[crashed — the run died before finishing]"
       const summary = hasText ? `${lastText}\n\n${note}` : note
+      const notes = yield* Ref.get(failoverNotesRef)
       yield* finalizeRun({
         nodeId: args.nodeId,
         label,
@@ -1530,6 +1542,7 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
           filesChanged: files,
           reason,
           ...(hasUsage ? { usage } : {}),
+          ...(notes.length > 0 ? { notes } : {}),
         },
       })
     }).pipe(Effect.catchAllCause(() => Effect.void))

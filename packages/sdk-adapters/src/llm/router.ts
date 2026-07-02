@@ -3,6 +3,7 @@ import { FetchHttpClient, HttpClient } from "@effect/platform"
 import {
   agentSpanAttributes,
   AuthStore,
+  classifyProviderError,
   costAttribute,
   extractUsage,
   genAiContentAttributes,
@@ -20,7 +21,7 @@ import {
   usageAttributes,
   type ModelSelection,
 } from "@xandreed/sdk-core"
-import { Effect, FiberRef, Layer, Stream } from "effect"
+import { Effect, FiberRef, Layer, Ref, Stream } from "effect"
 import { ModelRegistryLive } from "./modelRegistry.js"
 import { retryableLlm, withLlmTimeout } from "./retry.js"
 import {
@@ -222,23 +223,95 @@ export const RouterLanguageModelLive = Layer.effect(
         Effect.zipRight(recordError("llm", llmErrorTag(e))),
       )
 
+    // The failover selection for a PERSISTENT provider defect: the code role
+    // falls back to the run's pinned GENERAL model; the general role to the
+    // human-configured `Settings.fallbackModel`. Never a model the agent chose,
+    // never the same selection that just failed, undefined ⇒ no failover.
+    const fallbackSelection = (sel: ModelSelection) =>
+      Effect.gen(function* () {
+        const rc = yield* FiberRef.get(RunContextRef)
+        const role = rc.modelRole ?? "general"
+        const raw =
+          role === "code"
+            ? (rc.pinnedModels?.general ?? (yield* settingsStore.get()).fallbackModel)
+            : (yield* settingsStore.get()).fallbackModel
+        if (raw === undefined) return undefined
+        const fb = selectionFromString(raw)
+        return fb.provider === sel.provider && fb.modelId === sel.modelId ? undefined : fb
+      })
+
+    /**
+     * Self-healing failover: when a call dies with a PERSISTENT defect —
+     * `quota` (out of credits/daily budget for hours) or `config` (this model
+     * rejects the request shape) — retrying in place is pointless, so retry the
+     * call ONCE on the fallback selection, loudly: the notice rides the retry
+     * sink (rail/node log + health), and a per-run annotation is folded into
+     * the terminal outcome's notes. `auth` never fails over (credentials are
+     * the human's); `model` (malformed output) is the loop's recovery to own;
+     * `transient` already retried in place.
+     */
+    const withFailover = <A, E, R>(
+      sel: ModelSelection,
+      attempt: (s: ModelSelection) => Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E, R> =>
+      attempt(sel).pipe(
+        Effect.catchAll((e: E) => {
+          const cls = classifyProviderError(e)
+          if (cls !== "quota" && cls !== "config") return Effect.fail(e)
+          return fallbackSelection(sel).pipe(
+            Effect.flatMap((fb) => {
+              if (fb === undefined) return Effect.fail(e)
+              const from = `${sel.provider}:${sel.modelId}`
+              const to = `${fb.provider}:${fb.modelId}`
+              const announce = Effect.gen(function* () {
+                const rc = yield* FiberRef.get(RunContextRef)
+                if (rc.onLlmRetry !== undefined) {
+                  yield* rc.onLlmRetry({
+                    reason: `${cls} on ${from} — failing over to ${to}`,
+                    attempt: 1,
+                    maxAttempts: 1,
+                    delayMs: 0,
+                  })
+                }
+                if (rc.failoverNotes !== undefined) {
+                  yield* Ref.update(rc.failoverNotes, (ns) => [
+                    ...ns,
+                    `[failover: ${from} → ${to} after ${cls}]`,
+                  ])
+                }
+                yield* Effect.logWarning(`LLM failover: ${from} → ${to} (${cls})`)
+                yield* Effect.annotateCurrentSpan({
+                  "llm.failover": true,
+                  "llm.failover.from": from,
+                  "llm.failover.to": to,
+                  "llm.failover.class": cls,
+                })
+              })
+              return announce.pipe(Effect.zipRight(attempt(fb)))
+            }),
+          )
+        }),
+      )
+
     const service: LanguageModel.Service = {
       generateText: (options) =>
         currentSelection.pipe(
           Effect.flatMap((sel) =>
-            resolveAndBuild(sel).pipe(
-              Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc
-                  .generateText(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(
-                    // Bound each attempt (official providers ship no timeout),
-                    // THEN retry — a timeout is classified transient.
-                    withLlmTimeout,
-                    retryableLlm,
-                    Effect.tap((res) => observe(sel, options, res)),
-                    Effect.tapError(observeError),
-                  )
-                  .pipe(withLlmSpan(sel, "main")),
+            withFailover(sel, (s) =>
+              resolveAndBuild(s).pipe(
+                Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
+                  svc
+                    .generateText(shapeOptions(s, shouldPrepend, options))
+                    .pipe(
+                      // Bound each attempt (official providers ship no timeout),
+                      // THEN retry — a timeout is classified transient.
+                      withLlmTimeout,
+                      retryableLlm,
+                      Effect.tap((res) => observe(s, options, res)),
+                      Effect.tapError(observeError),
+                    )
+                    .pipe(withLlmSpan(s, "main")),
+                ),
               ),
             ),
           ),
@@ -249,17 +322,19 @@ export const RouterLanguageModelLive = Layer.effect(
       generateObject: (options) =>
         currentSelection.pipe(
           Effect.flatMap((sel) =>
-            resolveAndBuild(sel).pipe(
-              Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
-                svc
-                  .generateObject(shapeOptions(sel, shouldPrepend, options))
-                  .pipe(
-                    withLlmTimeout,
-                    retryableLlm,
-                    Effect.tap((res) => observe(sel, options, res)),
-                    Effect.tapError(observeError),
-                  )
-                  .pipe(withLlmSpan(sel, "main")),
+            withFailover(sel, (s) =>
+              resolveAndBuild(s).pipe(
+                Effect.flatMap(({ svc, prependClaudeCode: shouldPrepend }) =>
+                  svc
+                    .generateObject(shapeOptions(s, shouldPrepend, options))
+                    .pipe(
+                      withLlmTimeout,
+                      retryableLlm,
+                      Effect.tap((res) => observe(s, options, res)),
+                      Effect.tapError(observeError),
+                    )
+                    .pipe(withLlmSpan(s, "main")),
+                ),
               ),
             ),
           ),
