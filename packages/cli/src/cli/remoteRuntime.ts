@@ -22,7 +22,7 @@ import {
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
 import type { TuiModeInput } from "../modes/tui.js"
-import { agentStateForPhase, submittedAgentState } from "./presentation/agentState.js"
+import { agentStateForPhase, reconcileFleet, submittedAgentState } from "./presentation/agentState.js"
 import { fileLoggerLayer } from "./presentation/logger.js"
 import { rolesReadout } from "./presentation/statusBar.js"
 import { emptySidePane, emptyStats, type SidePaneState } from "./presentation/sidePane.js"
@@ -224,6 +224,35 @@ export const runTuiModeRemote = (
         yield* Effect.sync(() =>
           store.setAgentState(agentStateForPhase(store.agentState(), phase0, Date.now())),
         )
+        // Reconcile the FLEET + health wholesale from the daemon's snapshot —
+        // the (re)attach truth. A dropped terminal event / daemon restart can
+        // no longer wedge the loader at "waiting for N agents"; the fleet
+        // tree's health suffixes light up immediately instead of after the
+        // next agent_health edge. Stale daemon (no field) → leave state as-is.
+        if (state0.fleet !== undefined) {
+          const members = state0.fleet
+          yield* Effect.sync(() => {
+            store.setAgentState(
+              reconcileFleet(
+                store.agentState(),
+                members.map((m) => ({ nodeId: m.nodeId, name: m.name })),
+              ),
+            )
+            store.reconcileNodeHealth(
+              members.map(
+                (m) =>
+                  [
+                    m.nodeId,
+                    {
+                      state: m.state,
+                      lastActivityAt: m.lastActivityAt,
+                      ...(m.detail !== undefined ? { detail: m.detail } : {}),
+                    },
+                  ] as const,
+              ),
+            )
+          })
+        }
       }
       store.pushBlock({
         kind: "info",
@@ -283,6 +312,22 @@ export const runTuiModeRemote = (
           refreshQueue()
         },
       })
+
+      // Belt-and-braces fleet-tree reconcile: a 30s DB re-read that runs ONLY
+      // while something claims to be running — catches a status flip whose
+      // event a stream blip ate (the resync path covers the rest).
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep("30 seconds").pipe(
+            Effect.zipRight(
+              Effect.sync(() => {
+                const st = store.agentState()
+                if (st.phase !== "idle" || st.fleet.length > 0) refreshFleet()
+              }),
+            ),
+          ),
+        ),
+      )
 
       const exitDeferred = yield* Deferred.make<void>()
       // The SSE pump fiber (assigned once `pump` is defined + forked below).
@@ -582,6 +627,33 @@ export const runTuiModeRemote = (
               )
             }
             yield* Effect.sync(() => store.run.setQueue(st.queue ?? []))
+            // Reconcile fleet + health from the snapshot on every resync — the
+            // stream blip that forced this resync may have eaten a terminal
+            // subagent_end; the daemon's snapshot says who is REALLY running.
+            if (st.fleet !== undefined) {
+              const members = st.fleet
+              yield* Effect.sync(() => {
+                store.setAgentState(
+                  reconcileFleet(
+                    store.agentState(),
+                    members.map((m) => ({ nodeId: m.nodeId, name: m.name })),
+                  ),
+                )
+                store.reconcileNodeHealth(
+                  members.map(
+                    (m) =>
+                      [
+                        m.nodeId,
+                        {
+                          state: m.state,
+                          lastActivityAt: m.lastActivityAt,
+                          ...(m.detail !== undefined ? { detail: m.detail } : {}),
+                        },
+                      ] as const,
+                  ),
+                )
+              })
+            }
           }
         }
       })

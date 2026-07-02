@@ -133,6 +133,24 @@ export const SessionState = Schema.Struct({
    * stale daemon that predates the field still decodes (client reads `?? []`).
    */
   queue: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * The session's LIVE fleet — every running descendant on the bus, with its
+   * health. The (re)attach truth the client reconciles its event-fed fleet
+   * membership + health map against: a dropped terminal event or a daemon
+   * restart can no longer wedge the loader at "waiting for N agents".
+   * `optional` so a stale daemon still decodes (client leaves state as-is).
+   */
+  fleet: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        nodeId: Schema.String,
+        name: Schema.String,
+        state: Schema.String,
+        lastActivityAt: Schema.Number,
+        detail: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   pendingApproval: Schema.NullOr(ApprovalRequest),
   cursor: Schema.Number,
 })
