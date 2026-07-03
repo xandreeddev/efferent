@@ -10,6 +10,8 @@ import htmxSrc from "./vendor/htmx.min.js" with { type: "text" }
 import wsExtSrc from "./vendor/htmx-ext-ws.js" with { type: "text" }
 // @ts-ignore ~2.75MB — inlined; served lazily (diagrams.js injects it on the first diagram).
 import mermaidSrc from "./vendor/mermaid.min.js" with { type: "text" }
+// @ts-ignore Tailwind Play CDN — the JIT that styles agent-authored pages (real Tailwind classes).
+import tailwindSrc from "./vendor/tailwind.min.js" with { type: "text" }
 // @ts-ignore
 import appJsSrc from "./app.js" with { type: "text" }
 // @ts-ignore
@@ -46,6 +48,7 @@ const asset = (name: string, content: string, contentType: string): StaticAsset 
 export const staticAssets: ReadonlyArray<StaticAsset> = [
   asset("htmx.min.js", htmxSrc, "text/javascript; charset=utf-8"),
   asset("htmx-ext-ws.js", wsExtSrc, "text/javascript; charset=utf-8"),
+  asset("tailwind.min.js", tailwindSrc, "text/javascript; charset=utf-8"),
   asset("mermaid.min.js", mermaidSrc, "text/javascript; charset=utf-8"),
   asset("app.js", appJsSrc, "text/javascript; charset=utf-8"),
   asset("diagrams.js", diagramsJsSrc, "text/javascript; charset=utf-8"),

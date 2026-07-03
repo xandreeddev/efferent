@@ -735,17 +735,18 @@ export const RENDER_UI_MAX_HTML_BYTES = 131_072
  */
 const RenderUiTool = Tool.make("render_ui", {
   description:
-    "Build a PAGE in the user's web UI — your primary way to present anything visual, structured, or " +
-    "interactive: overviews, comparisons, data breakdowns, lessons, landing pages, plans, forms. Each " +
-    "distinct id is a separate page (a tab in the UI); title is its tab label. Re-render the SAME id " +
-    "to update that page in place; use mode:'append' to stream a long page section by section. Compose " +
-    "with the `ef-*` layout system documented in the '# Web UI kit' section of your instructions (hero, " +
-    "sections, columns, cards, stats, tables), and embed diagrams or charts as Mermaid source inside " +
-    '<pre class="ef-mermaid">…</pre> — the client renders them. Interactive forms post back to you: ' +
-    'give a form hx-post="/action/ui" hx-swap="none" plus a hidden ui-id field, and the submitted ' +
-    'fields arrive as your next user message ([ui:<id>] field="value" …). The HTML is sanitized (no ' +
-    "scripts/styles/iframes/event handlers; https-or-relative links; forms only to /action/…). NEVER " +
-    "write an HTML or Markdown file to disk as a way to show the user something — render it here.",
+    "Build a beautiful, modern PAGE in the user's web UI — your primary way to present anything: " +
+    "overviews, comparisons, data breakdowns, lessons, landing pages, plans, forms. Style it with " +
+    "TAILWIND CSS utility classes (like Vercel v0 / Lovable) — strong hero, multi-column grids, " +
+    "generous whitespace, clear type hierarchy, gradients, soft shadows, rounded corners, a cohesive " +
+    "palette. Each distinct id is a separate page (a tab); title is its tab label. Re-render the SAME " +
+    "id to update it in place; mode:'append' streams a long page section by section. Embed diagrams as " +
+    'Mermaid source inside <pre class="mermaid">…</pre> — the client renders them. Interactive forms ' +
+    'post back to you: give a form hx-post="/action/ui" hx-swap="none" plus a hidden ui-id field, and ' +
+    'the submitted fields arrive as your next user message ([ui:<id>] field="value" …). The HTML is ' +
+    "sanitized (no inline styles, <script>/<style>, or event handlers — use Tailwind classes; " +
+    "https-or-relative links; forms only to /action/…). NEVER write an HTML/Markdown file to disk to " +
+    "show the user something — render it here. See the '# Web UI kit' section of your instructions.",
   parameters: {
     id: Schema.String.annotations({
       description:
