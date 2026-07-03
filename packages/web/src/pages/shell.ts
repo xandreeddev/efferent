@@ -23,6 +23,16 @@ import { renderReply } from "../components/reply.js"
 import { renderTabs } from "../components/tabs.js"
 import type { ShellView } from "../views.js"
 
+/**
+ * Tailwind Play CDN config. Agent pages are styled with real Tailwind utility
+ * classes (the model's native, expert output — how v0/Lovable get their look).
+ * `preflight: false` keeps Tailwind's global reset from touching the chrome
+ * (the shell/drawers/dock are hand-styled); agent pages set everything they
+ * need explicitly with utilities. `darkMode: 'class'` lets a page opt into
+ * `dark:` variants. Play CDN watches the DOM, so htmx-swapped page content is
+ * styled as it streams in. */
+const TAILWIND_CONFIG = `tailwind.config={darkMode:'class',corePlugins:{preflight:false},theme:{extend:{fontFamily:{sans:['ui-sans-serif','system-ui','-apple-system','Segoe UI','Roboto','Helvetica','Arial','sans-serif']}}}}`
+
 /** The empty-stage hero: invites the platform's use cases. `data-suggest`
  *  buttons prefill the composer (app.js). Hidden by CSS once a page exists. */
 const stageEmpty = html`<div id="${ID_STAGE_EMPTY}" class="ef-stage-empty">
@@ -61,6 +71,8 @@ export const renderShell = (view: ShellView): string => {
 <link rel="stylesheet" href="${assetHref("app.css")}" />
 <link rel="stylesheet" href="${assetHref("kit.css")}" />
 <script>${raw(`try{var t=localStorage.getItem("ef-theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}`)}</script>
+<script src="${assetHref("tailwind.min.js")}"></script>
+<script>${raw(TAILWIND_CONFIG)}</script>
 <script src="${assetHref("htmx.min.js")}"></script>
 <script src="${assetHref("htmx-ext-ws.js")}"></script>
 <script src="${assetHref("app.js")}" defer></script>

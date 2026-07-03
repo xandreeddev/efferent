@@ -100,26 +100,15 @@ body.ef-conn-wait .ef-stage { opacity: 0.55; }
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  padding: 0 0 170px;
 }
-/* The page composes like a real web page: full-bleed BANDS (ef-band / a
-   leading ef-hero) own their horizontal centering via --page-gutter padding;
-   every other direct child is centered into the content column by margins.
-   So a band's tinted background spans the viewport while its content aligns
-   with the rest of the page. Scoped through the page section so nested agent
-   content can't trip these. */
-.ef-pages > .ef-page > .ef-page-body { padding-top: var(--sp-5); }
-.ef-pages > .ef-page > .ef-page-body > * { margin-inline: var(--page-gutter); }
-/* Full-bleed bands own their horizontal centering (kit ef-band + the common
-   framework names models reach for: ef-section-alt/-dark). */
-.ef-pages > .ef-page > .ef-page-body > .ef-band,
-.ef-pages > .ef-page > .ef-page-body > .ef-hero,
-.ef-pages > .ef-page > .ef-page-body > .ef-section-alt,
-.ef-pages > .ef-page > .ef-page-body > .ef-section-dark { margin-inline: 0; }
-.ef-page .ef-page-body > .ef-hero {
-  border-radius: 0;
-  border-inline: none;
-  padding-inline: var(--page-gutter);
+/* The page is a BLANK full-bleed surface the agent styles entirely with
+   Tailwind (its native output — how v0/Lovable get their look). The chrome
+   adds nothing but a floating-dock clearance at the bottom; everything else —
+   background, layout, spacing, type — is the agent's Tailwind. `min-height`
+   lets a full-page hero fill the viewport. */
+.ef-pages > .ef-page > .ef-page-body {
+  min-height: 100%;
+  padding-bottom: 150px;
 }
 .ef-page-dropped {
   text-align: right;

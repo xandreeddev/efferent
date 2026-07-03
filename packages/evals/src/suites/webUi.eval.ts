@@ -21,27 +21,25 @@ import type { EvalEnv } from "../env.js"
 
 /**
  * **Generative-UI PAGE quality** (`render_ui`, the `efferent web` canvas).
- * Runs the REAL web agent (webAgentPrompt + webUi toolkit + kit doc — exactly
- * what `efferent web` composes), captures the `ui_render` events, folds them
- * into pages with the driver's own merge, and grades the result across the
- * platform's use cases: a landing page, an architecture-with-visuals ask (the
- * 0fb4b8eb regression — the agent once wrote docs/architecture.md to disk and
- * said "view it in a Markdown renderer"), a data breakdown, and an
- * interactive exercise.
+ * Runs the REAL web agent (webAgentPrompt + the content-only toolkit + the
+ * Tailwind kit doc — exactly what `efferent web` composes), captures the
+ * `ui_render` events, folds them into pages with the driver's own merge, and
+ * grades the result across the platform's use cases: a landing page, a
+ * concept explainer with a diagram, a data breakdown, and an interactive
+ * exercise. Pages are styled with real Tailwind (the model's native output;
+ * the web UI ships the Tailwind runtime), so the scorers check Tailwind craft,
+ * not a bespoke kit.
  *
- *   - deterministic contract scorers — rendered a page at all; survives the
- *     sanitizer UNCHANGED; page-scale structure (hero/cols/tables/stats/h1);
- *     ≥4 ef-* kit classes; mermaid present where the case demands a diagram;
- *     **no file punt** (render_ui actually called, no .md/.html written in
- *     lieu of rendering, no "view it elsewhere" in the final text);
- *   - an anchored LLM judge on the page itself — the "is it GOOD" half.
+ *   - deterministic contract scorers — rendered a page; survives the sanitizer
+ *     UNCHANGED (no inline styles/scripts to strip); actually styled with
+ *     Tailwind utilities; a genuine multi-column grid; page-scale structure;
+ *     mermaid present where the case demands a diagram; **no file punt**;
+ *   - an anchored LLM judge on the page itself — the "is it GOOD, and does it
+ *     look modern" half.
  *
- * Page-scale baseline (2026-07-02, opencode:deepseek-v4-flash, 4 cases × 3):
- * mean 0.93, pass 100%, pass^k 100% — `no_file_punt` 1.00 on EVERY case
- * (architecture-visual 0.98: the regression is dead); judge 0.75–1.00;
- * sanitizer_clean is the soft spot (0.33 on landing/data — occasional
- * stripped markup, rendered with the dropped-chip). Retired card-scale
- * baseline (pre-pages, same day): mean 0.92, pass 100%.
+ * Baseline: pending a re-run on the Tailwind design system (the pre-Tailwind
+ * ef-* baseline is retired). Quality of the visual craft tracks model
+ * capability — a stronger model produces markedly better Tailwind pages.
  */
 
 interface WebUiInput {
@@ -181,7 +179,7 @@ const CASES = [
         "A real landing page, not a chat card: a hero (large title + one-line pitch + CTA button); " +
         "a 3-column features section with distinct plausible features; a stats row with three " +
         "labelled numbers; a get-started section with an install command in a pre/code block; " +
-        "coherent ef-* page-layout classes (hero/cols/features/stats or grid equivalents); no " +
+        "a modern Tailwind-styled page — a real hero, a multi-column grid of features, spacing/typography/color that reads polished; no " +
         "lorem-ipsum, no broken markup.",
     },
   },
@@ -200,7 +198,7 @@ const CASES = [
         "(mermaid source in a pre block — a sequence or flow diagram) showing the real actors " +
         "(user/browser, client app, authorization server, resource server) and the real steps " +
         "(authorize redirect → code → token exchange → access token → resource); a short prose " +
-        "explanation alongside; ef-* page structure. Technically accurate, not hand-wavy; it must " +
+        "explanation alongside; a modern Tailwind-styled layout (hero, sections, a grid, a styled card). Technically accurate, not hand-wavy; it must " +
         "not tell the user to view something elsewhere.",
     },
   },
@@ -222,7 +220,7 @@ const CASES = [
         "actual figures; computed totals and/or percentages that are ARITHMETICALLY CORRECT " +
         "(totals: Jan 5900, Feb 6650, Mar 7700); a clear callout or steps explaining what's " +
         "growing (egress is the standout: +133% Jan→Mar); a mermaid pie or xychart of the data; " +
-        "ef-* structure (stats/table/steps/callout).",
+        "a modern Tailwind layout (a stats grid, a styled table, cards).",
     },
   },
   {
@@ -239,7 +237,7 @@ const CASES = [
       rubric:
         "A practice-exercise page: a short, syntactically valid JS snippet in a pre/code block whose " +
         "output is well-defined; a clear question; a text input named answer plus a submit button wired " +
-        "for post-back; ef-* kit classes throughout.",
+        "for post-back; styled with Tailwind (spacing, rounded, a clear submit button).",
     },
   },
 ]
@@ -267,41 +265,47 @@ export const webUiEval = defineEval<WebUiInput, WebUiRun, WebUiExpected, EvalEnv
       ({ output }) =>
         output.graded !== undefined && sanitizeHtml(output.graded.html).dropped.length === 0,
     ),
-    // Counts only DOCUMENTED kit classes — hallucinated Tailwind-style ef-*
-    // utilities (ef-text-xl, ef-py-6…) style nothing and must not score.
-    predicate(
-      "on_design_system",
-      ({ output }) =>
-        output.graded !== undefined &&
-        (output.graded.html.match(
-          /\bef-(band|split|aside|media|hero|section|section-alt|section-dark|container|cols-\d|grid|grid-cols-\d|col|flex|span-2|features|feature|stats|stat|steps|step|figure|card|callout|stack|row|grid-\d|table|btn|badge|title|text|muted|lede|display|eyebrow|divider|field|label|input|textarea|select|choice|kbd|code|progress|img|mermaid|tight|loose)\b/g,
-        ) ?? []).length >= 4,
-    ),
-    // Page-scale structure: at least two of the page primitives.
+    // Actually styled with Tailwind (the model's native output) — spacing,
+    // color, layout, depth. A bare page with no utilities scores 0.
+    predicate("on_design_system", ({ output }) => {
+      const html = output.graded?.html ?? ""
+      const utils = [
+        /\bbg-(gradient|slate|zinc|neutral|indigo|violet|purple|emerald|rose|blue|sky|white\/)/,
+        /\btext-(4xl|5xl|3xl|2xl|xl|lg|slate|white|indigo|zinc)/,
+        /\b(grid|flex)\b/,
+        /\brounded-(xl|2xl|3xl|lg|full)/,
+        /\bshadow-(lg|xl|2xl|md)/,
+        /\b(px|py|p|gap|space-y|space-x|mt|mb|mx)-\d/,
+        /\bmax-w-\w+/,
+        /\bborder(-\w+)?\b/,
+      ].filter((re) => re.test(html)).length
+      return utils >= 5
+    }),
+    // Page-scale structure: a big hero heading, a centered container, sections,
+    // a grid — at least two.
     predicate("page_structure", ({ output }) => {
       const html = cleanHtml(output.graded)
       const hits = [
-        /<h1|<h2/.test(html),
-        /ef-hero|ef-band/.test(html),
-        /ef-cols-|ef-grid-|ef-features/.test(html),
-        /ef-table|<table/.test(html),
-        /ef-stat/.test(html),
+        /text-(4xl|5xl|3xl)/.test(html),
+        /max-w-\w+/.test(html),
+        /\bpy-\d{2}\b|\bpy-1[0-9]\b/.test(html),
+        /grid-cols-|md:grid-cols-/.test(html),
+        /<table|rounded-2xl/.test(html),
       ].filter(Boolean).length
       return hits >= 2
     }),
-    // A REAL page, not a flat prose column: at least one side-by-side layout —
-    // the named recipes OR the common-framework aliases the model reaches for
-    // (ef-grid / ef-grid-cols-N / ef-flex). The "still feels like a list" fix.
-    predicate(
-      "multi_column",
-      ({ output }) =>
-        /\bef-(split|media|cols-\d|grid-cols-\d|grid|flex|features|stats)\b/.test(cleanHtml(output.graded)),
+    // A REAL page, not a flat prose column: at least one genuine multi-column
+    // layout (a Tailwind grid with 2+ columns, or a responsive grid).
+    predicate("multi_column", ({ output }) =>
+      /\b(grid-cols-[234]|md:grid-cols-[234]|lg:grid-cols-[234]|sm:grid-cols-[234])\b/.test(
+        cleanHtml(output.graded),
+      ),
     ),
     // The diagram contract, where the case demands one.
     predicate("mermaid_present", ({ output, expected }) => {
       if (!expected.mermaid) return true
       const html = cleanHtml(output.graded)
-      const block = /<pre[^>]*class="[^"]*ef-mermaid[^"]*"[^>]*>([\s\S]*?)<\/pre>/.exec(html)
+      const block = /<pre[^>]*class="[^"]*\bmermaid\b[^"]*"[^>]*>([\s\S]*?)<\/pre>/.exec(html)
       return (
         block !== null &&
         /\b(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|pie|xychart)/.test(

@@ -31,13 +31,15 @@ describe("webAgentPrompt", () => {
     expect(text).not.toContain("cwd:")
   })
 
-  test("the canvas section carries the inversion + the multi-column mandate", () => {
-    expect(text).toContain("# The web canvas — build pages, not walls of text")
-    expect(text).toContain("NEVER write a Markdown or HTML file to disk")
+  test("the canvas section is design-forward Tailwind + carries the inversion", () => {
+    expect(text).toContain("# The web canvas — you are a world-class web designer")
+    expect(text).toContain("TAILWIND CSS")
+    expect(text).toContain("v0")
+    expect(text).toContain("NEVER write a Markdown/HTML file to disk")
     expect(text).toContain("[viewing:<page-id>]")
-    expect(text).toContain(`<pre class="ef-mermaid">`)
-    expect(text).toContain("NOT A FLAT LIST")
-    expect(text).toContain("ef-split")
+    expect(text).toContain(`<pre class="mermaid">`)
+    // Multi-column mandate expressed in Tailwind terms.
+    expect(text).toContain("grid grid-cols")
     // The canvas section sits ABOVE the task guidance (salience).
     expect(text.indexOf("# The web canvas")).toBeLessThan(text.indexOf("# Doing the task"))
   })

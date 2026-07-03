@@ -65,7 +65,7 @@
      next pass naturally re-renders it — self-correcting with keyed OOB. */
   var findSources = function () {
     return d.querySelectorAll(
-      "pre.ef-mermaid:not([data-mm-done]), .ef-codeblock[data-lang=\"mermaid\"]:not([data-mm-done])"
+      "pre.mermaid:not([data-mm-done]), pre.ef-mermaid:not([data-mm-done]), .language-mermaid:not([data-mm-done]), .ef-codeblock[data-lang=\"mermaid\"]:not([data-mm-done])"
     );
   };
 
