@@ -121,15 +121,31 @@ describe("web reducer", () => {
     expect(model.blocks[0]?.key).toBe("m:p9:u0")
   })
 
-  test("ui_render upserts a canvas card (same id updates in place)", () => {
+  test("ui_render upserts a canvas page (same id updates in place)", () => {
     const { model, allPatches } = run([
       { type: "ui_render", id: "quiz-1", title: "Quiz", html: "<p>q</p>", mode: "replace" },
       { type: "ui_render", id: "quiz-1", html: "<p>feedback</p>", mode: "replace" },
     ])
     expect(model.canvas).toHaveLength(1)
-    expect(model.canvas[0]?.html).toBe("<p>feedback</p>")
+    expect(model.canvas[0]?.regions).toEqual([{ region: "_main", html: "<p>feedback</p>" }])
     const patches = allPatches.filter((p) => p.kind === "canvas")
     expect(patches).toHaveLength(2)
+  })
+
+  test("ui_render component streaming: editing one region leaves its siblings byte-identical", () => {
+    const { model, allPatches } = run([
+      { type: "ui_render", id: "home", region: "hero", html: "<h1>Home</h1>", mode: "replace" },
+      { type: "ui_render", id: "home", region: "features", html: "<ul>f</ul>", mode: "replace" },
+      { type: "ui_render", id: "home", region: "hero", html: "<h1>Welcome</h1>", mode: "replace" },
+      { type: "ui_render", id: "home", region: "features", html: "", mode: "remove" },
+    ])
+    expect(model.canvas).toHaveLength(1)
+    // features grew then was removed; hero survived its edit.
+    expect(model.canvas[0]?.regions).toEqual([{ region: "hero", html: "<h1>Welcome</h1>" }])
+    const ops = (allPatches as Array<{ kind: string; op?: string }>)
+      .filter((p) => p.kind === "canvas")
+      .map((p) => p.op)
+    expect(ops).toEqual(["new-page", "new-region", "update-region", "remove-region"])
   })
 
   test("the root's own health stamps never mint a chip — they feed the activity strip", () => {

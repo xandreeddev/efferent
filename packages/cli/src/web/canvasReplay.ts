@@ -1,7 +1,8 @@
 /**
  * Rebuild the generative-UI pages from the PERSISTED message log. `render_ui`
- * is a tool, so every call's full args ({ id, title?, html, mode?, active? })
- * live in the ConversationStore as assistant tool-call parts — no separate
+ * is a tool, so every call's full args ({ id, region?, title?, html, mode?,
+ * active? }) live in the ConversationStore as assistant tool-call parts — the
+ * two-level (page → component) structure replays through the same fold — no separate
  * canvas storage exists or is needed. Replaying them through the SAME merge
  * the live fold uses (`mergeCanvasEntry`) makes replay ≡ live-fold true by
  * construction, so pages survive a driver restart and `--resume`.
@@ -32,11 +33,12 @@ const parseEntry = (input: unknown): CanvasEntry | undefined => {
   const id = str(a.id)
   const html = str(a.html)
   if (id === undefined || id.length === 0 || html === undefined) return undefined
-  const mode = a.mode === "append" ? "append" : "replace"
+  const mode = a.mode === "append" ? "append" : a.mode === "remove" ? "remove" : "replace"
   return {
     id,
     html,
     mode,
+    ...(str(a.region) !== undefined ? { region: str(a.region) as string } : {}),
     ...(str(a.title) !== undefined ? { title: str(a.title) as string } : {}),
     ...(typeof a.active === "boolean" ? { active: a.active } : {}),
   }

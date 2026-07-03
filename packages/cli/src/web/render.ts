@@ -7,7 +7,9 @@
 import {
   appendChatBlock,
   appendPageItem,
+  appendRegionItem,
   appendWorkspaceItem,
+  removeRegionItem,
   renderFullSync,
   renderShell,
   upsertActivity,
@@ -17,6 +19,7 @@ import {
   upsertPageItem,
   upsertPlan,
   upsertQueue,
+  upsertRegionItem,
   upsertReply,
   upsertTabs,
   upsertWorkspaceItem,
@@ -133,11 +136,25 @@ export const renderPatch = (m: WebModel, meta: WebMeta, p: Patch): string => {
       const item = m.canvas.find((c) => c.id === p.id)
       if (item === undefined) return ""
       const active = m.activePage === p.id
-      const fragment = p.isNew
-        ? appendPageItem(item, active, p.focus)
-        : upsertPageItem(item, active, p.focus)
-      // The tab bar rides in the SAME message so it can never drift.
-      return `${fragment}\n${upsertTabs(m.canvas, m.activePage)}`
+      // Whole-section ops ship the section (and carry focus on it); region ops
+      // ship just the addressed component (and carry focus on the tab bar).
+      const wholeSection = p.op === "new-page" || p.op === "rebuild"
+      let fragment: string
+      if (p.op === "new-page") {
+        fragment = appendPageItem(item, active, p.focus)
+      } else if (p.op === "rebuild") {
+        fragment = upsertPageItem(item, active, p.focus)
+      } else if (p.op === "remove-region") {
+        fragment = removeRegionItem(p.id, p.region)
+      } else {
+        const region = item.regions.find((r) => r.region === p.region)
+        if (region === undefined) return ""
+        fragment = p.op === "new-region" ? appendRegionItem(p.id, region) : upsertRegionItem(p.id, region)
+      }
+      // The tab bar rides in the SAME message so it can never drift; a
+      // region-only focus event pulls the user via the nav's data-focus.
+      const tabFocus = !wholeSection && p.focus ? p.id : undefined
+      return `${fragment}\n${upsertTabs(m.canvas, m.activePage, tabFocus)}`
     }
     case "approval":
       return upsertApproval(m.approval)

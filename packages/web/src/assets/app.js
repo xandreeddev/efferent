@@ -142,6 +142,15 @@
       var marked = d.querySelectorAll("#ef-canvas > .ef-page[data-focus]");
       for (var i = 0; i < marked.length; i++) marked[i].removeAttribute("data-focus");
       pinnedPage = focused.id;
+    } else {
+      /* A region-only update carries focus on the tab bar (the page section
+         wasn't re-shipped). Adopt + strip it, so a later message can't yank. */
+      var tabFocus = d.querySelector("#ef-tabs[data-focus]");
+      if (tabFocus) {
+        var fd = tabFocus.getAttribute("data-focus");
+        tabFocus.removeAttribute("data-focus");
+        if (fd && d.getElementById(fd)) pinnedPage = fd;
+      }
     }
     var target = null;
     if (pinnedPage && d.getElementById(pinnedPage)) target = pinnedPage;

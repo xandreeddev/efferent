@@ -61,6 +61,31 @@ height, then center the content:
 </div>
 \`\`\`
 
+## Components — build a page in pieces, edit one in place
+
+A page is an ordered set of named COMPONENTS. Give each part a \`region\` id and
+render them as separate render_ui calls with the SAME page id:
+
+\`\`\`
+render_ui({ id: "landing", region: "hero",     html: "<header>…</header>" })
+render_ui({ id: "landing", region: "features", html: "<section>…</section>" })
+render_ui({ id: "landing", region: "stats",    html: "<section>…</section>" })
+\`\`\`
+
+To EDIT a part, re-call with the SAME id + region and the new html — ONLY that
+component re-renders; the other components (and their rendered diagrams, the
+user's scroll, any typed-in form values) are untouched:
+
+\`\`\`
+render_ui({ id: "landing", region: "hero", html: "<header class=\\"bg-slate-950 …\\">…</header>" })
+\`\`\`
+
+- Reuse the EXACT region name to edit; a new name adds a new component.
+- \`mode:'append'\` grows a region in sections; \`mode:'remove'\` deletes one.
+- Omit \`region\` only to render or fully rebuild the whole page at once.
+- Prefer components for anything iterative — it keeps the page stable and your
+  output small as you refine.
+
 ## Diagrams & charts (Mermaid)
 
 Author Mermaid SOURCE (never SVG — it's stripped). One diagram per block:

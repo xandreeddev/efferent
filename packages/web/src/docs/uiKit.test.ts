@@ -14,6 +14,9 @@ describe("RENDER_UI_KIT_DOC", () => {
     // The interactive post-back contract survives.
     expect(RENDER_UI_KIT_DOC).toContain(`hx-post="/action/ui"`)
     expect(RENDER_UI_KIT_DOC).toContain("ui-id")
+    // Component streaming: build/edit a page by named regions.
+    expect(RENDER_UI_KIT_DOC).toContain("region:")
+    expect(RENDER_UI_KIT_DOC).toContain("Reuse the EXACT region name to edit")
     // No inline styles / scripts allowed.
     expect(RENDER_UI_KIT_DOC).toContain("NO inline")
     // The bespoke-kit framing is gone.

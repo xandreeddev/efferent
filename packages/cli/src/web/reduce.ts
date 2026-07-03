@@ -456,6 +456,7 @@ export const makeWebReducer = (
       case "ui_render": {
         const { model, patch } = putCanvas(m, {
           id: event.id,
+          ...(event.region !== undefined ? { region: event.region } : {}),
           ...(event.title !== undefined ? { title: event.title } : {}),
           html: event.html,
           mode: event.mode,

@@ -18,7 +18,7 @@ describe("webAgentPrompt", () => {
   })
 
   test("has ONLY the content tools — render/research/plan, no code or workspace tools", () => {
-    expect(text).toContain("- render_ui({ id, title?, html, mode?, active? })")
+    expect(text).toContain("- render_ui({ id, region?, title?, html, mode?, active? })")
     expect(text).toContain("- search_web({ query })")
     expect(text).toContain("- web_fetch({ url, maxBytes? })")
     expect(text).toContain("- update_plan(")
@@ -42,6 +42,16 @@ describe("webAgentPrompt", () => {
     expect(text).toContain("grid grid-cols")
     // The canvas section sits ABOVE the task guidance (salience).
     expect(text.indexOf("# The web canvas")).toBeLessThan(text.indexOf("# Doing the task"))
+  })
+
+  test("teaches component streaming: build from regions, edit one, reuse the exact name", () => {
+    expect(text).toContain("COMPONENTS (regions)")
+    expect(text).toContain("region:'hero'")
+    // The precise-edit discipline (the weak-model guardrail).
+    expect(text).toContain("Reuse the EXACT region name to edit")
+    expect(text).toContain("ONLY that component changes")
+    // mode:'remove' is documented.
+    expect(text).toContain("mode:'remove'")
   })
 
   test("versioned prompt named 'web'", () => {

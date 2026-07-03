@@ -1546,6 +1546,39 @@ describe("render_ui — webUi-gated generative UI", () => {
     expect(ui[0]?.nodeId).toBeUndefined() // root draw — no node attribution
   })
 
+  test("region + remove mode ride the event verbatim (component addressing)", async () => {
+    const { layer } = stubTreeStore()
+    const seen: Array<{ type: string }> = []
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [],
+      webUi: true,
+      onBusEvent: (e) => Effect.sync(() => void seen.push(e as { type: string })),
+    })
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (n: string, p: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      // Update one component of a page…
+      yield* call("render_ui", { id: "home", region: "hero", html: "<h1>hi</h1>" })
+      // …then delete it.
+      yield* call("render_ui", { id: "home", region: "hero", html: "", mode: "remove" })
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null,
+      }),
+    )
+    await Effect.runPromise(program as unknown as Effect.Effect<unknown>)
+    const ui = seen.filter((e) => e.type === "ui_render") as Array<{
+      type: string; id: string; region?: string; mode: string
+    }>
+    expect(ui).toHaveLength(2)
+    expect(ui[0]).toMatchObject({ id: "home", region: "hero", mode: "replace" })
+    expect(ui[1]).toMatchObject({ id: "home", region: "hero", mode: "remove" })
+  })
+
   test("an oversize html body refuses with HtmlTooLarge (model-readable, streaming hint)", async () => {
     const { layer } = stubTreeStore()
     const seen: Array<{ type: string }> = []

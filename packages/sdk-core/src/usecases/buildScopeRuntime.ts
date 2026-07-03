@@ -739,32 +739,42 @@ const RenderUiTool = Tool.make("render_ui", {
     "overviews, comparisons, data breakdowns, lessons, landing pages, plans, forms. Style it with " +
     "TAILWIND CSS utility classes (like Vercel v0 / Lovable) — strong hero, multi-column grids, " +
     "generous whitespace, clear type hierarchy, gradients, soft shadows, rounded corners, a cohesive " +
-    "palette. Each distinct id is a separate page (a tab); title is its tab label. Re-render the SAME " +
-    "id to update it in place; mode:'append' streams a long page section by section. Embed diagrams as " +
-    'Mermaid source inside <pre class="mermaid">…</pre> — the client renders them. Interactive forms ' +
-    'post back to you: give a form hx-post="/action/ui" hx-swap="none" plus a hidden ui-id field, and ' +
-    'the submitted fields arrive as your next user message ([ui:<id>] field="value" …). The HTML is ' +
-    "sanitized (no inline styles, <script>/<style>, or event handlers — use Tailwind classes; " +
+    "palette. Each distinct id is a separate page (a tab); title is its tab label. A page is built from " +
+    "named COMPONENTS: call render_ui with a `region` (e.g. 'hero', 'features') to add that component, " +
+    "then re-call with the SAME id + region to EDIT just it — only that component changes, the rest of " +
+    "the page (and its rendered diagrams) stay put. Omit `region` to render/replace the WHOLE page at " +
+    "once. mode:'append' grows the target (page or region) in sections; mode:'remove' deletes a region. " +
+    'Embed diagrams as Mermaid source inside <pre class="mermaid">…</pre> — the client renders them. ' +
+    'Interactive forms post back to you: give a form hx-post="/action/ui" hx-swap="none" plus a hidden ' +
+    'ui-id field, and the submitted fields arrive as your next user message ([ui:<id>] field="value" …). ' +
+    "The HTML is sanitized (no inline styles, <script>/<style>, or event handlers — use Tailwind classes; " +
     "https-or-relative links; forms only to /action/…). NEVER write an HTML/Markdown file to disk to " +
     "show the user something — render it here. See the '# Web UI kit' section of your instructions.",
   parameters: {
     id: Schema.String.annotations({
       description:
         "Stable page id (kebab-case, e.g. 'architecture'). One id = one page/tab; reuse it to update " +
-        "that page in place. Must not start with 'ef-'.",
+        "that page. Must not start with 'ef-'.",
+    }),
+    region: Schema.optional(Schema.String).annotations({
+      description:
+        "The component id within the page (kebab-case, e.g. 'hero'). Omit to render/replace the WHOLE " +
+        "page. Reuse the EXACT same region to edit that component — only it changes; use a new name only " +
+        "for a genuinely new component.",
     }),
     title: Schema.optional(Schema.String).annotations({
       description: "The page's tab label — give it on a page's first render.",
     }),
     html: Schema.String.annotations({
       description:
-        "The page body HTML (ef-* classes; sanitized before render). Keep a single call under ~128KB — " +
-        "stream longer pages with mode:'append'.",
+        "The HTML for the target (the whole page, or just the region when `region` is set; ef-*/Tailwind " +
+        "classes; sanitized before render). Keep a single call under ~128KB — stream longer content with " +
+        "mode:'append'.",
     }),
-    mode: Schema.optional(Schema.Literal("replace", "append")).annotations({
+    mode: Schema.optional(Schema.Literal("replace", "append", "remove")).annotations({
       description:
-        "'replace' (default) swaps the whole page body; 'append' adds below the existing content — use " +
-        "it to build a long page in sections.",
+        "'replace' (default) swaps the target; 'append' adds below the existing content (build in " +
+        "sections); 'remove' deletes the addressed region (ignored when `region` is omitted).",
     }),
     active: Schema.optional(Schema.Boolean).annotations({
       description:
@@ -2291,9 +2301,10 @@ const buildGenericHandlers = <R>(
     // append-streaming viable).
     const render_ui = (params: {
       readonly id: string
+      readonly region?: string
       readonly title?: string
       readonly html: string
-      readonly mode?: "replace" | "append"
+      readonly mode?: "replace" | "append" | "remove"
       readonly active?: boolean
     }) =>
       Effect.gen(function* () {
@@ -2302,7 +2313,7 @@ const buildGenericHandlers = <R>(
             error: "HtmlTooLarge",
             message:
               `This render is ${params.html.length} chars — over the ${RENDER_UI_MAX_HTML_BYTES} limit. ` +
-              "Stream the page in sections: re-call render_ui with the same id and mode:'append'.",
+              "Stream it in sections: re-call render_ui with the same id (and region) and mode:'append'.",
           })
         }
         if (opts.webUi !== true || opts.onBusEvent === undefined) {
@@ -2314,6 +2325,7 @@ const buildGenericHandlers = <R>(
           id: params.id,
           html: params.html,
           mode: params.mode ?? "replace",
+          ...(params.region !== undefined ? { region: params.region } : {}),
           ...(params.active !== undefined ? { active: params.active } : {}),
           ...(params.title !== undefined ? { title: params.title } : {}),
           ...(rc.parentNodeId !== null ? { nodeId: rc.parentNodeId as string } : {}),

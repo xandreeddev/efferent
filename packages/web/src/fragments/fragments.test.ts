@@ -1,22 +1,35 @@
 import { describe, expect, test } from "bun:test"
 import { appendChatBlock, upsertChatBlock } from "./blocks.js"
-import { appendPageItem, appendWorkspaceItem, upsertPageItem, upsertPlan, upsertWorkspaceItem } from "./workspace.js"
+import {
+  appendPageItem,
+  appendRegionItem,
+  appendWorkspaceItem,
+  removeRegionItem,
+  upsertPageItem,
+  upsertPlan,
+  upsertRegionItem,
+  upsertWorkspaceItem,
+} from "./workspace.js"
 import { renderFullSync } from "./sync.js"
 import { upsertActivity, upsertApproval, upsertHeader, upsertQueue, upsertReply, upsertTabs } from "./singletons.js"
-import type { ChatBlockView, ShellView } from "../views.js"
+import { MAIN_REGION, type CanvasItemView, type ChatBlockView, type ShellView } from "../views.js"
 
 const msg: ChatBlockView = { kind: "message", key: "m:p3:a0", role: "assistant", markdown: "**hi**" }
 const pill: ChatBlockView = { kind: "tool", id: "0:read_file:1", label: "read_file(src/x.ts)", state: "running" }
+
+/** A whole-page CanvasItemView (a single `_main` component). */
+const page = (id: string, html: string, title?: string): CanvasItemView => ({
+  id,
+  ...(title !== undefined ? { title } : {}),
+  regions: [{ region: MAIN_REGION, html }],
+})
 
 const shell: ShellView = {
   header: { sessionTitle: "s", workspace: "/w", model: "kimi", status: "idle", agentsRunning: 0 },
   blocks: [msg, pill],
   workspace: [{ kind: "file", file: { path: "a.ts", content: "x", startLine: 1 } }],
   plan: { steps: [{ text: "one", status: "active" }] },
-  canvas: [
-    { id: "quiz", html: "<p>q</p>" },
-    { id: "arch", title: "Architecture", html: "<h1>arch</h1>" },
-  ],
+  canvas: [page("quiz", "<p>q</p>"), page("arch", "<h1>arch</h1>", "Architecture")],
   activity: { status: "idle", agentsRunning: 0 },
   queue: { items: ["next"] },
   wsUrl: "/ws?t=x",
@@ -60,20 +73,38 @@ describe("fragments", () => {
   })
 
   test("pages sanitize agent html, key by agent-chosen id, render full-bleed (no card chrome)", () => {
-    const out = appendPageItem({ id: "ex-1", title: "Quiz", html: `<script>x</script><p>safe</p>` }, true)
+    const out = appendPageItem(page("ex-1", `<script>x</script><p>safe</p>`, "Quiz"), true)
     expect(out).toMatch(/^<div hx-swap-oob="beforeend:#ef-canvas">/)
     expect(out).toContain(`id="ui-ex-1"`)
     expect(out).toContain("ef-page--active")
     expect(out).toContain(`data-page-id="ex-1"`)
+    expect(out).toContain(`id="uib-ex-1"`) // the keyed page body (regions append here)
     expect(out).not.toContain("<script>")
     expect(out).toContain("<p>safe</p>")
     expect(out).not.toContain("ef-wcard") // pages are full-bleed, not cards
     expect(out).toContain("sanitized: 1 removed")
     // An update keeps the same id; a background update is not active.
-    const upd = upsertPageItem({ id: "ex-1", html: "<p>v2</p>" }, false)
+    const upd = upsertPageItem(page("ex-1", "<p>v2</p>"), false)
     expect(upd).toContain(`id="ui-ex-1"`)
     expect(upd).toContain(`hx-swap-oob="true"`)
     expect(upd).not.toContain("ef-page--active")
+  })
+
+  test("component fragments address ONE region: append into the page body, upsert/delete the region node", () => {
+    // A new component wraps in a beforeend-into-the-page-body OOB…
+    const add = appendRegionItem("home", { region: "hero", html: "<h1>hi</h1>" })
+    expect(add).toMatch(/^<div hx-swap-oob="beforeend:#uib-home">/)
+    expect(add).toContain(`id="uir-home_00hero"`) // keyed by (page, region); NUL → _00
+    expect(add).toContain(`data-region="hero"`)
+    expect(add).toContain("<h1>hi</h1>")
+    // …an update outerHTML-replaces ONLY that region node (siblings untouched)…
+    const upd = upsertRegionItem("home", { region: "hero", html: "<h1>welcome</h1>" })
+    expect(upd).toMatch(/^<div id="uir-home_00hero" class="ef-region" data-region="hero" hx-swap-oob="true">/)
+    expect(upd).toContain("<h1>welcome</h1>")
+    // …and a remove is an OOB delete of just that node.
+    const del = removeRegionItem("home", "hero")
+    expect(del).toContain(`id="uir-home_00hero"`)
+    expect(del).toContain(`hx-swap-oob="delete"`)
   })
 
   test("the tab bar upserts alongside pages: one tab per page, active marked, empty collapses", () => {

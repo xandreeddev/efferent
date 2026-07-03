@@ -11,10 +11,13 @@ export { renderShell } from "./pages/shell.js"
 export { appendChatBlock, upsertChatBlock, renderChatBlock } from "./fragments/blocks.js"
 export {
   appendPageItem,
+  appendRegionItem,
   appendWorkspaceItem,
+  removeRegionItem,
   renderWorkspaceItem,
   upsertPageItem,
   upsertPlan,
+  upsertRegionItem,
   upsertWorkspaceItem,
 } from "./fragments/workspace.js"
 export {
@@ -60,12 +63,16 @@ export {
 export { assetHref, staticAssets, type StaticAsset } from "./assets/static.js"
 export { RENDER_UI_KIT_DOC } from "./docs/uiKit.js"
 
+// the whole-page sentinel region (shared by the fold + replay)
+export { MAIN_REGION } from "./views.js"
+
 // view prop types (the driver adapts its models onto these)
 export type {
   ActivityView,
   AgentChipView,
   ApprovalView,
   CanvasItemView,
+  CanvasRegionView,
   ChatBlockView,
   DiffCardView,
   FileRefView,
