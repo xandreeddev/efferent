@@ -1,11 +1,12 @@
-import { render, type Html } from "../html.js"
-import { ID_CANVAS, ID_WS_ITEMS } from "../ids.js"
-import type { CanvasItemView, PlanView, WorkspaceItemView } from "../views.js"
+import { html, render, type Html } from "../html.js"
+import { ID_CANVAS, ID_WS_ITEMS, pageBodyId, regionId } from "../ids.js"
+import type { CanvasItemView, CanvasRegionView, PlanView, WorkspaceItemView } from "../views.js"
 import { renderDiffCard } from "../components/diffCard.js"
 import { renderFileRef } from "../components/fileRef.js"
-import { renderPageItem } from "../components/page.js"
+import { renderPageItem, renderRegion } from "../components/page.js"
 import { renderPlan } from "../components/plan.js"
 import { renderSourceCard } from "../components/sourceCard.js"
+import { oobAttr } from "../components/oob.js"
 import { wrapAppend } from "./blocks.js"
 
 /** Render a workspace stack item (plan routes to its own slot — see below). */
@@ -43,6 +44,21 @@ export const upsertPlan = (plan: PlanView): string => render(renderPlan(plan, "t
 export const appendPageItem = (item: CanvasItemView, active: boolean, focus = false): string =>
   wrapAppend(ID_CANVAS, renderPageItem(item, active, undefined, focus))
 
-/** An UPDATED page (same agent-chosen id) — replaced in place. */
+/** A whole page REBUILT (a no-region replace, or a full-section resync) —
+ *  outerHTML-replaces the section, dropping any stale component divs. */
 export const upsertPageItem = (item: CanvasItemView, active: boolean, focus = false): string =>
   render(renderPageItem(item, active, "true", focus))
+
+/** A NEW component — appended into its page's keyed body (wrapped, as above,
+ *  so the keyed `<div id="uir-…">` keeps its id). */
+export const appendRegionItem = (pageId: string, region: CanvasRegionView): string =>
+  wrapAppend(pageBodyId(pageId), renderRegion(pageId, region))
+
+/** An UPDATED component — outerHTML-replaces ONLY that region div; sibling
+ *  components (and their rendered diagrams / scroll / form state) are untouched. */
+export const upsertRegionItem = (pageId: string, region: CanvasRegionView): string =>
+  render(renderRegion(pageId, region, "true"))
+
+/** A DELETED component — an OOB `delete` swap removes just that region div. */
+export const removeRegionItem = (pageId: string, region: string): string =>
+  render(html`<div id="${regionId(pageId, region)}"${oobAttr("delete")}></div>`)

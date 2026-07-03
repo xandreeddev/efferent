@@ -23,9 +23,14 @@ export const upsertQueue = (view: QueueView): string => render(renderQueue(view,
 export const upsertApproval = (view: ApprovalView | undefined): string =>
   render(renderApproval(view, "true"))
 
-/** The tab bar — sent in the SAME WS message as every page append/replace. */
-export const upsertTabs = (pages: ReadonlyArray<CanvasItemView>, activePage?: string): string =>
-  render(renderTabs(pages, activePage, "true"))
+/** The tab bar — sent in the SAME WS message as every page/region fragment.
+ *  `focusPageId` set ⇒ stamp the transient `data-focus` (the focus channel for
+ *  region-only updates; see `renderTabs`). */
+export const upsertTabs = (
+  pages: ReadonlyArray<CanvasItemView>,
+  activePage?: string,
+  focusPageId?: string,
+): string => render(renderTabs(pages, activePage, "true", focusPageId))
 
 /** The activity strip (idle renders the hidden empty singleton). */
 export const upsertActivity = (view: ActivityView): string => render(renderActivity(view, "true"))

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { renderShell } from "./shell.js"
-import type { ShellView } from "../views.js"
+import { MAIN_REGION, type ShellView } from "../views.js"
 
 const view: ShellView = {
   header: { sessionTitle: "s", workspace: "/w", model: "kimi", status: "idle", agentsRunning: 0 },
   blocks: [{ kind: "message", key: "m:p0:u0", role: "user", markdown: "hi" }],
   workspace: [{ kind: "file", file: { path: "a.ts", content: "x", startLine: 1 } }],
   plan: { steps: [] },
-  canvas: [{ id: "arch", title: "Architecture", html: "<h1>a</h1>" }],
+  canvas: [{ id: "arch", title: "Architecture", regions: [{ region: MAIN_REGION, html: "<h1>a</h1>" }] }],
   activity: { status: "idle", agentsRunning: 0 },
   queue: { items: [] },
   wsUrl: "/ws?t=tok",

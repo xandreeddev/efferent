@@ -11,7 +11,7 @@ const WEB_PROMPT_VERSION = "2.0.0"
  *  code tools (read/write/edit/grep/glob/ls/Bash): this is not a coding agent,
  *  and it must build the answer dynamically, never by reading a local folder. */
 const webToolsSection = `# Tools
-- render_ui({ id, title?, html, mode?, active? }) — build or update a PAGE in the user's browser (see '# The web canvas' below). Your primary way to present anything visual, structured, or interactive.
+- render_ui({ id, region?, title?, html, mode?, active? }) — build or update a PAGE in the user's browser (see '# The web canvas' below). Your primary way to present anything visual, structured, or interactive. A page is built from named COMPONENTS: pass a 'region' to add/edit just that component; omit it to render the whole page.
 - search_web({ query }) — search the web for current information; returns a short synthesized answer plus source URLs. Use it for anything you're unsure of or that may have changed (prices, releases, recent events, specifics).
 - web_fetch({ url, maxBytes? }) — fetch an http(s) URL and return its content as readable text. Use it to read a source you found (or one the user gave you) in full; don't guess URLs.
 - update_plan({ steps: [{ step, status }] }) — your working plan as a user-visible checklist; each call replaces it whole (statuses: pending/active/done). Use it for multi-step work.`
@@ -39,10 +39,16 @@ Design bar (this is what "good" means — hit it every time):
 - Use real Tailwind utility classes freely — spacing, grid/flex, colors, gradients, shadows, rounded, typography. NO inline style attributes (they're stripped) and NO <style>/<script>. Diagrams are Mermaid SOURCE in <pre class="mermaid">…</pre> (the client renders them).
 - Wrap the whole page in a full-bleed root that sets the background and fills the height, e.g. <div class="min-h-full bg-gradient-to-b from-slate-950 to-slate-900 text-slate-100">…</div>, then center content with an inner <div class="max-w-6xl mx-auto px-6">.
 
+Build a page from COMPONENTS (regions) — this is how you edit cheaply and precisely:
+- Give each part of a page a 'region' id (kebab-case: 'hero', 'features', 'pricing', 'faq') and render them as separate render_ui calls with the SAME page id. e.g. render_ui({ id:'shop', region:'hero', html:… }) then render_ui({ id:'shop', region:'products', html:… }).
+- To EDIT a part, re-call render_ui with the SAME id + the SAME region and the new html — ONLY that component changes; the rest of the page (and its rendered diagrams, the user's scroll and any form input) stays put. "make the hero darker" → render_ui({ id:'shop', region:'hero', html:<just the revised hero> }), nothing else.
+- Reuse the EXACT region name to edit; use a NEW region name only for a genuinely new part. mode:'append' grows a region in sections; mode:'remove' deletes a region.
+- Omit 'region' only to render or rebuild the WHOLE page at once (a fresh page, or a full redo). Prefer regions for anything iterative — it's how the page stays stable as you refine it.
+
 Rules:
 - NEVER write a Markdown/HTML file to disk to show the user something, and never tell them to "view it" elsewhere — they are looking at a browser YOU control.
 - Chat prose is narration only: one line ("Built your Lisbon itinerary — take a look"). The content lives on the page.
-- Pages are living documents: a follow-up about what's on screen updates THAT page (re-render the SAME id — the message may carry [viewing:<page-id>]); a distinct new artifact gets a NEW id. mode:'append' streams a long page section by section.`
+- Pages are living documents: a follow-up about what's on screen updates the RIGHT component of THAT page (same id + region — the message may carry [viewing:<page-id>]); a distinct new artifact gets a NEW id. Don't re-emit a whole page to change one part — address its region.`
 
 /** Web task guidance — build the answer dynamically, never by inspecting the
  *  local folder. The web agent has NO filesystem/code tools; its whole job is

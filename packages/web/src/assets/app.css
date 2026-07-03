@@ -110,6 +110,12 @@ body.ef-conn-wait .ef-stage { opacity: 0.55; }
   min-height: 100%;
   padding-bottom: 150px;
 }
+/* Each render_ui COMPONENT (region) is a layout-neutral wrapper: display:contents
+   means the keyed div generates no box, so a page split across regions flows
+   exactly like one built in a single whole-page render (the agent's Tailwind is
+   untouched). Updating one region swaps only its subtree; the siblings — and
+   their rendered diagrams / scroll / form state — stay put. */
+.ef-page-body > .ef-region { display: contents; }
 .ef-page-dropped {
   text-align: right;
   font-size: var(--fs-tiny);

@@ -10,13 +10,22 @@ import { oobAttr } from "./oob.js"
  * render_ui id (the composer's `[viewing:…]` context field). With no pages the
  * nav renders empty (CSS collapses it). app.js re-applies the `--active` class
  * after upserts (client tab choice survives server re-renders).
+ *
+ * `focusPageId` stamps a transient `data-focus` (the page's DOM id) on the nav
+ * — the client adopts that tab then strips it. It's the focus channel for a
+ * region-only update, which doesn't re-ship the page section (a whole-section
+ * fragment carries `data-focus` on the section itself instead). A full sync
+ * never sets it, so a reconnect never yanks the user.
  */
 export const renderTabs = (
   pages: ReadonlyArray<CanvasItemView>,
   activePage?: string,
   oob?: string,
+  focusPageId?: string,
 ): Html =>
-  html`<nav id="${ID_TABS}" class="ef-tabs${pages.length === 0 ? " ef-tabs--empty" : ""}"${oobAttr(oob)}>${join(
+  html`<nav id="${ID_TABS}" class="ef-tabs${pages.length === 0 ? " ef-tabs--empty" : ""}"${
+    focusPageId !== undefined ? html` data-focus="${domIdForKey("ui", focusPageId)}"` : false
+  }${oobAttr(oob)}>${join(
     pages.map(
       (p) =>
         html`<button type="button" class="ef-tab${p.id === activePage ? " ef-tab--active" : ""}" data-page="${domIdForKey("ui", p.id)}" data-page-id="${p.id}">${p.title ?? p.id}</button>`,

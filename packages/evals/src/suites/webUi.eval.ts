@@ -13,7 +13,15 @@ import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
 import { webAgentPrompt } from "efferent/prompts/web.js"
 import type { InstructionFile } from "efferent/usecases/discoverInstructionFiles.js"
 import { mergeCanvasEntry } from "efferent/web/model.js"
-import { ACTION_UI_PATH, RENDER_UI_KIT_DOC, render, sanitizeHtml, UI_ID_FIELD } from "@xandreed/web"
+import {
+  ACTION_UI_PATH,
+  MAIN_REGION,
+  RENDER_UI_KIT_DOC,
+  render,
+  sanitizeHtml,
+  UI_ID_FIELD,
+  type CanvasItemView,
+} from "@xandreed/web"
 import { defineEval } from "../framework/Eval.js"
 import { predicate, qualityRubric } from "../framework/scorers.js"
 import { withTempWorkspace } from "../support/workspace.js"
@@ -52,25 +60,27 @@ interface WebUiExpected {
   readonly interactive: boolean
   /** Must the page embed at least one mermaid diagram? */
   readonly mermaid: boolean
+  /** Must the page be built from named COMPONENTS (regions), not one blob? */
+  readonly regions?: boolean
   /** What good looks like for THIS page (feeds the judge rubric). */
   readonly rubric: string
 }
 
-interface UiPage {
-  readonly id: string
-  readonly title?: string
-  readonly html: string
-}
 export interface WebUiRun {
   /** Folded pages (same merge as the live driver) in creation order. */
-  readonly pages: ReadonlyArray<UiPage>
+  readonly pages: ReadonlyArray<CanvasItemView>
   /** The page the last render touched — what the judge grades. */
-  readonly graded: UiPage | undefined
+  readonly graded: CanvasItemView | undefined
   readonly toolNames: ReadonlyArray<string>
   /** Paths passed to write_file/edit_file (feeds the no-punt scorer). */
   readonly writes: ReadonlyArray<string>
   readonly finalText: string
 }
+
+/** A page's full content — every component's html, in order (what the browser
+ *  shows). All the deterministic HTML checks run against this. */
+const pageHtml = (page: CanvasItemView | undefined): string =>
+  page === undefined ? "" : page.regions.map((r) => r.html).join("\n")
 
 /** Stand up the web-mode root (webAgentPrompt + render_ui + kit doc) over a
  *  temp workspace, run one prompt, fold the ui_render events into pages. The
@@ -88,7 +98,13 @@ const runWebUiAgent = (
       const prompt0 = webAgentPrompt(dir, new Date(), [], kitDoc, [], [], undefined, [])
       const rootScope = yield* discoverScopeTree(dir, () => prompt0.text)
       const rendersRef = yield* Ref.make<
-        ReadonlyArray<{ id: string; title?: string; html: string; mode: "replace" | "append" }>
+        ReadonlyArray<{
+          id: string
+          region?: string
+          title?: string
+          html: string
+          mode: "replace" | "append" | "remove"
+        }>
       >([])
       const toolsRef = yield* Ref.make<ReadonlyArray<string>>([])
       const writesRef = yield* Ref.make<ReadonlyArray<string>>([])
@@ -105,6 +121,7 @@ const runWebUiAgent = (
                 ...a,
                 {
                   id: e.id,
+                  ...(e.region !== undefined ? { region: e.region } : {}),
                   ...(e.title !== undefined ? { title: e.title } : {}),
                   html: e.html,
                   mode: e.mode,
@@ -149,7 +166,7 @@ const runWebUiAgent = (
       const toolNames = yield* Ref.get(toolsRef)
       const writes = yield* Ref.get(writesRef)
       // Fold with the DRIVER's merge — the eval grades what the browser shows.
-      let pages: ReadonlyArray<UiPage> = []
+      let pages: ReadonlyArray<CanvasItemView> = []
       for (const r of renders) pages = mergeCanvasEntry(pages, r).canvas
       const lastId = renders[renders.length - 1]?.id
       return {
@@ -224,6 +241,27 @@ const CASES = [
     },
   },
   {
+    // Component streaming: build a page one region at a time, then edit ONE —
+    // the two-level fold must keep it a multi-component page (not a _main blob).
+    name: "component-streaming",
+    input: {
+      prompt:
+        "Build a product page with render_ui (page id 'shop'), one COMPONENT at a time. " +
+        "First render a component: call render_ui with id 'shop', region 'hero', and hero html " +
+        "(a big product title + tagline). Then a second component: render_ui with id 'shop', " +
+        "region 'products', containing a grid of three product cards. Then UPDATE ONLY the hero: " +
+        "call render_ui again with id 'shop', region 'hero', and a revised hero. Then reply 'done'.",
+    },
+    expected: {
+      interactive: false,
+      mermaid: false,
+      regions: true,
+      rubric:
+        "A product page assembled from components: a hero (product title + tagline) and a products " +
+        "section (a grid of three cards), styled with Tailwind. A coherent page, not a chat card.",
+    },
+  },
+  {
     name: "exercise-js-output",
     input: {
       prompt:
@@ -243,8 +281,8 @@ const CASES = [
 ]
 
 /** The sanitized html — what the browser actually renders. */
-const cleanHtml = (page: UiPage | undefined): string =>
-  page === undefined ? "" : render(sanitizeHtml(page.html).html)
+const cleanHtml = (page: CanvasItemView | undefined): string =>
+  page === undefined ? "" : render(sanitizeHtml(pageHtml(page)).html)
 
 /** "Go view it elsewhere" phrasings — the exact 0fb4b8eb failure mode. */
 const PUNT_RE =
@@ -263,12 +301,12 @@ export const webUiEval = defineEval<WebUiInput, WebUiRun, WebUiExpected, EvalEnv
     predicate(
       "sanitizer_clean",
       ({ output }) =>
-        output.graded !== undefined && sanitizeHtml(output.graded.html).dropped.length === 0,
+        output.graded !== undefined && sanitizeHtml(pageHtml(output.graded)).dropped.length === 0,
     ),
     // Actually styled with Tailwind (the model's native output) — spacing,
     // color, layout, depth. A bare page with no utilities scores 0.
     predicate("on_design_system", ({ output }) => {
-      const html = output.graded?.html ?? ""
+      const html = pageHtml(output.graded)
       const utils = [
         /\bbg-(gradient|slate|zinc|neutral|indigo|violet|purple|emerald|rose|blue|sky|white\/)/,
         /\btext-(4xl|5xl|3xl|2xl|xl|lg|slate|white|indigo|zinc)/,
@@ -311,6 +349,17 @@ export const webUiEval = defineEval<WebUiInput, WebUiRun, WebUiExpected, EvalEnv
         /\b(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|pie|xychart)/.test(
           block[1] ?? "",
         )
+      )
+    }),
+    // Component addressing: a page the agent built region-by-region stays a
+    // multi-component page (each a named region), never collapsed to one blob.
+    predicate("region_isolation", ({ output, expected }) => {
+      if (expected.regions !== true) return true
+      const page = output.graded
+      return (
+        page !== undefined &&
+        page.regions.length >= 2 &&
+        page.regions.every((r) => r.region !== MAIN_REGION)
       )
     }),
     // The 0fb4b8eb regression: rendered in the UI, not punted to disk.

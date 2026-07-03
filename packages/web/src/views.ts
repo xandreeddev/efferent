@@ -131,13 +131,30 @@ export interface ReplyView {
   readonly markdown: string
 }
 
+/** The whole-page sentinel region: a `render_ui` with no `region` addresses
+ *  this single component, so a plain page is one `_main` region and there is
+ *  exactly one two-level fold path. Agent region ids are kebab-case and never
+ *  start with `_`, so it can't collide. */
+export const MAIN_REGION = "_main"
+
+/** One component (region) of a page. A page is an ordered set of these; the
+ *  agent addresses one by name via `render_ui.region`. */
+export interface CanvasRegionView {
+  /** The component id within the page (`render_ui.region`; `_main` = the
+   *  whole-page component). */
+  readonly region: string
+  /** UNsanitized agent HTML for this component — `renderPageItem` sanitizes it. */
+  readonly html: string
+}
+
 export interface CanvasItemView {
   /** The agent-chosen page id (`render_ui.id`) — one id = one page/tab. */
   readonly id: string
   /** The page's tab label. */
   readonly title?: string
-  /** UNsanitized agent HTML — `renderPageItem` sanitizes internally. */
-  readonly html: string
+  /** The page's components, in insertion order. A whole-page render is a single
+   *  `_main` region. */
+  readonly regions: ReadonlyArray<CanvasRegionView>
 }
 
 export interface ShellView {
