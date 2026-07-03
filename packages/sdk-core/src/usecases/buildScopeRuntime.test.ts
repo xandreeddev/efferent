@@ -1485,14 +1485,18 @@ describe("run_agent — the per-run child-spawn cap", () => {
 // --- render_ui (generative UI) — webUi-gated toolkit + the ui_render event ---
 
 describe("render_ui — webUi-gated generative UI", () => {
-  test("webUi adds render_ui to the DIRECT root toolkit; default and orchestrate roots never get it", () => {
+  test("webUi gives the CONTENT-builder toolkit — render_ui + web research + plan, NO code tools", () => {
     const base = { skills: [], memory: [], agents: [], tools: [] } as const
     const plain = Object.keys(buildScopeRuntime(rootScope, { ...base }).toolkit.tools)
     expect(plain).not.toContain("render_ui")
+    expect(plain).toContain("read_file") // the default direct root is a coder
 
     const web = Object.keys(buildScopeRuntime(rootScope, { ...base, webUi: true }).toolkit.tools)
-    expect(web).toContain("render_ui")
-    expect(web).toContain("run_agent") // still the full direct toolkit
+    expect(web.sort()).toEqual(["render_ui", "search_web", "update_plan", "web_fetch"])
+    // It is NOT a coding agent — no workspace/code/fleet tools.
+    for (const t of ["read_file", "write_file", "edit_file", "Bash", "grep", "glob", "ls", "run_agent"]) {
+      expect(web).not.toContain(t)
+    }
 
     const coordinator: AgentDefinition = {
       name: "coordinator", description: "the lead", body: "drive", sourcePath: "<test>",

@@ -164,17 +164,6 @@ const runWebUiAgent = (
     }),
   )
 
-/** A small fake project for the architecture regression — real files the
- *  agent must actually read (the rubric checks the diagram names them). */
-const ARCH_PROJECT: Record<string, string> = {
-  "package.json": `{ "name": "pulseboard", "version": "0.3.0", "main": "src/index.ts" }`,
-  "README.md": "# pulseboard\nA tiny metrics dashboard: collectors feed a store; the api serves widgets.\n",
-  "src/index.ts": `import { startCollectors } from "./collectors.js"\nimport { makeStore } from "./store.js"\nimport { serveApi } from "./api.js"\n\nconst store = makeStore()\nstartCollectors(store)\nserveApi(store)\n`,
-  "src/collectors.ts": `import type { Store } from "./store.js"\nexport const startCollectors = (store: Store) => {\n  setInterval(() => store.push("cpu", Math.random()), 1000)\n  setInterval(() => store.push("mem", Math.random()), 5000)\n}\n`,
-  "src/store.ts": `export interface Store { push(metric: string, v: number): void; series(metric: string): number[] }\nexport const makeStore = (): Store => {\n  const data = new Map<string, number[]>()\n  return {\n    push: (m, v) => { const s = data.get(m) ?? []; s.push(v); data.set(m, s) },\n    series: (m) => data.get(m) ?? [],\n  }\n}\n`,
-  "src/api.ts": `import type { Store } from "./store.js"\nexport const serveApi = (store: Store) => {\n  // GET /series/:metric -> store.series(metric)\n}\n`,
-}
-
 const CASES = [
   {
     name: "landing-page",
@@ -197,22 +186,22 @@ const CASES = [
     },
   },
   {
-    // The 0fb4b8eb regression: the verbatim failure phrasing, NO render_ui hint.
-    name: "architecture-visual",
+    // A visual explanation from KNOWLEDGE (the web agent has no filesystem) —
+    // the mermaid + no-file-punt case, non-code subject.
+    name: "concept-diagram",
     input: {
-      prompt: "can you show me the architecture of this project with some visuals?",
-      files: ARCH_PROJECT,
+      prompt: "explain how the OAuth 2.0 authorization-code flow works, with a diagram",
     },
     expected: {
       interactive: false,
       mermaid: true,
       rubric:
-        "An architecture page built from the ACTUAL files in the workspace (pulseboard: index, " +
-        "collectors, store, api): a short overview; at least one Mermaid diagram (mermaid source " +
-        "in a pre block) whose nodes name the real modules and whose edges reflect the real " +
-        "dependencies (index wires collectors+api to the store); a per-module section or a " +
-        "module→responsibility table; structured with ef-* sections/cards. It must NOT be, or " +
-        "point at, a file written to disk.",
+        "A page explaining the OAuth 2.0 authorization-code flow: at least one Mermaid diagram " +
+        "(mermaid source in a pre block — a sequence or flow diagram) showing the real actors " +
+        "(user/browser, client app, authorization server, resource server) and the real steps " +
+        "(authorize redirect → code → token exchange → access token → resource); a short prose " +
+        "explanation alongside; ef-* page structure. Technically accurate, not hand-wavy; it must " +
+        "not tell the user to view something elsewhere.",
     },
   },
   {

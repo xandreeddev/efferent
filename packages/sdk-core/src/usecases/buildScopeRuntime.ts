@@ -780,9 +780,31 @@ const RenderUiTool = Tool.make("render_ui", {
   failureMode: "return",
 })
 
-/** `genericToolkit` + `render_ui` — the root's toolkit when `opts.webUi` is on. */
-const webGenericToolkit = Toolkit.make(
-  ...([...Object.values(genericToolkit.tools), RenderUiTool] as ReadonlyArray<Tool.Any>),
+/**
+ * The **content-builder** toolkit — what the `efferent web` root gets. It is
+ * NOT a coding agent: it builds pages (`render_ui`), researches (`search_web` /
+ * `web_fetch`), and plans (`update_plan`) — and deliberately has **NO
+ * workspace/code tools** (no read/write/edit/grep/glob/ls/Bash/sessions) and no
+ * fleet tools (no run_agent/comms/schedule). The user's request is served by
+ * building it dynamically from knowledge + the web, never by reading the folder
+ * the app happens to be open in. A prompt rule alone didn't stop a weak model
+ * from grepping the cwd for a recipe (live-verified), so this is the mechanical
+ * guarantee — same discipline as the orchestrate root's stripped toolkit.
+ */
+const WEB_CONTENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "render_ui",
+  "search_web",
+  "web_fetch",
+  "update_plan",
+])
+
+const webContentToolkit = Toolkit.make(
+  ...([
+    ...(Object.entries(genericToolkit.tools) as Array<[string, Tool.Any]>)
+      .filter(([name]) => WEB_CONTENT_TOOL_NAMES.has(name))
+      .map(([, d]) => d),
+    RenderUiTool,
+  ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
 
 /**
@@ -2343,27 +2365,30 @@ export const buildScopeRuntime = <R = never>(
   // single-model, no-fleet setup). Sub-agents are unaffected — they build their
   // own per-spawn toolkit from `roleToolEntries`.
   const orchestrate = isOrchestrateMode(opts.agents)
-  // Direct roots get `render_ui` too when a web surface is attached (webUi);
-  // the orchestrate root never does — it delegates, it doesn't draw. The
-  // handler record must mirror the toolkit exactly (toLayer dies on extras).
+  // Three root shapes: orchestrate (no work tools — delegates), web (the
+  // content-builder toolkit — render_ui + web research + plan, NO code tools),
+  // or direct (the full coding toolkit). The handler record must mirror the
+  // toolkit exactly (toLayer dies on a record key its toolkit lacks), so each
+  // narrowed path filters the record to its tool set — the same discipline the
+  // orchestrate branch has always used.
   const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus, opts.webUi === true)
-  const directToolkit = opts.webUi === true ? webGenericToolkit : genericToolkit
+  const directToolkit = opts.webUi === true ? webContentToolkit : genericToolkit
   const rootToolkit = orchestrate ? orchestrationToolkit : directToolkit
+  const filterHandlers = (names: ReadonlySet<string>) =>
+    rootHandlers.pipe(
+      Effect.map(
+        (full) =>
+          Object.fromEntries(
+            Object.entries(full as Record<string, unknown>).filter(([k]) => names.has(k)),
+          ) as never,
+      ),
+    )
   const handlerLayer = (
     orchestrate
-      ? orchestrationToolkit.toLayer(
-          rootHandlers.pipe(
-            Effect.map(
-              (full) =>
-                Object.fromEntries(
-                  Object.entries(full as Record<string, unknown>).filter(([k]) =>
-                    ORCHESTRATION_TOOL_NAMES.has(k),
-                  ),
-                ) as never,
-            ),
-          ),
-        )
-      : directToolkit.toLayer(rootHandlers)
+      ? orchestrationToolkit.toLayer(filterHandlers(ORCHESTRATION_TOOL_NAMES))
+      : opts.webUi === true
+        ? webContentToolkit.toLayer(filterHandlers(new Set([...WEB_CONTENT_TOOL_NAMES, "render_ui"])))
+        : directToolkit.toLayer(rootHandlers)
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness
