@@ -87,3 +87,13 @@ export const budgetExhaustedFailure = {
 /** Appended to a sub-agent's summary when the pool stopped it early. */
 export const BUDGET_STOP_NOTE =
   "[stopped early: the shared sub-agent token budget ran out — this result is partial]"
+
+/** The model-facing failure for a spawn past the per-run child cap
+ *  (`RunContext.subAgentMaxChildren`). Same wrap-up discipline as
+ *  {@link budgetExhaustedFailure}: finish with what's in hand, don't
+ *  silently absorb the remaining fan-out inline. */
+export const maxChildrenReachedFailure = (max: number) =>
+  ({
+    error: "MaxChildrenReached",
+    message: `you have already spawned ${max} sub-agent${max === 1 ? "" : "s"} this run — the limit. Steer or wait on the agents you already have (wait_for_agents / send_message), or do the remaining work yourself if it is small.`,
+  }) as const

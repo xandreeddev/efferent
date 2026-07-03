@@ -39,6 +39,7 @@ import {
   DEFAULT_SUB_AGENT_TOKEN_BUDGET,
   drainPool,
   makeTokenPool,
+  maxChildrenReachedFailure,
   poolExhausted,
   type TokenPool,
 } from "./tokenBudget.js"
@@ -270,6 +271,14 @@ export interface BuildScopeRuntimeOptions {
   readonly maxSteps?: number
   /** Max spawn nesting depth; beyond it `run_agent` returns a failure. Default 2. */
   readonly maxDepth?: number
+  /** Max sub-agents ONE run may spawn (a per-run counter, checked alongside the
+   *  depth/budget guards; `Settings.subAgentMaxChildren` on `RunContext` wins
+   *  over this). Absent → no cap. The web driver sets 2. */
+  readonly maxChildren?: number
+  /** Offer the `render_ui` tool on the root's direct toolkit (a web surface is
+   *  attached that renders `ui_render` events). Default false — the daemon/TUI
+   *  paths are untouched. */
+  readonly webUi?: boolean
   /** Allow the `bash` tool. Default true. */
   readonly allowBash?: boolean
   /** No-progress deadline (ms) for a spawned sub-agent's stall watchdog. Default
@@ -714,6 +723,68 @@ const genericToolkit = Toolkit.make(
   ] as ReadonlyArray<Tool.Any>),
 ) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
 
+/** One `render_ui` call past this refuses with a model-readable failure telling
+ *  the model to stream the page in sections (`mode: "append"`) instead. */
+export const RENDER_UI_MAX_HTML_BYTES = 131_072
+
+/**
+ * The generative-UI tool — offered on the root's direct toolkit only when a web
+ * surface is attached (`BuildScopeRuntimeOptions.webUi`). The handler publishes
+ * a `ui_render` AgentEvent through the runtime's event sink (`onBusEvent`); the
+ * web driver sanitizes + renders it as a full canvas PAGE. Root-only in v1.
+ */
+const RenderUiTool = Tool.make("render_ui", {
+  description:
+    "Build a PAGE in the user's web UI — your primary way to present anything visual, structured, or " +
+    "interactive: overviews, comparisons, data breakdowns, lessons, landing pages, plans, forms. Each " +
+    "distinct id is a separate page (a tab in the UI); title is its tab label. Re-render the SAME id " +
+    "to update that page in place; use mode:'append' to stream a long page section by section. Compose " +
+    "with the `ef-*` layout system documented in the '# Web UI kit' section of your instructions (hero, " +
+    "sections, columns, cards, stats, tables), and embed diagrams or charts as Mermaid source inside " +
+    '<pre class="ef-mermaid">…</pre> — the client renders them. Interactive forms post back to you: ' +
+    'give a form hx-post="/action/ui" hx-swap="none" plus a hidden ui-id field, and the submitted ' +
+    'fields arrive as your next user message ([ui:<id>] field="value" …). The HTML is sanitized (no ' +
+    "scripts/styles/iframes/event handlers; https-or-relative links; forms only to /action/…). NEVER " +
+    "write an HTML or Markdown file to disk as a way to show the user something — render it here.",
+  parameters: {
+    id: Schema.String.annotations({
+      description:
+        "Stable page id (kebab-case, e.g. 'architecture'). One id = one page/tab; reuse it to update " +
+        "that page in place. Must not start with 'ef-'.",
+    }),
+    title: Schema.optional(Schema.String).annotations({
+      description: "The page's tab label — give it on a page's first render.",
+    }),
+    html: Schema.String.annotations({
+      description:
+        "The page body HTML (ef-* classes; sanitized before render). Keep a single call under ~128KB — " +
+        "stream longer pages with mode:'append'.",
+    }),
+    mode: Schema.optional(Schema.Literal("replace", "append")).annotations({
+      description:
+        "'replace' (default) swaps the whole page body; 'append' adds below the existing content — use " +
+        "it to build a long page in sections.",
+    }),
+    active: Schema.optional(Schema.Boolean).annotations({
+      description:
+        "Focus: a NEW page opens focused by default; pass false to build in the background, true on an " +
+        "update to pull the user to it.",
+    }),
+  },
+  success: Schema.Struct({
+    /** False when no web surface is attached (the tool is an honest no-op). */
+    rendered: Schema.Boolean,
+    id: Schema.String,
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `genericToolkit` + `render_ui` — the root's toolkit when `opts.webUi` is on. */
+const webGenericToolkit = Toolkit.make(
+  ...([...Object.values(genericToolkit.tools), RenderUiTool] as ReadonlyArray<Tool.Any>),
+) as unknown as Toolkit.Toolkit<Record<string, Tool.Any>>
+
 /**
  * The **orchestration-only** toolkit — what the ROOT gets when a fleet is in the
  * roster (always-orchestrate mode). It carries ONLY the four tools an interactive
@@ -752,8 +823,10 @@ const orchestrationToolkit = Toolkit.make(
 
 /** The fleet LEADS the root may delegate to. The root (depth 0, orchestrate mode)
  *  must route through one of these — never a bare-role worker — so the lead owns
- *  staffing, sequencing, and the gate. */
-const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
+ *  staffing, sequencing, and the gate. Exported so a driver shaping a lead-free
+ *  roster (direct mode) filters by the SAME list `isOrchestrateMode` keys on —
+ *  the two can never drift. */
+export const LEAD_AGENT_NAMES: ReadonlyArray<string> = ["coordinator", "research-coordinator"]
 
 /**
  * Is the ROOT a pure orchestrator for this roster? True iff a fleet lead
@@ -1148,6 +1221,9 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
   // — folded into the terminal outcome's notes so the record says which model
   // actually did the work.
   const failoverNotesRef = Ref.unsafeMake<ReadonlyArray<string>>([])
+  // Fresh per spawned run (the failoverNotes pattern): this run's OWN child
+  // counter — "children per run", never shared with siblings or the parent.
+  const childSpawnCounterRef = Ref.unsafeMake(0)
   const touch = (state?: RunState, detail?: string): Effect.Effect<void> =>
     Clock.currentTimeMillis.pipe(
       Effect.flatMap((at) =>
@@ -1294,6 +1370,12 @@ const runSpawnedAgent = <R>(args: RunSpawnedArgs<R>) => {
       ...(args.runContext.subAgentFetchBudget !== undefined
         ? { subAgentFetchBudget: args.runContext.subAgentFetchBudget }
         : {}),
+      // Child-count cap: the CONFIG is inherited (same cap at every level), the
+      // COUNTER is fresh per run — this spawn's own children, not the subtree's.
+      ...(args.runContext.subAgentMaxChildren !== undefined
+        ? { subAgentMaxChildren: args.runContext.subAgentMaxChildren }
+        : {}),
+      childSpawnCounter: childSpawnCounterRef,
       ...(args.toolResultMaxChars !== undefined
         ? { toolResultMaxChars: args.toolResultMaxChars }
         : {}),
@@ -1689,6 +1771,20 @@ const makeRunAgentHandler =
       if (yield* poolExhausted(rc.tokenPool)) {
         return yield* Effect.fail(budgetExhaustedFailure)
       }
+      // Child-count cap (Settings.subAgentMaxChildren via RunContext wins, then
+      // the build-time opts): an atomic check-and-increment on this run's own
+      // counter, so parallel run_agent calls in one turn can't race past it.
+      // Counts EVERY launch path (fresh spawn, resume, branch, handoff) — they
+      // all consume runtime.
+      const maxChildren = rc.subAgentMaxChildren ?? opts.maxChildren
+      if (maxChildren !== undefined && maxChildren > 0 && rc.childSpawnCounter !== undefined) {
+        const admitted = yield* Ref.modify(rc.childSpawnCounter, (n) =>
+          n >= maxChildren ? ([false, n] as const) : ([true, n + 1] as const),
+        )
+        if (!admitted) {
+          return yield* Effect.fail(maxChildrenReachedFailure(maxChildren))
+        }
+      }
       const { name, folder, task, seedFromNode, seedMode, agent, instructions, tools, role } =
         params
       // The model-given display name; blank/absent (a stale provider replaying
@@ -1861,6 +1957,10 @@ const buildGenericHandlers = <R>(
   opts: BuildScopeRuntimeOptions,
   hooks: AgentHooks<R> | undefined,
   bus: AgentBus,
+  // `Toolkit.toLayer` dies on a record key its toolkit lacks, so `render_ui`
+  // may only be present when the consumer is the web root's toolkit
+  // (webGenericToolkit). Sub-agent layers keep the plain record (root-only v1).
+  withRenderUi = false,
 ) =>
   Effect.gen(function* () {
     const base = yield* makeCodingHandlers(binding, opts.skills, opts.memory)
@@ -2160,6 +2260,44 @@ const buildGenericHandlers = <R>(
         }
       })
 
+    // Generative UI: publish the payload as a `ui_render` event on the ledger —
+    // the web driver sanitizes + renders it as a page. With no web surface
+    // attached this is an honest, model-readable no-op (rendered: false),
+    // never an error. An oversize body refuses with a streaming hint (the
+    // renderer's sanitizer caps the FOLDED page at 256KB — half per call keeps
+    // append-streaming viable).
+    const render_ui = (params: {
+      readonly id: string
+      readonly title?: string
+      readonly html: string
+      readonly mode?: "replace" | "append"
+      readonly active?: boolean
+    }) =>
+      Effect.gen(function* () {
+        if (params.html.length > RENDER_UI_MAX_HTML_BYTES) {
+          return yield* Effect.fail({
+            error: "HtmlTooLarge",
+            message:
+              `This render is ${params.html.length} chars — over the ${RENDER_UI_MAX_HTML_BYTES} limit. ` +
+              "Stream the page in sections: re-call render_ui with the same id and mode:'append'.",
+          })
+        }
+        if (opts.webUi !== true || opts.onBusEvent === undefined) {
+          return { rendered: false, id: params.id }
+        }
+        const rc = yield* FiberRef.get(RunContextRef)
+        yield* opts.onBusEvent({
+          type: "ui_render",
+          id: params.id,
+          html: params.html,
+          mode: params.mode ?? "replace",
+          ...(params.active !== undefined ? { active: params.active } : {}),
+          ...(params.title !== undefined ? { title: params.title } : {}),
+          ...(rc.parentNodeId !== null ? { nodeId: rc.parentNodeId as string } : {}),
+        })
+        return { rendered: true, id: params.id }
+      })
+
     return {
       ...base,
       run_agent,
@@ -2171,6 +2309,7 @@ const buildGenericHandlers = <R>(
       schedule,
       list_scheduled_jobs,
       cancel_scheduled_job,
+      ...(withRenderUi ? { render_ui } : {}),
     } as never
   })
 
@@ -2204,8 +2343,12 @@ export const buildScopeRuntime = <R = never>(
   // single-model, no-fleet setup). Sub-agents are unaffected — they build their
   // own per-spawn toolkit from `roleToolEntries`.
   const orchestrate = isOrchestrateMode(opts.agents)
-  const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus)
-  const rootToolkit = orchestrate ? orchestrationToolkit : genericToolkit
+  // Direct roots get `render_ui` too when a web surface is attached (webUi);
+  // the orchestrate root never does — it delegates, it doesn't draw. The
+  // handler record must mirror the toolkit exactly (toLayer dies on extras).
+  const rootHandlers = buildGenericHandlers(binding, opts, hooks, bus, opts.webUi === true)
+  const directToolkit = opts.webUi === true ? webGenericToolkit : genericToolkit
+  const rootToolkit = orchestrate ? orchestrationToolkit : directToolkit
   const handlerLayer = (
     orchestrate
       ? orchestrationToolkit.toLayer(
@@ -2220,7 +2363,7 @@ export const buildScopeRuntime = <R = never>(
             ),
           ),
         )
-      : genericToolkit.toLayer(rootHandlers)
+      : directToolkit.toLayer(rootHandlers)
   ) as ScopeRuntime["handlerLayer"]
 
   // The human-driven mirror of the handler's resume branch: same staleness

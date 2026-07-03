@@ -57,6 +57,8 @@ export const describeToolCall = (toolName: string, args: unknown): string => {
       const n = Array.isArray(a.steps) ? a.steps.length : 0
       return `Plan(${n} step${n === 1 ? "" : "s"})`
     }
+    case "render_ui":
+      return `Page(${truncate(str(a.title) ?? str(a.id) ?? "?", 40)})`
     // Fleet comms — surfaced as readable events so inter-agent traffic is visible
     // in the rail as it happens (a message to a peer, a note on the blackboard).
     case "send_message":
@@ -190,6 +192,8 @@ export const describeToolResult = (
     }
     case "schedule":
       return "scheduled"
+    case "render_ui":
+      return r.rendered === false ? "no web surface" : "rendered"
     case "update_plan": {
       const total = num(r.total)
       const done = num(r.done)

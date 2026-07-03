@@ -627,6 +627,12 @@ export const makeEventReducer = (
         // chatter the agents read themselves.
         return
       }
+
+      // Generative UI is a WEB surface concern (`efferent web` renders it into
+      // the canvas); the TUI deliberately ignores it — an explicit no-op so the
+      // event is documented as seen, not forgotten.
+      case "ui_render":
+        return
     }
   }
 }

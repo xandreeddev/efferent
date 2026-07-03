@@ -1,0 +1,15 @@
+{
+  "name": "@xandreed/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "efferent web UI — server-rendered htmx fragments over WebSocket: typed template strings, design-token CSS, an allowlist sanitizer for agent-authored UI. Pure strings in, strings out; zero runtime dependencies.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
