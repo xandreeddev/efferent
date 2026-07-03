@@ -256,5 +256,21 @@ export const AgentEvent = Schema.Union(
     at: Schema.Number,
     to: Schema.optional(Schema.String),
   }),
+  // The agent built/updated a PAGE (`render_ui`) — the web driver renders
+  // `html` (SANITIZED at render time; never trusted) as a full canvas page
+  // keyed by the agent-chosen `id` (a repeat render updates that page in
+  // place; `mode: "append"` streams a long page section by section). `active`
+  // is the focus hint: absent ⇒ a NEW page opens focused and an update stays
+  // in the background; explicit true/false overrides. Other renderers (TUI,
+  // json) may ignore it. `nodeId` set when a sub-agent drew.
+  Schema.Struct({
+    type: Schema.Literal("ui_render"),
+    id: Schema.String,
+    title: Schema.optional(Schema.String),
+    html: Schema.String,
+    mode: Schema.Literal("replace", "append"),
+    active: Schema.optional(Schema.Boolean),
+    nodeId: Schema.optional(Schema.String),
+  }),
 )
 export type AgentEvent = typeof AgentEvent.Type

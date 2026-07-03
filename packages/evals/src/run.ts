@@ -34,6 +34,7 @@ import { sessionTitleEval } from "./suites/sessionTitle.eval.js"
 import { swarmEval } from "./suites/swarm.eval.js"
 import { swarmCompileEval } from "./suites/swarmCompile.eval.js"
 import { toolSelectionEval } from "./suites/toolSelection.eval.js"
+import { webUiEval } from "./suites/webUi.eval.js"
 import { wholeTaskEval } from "./suites/wholeTask.eval.js"
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous specs */
@@ -59,6 +60,7 @@ const SUITES: ReadonlyArray<AnySpec> = [
   swarmCompileEval,
   researchDelegationEval,
   researchEfficiencyEval,
+  webUiEval,
 ]
 
 // --- argv ---------------------------------------------------------------

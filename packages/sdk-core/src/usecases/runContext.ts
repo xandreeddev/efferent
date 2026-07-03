@@ -44,6 +44,16 @@ export interface RunContext {
    *  the built-in default (`DEFAULT_SUB_AGENT_FETCH_BUDGET`). The root coder is
    *  exempt (its binding leaves `fetchBudget` unset). */
   readonly subAgentFetchBudget?: number
+  /** Per-run child-spawn cap (`Settings.subAgentMaxChildren` / a driver default
+   *  like web mode's 2). The CONFIG is inherited by the subtree; the COUNTER
+   *  ({@link childSpawnCounter}) is fresh per run — "children per run", not per
+   *  subtree. Absent → no cap. */
+  readonly subAgentMaxChildren?: number
+  /** Per-run spawn counter backing {@link subAgentMaxChildren} — the
+   *  `failoverNotes` pattern: seeded fresh for every run (root + each spawn),
+   *  never shared with children. The `run_agent` guard check-and-increments it
+   *  atomically so parallel tool calls can't race past the cap. */
+  readonly childSpawnCounter?: Ref.Ref<number>
   /** Compaction budget (chars) per tool-result string (`Settings.toolResultMaxTokens`
    *  × 4), threaded so sub-agent loops compress like the root. Absent → the
    *  built-in default; 0 disables. */
