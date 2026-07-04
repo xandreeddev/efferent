@@ -33,7 +33,7 @@ import {
 import { coderPrompt } from "./prompts/coder.js"
 import { discoverScopeTree } from "@xandreed/sdk-core"
 import { discoverInstructionFiles } from "./usecases/discoverInstructionFiles.js"
-import { withBuiltinAgents } from "./usecases/directive.js"
+import { stripLeads, withBuiltinAgents } from "./usecases/directive.js"
 import { loadAgents } from "./usecases/loadAgents.js"
 import { loadTools } from "@xandreed/sdk-core"
 import { loadMemory } from "./usecases/loadMemory.js"
@@ -170,6 +170,14 @@ const cwdOption = Options.text("cwd").pipe(
   ),
 )
 
+const directOption = Options.boolean("direct").pipe(
+  Options.withDescription(
+    "Direct ('claude code') mode: no swarm leads — the root codes hands-on with the " +
+      "full toolkit. run_agent stays available (cap it with :set subAgentMaxChildren). " +
+      "Persist per workspace with `:set agentMode direct`.",
+  ),
+)
+
 // ── `efferent verify` options ──────────────────────────────────────────────
 const verifyTargetOption = Options.text("target").pipe(
   Options.optional,
@@ -265,13 +273,18 @@ const readStdinIfPiped = (): Promise<string | undefined> =>
     stdin.on("error", () => resolve(undefined))
   })
 
+/** Per-invocation overrides for {@link discoverWorkspace} (the `--direct` flag). */
+interface DiscoverOverrides {
+  readonly agentMode?: "swarm" | "direct"
+}
+
 /**
  * Discover the workspace's skills / agent roles / declarative tools / instruction
  * files / scope tree — shared by the coder modes and `daemon serve` so both build
  * the agent from the same picture. Requires the app services (the caller provides
  * `AppLive`).
  */
-const discoverWorkspace = (workspace: string) =>
+const discoverWorkspace = (workspace: string, overrides?: DiscoverOverrides) =>
   Effect.gen(function* () {
     const skills = yield* loadSkills(workspace, homedir())
     const memory = yield* loadMemory(workspace, homedir())
@@ -284,10 +297,15 @@ const discoverWorkspace = (workspace: string) =>
     const settings = yield* (yield* SettingsStore).load(workspace, homedir())
     // The self-improving loop knobs shape the built-in coordinator: autoLoop
     // toggles the Opus gate + learn/retry phase, maxLoopAttempts the round cap.
-    const agents = withBuiltinAgents(yield* loadAgents(workspace, homedir()), {
+    const merged = withBuiltinAgents(yield* loadAgents(workspace, homedir()), {
       autoLoop: settings.autoLoop !== false,
       maxLoopAttempts: settings.maxLoopAttempts ?? 3,
     })
+    // Roster shape: 'direct' (flag > Settings.agentMode > 'swarm') strips the
+    // fleet leads AFTER the merge, so isOrchestrateMode flips off and the
+    // prompt + root toolkit both switch to the hands-on coder together.
+    const agentMode = overrides?.agentMode ?? settings.agentMode ?? "swarm"
+    const agents = agentMode === "direct" ? stripLeads(merged) : merged
     const tools = yield* loadTools(workspace, homedir())
     const instructionFiles = yield* discoverInstructionFiles(workspace, homedir())
     const root = coderPrompt(
@@ -608,11 +626,11 @@ const printDaemonStatus = (workspace: string) =>
  * and bind AuthStore to the workspace. Shared by `efferent code` / `attach` /
  * `daemon start`. Requires AppServices (the caller provides AppLive).
  */
-const prepareWorkspace = (cwd: Option.Option<string>) =>
+const prepareWorkspace = (cwd: Option.Option<string>, overrides?: DiscoverOverrides) =>
   Effect.gen(function* () {
     const workspace = resolveCwd(cwd)
     yield* Effect.sync(() => seedDbUrlFromConfig(workspace))
-    const discovered = yield* discoverWorkspace(workspace)
+    const discovered = yield* discoverWorkspace(workspace, overrides)
     const settings = yield* (yield* SettingsStore).load(workspace, homedir())
     yield* (yield* AuthStore).init(workspace)
     return { workspace, settings, ...discovered }
@@ -707,11 +725,11 @@ const daemonCommand = Command.make("daemon", { cwd: cwdOption }, ({ cwd }) =>
 // + `--code` flag; EFFERENT_LOCAL is irrelevant here (this path is always local).
 const codeCommand = Command.make(
   "code",
-  { cwd: cwdOption, resume: resumeOption },
-  ({ cwd, resume }) =>
+  { cwd: cwdOption, resume: resumeOption, direct: directOption },
+  ({ cwd, resume, direct }) =>
     Effect.gen(function* () {
       const { workspace, skills, memory, agents, tools, instructionFiles, rootScope } =
-        yield* prepareWorkspace(cwd)
+        yield* prepareWorkspace(cwd, direct ? { agentMode: "direct" } : undefined)
       const tuiInput = {
         cwd: workspace,
         skills,
@@ -725,6 +743,46 @@ const codeCommand = Command.make(
       }
       const { runTuiModeSolid } = yield* Effect.promise(() => import("./cli/runtime.js"))
       yield* runTuiModeSolid(tuiInput).pipe(Effect.catchAllDefect(tuiStartupFailure))
+    }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
+)
+
+// `efferent web` — the browser-served solo coder: its OWN in-process Workspace
+// (like `code`, no daemon) with the DIRECT roster (no swarm leads) and the
+// solo-web bounds (depth 1, ≤2 children), rendered as htmx fragments over a
+// WebSocket. Lazy import keeps the web assets off every other boot path (and
+// no OpenTUI is touched on this one).
+const webCommand = Command.make(
+  "web",
+  {
+    cwd: cwdOption,
+    resume: resumeOption,
+    port: Options.integer("port").pipe(
+      Options.optional,
+      Options.withDescription("Bind port (loopback only). Default: an ephemeral port."),
+    ),
+    open: Options.boolean("open").pipe(
+      Options.withDescription("Open the printed URL in the default browser."),
+    ),
+  },
+  ({ cwd, resume, port, open }) =>
+    Effect.gen(function* () {
+      const { workspace, settings, skills, memory, agents, tools, instructionFiles, rootScope } =
+        yield* prepareWorkspace(cwd, { agentMode: "direct" })
+      const { runWebMode } = yield* Effect.promise(() => import("./web/mode.js"))
+      yield* runWebMode({
+        workspace,
+        skills,
+        memory,
+        agents,
+        tools,
+        instructionFiles,
+        rootScope,
+        settings,
+        version: packageJson.version,
+        ...(port._tag === "Some" ? { port: port.value } : {}),
+        ...(resume._tag === "Some" ? { resumeConversationId: resume.value } : {}),
+        open,
+      })
     }).pipe(Effect.provide(AppLive), Effect.provide(TelemetryLive)),
 )
 
@@ -847,6 +905,7 @@ const cli = Command.run(
   root.pipe(
     Command.withSubcommands([
       codeCommand,
+      webCommand,
       attachCommand,
       daemonCommand,
       verifyCommand,

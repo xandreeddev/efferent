@@ -16,6 +16,7 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
+    "allowArbitraryExtensions": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -27,6 +28,8 @@
       "@xandreed/application/*": ["packages/application/src/*"],
       "@xandreed/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
       "@xandreed/sdk-adapters/*": ["packages/sdk-adapters/src/*"],
+      "@xandreed/web": ["packages/web/src/index.ts"],
+      "@xandreed/web/*": ["packages/web/src/*"],
       "efferent/*": ["packages/cli/src/*"]
     }
   }

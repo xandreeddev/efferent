@@ -1,4 +1,4 @@
-import type { AgentDefinition } from "@xandreed/sdk-core"
+import { LEAD_AGENT_NAMES, type AgentDefinition } from "@xandreed/sdk-core"
 import { BUILTIN_RESEARCH_AGENTS, builtinResearchAgents } from "./researchAgents.js"
 import { BUILTIN_TEAM_AGENTS, builtinTeamAgents } from "./teamAgents.js"
 
@@ -54,3 +54,16 @@ export const withBuiltinAgents = (
   const have = new Set(loaded.map((a) => a.name))
   return [...loaded, ...builtins.filter((b) => !have.has(b.name))]
 }
+
+/**
+ * Direct ("claude code") mode roster: drop the fleet LEADS so
+ * `isOrchestrateMode` turns off and the root becomes the hands-on coder with
+ * the full toolkit. Filters by the SAME `LEAD_AGENT_NAMES` list the mode
+ * switch keys on (exported by core), so the two can never drift. Deliberately
+ * applied AFTER the built-in merge: a workspace-defined `coordinator.md` is
+ * removed too — any surviving lead name would flip the root back to
+ * orchestrate. Specialists/verifier stay (only the two lead names matter).
+ */
+export const stripLeads = (
+  agents: ReadonlyArray<AgentDefinition>,
+): ReadonlyArray<AgentDefinition> => agents.filter((a) => !LEAD_AGENT_NAMES.includes(a.name))

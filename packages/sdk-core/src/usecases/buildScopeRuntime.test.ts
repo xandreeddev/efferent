@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, FiberRef, Layer } from "effect"
+import { Effect, FiberRef, Layer, Ref } from "effect"
 import { LanguageModel } from "@effect/ai"
 import type { AgentContextNode, ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
@@ -36,6 +36,7 @@ import {
   buildScopeRuntime,
   constrainToReadOnly,
   missionPreamble,
+  RENDER_UI_MAX_HTML_BYTES,
   roleToolEntries,
   STALL_NOTE,
 } from "./buildScopeRuntime.js"
@@ -1344,5 +1345,293 @@ describe("schedule management tools — schedule / list_scheduled_jobs / cancel_
     expect(r.afterCancel).toHaveLength(0)
     // failureMode:"return" surfaces the bad-cron failure as a tool result.
     expect(r.bad.isFailure ?? r.bad.error).toBeTruthy()
+  })
+})
+
+// --- The per-run child-spawn cap (subAgentMaxChildren / opts.maxChildren) ----
+// Bounds how many sub-agents ONE run may launch — the "solo web mode" brake
+// (a direct coder with at most a couple of helpers). The counter is per-run
+// and the check is an atomic check-and-increment, so parallel run_agent calls
+// can't race past the cap. EVERY launch path counts (fresh spawn AND resume).
+
+describe("run_agent — the per-run child-spawn cap", () => {
+  const looseCall = (tk: unknown) =>
+    (tk as { handle: (name: string, params: unknown) => Effect.Effect<{ result: unknown }> })
+      .handle
+
+  test("maxChildren 1: first spawn admitted, second refused with MaxChildrenReached; a resume counts too", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [], maxChildren: 1,
+    })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = looseCall(tk)
+      const first = yield* call("run_agent", { name: "one", folder: "pkg", task: "t1" })
+      const handle = first.result as { nodeId: string; status: string }
+      // Let the first agent finish so the resume below targets a settled node.
+      yield* call("wait_for_agents", { nodeIds: [handle.nodeId], timeoutSeconds: 5 })
+      const second = yield* call("run_agent", { name: "two", folder: "pkg", task: "t2" })
+      const resumed = yield* call("run_agent", {
+        name: "again", folder: "pkg", task: "t3",
+        seedFromNode: handle.nodeId, seedMode: "resume",
+      })
+      return {
+        first: handle,
+        second: second.result as { error?: string; message?: string },
+        resumed: resumed.result as { error?: string },
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+        childSpawnCounter: Ref.unsafeMake(0),
+      }),
+    )
+
+    const r = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "child-cap test HUNG" }),
+      ) as unknown as Effect.Effect<{
+        first: { status: string }
+        second: { error?: string; message?: string }
+        resumed: { error?: string }
+      }>,
+    )
+
+    expect(r.first.status).toBe("running")
+    expect(r.second.error).toBe("MaxChildrenReached")
+    expect(r.second.message).toContain("1 sub-agent")
+    // A resume consumes runtime like any launch — it is capped the same way.
+    expect(r.resumed.error).toBe("MaxChildrenReached")
+  })
+
+  test("RunContext.subAgentMaxChildren (Settings) WINS over opts.maxChildren", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [], maxChildren: 1,
+    })
+
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = looseCall(tk)
+      const a = yield* call("run_agent", { name: "a", folder: "pkg", task: "t" })
+      const b = yield* call("run_agent", { name: "b", folder: "pkg", task: "t" })
+      return {
+        a: a.result as { status?: string },
+        b: b.result as { status?: string; error?: string },
+      }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+        subAgentMaxChildren: 2, // the live-settings value overrides the build-time 1
+        childSpawnCounter: Ref.unsafeMake(0),
+      }),
+    )
+
+    const r = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "cap-precedence test HUNG" }),
+      ) as unknown as Effect.Effect<{
+        a: { status?: string }
+        b: { status?: string; error?: string }
+      }>,
+    )
+
+    expect(r.a.status).toBe("running")
+    expect(r.b.status).toBe("running") // admitted: rc cap (2) won over opts cap (1)
+  })
+
+  test("no cap configured → the guard is inert (spawns admitted)", async () => {
+    const { layer } = stubTreeStore()
+    const rt = buildScopeRuntime(rootScope, { skills: [], memory: [], agents: [], tools: [] })
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = looseCall(tk)
+      const a = yield* call("run_agent", { name: "a", folder: "pkg", task: "t" })
+      const b = yield* call("run_agent", { name: "b", folder: "pkg", task: "t" })
+      return [a.result, b.result] as ReadonlyArray<{ status?: string }>
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null,
+        parentNodeId: null,
+        depth: 0,
+        tokenPool: null,
+        childSpawnCounter: Ref.unsafeMake(0),
+      }),
+    )
+    const r = await Effect.runPromise(
+      program.pipe(
+        Effect.timeoutFail({ duration: "5 seconds", onTimeout: () => "no-cap test HUNG" }),
+      ) as unknown as Effect.Effect<ReadonlyArray<{ status?: string }>>,
+    )
+    expect(r[0]?.status).toBe("running")
+    expect(r[1]?.status).toBe("running")
+  })
+})
+
+// --- render_ui (generative UI) — webUi-gated toolkit + the ui_render event ---
+
+describe("render_ui — webUi-gated generative UI", () => {
+  test("webUi gives the CONTENT-builder toolkit — render_ui + web research + plan, NO code tools", () => {
+    const base = { skills: [], memory: [], agents: [], tools: [] } as const
+    const plain = Object.keys(buildScopeRuntime(rootScope, { ...base }).toolkit.tools)
+    expect(plain).not.toContain("render_ui")
+    expect(plain).toContain("read_file") // the default direct root is a coder
+
+    const web = Object.keys(buildScopeRuntime(rootScope, { ...base, webUi: true }).toolkit.tools)
+    expect(web.sort()).toEqual(["render_ui", "search_web", "update_plan", "web_fetch"])
+    // It is NOT a coding agent — no workspace/code/fleet tools.
+    for (const t of ["read_file", "write_file", "edit_file", "Bash", "grep", "glob", "ls", "run_agent"]) {
+      expect(web).not.toContain(t)
+    }
+
+    const coordinator: AgentDefinition = {
+      name: "coordinator", description: "the lead", body: "drive", sourcePath: "<test>",
+    }
+    const orch = Object.keys(
+      buildScopeRuntime(rootScope, { ...base, agents: [coordinator], webUi: true }).toolkit.tools,
+    )
+    expect(orch).not.toContain("render_ui") // the orchestrator delegates, it doesn't draw
+  })
+
+  test("the handler publishes a ui_render event through onBusEvent (webUi on)", async () => {
+    const { layer } = stubTreeStore()
+    const seen: Array<{ type: string }> = []
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [],
+      webUi: true,
+      onBusEvent: (e) => Effect.sync(() => void seen.push(e as { type: string })),
+    })
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (n: string, p: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const out = yield* call("render_ui", {
+        id: "quiz-1", title: "Quiz", html: "<p>q</p>", active: false,
+      })
+      return out.result as { rendered: boolean; id: string }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null,
+      }),
+    )
+    const r = (await Effect.runPromise(
+      program as unknown as Effect.Effect<{ rendered: boolean; id: string }>,
+    ))
+    expect(r).toEqual({ rendered: true, id: "quiz-1" })
+    const ui = seen.filter((e) => e.type === "ui_render") as Array<{
+      type: string; id: string; mode: string; active?: boolean; title?: string; nodeId?: string
+    }>
+    expect(ui).toHaveLength(1)
+    expect(ui[0]?.id).toBe("quiz-1")
+    expect(ui[0]?.mode).toBe("replace") // default filled in by the handler
+    expect(ui[0]?.active).toBe(false) // the focus hint rides the event verbatim
+    expect(ui[0]?.title).toBe("Quiz")
+    expect(ui[0]?.nodeId).toBeUndefined() // root draw — no node attribution
+  })
+
+  test("region + remove mode ride the event verbatim (component addressing)", async () => {
+    const { layer } = stubTreeStore()
+    const seen: Array<{ type: string }> = []
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [],
+      webUi: true,
+      onBusEvent: (e) => Effect.sync(() => void seen.push(e as { type: string })),
+    })
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (n: string, p: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      // Update one component of a page…
+      yield* call("render_ui", { id: "home", region: "hero", html: "<h1>hi</h1>" })
+      // …then delete it.
+      yield* call("render_ui", { id: "home", region: "hero", html: "", mode: "remove" })
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null,
+      }),
+    )
+    await Effect.runPromise(program as unknown as Effect.Effect<unknown>)
+    const ui = seen.filter((e) => e.type === "ui_render") as Array<{
+      type: string; id: string; region?: string; mode: string
+    }>
+    expect(ui).toHaveLength(2)
+    expect(ui[0]).toMatchObject({ id: "home", region: "hero", mode: "replace" })
+    expect(ui[1]).toMatchObject({ id: "home", region: "hero", mode: "remove" })
+  })
+
+  test("an oversize html body refuses with HtmlTooLarge (model-readable, streaming hint)", async () => {
+    const { layer } = stubTreeStore()
+    const seen: Array<{ type: string }> = []
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [],
+      webUi: true,
+      onBusEvent: (e) => Effect.sync(() => void seen.push(e as { type: string })),
+    })
+    const program = Effect.gen(function* () {
+      const tk = yield* rt.toolkit
+      const call = (tk as unknown as {
+        handle: (n: string, p: unknown) => Effect.Effect<{ result: unknown }>
+      }).handle
+      const out = yield* call("render_ui", {
+        id: "big", html: "x".repeat(RENDER_UI_MAX_HTML_BYTES + 1),
+      })
+      return out.result as { error?: string; message?: string }
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null,
+      }),
+    )
+    const r = await Effect.runPromise(
+      program as unknown as Effect.Effect<{ error?: string; message?: string }>,
+    )
+    expect(r.error).toBe("HtmlTooLarge")
+    expect(r.message).toContain("append")
+    expect(seen.filter((e) => e.type === "ui_render")).toHaveLength(0) // nothing published
+  })
+
+  test("without webUi the handler is an honest no-op (rendered: false), never an error", async () => {
+    const { layer } = stubTreeStore()
+    const seen: Array<unknown> = []
+    const rt = buildScopeRuntime(rootScope, {
+      skills: [], memory: [], agents: [], tools: [],
+      onBusEvent: (e) => Effect.sync(() => void seen.push(e)),
+    })
+    const program = Effect.gen(function* () {
+      // Without webUi the toolkit doesn't OFFER render_ui at all — the model
+      // can't call it. This documents the gate at the TOOLKIT level.
+      const tk = yield* rt.toolkit
+      return Object.keys((tk as { tools: Record<string, unknown> }).tools ?? {})
+    }).pipe(
+      Effect.provide(rt.handlerLayer),
+      Effect.provide(Layer.mergeAll(layer, stubPorts)),
+      Effect.locally(RunContextRef, {
+        rootConversationId: null, parentNodeId: null, depth: 0, tokenPool: null,
+      }),
+    )
+    const names = await Effect.runPromise(program as unknown as Effect.Effect<ReadonlyArray<string>>)
+    expect(names).not.toContain("render_ui")
+    expect(seen.filter((e) => (e as { type?: string }).type === "ui_render")).toHaveLength(0)
   })
 })

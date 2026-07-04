@@ -7,6 +7,10 @@
  * OpenTUI takes hex strings as `ColorInput`. The set is a One-Dark-ish family:
  * the three bright pane accents (cyan/magenta/green) plus the muted One-Dark
  * code colours shared by the syntax highlighter and the chrome.
+ *
+ * MIRRORED BY packages/web/src/theme/palette.ts (the web package may not
+ * import from the cli) — a palette change here must land there in the same
+ * commit.
  */
 export interface Palette {
   /** Bright accents — the focused-pane borders + primary highlights. */

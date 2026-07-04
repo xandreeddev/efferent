@@ -111,6 +111,18 @@ These are unfixed bugs/blockers, documented fully in [`journeys.md`](./journeys.
 - **Shell adapter hardening** — no process group on timeout kill (grandchildren may survive); unbounded output buffering before truncation. (journeys.md item 5)
 - **Live credentialed smoke** — the populated live journey (spawn → running nodes → resume) still needs a credentialed smoke. bash approval mid-turn, OAuth round-trip, and a live `run_agent` spawn with tool use remain unexercised. (journeys.md item 1)
 - **Fast input bursts** — Enter inside the same terminal chunk as text can land as a newline instead of running a `:` command. Typing-speed input is fine. (journeys.md item 2)
+- **Daemon may linger after `/shutdown`** (latent, unverified) — the web driver found that Bun stays alive after the main effect completes because global daemon-fiber timers (the workspace sweeper's sleep loop) keep the event loop busy; `efferent web` exits explicitly (`mode.ts`). The detached `daemon serve` process likely has the same zombie behavior after `efferent daemon stop` — verify and apply the same explicit exit if so.
+
+## Web UI follow-ups (v2 shipped: canvas-first pages, mermaid, viewing-context, replay persistence)
+
+- **Daemon-mounted web UI** — serve the same UI from the shared workspace daemon so browser + TUI share sessions. The pump already needs only a `Workspace` + a session id; the missing piece is per-fleet rosters (the scope runtime — and thus swarm-vs-direct — is built once per workspace today).
+- **Canvas snapshot on the checkpoint** — pages replay from the ACTIVE message window (`canvasReplay.ts`), so pages rendered before a handoff fold vanish on a reseed (a live process keeps them in memory). Carry a canvas snapshot on the checkpoint to make replay fold-proof.
+- **Workspace cards across restarts** — file/diff/source cards still derive from LIVE events only (pages now replay; the refs drawer starts empty after a restart). Re-derive from tool results in the seed walk.
+- **Checkpoints divider on the web rail** — `SessionState` carries no checkpoint list, so the `⚑ folded` divider is absent (conscious cut).
+- **Sub-agent `render_ui`** — the tool is root-only; `ui_render.nodeId` already carries attribution, so extending to spawned agents is a `roleToolEntries` gate away (`buildScopeRuntime.ts`). Needs a page-id namespace policy first (interleaved authorship).
+- **Approval sheet UX** — the web sheet posts decisions but has no session/project-scope explanation text.
+- **Live product-search eval case** — the `web-ui` suite's `comparison-page` is deliberately offline/deterministic; add a live `search_web`-driven product case once its flakiness is assessed.
+- **Wider chart vocabulary** — mermaid `pie`/`xychart-beta` cover basic data viz; richer charts (bar groups, scatter) would need a chart lib or server-rendered SVG through a sanitizer allowance.
 
 ---
 
