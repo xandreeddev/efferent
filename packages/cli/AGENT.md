@@ -13,6 +13,7 @@ packages/cli/src/
 ├── usecases/          workspace-shaped use cases: coderAgentConfig · teamAgents (the built-in fleet) · loadAgents/loadMemory/loadSkills · discoverInstructionFiles · directive
 ├── workspace/         the in-process Workspace runtime: inProcess.ts (JobController/submitJob + the stranded-node sweeper) · headlessApproval.ts (the cron parking approval)
 ├── server/            daemon-serve HTTP/SSE host
+├── web/               the `efferent web` driver (NO Solid/OpenTUI imports): model.ts (framework-free keyed cache) · reduce.ts (event→model, the pump switch ported) · render.ts (the ONE @xandreed/web import: Patch→OOB fragments) · pump.ts (makeFragmentPump — Workspace + session id only) · server.ts (HttpRouter + WS upgrade, token→cookie auth) · mode.ts (composition root)
 ├── modes/
 │   ├── tui.ts         just the TuiModeInput seam (driver lives in cli/)
 │   ├── print.ts       one-shot, streams final text to stdout

@@ -1,0 +1,292 @@
+/* efferent web — the agent-facing ef-* kit (documented in docs/uiKit.ts;
+   every class named there must exist here or in app.css). Paints ONLY
+   var(--tok-*) tokens + the theme-invariant scales from app.css :root —
+   no hex literal may appear in this file (see packages/web/CLAUDE.md). */
+
+/* ---------- layout primitives ---------- */
+
+.ef-stack { display: flex; flex-direction: column; gap: 10px; }
+.ef-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ef-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ef-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+/* Page-scale columns (collapse on small screens). */
+.ef-cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+.ef-cols-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+.ef-cols-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-4); }
+.ef-span-2 { grid-column: span 2; }
+
+/* Density modifiers (declared last so they win at equal specificity). */
+
+/* ---------- typography ---------- */
+
+.ef-display { font-size: var(--fs-display); font-weight: 700; line-height: 1.1; color: var(--tok-text-heading); margin: 0; }
+.ef-lede { font-size: var(--fs-lede); color: var(--tok-text-muted); margin: 0; }
+.ef-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tok-accent-side);
+  margin: 0;
+}
+.ef-title { color: var(--tok-text-heading); font-size: 15px; font-weight: 600; margin: 0; }
+.ef-text { color: var(--tok-text-default); margin: 0; }
+.ef-muted { color: var(--tok-text-muted); font-size: var(--fs-small); }
+
+/* ---------- page bands (full-bleed rows — pages compose from these) ---------- */
+
+/* A band spans the full page width; --page-gutter padding centers its content
+   to the shared column, so a tinted band reads as a real web-page section.
+   Alternate plain and --panel bands for the landing-page rhythm. */
+.ef-band { padding: var(--sp-7) var(--page-gutter); }
+.ef-band--panel { background: var(--tok-surface-panel); border-block: 1px solid var(--tok-surface-border); }
+.ef-band--raised { background: var(--tok-surface-raised); border-block: 1px solid var(--tok-surface-border); }
+.ef-band--tight { padding-block: var(--sp-5); }
+
+/* Content + aside, side by side (the article-with-sidebar shape). */
+.ef-split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-6); align-items: start; }
+.ef-split--rev { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+.ef-split--even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ef-aside {
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-2);
+  padding: var(--sp-4);
+  position: sticky;
+  top: var(--sp-4);
+}
+
+/* A figure/diagram beside its explanation (alternate with --rev). */
+.ef-media { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-6); align-items: center; }
+.ef-media--rev > :first-child { order: 2; }
+
+/* ---------- common-framework aliases (models reach for these names) ----------
+   Weak models emit Bootstrap/Tailwind-shaped class names regardless of the
+   kit doc — ef-grid + ef-col, ef-container, ef-section-alt/-dark. Rather than
+   let those style nothing (→ a flat single column), make them REAL: any
+   ef-grid becomes a responsive multi-column grid, so the model's natural
+   output lays out side by side. */
+.ef-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); }
+.ef-grid-cols-2 { display: grid; gap: var(--sp-4); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ef-grid-cols-3 { display: grid; gap: var(--sp-4); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ef-grid-cols-4 { display: grid; gap: var(--sp-4); grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ef-col { min-width: 0; }
+.ef-flex { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
+.ef-flex > * { min-width: 0; }
+.ef-container { max-width: var(--page-col); margin-inline: auto; }
+/* Alternating full-bleed section bands (the ef-band variants under the names
+   models pick). Full-bleed centering is handled by the .ef-page rule. */
+.ef-section-alt { padding: var(--sp-7) var(--page-gutter); background: var(--tok-surface-panel); border-block: 1px solid var(--tok-surface-border); }
+.ef-section-dark { padding: var(--sp-7) var(--page-gutter); background: var(--tok-surface-raised); border-block: 1px solid var(--tok-surface-border); }
+
+/* ---------- page structure ---------- */
+
+.ef-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-8) var(--sp-6);
+  background: var(--tok-surface-panel);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-3);
+  margin: 0 0 var(--sp-6);
+}
+.ef-hero-title { font-size: var(--fs-display); font-weight: 700; line-height: 1.1; color: var(--tok-text-heading); margin: 0; }
+.ef-hero-sub { font-size: var(--fs-lede); color: var(--tok-text-muted); margin: 0; max-width: 640px; }
+.ef-hero-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+
+.ef-section { margin: var(--sp-6) 0; }
+.ef-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--tok-surface-border);
+  padding-bottom: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+/* Page headings (h1–h3 inside agent pages pick these up via .ef-heading in
+   markdown; raw headings in render_ui HTML style themselves here). */
+.ef-page-body h1 { font-size: var(--fs-h1); color: var(--tok-text-heading); line-height: 1.2; margin: 0.4em 0; }
+.ef-page-body h2 { font-size: var(--fs-h2); color: var(--tok-text-heading); line-height: 1.25; margin: 0.5em 0 0.35em; }
+.ef-page-body h3 { font-size: var(--fs-h3); color: var(--tok-text-heading); line-height: 1.3; margin: 0.5em 0 0.3em; }
+
+/* ---------- surfaces ---------- */
+
+.ef-card {
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-2);
+  padding: 12px 14px;
+}
+.ef-divider { border: none; border-top: 1px solid var(--tok-surface-border); margin: 4px 0; }
+
+.ef-callout {
+  border-left: 3px solid var(--tok-accent-conversation);
+  background: var(--tok-surface-raised);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+}
+.ef-callout--info { border-left-color: var(--tok-accent-side); }
+.ef-callout--warn { border-left-color: var(--tok-state-running); }
+
+/* ---------- features · stats · steps · figure ---------- */
+
+.ef-features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+.ef-feature {
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-2);
+  padding: var(--sp-4);
+}
+
+.ef-stats { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
+.ef-stat {
+  flex: 1;
+  min-width: 130px;
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-2);
+  padding: var(--sp-4);
+  text-align: center;
+}
+.ef-stat-value { font-size: var(--fs-h1); font-weight: 700; color: var(--tok-accent-conversation); line-height: 1.15; }
+.ef-stat-label { font-size: var(--fs-small); color: var(--tok-text-muted); margin-top: var(--sp-1); }
+
+.ef-steps {
+  counter-reset: ef-step;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: var(--sp-4) 0;
+  padding: 0;
+}
+.ef-step { counter-increment: ef-step; position: relative; padding-left: var(--sp-7); min-height: 26px; }
+.ef-step::before {
+  content: counter(ef-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-accent-side);
+  color: var(--tok-accent-side);
+  font-size: 12px;
+}
+
+.ef-figure {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-4);
+  background: var(--tok-surface-panel);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--radius-2);
+}
+.ef-figure figcaption { font-size: var(--fs-small); color: var(--tok-text-muted); margin-top: var(--sp-2); }
+
+/* ---------- diagrams (mermaid source → client-rendered SVG) ---------- */
+
+/* The source block, pre-render (diagrams.js replaces it with a figure). */
+pre.ef-mermaid {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--tok-text-dim);
+  background: var(--tok-surface-panel);
+  border: 1px dashed var(--tok-surface-border);
+  border-radius: var(--radius-2);
+  padding: var(--sp-3);
+  overflow-x: auto;
+}
+.ef-mermaid-out { text-align: center; overflow-x: auto; }
+.ef-mermaid-out svg { max-width: 100%; height: auto; }
+.ef-mermaid-error { color: var(--tok-state-error); font-size: 12px; margin-top: var(--sp-2); }
+
+/* ---------- buttons · forms ---------- */
+
+.ef-btn {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--tok-text-default);
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.ef-btn:hover { border-color: var(--tok-text-dim); }
+.ef-btn--primary {
+  background: var(--tok-accent-input);
+  border-color: var(--tok-accent-input);
+  color: var(--tok-surface-page);
+  font-weight: 600;
+}
+.ef-btn--primary:hover { opacity: 0.9; }
+.ef-btn--ghost { background: none; border-color: transparent; color: var(--tok-text-muted); }
+.ef-btn:focus-visible { outline: 2px solid var(--tok-accent-input); outline-offset: 1px; }
+
+.ef-field { display: flex; flex-direction: column; gap: 4px; }
+.ef-label { color: var(--tok-text-muted); font-size: var(--fs-small); }
+.ef-input, .ef-textarea, .ef-select {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--tok-text-default);
+  background: var(--tok-surface-page);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+.ef-input:focus, .ef-textarea:focus, .ef-select:focus { outline: none; border-color: var(--tok-accent-input); }
+.ef-choice { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--tok-text-default); }
+
+/* ---------- status ---------- */
+
+.ef-badge {
+  display: inline-block;
+  font-size: var(--fs-tiny);
+  border-radius: 10px;
+  padding: 1px 9px;
+  border: 1px solid var(--tok-surface-border);
+  color: var(--tok-text-muted);
+}
+.ef-badge--ok { color: var(--tok-state-ok); border-color: var(--tok-state-ok); }
+.ef-badge--warn { color: var(--tok-state-running); border-color: var(--tok-state-running); }
+.ef-badge--err { color: var(--tok-state-error); border-color: var(--tok-state-error); }
+
+.ef-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-tiny);
+  background: var(--tok-surface-raised);
+  border: 1px solid var(--tok-surface-border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-1);
+  padding: 0 5px;
+}
+
+.ef-progress { width: 100%; accent-color: var(--tok-accent-input); }
+.ef-img { max-width: 100%; border-radius: 6px; }
+
+/* ---------- density modifiers (last: they win at equal specificity) ---------- */
+
+.ef-tight { gap: var(--sp-2); }
+.ef-loose { gap: var(--sp-6); }
+
+/* ---------- responsive collapse ---------- */
+
+@media (max-width: 720px) {
+  .ef-cols-2, .ef-cols-3, .ef-cols-4, .ef-features { grid-template-columns: minmax(0, 1fr); }
+  .ef-grid-cols-2, .ef-grid-cols-3, .ef-grid-cols-4 { grid-template-columns: minmax(0, 1fr); }
+  .ef-split, .ef-split--rev, .ef-split--even, .ef-media { grid-template-columns: minmax(0, 1fr); }
+  .ef-media--rev > :first-child { order: 0; }
+  .ef-aside { position: static; }
+  .ef-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ef-span-2 { grid-column: auto; }
+  .ef-band { padding-block: var(--sp-5); }
+  .ef-hero { padding: var(--sp-6) var(--sp-4); }
+  .ef-hero-title, .ef-display { font-size: var(--fs-h1); }
+}

@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "agent",
@@ -20,7 +19,7 @@
     },
     "examples": {
       "name": "@xandreed/examples",
-      "version": "0.0.0",
+      "version": "0.0.6",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/platform": "^0.96.1",
@@ -32,7 +31,7 @@
     },
     "packages/cli": {
       "name": "efferent",
-      "version": "0.3.0",
+      "version": "0.6.1",
       "bin": {
         "efferent": "dist/efferent.js",
         "eff": "dist/efferent.js",
@@ -49,13 +48,14 @@
         "@opentui/solid": "0.3.1",
         "@xandreed/sdk-adapters": "workspace:*",
         "@xandreed/sdk-core": "workspace:*",
+        "@xandreed/web": "workspace:*",
         "effect": "^3.21.4",
         "solid-js": "1.9.12",
       },
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.1.0",
+      "version": "0.2.3",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/opentelemetry": "^0.63.0",
@@ -73,7 +73,7 @@
     },
     "packages/sdk-adapters": {
       "name": "@xandreed/sdk-adapters",
-      "version": "0.1.0",
+      "version": "0.4.2",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
@@ -92,7 +92,7 @@
     },
     "packages/sdk-core": {
       "name": "@xandreed/sdk-core",
-      "version": "0.1.0",
+      "version": "0.5.1",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "effect": "^3.21.4",
@@ -113,6 +113,10 @@
         "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.4",
       },
+    },
+    "packages/web": {
+      "name": "@xandreed/web",
+      "version": "0.0.0",
     },
     "packages/website": {
       "name": "@xandreed/website",
@@ -610,6 +614,8 @@
     "@xandreed/sdk-core": ["@xandreed/sdk-core@workspace:packages/sdk-core"],
 
     "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
+
+    "@xandreed/web": ["@xandreed/web@workspace:packages/web"],
 
     "@xandreed/website": ["@xandreed/website@workspace:packages/website"],
 

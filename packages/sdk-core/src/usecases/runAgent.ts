@@ -1,5 +1,5 @@
 import type { Tool } from "@effect/ai"
-import { Clock, Effect } from "effect"
+import { Clock, Effect, Ref } from "effect"
 import type { ContextNodeId } from "../entities/AgentContext.js"
 import type { AgentGateEvent, AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
@@ -53,6 +53,9 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
     const tokenPool = yield* makeTokenPool(
       settings.subAgentTokenBudget ?? DEFAULT_SUB_AGENT_TOKEN_BUDGET,
     )
+    // The per-run child-spawn counter (subAgentMaxChildren guard) — fresh per
+    // top-level run for the same reason.
+    const childSpawnCounter = yield* Ref.make(0)
 
     const toolResultMaxChars =
       settings.toolResultMaxTokens !== undefined ? settings.toolResultMaxTokens * 4 : undefined
@@ -92,6 +95,12 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
           ...(settings.subAgentFetchBudget !== undefined
             ? { subAgentFetchBudget: settings.subAgentFetchBudget }
             : {}),
+          ...(settings.subAgentMaxChildren !== undefined && settings.subAgentMaxChildren > 0
+            ? { subAgentMaxChildren: settings.subAgentMaxChildren }
+            : {}),
+          // Fresh per top-level run, like the pool — the run_agent guard
+          // check-and-increments it against subAgentMaxChildren (if set).
+          childSpawnCounter,
           ...(toolResultMaxChars !== undefined ? { toolResultMaxChars } : {}),
           ...(input.config.compression !== undefined ? { compression: input.config.compression } : {}),
           pinnedModels: {
