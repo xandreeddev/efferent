@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import type { AgentAfterToolCallEvent } from "@xandreed/sdk-core"
+import type { LoopEvent } from "@xandreed/engine"
 import { WorkspacePath } from "@xandreed/foundry"
 import { capturePath } from "./filesTouched.js"
 
-const event = (over: Partial<AgentAfterToolCallEvent>): AgentAfterToolCallEvent => ({
+type ToolEnd = LoopEvent & { readonly type: "tool_end" }
+
+const event = (over: Partial<Omit<ToolEnd, "type">>): ToolEnd => ({
+  type: "tool_end",
   turnIndex: 0,
   toolCallId: "t1",
   toolName: "edit_file",
@@ -26,11 +29,6 @@ describe("capturePath", () => {
     expect(
       Option.getOrNull(capturePath(event({ args: { path: "/ws/src/deep/a.ts" } }), "/ws")),
     ).toBe(WorkspacePath.make("src/deep/a.ts"))
-  })
-
-  test("sub-agent events count too (the code tier does the edits)", () => {
-    const subAgent = event({ subAgentNodeId: "node-1" as never })
-    expect(Option.getOrNull(capturePath(subAgent, "/ws"))).toBe(WorkspacePath.make("src/foo.ts"))
   })
 
   test("reads, failures, Bash, bad args, and escapes are None", () => {

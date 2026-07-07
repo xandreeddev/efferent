@@ -15,7 +15,7 @@ import type {
   ImplementorError,
   WorkspaceError,
 } from "@xandreed/foundry"
-import type { FileSystem, SpecDoc } from "@xandreed/sdk-core"
+import type { FileSystem, SpecDoc } from "@xandreed/engine"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"

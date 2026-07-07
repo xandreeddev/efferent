@@ -7,7 +7,7 @@ import {
   makeTypecheckGate,
 } from "@xandreed/foundry"
 import type { Gate, Pipeline, TsProject } from "@xandreed/foundry"
-import { FileSystem } from "@xandreed/sdk-core"
+import { FileSystem } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { GateSuiteRequest } from "../spec/toForgeSpec.js"
 import { makeCommandGate } from "./commandGate.js"

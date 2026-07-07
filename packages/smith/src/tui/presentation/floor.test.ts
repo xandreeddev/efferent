@@ -82,7 +82,7 @@ describe("reduceFloor", () => {
     const floor = fold([
       {
         type: "agent",
-        event: { type: "tool_call_start", turnIndex: 0, id: "1", toolName: "edit_file", args: { path: "a.ts" } },
+        event: { type: "tool_start", turnIndex: 0, toolCallId: "1", toolName: "edit_file", args: { path: "a.ts" } },
       },
       { type: "agent", event: { type: "turn_start", turnIndex: 1 } },
     ])

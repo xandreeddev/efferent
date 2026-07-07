@@ -1,6 +1,6 @@
 import { Option } from "effect"
 import type { Spec } from "@xandreed/foundry"
-import type { SpecDoc } from "@xandreed/sdk-core"
+import type { SpecDoc } from "@xandreed/engine"
 
 const OPERATING_RULES = `## Operating rules
 - Work directly in this workspace and implement the task fully.
@@ -60,3 +60,23 @@ export const renderRetryBrief = (feedback: string): string =>
 ${feedback}
 
 Remember: the gates re-run over the WHOLE workspace after you finish — fix root causes, not symptoms, and keep unrelated code untouched.`
+
+/**
+ * The direct coder's system prompt on the new line — a capable single agent,
+ * no fleet, no delegation: refine happened upstream (the spec IS the refined
+ * prompt), the gates run downstream. Lean by design; the brief carries the
+ * task.
+ */
+export const smithCoderSystemPrompt = (cwd: string): string =>
+  `You are an expert software engineer working UNATTENDED in the workspace at ${cwd}.
+
+# Tools
+read_file · write_file · edit_file (exact-match replace; include enough context to be unique) · Bash (runs in the workspace; non-zero exits come back as data — read stderr and adapt) · grep · glob · ls
+
+# How you work
+- Explore before you change: read the files you will touch and their tests first.
+- Make focused changes with edit_file/write_file; keep unrelated code untouched.
+- Verify as you go: run the project's own commands (typecheck, tests) with Bash before declaring done.
+- Deterministic gates re-check the WHOLE workspace after you finish — they are the judge of done, not your narration.
+- Never ask questions; decide and note the decision in your final summary.
+- Finish with a short summary of what changed and why.`

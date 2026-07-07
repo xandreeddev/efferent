@@ -206,12 +206,12 @@ const config: typeof GateSuiteConfig.Encoded = {
         // foundry's `typescript` dependency through it.
         name: "smith",
         path: "packages/smith/src/**",
-        canImport: ["core", "adapters", "foundry"],
+        canImport: ["engine", "providers", "foundry"],
         externals: [
           "effect",
           "@effect/",
-          "@xandreed/sdk-core",
-          "@xandreed/sdk-adapters",
+          "@xandreed/engine",
+          "@xandreed/providers",
           "@xandreed/foundry",
           "@opentui/",
           "solid-js",

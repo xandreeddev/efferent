@@ -65,3 +65,23 @@ export type { AgentConfig } from "./loop/runAgent.js"
 // session
 export { makeSession } from "./session/chassis.js"
 export type { SeqEvent, Session } from "./session/chassis.js"
+
+// spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
+export {
+  DEFAULT_SPEC_LIMITS,
+  renderSpecSection,
+  SpecCheck,
+  SpecDoc,
+  SpecGates,
+  SpecLimits,
+  SpecSlug,
+  SpecStatus,
+} from "./spec/SpecDoc.js"
+export {
+  decodeSpecDocText,
+  encodeSpecDocText,
+  SpecDocParseError,
+  specSlug,
+  uniqueSlug,
+} from "./spec/codec.js"
+export { parseFrontmatter } from "./spec/frontmatter.js"

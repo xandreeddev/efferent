@@ -1,5 +1,5 @@
 import { Match, Option } from "effect"
-import type { SpecDoc } from "@xandreed/sdk-core"
+import type { SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import { agentEventLabel } from "../../presentation/eventLines.js"
 

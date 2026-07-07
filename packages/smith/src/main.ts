@@ -4,23 +4,17 @@
 // with the smith settings overlay on top and a headless-safe Approval.
 
 import { homedir } from "node:os"
-import { isAbsolute, resolve } from "node:path"
+import { isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Logger, Option } from "effect"
-import { FetchHttpClient } from "@effect/platform"
 import { BunContext } from "@effect/platform-bun"
-import { ApprovalAllowAllLive, SettingsStore } from "@xandreed/sdk-core"
+import { SettingsStore } from "@xandreed/engine"
 import {
-  HttpLive,
+  LanguageModelLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalShellLive,
-  ModelLive,
-  ModelRegistryLive,
-  StoresLive,
-  TmuxTerminalSessionLive,
-  UtilityLlmLive,
-  WebSearchLive,
-} from "@xandreed/sdk-adapters"
+  SqliteConversationStoreLive,
+} from "@xandreed/providers"
 import { ConfigError } from "@xandreed/foundry"
 import { SMITH_LIMIT_DEFAULTS } from "./domain/SmithConfig.js"
 import type { SmithRunConfig } from "./domain/SmithConfig.js"
@@ -168,28 +162,21 @@ export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => 
   configPath: state.configPath,
 })
 
-/** The full service stack one smith session runs on (cli AppLive minus TUI extras). */
+/** The full service stack one smith session runs on — the NEW LINE: engine
+ *  ports, providers at the edge. Conversations persist to the workspace's own
+ *  `.efferent/smith.db`; the coder is the engine's direct loop (no fleet, no
+ *  approval judge — the forge loop + gates bound the work). */
 export const smithAppLive = (run: SmithRunConfig) =>
   Layer.mergeAll(
-    StoresLive,
-    ModelLive,
+    SqliteConversationStoreLive(join(run.cwd, ".efferent", "smith.db")),
     LocalFileSystemLive,
     LocalShellLive,
-    TmuxTerminalSessionLive.pipe(Layer.provide(LocalShellLive)),
-    HttpLive,
-    WebSearchLive.pipe(Layer.provide(FetchHttpClient.layer)),
-    UtilityLlmLive.pipe(
-      Layer.provide(ModelRegistryLive),
-      Layer.provide(FetchHttpClient.layer),
-    ),
-    // Headless-safe by construction: bash stays behind --allow-bash, and the
-    // foundry gate pipeline replaces the runtime's Opus swarm gate.
-    ApprovalAllowAllLive,
-    ).pipe(
+    LanguageModelLive,
+  ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        LocalAuthStoreLive,
-        SmithSettingsStoreLive(run).pipe(Layer.provide(LocalFileSystemLive)),
+        LocalAuthStoreLive(run.cwd, homedir()),
+        SmithSettingsStoreLive(run, run.cwd, homedir()),
       ),
     ),
   )
@@ -224,12 +211,14 @@ if (isDirectRun) {
   }
   const program = Effect.gen(function* () {
     const settings = yield* SettingsStore
-    const resolved = yield* settings.load(run.cwd, homedir())
+    const resolved = yield* settings.load
+    const role = (value: Option.Option<string>): string =>
+      Option.getOrElse(value, () => "(unset)")
     if (!interactive) {
       // The resolved roles, on stderr (stdout is the event stream) — user
       // config/flags OVERRIDE the smith defaults, so say what actually runs.
       console.error(
-        `roles: general ${resolved.model} · code ${resolved.codeModel ?? resolved.model} · fast ${resolved.fastModel ?? resolved.model}`,
+        `roles: general ${role(resolved.model)} · code ${role(resolved.codeModel)} · fast ${role(resolved.fastModel)}`,
       )
     }
 
