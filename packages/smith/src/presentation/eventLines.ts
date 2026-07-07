@@ -17,24 +17,20 @@ const describeArgs = (args: unknown): string => {
   return typeof primary === "string" ? `(${clip(primary, 60)})` : ""
 }
 
-/** One label per AGENT event for a live feed; `None` = silent event. */
+/** One label per AGENT event (the engine's `LoopEvent`) for a live feed;
+ *  `None` = silent event. */
 export const agentEventLabel = (event: SmithEvent & { type: "agent" }): Option.Option<string> =>
   Match.value(event.event).pipe(
-    Match.when({ type: "tool_call_start" }, (t) =>
+    Match.when({ type: "tool_start" }, (t) =>
       Option.some(`⚙ ${t.toolName}${describeArgs(t.args)}`),
+    ),
+    Match.when({ type: "tool_end" }, (t) =>
+      t.ok ? Option.none<string>() : Option.some(`⚠ ${t.toolName} failed`),
     ),
     Match.when({ type: "assistant_message" }, (m) =>
       m.text.trim().length > 0 ? Option.some(`✦ ${clip(m.text.trim(), 140)}`) : Option.none(),
     ),
-    Match.when({ type: "subagent_start" }, (s) =>
-      Option.some(`◆ spawned ${s.name}${s.role !== undefined ? ` (${s.role})` : ""}`),
-    ),
-    Match.when({ type: "subagent_end" }, (s) =>
-      Option.some(`◆ ${s.name} ${s.ok ? "done" : "failed"}: ${clip(s.summary, 100)}`),
-    ),
-    Match.when({ type: "llm_retry" }, (r) =>
-      Option.some(`⟳ llm retry ${r.attempt}/${r.maxAttempts}: ${clip(r.reason, 80)}`),
-    ),
+    Match.when({ type: "error" }, (e) => Option.some(`✗ ${clip(e.message, 120)}`)),
     Match.orElse(() => Option.none<string>()),
   )
 

@@ -1,92 +1,50 @@
-import { homedir } from "node:os"
-import { Effect, Layer, Option, Ref } from "effect"
 import type { LanguageModel } from "@effect/ai"
+import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { WorkspacePath } from "@xandreed/foundry"
-import {
-  Approval,
-  buildScopeRuntime,
-  codeModelDistinct,
-  coderAgentConfig,
-  coderPrompt,
-  ContextTreeStore,
-  ConversationStore,
-  discoverInstructionFiles,
-  discoverScopeTree,
-  FileSystem,
-  Http,
-  loadAgents,
-  loadMemory,
-  loadSkills,
-  loadTools,
-  makeAgentEventHooks,
-  renderInstructionsSection,
-  runAgent,
-  runFleetToCompletion,
-  SettingsStore,
-  Shell,
-  stripLeads,
-  TerminalSession,
-  UtilityLlm,
-  WebSearch,
-  withInboxDrain,
-} from "@xandreed/sdk-core"
-import type { AgentHooks, AgentResult, ConversationId, SpecDoc } from "@xandreed/sdk-core"
+import { ConversationStore, FileSystem, runAgent, Shell } from "@xandreed/engine"
+import type { ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
-import { renderBrief, renderRetryBrief } from "./prompt.js"
+import { makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
+import { renderBrief, renderRetryBrief, smithCoderSystemPrompt } from "./prompt.js"
 
 /**
- * Everything one implementor attempt needs at runtime — captured as a
- * `Context` when the Layer builds, so `Implementor.implement` itself stays
- * `R = never` (the port has no requirement channel by design).
+ * The coder at the forge, RE-FOUNDED on the new line: a capable DIRECT agent
+ * (the engine's loop + the smith coding toolkit) doing agentic engineering,
+ * with foundry's gates entirely OUTSIDE it — no fleet, no sub-agent tree, no
+ * gates-inside-gates. Refine happened upstream (the locked SpecDoc IS the
+ * refined prompt); the forge loop drives attempts and the gate pipeline
+ * judges the workspace.
+ *
+ * Each forge run gets ONE persisted conversation: attempt 1 opens it with
+ * the brief; every retry continues the SAME conversation with the gate
+ * feedback as the next user prompt — cache-warm, full context. The receipt's
+ * `ref` ("conversation:<id>") links the FactoryRun artifact back to it.
+ *
+ * Error mapping: only INFRA failures (a provider error that survived the
+ * retry ladder, a defect) become `ImplementorError` — forge retries those
+ * twice. A finished-but-weak turn returns a normal receipt: the gates judge.
  */
+
 export type ImplementorServices =
   | FileSystem
   | Shell
-  | Http
-  | WebSearch
-  | TerminalSession
-  | ContextTreeStore
   | ConversationStore
-  | SettingsStore
-  | UtilityLlm
-  | Approval
   | LanguageModel.LanguageModel
 
-const EMPTY_RESULT: AgentResult = { finalText: "", messages: [], newTail: [] }
+const MAX_ATTEMPT_STEPS = 40
 
 export interface EfferentImplementorOptions {
   /** The workspace the coder works in — the same dir the gates snapshot. */
   readonly cwd: string
-  /** The smith event sink; the coder's AgentEvents ride it as `{type:"agent"}`. */
+  /** The smith event sink; the coder's LoopEvents ride it as `{type:"agent"}`. */
   readonly publish: (event: SmithEvent) => Effect.Effect<void>
   /** The locked SpecDoc driving this run — its constraints/non-goals reach the
-   *  brief here (foundry's `Spec` never carries them). `None` = flag path. */
+   *  brief here (foundry's `Spec` never carries them). `None` = shorthand path. */
   readonly doc: Option.Option<SpecDoc>
 }
 
-/**
- * The efferent coder agent as foundry's `Implementor` — the agent in the
- * factory. Each forge run gets ONE persisted conversation (SQLite via
- * `ConversationStore`, exactly like the CLI): attempt 1 opens it with the
- * task brief; every later attempt continues the SAME conversation with the
- * gate feedback as the next user prompt — cache-warm, full context, and every
- * message in the DB where you'd expect it. The receipt's `ref`
- * (`"conversation:<id>"`) links the persisted `FactoryRun` artifact back to
- * that conversation.
- *
- * The roster is the DIRECT one (`stripLeads` — no coordinator): the root codes
- * hands-on on the GENERAL role, and with a distinct code model configured
- * (smith's default) the prompt's delegation policy routes code-heavy pieces to
- * `role:"code"` sub-agents. A spawning turn is driven through
- * `runFleetToCompletion`, so an attempt only returns once its fleet settled.
- *
- * Error mapping: only INFRA failures (a provider hard error that survived the
- * headless retry ladder, a defect) become `ImplementorError` — forge retries
- * those twice, and each retry is a paid run. A finished-but-weak turn returns
- * a normal receipt: the gates are the judge.
- */
 export const makeEfferentImplementorLive = (
   options: EfferentImplementorOptions,
 ): Layer.Layer<Implementor, never, ImplementorServices> =>
@@ -95,62 +53,9 @@ export const makeEfferentImplementorLive = (
     Effect.gen(function* () {
       const context = yield* Effect.context<ImplementorServices>()
       const store = yield* ConversationStore
-      const settings = yield* (yield* SettingsStore).get()
-
-      // The REAL coder config, built once per forge session — the same recipe
-      // as the CLI's discoverWorkspace, direct roster.
-      const home = homedir()
-      const skills = yield* loadSkills(options.cwd, home)
-      const memory = yield* loadMemory(options.cwd, home)
-      const agents = stripLeads(yield* loadAgents(options.cwd, home))
-      const tools = yield* loadTools(options.cwd, home)
-      const instructionFiles = yield* discoverInstructionFiles(options.cwd, home)
-      const prompt = coderPrompt(
-        options.cwd,
-        new Date(),
-        skills,
-        instructionFiles,
-        agents,
-        tools,
-        "smith",
-        memory,
-        codeModelDistinct(settings),
+      const handlers = yield* Layer.build(
+        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
       )
-      const rootScope = yield* discoverScopeTree(options.cwd, (_children, body) =>
-        body !== undefined && body.trim().length > 0
-          ? `${prompt.text}\n\n# Project scope\n\n${body}`
-          : prompt.text,
-      )
-
-      const filesRef = yield* Ref.make<ReadonlyArray<WorkspacePath>>([])
-      const eventHooks = makeAgentEventHooks((event) =>
-        options.publish({ type: "agent", event }),
-      )
-      const hooks: AgentHooks = {
-        ...eventHooks,
-        onAfterToolCall: (event) =>
-          Ref.update(filesRef, (all) =>
-            Option.match(capturePath(event, options.cwd), {
-              onNone: () => all,
-              onSome: (path) => (all.includes(path) ? all : [...all, path]),
-            }),
-          ).pipe(Effect.zipRight(eventHooks.onAfterToolCall?.(event) ?? Effect.void)),
-      }
-
-      const runtime = buildScopeRuntime(
-        rootScope,
-        {
-          skills,
-          memory,
-          agents,
-          tools,
-          instructions: renderInstructionsSection(instructionFiles),
-          allowBash: settings.allowBash,
-        },
-        hooks,
-      )
-      const config = coderAgentConfig(rootScope, runtime, prompt)
-      const handlers = yield* Layer.build(runtime.handlerLayer)
 
       const conversationRef = yield* Ref.make(Option.none<ConversationId>())
       const conversation = Effect.gen(function* () {
@@ -164,7 +69,7 @@ export const makeEfferentImplementorLive = (
       return Implementor.of({
         implement: (input) =>
           Effect.gen(function* () {
-            yield* Ref.set(filesRef, [])
+            const filesRef = yield* Ref.make<ReadonlyArray<WorkspacePath>>([])
             const cid = yield* conversation.pipe(
               Effect.mapError(
                 (cause) =>
@@ -174,41 +79,55 @@ export const makeEfferentImplementorLive = (
                   }),
               ),
             )
+            const onEvent = (event: LoopEvent) =>
+              (event.type === "tool_end"
+                ? Ref.update(filesRef, (all) =>
+                    Option.match(capturePath(event, options.cwd), {
+                      onNone: () => all,
+                      onSome: (path) => (all.includes(path) ? all : [...all, path]),
+                    }),
+                  )
+                : Effect.void
+              ).pipe(Effect.zipRight(options.publish({ type: "agent", event })))
+
             const brief = Option.match(input.feedback, {
               onNone: () => renderBrief(input.spec, options.doc),
               onSome: renderRetryBrief,
             })
-            const failureRef = yield* Ref.make(Option.none<string>())
-            const remember = (cause: unknown) =>
-              Ref.update(failureRef, (prev) =>
-                Option.isSome(prev) ? prev : Option.some(String(cause)),
-              ).pipe(Effect.as(EMPTY_RESULT))
-            const runTurn = (turnPrompt: string) =>
-              runAgent(
-                config,
-                cid,
-                turnPrompt,
-                withInboxDrain(hooks, runtime.bus, String(cid)),
-                options.cwd,
-                undefined,
-                "headless",
-              ).pipe(Effect.catchAll(remember), Effect.catchAllDefect(remember))
 
             // The turn's prose is not the deliverable — the workspace state the
-            // gates snapshot is; the run is driven for its side effects.
-            yield* runFleetToCompletion({
-              bus: runtime.bus,
-              rootKey: String(cid),
-              firstPrompt: brief,
-              runTurn,
-            }).pipe(Effect.provide(handlers), Effect.provide(context))
+            // gates snapshot is; the run is driven for its side effects. Loop
+            // failures AND defects map to ImplementorError (infra), never a
+            // silent success.
+            yield* runAgent(
+              {
+                system: smithCoderSystemPrompt(options.cwd),
+                toolkit: smithCodingToolkit,
+                maxSteps: MAX_ATTEMPT_STEPS,
+              },
+              cid,
+              brief,
+              { onEvent },
+            ).pipe(
+              Effect.provide(handlers),
+              Effect.provide(context),
+              Effect.mapError(
+                (cause) =>
+                  new ImplementorError({
+                    attempt: input.attempt,
+                    message: String(cause),
+                  }),
+              ),
+              Effect.catchAllDefect((defect) =>
+                Effect.fail(
+                  new ImplementorError({
+                    attempt: input.attempt,
+                    message: `implementor crashed: ${String(defect)}`,
+                  }),
+                ),
+              ),
+            )
 
-            const failure = yield* Ref.get(failureRef)
-            if (Option.isSome(failure)) {
-              return yield* Effect.fail(
-                new ImplementorError({ attempt: input.attempt, message: failure.value }),
-              )
-            }
             return {
               filesTouched: [...(yield* Ref.get(filesRef))].sort(),
               ref: Option.some(`conversation:${cid}`),
