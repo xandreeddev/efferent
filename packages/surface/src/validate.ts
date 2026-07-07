@@ -20,6 +20,7 @@ export interface UiFinding {
     | "hx-wiring"
     | "a11y-min"
     | "no-arbitrary-values"
+    | "no-self-trigger"
   readonly detail: string
 }
 
@@ -158,6 +159,27 @@ const noArbitraryValues = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFin
 
 /* ------------------------------------------------------------------ */
 
+/** 5 · No SELF-FIRING triggers: `hx-trigger="load"` / `every Ns` / `revealed`
+ *  fire without any user action — a page that re-renders itself on load
+ *  creates an unbounded agent-turn loop (live-caught: a pomodoro page
+ *  auto-ticked itself into a token-burning post-back loop). User-initiated
+ *  triggers (click, submit, change, input, keyup…) pass. */
+const SELF_FIRING = /\b(load|every|revealed|intersect)\b/i
+const noSelfTrigger = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFinding> =>
+  tokens.flatMap((t) => {
+    const trigger = t.attrs.get("hx-trigger")
+    return trigger !== undefined && SELF_FIRING.test(trigger)
+      ? [
+          {
+            rule: "no-self-trigger" as const,
+            detail: `hx-trigger="${trigger.slice(0, 60)}" fires WITHOUT user action — every render would trigger the next agent turn in an unbounded loop; use a user-initiated trigger (click, submit, change) instead`,
+          },
+        ]
+      : []
+  })
+
+/* ------------------------------------------------------------------ */
+
 /** Run every UI gate over one `render_ui` html payload; empty = pass. */
 export const validateUi = (html: string): ReadonlyArray<UiFinding> => {
   const tokens = tokenize(html)
@@ -166,6 +188,7 @@ export const validateUi = (html: string): ReadonlyArray<UiFinding> => {
     ...hxWiring(html, tokens),
     ...a11yMin(html, tokens),
     ...noArbitraryValues(tokens),
+    ...noSelfTrigger(tokens),
   ]
 }
 
