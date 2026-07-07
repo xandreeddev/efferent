@@ -29,6 +29,8 @@ describe("math reducer", () => {
     const started = reduceMathEvent(m, { type: "turn_start", turnIndex: 0 }).model
     const r = reduceMathEvent(started, {
       type: "agent_end",
+      outcome: "ok",
+      reason: "completed",
       finalText: "I could not decide what to write.",
     })
     expect(r.model.lastError?.message).toContain("without writing any exercises")
@@ -40,7 +42,7 @@ describe("math reducer", () => {
   test("a run that DID render ends quietly (no error, generating cleared)", () => {
     const m0 = reduceMathEvent(waiting(), { type: "turn_start", turnIndex: 0 }).model
     const m = reduceMathEvent(m0, { type: "math_render", items: [ex("ex-1")] }).model
-    const r = reduceMathEvent(m, { type: "agent_end", finalText: "done" })
+    const r = reduceMathEvent(m, { type: "agent_end", outcome: "ok", reason: "completed", finalText: "done" })
     expect(r.model.lastError).toBeUndefined()
     expect(r.model.generating).toBe(false)
   })
@@ -56,9 +58,15 @@ describe("math reducer", () => {
   test("chat-ish events are no-ops on this surface", () => {
     const m = waiting()
     ;[
-      { type: "assistant_message", turnIndex: 0, text: "hello" } as const,
-      { type: "user_message", turnIndex: 0, text: "hi" } as const,
-      { type: "skill_load", name: "x" } as const,
+      {
+        type: "assistant_message",
+        turnIndex: 0,
+        text: "hello",
+        reasoning: "",
+        toolCalls: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 },
+      } as const,
+      { type: "tool_start", turnIndex: 0, toolCallId: "c1", toolName: "render_math", args: {} } as const,
     ].forEach((event) => {
       const r = reduceMathEvent(m, event)
       expect(r.model).toBe(m)

@@ -1,4 +1,11 @@
-import type { Prompt } from "@xandreed/sdk-core"
+/** A versioned prompt identity (kept local — the engine takes a plain
+ *  `system` string; the version rides eval manifests + telemetry). */
+export interface Prompt {
+  readonly name: string
+  readonly version: string
+  readonly variant?: string
+  readonly text: string
+}
 
 const MATH_PROMPT_VERSION = "2.0.0"
 
