@@ -53,6 +53,14 @@
         "solid-js": "1.9.12",
       },
     },
+    "packages/engine": {
+      "name": "@xandreed/engine",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "effect": "^3.21.4",
+      },
+    },
     "packages/evals": {
       "name": "@xandreed/evals",
       "version": "0.2.3",
@@ -89,6 +97,19 @@
         "@xandreed/sdk-adapters": "workspace:*",
         "@xandreed/sdk-core": "workspace:*",
         "@xandreed/web": "workspace:*",
+        "effect": "^3.21.4",
+      },
+    },
+    "packages/providers": {
+      "name": "@xandreed/providers",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/ai-anthropic": "^0.25.0",
+        "@effect/ai-google": "^0.14.0",
+        "@effect/ai-openai": "^0.39.2",
+        "@effect/platform": "^0.96.1",
+        "@xandreed/engine": "workspace:*",
         "effect": "^3.21.4",
       },
     },
@@ -642,6 +663,8 @@
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.3.2", "", {}, "sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA=="],
 
+    "@xandreed/engine": ["@xandreed/engine@workspace:packages/engine"],
+
     "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
 
     "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
@@ -649,6 +672,8 @@
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 
     "@xandreed/math": ["@xandreed/math@workspace:packages/math"],
+
+    "@xandreed/providers": ["@xandreed/providers@workspace:packages/providers"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 
