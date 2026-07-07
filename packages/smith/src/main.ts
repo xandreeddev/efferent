@@ -5,7 +5,7 @@
 
 import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Logger, Option } from "effect"
 import { FetchHttpClient } from "@effect/platform"
 import { BunContext } from "@effect/platform-bun"
 import { ApprovalAllowAllLive, SettingsStore } from "@xandreed/sdk-core"
@@ -223,6 +223,15 @@ if (isDirectRun) {
   }).pipe(
     Effect.provide(smithAppLive(run)),
     Effect.provide(BunContext.layer),
+    // Effect's default logger writes to STDOUT (console.log): in headless mode
+    // that pollutes the event stream, and in the TUI it bleeds raw log lines
+    // straight through the OpenTUI frame (live-caught). Headless → stderr;
+    // TUI → silenced (any console write corrupts the alt screen).
+    Effect.provide(
+      interactive
+        ? Logger.replace(Logger.defaultLogger, Logger.none)
+        : Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
+    ),
     // A layer-build failure (store selection, migration) is an infra error.
     Effect.catchAll((cause) =>
       Effect.sync(() => {
