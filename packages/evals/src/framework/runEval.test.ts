@@ -12,6 +12,7 @@ const echo = defineEval<string, string, { needles: ReadonlyArray<string> }, neve
     { name: "partial", input: "hello", expected: { needles: ["hello", "world"] } },
   ],
   task: (input) => Effect.succeed(input),
+  threshold: 0.6,
   scorers: [
     predicate("nonempty", ({ output }) => output.length > 0),
     includesAll("covers", ({ output, expected }) => ({ haystack: output, needles: expected.needles })),
@@ -41,6 +42,7 @@ describe("runEval", () => {
       name: "boom",
       data: [{ name: "explodes", input: 1, expected: null }],
       task: () => Effect.die(new Error("kaboom")),
+      threshold: 0.6,
       scorers: [predicate("always", () => true)],
     })
     const report = await Effect.runPromise(runEval(boom))
@@ -55,6 +57,7 @@ describe("runEval", () => {
       name: "scorer-fail",
       data: [{ name: "c", input: "x", expected: null }],
       task: (i) => Effect.succeed(i),
+      threshold: 0.6,
       scorers: [
         predicate("ok", () => true),
         { name: "throws", score: () => Effect.die(new Error("scorer boom")) },

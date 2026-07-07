@@ -40,6 +40,13 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-parallel-interface", include: LEGACY },
     { rule: "effect/branded-id-fields", include: ["packages/sdk-core/src/entities/**"] },
   ],
+  // Eval STRUCTURE as a gate: every packages/evals suite must declare ≥1
+  // scorer + an explicit threshold and be registered in run.ts's SUITES —
+  // an unregistered suite silently never runs.
+  evalShape: {
+    registry: "packages/evals/src/run.ts",
+    suiteGlob: "packages/evals/src/suites/**/*.eval.ts",
+  },
   boundaries: {
     layers: [
       {

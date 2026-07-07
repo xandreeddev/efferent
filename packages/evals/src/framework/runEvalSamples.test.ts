@@ -13,6 +13,7 @@ describe("runEval — N-sample aggregation (statistical rigor)", () => {
       samples: 3,
       data: [{ name: "noisy", input: null, expected: null }],
       task: () => Effect.sync(() => [0, 0.5, 1][call++ % 3] ?? 0),
+      threshold: 0.6,
       scorers: [fromEffect("score", ({ output }) => Effect.succeed(output))],
     })
 
@@ -31,6 +32,7 @@ describe("runEval — N-sample aggregation (statistical rigor)", () => {
       name: "single",
       data: [{ name: "c", input: null, expected: null }],
       task: () => Effect.succeed(1),
+      threshold: 0.6,
       scorers: [fromEffect("score", ({ output }) => Effect.succeed(output))],
     })
     const c = Effect.runSync(runEval(spec)).cases[0]!
@@ -47,6 +49,7 @@ describe("runEval — N-sample aggregation (statistical rigor)", () => {
       data: [{ name: "c", input: null, expected: null }],
       // First sample succeeds at 1.0, second throws → counts as 0.
       task: () => (call++ === 0 ? Effect.succeed(1) : Effect.fail("boom")),
+      threshold: 0.6,
       scorers: [fromEffect("score", ({ output }) => Effect.succeed(output))],
     })
     const c = Effect.runSync(runEval(spec)).cases[0]!
