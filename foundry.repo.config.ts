@@ -29,7 +29,7 @@ const LEGACY = [
 
 // packages/smith is post-foundry: it rides the same composition rules with
 // ZERO baseline entries — every finding there is fresh and fails outright.
-const CHECKED = [...LEGACY, "packages/smith/src/**"]
+const CHECKED = [...LEGACY, "packages/smith/src/**", "packages/math/src/**"]
 
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
@@ -37,7 +37,7 @@ const config: typeof GateSuiteConfig.Encoded = {
   rules: [
     {
       rule: "effect/no-try-catch",
-      include: ["packages/sdk-core/src/**", "packages/smith/src/**"],
+      include: ["packages/sdk-core/src/**", "packages/smith/src/**", "packages/math/src/**"],
     },
     { rule: "effect/no-let", include: CHECKED },
     { rule: "effect/no-loop-statements", include: CHECKED },
@@ -99,6 +99,24 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/foundry/src/**",
         canImport: [],
         externals: ["effect", "typescript", "node:", "bun:test"],
+      },
+      {
+        // The standalone math-practice product (docs/agents/education.md), on
+        // the smith pattern: its own driver over sdk-core + adapters + the web
+        // package's math views. NEVER imports the cli.
+        name: "math",
+        path: "packages/math/src/**",
+        canImport: ["core", "adapters", "web"],
+        externals: [
+          "effect",
+          "@effect/",
+          "@xandreed/sdk-core",
+          "@xandreed/sdk-adapters",
+          "@xandreed/web",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         // The agent in the factory: drives foundry's forge with the efferent

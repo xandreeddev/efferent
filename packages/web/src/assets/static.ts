@@ -20,6 +20,10 @@ import diagramsJsSrc from "./diagrams.js" with { type: "text" }
 import appCssSrc from "./app.css" with { type: "text" }
 // @ts-ignore
 import kitCssSrc from "./kit.css" with { type: "text" }
+// @ts-ignore
+import mathCssSrc from "./math.css" with { type: "text" }
+// @ts-ignore
+import mathJsSrc from "./math.js" with { type: "text" }
 import { renderTokensCss } from "../theme/css.js"
 import { ASSET_PREFIX } from "../protocol/contract.js"
 
@@ -54,6 +58,8 @@ export const staticAssets: ReadonlyArray<StaticAsset> = [
   asset("diagrams.js", diagramsJsSrc, "text/javascript; charset=utf-8"),
   asset("app.css", appCssSrc, "text/css; charset=utf-8"),
   asset("kit.css", kitCssSrc, "text/css; charset=utf-8"),
+  asset("math.css", mathCssSrc, "text/css; charset=utf-8"),
+  asset("math.js", mathJsSrc, "text/javascript; charset=utf-8"),
   asset("tokens.css", renderTokensCss(), "text/css; charset=utf-8"),
 ]
 
