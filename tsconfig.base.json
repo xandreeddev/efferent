@@ -36,6 +36,8 @@
       "@xandreed/surface/*": ["packages/surface/src/*"],
       "@xandreed/canvas": ["packages/canvas/src/index.ts"],
       "@xandreed/canvas/*": ["packages/canvas/src/*"],
+      "@xandreed/scenarios": ["packages/scenarios/src/index.ts"],
+      "@xandreed/scenarios/*": ["packages/scenarios/src/*"],
       "@xandreed/foundry": ["packages/foundry/src/index.ts"],
       "@xandreed/foundry/*": ["packages/foundry/src/*"],
       "@xandreed/smith": ["packages/smith/src/index.ts"],

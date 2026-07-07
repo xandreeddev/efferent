@@ -24,6 +24,7 @@
     "foundry": "bun packages/foundry/src/main.ts",
     "smith": "bun packages/smith/src/main.ts",
     "canvas": "bun packages/canvas/src/main.ts",
+    "scenarios": "bun packages/scenarios/src/main.ts",
     "smith:dev": "bun --hot packages/smith/src/main.ts",
     "obs:up": "docker compose -f docker-compose.observability.yml up -d",
     "obs:down": "docker compose -f docker-compose.observability.yml down",
