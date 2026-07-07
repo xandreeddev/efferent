@@ -167,8 +167,14 @@ export const decodeSpecDocText = (
     )
   })
 
+/** Prose bullets are single-line BY GRAMMAR — collapse any whitespace runs
+ *  (incl. newlines) a model slipped in. Safe for prose; NEVER applied to
+ *  check commands (semantics — the propose handler rejects those instead). */
+export const normalizeBullet = (text: string): string => text.replace(/\s+/g, " ").trim()
+
 /** Deterministic inverse of {@link decodeSpecDocText}: stable key order,
- *  canonical section order, absent options omitted. */
+ *  canonical section order, absent options omitted. Prose bullets are
+ *  normalized to keep the encode inside its own grammar (round-trip law). */
 export const encodeSpecDocText = (doc: SpecDoc): string => {
   const frontmatter = [
     "---",
@@ -191,10 +197,13 @@ export const encodeSpecDocText = (doc: SpecDoc): string => {
   return `${frontmatter}
 
 # Goal
-${doc.goal}${section("Acceptance", doc.acceptance)}${section(
+${doc.goal}${section("Acceptance", doc.acceptance.map(normalizeBullet))}${section(
     "Checks",
     doc.checks.map((check) => `${check.name}: ${check.command}`),
-  )}${section("Constraints", doc.constraints)}${section("Non-goals", doc.nonGoals)}
+  )}${section("Constraints", doc.constraints.map(normalizeBullet))}${section(
+    "Non-goals",
+    doc.nonGoals.map(normalizeBullet),
+  )}
 `
 }
 

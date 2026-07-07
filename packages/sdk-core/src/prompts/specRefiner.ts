@@ -32,6 +32,8 @@ gate. Write the spec so a machine can call the outcome.
      when the criterion holds). Criteria without a command must still be
      objectively checkable by reading the code.
    - checks: name + command pairs (e.g. "stats-tests: bun test src/stats.test.ts").
+     Each command is ONE line of shell (join statements with ";"); anything
+     longer belongs in a test file the check then runs.
    - constraints: what must NOT change; house rules to respect.
    - nonGoals: explicit scope fences — what this spec deliberately excludes.
 4. ${

@@ -138,6 +138,19 @@ describe("spec codec — strictness (typed errors, never silent drift)", () => {
   })
 })
 
+describe("encode stays inside its own grammar", () => {
+  test("prose bullets with embedded newlines are normalized, and round-trip", () => {
+    const messy = new SpecDoc({
+      ...minimalDoc,
+      acceptance: ["line one\n  wrapped onto line two", "  padded  "],
+      constraints: ["a\n\nb"],
+    })
+    const decoded = roundTrip(messy)
+    expect(decoded.acceptance).toEqual(["line one wrapped onto line two", "padded"])
+    expect(decoded.constraints).toEqual(["a b"])
+  })
+})
+
 describe("slugs", () => {
   test("specSlug is deterministic kebab, truncated", () => {
     expect(String(specSlug("Implement a Stats Util!"))).toBe("implement-a-stats-util")

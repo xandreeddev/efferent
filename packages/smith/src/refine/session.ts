@@ -93,12 +93,21 @@ export const makeRefineSession = (
       )
     const agent = options.agent ?? realAgent
 
+    // The draft FILE is the truth. A file that no longer decodes (hand-edit
+    // gone wrong, codec gap) is SURFACED as refine_error — never swallowed
+    // (live-caught: a silent None left the panel saying "no draft yet" while
+    // propose_spec had fired three times).
     const readDraft: Effect.Effect<Option.Option<DraftRef>> = Effect.gen(function* () {
       const current = yield* Ref.get(draftRef)
       if (Option.isNone(current)) return Option.none<DraftRef>()
       return yield* loadSpecDoc(cwd, String(current.value.slug)).pipe(
         Effect.map((doc) => Option.some({ doc, path: current.value.path })),
-        Effect.catchAll(() => Effect.succeed(Option.none<DraftRef>())),
+        Effect.catchAll((error) =>
+          publish({
+            type: "refine_error",
+            message: `draft file no longer decodes: ${error.message}`,
+          }).pipe(Effect.as(Option.none<DraftRef>())),
+        ),
         Effect.provide(context),
       )
     })

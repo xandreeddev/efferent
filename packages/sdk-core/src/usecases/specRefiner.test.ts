@@ -130,6 +130,22 @@ describe("propose_spec — the refiner's one write", () => {
     if (result._tag !== "Left") return
     expect((result.left as { error: string }).error).toBe("InvalidSpec")
   })
+
+  it("a multi-line check command is BOUNCED to the model, never mangled", async () => {
+    const fs = memoryFs()
+    const result = await propose(fs, {
+      ...params,
+      checks: [
+        { name: "multi", command: "import { x } from './x.ts';\nif (!x) throw new Error()" },
+      ],
+    })
+    expect(result._tag).toBe("Left")
+    if (result._tag !== "Left") return
+    const failure = result.left as { error: string; message?: string }
+    expect(failure.error).toBe("InvalidSpec")
+    expect(failure.message).toContain("multi-line command")
+    expect(failure.message).toContain('"multi"')
+  })
 })
 
 describe("specRefinerPrompt", () => {

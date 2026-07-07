@@ -57,7 +57,10 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   const busyColor = () => (store.busy() || forging() ? tokens.state.running : tokens.text.dim)
   const title = () =>
     store.mode() === "refine"
-      ? Option.getOrElse(Option.map(store.refine().draft, (d) => String(d.slug)), () => "spec")
+      ? Option.getOrElse(
+          Option.map(store.refine().draft, (d) => String(d.slug)),
+          () => props.ctx.runConfig.task,
+        )
       : floor().task
   return (
     <box flexDirection="row" flexShrink={0}>

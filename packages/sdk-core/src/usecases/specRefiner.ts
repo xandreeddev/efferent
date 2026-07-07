@@ -105,6 +105,20 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
           readonly budgetMinutes?: number | undefined
         }) =>
           Effect.gen(function* () {
+            // A check command is EXACT shell — never normalized. The spec file's
+            // grammar is one line per check, so a multi-line script must be
+            // rewritten by the model (join with ';' or make it a one-liner).
+            // Bounced, not mangled: failureMode:"return" makes this a teachable
+            // tool failure (live-caught: kimi proposed multi-line bun scripts).
+            const multiline = (params.checks ?? []).find((check) =>
+              /[\r\n]/.test(check.command),
+            )
+            if (multiline !== undefined) {
+              return yield* Effect.fail({
+                error: "InvalidSpec",
+                message: `check "${multiline.name}" has a multi-line command — make it a single line (join statements with ';', or move the logic into a test file and run that)`,
+              })
+            }
             const slug = yield* mintSlug(params.goal)
             const candidate = {
               slug: String(slug),
