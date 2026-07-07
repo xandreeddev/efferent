@@ -172,9 +172,20 @@ sdk-core migrates incrementally instead of big-bang.
   non-deterministic, zero-reason rejections still fail) +
   `makeVerifierJudgeGate` (`packages/cli/src/foundry/`) wrapping the
   independent Opus `Verifier.gate` into a forge pipeline, fail-closed.
-  Still open: the efferent agent as an `Implementor`
-  (`EfferentImplementorLive`), `driveLoop` consuming a full foundry
-  pipeline, `efferent forge` CLI surface.
-- Later: a `test` gate (bun test in-workspace), mutation-testing gate
+- ~~The agent in the factory~~ — SHIPPED as **`packages/smith`**
+  (`@xandreed/smith`): `EfferentImplementorLive` runs the REAL efferent coder
+  as the `Implementor` (one persisted conversation per forge run; retries
+  continue it with the gate brief; `receipt.ref` links artifact ↔
+  conversation), driven by `forge` with the new `ForgeHooks` progress seam,
+  a smith-local rank-2 command/test gate, gate-suite discovery
+  (`foundry.config.ts` / tsconfig / package.json), a headless `-p` mode and a
+  Solid+OpenTUI factory-floor TUI. Deliberately a SEPARATE source-run package
+  (never imported by `packages/cli` — foundry's `typescript` dependency must
+  not enter the published bundle), so there is no `efferent forge` subcommand;
+  the entry is `bun run smith`.
+  Still open: `driveLoop` consuming a full foundry pipeline as the runtime's
+  own deliverable gate.
+- Later: mutation-testing gate
   (StrykerJS incremental — the anti-"tests that assert nothing" meta-gate),
-  fast-check property gate, judge calibration before any judge gate blocks.
+  fast-check property gate, judge calibration before any judge gate blocks;
+  promoting smith's command/test gate into foundry's built-ins.

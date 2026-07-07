@@ -9,9 +9,9 @@ import {
   type AgentHooks,
 } from "@xandreed/sdk-core"
 import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
-import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
+import { coderAgentConfig, type InstructionFile } from "@xandreed/sdk-core"
+// The web prompt + canvas fold stay CLI concerns (baselined efferent/* debt).
 import { webAgentPrompt } from "efferent/prompts/web.js"
-import type { InstructionFile } from "efferent/usecases/discoverInstructionFiles.js"
 import { mergeCanvasEntry } from "efferent/web/model.js"
 import {
   ACTION_UI_PATH,
