@@ -80,6 +80,21 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("effect/no-loop-statements flags every loop kind", async () => {
+    const findings = await findingsFor(["effect/no-loop-statements"], ["loops.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-loop-statements", file: "loops.ts", line: 3 },
+      { rule: "effect/no-loop-statements", file: "loops.ts", line: 6 },
+    ])
+  })
+
+  test("effect/no-parallel-interface flags the Schema-shadowing interface only", async () => {
+    const findings = await findingsFor(["effect/no-parallel-interface"], ["parallelInterface.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-parallel-interface", file: "parallelInterface.ts", line: 7 },
+    ])
+  })
+
   test("clean.ts passes every rule", async () => {
     const findings = await findingsFor(
       builtinRules.map((r) => String(r.id)),

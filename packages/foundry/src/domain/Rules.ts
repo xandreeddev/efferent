@@ -46,4 +46,7 @@ export class GateSuiteConfig extends Schema.Class<GateSuiteConfig>("GateSuiteCon
   rules: Schema.Array(RuleConfig),
   boundaries: Schema.optionalWith(LayerConfig, { as: "Option" }),
   evalShape: Schema.optionalWith(EvalShapeConfig, { as: "Option" }),
+  /** Run the typecheck gate too. Set false when `tsc` already runs beside
+   *  this check (e.g. the repo's `bun run typecheck`) — no double program check. */
+  typecheck: Schema.optionalWith(Schema.Boolean, { default: () => true }),
 }) {}

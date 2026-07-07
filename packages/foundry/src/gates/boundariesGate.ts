@@ -23,12 +23,16 @@ const toSourceRelative = (importerRel: string, specifier: string): string => {
   return joined.endsWith(".ts") ? joined : joined.replace(/\.js$/, ".ts")
 }
 
+/** A prefix ending in `/` or `:` is a raw prefix (`@effect/` → `@effect/ai`,
+ *  `node:` → `node:path`); otherwise it matches the exact package or its
+ *  subpaths (`effect` → `effect`, `effect/Function` — never `effect-foo`). */
 const externalAllowed = (layer: LayerSpec, specifier: string): boolean =>
   layer.externals.some(
     (prefix) =>
       specifier === prefix ||
-      specifier.startsWith(`${prefix}/`) ||
-      (prefix.endsWith(":") && specifier.startsWith(prefix)),
+      specifier.startsWith(
+        prefix.endsWith("/") || prefix.endsWith(":") ? prefix : `${prefix}/`,
+      ),
   )
 
 /** Every import (and re-export) clause of a source file, with its node. */

@@ -18,7 +18,7 @@ export const renderFindingLine = (finding: Finding): string => {
   return `${dim(`[${finding.rule}]`)} ${where}${finding.message}`
 }
 
-const renderVerdict = (verdict: GateVerdict): string =>
+const renderVerdict = (verdict: GateVerdict, detail: boolean): string =>
   Match.value(verdict).pipe(
     Match.tag("pass", (v) => {
       const advisory = v.findings.length > 0 ? `${v.findings.length} advisory · ` : ""
@@ -27,9 +27,13 @@ const renderVerdict = (verdict: GateVerdict): string =>
     Match.tag("fail", (v) =>
       [
         `${red("✗")} ${v.gate} — ${v.findings.length} error${v.findings.length === 1 ? "" : "s"} ${dim(`${Math.round(v.durationMs)}ms`)}`,
-        ...v.findings.slice(0, MAX_SHOWN).map((f) => `    ${renderFindingLine(f)}`),
-        ...(v.findings.length > MAX_SHOWN
-          ? [`    ${dim(`…and ${v.findings.length - MAX_SHOWN} more`)}`]
+        ...(detail
+          ? [
+              ...v.findings.slice(0, MAX_SHOWN).map((f) => `    ${renderFindingLine(f)}`),
+              ...(v.findings.length > MAX_SHOWN
+                ? [`    ${dim(`…and ${v.findings.length - MAX_SHOWN} more`)}`]
+                : []),
+            ]
           : []),
       ].join("\n"),
     ),
@@ -39,6 +43,11 @@ const renderVerdict = (verdict: GateVerdict): string =>
 
 export const renderReport = (report: GateReport): string =>
   [
-    ...report.verdicts.map(renderVerdict),
+    ...report.verdicts.map((v) => renderVerdict(v, true)),
     report.ok ? green("gates: PASS") : red("gates: FAIL"),
   ].join("\n")
+
+/** Verdict lines only — for baselined (ratchet) runs, where the grandfathered
+ *  findings are known noise and only the NEW ones matter. */
+export const renderReportSummary = (report: GateReport): string =>
+  report.verdicts.map((v) => renderVerdict(v, false)).join("\n")

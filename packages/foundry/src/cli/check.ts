@@ -15,7 +15,7 @@ import { makeIdiomGate } from "../gates/idiomGate.js"
 import { builtinRules } from "../gates/rules/index.js"
 import { makeTypecheckGate } from "../gates/typecheckGate.js"
 import type { TsProject } from "../gates/TsProject.js"
-import { renderFindingLine, renderReport } from "./report.js"
+import { renderFindingLine, renderReport, renderReportSummary } from "./report.js"
 
 export interface CheckArgs {
   readonly configPath: string
@@ -53,7 +53,7 @@ export const gatesFromConfig = (
     onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
     onSome: (evalShape) => [makeEvalShapeGate(evalShape, config.tsconfig)],
   }),
-  makeTypecheckGate(config.tsconfig),
+  ...(config.typecheck ? [makeTypecheckGate(config.tsconfig)] : []),
 ]
 
 /** Error findings with fingerprints keyed on their source line's content. */
@@ -126,7 +126,11 @@ export const runCheck = (
       { gates: gatesFromConfig(config), policy: "collect-all" },
       workspace,
     )
-    yield* Effect.sync(() => console.log(renderReport(report)))
+    yield* Effect.sync(() =>
+      console.log(
+        Option.isSome(args.baselinePath) ? renderReportSummary(report) : renderReport(report),
+      ),
+    )
 
     return yield* Option.match(args.baselinePath, {
       onNone: () => Effect.succeed(report.ok ? 0 : 1),
