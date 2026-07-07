@@ -36,6 +36,7 @@ const CHECKED = [
   "packages/math/src/**",
   "packages/social/src/**",
   "packages/engine/src/**",
+  "packages/providers/src/**",
 ]
 
 const config: typeof GateSuiteConfig.Encoded = {
@@ -49,6 +50,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         "packages/smith/src/**",
         "packages/math/src/**",
         "packages/engine/src/**",
+        "packages/providers/src/**",
       ],
     },
     { rule: "effect/no-let", include: CHECKED },
@@ -122,6 +124,14 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/engine/src/**",
         canImport: [],
         externals: ["effect", "@effect/ai", "bun:test"],
+      },
+      {
+        // The NEW LINE's edge: Layer impls of the engine's ports (provider
+        // router, auth/settings stores, SQLite store, fs/shell).
+        name: "providers",
+        path: "packages/providers/src/**",
+        canImport: ["engine"],
+        externals: ["effect", "@effect/", "@xandreed/engine", "node:", "bun", "bun:"],
       },
       {
         // The social engagement agent: draft-only toolkit, human review queue,

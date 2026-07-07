@@ -1,0 +1,20 @@
+{
+  "name": "@xandreed/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The new line's edge: Layer implementations of the engine's ports — provider LanguageModel router, auth/settings stores, SQLite conversation store, fs/shell.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@effect/ai": "^0.35.0",
+    "@effect/ai-anthropic": "^0.25.0",
+    "@effect/ai-google": "^0.14.0",
+    "@effect/ai-openai": "^0.39.2",
+    "@effect/platform": "^0.96.1",
+    "@xandreed/engine": "workspace:*",
+    "effect": "^3.21.4"
+  }
+}
