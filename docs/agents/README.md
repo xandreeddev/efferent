@@ -29,3 +29,10 @@ Shared architecture rules: gates fail **closed** (a gate that cannot run is a
 every enforced rule is mechanically fixable from its findings (the model
 self-corrects via `failureMode: "return"`); packages stay decoupled behind the
 boundaries gate; every new line rides the repo ratchet (zero new findings).
+
+**Testing discipline** (`../evals-v3.md`): every agent's definition of done is a
+**full-scenario battery**, not a smoke — a multi-step evals-v3 scenario pack
+(live model + deterministic evidence checks over the event trail, the persisted
+conversation, and the workspace, plus anchored judges) with a **committed
+baseline** the default eval run regression-gates against. The pack ships in the
+same PR as the agent behavior it covers.
