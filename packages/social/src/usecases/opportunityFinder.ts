@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { runAgentLoop, type AgentMessage } from "@xandreed/sdk-core"
+import { runLoop, type AgentMessage } from "@xandreed/engine"
 import { engagedTweetIds, readLedger } from "../domain/Ledger.js"
 import { LEDGER_PATH } from "../domain/paths.js"
 import { BlogReader } from "../ports/BlogReader.js"
@@ -69,7 +69,7 @@ Decide if this is an opportunity. If yes, call "read_thread" on the tweet FIRST 
                 { role: "user", content: messageText },
               ]
 
-              yield* runAgentLoop({
+              yield* runLoop({
                 system: SYSTEM_PROMPT,
                 messages,
                 toolkit: socialToolkit,

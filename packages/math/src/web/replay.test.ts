@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentMessage } from "@xandreed/sdk-core"
+import { ToolCallId } from "@xandreed/engine"
+import type { AgentMessage } from "@xandreed/engine"
 import type { MathItem } from "../domain/MathContent.js"
 import { advance, applyGrade, emptyMathModel, putItems, type MathModel } from "./model.js"
 import { composeAgentMessage } from "../protocol.js"
@@ -21,7 +22,7 @@ const renderCall = (items: ReadonlyArray<unknown>): AgentMessage => ({
   content: [
     {
       type: "tool-call",
-      toolCallId: "t1",
+      toolCallId: ToolCallId.make("t1"),
       toolName: "render_math",
       input: { items },
     },

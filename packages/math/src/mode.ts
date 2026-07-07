@@ -11,7 +11,7 @@
 import { HttpServer } from "@effect/platform"
 import { BunHttpServer } from "@effect/platform-bun"
 import { Deferred, Effect, Layer } from "effect"
-import { ConversationStore, Shell } from "@xandreed/sdk-core"
+import { ConversationStore, Shell } from "@xandreed/engine"
 import { WS_PATH } from "@xandreed/web"
 import { makeMathSession, type MathRunServices } from "./session.js"
 import { composeAgentMessage } from "./protocol.js"
@@ -114,7 +114,7 @@ export const runMathMode = (
         )
         if (input.open === true) {
           yield* shell
-            .exec({ command: browserCommand(url), cwd: input.workspace })
+            .exec(browserCommand(url), { cwd: input.workspace })
             .pipe(Effect.ignore)
         }
         yield* Deferred.await(shutdown)

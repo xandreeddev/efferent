@@ -1,6 +1,6 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Schema } from "effect"
-import type { AgentConfig } from "@xandreed/sdk-core"
+import type { AgentConfig } from "@xandreed/engine"
 import { parseMathItems, type MathItem } from "./domain/MathContent.js"
 import { mathAgentPrompt } from "./prompt.js"
 
@@ -61,9 +61,9 @@ export interface MathAgentBundle {
 
 export const mathAgentBundle = (sink: MathRenderSink): MathAgentBundle => ({
   agentConfig: {
-    key: "math-tutor",
-    prompt: mathAgentPrompt(),
+    system: mathAgentPrompt().text,
     toolkit: mathToolkit,
+    maxSteps: 12,
   },
   handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink)),
 })

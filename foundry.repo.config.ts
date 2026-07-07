@@ -164,16 +164,16 @@ const config: typeof GateSuiteConfig.Encoded = {
       },
       {
         // The social engagement agent: draft-only toolkit, human review queue,
-        // deterministic policy gates at write_draft + pre-post. Standalone —
-        // depends on core + adapters, never the cli.
+        // deterministic policy gates at write_draft + pre-post. MIGRATED to
+        // the new line: engine + providers, never the old packages.
         name: "social",
         path: "packages/social/src/**",
-        canImport: ["core", "adapters"],
+        canImport: ["engine", "providers"],
         externals: [
           "effect",
           "@effect/",
-          "@xandreed/sdk-core",
-          "@xandreed/sdk-adapters",
+          "@xandreed/engine",
+          "@xandreed/providers",
           "playwright",
           "node:",
           "bun",
@@ -181,17 +181,18 @@ const config: typeof GateSuiteConfig.Encoded = {
         ],
       },
       {
-        // The standalone math-practice product (docs/agents/education.md), on
-        // the smith pattern: its own driver over sdk-core + adapters + the web
-        // package's math views. NEVER imports the cli.
+        // The standalone math-practice product (docs/agents/education.md).
+        // MIGRATED to the new line: engine + providers. Still renders through
+        // the old web package's math views — TRANSITIONAL until those views
+        // move into math/surface (then web dies with the old line).
         name: "math",
         path: "packages/math/src/**",
-        canImport: ["core", "adapters", "web"],
+        canImport: ["engine", "providers", "web"],
         externals: [
           "effect",
           "@effect/",
-          "@xandreed/sdk-core",
-          "@xandreed/sdk-adapters",
+          "@xandreed/engine",
+          "@xandreed/providers",
           "@xandreed/web",
           "node:",
           "bun",

@@ -2,15 +2,12 @@ import { homedir } from "node:os"
 import { Command } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
-import { SettingsStore } from "@xandreed/sdk-core"
+import { SettingsStore } from "@xandreed/engine"
 import {
+  LanguageModelLive,
   LocalAuthStoreLive,
-  LocalFileSystemLive,
   LocalSettingsStoreLive,
-  HttpLive,
-  ModelLive,
-  ModelRegistryLive,
-} from "@xandreed/sdk-adapters"
+} from "@xandreed/providers"
 
 import { PlaywrightXPlatformLive } from "./adapters/PlaywrightXPlatform.js"
 import { AstroBlogReaderLive } from "./adapters/AstroBlogReader.js"
@@ -23,14 +20,12 @@ import { findOpportunitiesAndDraft } from "./usecases/opportunityFinder.js"
 /* ------------------------------------------------------------------ */
 
 const CredentialsLive = Layer.mergeAll(
-  LocalAuthStoreLive,
-  LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
+  LocalAuthStoreLive(process.cwd(), homedir()),
+  LocalSettingsStoreLive(process.cwd(), homedir()),
 )
 
 const SocialAppLive = Layer.mergeAll(
-  ModelLive,
-  LocalFileSystemLive,
-  HttpLive,
+  LanguageModelLive,
   PlaywrightXPlatformLive,
   AstroBlogReaderLive,
 ).pipe(
@@ -52,8 +47,9 @@ if (envModel !== undefined) {
 /** Settings must LOAD before any model call — the router reads the store. */
 const withSettings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
-    const settings = yield* (yield* SettingsStore).load(process.cwd(), homedir())
-    yield* Effect.logInfo(`social: agent on ${settings.model}`)
+    const settings = yield* (yield* SettingsStore).load
+    const model = settings.model._tag === "Some" ? settings.model.value : "(no model configured)"
+    yield* Effect.logInfo(`social: agent on ${model}`)
     return yield* effect
   })
 
