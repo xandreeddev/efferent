@@ -129,9 +129,10 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
     <box flexDirection="column" flexShrink={0} marginTop={1}>
       <Show when={outcome().length > 0}>
         <box flexDirection="row">
-          <text fg={outcomeColor()} wrapMode="none">{outcome()}</text>
+          {/* The outcome never shrinks — the (long) artifact path clips instead. */}
+          <text fg={outcomeColor()} wrapMode="none" flexShrink={0}>{outcome()}</text>
           <Show when={Option.isSome(floor().artifact)}>
-            <text fg={tokens.text.dim} wrapMode="none">
+            <text fg={tokens.text.dim} wrapMode="none" flexShrink={1}>
               {` · artifact ${Option.getOrElse(floor().artifact, () => "")}`}
             </text>
           </Show>
