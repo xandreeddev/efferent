@@ -10,11 +10,11 @@ const usage = (input: number, output: number, cacheRead: number) => ({
 
 describe("costAttribute", () => {
   it("prices a catalogued model and reports the cache-hit ratio", () => {
-    // claude-3-5-haiku-20241022 = $0.8 / $4 / $0.08 per 1M (input/output/cache).
+    // claude-haiku-4-5 = $1 / $5 / $0.1 per 1M (input/output/cache).
     // 800 fresh input + 200 cached + 500 output:
-    //   (800*0.8 + 200*0.08 + 500*4) / 1e6 = 2656 / 1e6
-    const a = costAttribute("anthropic", "claude-3-5-haiku-20241022", usage(1000, 500, 200))
-    expect(a["gen_ai.cost_usd"]).toBeCloseTo(0.002656, 9)
+    //   (800*1 + 200*0.1 + 500*5) / 1e6 = 3320 / 1e6
+    const a = costAttribute("anthropic", "claude-haiku-4-5", usage(1000, 500, 200))
+    expect(a["gen_ai.cost_usd"]).toBeCloseTo(0.00332, 9)
     expect(a["gen_ai.cache_hit_ratio"]).toBeCloseTo(0.2, 9)
   })
 

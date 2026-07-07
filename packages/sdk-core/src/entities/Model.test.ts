@@ -40,7 +40,7 @@ describe("contextWindowFor — anthropic", () => {
     expect(contextWindowFor("anthropic", "claude-sonnet-4-6")).toBe(1_000_000)
   })
   it("reads a 200k window from the catalogue", () => {
-    expect(contextWindowFor("anthropic", "claude-sonnet-4-5")).toBe(200_000)
+    expect(contextWindowFor("anthropic", "claude-haiku-4-5")).toBe(200_000)
   })
   it("strips a trailing date stamp to hit the base id", () => {
     expect(contextWindowFor("anthropic", "claude-opus-4-8-20260101")).toBe(1_000_000)

@@ -14,6 +14,13 @@ export interface ImplementInput {
 
 export interface ImplementReceipt {
   readonly filesTouched: ReadonlyArray<WorkspacePath>
+  /**
+   * Opaque provenance for the attempt — e.g. `"conversation:<uuid>"` for an
+   * implementor whose work is a persisted agent conversation. Threaded into
+   * the `AttemptRecord` so the artifact links back to the implementor's own
+   * record of the work.
+   */
+  readonly ref?: Option.Option<string>
 }
 
 /**
