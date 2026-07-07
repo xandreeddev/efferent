@@ -482,6 +482,11 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
           })
         }
       }
+      // The result parts don't carry the call's arguments — thread them from
+      // the step's tool calls by id so `onAfterToolCall` honours its contract
+      // (consumers like smith's filesTouched read `args.path` off the AFTER
+      // event, where `ok` is known).
+      const argsByCallId = new Map(toolCalls.map((tc) => [tc.id, tc.args]))
       for (const tr of responseToolResults(content)) {
         yield* recordToolCall(tr.toolName, tr.ok)
         if (!tr.ok) {
@@ -495,7 +500,7 @@ export const runAgentLoop = <Tools extends Record<string, Tool.Any>, R>(
             turnIndex,
             toolCallId: tr.id,
             toolName: tr.toolName,
-            args: {},
+            args: argsByCallId.get(tr.id) ?? {},
             ok: tr.ok,
             result: tr.result,
           })

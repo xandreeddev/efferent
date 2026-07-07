@@ -3,6 +3,12 @@
 The factory: a verification loop + gate pipeline. `forge(spec)` drives spec →
 implement (via the `Implementor` port) → deterministic gate pipeline → typed
 feedback → retry until sound. See `docs/foundry.md` for the full design.
+`ForgeOptions.hooks` (`ForgeHooks` — onAttemptStart / onImplemented / onReport /
+onOutcome, observe-only `Effect<void>`) is the driver-UI progress seam, and an
+implementor's `receipt.ref` (opaque provenance, e.g. `conversation:<uuid>`)
+threads into `AttemptRecord.implementorRef` so the persisted artifact links
+back to the implementor's own record. The reference consumer is
+`@xandreed/smith` — the efferent coder standing at this forge.
 
 **This package is written in the style its own gates enforce, and CI runs
 `bun run foundry check` on this source (`foundry.config.ts`) — a violation

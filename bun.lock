@@ -106,6 +106,22 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/smith": {
+      "name": "@xandreed/smith",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/platform": "^0.96.1",
+        "@effect/platform-bun": "^0.89.0",
+        "@opentui/core": "0.3.1",
+        "@opentui/solid": "0.3.1",
+        "@xandreed/foundry": "workspace:*",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
+        "effect": "^3.21.4",
+        "solid-js": "1.9.12",
+      },
+    },
     "packages/social": {
       "name": "@xandreed/social",
       "version": "0.0.0",
@@ -622,6 +638,8 @@
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 
     "@xandreed/sdk-core": ["@xandreed/sdk-core@workspace:packages/sdk-core"],
+
+    "@xandreed/smith": ["@xandreed/smith@workspace:packages/smith"],
 
     "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
 

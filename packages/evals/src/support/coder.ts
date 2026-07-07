@@ -4,19 +4,21 @@ import {
   ApprovalAllowAllLive,
   type AgentHooks,
   buildScopeRuntime,
+  coderAgentConfig,
+  coderPrompt,
   ConversationStore,
+  discoverInstructionFiles,
   discoverScopeTree,
+  loadAgents,
+  loadMemory,
+  loadSkills,
   loadTools,
   runAgent,
 } from "@xandreed/sdk-core"
 import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
-import { coderAgentConfig } from "efferent/usecases/coderAgentConfig.js"
-import { coderPrompt } from "efferent/prompts/coder.js"
+// The built-in fleet stays a CLI concern — the ONE remaining efferent/* import
+// (baselined debt; the routing/fleet suites need the real roster).
 import { withBuiltinAgents } from "efferent/usecases/directive.js"
-import { discoverInstructionFiles } from "efferent/usecases/discoverInstructionFiles.js"
-import { loadAgents } from "efferent/usecases/loadAgents.js"
-import { loadMemory } from "efferent/usecases/loadMemory.js"
-import { loadSkills } from "efferent/usecases/loadSkills.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 

@@ -30,6 +30,8 @@
       "@xandreed/sdk-adapters/*": ["packages/sdk-adapters/src/*"],
       "@xandreed/foundry": ["packages/foundry/src/index.ts"],
       "@xandreed/foundry/*": ["packages/foundry/src/*"],
+      "@xandreed/smith": ["packages/smith/src/index.ts"],
+      "@xandreed/smith/*": ["packages/smith/src/*"],
       "@xandreed/web": ["packages/web/src/index.ts"],
       "@xandreed/web/*": ["packages/web/src/*"],
       "efferent/*": ["packages/cli/src/*"]

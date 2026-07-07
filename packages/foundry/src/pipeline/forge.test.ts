@@ -106,4 +106,70 @@ describe("forge — the factory loop", () => {
     expect(result.run.attempts.every((a) => !a.report.ok)).toBe(true)
     expect(Option.isNone(result.run.attempts[1]!.feedback)).toBe(true)
   })
+
+  test("hooks fire in loop order at every seam", async () => {
+    const program = Effect.gen(function* () {
+      const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
+      const calls = yield* Ref.make(0)
+      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (entry: string) => Ref.update(seen, (all) => [...all, entry])
+      yield* forge({
+        spec: spec(3),
+        pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+        hooks: {
+          onAttemptStart: (attempt) => note(`start:${attempt}`),
+          onImplemented: (attempt, receipt) =>
+            note(`impl:${attempt}:${receipt.filesTouched.length}`),
+          onReport: (attempt, report, feedback) =>
+            note(`report:${attempt}:${report.ok ? "ok" : "fail"}:${Option.isSome(feedback) ? "brief" : "none"}`),
+          onOutcome: (run) => note(`outcome:${run.outcome._tag}`),
+        },
+      }).pipe(
+        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(artifacts))),
+      )
+      return yield* Ref.get(seen)
+    })
+    const seen = await Effect.runPromise(program)
+
+    expect(seen).toEqual([
+      "start:1",
+      "impl:1:1",
+      "report:1:fail:brief",
+      "start:2",
+      "impl:2:1",
+      "report:2:ok:none",
+      "outcome:accepted",
+    ])
+  })
+
+  test("the implementor's ref threads into each attempt record", async () => {
+    const refImplementor = Layer.succeed(Implementor, {
+      implement: () =>
+        Effect.succeed({
+          filesTouched: [WorkspacePath.make("src/stringStats.ts")],
+          ref: Option.some("conversation:abc-123"),
+        }),
+    })
+    const program = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      return yield* forge({
+        spec: spec(2),
+        pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+      }).pipe(Effect.provide(Layer.mergeAll(refImplementor, memorySink(artifacts))))
+    })
+    const result = await Effect.runPromise(program)
+
+    expect(result.run.attempts.length).toBe(2)
+    expect(
+      result.run.attempts.map((a) => Option.getOrNull(a.implementorRef)),
+    ).toEqual(["conversation:abc-123", "conversation:abc-123"])
+    // A receipt without a ref (the recording implementor) stays None — covered
+    // by the first test's artifact via the same decode path.
+  })
 })
