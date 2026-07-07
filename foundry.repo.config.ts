@@ -37,6 +37,7 @@ const CHECKED = [
   "packages/social/src/**",
   "packages/engine/src/**",
   "packages/providers/src/**",
+  "packages/surface/src/**",
 ]
 
 const config: typeof GateSuiteConfig.Encoded = {
@@ -51,6 +52,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         "packages/math/src/**",
         "packages/engine/src/**",
         "packages/providers/src/**",
+        "packages/surface/src/**",
       ],
     },
     { rule: "effect/no-let", include: CHECKED },
@@ -132,6 +134,14 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/providers/src/**",
         canImport: ["engine"],
         externals: ["effect", "@effect/", "@xandreed/engine", "node:", "bun", "bun:"],
+      },
+      {
+        // The NEW LINE's UI substrate: html template, sanitizer, validateUi,
+        // protocol contract. Pure — effect only, nothing internal.
+        name: "surface",
+        path: "packages/surface/src/**",
+        canImport: [],
+        externals: ["effect", "bun:test"],
       },
       {
         // The social engagement agent: draft-only toolkit, human review queue,
