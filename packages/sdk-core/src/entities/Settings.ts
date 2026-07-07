@@ -131,24 +131,6 @@ export const Settings = Schema.Struct({
         "Auto-fold threshold: when a turn's context reaches this percent of the window, the TUI runs :handoff automatically at the next turn boundary. Unset → 85; 0 disables.",
     }),
   ),
-  autoLoop: Schema.optional(
-    Schema.Boolean.annotations({
-      description:
-        "The mandatory swarm gate (structural, ONE tier): when a run used sub-agents, the runtime submits the aggregate deliverable to the independent Opus gate at the ROOT, and on 'needs work' re-runs with the gate's reasons (capped by maxLoopAttempts + a 15-min gate wall clock). Every round is persisted to gate_verdicts (including 'unavailable'), so verification is auditable. Unset → on; false → no gate, deliver on the architect's in-fleet verdict alone.",
-    }),
-  ),
-  autoDistill: Schema.optional(
-    Schema.Boolean.annotations({
-      description:
-        "Learn-for-next-runs: at each finished turn the runtime mines the conversation for reusable skills/constraints (cheap fast tier), verifies each with the Opus gate, and persists the survivors so future runs inherit them. Unset → on; false → no automatic distillation (run `efferent distill` manually instead).",
-    }),
-  ),
-  maxLoopAttempts: Schema.optional(
-    Schema.Number.annotations({
-      description:
-        "Max Opus-gate rounds before the run delivers what it has. Unset → 2 (one retry — each retry re-runs the whole fleet, expensive by construction). 1 disables the retry (gate once, deliver). The 15-min gate wall clock + token budget + spawn depth are the hard ceilings regardless.",
-    }),
-  ),
   theme: Schema.optional(
     Schema.String.annotations({
       description:

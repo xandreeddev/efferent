@@ -109,8 +109,6 @@ export const SwitchableStoresLive: Layer.Layer<
       markPending: (id, prompt) => withConv((s) => s.markPending(id, prompt)),
       clearPending: (id) => withConv((s) => s.clearPending(id)),
       listPending: (dir) => withConv((s) => s.listPending(dir)),
-      recordGateVerdict: (record) => withConv((s) => s.recordGateVerdict(record)),
-      listGateVerdicts: (id) => withConv((s) => s.listGateVerdicts(id)),
     })
 
     const tree = ContextTreeStore.of({

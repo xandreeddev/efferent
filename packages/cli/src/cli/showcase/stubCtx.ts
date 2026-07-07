@@ -85,7 +85,5 @@ export const makeStubCtx = (opts: {
     liveAgents: () => [],
     importAgents: () => {},
     importTools: () => {},
-    getDirective: () => undefined,
-    setDirective: () => {},
   }
 }

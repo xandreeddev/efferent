@@ -9,7 +9,7 @@ import { ancestorDirs } from "./workspaceDiscovery.js"
  * the renderer applies the prompt budget).
  *
  * `kind` distinguishes hand-written guidance (`agent` — `AGENT.md`) from the
- * **distilled constraints** the self-improving loop writes
+ * **curated constraints** the human keeps
  * (`constraints` — `.efferent/CONSTRAINTS.md`). Both are always-on hard rules,
  * but constraints render under their own prominent `# Constraints` heading so
  * the model reads the loop's learned rules as a first-class layer. See
@@ -79,7 +79,7 @@ interface FoundInstructionFile {
 
 /**
  * The files discovered per ancestor dir. `AGENT.md` is hand-written guidance;
- * `.efferent/CONSTRAINTS.md` is the self-improving loop's distilled hard-rules
+ * `.efferent/CONSTRAINTS.md` is the workspace's curated hard-rules
  * file (`docs/self-improving-loop.md`) — same always-on-hard-rule semantics, but
  * rendered under its own `# Constraints` heading.
  */
@@ -150,7 +150,7 @@ export const renderInstructionsSection = (
   const constraints = renderFileGroup(
     constraintFiles,
     "# Constraints",
-    "Hard rules distilled from past runs by the self-improving loop and verified before they were saved. They exist to stop a mistake from recurring — follow them unless the user explicitly overrides one in conversation. Each bullet is a learned rule (the `[id] (✓n ✗m)` prefix is its identity + how often it has helped/hurt).",
+    "Hard rules this workspace keeps to stop known mistakes from recurring — follow them unless the user explicitly overrides one in conversation.",
   )
   const instructions = renderFileGroup(
     agentFiles,

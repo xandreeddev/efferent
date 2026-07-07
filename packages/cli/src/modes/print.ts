@@ -10,7 +10,6 @@ import {
   SettingsStore,
   Shell,
   UtilityLlm,
-  Verifier,
   WebSearch,
   runAgent,
   type AgentDefinition,
@@ -24,7 +23,6 @@ import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import { runFleetToCompletion, withInboxDrain } from "./fleetCompletion.js"
-import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -89,13 +87,6 @@ const consumeEvents = (
           }
           break
         }
-        case "gate":
-          if (event.verdict === "unavailable" || event.verdict === "blocked") {
-            yield* writeStderr(
-              `${ansi.fgBrightRed}[gate] ${event.verdict}: ${event.reasons.join("; ")}${ansi.reset}`,
-            )
-          }
-          break
         case "error":
           yield* writeStderr(`${ansi.fgBrightRed}[error] ${event.message}${ansi.reset}`)
           break
@@ -142,7 +133,6 @@ export const runPrintMode = (
   | ContextTreeStore
   | SettingsStore
   | WebSearch
-  | Verifier
   | UtilityLlm
 > =>
   Effect.gen(function* () {
@@ -235,19 +225,4 @@ export const runPrintMode = (
       yield* writeStderr(`${ansi.fgYellow}[outcome] ${note}${ansi.reset}`)
     }
     process.exitCode = outcomeExitCode(fold)
-
-    // Learn for next runs: the answer is already on stdout, so distillation runs
-    // after delivery (gated/bounded/fail-soft in headlessDistill). It delays exit,
-    // not the answer — and closes the self-improving loop on the headless path.
-    const learned = yield* headlessDistill({
-      conversationId: cid,
-      repoDir: input.cwd,
-      skills: input.skills,
-      memory: input.memory,
-    })
-    if (learned.length > 0) {
-      yield* writeStderr(
-        `${ansi.fgGreen}learned ${learned.length} reusable ${learned.length === 1 ? "lesson" : "lessons"} for next time: ${learned.map((r) => r.candidate.name).join(", ")}${ansi.reset}`,
-      )
-    }
   })

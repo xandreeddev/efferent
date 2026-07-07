@@ -47,8 +47,6 @@ export const makeRemoteWorkspace = (
         t.subscribe(id, since).pipe(Stream.provideService(HttpClient.HttpClient, client)),
       getSettings: () => withClient(t.getSettings()),
       updateSettings: (patch) => withClient(t.updateSettings(patch)),
-      getDirective: () => withClient(t.getDirective()),
-      setDirective: (d) => withClient(t.setDirective(d)),
       importAgents: (spec) => withClient(t.importAgents(spec)),
       importTools: (spec) => withClient(t.importTools(spec)),
     })

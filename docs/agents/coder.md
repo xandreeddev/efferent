@@ -81,10 +81,17 @@ Enforced (refine): the draft changes only through `propose_spec` (schema
 validation at the tool boundary); only the human locks. Eval-only: refiner
 quality (does the spec capture the ask?) — future suite.
 
-## Part 2 — the CLI reshape (PR-sequenced)
+## Part 2 — the CLI reshape (RESCOPED 2026-07-07: freeze, don't reshape)
 
-The CLI adapts to foundry: shed the shadow-foundry, adopt the spec, make the
-gates the definition of done.
+**Decision (superseding the R2–R4 plan below):** the old CLI is FROZEN — R1's
+excision lands (plus the mechanical compile fixes it forces in `packages/cli`),
+npm `efferent` keeps publishing as-is, and **no further CLI reshaping happens**.
+R2's `:spec` sessions exist on the new line as `smith spec`; R3's deterministic
+definition-of-done IS smith's forge loop; R4's default flip is moot for a frozen
+surface. Every new agent (education, social, ui-builder) is built as its own
+package on the smith pattern (sdk-core + adapters + foundry, never cli). A
+future thin CLI can grow out of smith's chassis when it's earned. R2–R4 below
+are kept for the record only.
 
 - **R1 — excise**: delete `ports/Verifier` + `ClaudeHeadless*`/`Unavailable*`
   verifiers, `gateLoop`, `autoLoop`/`maxLoopAttempts`, the driveLoop mandatory

@@ -17,7 +17,7 @@ import type { AgentBus } from "./agentBus.js"
  * and synthesize — looping until nothing is outstanding (or a round cap).
  *
  * Two requirements the caller must honour:
- * 1. The service layers (handler layer / Approval / Verifier) must be provided
+ * 1. The service layers (handler layer / Approval) must be provided
  *    **around this whole call**, NOT per turn — the fleet's forked fibers
  *    keep running between turns and need those layers alive.
  * 2. `runTurn` must use hooks wrapped with {@link withInboxDrain} so a synthesis

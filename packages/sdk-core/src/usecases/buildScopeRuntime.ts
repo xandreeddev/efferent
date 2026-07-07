@@ -25,7 +25,6 @@ import { Http } from "../ports/Http.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { Shell } from "../ports/Shell.js"
 import { UtilityLlm } from "../ports/UtilityLlm.js"
-import { Verifier } from "../ports/Verifier.js"
 import { WebSearch } from "../ports/WebSearch.js"
 import { agentSpanAttributes, subagentSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
@@ -85,11 +84,7 @@ export interface ScopeRuntime {
     Tool.HandlersFor<Record<string, Tool.Any>>,
     never,
     // `ConversationStore | SettingsStore | UtilityLlm` (beyond the tool ports):
-    // the handoff-brief seed (`generateHandoffBrief`) runs on the utility tier,
-    // and the store/settings stay provided for the scheduled-run gate (the
-    // root-tier `gateOnce` moving onto the `spawnAgent` cron path). The
-    // per-coordinator gate that first widened this R is gone — gating is
-    // root-only now (one tier).
+    // the handoff-brief seed (`generateHandoffBrief`) runs on the utility tier.
     | FileSystem
     | Shell
     | Http
@@ -99,7 +94,6 @@ export interface ScopeRuntime {
     | SettingsStore
     | UtilityLlm
     | Approval
-    | Verifier
   >
   /**
    * **Human-driven resume**: continue an existing context-tree node in place —

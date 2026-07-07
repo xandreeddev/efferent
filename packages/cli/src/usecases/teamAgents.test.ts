@@ -47,34 +47,17 @@ describe("the built-in coding team", () => {
     expect(ARCHITECT_AGENT.body).toContain("BLOCKED")
   })
 
-  it("the gate is STRUCTURAL: the coordinator never carries verify_with_gate/note_constraint (any setting)", () => {
-    // The Opus gate + learn + retry run in the runtime when the coordinator
-    // returns — not via tools the model drives. So those tools are gone at every
-    // setting; autoLoop only shapes whether the prompt tells it to EXPECT the gate.
-    for (const autoLoop of [true, false]) {
-      const c = coordinatorAgent({ autoLoop, maxLoopAttempts: 4 })
-      expect(c.tools).not.toContain("verify_with_gate")
-      expect(c.tools).not.toContain("note_constraint")
-      expect(c.body).not.toContain("verify_with_gate")
-      // still a lead (spawns + gathers), still doesn't write code itself
-      expect(c.tools).toContain("run_agent")
-      expect(c.tools).toContain("wait_for_agents")
-      expect(c.tools).not.toContain("edit_file")
-    }
-  })
-
-  it("autoLoop ON → DELIVER is gate-aware (deliver honestly, expect the automatic re-gate)", () => {
-    const c = coordinatorAgent({ autoLoop: true, maxLoopAttempts: 4 })
-    expect(c.body).toContain("DELIVER")
-    expect(c.body).toContain("INDEPENDENT Opus gate")
-    expect(c.body).toContain("automatically")
-    expect(COORDINATOR_AGENT.body).toContain("INDEPENDENT Opus gate") // default export
-  })
-
-  it("autoLoop OFF → plain architect-only deliver, no gate mention", () => {
-    const c = coordinatorAgent({ autoLoop: false, maxLoopAttempts: 3 })
-    expect(c.body).toContain("DELIVER")
+  it("the coordinator carries no gate tools and never mentions an LLM gate", () => {
+    const c = coordinatorAgent()
+    expect(c.tools).not.toContain("verify_with_gate")
+    expect(c.tools).not.toContain("note_constraint")
+    expect(c.body).not.toContain("verify_with_gate")
     expect(c.body).not.toContain("Opus gate")
+    expect(c.body).toContain("DELIVER")
+    // still a lead (spawns + gathers), still doesn't write code itself
+    expect(c.tools).toContain("run_agent")
+    expect(c.tools).toContain("wait_for_agents")
+    expect(c.tools).not.toContain("edit_file")
   })
 
   it("implementing specialists are leaf coders: full coding toolkit + comms, but no run_agent/wait_for_agents", () => {

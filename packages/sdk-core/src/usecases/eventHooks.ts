@@ -104,15 +104,6 @@ export const makeAgentEventHooks = <R = never>(
       role: event.role,
       usage: event.usage,
     }),
-  onGateResult: (event) =>
-    publish({
-      type: "gate",
-      verdict: event.verdict,
-      reasons: event.reasons,
-      attempt: event.attempt,
-      filesChanged: event.filesChanged,
-      ...(event.advisory !== undefined ? { advisory: event.advisory } : {}),
-    }),
   onLlmRetry: (event) =>
     publish({
       type: "llm_retry",

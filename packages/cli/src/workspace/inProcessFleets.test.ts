@@ -65,8 +65,6 @@ const multiConv = Layer.effect(
       markPending: () => Effect.void,
       clearPending: () => Effect.void,
       listPending: () => Effect.succeed([]),
-      recordGateVerdict: () => Effect.void,
-      listGateVerdicts: () => Effect.succeed([]),
     })
   }),
 )

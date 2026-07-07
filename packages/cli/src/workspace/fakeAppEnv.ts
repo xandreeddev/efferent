@@ -20,7 +20,7 @@ import {
   WebSearch,
   Workspace,
 } from "@xandreed/sdk-core"
-import { NoopTerminalSessionLive, UnavailableVerifierLive } from "@xandreed/sdk-adapters"
+import { NoopTerminalSessionLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "./inProcess.js"
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
 import { workspaceRouter } from "../transport/http/server.js"
@@ -91,8 +91,6 @@ export const stubConv = (rootCid: string) =>
         markPending: () => Effect.void,
         clearPending: () => Effect.void,
         listPending: () => Effect.succeed([]),
-        recordGateVerdict: () => Effect.void,
-        listGateVerdicts: () => Effect.succeed([]),
       })
     }),
   )
@@ -134,8 +132,7 @@ export const fakeEnvLayersNoConv = (modelText?: string) =>
     fakeAuthStore,
     fakeModel(modelText),
     stubTree,
-    UnavailableVerifierLive,
-  )
+      )
 
 /** A no-op AuthStore (the daemon router's /auth/reload needs it; tests never log in). */
 export const fakeAuthStore = Layer.succeed(

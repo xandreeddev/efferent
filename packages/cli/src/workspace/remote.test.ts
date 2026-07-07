@@ -38,14 +38,4 @@ describe("remote Workspace adapter", () => {
     expect(result.busy).toBe(false)
   })
 
-  test("directive set/get round-trips through the remote adapter", async () => {
-    const directive = await Effect.runPromise(
-      Effect.gen(function* () {
-        const ws = yield* makeRemoteWorkspace("")
-        yield* ws.setDirective({ objective: "remote goal" })
-        return yield* ws.getDirective()
-      }).pipe(Effect.scoped, Effect.provide(fakeServerLive(FAKE_ROOT_CID))),
-    )
-    expect(directive?.objective).toBe("remote goal")
-  })
 })

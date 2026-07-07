@@ -10,7 +10,6 @@ import {
   SettingsStore,
   Shell,
   UtilityLlm,
-  Verifier,
   WebSearch,
   runAgent,
   type AgentDefinition,
@@ -24,7 +23,6 @@ import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
 import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import { runFleetToCompletion, withInboxDrain } from "./fleetCompletion.js"
-import { headlessDistill } from "./headlessDistill.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import type { AgentEvent } from "../events.js"
 import { makeEventHooks } from "../events.js"
@@ -81,7 +79,6 @@ export const runJsonMode = (
   | ContextTreeStore
   | SettingsStore
   | WebSearch
-  | Verifier
   | UtilityLlm
 > =>
   Effect.gen(function* () {
@@ -153,22 +150,6 @@ export const runJsonMode = (
       // and so live fibers can't keep the process alive past the run.
       Effect.ensuring(runtime.bus.shutdown().pipe(Effect.ignore)),
     )
-
-    // Learn for next runs: mine + persist reusable lessons, emitted as a final
-    // `learned` event on the stream (gated/bounded/fail-soft in headlessDistill)
-    // — the self-improving loop's "learn" step on the headless json path.
-    const learned = yield* headlessDistill({
-      conversationId: cid,
-      repoDir: input.cwd,
-      skills: input.skills,
-      memory: input.memory,
-    })
-    if (learned.length > 0) {
-      yield* Queue.offer(queue, {
-        type: "learned",
-        lessons: learned.map((r) => ({ name: r.candidate.name, kind: r.candidate.kind })),
-      })
-    }
 
     // Deterministic drain: the run is done, so a sentinel is strictly the last
     // event; joining the consumer guarantees agent_end (and every trailing tool

@@ -1,7 +1,7 @@
 // The smith driver edge: argv → SmithRunConfig → composition root → run.
 // Mirrors the efferent CLI's AppLive (same adapters, same ~/.efferent auth +
 // config.json tiers, same SQLite conversation store) minus the TUI-cli extras,
-// with the smith settings overlay on top and headless-safe Approval/Verifier.
+// with the smith settings overlay on top and a headless-safe Approval.
 
 import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
@@ -18,7 +18,6 @@ import {
   ModelRegistryLive,
   StoresLive,
   TmuxTerminalSessionLive,
-  UnavailableVerifierLive,
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
@@ -186,8 +185,7 @@ export const smithAppLive = (run: SmithRunConfig) =>
     // Headless-safe by construction: bash stays behind --allow-bash, and the
     // foundry gate pipeline replaces the runtime's Opus swarm gate.
     ApprovalAllowAllLive,
-    UnavailableVerifierLive,
-  ).pipe(
+    ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         LocalAuthStoreLive,

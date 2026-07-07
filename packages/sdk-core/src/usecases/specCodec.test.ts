@@ -65,9 +65,11 @@ describe("spec codec — round trip", () => {
   })
 
   test("property: grammar-safe docs always round-trip", () => {
+    // "Grammar-safe" now includes canonical whitespace: encode normalizes prose
+    // bullets (runs -> single space), so the canonical form is the fixed point.
     const safeLine = fc
       .string({ minLength: 1, maxLength: 60, unit: "grapheme-ascii" })
-      .map((s) => s.replace(/[\n\r#:-]/g, "x").trim())
+      .map((s) => s.replace(/[\n\r#:-]/g, "x").replace(/\s+/g, " ").trim())
       .filter((s) => s.length > 0)
     fc.assert(
       fc.property(

@@ -15,10 +15,9 @@ import {
   loadTools,
   runAgent,
 } from "@xandreed/sdk-core"
-import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 // The built-in fleet stays a CLI concern — the ONE remaining efferent/* import
 // (baselined debt; the routing/fleet suites need the real roster).
-import { withBuiltinAgents } from "efferent/usecases/directive.js"
+import { withBuiltinAgents } from "efferent/usecases/builtinAgents.js"
 import type { EvalEnv } from "../env.js"
 import { readWorkspaceFile, withTempWorkspace } from "./workspace.js"
 
@@ -70,7 +69,7 @@ export const buildCoderConfig = (
     const memory = yield* loadMemory(dir, homedir())
     const loaded = yield* loadAgents(dir, homedir())
     const agents = includeFleet
-      ? withBuiltinAgents(loaded, { autoLoop: false, maxLoopAttempts: 1 })
+      ? withBuiltinAgents(loaded)
       : loaded
     const tools = yield* loadTools(dir, homedir())
     const instructionFiles = yield* discoverInstructionFiles(dir, homedir())
@@ -132,7 +131,6 @@ export const runCoder = (
         Effect.provide(ApprovalAllowAllLive),
         // No `claude` in evals: the verify gate reports unavailable (so the
         // toolkit's Verifier requirement resolves without shelling out).
-        Effect.provide(UnavailableVerifierLive),
       )
 
       const tools = yield* Ref.get(toolsRef)
