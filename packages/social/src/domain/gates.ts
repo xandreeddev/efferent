@@ -51,7 +51,11 @@ const WEEK_MS = 7 * DAY_MS
 
 /** t.co wraps every URL to 23 chars regardless of length. */
 const T_CO_LENGTH = 23
-const URL_RE = /https?:\/\/[^\s]+/g
+/** What X auto-links: schemed URLs, or bare domains WITH a path (live-caught:
+ *  kimi writes `xandreed.dev/posts/x` bare — X links it, so the allowlist and
+ *  the t.co length must both see it; a pathless bare token like `Effect.ts`
+ *  stays prose, or every TypeScript filename would false-positive). */
+const URL_RE = /https?:\/\/[^\s]+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s]+/gi
 
 export const effectiveLength = (content: string): number => {
   const urls = content.match(URL_RE) ?? []
@@ -186,7 +190,7 @@ const linkAllowlist: Gate = (draft, ctx) => {
   const urls = draft.content.match(URL_RE) ?? []
   return urls
     .filter((url) => {
-      const host = url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] ?? ""
+      const host = url.replace(/^https?:\/\//i, "").split(/[/?#]/)[0] ?? ""
       return !ctx.policy.linkAllowlist.some(
         (allowed) => host === allowed || host.endsWith(`.${allowed}`),
       )

@@ -75,11 +75,19 @@ export const readLedger = (path: string): Effect.Effect<ReadonlyArray<LedgerEntr
 /* ------------------------------------------------------------------ */
 
 /** Tweet ids we ever ENGAGED (drafted/queued/posted — a discard still counts
- *  as engaged-once: never re-draft a target a human already rejected). */
+ *  as engaged-once: never re-draft a target a human already rejected). A
+ *  gate_rejected row is a BOUNCED attempt, not an engagement — counting it
+ *  blocked the model's own fix-and-resend retry (live-caught: the length
+ *  rejection deduped the corrected draft ten seconds later). */
 export const engagedTweetIds = (entries: ReadonlyArray<LedgerEntry>): ReadonlySet<string> =>
   new Set(
     entries
-      .filter((e) => e.targetTweetId !== undefined && e.event !== "skipped")
+      .filter(
+        (e) =>
+          e.targetTweetId !== undefined &&
+          e.event !== "skipped" &&
+          e.event !== "gate_rejected",
+      )
       .map((e) => e.targetTweetId as string),
   )
 

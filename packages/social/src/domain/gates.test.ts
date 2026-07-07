@@ -107,9 +107,10 @@ describe("the 11 policy gates", () => {
     ).toContain("banned-content")
   })
 
-  test("7 t.co-weighted length", () => {
+  test("7 t.co-weighted length (bare-domain links weigh 23 too)", () => {
     const url = "https://xandreed.dev/posts/a-very-long-slug-that-would-normally-blow-the-budget-entirely"
     expect(effectiveLength(`x ${url}`)).toBe(2 + 23)
+    expect(effectiveLength("x xandreed.dev/posts/a-very-long-slug-here-that-runs-on")).toBe(2 + 23)
     const long = reply({ content: `${"a".repeat(280)} extra` })
     expect(rules(long, ctx())).toContain("length-280")
   })
@@ -120,12 +121,23 @@ describe("the 11 policy gates", () => {
     ).toContain("max-mentions")
   })
 
-  test("9 link allowlist", () => {
+  test("9 link allowlist — schemed AND bare-domain links (X auto-links both)", () => {
     expect(
       rules(reply({ content: "see https://evil.example.com/post" }), ctx()),
     ).toContain("link-allowlist")
     expect(
       rules(reply({ content: "see https://xandreed.dev/posts/effect-retries" }), ctx()),
+    ).not.toContain("link-allowlist")
+    // Bare domain with a path is a real link on X — the allowlist must see it.
+    expect(
+      rules(reply({ content: "see evil.example.com/post" }), ctx()),
+    ).toContain("link-allowlist")
+    expect(
+      rules(reply({ content: "walkthrough: xandreed.dev/posts/effect-retries" }), ctx()),
+    ).not.toContain("link-allowlist")
+    // Pathless prose tokens (Effect.ts, config.json) are NOT links.
+    expect(
+      rules(reply({ content: "Effect.ts beats config.json for this" }), ctx()),
     ).not.toContain("link-allowlist")
   })
 

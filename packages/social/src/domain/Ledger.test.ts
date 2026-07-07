@@ -39,15 +39,17 @@ describe("engagement ledger", () => {
     expect(rows.map((r) => r.targetTweetId)).toEqual(["1", "2"])
   })
 
-  test("engagedTweetIds counts drafted/posted/discarded, never skipped", () => {
+  test("engagedTweetIds counts drafted/posted/discarded — never skipped or gate_rejected (a bounce must not dedup its own retry)", () => {
     const ids = engagedTweetIds([
       entry({ targetTweetId: "a" }),
       entry({ event: "discarded", targetTweetId: "b" }),
       entry({ event: "skipped", targetTweetId: "c" }),
+      entry({ event: "gate_rejected", targetTweetId: "d" }),
     ])
     expect(ids.has("a")).toBe(true)
     expect(ids.has("b")).toBe(true)
     expect(ids.has("c")).toBe(false)
+    expect(ids.has("d")).toBe(false)
   })
 
   test("postedInWindow slices by rolling window", () => {
