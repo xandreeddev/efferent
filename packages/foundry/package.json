@@ -1,0 +1,16 @@
+{
+  "name": "@xandreed/foundry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The factory: a verification loop + gate pipeline — spec → implement → deterministic gates → typed feedback → retry until sound. Effect-native, and enforces the style it is written in.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "effect": "^3.21.4",
+    "typescript": "^5.9.3"
+  }
+}

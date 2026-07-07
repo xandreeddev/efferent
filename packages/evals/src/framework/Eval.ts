@@ -1,4 +1,4 @@
-import type { Effect } from "effect"
+import type { Array as Arr, Effect } from "effect"
 
 /**
  * A minimal, Effect-native eval library — the `data → task → scorers` shape
@@ -51,9 +51,13 @@ export interface EvalSpec<I, O, T, R> {
     | ReadonlyArray<EvalCase<I, T>>
     | Effect.Effect<ReadonlyArray<EvalCase<I, T>>, unknown, R>
   readonly task: (input: I, kase: EvalCase<I, T>) => Effect.Effect<O, unknown, R>
-  readonly scorers: ReadonlyArray<Scorer<I, O, T, unknown, R>>
-  /** Mean-score pass bar, 0..1. Default 0.6. */
-  readonly threshold?: number
+  /** Non-empty BY TYPE: a suite with `scorers: []` would silently score 0 —
+   *  that shape no longer typechecks (and the foundry `eval-shape` gate
+   *  enforces the same statically). */
+  readonly scorers: Arr.NonEmptyReadonlyArray<Scorer<I, O, T, unknown, R>>
+  /** Mean-score pass bar, 0..1. REQUIRED and honored by the run gate — an
+   *  implicit default hides the real bar (the old hardcoded 0.6). */
+  readonly threshold: number
   /** How many cases run at once. Default 1 (gentle on rate limits). */
   readonly concurrency?: number
   /**

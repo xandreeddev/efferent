@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Install the local git pre-commit hook for the core-purity ban.
+ * Install the local git pre-commit hook for the foundry gate suite.
  *
  * Runs automatically via the root `prepare` script on `bun install`, giving
  * contributors fast local feedback before code reaches CI. It is a convenience,
@@ -15,8 +15,9 @@ import { join } from "node:path"
 
 const MARKER = "efferent core-purity hook"
 const HOOK = `#!/bin/sh
-# ${MARKER} — core stays pure (errors are values). Bypass (discouraged): git commit --no-verify
-exec bun scripts/banTryCatch.ts
+# ${MARKER} — the foundry repo gates: core purity, Effect idioms (ratcheted),
+# dependency direction. Bypass (discouraged): git commit --no-verify
+exec bun packages/foundry/src/main.ts check --config foundry.repo.config.ts --baseline packages/foundry/baselines/repo.json
 `
 
 const ROOT = join(import.meta.dir, "..")
@@ -33,9 +34,9 @@ mkdirSync(hooksDir, { recursive: true })
 const hookPath = join(hooksDir, "pre-commit")
 
 if (existsSync(hookPath) && !readFileSync(hookPath, "utf-8").includes(MARKER)) {
-  console.error("• existing pre-commit hook left untouched — add `bun scripts/banTryCatch.ts` to it manually")
+  console.error("• existing pre-commit hook left untouched — add the foundry check to it manually")
   process.exit(0)
 }
 
 writeFileSync(hookPath, HOOK, { mode: 0o755 })
-console.error("✓ installed .git/hooks/pre-commit (core-purity ban)")
+console.error("✓ installed .git/hooks/pre-commit (foundry repo gates)")

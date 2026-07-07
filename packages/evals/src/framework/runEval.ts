@@ -62,7 +62,7 @@ const samplePassed = <I, O, T, R>(spec: EvalSpec<I, O, T, R>, s: SampleResult): 
     const sc = s.scores.find((x) => x.name === spec.gate!.scorer)
     return sc !== undefined && sc.score >= (spec.gate.min ?? 1)
   }
-  return s.mean >= (spec.threshold ?? 0.6)
+  return s.mean >= (spec.threshold)
 }
 
 /** One sample of a case: run the task (exit-captured) then every scorer
@@ -202,7 +202,7 @@ export const runEval = <I, O, T, R>(
 
     const end = yield* Clock.currentTimeMillis
     const mean = average(results.map((r) => r.mean))
-    const threshold = spec.threshold ?? 0.6
+    const threshold = spec.threshold
 
     yield* Effect.forEach(results, (r) => recordEvalCase(spec.name, r.mean >= threshold), {
       discard: true,
