@@ -48,8 +48,6 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   liveAgents: () => [],
   importAgents: () => {},
   importTools: () => {},
-  getDirective: () => undefined,
-  setDirective: () => {},
 })
 
 test("the App paints under tokyo-night (the reactive token proxy survives the native renderer)", async () => {

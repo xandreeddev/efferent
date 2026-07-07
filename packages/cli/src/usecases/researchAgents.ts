@@ -103,44 +103,9 @@ export const RESEARCHER_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-/** Inserted before REPORT when `autoLoop` is on. The gate is STRUCTURAL now — the
- *  research-coordinator's synthesized answer is validated by the Opus gate the
- *  moment it returns (no `verify_with_gate` tool, no manual loop); on "needs work"
- *  the runtime feeds the reasons back and re-runs it. The deliverable is PROSE (a
- *  sourced answer, no files), so the gate judges the answer itself. The prompt's
- *  job is just to make it report honestly and expect that automatic retry. */
-const RESEARCH_GATE_NOTE = `4a. EXPECT THE GATE. Your synthesized answer is validated by an INDEPENDENT Opus gate the moment you return — automatically; you don't call it. If it comes back "needs work", you'll be re-run with its concrete reasons (a part of the question left unanswered, an unsourced or likely-wrong claim, an unsupported conclusion) to fix — re-research the weak angle and re-synthesize; the retry and the learning are automatic. So report HONESTLY: a fully sourced answer, with any remaining gaps stated plainly.
-`
-
-/**
- * Build the research-coordinator for the current settings. The Opus deliverable
- * gate + learn + retry are STRUCTURAL (run by the runtime when it returns — see
- * `buildScopeRuntime`/`gateOnce`), NOT tools the model drives, so it carries no
- * `verify_with_gate`/`note_constraint`. `autoLoop` only shapes whether the prompt
- * tells it to expect the gate; off → today's synthesize-and-report single pass.
- */
-export const researchCoordinatorAgent = (
-  opts: { readonly autoLoop: boolean; readonly maxLoopAttempts: number } = {
-    autoLoop: true,
-    maxLoopAttempts: 3,
-  },
-): AgentDefinition =>
-  opts.autoLoop
-    ? {
-        ...RESEARCH_COORDINATOR_AGENT,
-        body: (RESEARCH_COORDINATOR_AGENT.body ?? "").replace(
-          "5. REPORT.",
-          `${RESEARCH_GATE_NOTE}5. REPORT.`,
-        ),
-      }
-    : RESEARCH_COORDINATOR_AGENT
-
-/** The built-in research team, merged into the loaded roles by `withBuiltinAgents`.
- *  `loopOpts` shapes the coordinator's gate/learn/retry (see {@link researchCoordinatorAgent}). */
-export const builtinResearchAgents = (
-  loopOpts?: { readonly autoLoop: boolean; readonly maxLoopAttempts: number },
-): ReadonlyArray<AgentDefinition> => [
-  loopOpts === undefined ? RESEARCH_COORDINATOR_AGENT : researchCoordinatorAgent(loopOpts),
+/** The built-in research team, merged into the loaded roles by `withBuiltinAgents`. */
+export const builtinResearchAgents = (): ReadonlyArray<AgentDefinition> => [
+  RESEARCH_COORDINATOR_AGENT,
   RESEARCHER_AGENT,
 ]
 

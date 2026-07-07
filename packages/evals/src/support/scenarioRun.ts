@@ -12,7 +12,6 @@ import {
   runAgent,
   SettingsStore,
 } from "@xandreed/sdk-core"
-import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import type { EvalEnv } from "../env.js"
 import { buildCoderConfig } from "./coder.js"
 import { dockerShellLayer, type Sandbox, withSandbox } from "./dockerSandbox.js"
@@ -331,7 +330,6 @@ export const runScenario = (
       const baseRun = runAgent(config, id, prompt, hooks, dir).pipe(
         Effect.provide(runtime.handlerLayer),
         Effect.provide(ApprovalAllowAllLive),
-        Effect.provide(UnavailableVerifierLive),
       )
       const result = yield* (sb !== undefined
         ? baseRun.pipe(Effect.provide(dockerShellLayer(sb)))

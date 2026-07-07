@@ -11,7 +11,6 @@ import {
   Shell,
   TerminalSession,
   UtilityLlm,
-  Verifier,
   WebSearch,
 } from "@xandreed/sdk-core"
 import type { ConversationId, DirEntry } from "@xandreed/sdk-core"
@@ -57,7 +56,6 @@ const stubServices = Layer.mergeAll(
   Layer.succeed(TerminalSession, TerminalSession.of({} as never)),
   Layer.succeed(ContextTreeStore, ContextTreeStore.of({} as never)),
   Layer.succeed(UtilityLlm, UtilityLlm.of({} as never)),
-  Layer.succeed(Verifier, Verifier.of({} as never)),
   Layer.succeed(LanguageModel.LanguageModel, {} as never),
   Layer.succeed(
     ConversationStore,

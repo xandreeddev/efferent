@@ -1,4 +1,3 @@
-import { homedir } from "node:os"
 import { Cause, Clock, Effect, Exit, Fiber, Layer, Ref, Runtime, Schema, Stream } from "effect"
 import type { LanguageModel } from "@effect/ai"
 import {
@@ -12,12 +11,9 @@ import {
   ContextNodeId,
   ConversationId,
   generateSessionTitle,
-  renderDirectiveSection,
   resumeAgent,
   runAgent,
-  runAutoDistill,
   SettingsStore,
-  Verifier,
   Workspace,
   WorkspaceError,
   conversationSessionId,
@@ -32,7 +28,6 @@ import {
   type AgentContextNode,
   type AgentDefinition,
   type Approval,
-  type Directive,
   type Job,
   type Scope,
   type Memory,
@@ -48,7 +43,6 @@ import {
 } from "@xandreed/sdk-core"
 import {
   buildScopeRuntime,
-  gateOnce,
   inboxToMessages,
   SWEEP_INTERVAL_MS,
   sweepStrandedRuns,
@@ -97,7 +91,6 @@ export type WorkspaceRunServices =
   | ContextTreeStore
   | SettingsStore
   | UtilityLlm
-  | Verifier
   | LanguageModel.LanguageModel
 
 /** A fleet to seed at build (the daemon passes the workspace's conversations). */
@@ -223,51 +216,6 @@ export const makeJobController = (input: {
    *  no client surface (the cron-only daemon). */
   readonly send?: (cid: ConversationId, prompt: string) => Effect.Effect<void>
 }): JobController => {
-  // A one-shot gate over the scheduled run's deliverable: cron runs were the
-  // one path with NO verification at all (`spawnAgent` bypasses `driveLoop`).
-  // No retry loop here — unattended runs have no one to steer a re-run — but
-  // the verdict is judged, PERSISTED to the audit trail, and folded into the
-  // returned outcome, so a scheduled run can never silently ship junk.
-  const gateScheduled = (
-    job: Job,
-    r: { summary: string; filesChanged: ReadonlyArray<string>; nodeId: ContextNodeId },
-  ) =>
-    Effect.gen(function* () {
-      const settings = yield* (yield* SettingsStore).get()
-      if (settings.autoLoop === false) return undefined
-      const tree = yield* ContextTreeStore
-      const conv = yield* ConversationStore
-      const all = yield* tree
-        .listTree(job.conversationId)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AgentContextNode>))
-      const self = all.filter((n) => n.id === r.nodeId)
-      const step = yield* gateOnce({
-        task: job.prompt,
-        summary: r.summary,
-        repoDir: job.folder,
-        freshNodes: self,
-        attempt: 1,
-        maxAttempts: 1,
-      })
-      if (step.kind === "no-subagents") return undefined
-      yield* conv
-        .recordGateVerdict({
-          conversationId: job.conversationId,
-          attempt: 1,
-          verdict: step.event.verdict,
-          reasons: step.event.reasons,
-          filesChanged: step.event.filesChanged,
-          advisory: step.event.advisory === true,
-          durationMs: 0,
-          ...(step.event.verdict === "unavailable"
-            ? { error: step.event.reasons.join("; ") }
-            : {}),
-        })
-        .pipe(Effect.ignore)
-      return step.event.verdict
-      // Cause-proof (defects too): the gate is an observer here — an audit
-      // hiccup must never turn a finished scheduled run into a failure.
-    }).pipe(Effect.catchAllCause(() => Effect.succeed(undefined)))
 
   const spawnScheduled = (job: Job) =>
     input.runtime
@@ -284,20 +232,10 @@ export const makeJobController = (input: {
       })
       .pipe(
         Effect.provide(input.scheduledApproval),
-        Effect.flatMap((r) =>
-          gateScheduled(job, r).pipe(
-            Effect.map((verdict) => ({ ...r, gateVerdict: verdict })),
-          ),
-        ),
         Effect.map((r) => ({
           conversationId: job.conversationId,
           nodeId: r.nodeId,
-          outcome:
-            r.gateVerdict === "needs_work" || r.gateVerdict === "blocked"
-              ? ("partial" as const)
-              : r.outcome === "partial"
-                ? ("partial" as const)
-                : ("ok" as const),
+          outcome: r.outcome === "partial" ? ("partial" as const) : ("ok" as const),
         })),
         // A scheduled job's failure is recorded on its context node — but the
         // RETURN must say so too (the old success-shaped swallow made a failed
@@ -407,7 +345,6 @@ export const makeInProcessWorkspace = (
     )
 
     const runStates = yield* Ref.make(new Map<string, RunState>())
-    const directiveRef = yield* Ref.make<Directive | undefined>(undefined)
     // Roots with an auto-delivery resume in flight — guards two near-simultaneous
     // top-level completions from each kicking off a resume turn.
     const autoDelivering = yield* Ref.make(new Set<string>())
@@ -507,9 +444,7 @@ export const makeInProcessWorkspace = (
                 undefined,
                 deps.memory,
               )
-        const directive = yield* Ref.get(directiveRef)
-        const directiveText = renderDirectiveSection(directive)
-        return directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
+        return base
       })
 
     const rootHooksFor = (rootKey: string): AgentHooks<never> => ({
@@ -565,43 +500,6 @@ export const makeInProcessWorkspace = (
           nm.set(key, { ...s, queue: [] })
           return [combined, nm]
         })
-        // Learn for next runs: at a true turn boundary (nothing queued), mine
-        // this conversation for reusable lessons and persist them so the NEXT
-        // turn inherits them — the self-improving loop's "learn" step. Background
-        // + fail-soft. This closes the loop on the DEFAULT daemon path, which
-        // previously never distilled (only `efferent code` did).
-        if (next === undefined && fleet !== undefined) {
-          const settings = yield* settingsStore.get()
-          if (settings.autoDistill !== false) {
-            const cid = fleet.rootCid
-            const existing = [
-              ...deps.skills.map((s) => s.name),
-              ...deps.memory.map((m) => m.name),
-            ]
-            const distillEffect = runAutoDistill({
-              conversationId: cid,
-              repoDir: deps.cwd,
-              globalDir: homedir(),
-              existing,
-            }).pipe(
-              Effect.flatMap((saved) =>
-                saved.length === 0
-                  ? Effect.void
-                  : publish({
-                      type: "learned",
-                      lessons: saved.map((r) => ({
-                        name: r.candidate.name,
-                        kind: r.candidate.kind,
-                      })),
-                    }),
-              ),
-              Effect.ignore,
-            )
-            yield* Effect.sync(() => {
-              Runtime.runFork(rt)(distillEffect)
-            })
-          }
-        }
         if (next !== undefined && fleet !== undefined) yield* startRootTurn(fleet.rootCid, next)
       })
 
@@ -827,11 +725,9 @@ export const makeInProcessWorkspace = (
       snapshot: () =>
         Effect.gen(function* () {
           const sessions = yield* listSummaries()
-          const directive = yield* Ref.get(directiveRef)
           const recent = yield* mostRecentFleet()
           return {
             sessions,
-            directive: directive ?? null,
             activeSessionId: recent !== undefined ? conversationSessionId(recent.rootCid) : null,
           } satisfies WorkspaceSnapshot
         }),
@@ -1103,8 +999,6 @@ export const makeInProcessWorkspace = (
         // `| undefined` the partial schema's type adds.
         settingsStore.update((curr) => ({ ...curr, ...patch }) as typeof curr),
 
-      getDirective: () => Ref.get(directiveRef),
-      setDirective: (d) => Ref.set(directiveRef, d),
 
       importAgents: (spec) =>
         importAgentsFromGithub(spec, join(deps.cwd, ".efferent/agents")).pipe(

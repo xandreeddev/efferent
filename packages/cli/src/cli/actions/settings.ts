@@ -246,27 +246,6 @@ export const openSettingsView = (store: TuiStore) =>
         hint: "sending folds the previous turns",
       },
       {
-        key: "autoLoop",
-        label: "autoLoop",
-        value: String(current.autoLoop ?? true),
-        kind: "boolean",
-        hint: "fleet validates with the Opus gate + retries till sound",
-      },
-      {
-        key: "autoDistill",
-        label: "autoDistill",
-        value: String(current.autoDistill ?? true),
-        kind: "boolean",
-        hint: "learn reusable skills/constraints at each turn end",
-      },
-      {
-        key: "maxLoopAttempts",
-        label: "maxLoopAttempts",
-        value: String(current.maxLoopAttempts ?? 3),
-        kind: "readonly",
-        hint: "max Opus-gate rounds (use :set)",
-      },
-      {
         key: "telemetry",
         label: "telemetry",
         value: String(current.telemetry ?? false),

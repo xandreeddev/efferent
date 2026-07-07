@@ -8,7 +8,6 @@ import {
   type AgentEvent,
   type AgentHooks,
 } from "@xandreed/sdk-core"
-import { UnavailableVerifierLive } from "@xandreed/sdk-adapters"
 import { coderAgentConfig, type InstructionFile } from "@xandreed/sdk-core"
 // The web prompt + canvas fold stay CLI concerns (baselined efferent/* debt).
 import { webAgentPrompt } from "efferent/prompts/web.js"
@@ -160,7 +159,6 @@ const runWebUiAgent = (
       const result = yield* runAgent(config, id, prompt, hooks, dir).pipe(
         Effect.provide(runtime.handlerLayer),
         Effect.provide(ApprovalAllowAllLive),
-        Effect.provide(UnavailableVerifierLive),
       )
       const renders = yield* Ref.get(rendersRef)
       const toolNames = yield* Ref.get(toolsRef)

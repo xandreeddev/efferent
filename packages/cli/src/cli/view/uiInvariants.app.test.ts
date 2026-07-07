@@ -45,8 +45,6 @@ const fakeCtx = (store: TuiStore): TuiContext => ({
   liveAgents: () => [],
   importAgents: () => {},
   importTools: () => {},
-  getDirective: () => undefined,
-  setDirective: () => {},
 })
 
 test("read_file renders as the pill + line count, NOT a content body dump", async () => {

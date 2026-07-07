@@ -18,10 +18,8 @@ import {
   WorkspaceMetrics,
   WorkspaceSnapshot,
   type ApprovalDecision,
-  type Directive,
   type SeqEvent,
 } from "@xandreed/sdk-core"
-import { Directive as DirectiveSchema } from "@xandreed/sdk-core"
 import { frameToSeqEvent, makeSseParser } from "./sse.js"
 
 /**
@@ -33,7 +31,6 @@ import { frameToSeqEvent, makeSseParser } from "./sse.js"
  * the remote adapter is a thin pass-through. The ONLY HTTP client code.
  */
 
-const DirectiveBody = Schema.Struct({ directive: Schema.NullOr(DirectiveSchema) })
 
 const toWs = (e: unknown): WorkspaceError =>
   new WorkspaceError({
@@ -87,14 +84,6 @@ export interface HttpTransport {
     id: SessionId,
     since?: number,
   ) => Stream.Stream<SeqEvent, WorkspaceError, HttpClient.HttpClient>
-  readonly getDirective: () => Effect.Effect<
-    Directive | undefined,
-    WorkspaceError,
-    HttpClient.HttpClient
-  >
-  readonly setDirective: (
-    d: Directive | undefined,
-  ) => Effect.Effect<void, WorkspaceError, HttpClient.HttpClient>
   readonly importAgents: (
     spec: string,
   ) => Effect.Effect<ImportResult, WorkspaceError, HttpClient.HttpClient>
@@ -173,11 +162,6 @@ export const makeHttpTransport = (baseUrl: string): HttpTransport => {
         Stream.mapError(toWs),
       )
     },
-    getDirective: () =>
-      getJson("/directive", DirectiveBody).pipe(
-        Effect.map((b) => b.directive ?? undefined),
-      ),
-    setDirective: (d) => postVoid("/directive", { directive: d ?? null }),
     importAgents: (spec) => postJson("/agents/import", { spec }, ImportResult),
     importTools: (spec) => postJson("/tools/import", { spec }, ImportResult),
     reloadAuth: () => postVoid("/auth/reload"),

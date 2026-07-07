@@ -7,7 +7,6 @@ import {
   SettingsStore,
   Shell,
   UtilityLlm,
-  Verifier,
   WebSearch,
   type AgentDefinition,
   type Scope,
@@ -70,9 +69,6 @@ export const runDaemonMode = (
   // does (provided by the daemon command's `AppLive`).
   | SettingsStore
   | UtilityLlm
-  // The workspace runtime (which the scheduler builds) now distills at turn end,
-  // which runs the Opus gate via the Verifier (also from `AppLive`).
-  | Verifier
 > =>
   Effect.gen(function* () {
     const runtime = buildScopeRuntime(input.rootScope, {

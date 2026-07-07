@@ -27,7 +27,6 @@ describe("applySmithSettings — precedence", () => {
     expect(out.codeModel).toBe(SMITH_MODEL_DEFAULTS.code)
     expect(out.fastModel).toBe(SMITH_MODEL_DEFAULTS.fast)
     expect(out.openCodeThinkingMode).toBe("high")
-    expect(out.autoLoop).toBe(false)
     expect(out.agentMode).toBe("direct")
     expect(out.maxSteps).toBe(40)
     expect(out.subAgentMaxChildren).toBe(4)
@@ -41,7 +40,6 @@ describe("applySmithSettings — precedence", () => {
       model: "google:gemini-3.5-pro",
       codeModel: "opencode:glm-5.1",
       openCodeThinkingMode: "off",
-      autoLoop: true,
       agentMode: "swarm",
       maxSteps: 60,
       subAgentMaxChildren: 9,
@@ -52,7 +50,6 @@ describe("applySmithSettings — precedence", () => {
     // fastModel untouched by the user → smith default still applies.
     expect(out.fastModel).toBe(SMITH_MODEL_DEFAULTS.fast)
     expect(out.openCodeThinkingMode).toBe("off")
-    expect(out.autoLoop).toBe(true)
     expect(out.agentMode).toBe("swarm")
     expect(out.maxSteps).toBe(60)
     expect(out.subAgentMaxChildren).toBe(9)

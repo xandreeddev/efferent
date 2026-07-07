@@ -121,31 +121,6 @@ export const AgentEvent = Schema.Union(
     role: Schema.Literal("fast"),
     usage: TokenUsage,
   }),
-  Schema.Struct({
-    /** The turn-boundary distiller persisted reusable lessons (skills/constraints/
-     *  memory) the next run will inherit — emitted on every run path so the
-     *  self-improving loop's "learn for next time" step is visible. */
-    type: Schema.Literal("learned"),
-    lessons: Schema.Array(
-      Schema.Struct({ name: Schema.String, kind: Schema.String }),
-    ),
-  }),
-  // The mandatory swarm gate validated (or rejected) the finished objective —
-  // emitted once per gate round whenever a run used sub-agents, so verification is
-  // never silent. `sound` ships; `needs_work`/`blocked` carry the reasons the loop
-  // learns from + retries on; `unavailable` means no verdict was possible (no
-  // `claude`) and the run proceeded LOUDLY unverified, never a silent pass.
-  Schema.Struct({
-    type: Schema.Literal("gate"),
-    verdict: Schema.Literal("sound", "needs_work", "blocked", "unavailable"),
-    reasons: Schema.Array(Schema.String),
-    attempt: Schema.Number,
-    filesChanged: Schema.Array(Schema.String),
-    // A non-sound verdict on a research/prose deliverable (no files changed) that
-    // was DELIVERED anyway with these reasons as advisory notes — not fail-closed.
-    // The UI renders it as notes, not a red failure.
-    advisory: Schema.optional(Schema.Boolean),
-  }),
   // The root turn's terminal event. `messages` is GONE from the wire — it had
   // zero consumers and could be megabytes per turn on SSE. `outcome`/`reason`
   // carry root honesty (a step-capped root is `partial`, an interrupted one

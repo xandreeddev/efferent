@@ -95,30 +95,11 @@ Protocol:
 /** The roster footer, shared by both variants. */
 const COORD_ROSTER = `Your roster: frontend (UI/client) · backend (server/data/API) · qa (tests) · product (clarify requirements) · implementer (generic coder) · architect (read-only reviewer). When a job needs a specialist no role covers, define one INLINE: run_agent({ folder, task, instructions: "<persona + approach>", tools?: [...] }) — give a read-only tools allowlist when it only investigates.`
 
-/** Phase 6 when the self-improving loop is ON. The gate is STRUCTURAL now — it
- *  runs automatically the moment the coordinator returns (no `verify_with_gate`
- *  tool to call, no manual loop): on a `needs_work` verdict the runtime feeds the
- *  reasons back and re-runs the coordinator. So the prompt's job is just to make
- *  it deliver HONESTLY and expect that feedback-driven retry. */
-const COORD_DELIVER_GATED = `6. DELIVER — then expect the gate. When the architect has approved the pieces, assemble the result, run the project's own checks (build / typecheck / tests) and confirm they pass — never deliver code that doesn't build — then report to your caller: a short summary of what changed, the files touched, and the architect's verdict. Your finished deliverable is then validated by an INDEPENDENT Opus gate before it's accepted — automatically, the moment you return; you don't call it. If it comes back "needs work", you'll be re-run with the gate's concrete reasons and the failed pieces to fix (the retry and the learning are automatic). So deliver HONESTLY: never claim done what isn't, and if something is partial or blocked, say so plainly with evidence — don't dress it up.`
-
-/** Phase 6 when the loop is OFF: deliver on the architect's verdict (no Opus gate). */
+/** Phase 6: deliver on the architect's verdict. */
 const COORD_DELIVER_PLAIN = `6. DELIVER. When the pieces pass the architect's review, assemble the result, run the project's own checks (build / typecheck / tests) and confirm they pass — never deliver code that doesn't build — then report to your caller: a short summary of what changed, the files touched, and the architect's verdict. If something is partial or blocked, say so plainly with evidence — don't dress it up.`
 
-/**
- * Build the coordinator definition for the current settings. The Opus gate +
- * learn + retry are STRUCTURAL (run by the runtime when the coordinator returns —
- * see `buildScopeRuntime`/`gateOnce`), NOT tools the model drives, so the
- * coordinator carries no `verify_with_gate`/`note_constraint`. `autoLoop` only
- * shapes the DELIVER phase (gate-aware vs the plain architect-only cycle);
- * `maxLoopAttempts` is the runtime's cap, not the prompt's.
- */
-export const coordinatorAgent = (
-  opts: { readonly autoLoop: boolean; readonly maxLoopAttempts: number } = {
-    autoLoop: true,
-    maxLoopAttempts: 3,
-  },
-): AgentDefinition => ({
+/** Build the coordinator definition. */
+export const coordinatorAgent = (): AgentDefinition => ({
   name: "coordinator",
   description:
     "Leads a coding team: plans the work, assembles the right specialists, coordinates them, validates with the architect, and delivers",
@@ -135,17 +116,11 @@ export const coordinatorAgent = (
     "wait_for_agents",
     ...COMMS_TOOLS,
   ],
-  body: [
-    COORD_PHASES_1_TO_5,
-    opts.autoLoop ? COORD_DELIVER_GATED : COORD_DELIVER_PLAIN,
-    COORD_ROSTER,
-  ].join("\n\n"),
+  body: [COORD_PHASES_1_TO_5, COORD_DELIVER_PLAIN, COORD_ROSTER].join("\n\n"),
   sourcePath: "<builtin>",
 })
 
-/** The default coordinator (self-improving loop on, 3-round cap) — used by the
- *  static {@link BUILTIN_TEAM_AGENTS} export; the live team is built per-settings
- *  by {@link builtinTeamAgents}. */
+/** The default coordinator. */
 export const COORDINATOR_AGENT: AgentDefinition = coordinatorAgent()
 
 /**
@@ -255,18 +230,9 @@ export const PRODUCT_AGENT: AgentDefinition = {
   sourcePath: "<builtin>",
 }
 
-/**
- * The built-in coding team for the current settings — the coordinator is built
- * per `autoLoop`/`maxLoopAttempts` (see {@link coordinatorAgent}); the rest are
- * static. Merged into the loaded roles by `withBuiltinAgents`.
- */
-export const builtinTeamAgents = (
-  opts: { readonly autoLoop: boolean; readonly maxLoopAttempts: number } = {
-    autoLoop: true,
-    maxLoopAttempts: 3,
-  },
-): ReadonlyArray<AgentDefinition> => [
-  coordinatorAgent(opts),
+/** The built-in coding team, merged into the loaded roles by `withBuiltinAgents`. */
+export const builtinTeamAgents = (): ReadonlyArray<AgentDefinition> => [
+  coordinatorAgent(),
   ARCHITECT_AGENT,
   PRODUCT_AGENT,
   FRONTEND_AGENT,
@@ -275,5 +241,5 @@ export const builtinTeamAgents = (
   IMPLEMENTER_AGENT,
 ]
 
-/** The default team (loop on, 3-round cap) — back-compat static export. */
+/** The default team — back-compat static export. */
 export const BUILTIN_TEAM_AGENTS: ReadonlyArray<AgentDefinition> = builtinTeamAgents()

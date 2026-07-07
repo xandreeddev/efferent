@@ -19,7 +19,7 @@ import {
   UtilityLlm,
   WebSearch,
 } from "@xandreed/sdk-core"
-import { NoopTerminalSessionLive, UnavailableVerifierLive } from "@xandreed/sdk-adapters"
+import { NoopTerminalSessionLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "./inProcess.js"
 import { makeFleetSupervisor } from "../cli/state/fleet.js"
 
@@ -101,7 +101,6 @@ const stubPortsNoModel = Layer.mergeAll(
   ),
   stubTree,
   NoopTerminalSessionLive,
-  UnavailableVerifierLive,
 )
 
 const stubPorts = Layer.mergeAll(stubPortsNoModel, doneModel)
@@ -148,8 +147,6 @@ const stubConv = () =>
         markPending: (_id, prompt) => Ref.set(pending, prompt),
         clearPending: () => Ref.set(pending, undefined),
         listPending: () => Effect.succeed([]),
-        recordGateVerdict: () => Effect.void,
-        listGateVerdicts: () => Effect.succeed([]),
       })
     }),
   )
@@ -287,26 +284,4 @@ describe("in-process Workspace", () => {
     expect(phases.after).toBe("idle")
   })
 
-  test("directive round-trips through get/setDirective", async () => {
-    const directive = await Effect.runPromise(
-      Effect.gen(function* () {
-        const ws = yield* makeInProcessWorkspace({
-          roots: [{ cid: ROOT_CID as never }],
-          rootScope,
-          cwd: "/tmp/ws",
-          skills: [],
-          memory: [],
-          agents: [],
-          tools: [],
-          instructionFiles: [],
-          approvalLayer: ApprovalAllowAllLive,
-          fleet: makeFleetSupervisor(),
-        })
-        yield* ws.setDirective({ objective: "ship the daemon", criteria: "tests green" })
-        return yield* ws.getDirective()
-      }).pipe(Effect.provide(Layer.mergeAll(stubPorts, stubConv()))),
-    )
-    expect(directive?.objective).toBe("ship the daemon")
-    expect(directive?.criteria).toBe("tests green")
-  })
 })

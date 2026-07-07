@@ -391,36 +391,6 @@ export const makeEventReducer = (
         )
         return
 
-      case "learned":
-        // The turn-boundary distiller persisted reusable lessons the next run
-        // inherits — surface it on the rail (the visible proof the loop closed).
-        if (event.lessons.length > 0) {
-          store.pushBlock({
-            kind: "info",
-            text: `learned ${event.lessons.length} reusable ${event.lessons.length === 1 ? "lesson" : "lessons"} for next time: ${event.lessons.map((l) => l.name).join(", ")} (:set autoDistill off to disable)`,
-          })
-        }
-        return
-
-      case "gate": {
-        // The mandatory swarm gate validated (or rejected) the finished objective.
-        // Surface every verdict on the rail — verification is never silent.
-        const files =
-          event.filesChanged.length > 0 ? ` · ${event.filesChanged.length} file(s)` : ""
-        const text =
-          event.verdict === "sound"
-            ? `✓ verifier: deliverable SOUND (attempt ${event.attempt})${files}`
-            : event.verdict === "unavailable"
-              ? `⚠ verifier UNAVAILABLE — work NOT verified: ${event.reasons.join("; ")}`
-              : event.advisory === true
-                ? // Research/prose deliverable delivered WITH the reviewer's notes —
-                  // not a failure, so render as advisory notes, not a red ✗.
-                  `⚑ verifier notes (delivered): ${event.reasons.join("; ")}`
-                : `✗ verifier: ${event.verdict.toUpperCase().replace("_", " ")} (attempt ${event.attempt})${files} — ${event.reasons.join("; ")}`
-        store.pushBlock({ kind: "info", text })
-        return
-      }
-
       case "assistant_message": {
         // Sub-agent narration (it carries a `nodeId`, stamped by the inner
         // hooks) never lands on the parent rail and never counts toward the

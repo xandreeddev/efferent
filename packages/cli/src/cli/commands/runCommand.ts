@@ -23,7 +23,6 @@ import {
 import { logout, openLoginFlow, openLogoutPicker } from "../actions/login.js"
 import { openOnboardingFlow } from "../actions/onboarding.js"
 import { openConversationTraces, openFleetDashboard } from "../actions/observability.js"
-import { parseDirective } from "../../usecases/directive.js"
 import {
   addJob,
   loadJobs,
@@ -249,12 +248,10 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
       return
     }
     case ":fleet": {
-      // The orchestration cockpit snapshot: the standing goal (P4), the live
-      // fired agents (P3/fleet), and this workspace's scheduled jobs (P5) — the
-      // three persistent orchestration concerns, in one readout. (The header's
-      // ◆ N agents chip tracks the live fleet continuously via the event pump;
-      // :tree shows the full run tree.)
-      const d = ctx.getDirective()
+      // The orchestration cockpit snapshot: the live fired agents (P3/fleet)
+      // and this workspace's scheduled jobs (P5). (The header's ◆ N agents chip
+      // tracks the live fleet continuously via the event pump; :tree shows the
+      // full run tree.)
       const fired = ctx.listFleet()
       // The whole live fleet from the bus — model-spawned background agents
       // included, not just `:spawn`-fired ones.
@@ -265,11 +262,6 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
             Effect.sync(() => {
               const mine = jobs.filter((j) => j.cwd === store.status().cwd)
               const lines: Array<string> = ["── fleet ──"]
-              lines.push(
-                d === undefined
-                  ? "directive: none (:goal <objective> to set)"
-                  : `directive: ${d.objective}${d.criteria !== undefined ? ` — done when ${d.criteria}` : ""}`,
-              )
               lines.push(
                 live.length === 0
                   ? "running agents: none (ask for coding work, or :spawn <agent> <folder> <task>)"
@@ -283,7 +275,7 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
                   ? "scheduled: none (:schedule add …)"
                   : `scheduled: ${mine.map((j) => `${j.cron} → ${j.prompt}`).join(" · ")}`,
               )
-              lines.push("verbs: :spawn · :stop <id> · :goal · :verify · :schedule · :tree · :agents · :tools")
+              lines.push("verbs: :spawn · :stop <id> · :schedule · :tree · :agents · :tools")
               store.pushBlock({ kind: "info", text: lines.join("\n") })
             }),
           ),
@@ -401,54 +393,6 @@ export const runCommand = (ctx: TuiContext, line: string): void => {
             .map((t) => `  ${t.name}(${t.params.map((p) => p.name).join(", ")}) — ${t.description}`)
             .join("\n"),
       })
-      return
-    }
-    case ":goal": {
-      if (arg === undefined || arg.length === 0) {
-        const d = ctx.getDirective()
-        store.pushBlock({
-          kind: "info",
-          text:
-            d === undefined
-              ? "no directive set — :goal <objective> [:: done-when criteria]"
-              : `directive: ${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""} (:verify to check · :goal clear to drop)`,
-        })
-        return
-      }
-      if (arg.trim() === "clear") {
-        ctx.setDirective(undefined)
-        store.pushBlock({ kind: "info", text: "directive cleared" })
-        return
-      }
-      const d = parseDirective(arg)
-      if (d === undefined) {
-        store.pushBlock({ kind: "info", text: "usage: :goal <objective> [:: done-when criteria]" })
-        return
-      }
-      ctx.setDirective(d)
-      store.pushBlock({
-        kind: "info",
-        text: `directive set — pursued every turn until :verify confirms it.\n${d.objective}${d.criteria !== undefined ? `\ndone when: ${d.criteria}` : ""}`,
-      })
-      return
-    }
-    case ":verify": {
-      const d = ctx.getDirective()
-      const adhoc = arg !== undefined && arg.length > 0
-      const objective = adhoc ? arg! : d?.objective
-      if (objective === undefined) {
-        store.pushBlock({
-          kind: "info",
-          text: "nothing to verify — set a goal (:goal <objective>) or :verify <objective>",
-        })
-        return
-      }
-      const criteria = adhoc ? undefined : d?.criteria
-      const task =
-        `Verify whether this objective is genuinely met:\n${objective}` +
-        (criteria !== undefined ? `\nAcceptance: ${criteria}` : "") +
-        `\n\nRead the workspace, check it independently, and report MET / NOT MET / INCONCLUSIVE with concrete evidence.`
-      ctx.spawnAgent("verifier", ".", task)
       return
     }
     case ":traces":

@@ -32,7 +32,6 @@ export const applySmithSettings = (merged: Settings, run: SmithRunConfig): Setti
   ),
   openCodeThinkingMode:
     merged.openCodeThinkingMode ?? SMITH_SETTING_DEFAULTS.openCodeThinkingMode,
-  autoLoop: merged.autoLoop ?? SMITH_SETTING_DEFAULTS.autoLoop,
   agentMode: merged.agentMode ?? SMITH_SETTING_DEFAULTS.agentMode,
   maxSteps:
     merged.maxSteps === DefaultSettings.maxSteps

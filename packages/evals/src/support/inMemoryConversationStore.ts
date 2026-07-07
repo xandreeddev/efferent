@@ -6,7 +6,6 @@ import {
   ConversationNotFound,
   ConversationStore,
   ConversationStoreError,
-  type GateVerdictRecord,
 } from "@xandreed/sdk-core"
 
 /**
@@ -45,9 +44,6 @@ export const InMemoryConversationStoreLive = Layer.effect(
   ConversationStore,
   Effect.gen(function* () {
     const ref = yield* Ref.make(new Map<string, Conv>())
-    const verdictsRef = yield* Ref.make<
-      ReadonlyArray<GateVerdictRecord & { readonly createdAt: number }>
-    >([])
 
     const decodeId = (raw: string) =>
       Schema.decodeUnknown(ConversationId)(raw).pipe(
@@ -232,13 +228,6 @@ export const InMemoryConversationStoreLive = Layer.effect(
           ),
         ),
 
-      // Gate-verdict audit rows (in-memory mirror of the SQL stores).
-      recordGateVerdict: (record) =>
-        Ref.update(verdictsRef, (vs) => [...vs, { ...record, createdAt: Date.now() }]),
-      listGateVerdicts: (id) =>
-        Ref.get(verdictsRef).pipe(
-          Effect.map((vs) => vs.filter((v) => v.conversationId === id)),
-        ),
     })
   }),
 )
