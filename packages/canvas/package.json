@@ -1,0 +1,18 @@
+{
+  "name": "@xandreed/canvas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The ui-builder agent: a browser-served canvas where the agent builds interactive pages with natural language — render_ui through deterministic UI gates, htmx-over-WebSocket, no client framework.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@effect/ai": "^0.35.0",
+    "@xandreed/engine": "workspace:*",
+    "@xandreed/providers": "workspace:*",
+    "@xandreed/surface": "workspace:*",
+    "effect": "^3.21.4"
+  }
+}
