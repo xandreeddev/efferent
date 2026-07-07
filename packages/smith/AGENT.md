@@ -71,6 +71,10 @@ src/
 - A rejected forge run is a RESULT (exit 1 + the report), never an error.
 - Launch from the repo root (`bun run smith -- --cwd <target>`): the Solid JSX
   preload lives in the root `bunfig.toml`. The headless path imports no `.tsx`.
+- **`EFFERENT_MODEL` is IGNORED** (dropped at the edge, with a stderr note):
+  Bun auto-loads the LAUNCH dir's `.env`, so the efferent repo's own seed would
+  silently override smith's general default for every target workspace
+  (live-caught). Pick models via flags or `.efferent/config.json`.
 
 ## Testing
 

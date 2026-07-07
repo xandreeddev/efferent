@@ -193,10 +193,29 @@ if (isDirectRun) {
   }
   const run = toRunConfig(state, task)
   const interactive = !run.headless && process.stdout.isTTY === true
+  // Bun auto-loads the LAUNCH dir's .env, and smith always launches from the
+  // efferent repo root — a stale EFFERENT_MODEL there would silently override
+  // the smith general default for EVERY target workspace (live-caught: the repo
+  // .env's gemini seed hijacked a kimi run). Smith's model defaults REPLACE the
+  // env-seed tier: flags > .efferent/config.json > smith defaults.
+  const envModel = process.env["EFFERENT_MODEL"]
+  if (envModel !== undefined) {
+    console.error(
+      `smith: ignoring EFFERENT_MODEL=${envModel} — use --model or .efferent/config.json`,
+    )
+    delete process.env["EFFERENT_MODEL"]
+  }
   const program = Effect.gen(function* () {
     const settings = yield* SettingsStore
-    yield* settings.load(run.cwd, homedir())
-    if (!interactive) return yield* runHeadless(run)
+    const resolved = yield* settings.load(run.cwd, homedir())
+    if (!interactive) {
+      // The resolved roles, on stderr (stdout is the event stream) — user
+      // config/flags OVERRIDE the smith defaults, so say what actually runs.
+      console.error(
+        `roles: general ${resolved.model} · code ${resolved.codeModel ?? resolved.model} · fast ${resolved.fastModel ?? resolved.model}`,
+      )
+      return yield* runHeadless(run)
+    }
     // Lazy: the TUI path touches @opentui/core's native FFI renderer — the
     // headless path must never load it.
     const { runTui } = yield* Effect.promise(() => import("./tui/runtime.js"))
