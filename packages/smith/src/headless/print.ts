@@ -1,83 +1,10 @@
-import { Effect, Fiber, Match, Option, Queue } from "effect"
-import { renderFindingLine, renderReportSummary } from "@xandreed/foundry"
+import { Effect, Fiber, Option, Queue } from "effect"
 import type { FileSystem } from "@xandreed/sdk-core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
+import { renderEventLines } from "../presentation/eventLines.js"
 import { runForgeSession } from "../forge/session.js"
-
-const MAX_FINDING_LINES = 8
-
-const clip = (text: string, max: number): string => {
-  const oneLine = text.split("\n")[0] ?? ""
-  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max)}…`
-}
-
-/** One stdout line (or block) per smith event; `None` = silent event. */
-export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
-  Match.value(event).pipe(
-    Match.when({ type: "forge_start" }, (e) =>
-      Option.some(
-        `─ forge: ${clip(e.spec.goal, 100)}\n  gates: ${e.gateNames.join(" → ")} · attempts ≤ ${e.spec.limits.maxAttempts}`,
-      ),
-    ),
-    Match.when({ type: "attempt_start" }, (e) =>
-      Option.some(`\n── attempt ${e.attempt} ──`),
-    ),
-    Match.when({ type: "implement_end" }, (e) =>
-      Option.some(
-        `  implemented: ${e.filesTouched.length} file(s) touched${Option.match(e.ref, {
-          onNone: () => "",
-          onSome: (ref) => ` · ${ref}`,
-        })}`,
-      ),
-    ),
-    Match.when({ type: "gate_start" }, (e) => Option.some(`  gate: ${e.gate}…`)),
-    Match.when({ type: "gate_report" }, (e) => {
-      const findings = e.report.failures
-        .flatMap((failure) => failure.findings)
-        .slice(0, MAX_FINDING_LINES)
-        .map((finding) => `      ${renderFindingLine(finding)}`)
-      return Option.some(
-        [`  ${renderReportSummary(e.report)}`, ...findings].join("\n"),
-      )
-    }),
-    Match.when({ type: "forge_end" }, (e) =>
-      Option.some(
-        `\n${e.run.outcome._tag === "accepted" ? "✓ ACCEPTED" : `✗ REJECTED (${e.run.outcome.reason})`} after ${e.run.attempts.length} attempt(s)\n  artifact: ${e.artifact}`,
-      ),
-    ),
-    Match.when({ type: "forge_error" }, (e) => Option.some(`✗ forge failed: ${e.message}`)),
-    Match.when({ type: "agent" }, (e) =>
-      Match.value(e.event).pipe(
-        Match.when({ type: "tool_call_start" }, (t) =>
-          Option.some(`    ⚙ ${t.toolName}${describeArgs(t.args)}`),
-        ),
-        Match.when({ type: "assistant_message" }, (m) =>
-          m.text.trim().length > 0 ? Option.some(`    ✦ ${clip(m.text.trim(), 140)}`) : Option.none(),
-        ),
-        Match.when({ type: "subagent_start" }, (s) =>
-          Option.some(`    ◆ spawned ${s.name}${s.role !== undefined ? ` (${s.role})` : ""}`),
-        ),
-        Match.when({ type: "subagent_end" }, (s) =>
-          Option.some(`    ◆ ${s.name} ${s.ok ? "done" : "failed"}: ${clip(s.summary, 100)}`),
-        ),
-        Match.when({ type: "llm_retry" }, (r) =>
-          Option.some(`    ⟳ llm retry ${r.attempt}/${r.maxAttempts}: ${clip(r.reason, 80)}`),
-        ),
-        Match.orElse(() => Option.none<string>()),
-      ),
-    ),
-    Match.exhaustive,
-  )
-
-const describeArgs = (args: unknown): string => {
-  if (typeof args !== "object" || args === null) return ""
-  const primary = ["path", "command", "pattern", "name", "query"]
-    .map((key) => (args as Record<string, unknown>)[key])
-    .find((value) => typeof value === "string")
-  return typeof primary === "string" ? `(${clip(primary, 60)})` : ""
-}
 
 /**
  * `-p` mode: run the forge session with every event rendered live as stdout

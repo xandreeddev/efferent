@@ -192,11 +192,15 @@ if (isDirectRun) {
     process.exit(2)
   }
   const run = toRunConfig(state, task)
-  // TUI lands next; every run is headless-rendered for now.
+  const interactive = !run.headless && process.stdout.isTTY === true
   const program = Effect.gen(function* () {
     const settings = yield* SettingsStore
     yield* settings.load(run.cwd, homedir())
-    return yield* runHeadless(run)
+    if (!interactive) return yield* runHeadless(run)
+    // Lazy: the TUI path touches @opentui/core's native FFI renderer — the
+    // headless path must never load it.
+    const { runTui } = yield* Effect.promise(() => import("./tui/runtime.js"))
+    return yield* runTui(run)
   }).pipe(
     Effect.provide(smithAppLive(run)),
     Effect.provide(BunContext.layer),
