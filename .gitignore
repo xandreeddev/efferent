@@ -12,48 +12,37 @@ coverage/
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
-
 .env
 .env.local
 .env.*.local
 .direnv/
-
 .DS_Store
 .idea/
 .vscode/
-
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
-
 # Local Postgres data dir from docker-compose.yml
 pg-data/
-
 # Playwright MCP scratch dir (snapshots, console logs)
 .playwright-mcp/
-
 # Serena MCP project cache (onboarding cache, memories, local config)
 .serena/
-
 # Local debug screenshots
 *.png
 # tracked brand asset (the GitHub avatar) — exception to the *.png ignore above
 !assets/avatar.png
-
 # Skills are local to each workspace; agents read them, repos don't carry them.
 .efferent/
-
 # local test scratch db
 test.db
 test.db-shm
 test.db-wal
-
 # Scratch handoff notes — session-local, never committed
 HANDOFF.md
 *.tgz
-
 # Working-note prompts (reference material, never committed)
 PROMPT.md
 prompt.md
-
 # ad-hoc eval run outputs (committed baselines live in packages/evals/baselines/)
 packages/evals/results/
+.foundry/

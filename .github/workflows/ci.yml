@@ -29,5 +29,11 @@ jobs:
 
       - run: bun run typecheck # tsc + the core-purity ban (scripts/banTryCatch.ts)
 
+      # Foundry's dogfood: its gate pipeline must be clean on its own source.
+      - run: bun run foundry check
+
+      # Foundry's key-free E2E: the forge loop over a scripted implementor.
+      - run: bun run foundry demo
+
       # Eval suites are key-gated and skip cleanly in CI; unit tests run.
       - run: bun test

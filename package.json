@@ -18,6 +18,7 @@
     "version": "changeset version && bun install --lockfile-only",
     "release": "bun scripts/publish.ts",
     "eval": "bun packages/evals/src/run.ts",
+    "foundry": "bun packages/foundry/src/main.ts",
     "obs:up": "docker compose -f docker-compose.observability.yml up -d",
     "obs:down": "docker compose -f docker-compose.observability.yml down",
     "generate-models": "bun packages/sdk-core/scripts/generateModelCatalog.ts",

@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "agent",
@@ -20,7 +19,7 @@
     },
     "examples": {
       "name": "@xandreed/examples",
-      "version": "0.0.0",
+      "version": "0.0.6",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/platform": "^0.96.1",
@@ -32,7 +31,7 @@
     },
     "packages/cli": {
       "name": "efferent",
-      "version": "0.3.0",
+      "version": "0.6.1",
       "bin": {
         "efferent": "dist/efferent.js",
         "eff": "dist/efferent.js",
@@ -55,7 +54,7 @@
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.1.0",
+      "version": "0.2.3",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/opentelemetry": "^0.63.0",
@@ -71,9 +70,17 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/foundry": {
+      "name": "@xandreed/foundry",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "^3.21.4",
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/sdk-adapters": {
       "name": "@xandreed/sdk-adapters",
-      "version": "0.1.0",
+      "version": "0.4.2",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
@@ -92,7 +99,7 @@
     },
     "packages/sdk-core": {
       "name": "@xandreed/sdk-core",
-      "version": "0.1.0",
+      "version": "0.5.1",
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "effect": "^3.21.4",
@@ -604,6 +611,8 @@
     "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
 
     "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
+
+    "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 
