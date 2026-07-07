@@ -1,5 +1,5 @@
 import { Effect, Fiber, Option, Queue } from "effect"
-import type { FileSystem } from "@xandreed/sdk-core"
+import type { FileSystem, SpecDoc } from "@xandreed/sdk-core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
@@ -12,6 +12,7 @@ import { runForgeSession } from "../forge/session.js"
  */
 export const runHeadless = (
   run: SmithRunConfig,
+  doc: Option.Option<SpecDoc> = Option.none(),
 ): Effect.Effect<number, never, ImplementorServices | FileSystem> =>
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<Option.Option<SmithEvent>>()
@@ -34,7 +35,7 @@ export const runHeadless = (
       }).pipe(Effect.repeat({ while: (more) => more }), Effect.asVoid),
     )
 
-    const outcome = yield* runForgeSession(run, publish).pipe(
+    const outcome = yield* runForgeSession(run, publish, doc).pipe(
       Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
       Effect.catchAll(() => Effect.succeed(2)),
     )

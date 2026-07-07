@@ -41,9 +41,26 @@ export const agentEventLabel = (event: SmithEvent & { type: "agent" }): Option.O
 /** One stdout line (or block) per smith event for the headless printer; `None` = silent. */
 export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
   Match.value(event).pipe(
+    Match.when({ type: "refine_start" }, (e) =>
+      Option.some(
+        `─ refine: ${Option.match(e.idea, { onNone: () => "(interactive)", onSome: (idea) => clip(idea, 100) })}`,
+      ),
+    ),
+    Match.when({ type: "spec_draft" }, (e) =>
+      Option.some(`── spec draft (${e.doc.slug}) → ${e.path} ──`),
+    ),
+    Match.when({ type: "spec_locked" }, (e) =>
+      Option.some(`✓ spec LOCKED: ${e.doc.slug} → ${e.path}`),
+    ),
+    Match.when({ type: "refine_error" }, (e) =>
+      Option.some(`✗ refine failed: ${e.message}`),
+    ),
     Match.when({ type: "forge_start" }, (e) =>
       Option.some(
-        `─ forge: ${clip(e.spec.goal, 100)}\n  gates: ${e.gateNames.join(" → ")} · attempts ≤ ${e.spec.limits.maxAttempts}`,
+        `─ forge: ${clip(e.spec.goal, 100)}${Option.match(e.doc, {
+          onNone: () => "",
+          onSome: (doc) => ` (spec: ${doc.slug})`,
+        })}\n  gates: ${e.gateNames.join(" → ")} · attempts ≤ ${e.spec.limits.maxAttempts}`,
       ),
     ),
     Match.when({ type: "attempt_start" }, (e) =>

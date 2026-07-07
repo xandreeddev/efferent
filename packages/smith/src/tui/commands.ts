@@ -28,6 +28,8 @@ const persist = (ctx: SmithTuiContext, patch: Record<string, unknown>, note: str
 /**
  * The `:` commands — the efferent CLI's configuration conventions, minimal:
  *   :quit / :q                end the TUI (exit code = the finished run's, else 130)
+ *   :lock                     refine mode: approve + lock the current draft
+ *   :forge                    refine mode: forge the locked spec (in this TUI)
  *   :model <p:m>              persist the GENERAL role to .efferent/config.json
  *   :model code|fast <p:m>    persist that role
  *   :set <key> <value>        persist any Settings key (coerced bool/number)
@@ -39,6 +41,20 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
   Match.value(command).pipe(
     Match.whenOr("quit", "q", () => {
       ctx.exit(ctx.store.exitCode() ?? 130)
+    }),
+    Match.when("lock", () => {
+      if (ctx.lock === undefined) {
+        ctx.store.setNotice(":lock only applies in refine mode")
+        return
+      }
+      ctx.lock()
+    }),
+    Match.when("forge", () => {
+      if (ctx.forge === undefined) {
+        ctx.store.setNotice(":forge only applies in refine mode")
+        return
+      }
+      ctx.forge()
     }),
     Match.when("model", () => {
       const roleKey = ROLE_KEYS[words[1] ?? ""]

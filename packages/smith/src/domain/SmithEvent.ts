@@ -1,6 +1,6 @@
 import type { Option } from "effect"
 import type { FactoryRun, GateReport, Spec } from "@xandreed/foundry"
-import type { AgentEvent } from "@xandreed/sdk-core"
+import type { AgentEvent, SpecDoc } from "@xandreed/sdk-core"
 
 /**
  * The ONE event union the smith UIs consume — in-process only (never a wire
@@ -14,10 +14,16 @@ import type { AgentEvent } from "@xandreed/sdk-core"
  *   text, sub-agent lifecycle, llm retries.
  */
 export type SmithEvent =
+  | { readonly type: "refine_start"; readonly idea: Option.Option<string> }
+  | { readonly type: "spec_draft"; readonly doc: SpecDoc; readonly path: string }
+  | { readonly type: "spec_locked"; readonly doc: SpecDoc; readonly path: string }
+  | { readonly type: "refine_error"; readonly message: string }
   | {
       readonly type: "forge_start"
       readonly spec: Spec
       readonly gateNames: ReadonlyArray<string>
+      /** The locked SpecDoc driving this run (None on the legacy flag path). */
+      readonly doc: Option.Option<SpecDoc>
     }
   | { readonly type: "attempt_start"; readonly attempt: number }
   | {

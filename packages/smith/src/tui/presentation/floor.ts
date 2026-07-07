@@ -84,9 +84,14 @@ const findingLine = (finding: {
   return `[${finding.rule}] ${where}${clip(finding.message, 110)}`
 }
 
-/** Fold one smith event into the floor. Pure — unit-tested without Solid. */
+/** Fold one smith event into the floor. Pure — unit-tested without Solid.
+ *  Refine-phase events are inert here (the refine reducer owns them). */
 export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
   Match.value(event).pipe(
+    Match.when({ type: "refine_start" }, () => state),
+    Match.when({ type: "spec_draft" }, () => state),
+    Match.when({ type: "spec_locked" }, () => state),
+    Match.when({ type: "refine_error" }, () => state),
     Match.when({ type: "forge_start" }, (e) => ({
       ...state,
       gateNames: e.gateNames,
