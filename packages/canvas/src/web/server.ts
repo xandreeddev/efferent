@@ -87,14 +87,16 @@ export const serveCanvas = (args: {
           return req.formData().then((form) => {
             const text = chatMessage(form)
             if (text.length > 0) {
-              void Effect.runPromise(Effect.fork(args.session.send(text)))
+              // runFork: an independent runtime fiber — runPromise(fork(…))
+              // would interrupt the turn the instant its parent resolved.
+              Effect.runFork(args.session.send(text))
             }
             return new Response(null, { status: 204 })
           })
         }
         if (req.method === "POST" && url.pathname === "/action/ui") {
           return req.formData().then((form) => {
-            void Effect.runPromise(Effect.fork(args.session.send(uiMessage(form))))
+            Effect.runFork(args.session.send(uiMessage(form)))
             return new Response(null, { status: 204 })
           })
         }
