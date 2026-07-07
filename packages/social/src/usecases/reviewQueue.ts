@@ -143,13 +143,12 @@ export const runReviewQueue = () =>
     
     yield* Effect.logInfo("Loading pending drafts...")
     const files = yield* Effect.tryPromise({
-      try: async () => {
-        try {
-          return await readdir(PENDING_DIR)
-        } catch {
-          return []
-        }
-      },
+      // An absent queue dir is an empty queue (two-arg then — no catch).
+      try: () =>
+        readdir(PENDING_DIR).then(
+          (entries) => entries,
+          () => [] as string[],
+        ),
       catch: (e) => new Error(`Failed to list pending drafts: ${String(e)}`),
     })
 

@@ -1,6 +1,6 @@
 /**
  * `bun run math` — the standalone math-practice product (docs/agents/
- * education.md), on the smith pattern: sdk-core + sdk-adapters composed at
+ * education.md), on the smith pattern: engine ports + providers composed at
  * this edge, never the cli. Serves the math shell on 127.0.0.1 and runs the
  * tutor agent over one persisted conversation (`~/.efferent/efferent.db`,
  * same store the CLI browses via `:browse`).

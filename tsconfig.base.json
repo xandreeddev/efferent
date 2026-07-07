@@ -22,12 +22,6 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@xandreed/sdk-core": ["packages/sdk-core/src/index.ts"],
-      "@xandreed/sdk-core/*": ["packages/sdk-core/src/*"],
-      "@xandreed/application": ["packages/application/src/index.ts"],
-      "@xandreed/application/*": ["packages/application/src/*"],
-      "@xandreed/sdk-adapters": ["packages/sdk-adapters/src/index.ts"],
-      "@xandreed/sdk-adapters/*": ["packages/sdk-adapters/src/*"],
       "@xandreed/engine": ["packages/engine/src/index.ts"],
       "@xandreed/engine/*": ["packages/engine/src/*"],
       "@xandreed/providers": ["packages/providers/src/index.ts"],
@@ -43,10 +37,7 @@
       "@xandreed/smith": ["packages/smith/src/index.ts"],
       "@xandreed/smith/*": ["packages/smith/src/*"],
       "@xandreed/math": ["packages/math/src/index.ts"],
-      "@xandreed/math/*": ["packages/math/src/*"],
-      "@xandreed/web": ["packages/web/src/index.ts"],
-      "@xandreed/web/*": ["packages/web/src/*"],
-      "efferent/*": ["packages/cli/src/*"]
+      "@xandreed/math/*": ["packages/math/src/*"]
     }
   }
 }
