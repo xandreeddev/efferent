@@ -1,22 +1,24 @@
 /**
- * MathModel → `@xandreed/web` math views → OOB fragments / the full page. The
+ * MathModel → the math view layer → OOB fragments / the full page. The
  * ONE file that imports the web package's math surface (the adapter seam —
  * same discipline as the web driver's render.ts).
  */
+import { render } from "@xandreed/surface"
 import {
-  render,
   renderMathFullSync,
-  renderMathShell,
   upsertMathControls,
   upsertMathHeader,
   upsertMathNote,
   upsertMathStage,
-  type MathControlsView,
-  type MathExerciseView,
-  type MathHeaderView,
-  type MathShellView,
-  type MathStage,
-} from "@xandreed/web"
+} from "./view/fragments.js"
+import { renderMathShell } from "./view/shell.js"
+import type {
+  MathControlsView,
+  MathExerciseView,
+  MathHeaderView,
+  MathShellView,
+  MathStage,
+} from "./view/types.js"
 import type { MathExercise } from "../domain/MathContent.js"
 import { Option } from "effect"
 import { canNext, findExercise, type ExerciseState, type MathModel, type MathPatch } from "./model.js"

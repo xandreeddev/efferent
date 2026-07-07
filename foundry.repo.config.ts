@@ -198,19 +198,18 @@ const config: typeof GateSuiteConfig.Encoded = {
         ],
       },
       {
-        // The standalone math-practice product (docs/agents/education.md).
-        // MIGRATED to the new line: engine + providers. Still renders through
-        // the old web package's math views — TRANSITIONAL until those views
-        // move into math/surface (then web dies with the old line).
+        // The standalone math-practice product (docs/agents/education.md),
+        // fully on the new line: engine + providers + surface (it owns its
+        // views/assets; sanitizeMathml lives in surface). No old-line edges.
         name: "math",
         path: "packages/math/src/**",
-        canImport: ["engine", "providers", "web"],
+        canImport: ["engine", "providers", "surface"],
         externals: [
           "effect",
           "@effect/",
           "@xandreed/engine",
           "@xandreed/providers",
-          "@xandreed/web",
+          "@xandreed/surface",
           "node:",
           "bun",
           "bun:",
