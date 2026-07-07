@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@xandreed/engine": "workspace:*",
+    "@xandreed/providers": "workspace:*",
     "playwright": "^1.49.0"
   },
   "devDependencies": {

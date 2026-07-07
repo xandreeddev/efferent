@@ -105,8 +105,8 @@
         "@effect/ai": "^0.35.0",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@xandreed/sdk-adapters": "workspace:*",
-        "@xandreed/sdk-core": "workspace:*",
+        "@xandreed/engine": "workspace:*",
+        "@xandreed/providers": "workspace:*",
         "@xandreed/web": "workspace:*",
         "effect": "^3.21.4",
       },
@@ -171,6 +171,8 @@
       "name": "@xandreed/social",
       "version": "0.0.0",
       "dependencies": {
+        "@xandreed/engine": "workspace:*",
+        "@xandreed/providers": "workspace:*",
         "playwright": "^1.49.0",
       },
       "devDependencies": {

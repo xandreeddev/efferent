@@ -9,21 +9,17 @@
  *                [--theme "<topic>"] [--resume <conversationId>]
  */
 import { homedir } from "node:os"
-import { resolve } from "node:path"
-import { FetchHttpClient } from "@effect/platform"
+import { join, resolve } from "node:path"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer, Logger, Option } from "effect"
-import { SettingsStore } from "@xandreed/sdk-core"
+import { SettingsStore } from "@xandreed/engine"
 import {
+  LanguageModelLive,
   LocalAuthStoreLive,
-  LocalFileSystemLive,
   LocalSettingsStoreLive,
   LocalShellLive,
-  ModelLive,
-  ModelRegistryLive,
-  StoresLive,
-  UtilityLlmLive,
-} from "@xandreed/sdk-adapters"
+  SqliteConversationStoreLive,
+} from "@xandreed/providers"
 import { runMathMode } from "./mode.js"
 
 interface ParseState {
@@ -93,21 +89,19 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
 
 const USAGE = `usage: bun run math [--cwd <dir>] [--port <n>] [--open] [--grade <n>] [--theme "<topic>"] [--resume <conversationId>]`
 
-/** The full service stack one math session runs on. */
-export const mathAppLive = Layer.mergeAll(
-  StoresLive,
-  ModelLive,
-  LocalFileSystemLive,
-  LocalShellLive,
-  UtilityLlmLive.pipe(Layer.provide(ModelRegistryLive), Layer.provide(FetchHttpClient.layer)),
-).pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      LocalAuthStoreLive,
-      LocalSettingsStoreLive.pipe(Layer.provide(LocalFileSystemLive)),
+/** The full service stack one math session runs on (the new line: engine
+ *  ports, providers at the edge; sessions live in the workspace's own
+ *  `.efferent/math.db`, never the frozen line's efferent.db). */
+export const mathAppLive = (cwd: string) =>
+  Layer.mergeAll(
+    SqliteConversationStoreLive(join(cwd, ".efferent", "math.db")),
+    LocalShellLive,
+    LanguageModelLive,
+  ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(LocalAuthStoreLive(cwd, homedir()), LocalSettingsStoreLive(cwd, homedir())),
     ),
-  ),
-)
+  )
 
 const isDirectRun = process.argv[1]?.endsWith("main.ts") === true
 if (isDirectRun) {
@@ -131,8 +125,10 @@ if (isDirectRun) {
 
   const program = Effect.gen(function* () {
     const settings = yield* SettingsStore
-    const resolved = yield* settings.load(state.cwd, homedir())
-    process.stderr.write(`math: tutor on ${resolved.model}\n`)
+    const resolved = yield* settings.load
+    process.stderr.write(
+      `math: tutor on ${Option.getOrElse(resolved.model, () => "(no model configured)")}\n`,
+    )
     yield* runMathMode({
       workspace: state.cwd,
       version: "0.1.0",
@@ -143,7 +139,7 @@ if (isDirectRun) {
       ...(Option.isSome(state.theme) ? { theme: state.theme.value } : {}),
     })
   }).pipe(
-    Effect.provide(mathAppLive),
+    Effect.provide(mathAppLive(state.cwd)),
     Effect.provide(BunContext.layer),
     // Server logs to stderr; the shell is the product surface.
     Effect.provide(Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true }))),

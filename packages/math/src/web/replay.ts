@@ -12,7 +12,7 @@
  * unfinished exercise, and graded-but-not-yet-reported results (pending
  * progress that never rode a message).
  */
-import type { AgentMessage } from "@xandreed/sdk-core"
+import type { AgentMessage } from "@xandreed/engine"
 import { parseMathItems } from "../domain/MathContent.js"
 import {
   applyTopic,
