@@ -1,5 +1,5 @@
 import { basename, resolve } from "node:path"
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import { FileSystem, Http, parseToolFile } from "@xandreed/sdk-core"
 import { parseAgentFile } from "./loadAgents.js"
 
@@ -178,7 +178,9 @@ export const importAgentsFromGithub = (
   spec: string,
   destDir: string,
 ): Effect.Effect<ImportResult, ImportAgentsError, Http | FileSystem> =>
-  importDefsFromGithub(spec, destDir, (content) => parseAgentFile(content, "")?.name)
+  importDefsFromGithub(spec, destDir, (content) =>
+    Option.getOrUndefined(Option.map(parseAgentFile(content, ""), (a) => a.name)),
+  )
 
 /** Import declarative TOOLS from GitHub into `.efferent/tools/`. */
 export const importToolsFromGithub = (

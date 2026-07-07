@@ -7,10 +7,10 @@ The efferent CLI driver — composition root for the run modes + daemon, plus th
 ```
 packages/cli/src/
 ├── main.ts            @effect/cli command + Layer composition + mode dispatch
-├── events.ts          AgentEvent union + makeEventHooks(queue, extraBeforeTool?)
+├── events.ts          re-export shim → @xandreed/sdk-core (AgentEvent + makeAgentEventHooks/makeEventHooks live in core usecases/eventHooks.ts)
 ├── terminal.ts        OSC-52 + spinner-frame + ANSI/width helpers (shared infra; print mode uses it too)
-├── prompts/           root coder system prompt (coder.ts: `coderPrompt` + the opt-in `renderDelegationPolicy`); fleet/scope prompt pieces live in @xandreed/sdk-core/prompts
-├── usecases/          workspace-shaped use cases: coderAgentConfig · teamAgents (the built-in fleet) · loadAgents/loadMemory/loadSkills · discoverInstructionFiles · directive
+├── prompts/           web prompt (web.ts); coder.ts is a re-export shim → @xandreed/sdk-core/prompts/coder.ts (`coderPrompt` moved to core so drivers like @xandreed/smith build the real coder without the CLI)
+├── usecases/          teamAgents (the built-in fleet) · importAgents · directive (withBuiltinAgents/VERIFIER_AGENT + shims); coderAgentConfig · loadAgents/loadMemory/loadSkills · discoverInstructionFiles · stripLeads are re-export shims → @xandreed/sdk-core
 ├── workspace/         the in-process Workspace runtime: inProcess.ts (JobController/submitJob + the stranded-node sweeper) · headlessApproval.ts (the cron parking approval)
 ├── server/            daemon-serve HTTP/SSE host
 ├── web/               the `efferent web` driver (NO Solid/OpenTUI imports): model.ts (framework-free keyed cache) · reduce.ts (event→model, the pump switch ported) · render.ts (the ONE @xandreed/web import: Patch→OOB fragments) · pump.ts (makeFragmentPump — Workspace + session id only) · server.ts (HttpRouter + WS upgrade, token→cookie auth) · mode.ts (composition root)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { Effect, FastCheck as fc, Layer } from "effect"
+import { Effect, FastCheck as fc, Layer, Option } from "effect"
 import { FileNotFound, FileSystem } from "@xandreed/sdk-core"
 import { loadAgents, parseAgentFile } from "./loadAgents.js"
 
@@ -121,9 +121,11 @@ body`,
   })
 
   it("parseAgentFile validates frontmatter for the git-import path", () => {
-    expect(parseAgentFile("---\nname: a\ndescription: d\n---\nbody", "/x.md")?.name).toBe("a")
-    expect(parseAgentFile("no frontmatter", "/x.md")).toBeUndefined()
-    expect(parseAgentFile("---\nname: a\n---\nbody", "/x.md")).toBeUndefined()
+    expect(
+      Option.getOrThrow(parseAgentFile("---\nname: a\ndescription: d\n---\nbody", "/x.md")).name,
+    ).toBe("a")
+    expect(Option.isNone(parseAgentFile("no frontmatter", "/x.md"))).toBe(true)
+    expect(Option.isNone(parseAgentFile("---\nname: a\n---\nbody", "/x.md"))).toBe(true)
   })
 
   it("property: arbitrary content never throws, always a well-typed array", () => {
