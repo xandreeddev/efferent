@@ -10,6 +10,8 @@ export class AttemptRecord extends Schema.Class<AttemptRecord>("AttemptRecord")(
   feedback: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
   filesTouched: Schema.Array(WorkspacePath),
   durationMs: Schema.NonNegative,
+  /** The implementor's opaque provenance ref (e.g. `"conversation:<uuid>"`). */
+  implementorRef: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
 }) {}
 
 /**

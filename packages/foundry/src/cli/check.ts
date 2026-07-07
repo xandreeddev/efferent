@@ -23,7 +23,8 @@ export interface CheckArgs {
   readonly updateBaseline: boolean
 }
 
-const loadConfig = (
+/** Load + Schema-validate a `GateSuiteConfig` module (default export). */
+export const loadConfig = (
   configPath: string,
 ): Effect.Effect<{ readonly config: GateSuiteConfig; readonly rootDir: string }, ConfigError> =>
   Effect.tryPromise({

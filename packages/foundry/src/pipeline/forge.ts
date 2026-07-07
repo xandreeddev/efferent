@@ -4,12 +4,35 @@ import type { ImplementorError, WorkspaceError } from "../domain/Errors.js"
 import { AcceptedOutcome, AttemptRecord, FactoryRun, RejectedOutcome } from "../domain/FactoryRun.js"
 import type { RunOutcome } from "../domain/FactoryRun.js"
 import type { Spec } from "../domain/Spec.js"
+import type { GateReport } from "../domain/Verdict.js"
 import type { Workspace } from "../ports/Gate.js"
 import { Implementor } from "../ports/Implementor.js"
+import type { ImplementReceipt } from "../ports/Implementor.js"
 import { RunSink } from "../ports/RunSink.js"
 import { renderFeedback } from "./renderFeedback.js"
 import { runPipeline } from "./runPipeline.js"
 import type { Pipeline } from "./runPipeline.js"
+
+/**
+ * Progress seams for a driver UI. All optional; a hook cannot fail (no error
+ * channel) and cannot change the loop — it only observes. Fired at the loop's
+ * existing boundaries: before an attempt implements, after the implementor
+ * returns, after the attempt's gate report (with the feedback that will feed
+ * the NEXT attempt, `None` on a final attempt), and after the run persists.
+ */
+export interface ForgeHooks {
+  readonly onAttemptStart?: (attempt: AttemptNumber) => Effect.Effect<void>
+  readonly onImplemented?: (
+    attempt: AttemptNumber,
+    receipt: ImplementReceipt,
+  ) => Effect.Effect<void>
+  readonly onReport?: (
+    attempt: AttemptNumber,
+    report: GateReport,
+    feedback: Option.Option<string>,
+  ) => Effect.Effect<void>
+  readonly onOutcome?: (run: FactoryRun) => Effect.Effect<void>
+}
 
 export interface ForgeOptions<R> {
   readonly spec: Spec
@@ -18,6 +41,8 @@ export interface ForgeOptions<R> {
   readonly workspaceDir: string
   /** Driver-provided snapshot of the workspace the gates judge. */
   readonly snapshot: Effect.Effect<Workspace, WorkspaceError>
+  /** Optional progress observers — see `ForgeHooks`. */
+  readonly hooks?: ForgeHooks
 }
 
 export interface ForgeResult {
@@ -58,11 +83,18 @@ export const forge = <R>(
   Effect.gen(function* () {
     const startedAt = yield* Clock.currentTimeMillis
     const deadline = startedAt + options.spec.limits.budgetMillis
+    const hooks: Required<ForgeHooks> = {
+      onAttemptStart: options.hooks?.onAttemptStart ?? (() => Effect.void),
+      onImplemented: options.hooks?.onImplemented ?? (() => Effect.void),
+      onReport: options.hooks?.onReport ?? (() => Effect.void),
+      onOutcome: options.hooks?.onOutcome ?? (() => Effect.void),
+    }
 
     const attemptOnce = (state: LoopState): Effect.Effect<LoopState, ImplementorError | WorkspaceError, R | Implementor> =>
       Effect.gen(function* () {
         const implementor = yield* Implementor
         const attemptStart = yield* Clock.currentTimeMillis
+        yield* hooks.onAttemptStart(state.attempt)
         const receipt = yield* implementor
           .implement({
             spec: options.spec,
@@ -71,6 +103,7 @@ export const forge = <R>(
             workspaceDir: options.workspaceDir,
           })
           .pipe(Effect.retry(implementorRetry))
+        yield* hooks.onImplemented(state.attempt, receipt)
         const workspace = yield* options.snapshot
         const report = yield* runPipeline(options.pipeline, workspace)
         const attemptEnd = yield* Clock.currentTimeMillis
@@ -93,7 +126,9 @@ export const forge = <R>(
           feedback,
           filesTouched: receipt.filesTouched,
           durationMs: attemptEnd - attemptStart,
+          implementorRef: receipt.ref ?? Option.none(),
         })
+        yield* hooks.onReport(state.attempt, report, feedback)
         return {
           attempt:
             phase === "continue" ? AttemptNumber.make(state.attempt + 1) : state.attempt,
@@ -147,5 +182,6 @@ export const forge = <R>(
 
     const sink = yield* RunSink
     const artifact = yield* sink.persist(run)
+    yield* hooks.onOutcome(run)
     return { run, artifact }
   }).pipe(Effect.withSpan("foundry.run"))
