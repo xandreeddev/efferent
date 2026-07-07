@@ -29,7 +29,7 @@ const LEGACY = [
 
 // packages/smith is post-foundry: it rides the same composition rules with
 // ZERO baseline entries — every finding there is fresh and fails outright.
-const CHECKED = [...LEGACY, "packages/smith/src/**", "packages/math/src/**"]
+const CHECKED = [...LEGACY, "packages/smith/src/**", "packages/math/src/**", "packages/social/src/**"]
 
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
@@ -99,6 +99,24 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/foundry/src/**",
         canImport: [],
         externals: ["effect", "typescript", "node:", "bun:test"],
+      },
+      {
+        // The social engagement agent: draft-only toolkit, human review queue,
+        // deterministic policy gates at write_draft + pre-post. Standalone —
+        // depends on core + adapters, never the cli.
+        name: "social",
+        path: "packages/social/src/**",
+        canImport: ["core", "adapters"],
+        externals: [
+          "effect",
+          "@effect/",
+          "@xandreed/sdk-core",
+          "@xandreed/sdk-adapters",
+          "playwright",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         // The standalone math-practice product (docs/agents/education.md), on

@@ -18,6 +18,9 @@ export class XPlatform extends Context.Tag("XPlatform")<
   {
     readonly search: (query: string) => Effect.Effect<ReadonlyArray<XSearchResult>, Error>
     readonly getNotifications: () => Effect.Effect<ReadonlyArray<XNotification>, Error>
+    /** The tweet + its visible conversation context — what the thread-context
+     *  trajectory gate requires a reply to have READ. */
+    readonly readThread: (tweetId: string) => Effect.Effect<ReadonlyArray<XSearchResult>, Error>
     readonly postTweet: (text: string, inReplyToId?: string) => Effect.Effect<void, Error>
   }
 >() {}
