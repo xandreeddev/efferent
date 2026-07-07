@@ -29,6 +29,17 @@
         "effect": "^3.21.2",
       },
     },
+    "packages/canvas": {
+      "name": "@xandreed/canvas",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@xandreed/engine": "workspace:*",
+        "@xandreed/providers": "workspace:*",
+        "@xandreed/surface": "workspace:*",
+        "effect": "^3.21.4",
+      },
+    },
     "packages/cli": {
       "name": "efferent",
       "version": "0.6.1",
@@ -669,6 +680,8 @@
     "@types/unist": ["@types/unist@3.0.3", "", {}, "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q=="],
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.3.2", "", {}, "sha512-5jsZFwgR5rTdKwidH9Qmat75RKwqfpKlWWB1frDkljN127mwqBu8K0PYo7/hFpF03IEJpfVPpCQDY/eDx3iHvA=="],
+
+    "@xandreed/canvas": ["@xandreed/canvas@workspace:packages/canvas"],
 
     "@xandreed/engine": ["@xandreed/engine@workspace:packages/engine"],
 

@@ -1,0 +1,21 @@
+/* canvas chrome — the agent styles page CONTENT with Tailwind; this styles the shell. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #101014; color: #e8e6e3; font: 15px/1.5 system-ui, sans-serif; }
+.ef-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.ef-topbar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-bottom: 1px solid #26262c; }
+.ef-mark { font-weight: 600; letter-spacing: 0.02em; color: #d97742; white-space: nowrap; }
+.ef-tabs-bar { display: flex; gap: 6px; overflow-x: auto; }
+.ef-tab-btn { background: transparent; color: #a7a29b; border: 1px solid #2c2c33; border-radius: 6px; padding: 4px 12px; cursor: pointer; font: inherit; }
+.ef-tab-btn.is-active { color: #e8e6e3; border-color: #d97742; }
+.ef-pages-host { flex: 1; overflow-y: auto; }
+.ef-page-host { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+.ef-page-host[hidden] { display: none; }
+.ef-dockbar { position: sticky; bottom: 0; background: #16161b; border-top: 1px solid #26262c; padding: 8px 14px; }
+.ef-status-strip { min-height: 18px; font-size: 13px; color: #a7a29b; padding-bottom: 4px; display: flex; gap: 12px; }
+.ef-spin::before { content: "⣻ "; color: #d97742; }
+.ef-reply-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-ask { display: flex; gap: 8px; }
+.ef-ask-input { flex: 1; background: #101014; color: inherit; border: 1px solid #2c2c33; border-radius: 8px; padding: 8px 12px; font: inherit; }
+.ef-ask-input:focus { outline: none; border-color: #d97742; }
+.ef-ask-send { background: #d97742; color: #101014; border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
