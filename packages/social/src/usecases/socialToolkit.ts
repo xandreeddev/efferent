@@ -1,12 +1,23 @@
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Ref, Schema } from "effect"
 import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { Failure } from "@xandreed/sdk-core"
 import { XPlatform } from "../ports/XPlatform.js"
 import { BlogReader } from "../ports/BlogReader.js"
-
-const DRAFTS_DIR = "/home/asiborro/Workspace/xandreed/posts/drafts"
+import {
+  appendLedger,
+  LedgerEntry,
+  readLedger,
+} from "../domain/Ledger.js"
+import { loadPolicy } from "../domain/policy.js"
+import {
+  renderFindings,
+  runSocialGates,
+  type SocialDraft,
+} from "../domain/gates.js"
+import { DRAFTS_PENDING_DIR, LEDGER_PATH, POLICY_PATH } from "../domain/paths.js"
+import type { XSearchResult } from "../ports/XPlatform.js"
 
 // ---- Tool Definitions ----
 
@@ -51,6 +62,28 @@ export const GetXNotifications = Tool.make("get_x_notifications", {
   failureMode: "return",
 })
 
+export const ReadThread = Tool.make("read_thread", {
+  description:
+    "Read a tweet and its visible conversation context BEFORE drafting a reply. Required: a reply that hasn't read its thread is rejected by the thread-context gate.",
+  parameters: {
+    tweetId: Schema.String.annotations({
+      description: "The status ID of the tweet to read in context.",
+    }),
+  },
+  success: Schema.Struct({
+    thread: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        author: Schema.String,
+        text: Schema.String,
+        timestamp: Schema.String,
+      })
+    ),
+  }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 export const ReadBlogPosts = Tool.make("read_blog_posts", {
   description: "Retrieve summaries (slug, title, description, tags) of your published blog posts.",
   parameters: {
@@ -88,13 +121,14 @@ export const ReadBlogPostContent = Tool.make("read_blog_post_content", {
 })
 
 export const WriteDraft = Tool.make("write_draft", {
-  description: "Save a synthesized tweet or thread reply as a local markdown draft file in the review queue.",
+  description:
+    "Save a synthesized tweet or thread reply as a draft in the human review queue. The draft passes the DETERMINISTIC POLICY GATES first (dedup, caps, banned content, length, links, thread-context…) — a rejection returns every finding; fix exactly what the findings say or drop the candidate. For a reply, call read_thread first.",
   parameters: {
     type: Schema.Literal("reply", "post").annotations({
       description: "Whether this is a reply to an existing tweet or a standalone post.",
     }),
     content: Schema.String.annotations({
-      description: "The draft post/reply content (under 280 characters).",
+      description: "The draft post/reply content (under 280 characters; links count as 23).",
     }),
     targetTweetId: Schema.optional(
       Schema.String.annotations({ description: "For replies, the status ID we are replying to." })
@@ -119,6 +153,7 @@ export const WriteDraft = Tool.make("write_draft", {
 export const socialToolkit = Toolkit.make(
   SearchX,
   GetXNotifications,
+  ReadThread,
   ReadBlogPosts,
   ReadBlogPostContent,
   WriteDraft
@@ -133,10 +168,29 @@ const toFailure = (e: unknown): Failure => ({
   message: e instanceof Error ? e.message : String(e),
 })
 
-export const makeSocialHandlers = () =>
+export interface SocialHandlerOptions {
+  readonly pendingDir?: string
+  readonly ledgerPath?: string
+  readonly policyPath?: string
+  readonly now?: () => Date
+}
+
+/**
+ * One handler record per session. `read_thread` results are CACHED in a Ref —
+ * that cache IS the trajectory evidence the thread-context gate checks: a
+ * reply whose target thread isn't in it was drafted blind and is rejected.
+ */
+export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
   Effect.gen(function* () {
     const x = yield* XPlatform
     const blog = yield* BlogReader
+    const pendingDir = options.pendingDir ?? DRAFTS_PENDING_DIR
+    const ledgerPath = options.ledgerPath ?? LEDGER_PATH
+    const policyPath = options.policyPath ?? POLICY_PATH
+    const now = options.now ?? (() => new Date())
+    const threadsRead = yield* Ref.make(
+      new Map<string, ReadonlyArray<XSearchResult>>(),
+    )
 
     return socialToolkit.of({
       search_x: ({ query }) =>
@@ -150,6 +204,13 @@ export const makeSocialHandlers = () =>
           const notifications = yield* x.getNotifications()
           const max = limit ?? 10
           return { notifications: notifications.slice(0, max) }
+        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+
+      read_thread: ({ tweetId }) =>
+        Effect.gen(function* () {
+          const thread = yield* x.readThread(tweetId)
+          yield* Ref.update(threadsRead, (m) => new Map(m).set(tweetId, thread))
+          return { thread }
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       read_blog_posts: ({ limit }) =>
@@ -172,33 +233,84 @@ export const makeSocialHandlers = () =>
         }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
 
       write_draft: ({ type, content, targetTweetId, targetAuthor, referenceBlogSlug }) =>
-        Effect.tryPromise({
-          try: async () => {
-            const id = targetTweetId ?? `new_${Date.now()}`
-            const filename = `${type}_${id}.md`
-            const subDir = join(DRAFTS_DIR, "pending")
-            const filePath = join(subDir, filename)
-            
-            // Generate markdown file with YAML frontmatter
-            const fmParts = [
-              `type: "${type}"`,
-              `targetTweetId: ${targetTweetId ? `"${targetTweetId}"` : "null"}`,
-              `targetAuthor: ${targetAuthor ? `"${targetAuthor}"` : "null"}`,
-              `referenceBlogSlug: ${referenceBlogSlug ? `"${referenceBlogSlug}"` : "null"}`,
-              `status: "pending"`,
-              `created_at: "${new Date().toISOString()}"`,
-            ]
-            const rawContent = `---\n${fmParts.join("\n")}\n---\n\n${content.trim()}\n`
-            
-            await mkdir(subDir, { recursive: true })
-            await writeFile(filePath, rawContent, "utf-8")
-            
-            return {
-              path: filePath,
+        Effect.gen(function* () {
+          // ---- Gate A: nothing enters the queue unvalidated ----
+          const draft: SocialDraft = {
+            kind: type,
+            content: content.trim(),
+            ...(targetTweetId !== undefined ? { targetTweetId } : {}),
+            ...(targetAuthor !== undefined ? { targetAuthor } : {}),
+            ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
+          }
+          const ledger = yield* readLedger(ledgerPath)
+          const policy = yield* loadPolicy(policyPath)
+          const posts = yield* blog
+            .getPosts()
+            .pipe(Effect.orElseSucceed(() => []))
+          const threads = yield* Ref.get(threadsRead)
+          const thread =
+            targetTweetId !== undefined ? threads.get(targetTweetId) : undefined
+          const findings = runSocialGates(draft, {
+            now: now(),
+            ledger,
+            policy,
+            ...(thread !== undefined ? { thread } : {}),
+            knownSlugs: new Set(posts.map((p) => p.slug)),
+            phase: "draft",
+          })
+          if (findings.length > 0) {
+            yield* appendLedger(
+              ledgerPath,
+              new LedgerEntry({
+                at: now().toISOString(),
+                event: "gate_rejected",
+                kind: type,
+                ...(targetTweetId !== undefined ? { targetTweetId } : {}),
+                ...(targetAuthor !== undefined ? { targetAuthor } : {}),
+                ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
+                content: draft.content,
+                findings: findings.map((f) => `[${f.rule}] ${f.detail}`),
+              }),
+            ).pipe(Effect.ignore)
+            return yield* Effect.fail({
+              error: "GateRejected",
+              message: `the draft failed ${findings.length} policy gate(s):\n${renderFindings(findings)}`,
+            })
+          }
+
+          const id = targetTweetId ?? `new_${now().getTime()}`
+          const filename = `${type}_${id}.md`
+          const filePath = join(pendingDir, filename)
+          const fmParts = [
+            `type: "${type}"`,
+            `targetTweetId: ${targetTweetId ? `"${targetTweetId}"` : "null"}`,
+            `targetAuthor: ${targetAuthor ? `"${targetAuthor}"` : "null"}`,
+            `referenceBlogSlug: ${referenceBlogSlug ? `"${referenceBlogSlug}"` : "null"}`,
+            `status: "pending"`,
+            `created_at: "${now().toISOString()}"`,
+          ]
+          const rawContent = `---\n${fmParts.join("\n")}\n---\n\n${draft.content}\n`
+          yield* Effect.tryPromise({
+            try: async () => {
+              await mkdir(pendingDir, { recursive: true })
+              await writeFile(filePath, rawContent, "utf-8")
+            },
+            catch: (e) => toFailure(e),
+          })
+          yield* appendLedger(
+            ledgerPath,
+            new LedgerEntry({
+              at: now().toISOString(),
+              event: "drafted",
+              kind: type,
+              ...(targetTweetId !== undefined ? { targetTweetId } : {}),
+              ...(targetAuthor !== undefined ? { targetAuthor } : {}),
+              ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
+              content: draft.content,
               filename,
-            }
-          },
-          catch: (e) => toFailure(e),
+            }),
+          ).pipe(Effect.ignore)
+          return { path: filePath, filename }
         }),
     })
   })

@@ -18,32 +18,36 @@ const parseFrontmatter = (rawContent: string): {
   
   const fmText = match[1] ?? ""
   const body = rawContent.slice(match[0]?.length ?? 0).trim()
-  
-  let title = ""
-  let description = ""
-  let tags: string[] = []
-  
-  for (const line of fmText.split("\n")) {
-    const colonIndex = line.indexOf(":")
-    if (colonIndex === -1) continue
-    const key = line.slice(0, colonIndex).trim()
-    const value = line.slice(colonIndex + 1).trim()
-    
-    if (key === "title") {
-      title = value.replace(/^['"]|['"]$/g, "")
-    } else if (key === "description") {
-      description = value.replace(/^['"]|['"]$/g, "")
-    } else if (key === "tags") {
-      if (value.startsWith("[") && value.endsWith("]")) {
-        tags = value
-          .slice(1, -1)
-          .split(",")
-          .map((t) => t.trim().replace(/^['"]|['"]$/g, ""))
+
+  const folded = fmText.split("\n").reduce<{
+    title: string
+    description: string
+    tags: ReadonlyArray<string>
+  }>(
+    (acc, line) => {
+      const colonIndex = line.indexOf(":")
+      if (colonIndex === -1) return acc
+      const key = line.slice(0, colonIndex).trim()
+      const value = line.slice(colonIndex + 1).trim()
+      if (key === "title") return { ...acc, title: value.replace(/^['"]|['"]$/g, "") }
+      if (key === "description") {
+        return { ...acc, description: value.replace(/^['"]|['"]$/g, "") }
       }
-    }
-  }
-  
-  return { title, description, tags, body }
+      if (key === "tags" && value.startsWith("[") && value.endsWith("]")) {
+        return {
+          ...acc,
+          tags: value
+            .slice(1, -1)
+            .split(",")
+            .map((t) => t.trim().replace(/^['"]|['"]$/g, "")),
+        }
+      }
+      return acc
+    },
+    { title: "", description: "", tags: [] },
+  )
+
+  return { ...folded, body }
 }
 
 export const AstroBlogReaderLive = Layer.succeed(
@@ -54,22 +58,19 @@ export const AstroBlogReaderLive = Layer.succeed(
         try: async () => {
           const files = await readdir(BLOG_POSTS_DIR)
           const mdFiles = files.filter((f) => f.endsWith(".md") && f !== "typography-test.md")
-          const posts: BlogPost[] = []
-          
-          for (const file of mdFiles) {
-            const filePath = join(BLOG_POSTS_DIR, file)
-            const rawContent = await readFile(filePath, "utf-8")
-            const slug = file.replace(/\.md$/, "")
-            const { title, description, tags, body } = parseFrontmatter(rawContent)
-            
-            posts.push({
-              slug,
-              title,
-              description,
-              tags,
-              content: body,
-            })
-          }
+          const posts: ReadonlyArray<BlogPost> = await Promise.all(
+            mdFiles.map(async (file) => {
+              const rawContent = await readFile(join(BLOG_POSTS_DIR, file), "utf-8")
+              const { title, description, tags, body } = parseFrontmatter(rawContent)
+              return {
+                slug: file.replace(/\.md$/, ""),
+                title,
+                description,
+                tags,
+                content: body,
+              }
+            }),
+          )
           return posts
         },
         catch: (e) => new Error(`Failed to read blog posts: ${String(e)}`),
