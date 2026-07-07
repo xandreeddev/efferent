@@ -150,19 +150,31 @@ sdk-core migrates incrementally instead of big-bang.
 
 ## Roadmap
 
-- ~~Skeleton (this doc)~~ — SHIPPED.
-- **Rule expansion + monorepo gates**: `effect/no-loop-statements`,
-  `effect/no-parallel-interface`; a repo-level boundaries config
-  (`cli → adapters → core` as a gate); fold `foundry check` into
-  `bun run typecheck`; retire `scripts/banTryCatch.ts`.
-- **Ratchet baselines** for sdk-core/adapters/cli.
-- **Evals v2**: `packages/evals` migrates onto `EvalContract` (non-empty
-  scorers, required branded threshold honored by the runner — replacing the
-  hardcoded 0.6 — trajectory scorers); the eval-shape gate goes
-  error-severity on `packages/evals`.
-- **Runtime integration**: the efferent agent as an `Implementor`;
-  `driveLoop` consuming a foundry pipeline with the existing `Verifier`
-  wrapped as the rank-4 judge gate; `efferent forge` CLI.
+- ~~Skeleton~~ — SHIPPED.
+- ~~Rule expansion + monorepo gates~~ — SHIPPED: `effect/no-loop-statements`
+  + `effect/no-parallel-interface`; `foundry.repo.config.ts` runs inside
+  `bun run typecheck` (dependency direction is a gate; `banTryCatch.ts`
+  retired — `effect/no-try-catch` is its generalization, still
+  zero-tolerance on sdk-core).
+- ~~Ratchet baselines~~ — SHIPPED: `packages/foundry/baselines/repo.json`
+  (815 grandfathered fingerprints over the five legacy packages; any NEW
+  finding fails). The gate's first catches, kept as debt to burn down:
+  `sdk-core/usecases/schedule.ts` imports `node:os` (the documented rule is
+  node:path only) and `evals/support/coder.ts` imports seven `efferent/*`
+  (cli) modules against the package's own rule.
+- ~~Evals v2 (structure)~~ — SHIPPED: `EvalSpec.scorers` is non-empty BY
+  TYPE, `threshold` is required and honored per-suite by `run.ts`'s gate
+  (the hardcoded 0.6 is gone); the eval-shape gate polices
+  `packages/evals` in the repo suite. Still open from the v2 contract:
+  trajectory-typed scorers (`ScorerArgsV2.trajectory`) and the branded
+  `Score` in the runner.
+- ~~Runtime integration (first seam)~~ — SHIPPED: `makeJudgeGate` (rank-4,
+  non-deterministic, zero-reason rejections still fail) +
+  `makeVerifierJudgeGate` (`packages/cli/src/foundry/`) wrapping the
+  independent Opus `Verifier.gate` into a forge pipeline, fail-closed.
+  Still open: the efferent agent as an `Implementor`
+  (`EfferentImplementorLive`), `driveLoop` consuming a full foundry
+  pipeline, `efferent forge` CLI surface.
 - Later: a `test` gate (bun test in-workspace), mutation-testing gate
   (StrykerJS incremental — the anti-"tests that assert nothing" meta-gate),
   fast-check property gate, judge calibration before any judge gate blocks.
