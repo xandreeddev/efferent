@@ -1,0 +1,409 @@
+/* efferent math — the standalone practice app's stylesheet.
+ * Token-painted ONLY: every colour is var(--tok-*) from tokens.css (the math
+ * shell hard-stamps <html data-theme="math">, the light design-system theme).
+ * No Tailwind, no kit.css, no app.css — this file owns the whole surface.
+ * Scales are local (math.css is the only stylesheet besides tokens.css). */
+
+:root {
+  --m-sp-1: 4px;
+  --m-sp-2: 8px;
+  --m-sp-3: 12px;
+  --m-sp-4: 16px;
+  --m-sp-5: 24px;
+  --m-sp-6: 32px;
+  --m-sp-7: 48px;
+  --m-fs-0: 0.8125rem;
+  --m-fs-1: 0.9375rem;
+  --m-fs-2: 1.0625rem;
+  --m-fs-3: 1.375rem;
+  --m-fs-4: 1.75rem;
+  --m-radius-1: 8px;
+  --m-radius-2: 12px;
+  --m-radius-3: 20px;
+  --m-col: 640px;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; min-height: 100%; }
+
+body {
+  background: var(--tok-surface-page);
+  color: var(--tok-text-default);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--m-fs-2);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ef-m-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ---- topbar ------------------------------------------------------------- */
+
+.ef-m-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-sp-4);
+  padding: var(--m-sp-3) var(--m-sp-5);
+  background: var(--tok-surface-panel);
+  border-bottom: 1px solid var(--tok-surface-border);
+}
+
+.ef-m-wordmark {
+  color: var(--tok-accent-conversation);
+  font-weight: 700;
+  font-size: var(--m-fs-1);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.ef-m-wordmark b { font-weight: 800; }
+
+.ef-m-topbar-right { display: flex; align-items: center; gap: var(--m-sp-3); min-width: 0; }
+.ef-m-topbar-right form { margin: 0; }
+
+.ef-m-chip {
+  border: 1px solid var(--tok-surface-border);
+  background: var(--tok-surface-panel);
+  color: var(--tok-text-default);
+  font-size: var(--m-fs-0);
+  font-weight: 600;
+  padding: 6px var(--m-sp-3);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ef-m-chip:hover { background: var(--tok-cursorLine); border-color: var(--tok-accent-input); }
+
+.ef-m-solved { color: var(--tok-state-ok); font-weight: 700; font-size: var(--m-fs-0); white-space: nowrap; }
+
+.ef-m-pulse {
+  color: var(--tok-text-muted);
+  font-size: var(--m-fs-0);
+  animation: ef-m-fade 1.6s ease-in-out infinite;
+  white-space: nowrap;
+}
+@keyframes ef-m-fade { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.ef-m-conn { color: var(--tok-text-dim); font-size: var(--m-fs-0); }
+.ef-m-conn--open { color: var(--tok-state-ok); }
+.ef-m-conn--closed { color: var(--tok-state-error); }
+
+/* ---- the column ---------------------------------------------------------- */
+
+.ef-m-main {
+  width: 100%;
+  max-width: var(--m-col);
+  margin: 0 auto;
+  padding: var(--m-sp-6) var(--m-sp-4) var(--m-sp-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--m-sp-4);
+}
+
+.ef-m-note { min-height: 0; text-align: center; }
+.ef-m-note:empty { display: none; }
+.ef-m-note-text { color: var(--tok-text-muted); font-size: var(--m-fs-1); }
+
+/* ---- the stage card ------------------------------------------------------ */
+
+.ef-m-stage {
+  background: var(--tok-surface-panel);
+  border: 1px solid var(--tok-surface-border);
+  border-radius: var(--m-radius-3);
+  box-shadow: 0 8px 30px var(--tok-surface-shadow);
+  padding: clamp(var(--m-sp-5), 5vw, var(--m-sp-7));
+}
+
+.ef-m-exercise { display: flex; flex-direction: column; gap: var(--m-sp-4); }
+
+.ef-m-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-sp-3);
+}
+.ef-m-eyebrow-label {
+  color: var(--tok-text-muted);
+  font-size: var(--m-fs-0);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ef-m-diff {
+  color: var(--tok-accent-conversation);
+  background: var(--tok-cursorLine);
+  font-size: var(--m-fs-0);
+  font-weight: 600;
+  padding: 2px var(--m-sp-2);
+  border-radius: 999px;
+}
+
+.ef-m-prompt {
+  margin: 0;
+  font-size: var(--m-fs-3);
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--tok-text-default);
+}
+
+.ef-m-equation {
+  text-align: center;
+  padding: var(--m-sp-3) 0;
+  overflow-x: auto;
+}
+.ef-m-equation math { font-size: 1.7em; }
+math { font-size: 1.08em; }
+
+/* ---- answering ------------------------------------------------------------ */
+
+.ef-m-answer { display: flex; flex-direction: column; gap: var(--m-sp-3); margin: 0; }
+.ef-m-answer--row { flex-direction: row; flex-wrap: wrap; }
+/* Only the input-beside-button row stretches the field; in column layouts
+   (setup) the input keeps its natural height. */
+.ef-m-answer--row .ef-m-input { flex: 1 1 200px; }
+
+.ef-m-input {
+  min-width: 0;
+  font: inherit;
+  font-size: var(--m-fs-2);
+  color: var(--tok-text-default);
+  background: var(--tok-surface-raised);
+  border: 1.5px solid var(--tok-surface-border);
+  border-radius: var(--m-radius-2);
+  padding: var(--m-sp-3) var(--m-sp-4);
+}
+.ef-m-input:focus {
+  outline: none;
+  border-color: var(--tok-accent-input);
+  box-shadow: 0 0 0 3px var(--tok-cursorLine);
+}
+.ef-m-input::placeholder { color: var(--tok-text-dim); }
+
+.ef-m-btn {
+  font: inherit;
+  font-size: var(--m-fs-1);
+  font-weight: 650;
+  border-radius: var(--m-radius-2);
+  padding: var(--m-sp-3) var(--m-sp-5);
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.ef-m-btn:disabled { opacity: 0.45; cursor: default; }
+
+.ef-m-btn--primary {
+  background: var(--tok-accent-input);
+  color: var(--tok-accent-on);
+}
+.ef-m-btn--primary:hover:not(:disabled) { background: var(--tok-accent-hover); }
+
+/* The Check/Try-again submit: hugs the input on one row, stands alone under a
+   choice grid. */
+.ef-m-check { white-space: nowrap; }
+.ef-m-answer:not(.ef-m-answer--row) .ef-m-check { align-self: flex-start; }
+
+.ef-m-btn--ghost {
+  background: var(--tok-surface-panel);
+  color: var(--tok-text-default);
+  border-color: var(--tok-surface-border);
+}
+.ef-m-btn--ghost:hover:not(:disabled) { background: var(--tok-cursorLine); border-color: var(--tok-accent-input); }
+
+.ef-m-btn--link {
+  background: none;
+  border: none;
+  color: var(--tok-text-muted);
+  font-size: var(--m-fs-0);
+  font-weight: 600;
+  padding: var(--m-sp-1) var(--m-sp-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ef-m-btn--link:hover { color: var(--tok-accent-input); }
+
+.ef-m-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--m-sp-3);
+}
+@media (max-width: 480px) { .ef-m-choices { grid-template-columns: 1fr; } }
+
+.ef-m-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--m-sp-3);
+  padding: var(--m-sp-3) var(--m-sp-4);
+  background: var(--tok-surface-raised);
+  border: 1.5px solid var(--tok-surface-border);
+  border-radius: var(--m-radius-2);
+  cursor: pointer;
+  font-size: var(--m-fs-2);
+}
+.ef-m-choice:hover { background: var(--tok-cursorLine); }
+.ef-m-choice:has(input:checked) {
+  background: var(--tok-match-line);
+  border-color: var(--tok-accent-input);
+}
+.ef-m-choice input { accent-color: var(--tok-accent-input); width: 18px; height: 18px; }
+.ef-m-choice-label { min-width: 0; }
+
+/* ---- feedback -------------------------------------------------------------- */
+
+.ef-m-feedback {
+  border-radius: var(--m-radius-2);
+  padding: var(--m-sp-4) var(--m-sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--m-sp-2);
+}
+.ef-m-feedback--ok { background: var(--tok-feedback-ok-bg); }
+.ef-m-feedback--ok .ef-m-verdict { color: var(--tok-feedback-ok-fg); }
+.ef-m-feedback--err { background: var(--tok-feedback-err-bg); }
+.ef-m-feedback--err .ef-m-verdict { color: var(--tok-feedback-err-fg); }
+.ef-m-feedback--info { background: var(--tok-cursorLine); }
+.ef-m-feedback--info .ef-m-verdict { color: var(--tok-text-default); }
+
+.ef-m-verdict { margin: 0; font-weight: 750; font-size: var(--m-fs-2); }
+
+.ef-m-hint { margin: 0; color: var(--tok-text-default); }
+.ef-m-hint b { color: var(--tok-text-muted); font-weight: 700; }
+
+.ef-m-solution { display: flex; flex-direction: column; gap: var(--m-sp-2); }
+.ef-m-solution-answer { margin: 0; }
+
+.ef-m-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--m-sp-2);
+}
+.ef-m-step::marker { color: var(--tok-accent-input); font-weight: 700; }
+.ef-m-step .ef-m-equation { text-align: left; padding: var(--m-sp-1) 0; }
+.ef-m-step .ef-m-equation math { font-size: 1.2em; }
+
+.ef-m-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--m-sp-2);
+  margin-top: var(--m-sp-1);
+}
+.ef-m-foot form { margin: 0; }
+
+/* ---- controls --------------------------------------------------------------- */
+
+.ef-m-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--m-sp-3);
+}
+.ef-m-controls:empty { display: none; }
+.ef-m-controls form { margin: 0; }
+
+.ef-m-writing {
+  flex-basis: 100%;
+  text-align: center;
+  color: var(--tok-text-muted);
+  font-size: var(--m-fs-0);
+  animation: ef-m-fade 1.6s ease-in-out infinite;
+}
+.ef-m-writing form { display: inline; }
+
+/* ---- setup ------------------------------------------------------------------ */
+
+.ef-m-setup { display: flex; flex-direction: column; gap: var(--m-sp-5); margin: 0; }
+
+.ef-m-setup-title {
+  margin: 0;
+  font-size: var(--m-fs-4);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--tok-text-default);
+}
+
+.ef-m-field { display: flex; flex-direction: column; gap: var(--m-sp-2); }
+
+.ef-m-label {
+  font-size: var(--m-fs-0);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--tok-text-muted);
+}
+
+.ef-m-select {
+  font: inherit;
+  font-size: var(--m-fs-2);
+  color: var(--tok-text-default);
+  background: var(--tok-surface-raised);
+  border: 1.5px solid var(--tok-surface-border);
+  border-radius: var(--m-radius-2);
+  padding: var(--m-sp-3) var(--m-sp-4);
+}
+.ef-m-select:focus { outline: none; border-color: var(--tok-accent-input); box-shadow: 0 0 0 3px var(--tok-cursorLine); }
+
+.ef-m-sugs { display: flex; flex-wrap: wrap; gap: var(--m-sp-2); }
+
+.ef-m-sug {
+  font: inherit;
+  font-size: var(--m-fs-1);
+  font-weight: 600;
+  color: var(--tok-accent-input);
+  background: var(--tok-cursorLine);
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  padding: var(--m-sp-2) var(--m-sp-4);
+  cursor: pointer;
+}
+.ef-m-sug:hover { border-color: var(--tok-accent-input); }
+
+.ef-m-start { align-self: flex-start; }
+
+/* ---- skeleton + error --------------------------------------------------------- */
+
+.ef-m-skel { display: flex; flex-direction: column; gap: var(--m-sp-4); }
+
+.ef-m-skel-bar {
+  border-radius: var(--m-radius-1);
+  background: linear-gradient(
+    100deg,
+    var(--tok-cursorLine) 40%,
+    color-mix(in srgb, var(--tok-cursorLine) 40%, var(--tok-surface-panel)) 50%,
+    var(--tok-cursorLine) 60%
+  );
+  background-size: 200% 100%;
+  animation: ef-m-shimmer 1.4s linear infinite;
+}
+@keyframes ef-m-shimmer { to { background-position: -200% 0; } }
+
+.ef-m-skel-bar--eyebrow { height: 12px; width: 34%; }
+.ef-m-skel-bar--prompt { height: 26px; width: 82%; }
+.ef-m-skel-bar--equation { height: 56px; width: 55%; align-self: center; }
+.ef-m-skel-bar--input { height: 50px; width: 100%; }
+
+.ef-m-skel-msg {
+  margin: 0;
+  text-align: center;
+  color: var(--tok-text-muted);
+  font-size: var(--m-fs-1);
+  animation: ef-m-fade 1.6s ease-in-out infinite;
+}
+
+.ef-m-error { display: flex; flex-direction: column; gap: var(--m-sp-3); align-items: flex-start; }
+.ef-m-error-msg { margin: 0; font-weight: 700; color: var(--tok-feedback-err-fg); }
+.ef-m-error-detail { margin: 0; color: var(--tok-text-muted); font-size: var(--m-fs-1); }
+.ef-m-error form { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ef-m-skel-bar, .ef-m-skel-msg, .ef-m-pulse, .ef-m-writing { animation: none; }
+}

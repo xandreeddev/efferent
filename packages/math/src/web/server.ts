@@ -10,7 +10,7 @@
  * retryable error stage, never a hung request).
  */
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
-import { Effect, PubSub, Queue } from "effect"
+import { Effect, Option, PubSub, Queue } from "effect"
 import type { MathSession } from "../session.js"
 import {
   ACTION_CHECK_PATH,
@@ -26,8 +26,8 @@ import {
   MATH_EX_FIELD,
   MATH_VALUE_FIELD,
   parseClientMessage,
-  staticAssets,
-} from "@xandreed/web"
+} from "./contract.js"
+import { staticAssets } from "./static.js"
 import {
   ALL_PATCHES,
   advance,
@@ -200,10 +200,13 @@ export const mathRouter = (deps: {
             const decoder = new TextDecoder()
             const inbound = socket.run((data) => {
               const msg = parseClientMessage(typeof data === "string" ? data : decoder.decode(data))
-              if (msg === undefined || msg.type === "chat") return Effect.void
-              return msg.type === "resync"
-                ? pump.fullRender.pipe(Effect.flatMap(write), Effect.catchAll(() => Effect.void))
-                : Effect.void
+              return Option.match(msg, {
+                onNone: () => Effect.void,
+                onSome: (m) =>
+                  m.type === "resync"
+                    ? pump.fullRender.pipe(Effect.flatMap(write), Effect.catchAll(() => Effect.void))
+                    : Effect.void,
+              })
             })
             yield* Effect.race(Effect.race(outbound, inbound), deps.closed ?? Effect.never)
           }),
