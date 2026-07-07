@@ -1,5 +1,22 @@
 # @xandreed/examples
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies [e624b8b]
+- Updated dependencies [590ee3d]
+- Updated dependencies [590ee3d]
+- Updated dependencies [590ee3d]
+- Updated dependencies [f563406]
+- Updated dependencies [590ee3d]
+- Updated dependencies [64efbfb]
+- Updated dependencies [604c0ec]
+- Updated dependencies [6a2b3f6]
+- Updated dependencies [64efbfb]
+  - @xandreed/sdk-core@0.6.0
+  - @xandreed/sdk-adapters@0.5.0
+
 ## 0.0.6
 
 ### Patch Changes

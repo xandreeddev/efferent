@@ -1,5 +1,30 @@
 # @xandreed/evals
 
+## 0.3.0
+
+### Minor Changes
+
+- 7c6c0ee: Evals v2 contract: `EvalSpec.scorers` is non-empty by type (`scorers: []` no
+  longer typechecks — the silent-0 hole is unrepresentable) and `threshold` is
+  required and honored per-suite by the run gate (the hardcoded 0.6 bar is
+  gone). Enforced statically by the new foundry `eval-shape` gate (non-empty
+  scorers, explicit threshold, registration in `run.ts`).
+
+### Patch Changes
+
+- Updated dependencies [e624b8b]
+- Updated dependencies [590ee3d]
+- Updated dependencies [590ee3d]
+- Updated dependencies [590ee3d]
+- Updated dependencies [f563406]
+- Updated dependencies [590ee3d]
+- Updated dependencies [64efbfb]
+- Updated dependencies [604c0ec]
+- Updated dependencies [6a2b3f6]
+- Updated dependencies [64efbfb]
+  - @xandreed/sdk-core@0.6.0
+  - @xandreed/sdk-adapters@0.5.0
+
 ## 0.2.3
 
 ### Patch Changes
