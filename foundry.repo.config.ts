@@ -39,6 +39,7 @@ const CHECKED = [
   "packages/providers/src/**",
   "packages/surface/src/**",
   "packages/canvas/src/**",
+  "packages/scenarios/src/**",
 ]
 
 const config: typeof GateSuiteConfig.Encoded = {
@@ -55,6 +56,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         "packages/providers/src/**",
         "packages/surface/src/**",
         "packages/canvas/src/**",
+        "packages/scenarios/src/**",
       ],
     },
     { rule: "effect/no-let", include: CHECKED },
@@ -144,6 +146,21 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/surface/src/**",
         canImport: [],
         externals: ["effect", "bun:test"],
+      },
+      {
+        // Evals v3: scenario packs over agent worlds. The TOP of the new
+        // line's graph — packs may import the agents; nothing imports it.
+        name: "scenarios",
+        path: "packages/scenarios/src/**",
+        canImport: ["engine", "providers", "surface", "foundry", "smith", "math", "social", "canvas"],
+        externals: [
+          "effect",
+          "@effect/",
+          "@xandreed/",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         // The ui-builder agent: render_ui through the surface gates, on the

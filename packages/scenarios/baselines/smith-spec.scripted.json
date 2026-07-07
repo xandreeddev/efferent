@@ -1,0 +1,7 @@
+{
+  "mode": "scripted",
+  "mean": 1,
+  "scenarios": {
+    "refine → lock → forge (scripted twin)": 1
+  }
+}

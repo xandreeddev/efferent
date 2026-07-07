@@ -124,6 +124,18 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/scenarios": {
+      "name": "@xandreed/scenarios",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@xandreed/engine": "workspace:*",
+        "@xandreed/foundry": "workspace:*",
+        "@xandreed/providers": "workspace:*",
+        "@xandreed/smith": "workspace:*",
+        "effect": "^3.21.4",
+      },
+    },
     "packages/sdk-adapters": {
       "name": "@xandreed/sdk-adapters",
       "version": "0.4.2",
@@ -696,6 +708,8 @@
     "@xandreed/math": ["@xandreed/math@workspace:packages/math"],
 
     "@xandreed/providers": ["@xandreed/providers@workspace:packages/providers"],
+
+    "@xandreed/scenarios": ["@xandreed/scenarios@workspace:packages/scenarios"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 
