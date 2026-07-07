@@ -172,6 +172,13 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/surface": {
+      "name": "@xandreed/surface",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "^3.21.4",
+      },
+    },
     "packages/web": {
       "name": "@xandreed/web",
       "version": "0.0.0",
@@ -682,6 +689,8 @@
     "@xandreed/smith": ["@xandreed/smith@workspace:packages/smith"],
 
     "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
+
+    "@xandreed/surface": ["@xandreed/surface@workspace:packages/surface"],
 
     "@xandreed/web": ["@xandreed/web@workspace:packages/web"],
 
