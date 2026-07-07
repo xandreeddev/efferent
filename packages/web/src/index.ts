@@ -113,6 +113,42 @@ export {
   ID_WS_ITEMS,
   type IdPrefix,
 } from "./ids.js"
+// --- the standalone math shell surface -------------------------------------
+export {
+  type MathChoiceView,
+  type MathControlsView,
+  type MathExerciseView,
+  type MathFeedbackView,
+  type MathHeaderView,
+  type MathSetupView,
+  type MathShellView,
+  type MathSolutionStepView,
+  type MathStage,
+} from "./mathViews.js"
+export {
+  mathBodyContents,
+  renderMathFullSync,
+  upsertMathControls,
+  upsertMathHeader,
+  upsertMathNote,
+  upsertMathStage,
+} from "./fragments/math.js"
+export { renderMathShell } from "./pages/mathShell.js"
+export { sanitizeMathml } from "./sanitize.js"
+export {
+  ACTION_CHECK_PATH,
+  ACTION_EASIER_PATH,
+  ACTION_HARDER_PATH,
+  ACTION_MORE_PATH,
+  ACTION_NEXT_PATH,
+  ACTION_REPORT_PATH,
+  ACTION_REVEAL_PATH,
+  ACTION_SETUP_PATH,
+  ACTION_TOPIC_PATH,
+  MATH_EX_FIELD,
+  MATH_VALUE_FIELD,
+} from "./protocol/contract.js"
+
 export { DEFAULT_THEME_NAME, webThemes, type WebTheme } from "./theme/themes.js"
 export { makeWebTokens, type SyntaxTokens, type WebTokens } from "./theme/tokens.js"
 export { flattenTokens, renderTokensCss } from "./theme/css.js"

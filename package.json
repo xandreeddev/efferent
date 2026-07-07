@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "examples"],
+  "workspaces": [
+    "packages/*",
+    "examples"
+  ],
   "scripts": {
     "dev": "bun --hot packages/cli/src/main.ts",
     "start": "bun packages/cli/src/main.ts",
@@ -25,7 +28,8 @@
     "obs:down": "docker compose -f docker-compose.observability.yml down",
     "generate-models": "bun packages/sdk-core/scripts/generateModelCatalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && bun packages/foundry/src/main.ts check && bun packages/foundry/src/main.ts check --config foundry.repo.config.ts --baseline packages/foundry/baselines/repo.json",
-    "prepare": "bun scripts/installHooks.ts"
+    "prepare": "bun scripts/installHooks.ts",
+    "math": "bun packages/math/src/main.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.10",

@@ -330,3 +330,118 @@ export const sanitizeHtml = (input: string): SanitizeResult => {
 
   return { html: raw(out), dropped }
 }
+
+/* ------------------------------------------------------------------ */
+/* MathML                                                              */
+/* ------------------------------------------------------------------ */
+
+/** Presentation-MathML elements the math surface renders. Deliberately NO
+ *  `annotation-xml`/`semantics`/`maction` (the classic mathml XSS vectors) and
+ *  no content MathML — equations only. */
+const MATHML_TAGS = new Set([
+  "math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "ms",
+  "mfrac", "msup", "msub", "msubsup", "msqrt", "mroot",
+  "munder", "mover", "munderover", "mtable", "mtr", "mtd",
+  "mstyle", "mpadded", "mphantom", "mfenced", "menclose",
+])
+
+/** Layout/typography attributes only — never id/class/style/href/on*. */
+const MATHML_ATTRS = new Set([
+  "display", "mathvariant", "mathsize", "displaystyle", "scriptlevel",
+  "linethickness", "rowspacing", "columnspacing", "rowalign", "columnalign",
+  "columnspan", "rowspan", "open", "close", "separators", "stretchy", "form",
+  "accent", "accentunder", "fence", "separator", "movablelimits", "largeop",
+  "lspace", "rspace", "depth", "height", "width", "notation", "voffset",
+])
+
+const MATHML_MAX_BYTES = 8_192
+
+/** Result of {@link sanitizeMathml}: rejected snippets simply don't display. */
+export interface MathmlResult {
+  readonly ok: boolean
+  readonly html: Html
+}
+
+const MATHML_REJECTED: MathmlResult = { ok: false, html: raw("") }
+
+interface MathmlStep {
+  readonly i: number
+  readonly out: string
+  readonly stack: ReadonlyArray<string>
+  readonly closedRoot: boolean
+}
+
+const mathmlAttrs = (attrText: string): string | undefined => {
+  const matches = [...attrText.matchAll(/([a-zA-Z_][a-zA-Z0-9_:.-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g)]
+  return matches.reduce<string | undefined>((acc, m) => {
+    if (acc === undefined || m[0] === "") return acc
+    const attr = (m[1] ?? "").toLowerCase()
+    const value = m[2] ?? m[3] ?? m[4] ?? ""
+    if (!MATHML_ATTRS.has(attr) || /[<>"']/.test(value)) return undefined
+    return `${acc} ${attr}="${value}"`
+  }, "")
+}
+
+/** One tag/text step of the MathML walk; undefined = reject. */
+const mathmlStep = (src: string, st: MathmlStep): MathmlStep | undefined => {
+  if (st.closedRoot) return undefined // trailing content after </math>
+  const lt = src.indexOf("<", st.i)
+  if (lt === -1) {
+    return st.stack.length === 0 ? { ...st, i: src.length } : undefined
+  }
+  const text = src.slice(st.i, lt)
+  if (/[<>]/.test(text)) return undefined
+  const out =
+    st.out + text.replace(/&(?!(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;")
+
+  const rest = src.slice(lt)
+  const close = /^<\/([a-zA-Z-]+)\s*>/.exec(rest)
+  if (close !== null) {
+    const name = (close[1] ?? "").toLowerCase()
+    if (st.stack[st.stack.length - 1] !== name) return undefined
+    const stack = st.stack.slice(0, -1)
+    return {
+      i: lt + close[0].length,
+      out: `${out}</${name}>`,
+      stack,
+      closedRoot: stack.length === 0,
+    }
+  }
+  const open = /^<([a-zA-Z-]+)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/.exec(rest)
+  if (open === null) return undefined
+  const name = (open[1] ?? "").toLowerCase()
+  if (!MATHML_TAGS.has(name)) return undefined
+  if (st.stack.length === 0 && name !== "math") return undefined
+  const attrs = mathmlAttrs(open[2] ?? "")
+  if (attrs === undefined) return undefined
+  const selfClosed = (open[3] ?? "") === "/"
+  return {
+    i: lt + open[0].length,
+    out: selfClosed ? `${out}<${name}${attrs} />` : `${out}<${name}${attrs}>`,
+    stack: selfClosed ? st.stack : [...st.stack, name],
+    closedRoot: false,
+  }
+}
+
+const mathmlWalk = (src: string, st: MathmlStep): MathmlStep | undefined => {
+  if (st.i >= src.length) return st
+  const next = mathmlStep(src, st)
+  return next === undefined ? undefined : mathmlWalk(src, next)
+}
+
+/**
+ * Strict, REJECTING sanitizer for a model-authored equation snippet: the input
+ * must be exactly ONE well-formed `<math>` element whose every tag is
+ * presentation MathML and every attribute layout-only — anything else is
+ * rejected whole (repairing an equation could change its MATH, which is worse
+ * than dropping it; the prompt text always carries the question).
+ */
+export const sanitizeMathml = (input: string): MathmlResult => {
+  const src = input.trim()
+  if (src.length === 0 || src.length > MATHML_MAX_BYTES) return MATHML_REJECTED
+  if (!/^<math[\s>]/i.test(src)) return MATHML_REJECTED
+  const end = mathmlWalk(src, { i: 0, out: "", stack: [], closedRoot: false })
+  return end === undefined || end.stack.length !== 0 || !end.closedRoot
+    ? MATHML_REJECTED
+    : { ok: true, html: raw(end.out) }
+}
