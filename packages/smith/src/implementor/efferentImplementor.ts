@@ -32,10 +32,10 @@ import {
   WebSearch,
   withInboxDrain,
 } from "@xandreed/sdk-core"
-import type { AgentHooks, AgentResult, ConversationId } from "@xandreed/sdk-core"
+import type { AgentHooks, AgentResult, ConversationId, SpecDoc } from "@xandreed/sdk-core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
-import { renderRetryBrief, renderTaskBrief } from "./prompt.js"
+import { renderBrief, renderRetryBrief } from "./prompt.js"
 
 /**
  * Everything one implementor attempt needs at runtime — captured as a
@@ -63,6 +63,9 @@ export interface EfferentImplementorOptions {
   readonly cwd: string
   /** The smith event sink; the coder's AgentEvents ride it as `{type:"agent"}`. */
   readonly publish: (event: SmithEvent) => Effect.Effect<void>
+  /** The locked SpecDoc driving this run — its constraints/non-goals reach the
+   *  brief here (foundry's `Spec` never carries them). `None` = flag path. */
+  readonly doc: Option.Option<SpecDoc>
 }
 
 /**
@@ -174,7 +177,7 @@ export const makeEfferentImplementorLive = (
               ),
             )
             const brief = Option.match(input.feedback, {
-              onNone: () => renderTaskBrief(input.spec),
+              onNone: () => renderBrief(input.spec, options.doc),
               onSome: renderRetryBrief,
             })
             const failureRef = yield* Ref.make(Option.none<string>())

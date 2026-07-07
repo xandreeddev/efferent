@@ -22,19 +22,25 @@ import {
   UtilityLlmLive,
   WebSearchLive,
 } from "@xandreed/sdk-adapters"
+import { ConfigError } from "@xandreed/foundry"
 import { SMITH_LIMIT_DEFAULTS } from "./domain/SmithConfig.js"
 import type { SmithRunConfig } from "./domain/SmithConfig.js"
 import { SmithSettingsStoreLive } from "./settings/smithSettings.js"
 import { runHeadless } from "./headless/print.js"
+import { runHeadlessRefine } from "./refine/headless.js"
+import { loadSpecDoc, mintUniqueSlug, writeSpecDoc } from "./spec/store.js"
+import { trivialSpecDoc } from "./spec/toForgeSpec.js"
 
-const USAGE = `smith — the agent in the factory (foundry forge + the efferent coder)
+const USAGE = `smith — the spec-driven agent in the factory (foundry forge + the efferent coder)
 
 Usage:
-  bun run smith "<task>" [flags]
+  bun run smith spec "<rough idea>" [flags]   refine a SpecDoc (-p: one unattended draft; --yes locks)
+  bun run smith forge <slug|spec.md> [flags]  forge a LOCKED spec
+  bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
 
 Flags:
   --cwd <dir>            workspace to forge IN PLACE (default: process.cwd())
-  --accept "<criterion>" acceptance criterion (repeatable)
+  --accept "<criterion>" acceptance criterion (repeatable; shorthand path)
   --max-attempts <n>     forge attempts, 1..10 (default ${SMITH_LIMIT_DEFAULTS.maxAttempts})
   --budget <mins>        wall-clock budget in minutes (default ${SMITH_LIMIT_DEFAULTS.budgetMillis / 60_000})
   --model <p:m>          general role override (default opencode:kimi-k2.6, thinking high)
@@ -44,14 +50,18 @@ Flags:
   --config <f>           explicit foundry GateSuiteConfig module for the gate suite
   --test-cmd "<cmd>"     test gate command (bash -c; default: bun test when package.json exists)
   --no-test              suppress the test gate
+  --yes                  lock the refined draft without review (spec -p mode)
   -p, --headless         print mode (no TUI)
   -h, --help             this help
 
+Specs live at <cwd>/.efferent/specs/<slug>.md (git-committable provenance).
 Config: same conventions as the efferent CLI — ~/.efferent/auth.json (:login
 there), .efferent/config.json local-over-global; smith defaults sit UNDER your
-config. Exit: 0 accepted · 1 rejected · 2 error.`
+config. Exit: 0 accepted/locked · 1 rejected · 2 error.`
 
 interface ParseState {
+  readonly command: Option.Option<"spec" | "forge">
+  readonly yes: boolean
   readonly task: Option.Option<string>
   readonly cwd: string
   readonly acceptance: ReadonlyArray<string>
@@ -71,6 +81,8 @@ interface ParseState {
 }
 
 const initialState: ParseState = {
+  command: Option.none(),
+  yes: false,
   task: Option.none(),
   cwd: process.cwd(),
   acceptance: [],
@@ -94,6 +106,7 @@ const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
   "--headless": (s) => ({ ...s, headless: true }),
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
+  "--yes": (s) => ({ ...s, yes: true }),
   "--help": (s) => ({ ...s, help: true }),
   "-h": (s) => ({ ...s, help: true }),
 }
@@ -124,6 +137,11 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
     if (VALUE_FLAGS[token] !== undefined) return { ...state, pending: Option.some(token) }
     if (token.startsWith("-")) {
       return { ...state, errors: [...state.errors, `unknown flag: ${token}`] }
+    }
+    // Reserved first tokens route the command; the next positional is its arg.
+    if (Option.isNone(state.command) && Option.isNone(state.task)) {
+      if (token === "spec") return { ...state, command: Option.some("spec" as const) }
+      if (token === "forge") return { ...state, command: Option.some("forge" as const) }
     }
     return Option.isNone(state.task)
       ? { ...state, task: Option.some(token) }
@@ -186,12 +204,13 @@ if (isDirectRun) {
     console.log(USAGE)
     process.exit(0)
   }
-  if (task === undefined || state.errors.length > 0) {
+  const command = Option.getOrUndefined(state.command)
+  if ((task === undefined && command === undefined) || state.errors.length > 0) {
     state.errors.forEach((error) => console.error(`smith: ${error}`))
     console.error(USAGE)
     process.exit(2)
   }
-  const run = toRunConfig(state, task)
+  const run = toRunConfig(state, task ?? "")
   const interactive = !run.headless && process.stdout.isTTY === true
   // Bun auto-loads the LAUNCH dir's .env, and smith always launches from the
   // efferent repo root — a stale EFFERENT_MODEL there would silently override
@@ -214,12 +233,53 @@ if (isDirectRun) {
       console.error(
         `roles: general ${resolved.model} · code ${resolved.codeModel ?? resolved.model} · fast ${resolved.fastModel ?? resolved.model}`,
       )
-      return yield* runHeadless(run)
     }
+
+    // `smith spec "<idea>"` — the refine pipeline.
+    if (command === "spec") {
+      if (task === undefined) {
+        console.error("smith: spec needs an idea — smith spec \"<rough idea>\"")
+        return 2
+      }
+      if (interactive) {
+        const { runTuiRefine } = yield* Effect.promise(() => import("./tui/runtime.js"))
+        return yield* runTuiRefine(run, task, state.yes)
+      }
+      return yield* runHeadlessRefine(run.cwd, task, state.yes)
+    }
+
+    // `smith forge <slug|path>` — a LOCKED spec drives the run.
+    // `smith "<task>"` — shorthand: a trivial locked spec, written for provenance.
+    const doc = yield* Effect.gen(function* () {
+      if (command === "forge") {
+        if (task === undefined) {
+          return yield* Effect.fail(
+            new ConfigError({ path: run.cwd, message: "forge needs a spec — smith forge <slug|spec.md>" }),
+          )
+        }
+        const loaded = yield* loadSpecDoc(run.cwd, task)
+        if (loaded.status !== "locked") {
+          return yield* Effect.fail(
+            new ConfigError({
+              path: task,
+              message: `spec "${loaded.slug}" is a DRAFT — refine and lock it first (smith spec, then :lock / --yes)`,
+            }),
+          )
+        }
+        return loaded
+      }
+      const slug = yield* mintUniqueSlug(run.cwd, run.task)
+      const trivial = yield* trivialSpecDoc(run, slug, new Date().toISOString())
+      yield* writeSpecDoc(run.cwd, trivial)
+      return trivial
+    })
+    const forgeRun: SmithRunConfig = { ...run, task: doc.goal }
+
+    if (!interactive) return yield* runHeadless(forgeRun, Option.some(doc))
     // Lazy: the TUI path touches @opentui/core's native FFI renderer — the
     // headless path must never load it.
     const { runTui } = yield* Effect.promise(() => import("./tui/runtime.js"))
-    return yield* runTui(run)
+    return yield* runTui(forgeRun, Option.some(doc))
   }).pipe(
     Effect.provide(smithAppLive(run)),
     Effect.provide(BunContext.layer),

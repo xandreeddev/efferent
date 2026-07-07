@@ -1,22 +1,32 @@
 # @xandreed/smith
 
-**The agent in the factory.** A coding agent whose OUTER loop is
-`@xandreed/foundry`'s `forge` — implement → snapshot → staged gate pipeline →
-typed feedback → retry — and whose implementor is the REAL efferent coder
-(`@xandreed/sdk-core` + `@xandreed/sdk-adapters`) run headless, every message
-persisted to the same SQLite `ConversationStore` the CLI uses. Private,
-source-run only (`bun run smith`); it is NEVER imported by `packages/cli`
-(foundry depends on the `typescript` compiler, which must not enter the
-published bundle) — the boundaries gate enforces both directions.
+**The SPEC-DRIVEN agent in the factory.** A rough idea becomes a **SpecDoc**
+(drafted by the refiner agent, refined WITH the human, LOCKED by the human),
+and only a locked spec forges: `@xandreed/foundry`'s `forge` loop — implement
+→ snapshot → staged gate pipeline → typed feedback → retry — with the REAL
+efferent coder (`@xandreed/sdk-core` + `@xandreed/sdk-adapters`) as the
+implementor, every message persisted to the same SQLite `ConversationStore`
+the CLI uses. Private, source-run only (`bun run smith`); it is NEVER
+imported by `packages/cli` (foundry depends on the `typescript` compiler,
+which must not enter the published bundle) — the boundaries gate enforces
+both directions. Doctrine + roadmap: `docs/agents/coder.md`.
 
 ```bash
-bun run smith "add a stats util with tests" --cwd ~/code/toy -p --allow-bash
-bun run smith "<task>"          # TTY → the factory-floor TUI
+bun run smith spec "a stats module with tests" --cwd ~/code/toy   # TTY → refine mode
+#   … refine in the composer · :lock approves · :forge builds in the same TUI
+bun run smith spec "<idea>" --cwd <dir> -p [--yes]  # one unattended draft on stdout (--yes locks)
+bun run smith forge <slug|.efferent/specs/x.md>     # forge a LOCKED spec
+bun run smith "<task>" --cwd <dir> [-p]             # shorthand: trivial locked spec + forge
 ```
 
-Exit: 0 accepted · 1 rejected · 2 infra error. Artifact: `<cwd>/.foundry/runs/<id>.json`
-(each `AttemptRecord.implementorRef` = `conversation:<uuid>` — open it in
-`efferent` via `:browse`).
+The SpecDoc lives at `<cwd>/.efferent/specs/<slug>.md` — git-committable
+provenance (flat frontmatter: status/limits/gate overrides; strict sections:
+`# Goal`, `## Acceptance`, `## Checks` (`- name: command` — each becomes a
+rank-2 `accept-<name>` gate), `## Constraints`, `## Non-goals`). The
+`propose_spec` tool is the ONLY way a draft changes; only the human locks.
+Exit: 0 accepted/locked · 1 rejected · 2 infra error. Artifact:
+`<cwd>/.foundry/runs/<id>.json` (each `AttemptRecord.implementorRef` =
+`conversation:<uuid>` — open it in `efferent` via `:browse`).
 
 ## Model roles (defaults — all overridable)
 
@@ -36,29 +46,43 @@ gate — no Opus swarm gate), `agentMode: "direct"`, `maxSteps: 40`,
 
 ```
 src/
-├── main.ts            argv fold → SmithRunConfig → composition root (cli AppLive minus
-│                      TUI extras + BunContext) → TTY ? TUI (lazy import) : headless
+├── main.ts            argv fold → SmithCommand (spec | forge <ref> | task shorthand) →
+│                      composition root (cli AppLive minus TUI extras + BunContext) →
+│                      TTY ? TUI (lazy import) : headless
 ├── domain/            SmithConfig (defaults + SmithRunConfig) · SmithEvent (the ONE union
-│                      both hook families fan into: forge_* + gate_* + {type:"agent"})
+│                      both hook families fan into: refine_* + spec_* + forge_* + gate_* +
+│                      {type:"agent"})
 ├── settings/          the SettingsStore overlay (flags > user config > smith defaults)
+├── spec/              store (load/write/lock/list + unique slugs over FileSystem) ·
+│                      toForgeSpec (SpecDoc → foundry Spec — the ONLY foundry mapping;
+│                      gateRequestFromSpec: flags > frontmatter > discovery; trivialSpecDoc
+│                      for the shorthand)
+├── refine/            session (one persisted conversation with the sdk-core refiner; the
+│                      draft FILE is the truth, re-read after every turn; ONE handler
+│                      record shared by the real agent layer and the scripted test seam) ·
+│                      headless (-p: one unattended draft on stdout, --yes locks)
 ├── implementor/       efferentImplementor (EfferentImplementorLive: Layer.scoped capturing
 │                      the service Context so Implementor stays R=never; ONE conversation
 │                      per forge run — retries continue it with the gate brief; receipt.ref
 │                      links artifact↔conversation; runFleetToCompletion settles spawns;
-│                      only INFRA failures → ImplementorError) · prompt (task/retry briefs)
+│                      only INFRA failures → ImplementorError) · prompt (renderSpecBrief:
+│                      acceptance + checks + constraints + non-goals; retry brief)
 │                      · filesTouched (tool_call_end → WorkspacePath)
 ├── gates/             commandGate (rank-2 test gate over Bun.spawn; crash = GateCrash,
-│                      fail-closed) · suite (discovery: --config | foundry.config.ts |
-│                      tsconfig→typecheck + package.json→bun test; zero gates = ConfigError)
+│                      fail-closed) · suite (GateSuiteRequest: config | foundry.config.ts |
+│                      tsconfig→typecheck + package.json→bun test + spec checks →
+│                      accept-<name> gates; zero gates = ConfigError)
 ├── forge/session.ts   Spec → suite → forge IN PLACE (TsProjectFresh + file sink);
 │                      runForgeSessionWith is the scripted-implementor test seam
 ├── presentation/      eventLines — pure SmithEvent → text (headless lines + feed labels)
 ├── headless/print.ts  -p mode: live event lines, flush-sentinel printer
-└── tui/               the factory floor: theme (single static token set) · presentation/
-                       floor (reduceFloor: events → attempt×gate matrix, pure) · state/
-                       (signals) · events/pump · commands (:quit/:model/:set via the same
-                       SettingsStore) · keys (Esc interrupt · Ctrl-C quit) · view/App.tsx ·
-                       runtime (scoped renderer + pump/session fibers + exit Deferred)
+└── tui/               refine mode (transcript + live SpecPanel + composer; :lock · :forge
+                       transitions the SAME TUI into the floor) + the factory floor:
+                       theme (single static token set) · presentation/{floor,refine}
+                       (pure reducers) · state/ (signals) · events/pump · commands
+                       (:quit/:lock/:forge/:model/:set) · keys (Esc interrupt · Ctrl-C
+                       quit) · view/App.tsx · runtime (withTuiChassis: shared scoped
+                       renderer + pump + exit Deferred; runTui / runTuiRefine)
 ```
 
 ## Rules

@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { makeScriptedImplementor, withTempWorkspace, writeWorkspaceFile } from "@xandreed/foundry"
+import { SpecDoc } from "@xandreed/sdk-core"
 import { LocalFileSystemLive } from "@xandreed/sdk-adapters"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
@@ -83,5 +84,61 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
       "gate_report",
       "forge_end",
     ])
+  })
+
+  test("a locked SpecDoc drives the run: its checks become accept gates", async () => {
+    const events: SmithEvent[] = []
+    const publish = (event: SmithEvent) =>
+      Effect.sync(() => {
+        events.push(event)
+      })
+
+    const doc = Effect.runSync(
+      Schema.decodeUnknown(SpecDoc)({
+        slug: "make-out-file",
+        status: "locked",
+        created: "2026-07-07T10:00:00Z",
+        locked: "2026-07-07T10:05:00Z",
+        goal: "Create out.txt in the workspace.",
+        acceptance: ["out.txt exists"],
+        constraints: ["touch nothing else"],
+        nonGoals: [],
+        checks: [{ name: "out-exists", command: "test -f out.txt" }],
+        limits: { maxAttempts: 3, budgetMinutes: 5 },
+        // The spec suppresses the auto bun-test gate — its own check is the bar.
+        gates: { noTest: true },
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      withTempWorkspace(tmpdir(), (dir) =>
+        Effect.gen(function* () {
+          yield* writeWorkspaceFile(dir, "package.json", `{ "name": "toy" }`)
+          const implementor = makeScriptedImplementor([
+            [], // attempt 1 writes nothing — the accept gate fails
+            [{ path: "out.txt", content: "done\n" }],
+          ])
+          return yield* runForgeSessionWith(
+            { ...runFor(dir), task: doc.goal },
+            publish,
+            implementor,
+            Option.some(doc),
+          ).pipe(Effect.provide(LocalFileSystemLive))
+        }),
+      ),
+    )
+
+    // The spec's machine check ran as the ONLY gate (noTest suppressed bun-test)…
+    const start = events.find((event) => event.type === "forge_start")
+    expect(start?.type === "forge_start" ? start.gateNames : []).toEqual(["accept-out-exists"])
+    // …rejected attempt 1 with the check's rule id in the feedback…
+    expect(result.run.attempts.length).toBe(2)
+    expect(Option.getOrThrow(result.run.attempts[0]!.feedback)).toContain(
+      "test/accept-out-exists",
+    )
+    // …and the artifact's Spec came from the doc.
+    expect(result.run.outcome._tag).toBe("accepted")
+    expect(result.run.spec.goal).toBe(doc.goal)
+    expect(result.run.spec.acceptance).toEqual(doc.acceptance)
   })
 })
