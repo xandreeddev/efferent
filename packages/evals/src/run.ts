@@ -374,7 +374,12 @@ const program = Effect.gen(function* () {
     console.log(`saved baseline → ${savePath}`)
   }
 
-  const anyFail = runs.some((r) => r.suites.some((s) => s.mean < 0.6))
+  // Each suite is gated against ITS OWN declared threshold (required on the
+  // spec since evals v2) — never a hardcoded bar.
+  const thresholdOf = new Map(SUITES.map((s) => [s.name, s.threshold]))
+  const anyFail = runs.some((r) =>
+    r.suites.some((s) => s.mean < (thresholdOf.get(s.suite) ?? 1)),
+  )
   if (anyFail) process.exitCode = 1
 
   // Regression GATE: with `--compare <baseline>`, fail the run if any suite

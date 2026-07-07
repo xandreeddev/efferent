@@ -71,6 +71,14 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/foundry": {
+      "name": "@xandreed/foundry",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "^3.21.4",
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/sdk-adapters": {
       "name": "@xandreed/sdk-adapters",
       "version": "0.4.2",
@@ -608,6 +616,8 @@
     "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
 
     "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
+
+    "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 

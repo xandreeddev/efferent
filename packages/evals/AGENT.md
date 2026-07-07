@@ -51,7 +51,7 @@ their own Grafana folder (`efferent — evals`); prod dashboards filter `{job="e
 
 ## Rules
 
-- **A spec is pure data.** `defineEval({ name, data, task, scorers, threshold?, concurrency? })`.
+- **A spec is pure data.** `defineEval({ name, data, task, scorers, threshold, concurrency? })`. `scorers` is non-empty BY TYPE and `threshold` is REQUIRED and honored by the run gate (evals v2 — the foundry `eval-shape` gate also enforces both statically, plus registration in `run.ts`).
   Pin specs to `R = EvalEnv` so a subset-requiring task/scorer assigns by contravariance.
 - **Config injection.** `makeEvalEnv(config?)` pins `{main, fast, judge, promptVariant, maxSteps}`
   via a `FixedSettingsStoreLive` whose `load()` ignores disk — so a `--config` matrix run is the
