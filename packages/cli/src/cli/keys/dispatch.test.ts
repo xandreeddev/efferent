@@ -84,8 +84,6 @@ const harness = (): Harness => {
       liveAgents: () => [],
       importAgents: () => {},
       importTools: () => {},
-      getDirective: () => undefined,
-      setDirective: () => {},
     },
   }
   return h

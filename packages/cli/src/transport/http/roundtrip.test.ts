@@ -21,7 +21,7 @@ import {
   WebSearch,
   Workspace,
 } from "@xandreed/sdk-core"
-import { NoopTerminalSessionLive, UnavailableVerifierLive } from "@xandreed/sdk-adapters"
+import { NoopTerminalSessionLive } from "@xandreed/sdk-adapters"
 import { makeInProcessWorkspace } from "../../workspace/inProcess.js"
 import { makeFleetSupervisor } from "../../cli/state/fleet.js"
 import { fakeAuthStore } from "../../workspace/fakeAppEnv.js"
@@ -86,8 +86,6 @@ const stubConv = Layer.effect(
       markPending: () => Effect.void,
       clearPending: () => Effect.void,
       listPending: () => Effect.succeed([]),
-      recordGateVerdict: () => Effect.void,
-      listGateVerdicts: () => Effect.succeed([]),
     })
   }),
 )
@@ -122,7 +120,6 @@ const stubPorts = Layer.mergeAll(
   doneModel,
   stubTree,
   stubConv,
-  UnavailableVerifierLive,
 )
 
 const workspaceLayer = Layer.effect(

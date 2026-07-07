@@ -1,4 +1,3 @@
-import { homedir } from "node:os"
 import { Cause, Clock, Effect, Exit, Queue, Schema, type Layer } from "effect"
 import {
   AuthStore,
@@ -7,7 +6,6 @@ import {
   DEFAULT_AUTO_HANDOFF_PCT,
   generateSessionTitle,
   runAgent,
-  runAutoDistill,
   SettingsStore,
   shouldAutoHandoff,
   type AgentDefinition,
@@ -22,7 +20,6 @@ import {
 } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../../prompts/coder.js"
-import { type Directive, renderDirectiveSection } from "../../usecases/directive.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
 import { type InstructionFile } from "../../usecases/discoverInstructionFiles.js"
 import type { AgentEvent } from "../../events.js"
@@ -66,7 +63,6 @@ export interface SubmitDeps {
   readonly approvalLayer: Layer.Layer<Approval, never, SettingsStore | UtilityLlm>
   /** The session's standing goal (Phase 4), read per turn and appended to the
    *  prompt. Returns undefined when none is set. */
-  readonly getDirective: () => Directive | undefined
 }
 
 /**
@@ -81,7 +77,7 @@ export interface SubmitDeps {
 export const makeSubmit = (
   deps: SubmitDeps,
 ): ((text: string) => Effect.Effect<void, never, AppServices>) => {
-  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, memory, agents, tools, instructionFiles, approvalLayer, getDirective } = deps
+  const { store, scopeRuntime, baseHooks, eventQueue, rootScope, cwd, skills, memory, agents, tools, instructionFiles, approvalLayer } = deps
 
   /**
    * Follow-up typed while a node-session preview is open: the message goes to
@@ -350,44 +346,10 @@ export const makeSubmit = (
           })
           yield* runHandoff(store, cid).pipe(Effect.catchAll(() => Effect.void))
         }
-        // Learn for next runs: at the turn boundary, mine this conversation for
-        // reusable skills/constraints (cheap fast tier), Opus-verify each, and
-        // persist the survivors so future runs inherit them. Background daemon +
-        // fail-soft — never blocks the UI, and a missing claude / provider just
-        // means nothing is learned this turn. Skipped while messages are queued.
-        if (next === undefined && settings.autoDistill !== false) {
-          const existing = [
-            ...skills.map((s) => s.name),
-            ...memory.map((m) => m.name),
-          ]
-          const distillEffect = runAutoDistill({
-            conversationId: cid,
-            repoDir: cwd,
-            globalDir: homedir(),
-            existing,
-          }).pipe(
-            Effect.flatMap((saved) =>
-              saved.length === 0
-                ? Effect.void
-                : Effect.sync(() =>
-                    store.pushBlock({
-                      kind: "info",
-                      text: `learned ${saved.length} reusable ${saved.length === 1 ? "lesson" : "lessons"} for next time: ${saved.map((r) => r.candidate.name).join(", ")} (:set autoDistill off to disable)`,
-                    }),
-                  ),
-            ),
-            Effect.catchAll((e) => Effect.log(`auto-distill failed: ${e}`)),
-          )
-          yield* Effect.forkDaemon(distillEffect)
-        }
         if (next !== undefined) yield* submit(next)
       })
 
-      // Append the session's standing goal (if any) so it rides every turn.
-      const base = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools, undefined, memory)
-      const directiveText = renderDirectiveSection(getDirective())
-      const prompt =
-        directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base
+      const prompt = coderPrompt(cwd, new Date(), skills, instructionFiles, agents, tools, undefined, memory)
       // Give the root an inbox like every other agent: a message sent to it
       // mid-turn (busy → bus.post(cid)) is folded in at the next turn boundary,
       // so the human can steer the lead without waiting for the turn to end.

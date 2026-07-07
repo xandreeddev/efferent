@@ -19,8 +19,6 @@ import { regressionVerdict, renderRuns, renderVsBaseline } from "./trace/report.
 import { backgroundShellEval } from "./suites/backgroundShell.eval.js"
 import { coderEditEval } from "./suites/coderEdit.eval.js"
 import { delegationDecisionEval } from "./suites/delegationDecision.eval.js"
-import { distillEval } from "./suites/distill.eval.js"
-import { distillClassificationEval } from "./suites/distillClassification.eval.js"
 import { handoffEval } from "./suites/handoff.eval.js"
 import { orchestrationEval } from "./suites/orchestration.eval.js"
 import { compactionDigestEval } from "./suites/compactionDigest.eval.js"
@@ -52,8 +50,6 @@ const SUITES: ReadonlyArray<AnySpec> = [
   compactionDigestEval,
   sessionTitleEval,
   repoTasksEval,
-  distillEval,
-  distillClassificationEval,
   delegationDecisionEval,
   orchestrationEval,
   swarmEval,

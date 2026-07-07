@@ -20,8 +20,6 @@ export const SMITH_MODEL_DEFAULTS = {
  * Non-model setting defaults. Rationale per knob:
  * - `openCodeThinkingMode: "high"` — kimi-k2.6 runs with extended thinking
  *   (the "kimi 2.6 HIGH" ask); `:set openCodeThinkingMode off` to disable.
- * - `autoLoop: false` — the foundry gate pipeline IS the verification; the
- *   runtime's Opus swarm gate would double-judge every attempt.
  * - `agentMode: "direct"` — the implementor root codes hands-on (no
  *   coordinator); code-heavy pieces still delegate by ROLE to the code tier.
  * - `maxSteps: 40` — one forge attempt is one substantial coder turn (the
@@ -31,7 +29,6 @@ export const SMITH_MODEL_DEFAULTS = {
  */
 export const SMITH_SETTING_DEFAULTS = {
   openCodeThinkingMode: "high",
-  autoLoop: false,
   agentMode: "direct",
   maxSteps: 40,
   subAgentMaxChildren: 4,

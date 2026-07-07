@@ -1,15 +1,12 @@
 import type { Tool } from "@effect/ai"
-import { Clock, Effect, Ref } from "effect"
-import type { ContextNodeId } from "../entities/AgentContext.js"
-import type { AgentGateEvent, AgentHooks } from "../entities/AgentHooks.js"
+import { Effect, Ref } from "effect"
+import type { AgentHooks } from "../entities/AgentHooks.js"
 import type { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
 import { SettingsStore } from "../ports/SettingsStore.js"
 import { recordError } from "../telemetry/metrics.js"
 import { agentSpanAttributes, runSpanName } from "../telemetry/spanNames.js"
 import { runAgentLoop } from "./agentLoop.js"
-import { gateOnce, listTreeSafe, settleNewNodes } from "./gateLoop.js"
-import { reinforceConstraints } from "./persistArtifact.js"
 import { handoffToMessage } from "./promptMapping.js"
 import { RunContextRef } from "./runContext.js"
 import { DEFAULT_SUB_AGENT_TOKEN_BUDGET, makeTokenPool } from "./tokenBudget.js"
@@ -31,12 +28,6 @@ interface DriveLoopInput<Tools extends Record<string, Tool.Any>, R> {
    *  whether approvals can prompt a human. Absent ⇒ fast retries only. */
   readonly interactionPolicy: "interactive" | "headless" | undefined
 }
-
-/** Emit a swarm-gate verdict through the caller's hook, if any (no-op otherwise). */
-const emitGate = <Tools extends Record<string, Tool.Any>, R>(
-  input: DriveLoopInput<Tools, R>,
-  event: AgentGateEvent,
-): Effect.Effect<void, never, R> => input.extraHooks?.onGateResult?.(event) ?? Effect.void
 
 const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
   input: DriveLoopInput<Tools, R>,
@@ -67,9 +58,6 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
     const persistTail = (msgs: ReadonlyArray<AgentMessage>) =>
       Effect.forEach(msgs, (m) => store.append(input.conversationId, m)).pipe(Effect.orDie)
 
-    // One run of the loop over a message buffer — reused verbatim for the first
-    // attempt AND each gate-driven retry, so a retry inherits the same pinned
-    // models, shared token pool, compaction policy, and incremental persistence.
     const runOneAttempt = (messages: ReadonlyArray<AgentMessage>) =>
       runAgentLoop({
         system: input.config.prompt.text,
@@ -137,108 +125,11 @@ const driveLoop = <Tools extends Record<string, Tool.Any>, R>(
         Effect.annotateLogs({ conversationId: input.conversationId }),
       )
 
-    // Snapshot the tree BEFORE the run so we can tell which sub-agent nodes THIS
-    // run created (a resumed conversation already carries prior turns' nodes).
-    const nodeIdsBefore: ReadonlySet<ContextNodeId> = new Set(
-      (yield* listTreeSafe(input.conversationId)).map((n) => n.id),
-    )
-
-    let result = yield* runOneAttempt(input.messages)
-
-    // Wall-clock ceiling for the WHOLE gate phase (settle + every verifier
-    // round + every fleet retry). Bounds the "root wedged for tens of minutes
-    // with only a spinner" class regardless of attempt count.
-    const GATE_WALL_CLOCK_MS = 15 * 60_000
-
-    // ===== Mandatory swarm gate (the self-improving loop's enforcement point) =====
-    // If THIS run used sub-agents, the objective is NOT done until the independent
-    // Opus gate validates the deliverable. This lives in `driveLoop` — the one path
-    // `runAgent`/`resumeAgent` (and thus every mode) funnels through — so it is
-    // structurally impossible to fan out a swarm and skip verification. It depends
-    // on NEITHER the model calling a tool NOR a coordinator; only `autoLoop`
-    // (default on) gates it. This is the ONE gate tier: the whole run's aggregate
-    // deliverable, judged once here (the old per-coordinator tier is gone).
-    // Fail-closed: needs_work → RUN AGAIN with the gate's reasons → re-gate, to
-    // `maxLoopAttempts` (learning happens at the turn boundary, not in-gate). A
-    // genuinely unavailable verifier is surfaced LOUDLY (never a silent pass) and
-    // does not loop. `repoDir` is required to ground the gate.
-    if (settings.autoLoop !== false && input.workspaceDir !== undefined) {
-      const repoDir = input.workspaceDir
-      // Default ONE retry (2 attempts): each retry re-runs the whole fleet —
-      // expensive by construction — and the forensics showed retry-to-3 mostly
-      // burned tokens without converging. The wall-clock budget bounds the
-      // whole gate phase regardless of attempts (verifier calls used to run up
-      // to 30 min × attempts with only a spinner showing).
-      const maxAttempts = settings.maxLoopAttempts ?? 2
-      const gateStart = yield* Clock.currentTimeMillis
-      let attempt = 1
-      while (true) {
-        const elapsed = (yield* Clock.currentTimeMillis) - gateStart
-        if (elapsed > GATE_WALL_CLOCK_MS) {
-          yield* store
-            .recordGateVerdict({
-              conversationId: input.conversationId,
-              attempt,
-              verdict: "unavailable",
-              reasons: [
-                `gate wall-clock budget exhausted after ${Math.round(elapsed / 1000)}s — delivered as-is`,
-              ],
-              filesChanged: [],
-              advisory: false,
-              durationMs: elapsed,
-              error: "gate budget exhausted",
-            })
-            .pipe(Effect.ignore)
-          break
-        }
-        const freshNodes = yield* settleNewNodes(input.conversationId, nodeIdsBefore)
-        const roundStart = yield* Clock.currentTimeMillis
-        const step = yield* gateOnce({
-          task: input.mission ?? input.promptLabel,
-          summary: result.finalText,
-          repoDir,
-          freshNodes,
-          attempt,
-          maxAttempts,
-        })
-        if (step.kind === "no-subagents") break
-        // AUDIT: every round lands a row — INCLUDING `unavailable` (with the
-        // verifier's error text), so a flaky gate can never again degrade to a
-        // silent, untraceable bypass ("claude exited 1 after 2s" ×3 in the
-        // forensics, invisible everywhere).
-        const roundMs = (yield* Clock.currentTimeMillis) - roundStart
-        yield* store
-          .recordGateVerdict({
-            conversationId: input.conversationId,
-            attempt,
-            verdict: step.event.verdict,
-            reasons: step.event.reasons,
-            filesChanged: step.event.filesChanged,
-            advisory: step.event.advisory === true,
-            durationMs: roundMs,
-            ...(step.event.verdict === "unavailable"
-              ? { error: step.event.reasons.join("; ") }
-              : {}),
-          })
-          .pipe(Effect.ignore)
-        yield* emitGate(input, step.event)
-        // ✗-reinforcement: the gate cited standing constraints the deliverable
-        // violated — bump their harmful counters so the library's numbers mean
-        // something (every rule sat at (✓0 ✗0) forever before this).
-        if (
-          step.event.constraintsViolated !== undefined &&
-          step.event.constraintsViolated.length > 0
-        ) {
-          yield* reinforceConstraints(repoDir, step.event.constraintsViolated)
-        }
-        if (step.kind !== "retry") break
-
-        // RUN AGAIN — feed the gate's reasons back as the next turn, then re-gate.
-        yield* persistTail([step.feedback])
-        result = yield* runOneAttempt([...result.messages, step.feedback])
-        attempt++
-      }
-    }
+    // The old post-run LLM-judge gate (Opus via claude-headless, the "mandatory
+    // swarm gate") lived here. Excised (docs/agents/coder.md R1): an LLM judge
+    // where a deterministic gate belongs. The deterministic definition-of-done
+    // (the foundry gate suite as a subprocess) lands in this same spot in R3.
+    const result = yield* runOneAttempt(input.messages)
 
     yield* store.clearPending(input.conversationId).pipe(Effect.ignore)
     return result

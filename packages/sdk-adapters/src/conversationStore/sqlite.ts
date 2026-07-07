@@ -336,53 +336,6 @@ export const SqliteConversationStoreLive = Layer.effect(
           return results
         }),
 
-      recordGateVerdict: (record) =>
-        wrapSql(
-          sql`
-            INSERT INTO gate_verdicts (
-              id, conversation_id, attempt, verdict, reasons, files_changed,
-              advisory, duration_ms, error, created_at
-            )
-            VALUES (
-              ${crypto.randomUUID()}, ${record.conversationId}, ${record.attempt},
-              ${record.verdict}, ${JSON.stringify(record.reasons)},
-              ${JSON.stringify(record.filesChanged)}, ${record.advisory ? 1 : 0},
-              ${record.durationMs}, ${record.error ?? null}, ${Date.now()}
-            )
-          `,
-          "Failed to record gate verdict",
-        ).pipe(Effect.asVoid),
-
-      listGateVerdicts: (id) =>
-        Effect.gen(function* () {
-          const rows = yield* wrapSql(
-            sql<{
-              readonly attempt: number
-              readonly verdict: string
-              readonly reasons: string
-              readonly files_changed: string
-              readonly advisory: number
-              readonly duration_ms: number
-              readonly error: string | null
-              readonly created_at: number
-            }>`
-              SELECT attempt, verdict, reasons, files_changed, advisory, duration_ms, error, created_at
-              FROM gate_verdicts WHERE conversation_id = ${id} ORDER BY created_at ASC
-            `,
-            "Failed to list gate verdicts",
-          )
-          return rows.map((r) => ({
-            conversationId: id,
-            attempt: Number(r.attempt),
-            verdict: r.verdict as "sound" | "needs_work" | "blocked" | "unavailable",
-            reasons: JSON.parse(r.reasons) as string[],
-            filesChanged: JSON.parse(r.files_changed) as string[],
-            advisory: r.advisory === 1,
-            durationMs: Number(r.duration_ms),
-            ...(r.error !== null ? { error: r.error } : {}),
-            createdAt: Number(r.created_at),
-          }))
-        }),
     })
 
     return store

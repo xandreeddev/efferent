@@ -5,7 +5,6 @@ import {
   ApprovalDecision,
   AuthStore,
   CreateFleetRequest,
-  Directive,
   FleetMessage,
   ImportResult,
   Settings,
@@ -42,7 +41,6 @@ export interface DaemonIdentity {
 const SendBody = Schema.Struct({ prompt: Schema.String })
 const ModelBody = Schema.Struct({ model: Schema.String })
 const ImportBody = Schema.Struct({ spec: Schema.String })
-const DirectiveBody = Schema.Struct({ directive: Schema.NullOr(Directive) })
 const SinceParams = Schema.Struct({ since: Schema.optional(Schema.NumberFromString) })
 const HealthResponse = Schema.Struct({
   pid: Schema.Number,
@@ -234,25 +232,6 @@ export const workspaceRouter = (
         const patch = yield* HttpServerRequest.schemaBodyJson(SettingsPatch)
         const s = yield* ws.updateSettings(patch)
         return yield* HttpServerResponse.schemaJson(Settings)(s)
-      }),
-    ),
-    HttpRouter.get(
-      "/directive",
-      Effect.gen(function* () {
-        const ws = yield* Workspace
-        const directive = yield* ws.getDirective()
-        return yield* HttpServerResponse.schemaJson(DirectiveBody)({
-          directive: directive ?? null,
-        })
-      }),
-    ),
-    HttpRouter.post(
-      "/directive",
-      Effect.gen(function* () {
-        const ws = yield* Workspace
-        const { directive } = yield* HttpServerRequest.schemaBodyJson(DirectiveBody)
-        yield* ws.setDirective(directive ?? undefined)
-        return noContent
       }),
     ),
     HttpRouter.post(

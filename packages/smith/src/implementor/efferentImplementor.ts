@@ -28,7 +28,6 @@ import {
   stripLeads,
   TerminalSession,
   UtilityLlm,
-  Verifier,
   WebSearch,
   withInboxDrain,
 } from "@xandreed/sdk-core"
@@ -53,7 +52,6 @@ export type ImplementorServices =
   | SettingsStore
   | UtilityLlm
   | Approval
-  | Verifier
   | LanguageModel.LanguageModel
 
 const EMPTY_RESULT: AgentResult = { finalText: "", messages: [], newTail: [] }

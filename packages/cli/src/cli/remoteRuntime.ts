@@ -17,7 +17,6 @@ import {
   connLabel,
   sessionConversationId,
   SessionId,
-  type Directive,
   type SessionSummary,
   type WorkspaceSnapshot,
 } from "@xandreed/sdk-core"
@@ -186,7 +185,6 @@ export const runTuiModeRemote = (
 
       // Mutable client caches refreshed from the daemon snapshot.
       let snapshotCache: WorkspaceSnapshot = snap0
-      let directiveCache: Directive | undefined = snap0.directive ?? undefined
       const runningAgents = (): ReadonlyArray<SessionSummary> =>
         snapshotCache.sessions.filter((s) => s.kind === "agent" && s.status === "running")
       const refreshSnapshot = (): void => {
@@ -195,7 +193,6 @@ export const runTuiModeRemote = (
             Effect.tap((s) =>
               Effect.sync(() => {
                 snapshotCache = s
-                directiveCache = s.directive ?? undefined
               }),
             ),
             Effect.catchAll(() => Effect.void),
@@ -513,11 +510,6 @@ export const runTuiModeRemote = (
               ),
             ),
           )
-        },
-        getDirective: () => directiveCache,
-        setDirective: (d) => {
-          directiveCache = d
-          void Runtime.runPromise(rt)(ws.setDirective(d).pipe(Effect.ignore))
         },
         exit: () => {
           Runtime.runFork(rt)(Deferred.succeed(exitDeferred, undefined))

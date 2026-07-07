@@ -2,7 +2,6 @@ import { Context, type Effect, Schema, type Stream } from "effect"
 import { AgentEvent } from "../entities/AgentEvent.js"
 import { AgentMessage, ConversationId } from "../entities/Conversation.js"
 import { ContextNodeId } from "../entities/AgentContext.js"
-import { Directive } from "../entities/Directive.js"
 import { Settings } from "../entities/Settings.js"
 import { AgentPhase } from "../entities/AgentPhase.js"
 import { ApprovalDecision, ApprovalRequest } from "./Approval.js"
@@ -158,7 +157,6 @@ export type SessionState = typeof SessionState.Type
 
 export const WorkspaceSnapshot = Schema.Struct({
   sessions: Schema.Array(SessionSummary),
-  directive: Schema.NullOr(Directive),
   activeSessionId: Schema.NullOr(SessionId),
 })
 export type WorkspaceSnapshot = typeof WorkspaceSnapshot.Type
@@ -313,13 +311,6 @@ export class Workspace extends Context.Tag("@xandreed/sdk-core/Workspace")<
     readonly updateSettings: (
       patch: SettingsPatch,
     ) => Effect.Effect<Settings, WorkspaceError>
-    readonly getDirective: () => Effect.Effect<
-      Directive | undefined,
-      WorkspaceError
-    >
-    readonly setDirective: (
-      d: Directive | undefined,
-    ) => Effect.Effect<void, WorkspaceError>
     readonly importAgents: (
       spec: string,
     ) => Effect.Effect<ImportResult, WorkspaceError>

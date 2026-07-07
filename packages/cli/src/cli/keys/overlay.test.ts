@@ -41,8 +41,6 @@ const ctxOf = (store: TuiStore): TuiContext => ({
   liveAgents: () => [],
   importAgents: () => {},
   importTools: () => {},
-  getDirective: () => undefined,
-  setDirective: () => {},
 })
 
 const key = (name: string, mods: Partial<Key> = {}): Key => ({

@@ -351,29 +351,6 @@ export const makeWebReducer = (
         )
       }
 
-      case "gate": {
-        const files = event.filesChanged.length > 0 ? ` · ${event.filesChanged.length} file(s)` : ""
-        const text =
-          event.verdict === "sound"
-            ? `✓ verifier: deliverable SOUND (attempt ${event.attempt})${files}`
-            : event.verdict === "unavailable"
-              ? `⚠ verifier UNAVAILABLE — work NOT verified: ${event.reasons.join("; ")}`
-              : event.advisory === true
-                ? `⚑ verifier notes (delivered): ${event.reasons.join("; ")}`
-                : `✗ verifier: ${event.verdict.toUpperCase().replace("_", " ")} (attempt ${event.attempt})${files} — ${event.reasons.join("; ")}`
-        return withPhase(info(m, text))
-      }
-
-      case "learned":
-        return event.lessons.length > 0
-          ? withPhase(
-              info(
-                m,
-                `learned ${event.lessons.length} reusable ${event.lessons.length === 1 ? "lesson" : "lessons"}: ${event.lessons.map((l) => l.name).join(", ")}`,
-              ),
-            )
-          : withPhase(same(m))
-
       case "agent_end": {
         const outcome = event.outcome ?? "ok"
         const r =

@@ -51,8 +51,6 @@ describe("in-process Workspace — auto-resume in-flight turn", () => {
                 p !== undefined ? [{ id: FAKE_ROOT_CID as ConversationId, prompt: p }] : [],
               ),
             ),
-          recordGateVerdict: () => Effect.void,
-          listGateVerdicts: () => Effect.succeed([]),
         })
       }),
     )
