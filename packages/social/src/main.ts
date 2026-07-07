@@ -1,7 +1,8 @@
+import { homedir } from "node:os"
 import { Command } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { FetchHttpClient } from "@effect/platform"
 import { Effect, Layer } from "effect"
+import { SettingsStore } from "@xandreed/sdk-core"
 import {
   LocalAuthStoreLive,
   LocalFileSystemLive,
@@ -40,18 +41,34 @@ const SocialAppLive = Layer.mergeAll(
 /* CLI Commands                                                       */
 /* ------------------------------------------------------------------ */
 
+// Bun auto-loads the launch dir's .env; a stale EFFERENT_MODEL there silently
+// overrides the configured model (the smith/math lesson).
+const envModel = process.env["EFFERENT_MODEL"]
+if (envModel !== undefined) {
+  console.error(`social: ignoring EFFERENT_MODEL=${envModel} — configure .efferent/config.json`)
+  delete process.env["EFFERENT_MODEL"]
+}
+
+/** Settings must LOAD before any model call — the router reads the store. */
+const withSettings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const settings = yield* (yield* SettingsStore).load(process.cwd(), homedir())
+    yield* Effect.logInfo(`social: agent on ${settings.model}`)
+    return yield* effect
+  })
+
 const daemonCmd = Command.make("daemon", {}, () =>
-  startDaemon().pipe(Effect.provide(SocialAppLive))
+  withSettings(startDaemon()).pipe(Effect.provide(SocialAppLive))
 )
 
 const reviewCmd = Command.make("review", {}, () =>
-  runReviewQueue().pipe(Effect.provide(SocialAppLive))
+  withSettings(runReviewQueue()).pipe(Effect.provide(SocialAppLive))
 )
 
 const testCmd = Command.make("test", {}, () =>
   Effect.gen(function* () {
     yield* Effect.logInfo("Testing Playwright X platform connection...")
-    yield* findOpportunitiesAndDraft(["EffectTS"])
+    yield* withSettings(findOpportunitiesAndDraft(["EffectTS"]))
   }).pipe(Effect.provide(SocialAppLive))
 )
 

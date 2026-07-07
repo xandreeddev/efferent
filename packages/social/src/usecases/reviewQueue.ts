@@ -1,13 +1,24 @@
 import { Effect } from "effect"
-import { readdir, readFile, rename, unlink, mkdir } from "node:fs/promises"
+import { readdir, readFile, rename, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
 import * as readline from "node:readline"
 import { XPlatform } from "../ports/XPlatform.js"
+import { BlogReader } from "../ports/BlogReader.js"
+import { appendLedger, LedgerEntry, readLedger } from "../domain/Ledger.js"
+import { loadPolicy } from "../domain/policy.js"
+import { renderFindings, runSocialGates, type SocialFinding } from "../domain/gates.js"
+import {
+  DRAFTS_DISCARDED_DIR,
+  DRAFTS_PENDING_DIR,
+  DRAFTS_POSTED_DIR,
+  LEDGER_PATH,
+  POLICY_PATH,
+} from "../domain/paths.js"
 
-const PENDING_DIR = "/home/asiborro/Workspace/xandreed/posts/drafts/pending"
-const POSTED_DIR = "/home/asiborro/Workspace/xandreed/posts/drafts/posted"
-const DISCARDED_DIR = "/home/asiborro/Workspace/xandreed/posts/drafts/discarded"
+const PENDING_DIR = DRAFTS_PENDING_DIR
+const POSTED_DIR = DRAFTS_POSTED_DIR
+const DISCARDED_DIR = DRAFTS_DISCARDED_DIR
 
 interface DraftMetadata {
   readonly type: "reply" | "post"
@@ -26,45 +37,31 @@ const parseDraftFile = async (filename: string): Promise<DraftMetadata> => {
   
   const match = fileContent.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   const body = match ? fileContent.slice(match[0].length).trim() : fileContent.trim()
-  
-  let type: "reply" | "post" = "post"
-  let targetTweetId: string | null = null
-  let targetAuthor: string | null = null
-  let referenceBlogSlug: string | null = null
-  let status = "pending"
 
-  if (match) {
-    const fmText = match[1] ?? ""
-    for (const line of fmText.split("\n")) {
+  const defaults = {
+    type: "post" as "reply" | "post",
+    targetTweetId: null as string | null,
+    targetAuthor: null as string | null,
+    referenceBlogSlug: null as string | null,
+    status: "pending",
+  }
+  const folded = (match?.[1] ?? "").split("\n").reduce<typeof defaults>(
+    (acc, line) => {
       const colonIndex = line.indexOf(":")
-      if (colonIndex === -1) continue
+      if (colonIndex === -1) return acc
       const key = line.slice(0, colonIndex).trim()
       const value = line.slice(colonIndex + 1).trim().replace(/^['"]|['"]$/g, "")
-      
-      if (key === "type" && (value === "reply" || value === "post")) {
-        type = value
-      } else if (key === "targetTweetId" && value !== "null") {
-        targetTweetId = value
-      } else if (key === "targetAuthor" && value !== "null") {
-        targetAuthor = value
-      } else if (key === "referenceBlogSlug" && value !== "null") {
-        referenceBlogSlug = value
-      } else if (key === "status") {
-        status = value
-      }
-    }
-  }
+      if (key === "type" && (value === "reply" || value === "post")) return { ...acc, type: value }
+      if (key === "targetTweetId" && value !== "null") return { ...acc, targetTweetId: value }
+      if (key === "targetAuthor" && value !== "null") return { ...acc, targetAuthor: value }
+      if (key === "referenceBlogSlug" && value !== "null") return { ...acc, referenceBlogSlug: value }
+      if (key === "status") return { ...acc, status: value }
+      return acc
+    },
+    defaults,
+  )
 
-  return {
-    type,
-    targetTweetId,
-    targetAuthor,
-    referenceBlogSlug,
-    status,
-    content: body,
-    filePath,
-    filename,
-  }
+  return { ...folded, content: body, filePath, filename }
 }
 
 const askQuestion = (query: string): Promise<string> => {
@@ -88,9 +85,61 @@ const openEditor = (filePath: string): Promise<void> => {
   })
 }
 
+/** Gate B — the pre-post check, run on the draft AS IT IS NOW (after any
+ *  human [e]dit) plus the post-time ledger state (dedup vs posted, caps at
+ *  send). Nothing leaves for X without passing it. */
+export const gateBeforePost = (
+  draft: Pick<DraftMetadata, "type" | "content" | "targetTweetId" | "targetAuthor" | "referenceBlogSlug">,
+  args: {
+    readonly ledgerPath?: string
+    readonly policyPath?: string
+    readonly knownSlugs: ReadonlySet<string>
+    readonly now?: Date
+  },
+): Effect.Effect<ReadonlyArray<SocialFinding>> =>
+  Effect.gen(function* () {
+    const ledger = yield* readLedger(args.ledgerPath ?? LEDGER_PATH)
+    const policy = yield* loadPolicy(args.policyPath ?? POLICY_PATH)
+    return runSocialGates(
+      {
+        kind: draft.type,
+        content: draft.content,
+        ...(draft.targetTweetId !== null ? { targetTweetId: draft.targetTweetId } : {}),
+        ...(draft.targetAuthor !== null ? { targetAuthor: draft.targetAuthor } : {}),
+        ...(draft.referenceBlogSlug !== null ? { referenceBlogSlug: draft.referenceBlogSlug } : {}),
+      },
+      {
+        now: args.now ?? new Date(),
+        ledger,
+        policy,
+        knownSlugs: args.knownSlugs,
+        phase: "post",
+      },
+    )
+  })
+
+const ledgerRow = (
+  draft: DraftMetadata,
+  event: "posted" | "discarded" | "skipped",
+): LedgerEntry =>
+  new LedgerEntry({
+    at: new Date().toISOString(),
+    event,
+    kind: draft.type,
+    ...(draft.targetTweetId !== null ? { targetTweetId: draft.targetTweetId } : {}),
+    ...(draft.targetAuthor !== null ? { targetAuthor: draft.targetAuthor } : {}),
+    ...(draft.referenceBlogSlug !== null ? { referenceBlogSlug: draft.referenceBlogSlug } : {}),
+    content: draft.content,
+    filename: draft.filename,
+  })
+
 export const runReviewQueue = () =>
   Effect.gen(function* () {
     const x = yield* XPlatform
+    const blog = yield* BlogReader
+    const knownSlugs = new Set(
+      (yield* blog.getPosts().pipe(Effect.orElseSucceed(() => []))).map((p) => p.slug),
+    )
     
     yield* Effect.logInfo("Loading pending drafts...")
     const files = yield* Effect.tryPromise({
@@ -113,10 +162,11 @@ export const runReviewQueue = () =>
 
     console.log(`\nFound ${pendingDrafts.length} drafts to review.\n`)
 
-    for (const file of pendingDrafts) {
-      let doneWithDraft = false
-      
-      while (!doneWithDraft) {
+    // One draft at a time; each is a small recursive state machine
+    // (show → ask → act; [e]dit loops back to a fresh re-parse) and "q" stops
+    // the whole queue. Recursion replaces the old mutable while-flags.
+    const reviewOne = (file: string): Effect.Effect<"continue" | "quit", Error, never> =>
+      Effect.gen(function* () {
         const draft = yield* Effect.tryPromise({
           try: () => parseDraftFile(file),
           catch: (e) => new Error(`Failed to parse draft "${file}": ${String(e)}`),
@@ -142,13 +192,13 @@ export const runReviewQueue = () =>
 
         if (choice === "q") {
           console.log("Exiting review queue.")
-          return
+          return "quit" as const
         }
 
         if (choice === "s") {
+          yield* appendLedger(LEDGER_PATH, ledgerRow(draft, "skipped")).pipe(Effect.ignore)
           console.log("Skipping draft.\n")
-          doneWithDraft = true
-          continue
+          return "continue" as const
         }
 
         if (choice === "d") {
@@ -159,19 +209,28 @@ export const runReviewQueue = () =>
             },
             catch: (e) => new Error(`Failed to discard draft: ${String(e)}`),
           })
+          yield* appendLedger(LEDGER_PATH, ledgerRow(draft, "discarded")).pipe(Effect.ignore)
           console.log("Draft moved to discarded.\n")
-          doneWithDraft = true
-          continue
+          return "continue" as const
         }
 
         if (choice === "e") {
           console.log(`Opening editor (${process.env.EDITOR || "nano"})...`)
           yield* Effect.promise(() => openEditor(draft.filePath))
           console.log("Reloading updated draft...\n")
-          continue
+          return yield* reviewOne(file)
         }
 
         if (choice === "a") {
+          // ---- Gate B: nothing leaves for X unvalidated (the [e]dit path
+          // used to post >280 raw; caps/dedup are re-checked AT SEND). ----
+          const findings = yield* gateBeforePost(draft, { knownSlugs })
+          if (findings.length > 0) {
+            console.log("⛔ Gate B blocked this draft:")
+            console.log(renderFindings(findings))
+            console.log("Edit it ([e]) or discard it ([d]).\n")
+            return yield* reviewOne(file)
+          }
           console.log("Posting to X...")
           yield* x.postTweet(draft.content, draft.targetTweetId ?? undefined).pipe(
             Effect.tap(() =>
@@ -183,15 +242,22 @@ export const runReviewQueue = () =>
                 catch: (e) => new Error(`Failed to archive posted draft: ${String(e)}`),
               })
             ),
+            Effect.tap(() => appendLedger(LEDGER_PATH, ledgerRow(draft, "posted")).pipe(Effect.ignore)),
             Effect.tap(() => Effect.sync(() => console.log("✅ Successfully posted to X!\n"))),
             Effect.catchAll((err) =>
               Effect.sync(() => console.error(`❌ Posting failed: ${err.message}\n`))
             )
           )
-          doneWithDraft = true
+          return "continue" as const
         }
-      }
-    }
+
+        // Unrecognized input — ask again.
+        return yield* reviewOne(file)
+      })
+
+    yield* Effect.reduce(pendingDrafts, "continue" as "continue" | "quit", (state, file) =>
+      state === "quit" ? Effect.succeed(state) : reviewOne(file),
+    )
 
     console.log("Finished reviewing all pending drafts.")
   })

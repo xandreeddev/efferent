@@ -60,37 +60,23 @@ export const PlaywrightXPlatformLive = Layer.succeed(
           const tweets = yield* Effect.tryPromise({
             try: async () => {
               const tweetElements = await page.locator('[data-testid="tweet"]').all()
-              const results: XSearchResult[] = []
-              
-              for (const tweet of tweetElements) {
-                // Get tweet text
-                const text = await tweet.locator('[data-testid="tweetText"]').first().innerText().catch(() => "")
-                
-                // Get author username (usually starting with @)
-                const author = await tweet.locator('[data-testid="User-Name"]').first().innerText().catch(() => "")
-                const handleMatch = author.match(/@\w+/)
-                const handle = handleMatch ? handleMatch[0] : "unknown"
-                
-                // Get timestamp/time link
-                const timeLocator = tweet.locator("time").first()
-                const timestamp = await timeLocator.getAttribute("datetime").catch(() => "")
-                
-                // Extract tweet ID from time link (contains /status/<id>)
-                const linkLocator = tweet.locator('a[href*="/status/"]').first()
-                const href = await linkLocator.getAttribute("href").catch(() => "")
-                const idMatch = href ? href.match(/\/status\/(\d+)/) : null
-                const id = idMatch ? idMatch[1] : `temp_${Math.random()}`
-                
-                if (text.trim().length > 0) {
-                  results.push({
-                    id: id ?? "",
-                    author: handle,
+              const parsed = await Promise.all(
+                tweetElements.map(async (tweet, index) => {
+                  const text = await tweet.locator('[data-testid="tweetText"]').first().innerText().catch(() => "")
+                  const author = await tweet.locator('[data-testid="User-Name"]').first().innerText().catch(() => "")
+                  const handleMatch = author.match(/@\w+/)
+                  const timestamp = await tweet.locator("time").first().getAttribute("datetime").catch(() => "")
+                  const href = await tweet.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const idMatch = href ? href.match(/\/status\/(\d+)/) : null
+                  return {
+                    id: idMatch?.[1] ?? `temp_${index}`,
+                    author: handleMatch ? handleMatch[0] : "unknown",
                     text,
                     timestamp: timestamp ?? new Date().toISOString(),
-                  })
-                }
-              }
-              return results
+                  } satisfies XSearchResult
+                }),
+              )
+              return parsed.filter((t) => t.text.trim().length > 0)
             },
             catch: (e) => new Error(`Failed to parse tweets: ${String(e)}`),
           })
@@ -118,37 +104,67 @@ export const PlaywrightXPlatformLive = Layer.succeed(
           const notifications = yield* Effect.tryPromise({
             try: async () => {
               const cellElements = await page.locator('[data-testid="cellInnerDiv"]').all()
-              const results: XNotification[] = []
-              
-              for (const cell of cellElements) {
-                // Focus on mentions / text notifications
-                const text = await cell.innerText().catch(() => "")
-                // Simple parser: check if it's a mention or direct reply
-                // Check if it has a tweet link / ID
-                const linkLocator = cell.locator('a[href*="/status/"]').first()
-                const href = await linkLocator.getAttribute("href").catch(() => "")
-                const idMatch = href ? href.match(/\/status\/(\d+)/) : null
-                const id = idMatch ? idMatch[1] : null
-                
-                if (id && text.trim().length > 0) {
-                  // Find any user handles in text or default to parsed
+              const parsed = await Promise.all(
+                cellElements.map(async (cell) => {
+                  const text = await cell.innerText().catch(() => "")
+                  const href = await cell.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const idMatch = href ? href.match(/\/status\/(\d+)/) : null
                   const handleMatch = text.match(/@\w+/)
-                  const handle = handleMatch ? handleMatch[0] : "unknown"
-                  
-                  results.push({
-                    id,
-                    author: handle,
-                    text: text.replace(/\n/g, " "),
-                  })
-                }
-              }
-              return results
+                  return idMatch?.[1] !== undefined && text.trim().length > 0
+                    ? [{
+                        id: idMatch[1],
+                        author: handleMatch ? handleMatch[0] : "unknown",
+                        text: text.replace(/\n/g, " "),
+                      } satisfies XNotification]
+                    : []
+                }),
+              )
+              return parsed.flat()
             },
             catch: (e) => new Error(`Failed to parse notifications: ${String(e)}`),
           })
 
           yield* Effect.logInfo(`Found ${notifications.length} notifications on X`)
           return notifications
+        })
+      ),
+
+    readThread: (tweetId: string) =>
+      runInBrowser(true, (page) =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo(`Reading thread for tweet ${tweetId}`)
+          const url = `https://x.com/anyuser/status/${tweetId}`
+          yield* Effect.tryPromise({
+            try: () => page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }),
+            catch: (e) => new Error(`Failed to open the thread: ${String(e)}`),
+          })
+          yield* Effect.tryPromise({
+            try: () => page.waitForSelector('[data-testid="tweet"]', { timeout: 15000 }),
+            catch: (e) => new Error(`Thread did not load: ${String(e)}`),
+          })
+          const tweets = yield* Effect.tryPromise({
+            try: async () => {
+              const tweetElements = await page.locator('[data-testid="tweet"]').all()
+              const parsed = await Promise.all(
+                tweetElements.map(async (tweet, index) => {
+                  const text = await tweet.locator('[data-testid="tweetText"]').first().innerText().catch(() => "")
+                  const author = await tweet.locator('[data-testid="User-Name"]').first().innerText().catch(() => "")
+                  const handleMatch = author.match(/@\w+/)
+                  const timestamp = await tweet.locator("time").first().getAttribute("datetime").catch(() => "")
+                  const href = await tweet.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const idMatch = href ? href.match(/\/status\/(\d+)/) : null
+                  // The FOCAL tweet's own permalink is the page URL, not a link —
+                  // fall back to the requested id for the first element.
+                  const id = idMatch?.[1] ?? (index === 0 ? tweetId : "")
+                  return { id, author: handleMatch ? handleMatch[0] : "unknown", text, timestamp: timestamp ?? new Date().toISOString() }
+                }),
+              )
+              return parsed.filter((t) => t.text.trim().length > 0 && t.id !== "")
+            },
+            catch: (e) => new Error(`Failed to parse the thread: ${String(e)}`),
+          })
+          yield* Effect.logInfo(`Read ${tweets.length} tweets from the thread`)
+          return tweets
         })
       ),
 
