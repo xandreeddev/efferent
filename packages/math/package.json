@@ -14,7 +14,7 @@
     "@effect/platform-bun": "^0.89.0",
     "@xandreed/engine": "workspace:*",
     "@xandreed/providers": "workspace:*",
-    "@xandreed/web": "workspace:*",
+    "@xandreed/surface": "workspace:*",
     "effect": "^3.21.4"
   }
 }
