@@ -38,6 +38,7 @@ const CHECKED = [
   "packages/engine/src/**",
   "packages/providers/src/**",
   "packages/surface/src/**",
+  "packages/canvas/src/**",
 ]
 
 const config: typeof GateSuiteConfig.Encoded = {
@@ -53,6 +54,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         "packages/engine/src/**",
         "packages/providers/src/**",
         "packages/surface/src/**",
+        "packages/canvas/src/**",
       ],
     },
     { rule: "effect/no-let", include: CHECKED },
@@ -142,6 +144,23 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/surface/src/**",
         canImport: [],
         externals: ["effect", "bun:test"],
+      },
+      {
+        // The ui-builder agent: render_ui through the surface gates, on the
+        // engine chassis, providers at the edge. Never touches the old line.
+        name: "canvas",
+        path: "packages/canvas/src/**",
+        canImport: ["engine", "providers", "surface"],
+        externals: [
+          "effect",
+          "@effect/",
+          "@xandreed/engine",
+          "@xandreed/providers",
+          "@xandreed/surface",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         // The social engagement agent: draft-only toolkit, human review queue,
