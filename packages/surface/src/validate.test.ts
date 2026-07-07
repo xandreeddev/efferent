@@ -62,6 +62,17 @@ describe("validateUi — the ui-builder's hard gates", () => {
     expect(rules(`<div class="grid grid-cols-3 gap-4 bg-slate-900 text-sm">x</div>`)).not.toContain("no-arbitrary-values")
   })
 
+  test("no-self-trigger: load/every/revealed fire without user action and are banned; click passes", () => {
+    expect(rules(`<div hx-get="/action/ui" hx-trigger="load delay:1s"></div><input name="ui-id" value="p" />`)).toContain("no-self-trigger")
+    expect(rules(`<div hx-post="/action/ui" hx-trigger="every 2s"></div><input name="ui-id" value="p" />`)).toContain("no-self-trigger")
+    expect(rules(`<div hx-get="/action/ui" hx-trigger="revealed"></div><input name="ui-id" value="p" />`)).toContain("no-self-trigger")
+    expect(
+      rules(`<button hx-post="/action/ui" hx-trigger="click">Go</button><input name="ui-id" value="p" />`),
+    ).not.toContain("no-self-trigger")
+    // The htmx data- alias obeys the same rule.
+    expect(rules(`<div hx-get="/action/ui" data-hx-trigger="load"></div><input name="ui-id" value="p" />`)).toContain("no-self-trigger")
+  })
+
   test("findings accumulate across families and render deterministically", () => {
     const bad = `
       <script>x</script>
