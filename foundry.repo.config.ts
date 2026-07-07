@@ -27,17 +27,24 @@ const LEGACY = [
   "packages/evals/src/**",
 ]
 
+// packages/smith is post-foundry: it rides the same composition rules with
+// ZERO baseline entries — every finding there is fresh and fails outright.
+const CHECKED = [...LEGACY, "packages/smith/src/**"]
+
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
   typecheck: false,
   rules: [
-    { rule: "effect/no-try-catch", include: ["packages/sdk-core/src/**"] },
-    { rule: "effect/no-let", include: LEGACY },
-    { rule: "effect/no-loop-statements", include: LEGACY },
-    { rule: "effect/no-nullable-return", include: LEGACY },
-    { rule: "effect/match-over-tag-switch", include: LEGACY },
-    { rule: "effect/no-as-any", include: LEGACY },
-    { rule: "effect/no-parallel-interface", include: LEGACY },
+    {
+      rule: "effect/no-try-catch",
+      include: ["packages/sdk-core/src/**", "packages/smith/src/**"],
+    },
+    { rule: "effect/no-let", include: CHECKED },
+    { rule: "effect/no-loop-statements", include: CHECKED },
+    { rule: "effect/no-nullable-return", include: CHECKED },
+    { rule: "effect/match-over-tag-switch", include: CHECKED },
+    { rule: "effect/no-as-any", include: CHECKED },
+    { rule: "effect/no-parallel-interface", include: CHECKED },
     { rule: "effect/branded-id-fields", include: ["packages/sdk-core/src/entities/**"] },
   ],
   // Eval STRUCTURE as a gate: every packages/evals suite must declare ≥1
@@ -92,6 +99,27 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/foundry/src/**",
         canImport: [],
         externals: ["effect", "typescript", "node:", "bun:test"],
+      },
+      {
+        // The agent in the factory: drives foundry's forge with the efferent
+        // coder as the Implementor. NEVER imports the cli ("efferent/") — and
+        // the cli never imports smith, so the published bundle can't reach
+        // foundry's `typescript` dependency through it.
+        name: "smith",
+        path: "packages/smith/src/**",
+        canImport: ["core", "adapters", "foundry"],
+        externals: [
+          "effect",
+          "@effect/",
+          "@xandreed/sdk-core",
+          "@xandreed/sdk-adapters",
+          "@xandreed/foundry",
+          "@opentui/",
+          "solid-js",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         name: "cli",
