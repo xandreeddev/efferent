@@ -43,6 +43,9 @@ export interface EfferentImplementorOptions {
   /** The locked SpecDoc driving this run — its constraints/non-goals reach the
    *  brief here (foundry's `Spec` never carries them). `None` = shorthand path. */
   readonly doc: Option.Option<SpecDoc>
+  /** Rendered forge-history lessons (foundry's deterministic memory) — folded
+   *  into the attempt-1 brief; retries already carry the gate feedback. */
+  readonly lessons?: Option.Option<string>
 }
 
 export const makeEfferentImplementorLive = (
@@ -91,7 +94,8 @@ export const makeEfferentImplementorLive = (
               ).pipe(Effect.zipRight(options.publish({ type: "agent", event })))
 
             const brief = Option.match(input.feedback, {
-              onNone: () => renderBrief(input.spec, options.doc),
+              onNone: () =>
+                renderBrief(input.spec, options.doc, options.lessons ?? Option.none()),
               onSome: renderRetryBrief,
             })
 

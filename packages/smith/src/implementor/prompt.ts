@@ -42,12 +42,23 @@ export const renderSpecBrief = (doc: SpecDoc): string => {
 ${OPERATING_RULES}`
 }
 
-/** The attempt-1 brief: the full SpecDoc when the run is spec-driven. */
-export const renderBrief = (spec: Spec, doc: Option.Option<SpecDoc>): string =>
-  Option.match(doc, {
+/** The attempt-1 brief: the full SpecDoc when the run is spec-driven, plus
+ *  the workspace's forge-history lessons (foundry's deterministic memory —
+ *  recurring gate rejections the coder should get right the FIRST time). */
+export const renderBrief = (
+  spec: Spec,
+  doc: Option.Option<SpecDoc>,
+  lessons: Option.Option<string> = Option.none(),
+): string => {
+  const base = Option.match(doc, {
     onNone: () => renderTaskBrief(spec),
     onSome: renderSpecBrief,
   })
+  return Option.match(lessons, {
+    onNone: () => base,
+    onSome: (text) => `${base}\n\n${text}`,
+  })
+}
 
 /**
  * A retry attempt's brief: the gate pipeline's rendered feedback, framed so the
