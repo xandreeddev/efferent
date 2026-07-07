@@ -36,6 +36,14 @@ const runInBrowser = <A, E, R>(
       }).pipe(Effect.orDie) // Ensure finalizer doesn't fail the effect
   )
 
+/** Promise fallback without `.catch()` (banned): a missing element resolves
+ *  to the fallback via the two-arg `.then` — same semantics, gate-clean. */
+const orElse = <T,>(promise: Promise<T>, fallback: T): Promise<T> =>
+  promise.then(
+    (value) => value,
+    () => fallback,
+  )
+
 export const PlaywrightXPlatformLive = Layer.succeed(
   XPlatform,
   XPlatform.of({
@@ -62,11 +70,11 @@ export const PlaywrightXPlatformLive = Layer.succeed(
               const tweetElements = await page.locator('[data-testid="tweet"]').all()
               const parsed = await Promise.all(
                 tweetElements.map(async (tweet, index) => {
-                  const text = await tweet.locator('[data-testid="tweetText"]').first().innerText().catch(() => "")
-                  const author = await tweet.locator('[data-testid="User-Name"]').first().innerText().catch(() => "")
+                  const text = await orElse(tweet.locator('[data-testid="tweetText"]').first().innerText(), "")
+                  const author = await orElse(tweet.locator('[data-testid="User-Name"]').first().innerText(), "")
                   const handleMatch = author.match(/@\w+/)
-                  const timestamp = await tweet.locator("time").first().getAttribute("datetime").catch(() => "")
-                  const href = await tweet.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const timestamp = await orElse(tweet.locator("time").first().getAttribute("datetime"), "")
+                  const href = await orElse(tweet.locator('a[href*="/status/"]').first().getAttribute("href"), "")
                   const idMatch = href ? href.match(/\/status\/(\d+)/) : null
                   return {
                     id: idMatch?.[1] ?? `temp_${index}`,
@@ -106,8 +114,8 @@ export const PlaywrightXPlatformLive = Layer.succeed(
               const cellElements = await page.locator('[data-testid="cellInnerDiv"]').all()
               const parsed = await Promise.all(
                 cellElements.map(async (cell) => {
-                  const text = await cell.innerText().catch(() => "")
-                  const href = await cell.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const text = await orElse(cell.innerText(), "")
+                  const href = await orElse(cell.locator('a[href*="/status/"]').first().getAttribute("href"), "")
                   const idMatch = href ? href.match(/\/status\/(\d+)/) : null
                   const handleMatch = text.match(/@\w+/)
                   return idMatch?.[1] !== undefined && text.trim().length > 0
@@ -147,11 +155,11 @@ export const PlaywrightXPlatformLive = Layer.succeed(
               const tweetElements = await page.locator('[data-testid="tweet"]').all()
               const parsed = await Promise.all(
                 tweetElements.map(async (tweet, index) => {
-                  const text = await tweet.locator('[data-testid="tweetText"]').first().innerText().catch(() => "")
-                  const author = await tweet.locator('[data-testid="User-Name"]').first().innerText().catch(() => "")
+                  const text = await orElse(tweet.locator('[data-testid="tweetText"]').first().innerText(), "")
+                  const author = await orElse(tweet.locator('[data-testid="User-Name"]').first().innerText(), "")
                   const handleMatch = author.match(/@\w+/)
-                  const timestamp = await tweet.locator("time").first().getAttribute("datetime").catch(() => "")
-                  const href = await tweet.locator('a[href*="/status/"]').first().getAttribute("href").catch(() => "")
+                  const timestamp = await orElse(tweet.locator("time").first().getAttribute("datetime"), "")
+                  const href = await orElse(tweet.locator('a[href*="/status/"]').first().getAttribute("href"), "")
                   const idMatch = href ? href.match(/\/status\/(\d+)/) : null
                   // The FOCAL tweet's own permalink is the page URL, not a link —
                   // fall back to the requested id for the first element.

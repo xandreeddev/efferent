@@ -36,3 +36,6 @@ jobs:
 
       # Eval suites are key-gated and skip cleanly in CI; unit tests run.
       - run: bun test
+
+      # Evals v3: the scripted scenario packs (key-free) + committed baselines.
+      - run: bun run scenarios

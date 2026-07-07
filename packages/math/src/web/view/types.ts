@@ -1,8 +1,7 @@
 /**
  * View-model prop types for the standalone `efferent math` shell — the
  * structural shapes the cli's math driver maps its model onto (same adapter
- * discipline as `views.ts` for the web shell; this package never imports
- * sdk-core, so these are independent structural types, not the tool schema).
+ * discipline as `views.ts` for the web shell; independent structural types, not the tool schema).
  *
  * Everything here is plain data. The ONLY model-authored string that crosses
  * into markup is `mathml` (an equation snippet), and the components run it

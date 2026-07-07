@@ -8,19 +8,8 @@
     "examples"
   ],
   "scripts": {
-    "dev": "bun --hot packages/cli/src/main.ts",
-    "start": "bun packages/cli/src/main.ts",
-    "start:fresh": "EFFERENT_HOME=$(mktemp -d) bun packages/cli/src/main.ts",
-    "code": "bun packages/cli/src/main.ts code",
-    "code:dev": "bun --hot packages/cli/src/main.ts code",
     "social": "bun packages/social/src/main.ts",
     "social:dev": "bun --hot packages/social/src/main.ts",
-    "build": "bun run scripts/build.ts",
-    "build:libs": "tsc -b packages/evals/tsconfig.build.json",
-    "changeset": "changeset",
-    "version": "changeset version && bun install --lockfile-only",
-    "release": "bun scripts/publish.ts",
-    "eval": "bun packages/evals/src/run.ts",
     "foundry": "bun packages/foundry/src/main.ts",
     "smith": "bun packages/smith/src/main.ts",
     "canvas": "bun packages/canvas/src/main.ts",
@@ -28,7 +17,6 @@
     "smith:dev": "bun --hot packages/smith/src/main.ts",
     "obs:up": "docker compose -f docker-compose.observability.yml up -d",
     "obs:down": "docker compose -f docker-compose.observability.yml down",
-    "generate-models": "bun packages/sdk-core/scripts/generateModelCatalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && bun packages/foundry/src/main.ts check && bun packages/foundry/src/main.ts check --config foundry.repo.config.ts --baseline packages/foundry/baselines/repo.json",
     "prepare": "bun scripts/installHooks.ts",
     "math": "bun packages/math/src/main.ts"
