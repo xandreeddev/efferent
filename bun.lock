@@ -79,6 +79,19 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/math": {
+      "name": "@xandreed/math",
+      "version": "0.1.0",
+      "dependencies": {
+        "@effect/ai": "^0.35.0",
+        "@effect/platform": "^0.96.1",
+        "@effect/platform-bun": "^0.89.0",
+        "@xandreed/sdk-adapters": "workspace:*",
+        "@xandreed/sdk-core": "workspace:*",
+        "@xandreed/web": "workspace:*",
+        "effect": "^3.21.4",
+      },
+    },
     "packages/sdk-adapters": {
       "name": "@xandreed/sdk-adapters",
       "version": "0.4.2",
@@ -634,6 +647,8 @@
     "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
 
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
+
+    "@xandreed/math": ["@xandreed/math@workspace:packages/math"],
 
     "@xandreed/sdk-adapters": ["@xandreed/sdk-adapters@workspace:packages/sdk-adapters"],
 

@@ -1,0 +1,20 @@
+{
+  "name": "@xandreed/math",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "efferent math \u2014 a standalone math-practice product: the tutor agent authors self-contained exercises through render_math; the server grades every answer instantly against the exercise's own key.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@effect/ai": "^0.35.0",
+    "@effect/platform": "^0.96.1",
+    "@effect/platform-bun": "^0.89.0",
+    "@xandreed/sdk-adapters": "workspace:*",
+    "@xandreed/sdk-core": "workspace:*",
+    "@xandreed/web": "workspace:*",
+    "effect": "^3.21.4"
+  }
+}

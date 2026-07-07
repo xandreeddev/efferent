@@ -15,3 +15,18 @@ export const SHUTDOWN_PATH = "/shutdown"
 
 /** The reserved generative-UI form field naming the emitting card. */
 export const UI_ID_FIELD = "ui-id"
+
+// --- the standalone math shell's typed actions (server grades; no chat) ----
+export const ACTION_CHECK_PATH = "/action/check"
+export const ACTION_NEXT_PATH = "/action/next"
+export const ACTION_REVEAL_PATH = "/action/reveal"
+export const ACTION_REPORT_PATH = "/action/report"
+export const ACTION_SETUP_PATH = "/action/setup"
+export const ACTION_MORE_PATH = "/action/more"
+export const ACTION_HARDER_PATH = "/action/harder"
+export const ACTION_EASIER_PATH = "/action/easier"
+export const ACTION_TOPIC_PATH = "/action/topic"
+
+/** Math answer-form fields: which exercise, and the student's value. */
+export const MATH_EX_FIELD = "ex"
+export const MATH_VALUE_FIELD = "value"
