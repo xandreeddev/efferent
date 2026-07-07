@@ -9,7 +9,7 @@ import {
 import type { Gate, Pipeline, TsProject } from "@xandreed/foundry"
 import { FileSystem } from "@xandreed/sdk-core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
-import type { SmithRunConfig } from "../domain/SmithConfig.js"
+import type { GateSuiteRequest } from "../spec/toForgeSpec.js"
 import { makeCommandGate } from "./commandGate.js"
 
 export interface GateSuite {
@@ -30,28 +30,31 @@ export const withGateEvents = <R>(
 })
 
 /**
- * The workspace's gate suite, discovered in precedence order:
- * 1. `--config <f>` — an explicit foundry `GateSuiteConfig` module;
+ * The workspace's gate suite, discovered in precedence order (the request is
+ * pre-merged: CLI flags > spec frontmatter — see `gateRequestFromSpec`):
+ * 1. an explicit foundry `GateSuiteConfig` module (flag or spec `gates.config`);
  * 2. `<cwd>/foundry.config.ts` — the workspace's own suite (same file
  *    `foundry check` uses), loaded via foundry's `loadConfig` + `gatesFromConfig`;
  * 3. defaults — a typecheck gate when `tsconfig.json` exists, plus a `bun test`
- *    command gate when `package.json` exists (`--test-cmd` overrides the
- *    command — run through `bash -c` so pipes/env work; `--no-test` suppresses).
+ *    command gate when `package.json` exists (`testCommand` overrides —
+ *    run through `bash -c` so pipes/env work; `noTest` suppresses).
+ * Plus one rank-2 `accept-<name>` command gate per spec check — the spec's
+ * machine-checkable acceptance criteria, enforced.
  *
  * No discoverable gate at all is a `ConfigError`: a forge run with nothing to
  * verify would accept anything (and the pipeline's gates are non-empty by type).
  */
 export const discoverGateSuite = (
-  run: SmithRunConfig,
+  request: GateSuiteRequest,
   publish: (event: SmithEvent) => Effect.Effect<void>,
 ): Effect.Effect<GateSuite, ConfigError, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const exists = (rel: string) =>
-      fs.exists(join(run.cwd, rel)).pipe(Effect.catchAll(() => Effect.succeed(false)))
+      fs.exists(join(request.cwd, rel)).pipe(Effect.catchAll(() => Effect.succeed(false)))
 
-    const workspaceConfig = join(run.cwd, "foundry.config.ts")
-    const configPath = yield* Option.match(run.configPath, {
+    const workspaceConfig = join(request.cwd, "foundry.config.ts")
+    const configPath = yield* Option.match(request.configPath, {
       onSome: (path) => Effect.succeed(Option.some(path)),
       onNone: () =>
         Effect.map(exists("foundry.config.ts"), (has) =>
@@ -70,9 +73,9 @@ export const discoverGateSuite = (
         ? [makeTypecheckGate("tsconfig.json")]
         : []
 
-    const testGate = run.noTest
+    const testGate = request.noTest
       ? []
-      : yield* Option.match(run.testCommand, {
+      : yield* Option.match(request.testCommand, {
           onSome: (command) =>
             Effect.succeed([
               makeCommandGate({ name: "test-cmd", argv: ["bash", "-c", command] }),
@@ -83,13 +86,27 @@ export const discoverGateSuite = (
             ),
         })
 
-    const gates: ReadonlyArray<Gate<TsProject>> = [...configured, ...typecheck, ...testGate]
+    // The spec's machine-checkable acceptance: each check is a named command
+    // that must exit 0 — a rank-2 gate like any other, fail-closed.
+    const acceptGates = request.checks.map((check) =>
+      makeCommandGate({
+        name: `accept-${check.name}`,
+        argv: ["bash", "-c", check.command],
+      }),
+    )
+
+    const gates: ReadonlyArray<Gate<TsProject>> = [
+      ...configured,
+      ...typecheck,
+      ...testGate,
+      ...acceptGates,
+    ]
     if (!Arr.isNonEmptyReadonlyArray(gates)) {
       return yield* Effect.fail(
         new ConfigError({
-          path: run.cwd,
+          path: request.cwd,
           message:
-            "no gates discoverable: no foundry.config.ts, no tsconfig.json, no package.json (and no --config/--test-cmd). A forge run with nothing to verify would accept anything.",
+            "no gates discoverable: no foundry.config.ts, no tsconfig.json, no package.json (and no --config/--test-cmd, no spec checks). A forge run with nothing to verify would accept anything.",
         }),
       )
     }

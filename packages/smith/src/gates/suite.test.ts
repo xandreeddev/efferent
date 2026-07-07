@@ -5,6 +5,7 @@ import { withTempWorkspace, writeWorkspaceFile } from "@xandreed/foundry"
 import { LocalFileSystemLive } from "@xandreed/sdk-adapters"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
+import { gateRequestFromSpec } from "../spec/toForgeSpec.js"
 import { discoverGateSuite } from "./suite.js"
 
 const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig => ({
@@ -25,7 +26,9 @@ const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig
 const silent = () => Effect.void
 
 const discover = (cwd: string, over: Partial<SmithRunConfig> = {}) =>
-  discoverGateSuite(runFor(cwd, over), silent).pipe(Effect.provide(LocalFileSystemLive))
+  discoverGateSuite(gateRequestFromSpec(runFor(cwd, over), Option.none()), silent).pipe(
+    Effect.provide(LocalFileSystemLive),
+  )
 
 describe("discoverGateSuite", () => {
   test("tsconfig.json alone → the typecheck gate", async () => {

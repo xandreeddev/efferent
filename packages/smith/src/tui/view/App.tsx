@@ -8,6 +8,8 @@ import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import type { GateCell } from "../presentation/floor.js"
 
+const TRANSCRIPT_ROWS = 20
+
 const cellColor = (state: GateCell["state"]): string =>
   state === "pass"
     ? tokens.state.ok
@@ -32,28 +34,131 @@ const cellGlyph = (state: GateCell["state"]): string =>
 
 const FEED_ROWS = 18
 
-/** The header: brand · task · attempt/phase heartbeat. */
+/** The header: brand · task · attempt/phase heartbeat (mode-aware). */
 const Header = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
   const floor = store.floor
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
-  const busy = () => floor().phase === "implementing" || floor().phase === "gating"
-  const heartbeat = () =>
-    busy()
+  const forging = () => floor().phase === "implementing" || floor().phase === "gating"
+  const heartbeat = () => {
+    if (store.mode() === "refine") {
+      return store.busy()
+        ? `${spin()} refining…`
+        : store.refine().locked
+          ? "spec locked — :forge to build"
+          : ":lock when the spec is right"
+    }
+    return forging()
       ? `${spin()} ${floor().phase} · attempt ${floor().attempts.length}/${floor().maxAttempts}`
       : floor().phase === "boot"
         ? "starting…"
         : floor().phase
+  }
+  const busyColor = () => (store.busy() || forging() ? tokens.state.running : tokens.text.dim)
+  const title = () =>
+    store.mode() === "refine"
+      ? Option.getOrElse(
+          Option.map(store.refine().draft, (d) => String(d.slug)),
+          () => props.ctx.runConfig.task,
+        )
+      : floor().task
   return (
     <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.brand} flexShrink={0}>{glyph.brand}</text>
-      <text fg={tokens.text.bright} flexShrink={0}>smith </text>
+      <text fg={tokens.text.bright} flexShrink={0}>
+        {store.mode() === "refine" ? "smith spec " : "smith "}
+      </text>
       <text fg={tokens.text.dim} flexGrow={1} wrapMode="none">
-        {floor().task}
+        {title()}
       </text>
-      <text fg={busy() ? tokens.state.running : tokens.text.dim} flexShrink={0}>
-        {` ${heartbeat()}`}
-      </text>
+      <text fg={busyColor()} flexShrink={0}>{` ${heartbeat()}`}</text>
+    </box>
+  )
+}
+
+/** Refine mode: the dialog with the refiner. */
+const Transcript = (props: { ctx: SmithTuiContext }) => {
+  const refine = props.ctx.store.refine
+  const visible = () => refine().transcript.slice(-TRANSCRIPT_ROWS)
+  return (
+    <box flexDirection="column" flexGrow={1} marginTop={1}>
+      <text fg={tokens.text.dim}>refine</text>
+      <Show
+        when={visible().length > 0}
+        fallback={
+          <text fg={tokens.state.pending}>
+            {"  describe what to build — the refiner drafts a spec you approve"}
+          </text>
+        }
+      >
+        <For each={visible()}>
+          {(line) => (
+            <text
+              fg={line.who === "you" ? tokens.accent.input : tokens.text.default}
+              wrapMode="word"
+            >
+              {line.who === "you" ? `${glyph.caret}${line.text}` : `  ${line.text}`}
+            </text>
+          )}
+        </For>
+      </Show>
+      <Show when={refine().feed.length > 0}>
+        <For each={refine().feed.slice(-4)}>
+          {(label) => (
+            <text fg={tokens.text.dim} wrapMode="none">{`    ${label}`}</text>
+          )}
+        </For>
+      </Show>
+    </box>
+  )
+}
+
+/** The live SpecDoc panel — goal, criteria, checks, status badge. */
+const SpecPanel = (props: { ctx: SmithTuiContext }) => {
+  const refine = props.ctx.store.refine
+  const doc = () => Option.getOrUndefined(refine().draft)
+  const badgeColor = () => (refine().locked ? tokens.state.ok : tokens.state.warn)
+  return (
+    <box flexDirection="column" width={52} flexShrink={0} marginTop={1} marginLeft={2}>
+      <box flexDirection="row">
+        <text fg={tokens.text.dim} flexGrow={1}>spec</text>
+        <Show when={doc() !== undefined}>
+          <text fg={badgeColor()} flexShrink={0}>
+            {refine().locked ? "locked" : "draft"}
+          </text>
+        </Show>
+      </box>
+      <Show
+        when={doc() !== undefined}
+        fallback={<text fg={tokens.state.pending}>  (no draft yet)</text>}
+      >
+        <text fg={tokens.text.bright} wrapMode="word">{`  ${doc()?.goal ?? ""}`}</text>
+        <Show when={(doc()?.acceptance.length ?? 0) > 0}>
+          <text fg={tokens.text.dim} marginTop={1}>  acceptance</text>
+          <For each={doc()?.acceptance ?? []}>
+            {(item) => <text fg={tokens.text.default} wrapMode="word">{`    - ${item}`}</text>}
+          </For>
+        </Show>
+        <Show when={(doc()?.checks.length ?? 0) > 0}>
+          <text fg={tokens.text.dim} marginTop={1}>  checks (run as gates)</text>
+          <For each={doc()?.checks ?? []}>
+            {(check) => (
+              <text fg={tokens.state.ok} wrapMode="none">{`    ✓ ${check.name}: ${check.command}`}</text>
+            )}
+          </For>
+        </Show>
+        <Show when={(doc()?.constraints.length ?? 0) > 0}>
+          <text fg={tokens.text.dim} marginTop={1}>  constraints</text>
+          <For each={doc()?.constraints ?? []}>
+            {(item) => <text fg={tokens.text.default} wrapMode="word">{`    - ${item}`}</text>}
+          </For>
+        </Show>
+      </Show>
+      <Show when={Option.isSome(refine().error)}>
+        <text fg={tokens.state.error} wrapMode="word" marginTop={1}>
+          {`  ${Option.getOrElse(refine().error, () => "")}`}
+        </text>
+      </Show>
     </box>
   )
 }
@@ -155,7 +260,8 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** The command line: `:quit · :model [role] <p:m> · :set k v`; Esc interrupts. */
+/** The composer: refine mode sends plain text as refiner turns; `:`-prefixed
+ *  input is always a command (`:quit · :lock · :forge · :model · :set`). */
 const CommandLine = (props: { ctx: SmithTuiContext }) => {
   const ref: { current: TextareaRenderable | undefined } = { current: undefined }
   const submit = (): void => {
@@ -164,8 +270,20 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     const value = renderable.plainText.trim()
     if (value.length === 0) return
     renderable.setText("")
-    runTuiCommand(props.ctx, value)
+    if (value.startsWith(":")) {
+      runTuiCommand(props.ctx, value)
+      return
+    }
+    if (props.ctx.store.mode() === "refine" && props.ctx.sendRefine !== undefined) {
+      props.ctx.sendRefine(value)
+      return
+    }
+    props.ctx.store.setNotice("prefix commands with ':' (try :quit)")
   }
+  const placeholder = () =>
+    props.ctx.store.mode() === "refine"
+      ? "refine the spec… — :lock when right, :forge to build, Ctrl-C quits"
+      : ":quit · :model [code|fast] <p:m> · :set k v — Esc interrupts, Ctrl-C quits"
   return (
     <box flexDirection="row" flexShrink={0} marginTop={1}>
       <text fg={tokens.accent.input} flexShrink={0}>{glyph.caret}</text>
@@ -177,7 +295,7 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
         height={1}
         flexGrow={1}
         keyBindings={[{ name: "return", action: "submit" }]}
-        placeholder=":quit · :model [code|fast] <p:m> · :set k v — Esc interrupts, Ctrl-C quits"
+        placeholder={placeholder()}
         textColor={tokens.text.default}
         wrapMode="none"
         onSubmit={submit}
@@ -186,16 +304,27 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** The factory floor. Borderless, token-driven — the cli's layout language. */
+/** The factory: refine mode (transcript + live SpecPanel) flows into forge
+ *  mode (the floor). Borderless, token-driven — the cli's layout language. */
 export const App = (props: { ctx: SmithTuiContext }) => {
   useKeyboard((key) => dispatch(props.ctx, key))
   return (
     <box flexDirection="column" flexGrow={1} padding={1}>
       <Header ctx={props.ctx} />
-      <box flexDirection="row" flexGrow={1}>
-        <AttemptPanel ctx={props.ctx} />
-        <Feed ctx={props.ctx} />
-      </box>
+      <Show
+        when={props.ctx.store.mode() === "forge"}
+        fallback={
+          <box flexDirection="row" flexGrow={1}>
+            <Transcript ctx={props.ctx} />
+            <SpecPanel ctx={props.ctx} />
+          </box>
+        }
+      >
+        <box flexDirection="row" flexGrow={1}>
+          <AttemptPanel ctx={props.ctx} />
+          <Feed ctx={props.ctx} />
+        </box>
+      </Show>
       <StatusRows ctx={props.ctx} />
       <CommandLine ctx={props.ctx} />
     </box>

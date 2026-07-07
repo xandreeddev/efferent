@@ -15,12 +15,13 @@ import type {
   ImplementorError,
   WorkspaceError,
 } from "@xandreed/foundry"
-import type { FileSystem } from "@xandreed/sdk-core"
+import type { FileSystem, SpecDoc } from "@xandreed/sdk-core"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { discoverGateSuite } from "../gates/suite.js"
+import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
 /** Map foundry's loop hooks onto the smith event stream. */
 export const smithForgeHooks = (
@@ -38,18 +39,26 @@ export const smithForgeHooks = (
     publish({ type: "gate_report", attempt, report, feedback }),
 })
 
-/** The `Spec`, Schema-decoded so bad flag values surface as `ConfigError`
- *  (a `new Spec(...)` construction would THROW on a bounds violation). */
-const buildSpec = (run: SmithRunConfig): Effect.Effect<Spec, ConfigError> =>
-  Schema.decodeUnknown(Spec)({
-    goal: run.task,
-    acceptance: run.acceptance,
-    limits: { maxAttempts: run.maxAttempts, budgetMillis: run.budgetMillis },
-  }).pipe(
-    Effect.mapError(
-      (parseError) => new ConfigError({ path: "<flags>", message: String(parseError) }),
-    ),
-  )
+/** The `Spec`, Schema-decoded so bad values surface as `ConfigError` (a
+ *  `new Spec(...)` construction would THROW on a bounds violation). A locked
+ *  SpecDoc wins over the flag path. */
+const buildSpec = (
+  run: SmithRunConfig,
+  doc: Option.Option<SpecDoc>,
+): Effect.Effect<Spec, ConfigError> =>
+  Option.match(doc, {
+    onSome: toForgeSpec,
+    onNone: () =>
+      Schema.decodeUnknown(Spec)({
+        goal: run.task,
+        acceptance: run.acceptance,
+        limits: { maxAttempts: run.maxAttempts, budgetMillis: run.budgetMillis },
+      }).pipe(
+        Effect.mapError(
+          (parseError) => new ConfigError({ path: "<flags>", message: String(parseError) }),
+        ),
+      ),
+  })
 
 /**
  * One smith forge session over an EXPLICIT implementor Layer — the seam tests
@@ -62,15 +71,19 @@ export const runForgeSessionWith = <R>(
   run: SmithRunConfig,
   publish: (event: SmithEvent) => Effect.Effect<void>,
   implementor: Layer.Layer<Implementor, never, R>,
+  doc: Option.Option<SpecDoc> = Option.none(),
 ): Effect.Effect<
   ForgeResult,
   ConfigError | ImplementorError | WorkspaceError,
   R | FileSystem
 > =>
   Effect.gen(function* () {
-    const spec = yield* buildSpec(run)
-    const { gateNames, pipeline } = yield* discoverGateSuite(run, publish)
-    yield* publish({ type: "forge_start", spec, gateNames })
+    const spec = yield* buildSpec(run, doc)
+    const { gateNames, pipeline } = yield* discoverGateSuite(
+      gateRequestFromSpec(run, doc),
+      publish,
+    )
+    yield* publish({ type: "forge_start", spec, gateNames, doc })
 
     const result = yield* forge({
       spec,
@@ -102,8 +115,15 @@ export const runForgeSessionWith = <R>(
 export const runForgeSession = (
   run: SmithRunConfig,
   publish: (event: SmithEvent) => Effect.Effect<void>,
+  doc: Option.Option<SpecDoc> = Option.none(),
 ): Effect.Effect<
   ForgeResult,
   ConfigError | ImplementorError | WorkspaceError,
   ImplementorServices | FileSystem
-> => runForgeSessionWith(run, publish, makeEfferentImplementorLive({ cwd: run.cwd, publish }))
+> =>
+  runForgeSessionWith(
+    run,
+    publish,
+    makeEfferentImplementorLive({ cwd: run.cwd, publish, doc }),
+    doc,
+  )

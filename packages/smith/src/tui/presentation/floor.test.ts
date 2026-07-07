@@ -38,7 +38,7 @@ const fold = (events: ReadonlyArray<SmithEvent>) =>
 describe("reduceFloor", () => {
   test("the happy loop: fail on attempt 1, pass on attempt 2", () => {
     const floor = fold([
-      { type: "forge_start", spec, gateNames: ["bun-test"] },
+      { type: "forge_start", spec, gateNames: ["bun-test"], doc: Option.none() },
       { type: "attempt_start", attempt: 1 },
       { type: "implement_end", attempt: 1, filesTouched: ["sum.ts"], ref: Option.some("conversation:abc") },
       { type: "gate_start", gate: "bun-test" },
@@ -61,7 +61,7 @@ describe("reduceFloor", () => {
 
   test("findings render as plain [rule] message lines after a failed report", () => {
     const floor = fold([
-      { type: "forge_start", spec, gateNames: ["bun-test"] },
+      { type: "forge_start", spec, gateNames: ["bun-test"], doc: Option.none() },
       { type: "attempt_start", attempt: 1 },
       { type: "gate_report", attempt: 1, report: failReport, feedback: Option.none() },
     ])
@@ -70,7 +70,7 @@ describe("reduceFloor", () => {
 
   test("gate_start marks the cell running; forge_end records the outcome", () => {
     const running = fold([
-      { type: "forge_start", spec, gateNames: ["bun-test"] },
+      { type: "forge_start", spec, gateNames: ["bun-test"], doc: Option.none() },
       { type: "attempt_start", attempt: 1 },
       { type: "gate_start", gate: "bun-test" },
     ])
