@@ -42,3 +42,6 @@ export * from "./adapters/tempWorkspace.js"
 // cli building blocks (renderers only — the driver is main.ts)
 export * from "./cli/check.js"
 export * from "./cli/report.js"
+export { readRuns } from "./adapters/readRuns.js"
+export { deriveLessons, renderLessons } from "./pipeline/lessons.js"
+export type { Lesson, LessonOptions } from "./pipeline/lessons.js"

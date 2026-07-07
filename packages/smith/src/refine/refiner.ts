@@ -152,12 +152,22 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
     })
   })
 
-/** The refiner as an engine AgentConfig. */
+/** The refiner as an engine AgentConfig. Forge-history lessons (foundry's
+ *  deterministic memory) ride the system prompt so the SPEC addresses the
+ *  workspace's recurring gate rejections — constraints and checks born from
+ *  evidence, not vibes. */
 export const specRefinerAgentConfig = (
   cwd: string,
-  options: { readonly unattended: boolean } = { unattended: false },
+  options: {
+    readonly unattended: boolean
+    readonly lessons?: Option.Option<string>
+  } = { unattended: false },
 ): AgentConfig<(typeof specRefinerToolkit)["tools"]> => ({
-  system: specRefinerPrompt(cwd, options),
+  system: Option.match(options.lessons ?? Option.none(), {
+    onNone: () => specRefinerPrompt(cwd, options),
+    onSome: (text) =>
+      `${specRefinerPrompt(cwd, options)}\n\n# Past forge history in this workspace\n${text}\nWhen a lesson is relevant to this spec, encode it as a CONSTRAINT or a machine CHECK — the next run should not bounce on a known failure.`,
+  }),
   toolkit: specRefinerToolkit,
   maxSteps: 16,
 })
