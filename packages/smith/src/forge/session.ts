@@ -2,8 +2,11 @@ import { join } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConfigError,
+  deriveLessons,
   forge,
   makeFileRunSink,
+  readRuns,
+  renderLessons,
   snapshotWorkspace,
   Spec,
   TsProjectFreshLive,
@@ -111,7 +114,18 @@ export const runForgeSessionWith = <R>(
     Effect.withSpan("smith.session"),
   )
 
-/** The production session: the efferent coder as the Implementor. */
+/** Rendered forge-history lessons for a workspace — `None` when the history
+ *  is empty or carries no recurring rejections. */
+export const loadForgeLessons = (cwd: string): Effect.Effect<Option.Option<string>> =>
+  readRuns(join(cwd, ".foundry", "runs")).pipe(
+    Effect.map((runs) => {
+      const rendered = renderLessons(deriveLessons(runs))
+      return rendered.length > 0 ? Option.some(rendered) : Option.none<string>()
+    }),
+  )
+
+/** The production session: the efferent coder as the Implementor, with the
+ *  workspace's forge-history lessons folded into the attempt-1 brief. */
 export const runForgeSession = (
   run: SmithRunConfig,
   publish: (event: SmithEvent) => Effect.Effect<void>,
@@ -121,9 +135,11 @@ export const runForgeSession = (
   ConfigError | ImplementorError | WorkspaceError,
   ImplementorServices | FileSystem
 > =>
-  runForgeSessionWith(
-    run,
-    publish,
-    makeEfferentImplementorLive({ cwd: run.cwd, publish, doc }),
-    doc,
+  Effect.flatMap(loadForgeLessons(run.cwd), (lessons) =>
+    runForgeSessionWith(
+      run,
+      publish,
+      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons }),
+      doc,
+    ),
   )

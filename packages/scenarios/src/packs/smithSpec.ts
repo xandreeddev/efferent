@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Ref } from "effect"
 import { ConversationId, ConversationStore, Shell, specSlug } from "@xandreed/engine"
 import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
 import { makeScriptedImplementor } from "@xandreed/foundry"
-import { makeRefineSession, runForgeSessionWith, SMITH_LIMIT_DEFAULTS } from "@xandreed/smith"
+import { loadForgeLessons, makeRefineSession, runForgeSessionWith, SMITH_LIMIT_DEFAULTS } from "@xandreed/smith"
 import type { RefineAgent, RefineSession, SmithEvent, SmithRunConfig } from "@xandreed/smith"
 import type { Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
@@ -132,7 +132,8 @@ export const smithSpecPack: Pack = {
               const draft = yield* w.refine.currentDraft
               const doc = Option.getOrThrow(draft).doc
               const implementor = makeScriptedImplementor([
-                [], // attempt 1 writes nothing — the accept gates fail
+                [], // attempts 1 AND 2 write nothing — the accept gates fail
+                [], // twice: recurrence is what turns a rejection into a LESSON
                 [{ path: "out.txt", content: "done\n" }],
               ])
               yield* runForgeSessionWith(w.run, w.publish, implementor, Option.some(doc)).pipe(
@@ -163,12 +164,40 @@ export const smithSpecPack: Pack = {
                 end !== undefined &&
                 end.type === "forge_end" &&
                 end.run.outcome._tag === "accepted" &&
-                end.run.attempts.length === 2 &&
-                end.run.attempts[0]?.report.ok === false
+                end.run.attempts.length === 3 &&
+                end.run.attempts[0]?.report.ok === false &&
+                end.run.attempts[1]?.report.ok === false
               )
             }),
             fileExists("out.txt"),
             fileContains("out.txt", "done"),
+          ],
+        },
+        {
+          name: "the forge history becomes deterministic memory for the NEXT run",
+          act: () => Effect.void,
+          checks: [
+            {
+              name: "lessons derived from the rejected attempt",
+              severity: "hard",
+              run: (w) =>
+                loadForgeLessons(w.dir).pipe(
+                  Effect.map((lessons) =>
+                    Option.match(lessons, {
+                      onNone: () => ({
+                        pass: false,
+                        detail: "no lessons derived from a history with a rejected attempt",
+                      }),
+                      onSome: (text) => ({
+                        pass:
+                          text.includes("accept-out-exists") &&
+                          text.includes("Lessons from past forge runs"),
+                        detail: `lessons text: ${text.slice(0, 160)}`,
+                      }),
+                    }),
+                  ),
+                ),
+            },
           ],
         },
       ],
