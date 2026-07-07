@@ -453,6 +453,31 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       yield* Effect.sync(() => store.toast(`Updated subAgentMaxDepth → ${Math.floor(num)} · applies next turn`))
       return
     }
+    if (key === "subAgentMaxChildren") {
+      const num = Number(value)
+      if (!Number.isFinite(num) || num < 0) {
+        return yield* err("Setting 'subAgentMaxChildren' must be a number ≥ 0 (0 clears the cap)")
+      }
+      yield* settings.update((curr) => ({ ...curr, subAgentMaxChildren: Math.floor(num) }))
+      yield* Effect.sync(() =>
+        store.toast(
+          `Updated subAgentMaxChildren → ${num === 0 ? "off (no cap)" : Math.floor(num)} · applies next turn`,
+        ),
+      )
+      return
+    }
+    if (key === "agentMode") {
+      if (value !== "swarm" && value !== "direct") {
+        return yield* err("Setting 'agentMode' must be 'swarm' or 'direct'")
+      }
+      yield* settings.update((curr) => ({ ...curr, agentMode: value }))
+      yield* Effect.sync(() =>
+        store.toast(
+          `Updated agentMode → ${value === "direct" ? "direct (hands-on coder, no swarm leads)" : "swarm (orchestrate through leads)"} · applies next launch (the roster is built at boot)`,
+        ),
+      )
+      return
+    }
     if (key === "subAgentFetchBudget") {
       const num = Number(value)
       if (!Number.isFinite(num) || num < 0) {
@@ -557,7 +582,7 @@ export const applySetting = (store: TuiStore, key: string, value: string) =>
       return
     }
     yield* err(
-      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, subAgentMaxDepth, subAgentFetchBudget, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, autoLoop, autoDistill, maxLoopAttempts, telemetry, grafanaUrl`,
+      `Unknown setting: ${key}. Valid: allowBash, maxSteps, subAgentTokenBudget, subAgentMaxSteps, subAgentMaxDepth, subAgentMaxChildren, subAgentFetchBudget, agentMode, anthropicThinkingEffort, openAiReasoningEffort, geminiThinkingLevel, searchModel, fastModel, toolResultMaxTokens, autoHandoffPct, autoApprove, autoCollapse, autoLoop, autoDistill, maxLoopAttempts, telemetry, grafanaUrl`,
     )
   })
 

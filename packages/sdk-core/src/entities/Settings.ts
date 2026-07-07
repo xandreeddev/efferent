@@ -47,6 +47,18 @@ export const Settings = Schema.Struct({
         "Per-sub-agent web-lookup budget: max combined web_fetch + search_web calls ONE spawned agent makes in its whole run before the tools refuse with a 'report now' signal — the deterministic brake on a fleet worker that over-researches. Unset → 15. 0 disables (no cap). The root coder is always exempt.",
     }),
   ),
+  subAgentMaxChildren: Schema.optional(
+    Schema.Number.annotations({
+      description:
+        "Max sub-agents ONE run may spawn (a per-run spawn counter checked alongside the depth/budget guards; every launch path — spawn/resume/branch/handoff — counts). Unset/0 → no cap. Web mode defaults it to 2.",
+    }),
+  ),
+  agentMode: Schema.optional(
+    Schema.Literal("swarm", "direct").annotations({
+      description:
+        "Roster shape: 'swarm' (default — the coordinator/research-coordinator leads are loaded and the root is a pure orchestrator) or 'direct' (no leads; the root codes hands-on with the full toolkit, Claude-Code style — run_agent stays available, bounded by subAgentMaxChildren when set). Applies at launch (the roster is built at boot).",
+    }),
+  ),
   approvedBashRules: Schema.optional(
     Schema.Array(Schema.String).annotations({
       description:

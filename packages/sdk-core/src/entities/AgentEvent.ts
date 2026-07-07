@@ -256,5 +256,26 @@ export const AgentEvent = Schema.Union(
     at: Schema.Number,
     to: Schema.optional(Schema.String),
   }),
+  // The agent built/updated a PAGE (`render_ui`) — the web driver renders
+  // `html` (SANITIZED at render time; never trusted) keyed by the agent-chosen
+  // `id`. A page is an ordered set of named COMPONENTS (regions): `region`
+  // omitted ⇒ the call targets the whole page (`mode:"replace"` rebuilds it,
+  // `"append"` grows it); `region` present ⇒ it targets one component
+  // (`"replace"` updates it, `"append"` grows it, `"remove"` deletes it, a new
+  // name adds one). So a repeat render updates only what it addresses — the
+  // rest of the page (and its rendered diagrams) stay put. `active` is the
+  // page focus hint: absent ⇒ a NEW page opens focused and an update stays in
+  // the background; explicit true/false overrides. Other renderers (TUI, json)
+  // may ignore it. `nodeId` set when a sub-agent drew.
+  Schema.Struct({
+    type: Schema.Literal("ui_render"),
+    id: Schema.String,
+    region: Schema.optional(Schema.String),
+    title: Schema.optional(Schema.String),
+    html: Schema.String,
+    mode: Schema.Literal("replace", "append", "remove"),
+    active: Schema.optional(Schema.Boolean),
+    nodeId: Schema.optional(Schema.String),
+  }),
 )
 export type AgentEvent = typeof AgentEvent.Type

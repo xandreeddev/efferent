@@ -55,6 +55,7 @@ import {
 } from "@xandreed/sdk-core"
 import { coderAgentConfig } from "../usecases/coderAgentConfig.js"
 import { coderPrompt } from "../prompts/coder.js"
+import { webAgentPrompt } from "../prompts/web.js"
 import { importAgentsFromGithub, importToolsFromGithub } from "../usecases/importAgents.js"
 import { renderInstructionsSection, type InstructionFile } from "../usecases/discoverInstructionFiles.js"
 import type { ToolDefinition } from "@xandreed/sdk-core"
@@ -127,6 +128,15 @@ export interface InProcessWorkspaceDeps {
   readonly resolveApproval?: (decision: ApprovalDecision) => void
   /** Allow the bash tool (default true, as the TUI does). */
   readonly allowBash?: boolean
+  /** Offer `render_ui` on the root's direct toolkit (a web surface renders
+   *  `ui_render` events). Default false — daemon/TUI byte-identical. */
+  readonly webUi?: boolean
+  /** Sub-agent nesting-depth override for this workspace (the web driver's 1).
+   *  `Settings.subAgentMaxDepth` still wins per run (RunContext over opts). */
+  readonly maxDepth?: number
+  /** Per-run child-spawn cap for this workspace (the web driver's 2).
+   *  `Settings.subAgentMaxChildren` still wins per run. */
+  readonly maxChildren?: number
 }
 
 /** Per-session run state (busy/fiber/queue), keyed by session key. */
@@ -388,6 +398,10 @@ export const makeInProcessWorkspace = (
         // Mirror inter-agent messages onto the ledger as `board_note` events —
         // the dashboard's "messages flying" stream is then just the SSE stream.
         onBusEvent: publish,
+        // Web-driver knobs — default-off ⇒ daemon/TUI byte-identical.
+        ...(deps.webUi === true ? { webUi: true } : {}),
+        ...(deps.maxDepth !== undefined ? { maxDepth: deps.maxDepth } : {}),
+        ...(deps.maxChildren !== undefined ? { maxChildren: deps.maxChildren } : {}),
       },
       baseHooks,
     )
@@ -469,16 +483,30 @@ export const makeInProcessWorkspace = (
 
     const buildRootPrompt = () =>
       Effect.gen(function* () {
-        const base = coderPrompt(
-          deps.cwd,
-          new Date(),
-          deps.skills,
-          deps.instructionFiles,
-          deps.agents,
-          deps.tools,
-          undefined,
-          deps.memory,
-        )
+        // A web surface gets its OWN agent identity (platform, canvas-first);
+        // every other path keeps the coder prompt unchanged.
+        const base =
+          deps.webUi === true
+            ? webAgentPrompt(
+                deps.cwd,
+                new Date(),
+                deps.skills,
+                deps.instructionFiles,
+                deps.agents,
+                deps.tools,
+                undefined,
+                deps.memory,
+              )
+            : coderPrompt(
+                deps.cwd,
+                new Date(),
+                deps.skills,
+                deps.instructionFiles,
+                deps.agents,
+                deps.tools,
+                undefined,
+                deps.memory,
+              )
         const directive = yield* Ref.get(directiveRef)
         const directiveText = renderDirectiveSection(directive)
         return directiveText.length > 0 ? { ...base, text: base.text + directiveText } : base

@@ -42,6 +42,32 @@ describe("AgentEvent — needs_human", () => {
   })
 })
 
+describe("AgentEvent — ui_render (generative UI pages)", () => {
+  it("encodes/decodes the full shape", () => {
+    const event: AgentEvent = {
+      type: "ui_render",
+      id: "quiz-1",
+      title: "Fractions check",
+      html: `<form class="ef-stack"><input name="answer" /></form>`,
+      mode: "replace",
+      active: false,
+      nodeId: "33333333-3333-3333-3333-333333333333",
+    }
+    expect(decode(encode(event))).toEqual(event)
+  })
+
+  it("title/active/nodeId are optional; mode is a constrained literal", () => {
+    const minimal: AgentEvent = {
+      type: "ui_render",
+      id: "x",
+      html: "<p>hi</p>",
+      mode: "append",
+    }
+    expect(decode(encode(minimal))).toEqual(minimal)
+    expect(() => decode({ type: "ui_render", id: "x", html: "", mode: "sideways" })).toThrow()
+  })
+})
+
 describe("AgentEvent — the union still round-trips (every member, incl. needs_human)", () => {
   it("encode→decode is identity over arbitrary members", () => {
     fc.assert(

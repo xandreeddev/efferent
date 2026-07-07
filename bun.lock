@@ -48,6 +48,7 @@
         "@opentui/solid": "0.3.1",
         "@xandreed/sdk-adapters": "workspace:*",
         "@xandreed/sdk-core": "workspace:*",
+        "@xandreed/web": "workspace:*",
         "effect": "^3.21.4",
         "solid-js": "1.9.12",
       },
@@ -120,6 +121,10 @@
         "@xandreed/sdk-core": "workspace:*",
         "effect": "^3.21.4",
       },
+    },
+    "packages/web": {
+      "name": "@xandreed/web",
+      "version": "0.0.0",
     },
     "packages/website": {
       "name": "@xandreed/website",
@@ -619,6 +624,8 @@
     "@xandreed/sdk-core": ["@xandreed/sdk-core@workspace:packages/sdk-core"],
 
     "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
+
+    "@xandreed/web": ["@xandreed/web@workspace:packages/web"],
 
     "@xandreed/website": ["@xandreed/website@workspace:packages/website"],
 
