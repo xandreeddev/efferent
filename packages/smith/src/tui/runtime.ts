@@ -2,8 +2,8 @@ import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
 import { Deferred, Effect, Fiber, Option, Queue, Runtime, Scope } from "effect"
-import { SettingsStore } from "@xandreed/sdk-core"
-import type { FileSystem, SpecDoc } from "@xandreed/sdk-core"
+import { SettingsStore } from "@xandreed/engine"
+import type { FileSystem, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
@@ -14,7 +14,7 @@ import { createSmithStore } from "./state/store.js"
 import type { SmithStore, SmithTuiContext } from "./state/store.js"
 import { App } from "./view/App.js"
 
-type TuiServices = ImplementorServices | FileSystem
+type TuiServices = ImplementorServices | FileSystem | SettingsStore
 
 /** The scoped chassis every smith TUI mode shares: queue+pump, renderer,
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */
@@ -35,13 +35,16 @@ const withTuiChassis = (
         Queue.offer(queue, event).pipe(Effect.asVoid)
       const rt = yield* Effect.runtime<TuiServices>()
 
-      const settings = yield* Effect.flatMap(SettingsStore, (store) => store.get())
+      const settings = yield* Effect.flatMap(SettingsStore, (store) => store.load).pipe(
+        Effect.orDie,
+      )
+      const general = Option.getOrElse(settings.model, () => "(unset)")
       const store = createSmithStore(
         run,
         {
-          general: settings.model,
-          code: settings.codeModel ?? settings.model,
-          fast: settings.fastModel ?? settings.model,
+          general,
+          code: Option.getOrElse(settings.codeModel, () => general),
+          fast: Option.getOrElse(settings.fastModel, () => general),
         },
         mode,
       )

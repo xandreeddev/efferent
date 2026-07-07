@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { SpecDoc } from "@xandreed/sdk-core"
+import { SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import { initialRefine, reduceRefine, withUserLine } from "./refine.js"
 
@@ -39,11 +39,11 @@ describe("reduceRefine", () => {
     const state = fold([
       {
         type: "agent",
-        event: { type: "assistant_message", turnIndex: 0, text: "Two questions: …" },
+        event: { type: "assistant_message", turnIndex: 0, text: "Two questions: …", reasoning: "", toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 } },
       },
       {
         type: "agent",
-        event: { type: "tool_call_start", turnIndex: 0, id: "1", toolName: "grep", args: { pattern: "widget" } },
+        event: { type: "tool_start", turnIndex: 0, toolCallId: "1", toolName: "grep", args: { pattern: "widget" } },
       },
     ])
     expect(state.transcript).toEqual([{ who: "smith", text: "Two questions: …" }])

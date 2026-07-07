@@ -1,6 +1,6 @@
 import type { Option } from "effect"
 import type { FactoryRun, GateReport, Spec } from "@xandreed/foundry"
-import type { AgentEvent, SpecDoc } from "@xandreed/sdk-core"
+import type { LoopEvent, SpecDoc } from "@xandreed/engine"
 
 /**
  * The ONE event union the smith UIs consume — in-process only (never a wire
@@ -9,7 +9,7 @@ import type { AgentEvent, SpecDoc } from "@xandreed/sdk-core"
  *   `implement_end` / `gate_report`), plus `forge_start`/`forge_end`/
  *   `forge_error` emitted by the session driver and `gate_start` from the
  *   gate decorator (`withGateEvents`);
- * - the efferent coder's `AgentHooks` (via sdk-core's `makeAgentEventHooks`)
+ * - the efferent coder's `AgentHooks` (via the engine loop's `onEvent` sink)
  *   → wrapped verbatim as `{ type: "agent", event }` — tool calls, assistant
  *   text, sub-agent lifecycle, llm retries.
  */
@@ -45,4 +45,4 @@ export type SmithEvent =
       readonly artifact: string
     }
   | { readonly type: "forge_error"; readonly message: string }
-  | { readonly type: "agent"; readonly event: AgentEvent }
+  | { readonly type: "agent"; readonly event: LoopEvent }

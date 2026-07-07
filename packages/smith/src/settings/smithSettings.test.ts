@@ -1,120 +1,56 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option, Ref } from "effect"
-import { DefaultSettings, SettingsStore } from "@xandreed/sdk-core"
-import type { Settings } from "@xandreed/sdk-core"
-import { SMITH_LIMIT_DEFAULTS, SMITH_MODEL_DEFAULTS } from "../domain/SmithConfig.js"
+import { Option } from "effect"
+import { EngineSettings } from "@xandreed/engine"
+import { SMITH_MODEL_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
-import { applySmithSettings, smithSettingsStore } from "./smithSettings.js"
+import { applySmithSettings } from "./smithSettings.js"
 
-const baseRun: SmithRunConfig = {
-  task: "do the thing",
-  cwd: "/tmp/ws",
-  acceptance: [],
-  maxAttempts: SMITH_LIMIT_DEFAULTS.maxAttempts,
-  budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
-  models: { general: Option.none(), code: Option.none(), fast: Option.none() },
-  allowBash: false,
-  headless: true,
-  testCommand: Option.none(),
-  noTest: false,
-  configPath: Option.none(),
-}
+const run = (over: Partial<SmithRunConfig["models"]> = {}): SmithRunConfig =>
+  ({
+    models: {
+      general: Option.none(),
+      code: Option.none(),
+      fast: Option.none(),
+      ...over,
+    },
+  }) as SmithRunConfig
 
-describe("applySmithSettings — precedence", () => {
-  test("virgin settings get the full smith defaults", () => {
-    const out = applySmithSettings(DefaultSettings, baseRun)
-    expect(out.model).toBe(SMITH_MODEL_DEFAULTS.general)
-    expect(out.codeModel).toBe(SMITH_MODEL_DEFAULTS.code)
-    expect(out.fastModel).toBe(SMITH_MODEL_DEFAULTS.fast)
-    expect(out.openCodeThinkingMode).toBe("high")
-    expect(out.agentMode).toBe("direct")
-    expect(out.maxSteps).toBe(40)
-    expect(out.subAgentMaxChildren).toBe(4)
-    expect(out.subAgentMaxDepth).toBe(1)
-    expect(out.allowBash).toBe(false)
-  })
-
-  test("user config wins over smith defaults", () => {
-    const configured: Settings = {
-      ...DefaultSettings,
-      model: "google:gemini-3.5-pro",
-      codeModel: "opencode:glm-5.1",
-      openCodeThinkingMode: "off",
-      agentMode: "swarm",
-      maxSteps: 60,
-      subAgentMaxChildren: 9,
-    }
-    const out = applySmithSettings(configured, baseRun)
-    expect(out.model).toBe("google:gemini-3.5-pro")
-    expect(out.codeModel).toBe("opencode:glm-5.1")
-    // fastModel untouched by the user → smith default still applies.
-    expect(out.fastModel).toBe(SMITH_MODEL_DEFAULTS.fast)
-    expect(out.openCodeThinkingMode).toBe("off")
-    expect(out.agentMode).toBe("swarm")
-    expect(out.maxSteps).toBe(60)
-    expect(out.subAgentMaxChildren).toBe(9)
-  })
-
-  test("CLI flags win over user config", () => {
-    const configured: Settings = { ...DefaultSettings, model: "google:gemini-3.5-pro" }
-    const run: SmithRunConfig = {
-      ...baseRun,
-      models: {
-        general: Option.some("anthropic:claude-sonnet-5"),
-        code: Option.some("opencode:kimi-k2.5"),
-        fast: Option.none(),
-      },
-      allowBash: true,
-    }
-    const out = applySmithSettings(configured, run)
-    expect(out.model).toBe("anthropic:claude-sonnet-5")
-    expect(out.codeModel).toBe("opencode:kimi-k2.5")
-    expect(out.fastModel).toBe(SMITH_MODEL_DEFAULTS.fast)
-    expect(out.allowBash).toBe(true)
-  })
+const empty = new EngineSettings({
+  model: Option.none(),
+  codeModel: Option.none(),
+  fastModel: Option.none(),
 })
 
-describe("smithSettingsStore — the wrapping layer", () => {
-  /** A fake inner store over a Ref, recording what `update`'s diff would see. */
-  const fakeInner = (initial: Settings) =>
-    Effect.gen(function* () {
-      const ref = yield* Ref.make(initial)
-      const layer = Layer.succeed(
-        SettingsStore,
-        SettingsStore.of({
-          get: () => Ref.get(ref),
-          global: () => Ref.get(ref),
-          update: (f) => Ref.updateAndGet(ref, f),
-          load: () => Ref.get(ref),
-        }),
-      )
-      return { ref, layer }
-    })
+describe("applySmithSettings — flags > user config > smith defaults", () => {
+  test("nothing configured, the smith defaults fill every role", () => {
+    const out = applySmithSettings(empty, run())
+    expect(Option.getOrThrow(out.model)).toBe(SMITH_MODEL_DEFAULTS.general)
+    expect(Option.getOrThrow(out.codeModel)).toBe(SMITH_MODEL_DEFAULTS.code)
+    expect(Option.getOrThrow(out.fastModel)).toBe(SMITH_MODEL_DEFAULTS.fast)
+  })
 
-  test("reads come back overlaid; update's f sees the RAW merged settings", async () => {
-    const fSaw: string[] = []
-    const program = Effect.gen(function* () {
-      const { layer, ref } = yield* fakeInner(DefaultSettings)
-      const wrapped = yield* Effect.gen(function* () {
-        const store = yield* SettingsStore
-        const got = yield* store.get()
-        yield* store.update((current) => {
-          // `f` must receive the un-overlaid settings: record what it saw.
-          fSaw.push(current.model)
-          return { ...current, theme: "one-dark" }
-        })
-        return got
-      }).pipe(Effect.provide(smithSettingsStore(baseRun).pipe(Layer.provide(layer))))
-      return { overlaid: wrapped, inner: yield* Ref.get(ref) }
+  test("user config beats the smith default", () => {
+    const configured = new EngineSettings({
+      model: Option.some("google:gemini-3.5-flash"),
+      codeModel: Option.none(),
+      fastModel: Option.none(),
     })
-    const { inner, overlaid } = await Effect.runPromise(program)
+    const out = applySmithSettings(configured, run())
+    expect(Option.getOrThrow(out.model)).toBe("google:gemini-3.5-flash")
+    expect(Option.getOrThrow(out.codeModel)).toBe(SMITH_MODEL_DEFAULTS.code)
+  })
 
-    expect(overlaid.model).toBe(SMITH_MODEL_DEFAULTS.general)
-    // f saw the raw stock model, NOT the smith default…
-    expect(fSaw).toEqual([DefaultSettings.model])
-    // …so the inner store's state carries only f's own change.
-    expect(inner.theme).toBe("one-dark")
-    expect(inner.model).toBe(DefaultSettings.model)
-    expect(inner.codeModel).toBeUndefined()
+  test("a CLI flag beats everything", () => {
+    const configured = new EngineSettings({
+      model: Option.some("google:gemini-3.5-flash"),
+      codeModel: Option.some("google:gemini-3.5-pro"),
+      fastModel: Option.none(),
+    })
+    const out = applySmithSettings(
+      configured,
+      run({ general: Option.some("anthropic:claude-sonnet-5") }),
+    )
+    expect(Option.getOrThrow(out.model)).toBe("anthropic:claude-sonnet-5")
+    expect(Option.getOrThrow(out.codeModel)).toBe("google:gemini-3.5-pro")
   })
 })

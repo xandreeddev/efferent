@@ -1,14 +1,12 @@
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
+import { ConversationStore, runAgent } from "@xandreed/engine"
+import type { ConversationId, SpecDoc, SpecSlug } from "@xandreed/engine"
 import {
-  ConversationStore,
-  makeAgentEventHooks,
   makeSpecRefinerHandlers,
-  runAgent,
   specRefinerAgentConfig,
   specRefinerToolkit,
-} from "@xandreed/sdk-core"
-import type { ConversationId, SpecDoc, SpecSlug } from "@xandreed/sdk-core"
+} from "./refiner.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { loadSpecDoc, lockSpecDoc } from "../spec/store.js"
@@ -77,10 +75,11 @@ export const makeRefineSession = (
     const refinerLayer = specRefinerToolkit.toLayer(handlers)
     const tools: RefineTools = { propose: handlers.propose_spec }
     const config = specRefinerAgentConfig(cwd, { unattended: options.unattended })
-    const hooks = makeAgentEventHooks((event) => publish({ type: "agent", event }))
 
     const realAgent: RefineAgent = (cid, prompt) =>
-      runAgent(config, cid, prompt, hooks, cwd, undefined, "headless").pipe(
+      runAgent(config, cid, prompt, {
+        onEvent: (event) => publish({ type: "agent", event }),
+      }).pipe(
         Effect.provide(refinerLayer),
         Effect.provide(context),
         Effect.asVoid,

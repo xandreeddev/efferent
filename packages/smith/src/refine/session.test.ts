@@ -1,19 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option } from "effect"
 import { LanguageModel } from "@effect/ai"
-import {
-  ApprovalAllowAllLive,
-  ContextTreeStore,
-  ConversationStore,
-  FileSystem,
-  Http,
-  SettingsStore,
-  Shell,
-  TerminalSession,
-  UtilityLlm,
-  WebSearch,
-} from "@xandreed/sdk-core"
-import type { ConversationId, DirEntry } from "@xandreed/sdk-core"
+import { ConversationStore, FileSystem, Shell } from "@xandreed/engine"
+import { ConversationId } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeRefineSession } from "./session.js"
 import type { RefineAgent } from "./session.js"
@@ -23,49 +12,36 @@ const CWD = "/ws"
 /** In-memory FileSystem (write/read/list) — the spec file is the truth. */
 const memoryFs = () => {
   const files = new Map<string, string>()
-  const layer = Layer.succeed(
-    FileSystem,
-    FileSystem.of({
-      read: (path: string) =>
-        files.has(path)
-          ? Effect.succeed({ content: files.get(path) ?? "", truncated: false, totalLines: 1 })
-          : Effect.fail({ _tag: "FileNotFound", path } as never),
-      write: (path: string, content: string) =>
-        Effect.sync(() => {
-          files.set(path, content)
-        }),
-      exists: (path: string) => Effect.succeed(files.has(path)),
-      list: (dir: string) =>
-        Effect.succeed(
-          [...files.keys()]
-            .filter((path) => path.startsWith(`${dir}/`))
-            .map((path): DirEntry => ({ path, type: "file" })),
-        ),
-      glob: () => Effect.succeed([]),
-    } as never),
-  )
+  const layer = Layer.succeed(FileSystem, {
+    read: (path: string) =>
+      files.has(path)
+        ? Effect.succeed(files.get(path) ?? "")
+        : Effect.fail({ _tag: "FsError", path, message: "not found" } as never),
+    write: (path: string, content: string) =>
+      Effect.sync(() => {
+        files.set(path, content)
+      }),
+    exists: (path: string) => Effect.succeed(files.has(path)),
+    list: (dir: string) =>
+      Effect.succeed(
+        [...files.keys()]
+          .filter((path) => path.startsWith(`${dir}/`))
+          .map((path) => path.slice(dir.length + 1)),
+      ),
+    mkdir: () => Effect.void,
+  } as never)
   return { files, layer }
 }
 
 /** Everything the session's context capture wants; the scripted agent touches
  *  none of it beyond FileSystem + the conversation mint. */
 const stubServices = Layer.mergeAll(
-  Layer.succeed(Shell, Shell.of({} as never)),
-  Layer.succeed(Http, Http.of({} as never)),
-  Layer.succeed(WebSearch, WebSearch.of({} as never)),
-  Layer.succeed(TerminalSession, TerminalSession.of({} as never)),
-  Layer.succeed(ContextTreeStore, ContextTreeStore.of({} as never)),
-  Layer.succeed(UtilityLlm, UtilityLlm.of({} as never)),
+  Layer.succeed(Shell, {} as never),
   Layer.succeed(LanguageModel.LanguageModel, {} as never),
-  Layer.succeed(
-    ConversationStore,
-    ConversationStore.of({
-      create: () => Effect.succeed("refine-conv-1" as ConversationId),
-    } as never),
-  ),
-  ApprovalAllowAllLive,
-  // Part of the captured context; the scripted path never reads it.
-  Layer.succeed(SettingsStore, {} as never),
+  Layer.succeed(ConversationStore, {
+    create: () =>
+      Effect.succeed(ConversationId.make("00000000-0000-4000-8000-00000000abcd")),
+  } as never),
 )
 
 /** The scripted refiner: one propose through the SESSION's own handlers —

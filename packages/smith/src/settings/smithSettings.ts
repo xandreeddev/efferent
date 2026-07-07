@@ -1,55 +1,36 @@
 import { Effect, Layer, Option } from "effect"
-import { DefaultSettings, SettingsStore } from "@xandreed/sdk-core"
-import type { Settings } from "@xandreed/sdk-core"
-import { LocalSettingsStoreLive } from "@xandreed/sdk-adapters"
-import { SMITH_MODEL_DEFAULTS, SMITH_SETTING_DEFAULTS } from "../domain/SmithConfig.js"
+import { EngineSettings, SettingsStore } from "@xandreed/engine"
+import { LocalSettingsStoreLive } from "@xandreed/providers"
+import { SMITH_MODEL_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 
 /**
- * The smith settings overlay, applied to every READ of the store. Precedence
- * (highest first): CLI flags > user config (`.efferent/config.json`
- * local-over-global, incl. `EFFERENT_MODEL`) > smith defaults > the stock
- * `DefaultSettings`.
- *
- * Optional keys are precise — `undefined` means the user never set them, so
- * the smith default applies. The required keys (`model`, `maxSteps`) use a
- * sentinel comparison against `DefaultSettings`: a merged value still equal to
- * the stock default means "never configured" (documented edge: explicitly
- * choosing the stock default is indistinguishable — a flag wins regardless).
+ * The smith settings overlay on the ENGINE's store, applied to every read.
+ * Precedence (highest first): CLI flags > user config
+ * (`.efferent/config.json`, local-over-global) > smith model defaults.
+ * `setModel` passes through UN-overlaid, so a smith default is never
+ * persisted to the user's config.
  */
-export const applySmithSettings = (merged: Settings, run: SmithRunConfig): Settings => ({
-  ...merged,
-  model: Option.getOrElse(run.models.general, () =>
-    merged.model === DefaultSettings.model ? SMITH_MODEL_DEFAULTS.general : merged.model,
-  ),
-  codeModel: Option.getOrElse(
-    run.models.code,
-    () => merged.codeModel ?? SMITH_MODEL_DEFAULTS.code,
-  ),
-  fastModel: Option.getOrElse(
-    run.models.fast,
-    () => merged.fastModel ?? SMITH_MODEL_DEFAULTS.fast,
-  ),
-  openCodeThinkingMode:
-    merged.openCodeThinkingMode ?? SMITH_SETTING_DEFAULTS.openCodeThinkingMode,
-  agentMode: merged.agentMode ?? SMITH_SETTING_DEFAULTS.agentMode,
-  maxSteps:
-    merged.maxSteps === DefaultSettings.maxSteps
-      ? SMITH_SETTING_DEFAULTS.maxSteps
-      : merged.maxSteps,
-  subAgentMaxChildren:
-    merged.subAgentMaxChildren ?? SMITH_SETTING_DEFAULTS.subAgentMaxChildren,
-  subAgentMaxDepth: merged.subAgentMaxDepth ?? SMITH_SETTING_DEFAULTS.subAgentMaxDepth,
-  allowBash: merged.allowBash || run.allowBash,
-})
+export const applySmithSettings = (
+  merged: EngineSettings,
+  run: SmithRunConfig,
+): EngineSettings =>
+  new EngineSettings({
+    model: Option.orElse(
+      Option.orElse(run.models.general, () => merged.model),
+      () => Option.some(SMITH_MODEL_DEFAULTS.general),
+    ),
+    codeModel: Option.orElse(
+      Option.orElse(run.models.code, () => merged.codeModel),
+      () => Option.some(SMITH_MODEL_DEFAULTS.code),
+    ),
+    fastModel: Option.orElse(
+      Option.orElse(run.models.fast, () => merged.fastModel),
+      () => Option.some(SMITH_MODEL_DEFAULTS.fast),
+    ),
+  })
 
-/**
- * Wrap an inner `SettingsStore` so every read comes back smith-overlaid.
- * `update` passes `f` through to the inner store UN-overlaid: the inner diff
- * (`f(prev)` vs `prev`) then only contains the keys `f` itself changed, so a
- * smith default is NEVER persisted to the user's config.json — setter-style
- * updates (`:set k v`) behave identically either way.
- */
+/** Wrap an inner `SettingsStore` so every read comes back smith-overlaid. */
 export const smithSettingsStore = (
   run: SmithRunConfig,
 ): Layer.Layer<SettingsStore, never, SettingsStore> =>
@@ -57,20 +38,14 @@ export const smithSettingsStore = (
     SettingsStore,
     Effect.gen(function* () {
       const inner = yield* SettingsStore
-      const overlay = (settings: Settings) => applySmithSettings(settings, run)
-      return SettingsStore.of({
-        get: () => Effect.map(inner.get(), overlay),
-        global: () => Effect.map(inner.global(), overlay),
-        update: (f, scope) => Effect.map(inner.update(f, scope), overlay),
-        load: (cwd, homeDir) => Effect.map(inner.load(cwd, homeDir), overlay),
-      })
+      return {
+        load: Effect.map(inner.load, (settings) => applySmithSettings(settings, run)),
+        setModel: inner.setModel,
+      }
     }),
   )
 
-/**
- * THE `SettingsStore` for a smith composition: the real
- * `LocalSettingsStoreLive` (same `.efferent/config.json` tiers as the
- * efferent CLI) with the smith overlay on top. Requires `FileSystem`.
- */
-export const SmithSettingsStoreLive = (run: SmithRunConfig) =>
-  smithSettingsStore(run).pipe(Layer.provide(LocalSettingsStoreLive))
+/** THE `SettingsStore` for a smith composition: the providers store (same
+ *  `.efferent/config.json` tiers as everything else) with the smith overlay. */
+export const SmithSettingsStoreLive = (run: SmithRunConfig, cwd: string, home: string) =>
+  smithSettingsStore(run).pipe(Layer.provide(LocalSettingsStoreLive(cwd, home)))

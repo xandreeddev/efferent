@@ -1,15 +1,17 @@
 # @xandreed/smith
 
-**The SPEC-DRIVEN agent in the factory.** A rough idea becomes a **SpecDoc**
-(drafted by the refiner agent, refined WITH the human, LOCKED by the human),
-and only a locked spec forges: `@xandreed/foundry`'s `forge` loop — implement
-→ snapshot → staged gate pipeline → typed feedback → retry — with the REAL
-efferent coder (`@xandreed/sdk-core` + `@xandreed/sdk-adapters`) as the
-implementor, every message persisted to the same SQLite `ConversationStore`
-the CLI uses. Private, source-run only (`bun run smith`); it is NEVER
-imported by `packages/cli` (foundry depends on the `typescript` compiler,
-which must not enter the published bundle) — the boundaries gate enforces
-both directions. Doctrine + roadmap: `docs/agents/coder.md`.
+**The SPEC-DRIVEN agent in the factory, RE-FOUNDED on the new line.** A rough
+idea becomes a **SpecDoc** (drafted by the refiner agent, refined WITH the
+human, LOCKED by the human), and only a locked spec forges:
+`@xandreed/foundry`'s `forge` loop — implement → snapshot → staged gate
+pipeline → typed feedback → retry — with a capable DIRECT coder on
+`@xandreed/engine` + `@xandreed/providers` as the implementor: the engine's
+loop + the smith coding toolkit (read/write/edit/Bash/grep/glob/ls; writes
+cwd-guarded), NO fleet, NO sub-agent tree, NO approval judge — refine is the
+prompt engineering, the gates are the judge, nothing in between
+(gates-outside doctrine). Conversations persist to the workspace's own
+`.efferent/smith.db`. Private, source-run only (`bun run smith`); boundaries:
+smith → engine + providers + foundry, never any old-line package.
 
 ```bash
 bun run smith spec "a stats module with tests" --cwd ~/code/toy   # TTY → refine mode

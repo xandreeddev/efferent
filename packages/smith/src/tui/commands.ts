@@ -1,39 +1,17 @@
 import { Effect, Match } from "effect"
-import { SettingsStore } from "@xandreed/sdk-core"
-import type { Settings } from "@xandreed/sdk-core"
+import { SettingsStore } from "@xandreed/engine"
 import type { SmithTuiContext } from "./state/store.js"
 
-const coerce = (value: string): string | number | boolean =>
-  value === "true" ? true : value === "false" ? false : /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value
-
-const ROLE_KEYS: Record<string, "model" | "codeModel" | "fastModel"> = {
-  general: "model",
-  code: "codeModel",
-  fast: "fastModel",
-}
-
-const persist = (ctx: SmithTuiContext, patch: Record<string, unknown>, note: string): void => {
-  void ctx.run(
-    Effect.flatMap(SettingsStore, (store) =>
-      store.update((current) => ({ ...current, ...patch }) as Settings),
-    ).pipe(
-      Effect.tap(() => Effect.sync(() => ctx.store.setNotice(note))),
-      Effect.catchAllCause((cause) =>
-        Effect.sync(() => ctx.store.setNotice(`failed: ${String(cause)}`)),
-      ),
-    ),
-  )
-}
-
 /**
- * The `:` commands — the efferent CLI's configuration conventions, minimal:
- *   :quit / :q                end the TUI (exit code = the finished run's, else 130)
- *   :lock                     refine mode: approve + lock the current draft
- *   :forge                    refine mode: forge the locked spec (in this TUI)
- *   :model <p:m>              persist the GENERAL role to .efferent/config.json
- *   :model code|fast <p:m>    persist that role
- *   :set <key> <value>        persist any Settings key (coerced bool/number)
+ * The `:` commands — minimal on the new line:
+ *   :quit / :q     end the TUI (exit code = the finished run's, else 130)
+ *   :lock          refine mode: approve + lock the current draft
+ *   :forge         refine mode: forge the locked spec (in this TUI)
+ *   :model <p:m>   persist the GENERAL model to .efferent/config.json
  * Models are pinned at run start, so a switch applies to the NEXT run.
+ * Role models (code/fast) and arbitrary keys are edited in
+ * `.efferent/config.json` directly — the engine's settings surface is
+ * deliberately small.
  */
 export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
   const words = raw.replace(/^:/, "").trim().split(/\s+/)
@@ -57,26 +35,28 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
       ctx.forge()
     }),
     Match.when("model", () => {
-      const roleKey = ROLE_KEYS[words[1] ?? ""]
-      const selection = roleKey === undefined ? words[1] : words[2]
-      const key = roleKey ?? "model"
-      if (selection === undefined || selection.length === 0) {
-        ctx.store.setNotice("usage: :model [code|fast] <provider:modelId>")
+      const selection = words[1]
+      if (selection === undefined || selection.length === 0 || !selection.includes(":")) {
+        ctx.store.setNotice("usage: :model <provider:modelId>")
         return
       }
-      persist(ctx, { [key]: selection }, `${key} = ${selection} — applies to the next run`)
-    }),
-    Match.when("set", () => {
-      const key = words[1]
-      const value = words.slice(2).join(" ")
-      if (key === undefined || value.length === 0) {
-        ctx.store.setNotice("usage: :set <key> <value>")
-        return
-      }
-      persist(ctx, { [key]: coerce(value) }, `${key} = ${value}`)
+      void ctx.run(
+        Effect.flatMap(SettingsStore, (store) => store.setModel(selection)).pipe(
+          Effect.tap(() =>
+            Effect.sync(() =>
+              ctx.store.setNotice(`model = ${selection} — applies to the next run`),
+            ),
+          ),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() => ctx.store.setNotice(`failed: ${String(cause)}`)),
+          ),
+        ),
+      )
     }),
     Match.orElse(() => {
-      ctx.store.setNotice(`unknown command: :${command} (try :quit · :model · :set)`)
+      ctx.store.setNotice(
+        `unknown command: :${command} (try :quit · :model — other keys: edit .efferent/config.json)`,
+      )
     }),
   )
 }

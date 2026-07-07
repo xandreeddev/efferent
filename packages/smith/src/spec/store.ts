@@ -4,12 +4,12 @@ import {
   decodeSpecDocText,
   encodeSpecDocText,
   FileSystem,
-  SPECS_DIR,
   SpecDoc,
   specSlug,
   uniqueSlug,
-} from "@xandreed/sdk-core"
-import type { SpecDocParseError, SpecSlug } from "@xandreed/sdk-core"
+} from "@xandreed/engine"
+import type { SpecDocParseError, SpecSlug } from "@xandreed/engine"
+import { SPECS_DIR } from "../refine/refiner.js"
 import { ConfigError } from "@xandreed/foundry"
 
 /** Absolute path of a spec file in `cwd`'s workspace. */
@@ -40,7 +40,7 @@ export const loadSpecDoc = (
           }),
       ),
     )
-    return yield* decodeSpecDocText(slugOfPath(path), read.content).pipe(
+    return yield* decodeSpecDocText(slugOfPath(path), read).pipe(
       Effect.mapError(
         (error: SpecDocParseError) => new ConfigError({ path, message: error.message }),
       ),
@@ -54,6 +54,10 @@ export const writeSpecDoc = (
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const path = specPath(cwd, doc.slug)
+    // The engine's FileSystem does NOT create parents (live-caught: the
+    // shorthand's first write in a fresh workspace ENOENT'd) — the store
+    // owns its layout.
+    yield* fs.mkdir(`${cwd}/${SPECS_DIR}`).pipe(Effect.catchAll(() => Effect.void))
     yield* fs.write(path, encodeSpecDocText(doc)).pipe(
       Effect.mapError((error) => new ConfigError({ path, message: String(error) })),
     )
@@ -77,10 +81,10 @@ export const listSpecs = (cwd: string): Effect.Effect<ReadonlyArray<string>, nev
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const entries = yield* fs
-      .list(`${cwd}/${SPECS_DIR}`, { recursive: false })
-      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<{ path: string }>)))
+      .list(`${cwd}/${SPECS_DIR}`)
+      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<string>)))
     return entries
-      .map((entry) => slugOfPath(entry.path))
+      .map((name) => slugOfPath(name))
       .filter((slug) => slug.length > 0)
       .sort()
   })
