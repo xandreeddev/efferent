@@ -3,7 +3,7 @@
   "version": "0.0.6",
   "private": true,
   "type": "module",
-  "description": "Runnable, minimal examples of building agents on @xandreed/sdk-core.",
+  "description": "Frozen examples of the previous-line SDK (kept as documentation for the published npm package; not built).",
   "scripts": {
     "dice": "bun diceAgent.ts",
     "calc": "bun calcAgent.ts",
@@ -12,12 +12,5 @@
     "compression": "bun compressionAgent.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "@effect/ai": "^0.35.0",
-    "@effect/platform": "^0.96.1",
-    "@effect/platform-bun": "^0.89.0",
-    "@xandreed/sdk-adapters": "workspace:*",
-    "@xandreed/sdk-core": "workspace:*",
-    "effect": "^3.21.2"
-  }
+  "dependencies": {}
 }
