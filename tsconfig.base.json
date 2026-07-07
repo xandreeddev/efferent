@@ -32,6 +32,8 @@
       "@xandreed/engine/*": ["packages/engine/src/*"],
       "@xandreed/providers": ["packages/providers/src/index.ts"],
       "@xandreed/providers/*": ["packages/providers/src/*"],
+      "@xandreed/surface": ["packages/surface/src/index.ts"],
+      "@xandreed/surface/*": ["packages/surface/src/*"],
       "@xandreed/foundry": ["packages/foundry/src/index.ts"],
       "@xandreed/foundry/*": ["packages/foundry/src/*"],
       "@xandreed/smith": ["packages/smith/src/index.ts"],

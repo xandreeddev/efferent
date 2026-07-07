@@ -1,0 +1,14 @@
+{
+  "name": "@xandreed/surface",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The new line's UI substrate: the html tagged template, the allowlist sanitizer (the security boundary for agent-authored HTML), the validateUi hard gates, and the htmx protocol contract.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "effect": "^3.21.4"
+  }
+}
