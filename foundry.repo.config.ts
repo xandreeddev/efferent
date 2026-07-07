@@ -29,7 +29,14 @@ const LEGACY = [
 
 // packages/smith is post-foundry: it rides the same composition rules with
 // ZERO baseline entries — every finding there is fresh and fails outright.
-const CHECKED = [...LEGACY, "packages/smith/src/**", "packages/math/src/**", "packages/social/src/**"]
+// packages/engine is the NEW LINE's kernel — same zero-baseline discipline.
+const CHECKED = [
+  ...LEGACY,
+  "packages/smith/src/**",
+  "packages/math/src/**",
+  "packages/social/src/**",
+  "packages/engine/src/**",
+]
 
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
@@ -37,7 +44,12 @@ const config: typeof GateSuiteConfig.Encoded = {
   rules: [
     {
       rule: "effect/no-try-catch",
-      include: ["packages/sdk-core/src/**", "packages/smith/src/**", "packages/math/src/**"],
+      include: [
+        "packages/sdk-core/src/**",
+        "packages/smith/src/**",
+        "packages/math/src/**",
+        "packages/engine/src/**",
+      ],
     },
     { rule: "effect/no-let", include: CHECKED },
     { rule: "effect/no-loop-statements", include: CHECKED },
@@ -45,7 +57,10 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/match-over-tag-switch", include: CHECKED },
     { rule: "effect/no-as-any", include: CHECKED },
     { rule: "effect/no-parallel-interface", include: CHECKED },
-    { rule: "effect/branded-id-fields", include: ["packages/sdk-core/src/entities/**"] },
+    {
+      rule: "effect/branded-id-fields",
+      include: ["packages/sdk-core/src/entities/**", "packages/engine/src/domain/**"],
+    },
   ],
   // Eval STRUCTURE as a gate: every packages/evals suite must declare ≥1
   // scorer + an explicit threshold and be registered in run.ts's SUITES —
@@ -99,6 +114,14 @@ const config: typeof GateSuiteConfig.Encoded = {
         path: "packages/foundry/src/**",
         canImport: [],
         externals: ["effect", "typescript", "node:", "bun:test"],
+      },
+      {
+        // The NEW LINE's agent kernel: entities, ports, the loop, the session
+        // chassis. Pure — imports nothing internal, no provider SDKs, no IO.
+        name: "engine",
+        path: "packages/engine/src/**",
+        canImport: [],
+        externals: ["effect", "@effect/ai", "bun:test"],
       },
       {
         // The social engagement agent: draft-only toolkit, human review queue,
