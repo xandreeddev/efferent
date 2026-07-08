@@ -31,6 +31,7 @@ export {
   StoreError,
 } from "./ports/ConversationStore.js"
 export { EngineSettings, SettingsError, SettingsStore } from "./ports/SettingsStore.js"
+export type { ModelRole } from "./ports/SettingsStore.js"
 export { AuthError, AuthStore, Credential } from "./ports/AuthStore.js"
 export { FileSystem, FsError } from "./ports/FileSystem.js"
 export { Shell, ShellError, ShellResult } from "./ports/Shell.js"

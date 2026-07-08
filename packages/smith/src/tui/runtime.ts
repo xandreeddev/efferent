@@ -3,6 +3,7 @@ import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
 import { Deferred, Effect, Fiber, Option, Queue, Runtime, Scope } from "effect"
 import { SettingsStore } from "@xandreed/engine"
+import type { AuthStore } from "@xandreed/engine"
 import type { FileSystem, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
@@ -14,7 +15,7 @@ import { createSmithStore } from "./state/store.js"
 import type { SmithStore, SmithTuiContext } from "./state/store.js"
 import { App } from "./view/App.js"
 
-type TuiServices = ImplementorServices | FileSystem | SettingsStore
+type TuiServices = ImplementorServices | FileSystem | SettingsStore | AuthStore
 
 /** The scoped chassis every smith TUI mode shares: queue+pump, renderer,
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */

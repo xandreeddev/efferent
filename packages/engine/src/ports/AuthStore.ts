@@ -41,5 +41,9 @@ export class AuthStore extends Context.Tag("@xandreed/engine/AuthStore")<
     readonly resolveKey: (
       p: ProviderId,
     ) => Effect.Effect<Option.Option<Redacted.Redacted<string>>, AuthError>
+    /** Persist a credential (the human's `:login` action). */
+    readonly set: (p: ProviderId, credential: Credential) => Effect.Effect<void, AuthError>
+    /** Remove a provider's credential everywhere it is stored (`:logout`). */
+    readonly remove: (p: ProviderId) => Effect.Effect<void, AuthError>
   }
 >() {}

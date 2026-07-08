@@ -35,14 +35,18 @@ describe("LocalSettingsStoreLive", () => {
     )
   })
 
-  test("setModel writes the LOCAL config, preserving unrelated keys", async () => {
+  test("setRole writes each role's key to the LOCAL config, preserving unrelated keys", async () => {
     const { layer, cwd } = setup({}, { theme: "efferent", telemetry: true })
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* SettingsStore
-        yield* store.setModel("opencode:kimi-k2.6")
+        yield* store.setRole("general", Option.some("opencode:kimi-k2.6"))
+        yield* store.setRole("code", Option.some("opencode:kimi-k2.7-code"))
+        yield* store.setRole("fast", Option.some("opencode:deepseek-v4-flash"))
         const settings = yield* store.load
         expect(Option.getOrThrow(settings.model)).toBe("opencode:kimi-k2.6")
+        expect(Option.getOrThrow(settings.codeModel)).toBe("opencode:kimi-k2.7-code")
+        expect(Option.getOrThrow(settings.fastModel)).toBe("opencode:deepseek-v4-flash")
       }).pipe(Effect.provide(layer)),
     )
     const written = JSON.parse(
@@ -50,6 +54,25 @@ describe("LocalSettingsStoreLive", () => {
     ) as Record<string, unknown>
     expect(written["theme"]).toBe("efferent")
     expect(written["telemetry"]).toBe(true)
+    expect(written["model"]).toBe("opencode:kimi-k2.6")
+    expect(written["codeModel"]).toBe("opencode:kimi-k2.7-code")
+  })
+
+  test("setRole None clears the key (the role falls back), others untouched", async () => {
+    const { layer, cwd } = setup({}, { model: "opencode:kimi-k2.6", codeModel: "x:y" })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        yield* store.setRole("code", Option.none())
+        const settings = yield* store.load
+        expect(Option.isNone(settings.codeModel)).toBe(true)
+        expect(Option.getOrThrow(settings.model)).toBe("opencode:kimi-k2.6")
+      }).pipe(Effect.provide(layer)),
+    )
+    const written = JSON.parse(
+      readFileSync(join(cwd, ".efferent", "config.json"), "utf-8"),
+    ) as Record<string, unknown>
+    expect("codeModel" in written).toBe(false)
     expect(written["model"]).toBe("opencode:kimi-k2.6")
   })
 
