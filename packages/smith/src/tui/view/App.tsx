@@ -1,6 +1,6 @@
-import type { TextareaRenderable } from "@opentui/core"
+import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
 import { For, Show } from "solid-js"
-import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, usePaste } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
 import { dispatch, dispatchPaste } from "../keys.js"
@@ -36,10 +36,6 @@ const cellGlyph = (state: GateCell["state"]): string =>
         : state === "skip"
           ? glyph.skip
           : glyph.pending
-
-const FEED_ROWS = 18
-/** Rows the fixed chrome (header, panels heads, status, composer) occupies. */
-const CHROME_ROWS = 14
 
 /** The header: brand · task · attempt/phase heartbeat (mode-aware). */
 const Header = (props: { ctx: SmithTuiContext }) => {
@@ -107,35 +103,49 @@ const Header = (props: { ctx: SmithTuiContext }) => {
  *  hidden), what it said (tagged with the model that said it), and every
  *  tool call inline with live status. Both modes render through it. */
 const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
-  const conversation = props.ctx.store.conversation
-  const dimensions = useTerminalDimensions()
-  const rows = () => Math.max(12, Math.min(80, dimensions().height - CHROME_ROWS))
-  const visible = () => conversation().blocks.slice(-rows())
+  const { store } = props.ctx
+  const conversation = store.conversation
+  // A property-mutated holder (the composerClear pattern) — `let` is banned.
+  const scroll = { current: undefined as ScrollBoxRenderable | undefined }
+  useKeyboard((key) => {
+    if (key.name === "pageup") scroll.current?.scrollBy(-8)
+    if (key.name === "pagedown") scroll.current?.scrollBy(8)
+  })
+  const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
+  const elapsed = () => {
+    store.spinner()
+    return store.busySince() > 0 ? Math.floor((Date.now() - store.busySince()) / 1000) : 0
+  }
   return (
     <box flexDirection="column" flexGrow={1} marginTop={1}>
       <box flexDirection="row" flexShrink={0}>
         <text fg={tokens.accent.input} flexShrink={0}>{`${glyph.brand} `}</text>
         <text fg={tokens.text.dim} wrapMode="none">{props.label}</text>
       </box>
-      {/* The block slice counts BLOCKS but wrapped text eats extra ROWS —
-          bottom-justify + clip so the newest content owns the bottom edge
-          and any excess disappears at the TOP instead of overdrawing the
-          composer/side panel (live-caught collision on a long draft). */}
-      <box
-        flexDirection="column"
+      {/* The history is a SCROLLBOX: sticky-bottom follows the live tail,
+          the wheel / PgUp / PgDn reach anything above (the clipped-top body
+          made history unreachable — live complaint), and manual scroll
+          re-engages when you return to the bottom. */}
+      <scrollbox
+        ref={(r: ScrollBoxRenderable) => {
+          scroll.current = r
+        }}
         flexGrow={1}
-        overflow="hidden"
-        justifyContent="flex-end"
+        stickyScroll={true}
+        stickyStart="bottom"
+        scrollY={true}
+        scrollX={false}
+        contentOptions={{ flexDirection: "column" }}
       >
       <Show
-        when={visible().length > 0}
+        when={conversation().blocks.length > 0}
         fallback={
           <text fg={tokens.state.pending}>
             {"  describe what to build — the refiner drafts a spec you approve"}
           </text>
         }
       >
-        <For each={visible()}>
+        <For each={conversation().blocks}>
           {(block) => {
             // Every block is flexShrink 0 on the COLUMN axis: yoga would
             // otherwise COMPRESS block heights to fit and the text would
@@ -201,7 +211,20 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
           }}
         </For>
       </Show>
-      </box>
+      </scrollbox>
+      {/* The in-pane heartbeat: a thinking model was ONLY visible in the
+          header's tiny clock — the pane looked dead for minutes on a long
+          turn ("the session hung"). */}
+      <Show when={store.busy()}>
+        <box flexDirection="row" flexShrink={0}>
+          <text fg={tokens.state.running} flexShrink={0}>
+            {`  ${spin()} thinking… ${elapsed()}s`}
+          </text>
+          <text fg={tokens.text.dim} wrapMode="none">
+            {"  — Esc interrupts · wheel/PgUp scrolls the story"}
+          </text>
+        </box>
+      </Show>
     </box>
   )
 }
