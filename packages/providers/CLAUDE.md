@@ -28,6 +28,11 @@ src/
 │              minutes non-streaming, empty-response rejection) · router
 │              (LanguageModelLive — re-resolves selection + key per call) ·
 │              utilityLlm (fast tier: fastModel ?? model, one-shot)
+├── telemetry/ TracingLive(serviceName) — OTLP HTTP exporter for the kernel's
+│              spans (engine.run/turn, providers.generate with llm.model/
+│              reasoning/usage/finish_reason); default localhost:4318, silent
+│              when no collector · FileLoggerLive(path) — append-only logfmt
+│              file logger (the TUI must never console-log)
 ├── store/     SqliteConversationStoreLive — bun:sqlite, its OWN db file
 │              (never the frozen line's efferent.db), atomic positions
 ├── fs/ shell/ LocalFileSystemLive · LocalShellLive (non-zero exit = result)

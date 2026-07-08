@@ -78,6 +78,24 @@ export const generateWith = (
       rejectEmptyResponse(label),
       retryableLlm(label),
       Effect.map((res) => stampResponse(res, label)),
+      // The span carries the WHOLE turn: what finished, what it cost, and
+      // the (clipped) thinking — a trace answers "what did the model do"
+      // without opening the conversation db.
+      Effect.tap((res) =>
+        Effect.annotateCurrentSpan({
+          "llm.finish_reason": String(res.finishReason),
+          "llm.usage.input_tokens": res.usage.inputTokens ?? 0,
+          "llm.usage.output_tokens": res.usage.outputTokens ?? 0,
+          "llm.response_chars": res.text.length,
+          "llm.tool_calls": res.content
+            .flatMap((part) => {
+              const p = part as { readonly type?: string; readonly name?: string }
+              return p.type === "tool-call" ? [p.name ?? ""] : []
+            })
+            .join(","),
+          "llm.reasoning": (res.reasoningText ?? "").slice(0, 500),
+        }),
+      ),
       Effect.withSpan("providers.generate", {
         attributes: { "llm.model": label },
       }),

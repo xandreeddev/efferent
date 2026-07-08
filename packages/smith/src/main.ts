@@ -9,12 +9,14 @@ import { Effect, Layer, Logger, Option } from "effect"
 import { BunContext } from "@effect/platform-bun"
 import { SettingsStore } from "@xandreed/engine"
 import {
+  FileLoggerLive,
   LanguageModelLive,
   UtilityLlmLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalShellLive,
   SqliteConversationStoreLive,
+  TracingLive,
 } from "@xandreed/providers"
 import { ConfigError } from "@xandreed/foundry"
 import { SMITH_LIMIT_DEFAULTS } from "./domain/SmithConfig.js"
@@ -281,13 +283,18 @@ if (isDirectRun) {
   }).pipe(
     Effect.provide(smithAppLive(run)),
     Effect.provide(BunContext.layer),
+    // The kernel's spans (engine.run/turn, providers.generate) reach the local
+    // LGTM stack when it's up (`bun run obs:up`); a missing collector fails
+    // silently — always-on costs nothing.
+    Effect.provide(TracingLive("smith")),
     // Effect's default logger writes to STDOUT (console.log): in headless mode
     // that pollutes the event stream, and in the TUI it bleeds raw log lines
     // straight through the OpenTUI frame (live-caught). Headless → stderr;
-    // TUI → silenced (any console write corrupts the alt screen).
+    // TUI → an append-only FILE — Logger.none left a mid-run failure with no
+    // trace anywhere ("it just died", live-caught twice).
     Effect.provide(
       interactive
-        ? Logger.replace(Logger.defaultLogger, Logger.none)
+        ? FileLoggerLive(join(run.cwd, ".efferent", "logs", "smith.log"))
         : Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
     ),
     // A layer-build failure (store selection, migration) is an infra error.

@@ -7,6 +7,7 @@ import {
   LocalAuthStoreLive,
   LocalSettingsStoreLive,
   SqliteConversationStoreLive,
+  TracingLive,
 } from "@xandreed/providers"
 import { makeCanvasSession } from "./session.js"
 import { serveCanvas } from "./web/server.js"
@@ -59,5 +60,6 @@ await Effect.runPromise(
   program.pipe(
     Effect.provide(LanguageModelLive),
     Effect.provide(layers),
+    Effect.provide(TracingLive("canvas")),
   ) as Effect.Effect<void>,
 )
