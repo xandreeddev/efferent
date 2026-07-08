@@ -251,4 +251,39 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(resumed).toContain("write a fibonacci helper")
     expect(resumed).toContain("Drafted the fibonacci spec")
   })
+
+  test("a spec with MANY checks renders the compact gate tally, never overflow", async () => {
+    const tui = await boot({
+      seams: {
+        refineAgent: proposingRefineAgent({
+          goal: "Create out.txt containing done.",
+          acceptance: ["out.txt exists"],
+          checks: Array.from({ length: 8 }, (_, i) => ({
+            name: `a-rather-long-acceptance-check-name-${i}`,
+            command: "test -f out.txt",
+          })),
+        }),
+        forgeRunner: (run, publish, doc) =>
+          runForgeSessionWith(
+            run,
+            publish,
+            makeScriptedImplementor([[{ path: "out.txt", content: "done\n" }]]),
+            doc,
+          ),
+      },
+    })
+    await tui.setup.mockInput.typeText("make an out file")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("Create out.txt containing done."))
+    await tui.setup.mockInput.typeText(":lock")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("locked"))
+    await tui.setup.mockInput.typeText(":forge")
+    tui.setup.mockInput.pressEnter()
+    const done = await waitFrame(tui, (f) => f.includes("accepted (attempt 1)"), 200)
+    // The tally renders (✓9 = bun-test skipped? 8 accepts + typecheck-ish —
+    // assert the SHAPE, not the exact count) and no raw cell soup bleeds in.
+    expect(done).toMatch(/✓\d+ ✗\d+/)
+    expect(done).not.toContain("a-rather-long-acceptance-check-name-7")
+  })
 })
