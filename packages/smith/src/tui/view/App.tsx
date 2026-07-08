@@ -8,7 +8,7 @@ import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
 import type { GateCell } from "../presentation/floor.js"
-import { contextGauge, contextTokens, fmtTokens } from "../presentation/conversation.js"
+import { contextGauge, contextTokens } from "../presentation/conversation.js"
 import { contextWindowOf } from "../presentation/modelCatalog.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
@@ -106,6 +106,9 @@ const Header = (props: { ctx: SmithTuiContext }) => {
 const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
   const { store } = props.ctx
   const conversation = store.conversation
+  const cwd = props.ctx.runConfig.cwd
+  const relArg = (arg: string): string =>
+    arg === cwd ? "." : arg.startsWith(`${cwd}/`) ? arg.slice(cwd.length + 1) : arg
   // A property-mutated holder (the composerClear pattern) — `let` is banned.
   const scroll = { current: undefined as ScrollBoxRenderable | undefined }
   useKeyboard((key) => {
@@ -159,33 +162,37 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 </text>
               )
             }
+            // TURN SPACING (the agy rhythm): one blank line opens each turn
+            // (the ▸ header or a leading assistant), everything inside a
+            // turn — thought, text, tools — stays flush.
             if (block.kind === "reasoning") {
               return (
-                <box flexDirection="row" flexShrink={0}>
-                  <text fg={tokens.text.dim} flexShrink={0}>{"  ▸ "}</text>
-                  <text fg={tokens.text.dim} wrapMode="word" flexShrink={1}>
-                    {block.text}
-                  </text>
+                <box flexDirection="column" flexShrink={0} marginTop={1}>
+                  <text fg={tokens.text.dim} wrapMode="none">{`  ▸ ${block.tag}`}</text>
+                  <box flexDirection="row">
+                    <text flexShrink={0}>{"    "}</text>
+                    <text fg={tokens.text.dim} wrapMode="word" flexShrink={1}>
+                      {block.text}
+                    </text>
+                  </box>
                 </box>
               )
             }
             if (block.kind === "assistant") {
-              const tag = [
-                ...Option.match(block.model, { onNone: () => [], onSome: (m) => [m] }),
-                `${fmtTokens(block.tokens.input)} in · ${fmtTokens(block.tokens.output)} out`,
-              ].join(" · ")
               return (
-                <box flexDirection="column" flexShrink={0}>
+                <box flexDirection="column" flexShrink={0} marginTop={block.leading ? 1 : 0}>
                   <Show when={block.text.length > 0}>
                     <text fg={tokens.text.bright} wrapMode="word">{`  ${block.text}`}</text>
                   </Show>
-                  <text fg={tokens.text.dim} wrapMode="none">{`  └ ${tag}`}</text>
+                  <Show when={block.leading}>
+                    <text fg={tokens.text.dim} wrapMode="none">{`  └ ${block.tag}`}</text>
+                  </Show>
                 </box>
               )
             }
             if (block.kind === "error") {
               return (
-                <box flexDirection="row" flexShrink={0}>
+                <box flexDirection="row" flexShrink={0} marginTop={1}>
                   <text fg={tokens.state.error} flexShrink={0}>{`  ${glyph.fail} `}</text>
                   <text fg={tokens.state.error} wrapMode="word" flexShrink={1}>
                     {block.text}
@@ -194,7 +201,8 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               )
             }
             // One bullet, color = state (the agy pattern): amber running,
-            // green done, red failed — the glyph itself stays quiet.
+            // green done, red failed — the glyph itself stays quiet. Paths
+            // render RELATIVE to the workspace — absolute prefixes are noise.
             const statusColor =
               block.status === "ok"
                 ? tokens.state.ok
@@ -205,7 +213,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               <box flexDirection="row" flexShrink={0}>
                 <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
                 <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
-                  {`${block.name}(${block.arg})`}
+                  {`${block.name}(${relArg(block.arg)})`}
                 </text>
               </box>
             )
