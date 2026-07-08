@@ -8,6 +8,7 @@ import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
 import type { GateCell } from "../presentation/floor.js"
+import { fmtTokens } from "../presentation/conversation.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
 import { computePalette } from "../presentation/palette.js"
@@ -101,13 +102,31 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** Refine mode: the dialog with the refiner. */
-const Transcript = (props: { ctx: SmithTuiContext }) => {
-  const refine = props.ctx.store.refine
-  const visible = () => refine().transcript.slice(-TRANSCRIPT_ROWS)
+/** The CONVERSATION pane — the session's full story, full width: what you
+ *  said, what the model THOUGHT (reasoning is first-class, dim, never
+ *  hidden), what it said (tagged with the model that said it), and every
+ *  tool call inline with live status. Both modes render through it. */
+const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
+  const conversation = props.ctx.store.conversation
+  const dimensions = useTerminalDimensions()
+  const rows = () => Math.max(12, Math.min(80, dimensions().height - CHROME_ROWS))
+  const visible = () => conversation().blocks.slice(-rows())
   return (
     <box flexDirection="column" flexGrow={1} marginTop={1}>
-      <text fg={tokens.text.dim}>refine</text>
+      <box flexDirection="row" flexShrink={0}>
+        <text fg={tokens.accent.input} flexShrink={0}>{`${glyph.brand} `}</text>
+        <text fg={tokens.text.dim} wrapMode="none">{props.label}</text>
+      </box>
+      {/* The block slice counts BLOCKS but wrapped text eats extra ROWS —
+          bottom-justify + clip so the newest content owns the bottom edge
+          and any excess disappears at the TOP instead of overdrawing the
+          composer/side panel (live-caught collision on a long draft). */}
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        overflow="hidden"
+        justifyContent="flex-end"
+      >
       <Show
         when={visible().length > 0}
         fallback={
@@ -117,23 +136,72 @@ const Transcript = (props: { ctx: SmithTuiContext }) => {
         }
       >
         <For each={visible()}>
-          {(line) => (
-            <text
-              fg={line.who === "you" ? tokens.accent.input : tokens.text.default}
-              wrapMode="word"
-            >
-              {line.who === "you" ? `${glyph.caret}${line.text}` : `  ${line.text}`}
-            </text>
-          )}
+          {(block) => {
+            // Every block is flexShrink 0 on the COLUMN axis: yoga would
+            // otherwise COMPRESS block heights to fit and the text would
+            // overdraw its neighbors (live-caught fused rows) — excess
+            // must clip at the top, never squeeze.
+            if (block.kind === "user") {
+              return (
+                <text fg={tokens.accent.input} wrapMode="word" marginTop={1} flexShrink={0}>
+                  {`${glyph.caret}${block.text}`}
+                </text>
+              )
+            }
+            if (block.kind === "reasoning") {
+              return (
+                <box flexDirection="row" flexShrink={0}>
+                  <text fg={tokens.text.dim} flexShrink={0}>{"  ◈ "}</text>
+                  <text fg={tokens.text.dim} wrapMode="word" flexShrink={1}>
+                    {block.text}
+                  </text>
+                </box>
+              )
+            }
+            if (block.kind === "assistant") {
+              const tag = [
+                ...Option.match(block.model, { onNone: () => [], onSome: (m) => [m] }),
+                `${fmtTokens(block.tokens.input)} in · ${fmtTokens(block.tokens.output)} out`,
+              ].join(" · ")
+              return (
+                <box flexDirection="column" flexShrink={0}>
+                  <Show when={block.text.length > 0}>
+                    <text fg={tokens.text.default} wrapMode="word">{`  ${block.text}`}</text>
+                  </Show>
+                  <text fg={tokens.text.dim} wrapMode="none">{`    — ${tag}`}</text>
+                </box>
+              )
+            }
+            if (block.kind === "error") {
+              return (
+                <box flexDirection="row" flexShrink={0}>
+                  <text fg={tokens.state.error} flexShrink={0}>{`  ${glyph.fail} `}</text>
+                  <text fg={tokens.state.error} wrapMode="word" flexShrink={1}>
+                    {block.text}
+                  </text>
+                </box>
+              )
+            }
+            const statusGlyph =
+              block.status === "ok" ? glyph.pass : block.status === "fail" ? glyph.fail : glyph.running
+            const statusColor =
+              block.status === "ok"
+                ? tokens.state.ok
+                : block.status === "fail"
+                  ? tokens.state.error
+                  : tokens.state.running
+            return (
+              <box flexDirection="row" flexShrink={0}>
+                <text fg={statusColor} flexShrink={0}>{`  ${statusGlyph} `}</text>
+                <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
+                  {`${block.name}(${block.arg})`}
+                </text>
+              </box>
+            )
+          }}
         </For>
       </Show>
-      <Show when={refine().feed.length > 0}>
-        <For each={refine().feed.slice(-4)}>
-          {(label) => (
-            <text fg={tokens.text.dim} wrapMode="none">{`    ${label}`}</text>
-          )}
-        </For>
-      </Show>
+      </box>
     </box>
   )
 }
@@ -195,7 +263,7 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
 const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
   const floor = props.ctx.store.floor
   return (
-    <box flexDirection="column" width={52} flexShrink={0} marginTop={1}>
+    <box flexDirection="column" width={52} flexShrink={0} marginTop={1} marginLeft={2}>
       <text fg={tokens.text.dim}>attempts</text>
       <Show
         when={floor().attempts.length > 0}
@@ -263,22 +331,7 @@ const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** The live activity feed — the coder's tool calls, spawns, retries. Sized
- *  to the terminal so a tall window shows work, not blank rows. */
-const Feed = (props: { ctx: SmithTuiContext }) => {
-  const floor = props.ctx.store.floor
-  const dimensions = useTerminalDimensions()
-  const rows = () => Math.max(FEED_ROWS, Math.min(60, dimensions().height - CHROME_ROWS))
-  const visible = () => floor().feed.slice(-rows())
-  return (
-    <box flexDirection="column" flexGrow={1} marginTop={1} marginLeft={2}>
-      <text fg={tokens.text.dim}>activity</text>
-      <For each={visible()}>
-        {(line) => <text fg={tokens.text.default} wrapMode="none">{`  ${line}`}</text>}
-      </For>
-    </box>
-  )
-}
+
 
 /** Outcome + roles + notice — the two quiet status rows above the input. */
 const StatusRows = (props: { ctx: SmithTuiContext }) => {
@@ -425,14 +478,14 @@ export const App = (props: { ctx: SmithTuiContext }) => {
       </Show>
       <Show when={mode() === "refine"}>
         <box flexDirection="row" flexGrow={1}>
-          <Transcript ctx={props.ctx} />
+          <ConversationPane ctx={props.ctx} label="conversation — the refiner" />
           <SpecPanel ctx={props.ctx} />
         </box>
       </Show>
       <Show when={mode() === "forge"}>
         <box flexDirection="row" flexGrow={1}>
+          <ConversationPane ctx={props.ctx} label="conversation — the implementor" />
           <AttemptPanel ctx={props.ctx} />
-          <Feed ctx={props.ctx} />
         </box>
       </Show>
       <StatusRows ctx={props.ctx} />

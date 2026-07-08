@@ -23,6 +23,8 @@ export type LoopEvent =
       readonly turnIndex: number
       readonly text: string
       readonly reasoning: string
+      /** The resolved `provider:modelId` that produced this message. */
+      readonly model?: string
       readonly toolCalls: ReadonlyArray<ToolCallSummary>
       readonly usage: TokenUsage
       /** The assistant message's absolute store position, when persisted —

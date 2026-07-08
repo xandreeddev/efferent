@@ -173,6 +173,9 @@ describe("the smith TUI — frame-level regressions", () => {
     tui.setup.mockInput.pressEnter()
     const drafted = await waitFrame(tui, (f) => f.includes("Create out.txt containing done."))
     expect(drafted).toContain("draft")
+    // The conversation pane carries the user's line at full width.
+    expect(drafted).toContain("❯ make an out file")
+    expect(drafted).toContain("conversation — the refiner")
 
     await tui.setup.mockInput.typeText(":lock")
     tui.setup.mockInput.pressEnter()
@@ -188,6 +191,9 @@ describe("the smith TUI — frame-level regressions", () => {
     const dashboard = await waitFrame(tui, (f) => f.includes("✓ accepted (attempt 1)"))
     expect(dashboard).toContain("✓ accepted (attempt 1)")
     expect(dashboard).toContain("create-out-txt-containing-done")
+    // The FAST model named the session after its first turn (stubbed here).
+    const titled = await waitFrame(tui, (f) => f.includes("scripted session title"))
+    expect(titled).toContain("scripted session title")
   })
 
   test("an UNCONFIGURED workspace boots into the onboarding checklist", async () => {

@@ -35,8 +35,12 @@ Exit: 0 accepted/locked · 1 rejected · 2 infra error. Artifact:
 
 ## Model roles (defaults — all overridable)
 
-general `opencode:kimi-k2.6` (+ `openCodeThinkingMode: "high"`) · code
-`opencode:kimi-k2.7-code` · fast `opencode:deepseek-v4-flash`. Configured
+general `opencode:kimi-k2.6` · code
+`opencode:kimi-k2.7-code` · fast `opencode:deepseek-v4-flash`. (These models
+think by DEFAULT — no request param; `openCodeThinkingMode` is an old-line
+knob the new providers deliberately don't send. The gateway returns the
+thinking under TWO field names — `reasoning` on kimi-k2.6, `reasoning_content`
+on k2.7-code/deepseek — providers' compat client parses both.) Configured
 **exactly like the efferent CLI**: user `.efferent/config.json`
 (local-over-global, `EFFERENT_MODEL`, `~/.efferent/auth.json` via `:login`
 there) WINS over these defaults; `--model/--code-model/--fast-model` flags win
@@ -85,7 +89,7 @@ src/
                        runTuiWorkspace). Workspace = the persistent session: idle
                        dashboard (specs · runs · lessons) ⇄ refine ⇄ forge, exit only
                        by :quit. theme (single token set; no hex/glyph outside it) ·
-                       presentation/{floor,refine,workspace,selectBox,promptBox,
+                       presentation/{conversation,floor,refine,workspace,selectBox,promptBox,
                        loginFlow,modelCatalog} (pure machines, fold-tested) · state/
                        (signals + the ONE overlay: select picker | login flow) ·
                        view/ui/{atoms,BottomMenu,PromptBody} (the MenuRow discipline:

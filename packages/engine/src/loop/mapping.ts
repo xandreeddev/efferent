@@ -310,13 +310,26 @@ const USAGE_KEY = "engine"
 export const withUsageOnAssistant = (
   messages: ReadonlyArray<AgentMessage>,
   usage: TokenUsage,
+  model: Option.Option<string> = Option.none(),
 ): ReadonlyArray<AgentMessage> => {
   const at = messages.findIndex((m) => m.role === "assistant")
+  const stamp = {
+    ...usage,
+    ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
+  }
   return messages.map((m, i) => {
     if (i !== at || m.role !== "assistant") return m
     const prev = hasKeys(m.providerOptions) ? m.providerOptions : {}
-    return { ...m, providerOptions: { ...prev, [USAGE_KEY]: usage } }
+    return { ...m, providerOptions: { ...prev, [USAGE_KEY]: stamp } }
   })
+}
+
+/** The resolved `provider:modelId` the router stamped onto the finish part. */
+export const extractModel = (content: ReadonlyArray<unknown>): Option.Option<string> => {
+  const finish = (content as ReadonlyArray<AnyPart>).find((p) => p.type === "finish")
+  const model = (finish?.metadata as { readonly router?: { readonly model?: unknown } } | undefined)
+    ?.router?.model
+  return typeof model === "string" && model.length > 0 ? Option.some(model) : Option.none()
 }
 
 /** The turn usage embedded on a persisted assistant message, if any. */
@@ -325,4 +338,12 @@ export const assistantUsage = (msg: AgentMessage): Option.Option<TokenUsage> => 
   const opts = msg.providerOptions as Record<string, unknown> | undefined
   const usage = opts?.[USAGE_KEY]
   return hasKeys(usage) ? Option.some(usage as TokenUsage) : Option.none()
+}
+
+/** The `provider:modelId` embedded alongside the usage stamp, if any. */
+export const assistantModel = (msg: AgentMessage): Option.Option<string> => {
+  if (msg.role !== "assistant") return Option.none()
+  const opts = msg.providerOptions as Record<string, unknown> | undefined
+  const model = (opts?.[USAGE_KEY] as { readonly model?: unknown } | undefined)?.model
+  return typeof model === "string" && model.length > 0 ? Option.some(model) : Option.none()
 }

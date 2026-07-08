@@ -39,6 +39,7 @@ export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/UtilityLlm.
 
 // loop
 export {
+  assistantModel,
   assistantUsage,
   extractUsage,
   handoffToMessage,

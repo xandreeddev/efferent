@@ -14,7 +14,7 @@ import type { RefineAgent, RefineSession } from "../refine/session.js"
 import { listSpecs, loadSpecDoc } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
 import type { ProviderStatus, SmithProvider } from "./presentation/loginFlow.js"
-import { AuthStore as AuthStoreTag, ConversationId, ConversationStore } from "@xandreed/engine"
+import { AuthStore as AuthStoreTag, ConversationId, ConversationStore, UtilityLlm, assistantModel, assistantUsage } from "@xandreed/engine"
 import type { Credential } from "@xandreed/engine"
 import { readRuns } from "@xandreed/foundry"
 import { join } from "node:path"
@@ -23,7 +23,31 @@ import { createSmithStore } from "./state/store.js"
 import type { SmithStore, SmithTuiContext } from "./state/store.js"
 import { App } from "./view/App.js"
 
-export type TuiServices = ImplementorServices | FileSystem | SettingsStore | AuthStore
+export type TuiServices =
+  | ImplementorServices
+  | FileSystem
+  | SettingsStore
+  | AuthStore
+  | UtilityLlm
+
+/** The persisted content-part vocabulary `:resume` replays (see the engine's
+ *  `responseToAgentMessages` for the writing side). */
+interface ReplayPart {
+  readonly type?: string
+  readonly text?: string
+  readonly toolCallId?: string
+  readonly toolName?: string
+  readonly input?: unknown
+  readonly output?: unknown
+  readonly isError?: boolean
+}
+
+const joinReplayText = (parts: ReadonlyArray<ReplayPart>, type: "text" | "reasoning"): string =>
+  parts
+    .filter((p) => p.type === type)
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim()
 
 /** The scoped chassis every smith TUI mode shares: queue+pump, renderer,
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */
@@ -368,32 +392,83 @@ export const makeWorkspaceBody = (
                   ? Effect.void
                   : Effect.sync(() => store.addUserLine(message.content as string))
               }
+              // Assistant turn: rebuild the FULL story — reasoning stays
+              // reasoning (never fused into the reply), tool calls become
+              // pane blocks, and the persisted usage stamp restores the
+              // model + spend tag (replay ≡ live-fold).
               if (message.role === "assistant" && Array.isArray(message.content)) {
-                const text = message.content
-                  .flatMap((part) =>
-                    typeof part === "object" && part !== null && "text" in part
-                      ? [String((part as { text: unknown }).text)]
-                      : [],
-                  )
-                  .join("")
-                return text.trim().length === 0
-                  ? Effect.void
-                  : publish({
+                const parts = message.content as ReadonlyArray<ReplayPart>
+                const text = joinReplayText(parts, "text")
+                const reasoning = joinReplayText(parts, "reasoning")
+                const toolCalls = parts.flatMap((p) =>
+                  p.type === "tool-call"
+                    ? [
+                        {
+                          id: String(p.toolCallId ?? ""),
+                          toolName: String(p.toolName ?? ""),
+                          args: p.input ?? {},
+                        },
+                      ]
+                    : [],
+                )
+                if (text.trim().length === 0 && reasoning.length === 0 && toolCalls.length === 0) {
+                  return Effect.void
+                }
+                const usage = Option.getOrElse(assistantUsage(message), () => ({
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  totalTokens: 0,
+                  cacheReadTokens: 0,
+                }))
+                return Effect.zipRight(
+                  publish({
+                    type: "agent",
+                    event: {
+                      type: "assistant_message",
+                      turnIndex: 0,
+                      text,
+                      reasoning,
+                      toolCalls,
+                      usage,
+                      ...Option.match(assistantModel(message), {
+                        onNone: () => ({}),
+                        onSome: (model) => ({ model }),
+                      }),
+                    },
+                  }),
+                  Effect.forEach(toolCalls, (call) =>
+                    publish({
                       type: "agent",
                       event: {
-                        type: "assistant_message",
+                        type: "tool_start",
                         turnIndex: 0,
-                        text,
-                        reasoning: "",
-                        toolCalls: [],
-                        usage: {
-                          inputTokens: 0,
-                          outputTokens: 0,
-                          totalTokens: 0,
-                          cacheReadTokens: 0,
-                        },
+                        toolCallId: call.id,
+                        toolName: call.toolName,
+                        args: call.args,
                       },
-                    })
+                    }),
+                  ),
+                )
+              }
+              // Tool results flip the replayed tool blocks to their outcome.
+              if (message.role === "tool" && Array.isArray(message.content)) {
+                const parts = message.content as ReadonlyArray<ReplayPart>
+                return Effect.forEach(
+                  parts.flatMap((p) => (p.type === "tool-result" ? [p] : [])),
+                  (p) =>
+                    publish({
+                      type: "agent",
+                      event: {
+                        type: "tool_end",
+                        turnIndex: 0,
+                        toolCallId: String(p.toolCallId ?? ""),
+                        toolName: String(p.toolName ?? ""),
+                        args: {},
+                        ok: p.isError !== true,
+                        result: p.output ?? {},
+                      },
+                    }),
+                )
               }
               return Effect.void
             })
@@ -404,10 +479,29 @@ export const makeWorkspaceBody = (
         )
       }
 
+      const autoTitle = (
+        cid: ConversationId,
+        firstText: string,
+      ): Effect.Effect<void, never, ConversationStore | UtilityLlm | AuthStore | FileSystem> =>
+        Effect.gen(function* () {
+          const conv = yield* ConversationStore
+          const utility = yield* UtilityLlm
+          const completion = yield* utility
+            .complete(
+              `Name this coding session in 3 to 6 plain words — no quotes, no punctuation, just the words:\n\n${firstText.slice(0, 400)}`,
+            )
+            .pipe(Effect.orDie)
+          const title = completion.text.trim().split("\n")[0]?.slice(0, 60) ?? ""
+          if (title.length === 0) return
+          yield* conv.setTitle(cid, title).pipe(Effect.orDie)
+          yield* refreshWorkspace
+        }).pipe(Effect.catchAllDefect(() => Effect.void))
+
       const dropRefine = Effect.gen(function* () {
         yield* Ref.set(refineRef, Option.none())
         yield* Effect.sync(() => {
           store.resetRefine()
+          store.resetConversation()
           store.setMode("idle")
         })
         yield* refreshWorkspace
@@ -435,6 +529,7 @@ export const makeWorkspaceBody = (
               yield* dropRefine
             }
             const existing = yield* Ref.get(refineRef)
+            const fresh = Option.isNone(existing)
             const session = yield* Option.match(existing, {
               onSome: (s) => Effect.succeed(s),
               onNone: () =>
@@ -446,6 +541,7 @@ export const makeWorkspaceBody = (
                   yield* Ref.set(refineRef, Option.some(created))
                   yield* Effect.sync(() => {
                     store.resetRefine()
+                    store.resetConversation()
                     store.setMode("refine")
                   })
                   yield* publish({ type: "refine_start", idea: Option.some(text) })
@@ -455,6 +551,16 @@ export const makeWorkspaceBody = (
             const fiber = forked(
               "turn",
               turn(session, text).pipe(
+                // The FAST model names a new session after its first turn —
+                // the dashboard's sessions list shows titles, not truncated
+                // prompts. Failures are silent; the title is a nicety.
+                Effect.zipLeft(
+                  fresh
+                    ? autoTitle(session.conversationId, text).pipe(
+                        Effect.catchAll(() => Effect.void),
+                      )
+                    : Effect.void,
+                ),
                 Effect.ensuring(Ref.set(turnFiberRef, Option.none())),
               ),
             )
@@ -503,6 +609,7 @@ export const makeWorkspaceBody = (
             }
             yield* Effect.sync(() => {
               store.resetFloor(doc.value.goal, run.maxAttempts)
+              store.resetConversation()
               store.setMode("forge")
             })
             const forgeRunner = seams.forgeRunner ?? runForgeSession

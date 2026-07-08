@@ -22,8 +22,10 @@ src/
 │              opencode's gateway; v1 non-streaming) · providers (per-call
 │              service construction: opencode/google/anthropic/openai;
 │              anthropic cache breakpoints + Claude Code system block on
-│              subscription auth) · retry (transient-only retries, 120s
-│              timeout, empty-response rejection) · router
+│              subscription auth; compat parses BOTH gateway reasoning
+│              vocabularies — `reasoning` and `reasoning_content`) · retry
+│              (transient-only retries, 300s timeout — thinking models run
+│              minutes non-streaming, empty-response rejection) · router
 │              (LanguageModelLive — re-resolves selection + key per call) ·
 │              utilityLlm (fast tier: fastModel ?? model, one-shot)
 ├── store/     SqliteConversationStoreLive — bun:sqlite, its OWN db file
