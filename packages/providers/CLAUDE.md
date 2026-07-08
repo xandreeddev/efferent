@@ -10,11 +10,14 @@ external SDKs only — never on foundry, never on any old-line package.
 src/
 ├── auth/      LocalAuthStoreLive (the SAME ~/.efferent/auth.json vocabulary
 │              the previous line writes — existing logins keep working;
-│              read-through per call; anthropic OAuth refresh wired) ·
-│              anthropicOAuth (protocol constants + refresh)
-├── settings/  LocalSettingsStoreLive — config.json two-tier merge
-│              (global ~/.efferent + local <cwd>/.efferent, local wins);
-│              reads only the model roles, preserves every other key
+│              read-through per call; anthropic OAuth refresh wired; set/remove for
+│              :login/:logout — set writes GLOBAL, remove clears every tier) ·
+│              anthropicOAuth (full protocol: PKCE begin/exchange + refresh)
+├── settings/  LocalSettingsStoreLive — config.json two-tier merge (global
+│              ~/.efferent + local <cwd>/.efferent, local wins); reads only
+│              the model roles, preserves every other key; setRole writes/
+│              clears one role key in the LOCAL file · roleModelView (a
+│              role-scoped SettingsStore view: load maps model = role ?? model)
 ├── llm/       compat (generic OpenAI-compatible /chat/completions client —
 │              opencode's gateway; v1 non-streaming) · providers (per-call
 │              service construction: opencode/google/anthropic/openai;

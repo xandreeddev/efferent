@@ -154,4 +154,28 @@ export const LocalAuthStoreLive = (cwd: string, home: string) =>
         )
         return Option.some(Redacted.make(fresh.access))
       }),
+    set: (provider: ProviderId, credential: Credential) =>
+      Effect.gen(function* () {
+        // Logins land in the GLOBAL file — credentials belong to the user,
+        // not one workspace (a local entry still overrides on read).
+        const globalPath = authPaths(cwd, home)[0] ?? ""
+        const file = yield* readAuthFile(globalPath)
+        yield* writeAuthFile(
+          globalPath,
+          new Map([...file.entries, [provider, credential] as const]),
+        )
+      }),
+    remove: (provider: ProviderId) =>
+      // Logout removes the provider from EVERY tier that holds it, so a
+      // stale local override can't silently resurrect the credential.
+      Effect.forEach(authPaths(cwd, home), (path) =>
+        Effect.gen(function* () {
+          const file = yield* readAuthFile(path)
+          if (!file.entries.has(provider)) return
+          yield* writeAuthFile(
+            path,
+            new Map([...file.entries].filter(([p]) => p !== provider)),
+          )
+        }),
+      ).pipe(Effect.asVoid),
   })

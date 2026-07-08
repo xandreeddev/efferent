@@ -18,7 +18,8 @@ import type {
   ImplementorError,
   WorkspaceError,
 } from "@xandreed/foundry"
-import type { FileSystem, SpecDoc } from "@xandreed/engine"
+import type { AuthStore, FileSystem, SettingsStore, SpecDoc } from "@xandreed/engine"
+import { LanguageModelLive, roleModelView } from "@xandreed/providers"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"
@@ -125,7 +126,10 @@ export const loadForgeLessons = (cwd: string): Effect.Effect<Option.Option<strin
   )
 
 /** The production session: the efferent coder as the Implementor, with the
- *  workspace's forge-history lessons folded into the attempt-1 brief. */
+ *  workspace's forge-history lessons folded into the attempt-1 brief. The
+ *  implementor's LanguageModel is scoped to the CODE role (`codeModel ??
+ *  model`) via the role view — the coder runs on the code model while the
+ *  refiner stays general and the utility tier stays fast. */
 export const runForgeSession = (
   run: SmithRunConfig,
   publish: (event: SmithEvent) => Effect.Effect<void>,
@@ -133,13 +137,15 @@ export const runForgeSession = (
 ): Effect.Effect<
   ForgeResult,
   ConfigError | ImplementorError | WorkspaceError,
-  ImplementorServices | FileSystem
+  ImplementorServices | FileSystem | SettingsStore | AuthStore
 > =>
   Effect.flatMap(loadForgeLessons(run.cwd), (lessons) =>
     runForgeSessionWith(
       run,
       publish,
-      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons }),
+      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons }).pipe(
+        Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
+      ),
       doc,
     ),
   )
