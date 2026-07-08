@@ -1,5 +1,5 @@
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Ref, Schema } from "effect"
 import type { AgentConfig } from "@xandreed/engine"
 import { parseMathItems, type MathItem } from "./domain/MathContent.js"
 import { mathAgentPrompt } from "./prompt.js"
@@ -39,10 +39,15 @@ export const mathToolkit = Toolkit.make(RenderMath)
 /** Where accepted items go — the session wires this to its event ledger. */
 export type MathRenderSink = (items: ReadonlyArray<MathItem>) => Effect.Effect<void>
 
-export const makeMathHandlers = (sink: MathRenderSink) => ({
+export const makeMathHandlers = (sink: MathRenderSink, served: Ref.Ref<ReadonlySet<string>>) => ({
   render_math: (params: { readonly items: ReadonlyArray<unknown> }) =>
     Effect.gen(function* () {
-      const parsed = parseMathItems(params.items)
+      const seen = yield* Ref.get(served)
+      const parsed = parseMathItems(params.items, seen)
+      const servedIds = parsed.accepted.flatMap((i) => (i.kind === "note" ? [] : [i.id]))
+      if (servedIds.length > 0) {
+        yield* Ref.update(served, (s) => new Set([...s, ...servedIds]))
+      }
       if (parsed.accepted.length > 0) {
         yield* sink(parsed.accepted)
       }
@@ -59,11 +64,20 @@ export interface MathAgentBundle {
   readonly handlerLayer: Layer.Layer<Tool.Handler<"render_math">>
 }
 
-export const mathAgentBundle = (sink: MathRenderSink): MathAgentBundle => ({
+/**
+ * `served` is the SESSION-scope dedup memory: every exercise id the handler
+ * has accepted this session. A later batch re-sending one bounces with a
+ * "write a NEW exercise" reason — the model cannot pad a set by re-serving.
+ * The caller owns the Ref so it outlives individual turns.
+ */
+export const mathAgentBundle = (
+  sink: MathRenderSink,
+  served: Ref.Ref<ReadonlySet<string>>,
+): MathAgentBundle => ({
   agentConfig: {
     system: mathAgentPrompt().text,
     toolkit: mathToolkit,
     maxSteps: 12,
   },
-  handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink)),
+  handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink, served)),
 })

@@ -163,3 +163,66 @@ describe("gradeAnswer", () => {
     )
   })
 })
+
+describe("parseMathItems — session dedupe", () => {
+  test("an id already served this session bounces with a fix-it reason", () => {
+    const out = parseMathItems([exercise(), exercise({ id: "ex-9" })], new Set(["ex-1"]))
+    expect(out.accepted.filter((i) => i.kind !== "note").map((i) => (i as { id: string }).id)).toEqual(["ex-9"])
+    expect(out.rejected).toHaveLength(1)
+    expect(out.rejected[0]?.reason).toContain("already served this session")
+    expect(out.rejected[0]?.reason).toContain("ex-1")
+  })
+
+  test("in-call duplicate still wins over session dedupe (distinct reasons)", () => {
+    const out = parseMathItems([exercise({ id: "ex-2" }), exercise({ id: "ex-2" })], new Set())
+    expect(out.accepted).toHaveLength(1)
+    expect(out.rejected[0]?.reason).toContain("in this call")
+  })
+})
+
+describe("parseMathItems — strict MathML admission", () => {
+  const good = "<math><mfrac><mn>1</mn><mn>4</mn></mfrac></math>"
+
+  test("valid presentation MathML is admitted, on the exercise and its parts", () => {
+    const out = parseMathItems([
+      exercise({
+        mathml: good,
+        answer: { kind: "choice", value: "a" },
+        choices: [
+          { id: "a", label: "3/4", mathml: good },
+          { id: "b", label: "1/2" },
+        ],
+        solution: [{ text: "step", mathml: good }],
+      }),
+    ])
+    expect(out.rejected).toEqual([])
+    expect(out.accepted).toHaveLength(1)
+  })
+
+  test("rejected MathML bounces at admission and names the offending part", () => {
+    const bad = "<math><semantics><annotation-xml></annotation-xml></semantics></math>"
+    const onEx = parseMathItems([exercise({ mathml: bad })])
+    expect(onEx.accepted).toEqual([])
+    expect(onEx.rejected[0]?.reason).toContain("the exercise mathml was rejected")
+
+    const onChoice = parseMathItems([
+      exercise({
+        answer: { kind: "choice", value: "a" },
+        choices: [
+          { id: "a", label: "x", mathml: bad },
+          { id: "b", label: "y" },
+        ],
+      }),
+    ])
+    expect(onChoice.rejected[0]?.reason).toContain("choice 'a' mathml was rejected")
+
+    const onStep = parseMathItems([exercise({ solution: [{ text: "s", mathml: bad }] })])
+    expect(onStep.rejected[0]?.reason).toContain("solution step 1 mathml was rejected")
+  })
+
+  test("non-math markup smuggled as mathml is rejected", () => {
+    const out = parseMathItems([exercise({ mathml: "<div onclick=alert(1)>hi</div>" })])
+    expect(out.accepted).toEqual([])
+    expect(out.rejected[0]?.reason).toContain("strict sanitizer")
+  })
+})
