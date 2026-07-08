@@ -16,7 +16,9 @@
     "@effect/opentelemetry": "^0.63.0",
     "@effect/platform": "^0.96.1",
     "@effect/platform-bun": "^0.89.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@xandreed/engine": "workspace:*",
     "effect": "^3.21.4"

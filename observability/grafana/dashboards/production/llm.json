@@ -1,0 +1,178 @@
+{
+  "uid": "efferent-llm",
+  "title": "efferent — llm",
+  "tags": ["efferent", "llm"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "agent (service)",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(llm_requests_total, job)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "model",
+        "label": "model",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(llm_requests_total{job=~\"$service\"}, llm_model)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "input tokens (range)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(llm_usage_input_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "output tokens (range)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(llm_usage_output_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "requests (range)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(llm_requests_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "errors (range)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(llm_requests_total{job=~\"$service\",llm_model=~\"$model\",outcome=\"error\"}[$__range])) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "token throughput (per minute)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (llm_model) (rate(llm_usage_input_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
+          "legendFormat": "in — {{llm_model}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (llm_model) (rate(llm_usage_output_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
+          "legendFormat": "out — {{llm_model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "request duration — p50 / p95",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "p50 — {{llm_model}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "p95 — {{llm_model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "requests per minute by outcome",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (llm_model, outcome) (rate(llm_requests_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{outcome}} — {{llm_model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "mean request duration",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (llm_model) (rate(llm_request_duration_milliseconds_sum{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) / sum by (llm_model) (rate(llm_request_duration_milliseconds_count{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "mean — {{llm_model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    }
+  ]
+}
