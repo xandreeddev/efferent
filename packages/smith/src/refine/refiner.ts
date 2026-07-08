@@ -169,5 +169,10 @@ export const specRefinerAgentConfig = (
       `${specRefinerPrompt(cwd, options)}\n\n# Past forge history in this workspace\n${text}\nWhen a lesson is relevant to this spec, encode it as a CONSTRAINT or a machine CHECK — the next run should not bounce on a known failure.`,
   }),
   toolkit: specRefinerToolkit,
-  maxSteps: 16,
+  // 32, not 16: exploring a real codebase before proposing (ls + read_file
+  // across dozens of modules) ate 16 steps with no spec yet — the run hit
+  // the cap SILENTLY and read as a hang (live-caught on a Python port).
+  // The cap still bounds one message's spend; the session persists, so a
+  // follow-up message continues from the same context.
+  maxSteps: 32,
 })
