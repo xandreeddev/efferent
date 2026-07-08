@@ -8,7 +8,8 @@ import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
 import type { GateCell } from "../presentation/floor.js"
-import { fmtTokens } from "../presentation/conversation.js"
+import { contextGauge, contextTokens, fmtTokens } from "../presentation/conversation.js"
+import { contextWindowOf } from "../presentation/modelCatalog.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
 import { computePalette } from "../presentation/palette.js"
@@ -161,7 +162,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             if (block.kind === "reasoning") {
               return (
                 <box flexDirection="row" flexShrink={0}>
-                  <text fg={tokens.text.dim} flexShrink={0}>{"  ◈ "}</text>
+                  <text fg={tokens.text.dim} flexShrink={0}>{"  ▸ "}</text>
                   <text fg={tokens.text.dim} wrapMode="word" flexShrink={1}>
                     {block.text}
                   </text>
@@ -176,9 +177,9 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               return (
                 <box flexDirection="column" flexShrink={0}>
                   <Show when={block.text.length > 0}>
-                    <text fg={tokens.text.default} wrapMode="word">{`  ${block.text}`}</text>
+                    <text fg={tokens.text.bright} wrapMode="word">{`  ${block.text}`}</text>
                   </Show>
-                  <text fg={tokens.text.dim} wrapMode="none">{`    — ${tag}`}</text>
+                  <text fg={tokens.text.dim} wrapMode="none">{`  └ ${tag}`}</text>
                 </box>
               )
             }
@@ -192,8 +193,8 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 </box>
               )
             }
-            const statusGlyph =
-              block.status === "ok" ? glyph.pass : block.status === "fail" ? glyph.fail : glyph.running
+            // One bullet, color = state (the agy pattern): amber running,
+            // green done, red failed — the glyph itself stays quiet.
             const statusColor =
               block.status === "ok"
                 ? tokens.state.ok
@@ -202,7 +203,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                   : tokens.state.running
             return (
               <box flexDirection="row" flexShrink={0}>
-                <text fg={statusColor} flexShrink={0}>{`  ${statusGlyph} `}</text>
+                <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
                 <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
                   {`${block.name}(${block.arg})`}
                 </text>
@@ -361,8 +362,20 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
   const roles = store.roles
   const floor = store.floor
+  // The LIVE context gauge: the latest turn's input tokens vs the active
+  // model's window (code drives forge, general drives refine).
+  const gauge = () => {
+    const activeModel = store.mode() === "forge" ? roles().code : roles().general
+    return Option.getOrElse(
+      Option.map(
+        contextGauge(contextTokens(store.conversation()), contextWindowOf(activeModel)),
+        (text) => `   ${text}`,
+      ),
+      () => "",
+    )
+  }
   const rolesLine = () =>
-    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}`
+    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}`
   const outcome = () => Option.getOrElse(floor().outcome, () => "")
   const outcomeColor = () => (floor().phase === "done" ? tokens.state.ok : tokens.state.error)
   return (
