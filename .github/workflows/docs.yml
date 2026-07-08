@@ -14,7 +14,6 @@ on:
     branches: [main]
     paths:
       - "packages/website/**"
-      - "examples/**" # docs render example sources via ?raw
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
