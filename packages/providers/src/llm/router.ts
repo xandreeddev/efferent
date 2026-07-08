@@ -1,6 +1,6 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { Effect, Layer, Option, Stream } from "effect"
+import { Effect, Layer, Metric, Option, Stream } from "effect"
 import {
   AuthStore,
   formatModelSelection,
@@ -21,6 +21,36 @@ import { rejectEmptyResponse, retryableLlm } from "./retry.js"
 
 const configError = (message: string): AiError.UnknownError =>
   new AiError.UnknownError({ module: "Router", method: "selection", description: message })
+
+/**
+ * The routed-call metrics — every LLM request crosses this seam, so this is
+ * the ONE place tokens and latency are counted. Tagged per resolved model;
+ * exported by `TracingLive`'s metric reader (Prometheus: `llm_usage_*_total`,
+ * `llm_request_duration_*`, `llm_requests_total` by outcome).
+ */
+const llmInputTokens = Metric.counter("llm.usage.input_tokens", {
+  description: "prompt tokens consumed by routed LLM calls",
+  incremental: true,
+})
+const llmOutputTokens = Metric.counter("llm.usage.output_tokens", {
+  description: "completion tokens produced by routed LLM calls",
+  incremental: true,
+})
+const llmRequests = Metric.counter("llm.requests", {
+  description: "routed LLM calls by final outcome (after retries)",
+  incremental: true,
+})
+/** Wall-clock per routed call INCLUDING retries, in millisecond buckets
+ *  spanning a fast cached turn (100ms) to the 300s request timeout. */
+const llmDuration = Metric.timerWithBoundaries(
+  "llm.request.duration",
+  [100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000],
+)
+
+const byModel = <Type, In, Out>(
+  metric: Metric.Metric<Type, In, Out>,
+  label: string,
+): Metric.Metric<Type, In, Out> => Metric.tagged(metric, "llm.model", label)
 
 const shapeOptions = (
   selection: ModelSelection,
@@ -96,6 +126,22 @@ export const generateWith = (
           "llm.reasoning": (res.reasoningText ?? "").slice(0, 500),
         }),
       ),
+      Effect.tap((res) =>
+        Effect.all(
+          [
+            Metric.incrementBy(byModel(llmInputTokens, label), res.usage.inputTokens ?? 0),
+            Metric.incrementBy(byModel(llmOutputTokens, label), res.usage.outputTokens ?? 0),
+          ],
+          { discard: true },
+        ),
+      ),
+      Effect.tapBoth({
+        onFailure: () =>
+          Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "error")),
+        onSuccess: () =>
+          Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "ok")),
+      }),
+      Metric.trackDuration(byModel(llmDuration, label)),
       Effect.withSpan("providers.generate", {
         attributes: { "llm.model": label },
       }),

@@ -1,6 +1,8 @@
 import { dirname } from "node:path"
 import { NodeSdk } from "@effect/opentelemetry"
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
+import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { FileSystem, PlatformLogger } from "@effect/platform"
 import { BunFileSystem } from "@effect/platform-bun"
@@ -26,6 +28,12 @@ export const TracingLive = (serviceName: string): Layer.Layer<never> =>
   NodeSdk.layer(() => ({
     resource: { serviceName },
     spanProcessor: [new BatchSpanProcessor(new OTLPTraceExporter())],
+    // Effect's Metric registry (the router's llm.* counters + timer) rides
+    // the same OTLP endpoint into Prometheus, every 5s.
+    metricReader: new PeriodicExportingMetricReader({
+      exporter: new OTLPMetricExporter(),
+      exportIntervalMillis: 5000,
+    }),
   })) as Layer.Layer<never>
 
 export const FileLoggerLive = (path: string): Layer.Layer<never> =>
