@@ -28,7 +28,7 @@ describe("the conversation fold", () => {
     ])
   })
 
-  test("REASONING is a first-class block; assistant text carries its model", () => {
+  test("a THINKING turn: the ▸ header carries the meta; the reply carries none", () => {
     const state = reduceConversation(
       withUserBlock(initialConversation, "port the module"),
       agent({
@@ -45,22 +45,47 @@ describe("the conversation fold", () => {
     expect(state.blocks[1]).toEqual({
       kind: "reasoning",
       text: "The Python module maps to two TS files because…",
+      tag: "opencode:kimi-k2.7-code · 1 in · 1 out",
+      tokens: { input: 1, output: 1 },
     })
-    const assistant = state.blocks[2]
-    expect(assistant?.kind).toBe("assistant")
-    if (assistant?.kind !== "assistant") return
-    expect(assistant.text).toBe("Done — two files written.")
-    expect(Option.getOrThrow(assistant.model)).toBe("opencode:kimi-k2.7-code")
-    expect(assistant.tokens).toEqual({ input: 1, output: 1 })
+    expect(state.blocks[2]).toEqual({
+      kind: "assistant",
+      text: "Done — two files written.",
+      tag: "opencode:kimi-k2.7-code · 1 in · 1 out",
+      leading: false,
+      tokens: { input: 1, output: 1 },
+    })
   })
 
-  test("a tool-only turn still lands its tag block; unrelated events are inert", () => {
+  test("a REASONING-ONLY turn emits just the header — no empty reply block", () => {
+    const state = reduceConversation(
+      initialConversation,
+      agent({
+        type: "assistant_message",
+        turnIndex: 0,
+        text: " ",
+        reasoning: "exploring first",
+        toolCalls: [],
+        usage,
+      }),
+    )
+    expect(state.blocks.map((b) => b.kind)).toEqual(["reasoning"])
+    expect(Option.getOrThrow(contextTokens(state))).toBe(1)
+  })
+
+  test("a tool-only turn (no thought) still lands its LEADING tag block; unrelated events are inert", () => {
     const state = [
       agent({ type: "assistant_message", turnIndex: 0, text: "  ", reasoning: "", toolCalls: [], usage }),
       { type: "refine_start", idea: Option.none() } satisfies SmithEvent,
     ].reduce(reduceConversation, initialConversation)
     expect(state.blocks).toEqual([
-      { kind: "assistant", text: "", model: Option.none(), tokens: { input: 1, output: 1 } },
+      {
+        kind: "assistant",
+        text: "",
+        tag: "1 in · 1 out",
+        leading: true,
+        tokens: { input: 1, output: 1 },
+      },
     ])
   })
 

@@ -289,9 +289,10 @@ describe("the smith TUI — frame-level regressions", () => {
       })
     })
     const frame = await waitFrame(tui, (f) => f.includes("turn 39 reply"))
-    // The newest turn owns the bottom of the story…
+    // The newest turn owns the bottom of the story, its ▸ header carrying
+    // the model + spend (thinking turns get no separate └ line)…
     expect(frame).toContain("turn 39 reply")
-    expect(frame).toContain("└ opencode:kimi-k2.6")
+    expect(frame).toContain("▸ opencode:kimi-k2.6 · 1k in · 40 out")
     // …the ctx gauge reads the LATEST turn's input tokens (the scripted
     // model "g" has no known window → absolute only)…
     expect(frame).toContain("ctx 1k")

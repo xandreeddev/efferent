@@ -11,12 +11,21 @@ import type { SmithEvent } from "../../domain/SmithEvent.js"
 
 export type ConversationBlock =
   | { readonly kind: "user"; readonly text: string }
-  | { readonly kind: "reasoning"; readonly text: string }
+  /** The turn HEADER when the model thought: "▸ model · Nk in · N out" over
+   *  the reasoning text (the agy pattern — meta rides the thought line). */
+  | {
+      readonly kind: "reasoning"
+      readonly text: string
+      readonly tag: string
+      readonly tokens: { readonly input: number; readonly output: number }
+    }
   | {
       readonly kind: "assistant"
       readonly text: string
-      readonly model: Option.Option<string>
-      /** This turn's spend — rendered on the tag line ("1.2k in · 63 out"). */
+      readonly tag: string
+      /** True when this block STARTS its turn (no reasoning before it) —
+       *  it then owns the blank line and the "└ tag" meta line. */
+      readonly leading: boolean
       readonly tokens: { readonly input: number; readonly output: number }
     }
   | {
@@ -87,19 +96,23 @@ export const reduceConversation = (
         Match.when({ type: "assistant_message" }, (m) => {
           const reasoning = m.reasoning.trim()
           const text = m.text.trim()
-          // EVERY turn lands a block — a tool-only turn still shows its
-          // model + spend as a tag line above its tool calls.
+          const tokens = { input: m.usage.inputTokens, output: m.usage.outputTokens }
+          const tag = [
+            ...Option.match(Option.fromNullable(m.model), { onNone: () => [], onSome: (id) => [id] }),
+            `${fmtTokens(tokens.input)} in · ${fmtTokens(tokens.output)} out`,
+          ].join(" · ")
+          const hasReasoning = reasoning.length > 0
+          // ONE meta line per turn: on the "▸" header when the model thought,
+          // on a "└" line otherwise — and every turn lands SOMETHING (a
+          // tool-only turn still shows its spend).
           return push(
             state,
-            ...(reasoning.length > 0
-              ? [{ kind: "reasoning", text: clip(reasoning, REASONING_BUDGET) } as const]
+            ...(hasReasoning
+              ? [{ kind: "reasoning", text: clip(reasoning, REASONING_BUDGET), tag, tokens } as const]
               : []),
-            {
-              kind: "assistant",
-              text,
-              model: Option.fromNullable(m.model),
-              tokens: { input: m.usage.inputTokens, output: m.usage.outputTokens },
-            } as const,
+            ...(text.length > 0 || !hasReasoning
+              ? [{ kind: "assistant", text, tag, leading: !hasReasoning, tokens } as const]
+              : []),
           )
         }),
         Match.orElse(() => state),
@@ -120,7 +133,10 @@ export const fmtTokens = (n: number): string =>
 export const contextTokens = (state: ConversationState): Option.Option<number> =>
   Option.fromNullable(
     state.blocks.reduce<number | undefined>(
-      (latest, block) => (block.kind === "assistant" ? block.tokens.input : latest),
+      (latest, block) =>
+        block.kind === "assistant" || block.kind === "reasoning"
+          ? block.tokens.input
+          : latest,
       undefined,
     ),
   )
