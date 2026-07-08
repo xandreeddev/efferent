@@ -14,11 +14,20 @@ const palette = {
   yellow: "#d9b04c",
   blue: "#7aa2f7",
   rule: "#3a3a40",
+  gray: "#9a958a",
+  cursorLine: "#2a2a30",
 } as const
 
 export const tokens = {
-  text: { default: palette.ink, dim: palette.inkDim, bright: palette.inkBright },
+  text: {
+    default: palette.ink,
+    dim: palette.inkDim,
+    bright: palette.inkBright,
+    muted: palette.gray,
+  },
   accent: { brand: palette.ember, input: palette.verdigris },
+  marker: { select: palette.verdigris, cursor: palette.verdigris },
+  cursorLine: palette.cursorLine,
   state: {
     ok: palette.green,
     error: palette.red,
@@ -37,5 +46,11 @@ export const glyph = {
   skip: "◌",
   pending: "·",
   running: "●",
+  pointer: ">",
+  more: { above: "↑", below: "↓" },
+  activeTag: "◀",
+  cursorBlock: "█",
+  rule: "─",
+  bullet: "·",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const
