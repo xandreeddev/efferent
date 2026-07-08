@@ -19,6 +19,7 @@ import {
   LocalSettingsStoreLive,
   LocalShellLive,
   SqliteConversationStoreLive,
+  TracingLive,
 } from "@xandreed/providers"
 import { runMathMode } from "./mode.js"
 
@@ -141,6 +142,7 @@ if (isDirectRun) {
   }).pipe(
     Effect.provide(mathAppLive(state.cwd)),
     Effect.provide(BunContext.layer),
+    Effect.provide(TracingLive("math")),
     // Server logs to stderr; the shell is the product surface.
     Effect.provide(Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true }))),
   )

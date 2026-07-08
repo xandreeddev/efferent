@@ -299,6 +299,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
       Match.exhaustive,
     )
     yield* onEvent({ type: "agent_end", outcome, reason, finalText: final.finalText })
+    // The run span states its verdict — a one-turn trace that claims
+    // "completed" with tool calls pending is visible at a glance.
+    yield* Effect.annotateCurrentSpan({
+      "engine.outcome": outcome,
+      "engine.reason": reason,
+      "engine.turns": final.turnIndex,
+      "engine.usage.total_tokens": final.usage.totalTokens,
+    })
     return {
       finalText: final.finalText,
       messages: final.messages,

@@ -57,7 +57,17 @@ const config: typeof GateSuiteConfig.Encoded = {
         name: "providers",
         path: "packages/providers/src/**",
         canImport: ["engine"],
-        externals: ["effect", "@effect/", "@xandreed/engine", "node:", "bun", "bun:"],
+        // @opentelemetry/: the OTLP exporter + span processor behind
+        // TracingLive — observability is edge concern, so it lives here.
+        externals: [
+          "effect",
+          "@effect/",
+          "@opentelemetry/",
+          "@xandreed/engine",
+          "node:",
+          "bun",
+          "bun:",
+        ],
       },
       {
         // The UI substrate: html template, sanitizers, validateUi, protocol
