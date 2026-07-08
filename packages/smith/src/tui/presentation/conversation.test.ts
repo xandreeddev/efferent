@@ -109,6 +109,26 @@ describe("the conversation fold", () => {
     expect(Option.getOrThrow(contextGauge(Option.some(500), Option.none()))).toBe("ctx 500")
   })
 
+  test("a PARTIAL agent_end lands as a durable ⚠ notice; ok ends are inert", () => {
+    // The invisible step-cap: 16 exploration turns, then silence — the run
+    // "completed" as partial and the pane showed NOTHING (live-caught).
+    const capped = reduceConversation(
+      initialConversation,
+      agent({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" }),
+    )
+    expect(capped.blocks).toHaveLength(1)
+    const notice = capped.blocks[0]
+    expect(notice?.kind).toBe("notice")
+    if (notice?.kind !== "notice") return
+    expect(notice.text).toContain("step ceiling")
+    expect(notice.text).toContain("continue")
+    const ok = reduceConversation(
+      initialConversation,
+      agent({ type: "agent_end", outcome: "ok", reason: "completed", finalText: "done" }),
+    )
+    expect(ok.blocks).toEqual([])
+  })
+
   test("refine_error lands as a DURABLE error block in the story", () => {
     const state = reduceConversation(initialConversation, {
       type: "refine_error",

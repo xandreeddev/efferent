@@ -200,6 +200,16 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 </box>
               )
             }
+            if (block.kind === "notice") {
+              return (
+                <box flexDirection="row" flexShrink={0} marginTop={1}>
+                  <text fg={tokens.state.warn} flexShrink={0}>{"  ⚠ "}</text>
+                  <text fg={tokens.state.warn} wrapMode="word" flexShrink={1}>
+                    {block.text}
+                  </text>
+                </box>
+              )
+            }
             // One bullet, color = state (the agy pattern): amber running,
             // green done, red failed — the glyph itself stays quiet. Paths
             // render RELATIVE to the workspace — absolute prefixes are noise.
