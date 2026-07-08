@@ -1,5 +1,5 @@
 import type { LanguageModel } from "@effect/ai"
-import { Effect } from "effect"
+import { Effect, Ref } from "effect"
 import { makeSession, runAgent } from "@xandreed/engine"
 import type { ConversationId, ConversationStore, LoopEvent, Session } from "@xandreed/engine"
 import type { MathItem } from "./domain/MathContent.js"
@@ -33,13 +33,20 @@ export const makeMathSession = (args: {
   readonly conversationId: ConversationId
   readonly cwd: string
 }): Effect.Effect<MathSession, never, MathRunServices> =>
-  makeSession<MathSessionEvent, MathRunServices>({
-    conversationId: args.conversationId,
-    onError: (message) => ({ type: "error", message }),
-    runTurn: (text, publish) => {
-      const bundle = mathAgentBundle((items) => publish({ type: "math_render", items }))
-      return runAgent(bundle.agentConfig, args.conversationId, text, {
-        onEvent: publish,
-      }).pipe(Effect.provide(bundle.handlerLayer), Effect.asVoid)
-    },
-  })
+  // The served-id set lives at SESSION scope (outlives turns): an exercise id
+  // accepted in any earlier batch is rejected on re-send with a fix-it reason.
+  Effect.flatMap(Ref.make<ReadonlySet<string>>(new Set()), (served) =>
+    makeSession<MathSessionEvent, MathRunServices>({
+      conversationId: args.conversationId,
+      onError: (message) => ({ type: "error", message }),
+      runTurn: (text, publish) => {
+        const bundle = mathAgentBundle(
+          (items) => publish({ type: "math_render", items }),
+          served,
+        )
+        return runAgent(bundle.agentConfig, args.conversationId, text, {
+          onEvent: publish,
+        }).pipe(Effect.provide(bundle.handlerLayer), Effect.asVoid)
+      },
+    }),
+  )

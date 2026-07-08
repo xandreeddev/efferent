@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { Effect } from "effect"
 import type { PackReport, ScenarioMode } from "./framework/model.js"
 import { runPack } from "./framework/run.js"
+import { mathPack } from "./packs/math.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 
 /**
@@ -14,7 +15,7 @@ import { smithSpecPack } from "./packs/smithSpec.js"
  * committed files (reviewed in the PR diff like any ratchet update).
  */
 
-const PACKS = { "smith-spec": smithSpecPack } as const
+const PACKS = { math: mathPack, "smith-spec": smithSpecPack } as const
 
 const BASELINE_DIR = join(import.meta.dir, "..", "baselines")
 /** A mean may wobble; a drop beyond this against the committed baseline fails. */

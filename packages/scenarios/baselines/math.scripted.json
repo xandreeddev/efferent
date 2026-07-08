@@ -1,0 +1,7 @@
+{
+  "mode": "scripted",
+  "mean": 1,
+  "scenarios": {
+    "admission + session dedupe (scripted twin)": 1
+  }
+}
