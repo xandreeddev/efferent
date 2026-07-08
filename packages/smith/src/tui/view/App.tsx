@@ -9,6 +9,7 @@ import type { SmithTuiContext } from "../state/store.js"
 import type { GateCell } from "../presentation/floor.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
+import { computePalette } from "../presentation/palette.js"
 
 const TRANSCRIPT_ROWS = 20
 
@@ -42,19 +43,33 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   const floor = store.floor
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
   const forging = () => floor().phase === "implementing" || floor().phase === "gating"
+  // The spinner tick re-renders these every 120ms — a slow model call shows
+  // a RUNNING clock and, past 30s of event silence, an explicit hint.
+  const elapsed = () => {
+    store.spinner()
+    return store.busySince() > 0 ? Math.floor((Date.now() - store.busySince()) / 1000) : 0
+  }
+  const stalled = () => {
+    store.spinner()
+    return (
+      (store.busy() || forging()) &&
+      store.lastEventAt() > 0 &&
+      Date.now() - store.lastEventAt() > 30_000
+    )
+  }
   const heartbeat = () => {
     if (store.mode() === "idle") {
       return "describe what to build — :forge <slug> · :model · :login · :quit"
     }
     if (store.mode() === "refine") {
       return store.busy()
-        ? `${spin()} refining…`
+        ? `${spin()} refining… ${elapsed()}s${stalled() ? " — the model is SLOW to respond; Esc cancels" : ""}`
         : store.refine().locked
           ? "spec locked — :forge to build"
           : ":lock when the spec is right"
     }
     return forging()
-      ? `${spin()} ${floor().phase} · attempt ${floor().attempts.length}/${floor().maxAttempts}`
+      ? `${spin()} ${floor().phase} · attempt ${floor().attempts.length}/${floor().maxAttempts}${stalled() ? " — SLOW; Esc interrupts" : ""}`
       : floor().phase === "boot"
         ? "starting…"
         : floor().phase
@@ -309,6 +324,7 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
           ref.current = renderable
           renderable.focus()
           props.ctx.store.registerComposerClear(() => renderable.setText(""))
+          props.ctx.store.registerComposerRead(() => renderable.plainText)
         }}
         height={1}
         flexGrow={1}
@@ -319,6 +335,31 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
         onSubmit={submit}
       />
     </box>
+  )
+}
+
+/** The live `:` palette — command matches render under the composer as you
+ *  type (polled off the spinner tick; the textarea has no input event). */
+const Palette = (props: { ctx: SmithTuiContext }) => {
+  const rows = () => {
+    props.ctx.store.spinner()
+    return computePalette(props.ctx.store.composerText().trim())
+  }
+  return (
+    <Show when={rows().length > 0}>
+      <box flexDirection="column" flexShrink={0}>
+        <For each={rows()}>
+          {(cmd) => (
+            <box flexDirection="row">
+              <text fg={tokens.accent.input} wrapMode="none" flexShrink={0}>
+                {`  ${cmd.usage}`}
+              </text>
+              <text fg={tokens.text.dim} wrapMode="none" flexGrow={1}>{`  ${cmd.desc}`}</text>
+            </box>
+          )}
+        </For>
+      </box>
+    </Show>
   )
 }
 
@@ -352,6 +393,7 @@ export const App = (props: { ctx: SmithTuiContext }) => {
           on remount). */}
       <Show when={!overlayOpen()} fallback={<OverlayView ctx={props.ctx} />}>
         <CommandLine ctx={props.ctx} />
+        <Palette ctx={props.ctx} />
       </Show>
     </box>
   )
