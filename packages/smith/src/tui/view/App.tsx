@@ -1,9 +1,9 @@
 import type { TextareaRenderable } from "@opentui/core"
 import { For, Show } from "solid-js"
-import { useKeyboard } from "@opentui/solid"
+import { useKeyboard, usePaste } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
-import { dispatch } from "../keys.js"
+import { dispatch, dispatchPaste } from "../keys.js"
 import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import type { GateCell } from "../presentation/floor.js"
@@ -367,6 +367,11 @@ const Palette = (props: { ctx: SmithTuiContext }) => {
  *  mode (the floor). Borderless, token-driven — the cli's layout language. */
 export const App = (props: { ctx: SmithTuiContext }) => {
   useKeyboard((key) => dispatch(props.ctx, key))
+  usePaste((event) => {
+    // Only overlays route pastes here — the composer textarea handles its own.
+    if (props.ctx.store.overlay().kind === "none") return
+    dispatchPaste(props.ctx, new TextDecoder().decode(event.bytes))
+  })
   const mode = () => props.ctx.store.mode()
   const overlayOpen = () => props.ctx.store.overlay().kind !== "none"
   return (
