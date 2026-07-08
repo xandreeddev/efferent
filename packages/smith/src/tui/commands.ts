@@ -1,6 +1,7 @@
 import { Match, Option } from "effect"
 import { quitCode } from "./keys.js"
 import { resolveCommand } from "./presentation/palette.js"
+import { openSelect } from "./presentation/selectBox.js"
 import { logout, openLoginFlow } from "./actions/login.js"
 import { openModelPicker, submitModel } from "./actions/model.js"
 import type { SmithTuiContext } from "./state/store.js"
@@ -64,6 +65,34 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
       }
       openModelPicker(ctx, role)
     }),
+    Match.when("resume", () => {
+      if (ctx.resume === undefined) {
+        ctx.store.setNotice(":resume only applies in the workspace session")
+        return
+      }
+      const id = words[1]
+      if (id !== undefined && id.length > 0) {
+        ctx.resume(id)
+        return
+      }
+      const sessions = ctx.store.workspace().sessions
+      if (sessions.length === 0) {
+        ctx.store.setNotice("no previous sessions in this workspace")
+        return
+      }
+      ctx.store.setOverlay({
+        kind: "select",
+        purpose: { tag: "resume" },
+        sel: openSelect(
+          "Resume a session",
+          sessions.map((s) => ({
+            value: Option.some(s.id),
+            label: s.label,
+            tag: s.ageMinutes < 60 ? `${s.ageMinutes}m ago` : `${Math.round(s.ageMinutes / 60)}h ago`,
+          })),
+        ),
+      })
+    }),
     Match.when("login", () => {
       openLoginFlow(ctx)
     }),
@@ -73,7 +102,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     }),
     Match.orElse(() => {
       ctx.store.setNotice(
-        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :login · :logout)`,
+        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :resume · :login · :logout)`,
       )
     }),
   )

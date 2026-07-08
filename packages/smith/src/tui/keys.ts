@@ -81,6 +81,14 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
             submitModel(ctx, overlay.purpose.role, value)
             return
           }
+          if (overlay.purpose.tag === "resume") {
+            ctx.store.closeOverlay()
+            Option.match(value, {
+              onNone: () => ctx.store.setNotice("nothing selected"),
+              onSome: (id) => ctx.resume?.(id),
+            })
+            return
+          }
           // logout picker: the value IS the provider id.
           ctx.store.closeOverlay()
           logout(ctx, value)

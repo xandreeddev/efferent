@@ -13,6 +13,9 @@ import { makeRefineSession } from "../refine/session.js"
 import type { RefineAgent, RefineSession } from "../refine/session.js"
 import { listSpecs, loadSpecDoc } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
+import type { ProviderStatus, SmithProvider } from "./presentation/loginFlow.js"
+import { AuthStore as AuthStoreTag, ConversationId, ConversationStore } from "@xandreed/engine"
+import type { Credential } from "@xandreed/engine"
 import { readRuns } from "@xandreed/foundry"
 import { join } from "node:path"
 import { runEventPump } from "./events/pump.js"
@@ -283,6 +286,12 @@ export const makeWorkspaceBody = (
 
       // The dashboard reads: specs (undecodable ones dropped — one hand-edited
       // file can't blank the view), the forge-run history, the lessons brief.
+      const SMITH_PROVIDERS: ReadonlyArray<SmithProvider> = [
+        "anthropic",
+        "openai",
+        "google",
+        "opencode",
+      ]
       const refreshWorkspace = Effect.gen(function* () {
         const slugs = yield* listSpecs(run.cwd)
         const docs = yield* Effect.forEach(slugs, (slug) =>
@@ -293,8 +302,27 @@ export const makeWorkspaceBody = (
         )
         const runs = yield* readRuns(join(run.cwd, ".foundry", "runs"))
         const lessons = yield* loadForgeLessons(run.cwd)
+        const auth = yield* AuthStoreTag
+        const credentials = yield* auth.all.pipe(
+          Effect.orElseSucceed(() => new Map<string, Credential>()),
+        )
+        const statuses: ReadonlyArray<ProviderStatus> = SMITH_PROVIDERS.map((provider) => ({
+          provider,
+          configured: Option.map(Option.fromNullable(credentials.get(provider)), (c) => c.type),
+        }))
+        const conv = yield* ConversationStore
+        const sessions = yield* conv
+          .listByWorkspace(run.cwd)
+          .pipe(Effect.orElseSucceed(() => []))
         store.setWorkspace(
-          workspaceView(docs.flatMap(Option.toArray), runs, lessons),
+          workspaceView(
+            docs.flatMap(Option.toArray),
+            runs,
+            lessons,
+            statuses,
+            sessions,
+            Date.now(),
+          ),
         )
       })
       yield* refreshWorkspace
@@ -305,7 +333,7 @@ export const makeWorkspaceBody = (
       const turn = (
         session: RefineSession,
         text: string,
-      ): Effect.Effect<void, never, FileSystem> =>
+      ): Effect.Effect<void, never, FileSystem | ConversationStore | AuthStore> =>
         Effect.gen(function* () {
           yield* Effect.sync(() => {
             store.addUserLine(text)
@@ -314,6 +342,67 @@ export const makeWorkspaceBody = (
           yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
           yield* refreshWorkspace
         }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
+
+      /** `:resume <id>`: rebuild the transcript through the SAME reducer the
+       *  live path feeds (replay ≡ live-fold), then continue the conversation. */
+      const resumeSession = (id: string): void => {
+        forked(
+          "resume",
+          Effect.gen(function* () {
+            const cid = ConversationId.make(id)
+            const session = yield* makeRefineSession(run.cwd, publish, {
+              unattended: false,
+              resume: cid,
+              ...(seams.refineAgent !== undefined ? { agent: seams.refineAgent } : {}),
+            })
+            yield* Ref.set(refineRef, Option.some(session))
+            yield* Effect.sync(() => {
+              store.resetRefine()
+              store.setMode("refine")
+            })
+            const conv = yield* ConversationStore
+            const messages = yield* conv.list(cid).pipe(Effect.orElseSucceed(() => []))
+            yield* Effect.forEach(messages, (message) => {
+              if (message.role === "user" && typeof message.content === "string") {
+                return message.content.startsWith("[")
+                  ? Effect.void
+                  : Effect.sync(() => store.addUserLine(message.content as string))
+              }
+              if (message.role === "assistant" && Array.isArray(message.content)) {
+                const text = message.content
+                  .flatMap((part) =>
+                    typeof part === "object" && part !== null && "text" in part
+                      ? [String((part as { text: unknown }).text)]
+                      : [],
+                  )
+                  .join("")
+                return text.trim().length === 0
+                  ? Effect.void
+                  : publish({
+                      type: "agent",
+                      event: {
+                        type: "assistant_message",
+                        turnIndex: 0,
+                        text,
+                        reasoning: "",
+                        toolCalls: [],
+                        usage: {
+                          inputTokens: 0,
+                          outputTokens: 0,
+                          totalTokens: 0,
+                          cacheReadTokens: 0,
+                        },
+                      },
+                    })
+              }
+              return Effect.void
+            })
+            yield* Effect.sync(() =>
+              store.setNotice("session resumed — continue refining, or :new to leave it"),
+            )
+          }),
+        )
+      }
 
       const dropRefine = Effect.gen(function* () {
         yield* Ref.set(refineRef, Option.none())
@@ -510,6 +599,7 @@ export const makeWorkspaceBody = (
         newSpec: () => {
           Runtime.runFork(rt)(dropRefine)
         },
+        resume: resumeSession,
       }
     })
 
