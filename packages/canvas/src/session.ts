@@ -21,20 +21,33 @@ export type CanvasRunServices = LanguageModel.LanguageModel | ConversationStore
  * chassis publish — an accepted render lands on the same seq'd stream as
  * the loop events.
  */
+/** Chat text is a CAPTION channel. A reply that pastes markup instead of
+ *  calling render_ui is a harness violation (live-caught: a pomodoro page
+ *  arrived as an HTML snippet in chat) — detected deterministically and
+ *  corrected with ONE bounded follow-up turn. */
+export const looksLikeHtmlDump = (text: string): boolean =>
+  /```\s*html/i.test(text) ||
+  (text.match(/<[a-z][a-z0-9-]*[\s/>]/gi) ?? []).length >= 4
+
+const HTML_DUMP_CORRECTIVE =
+  "[system] Your last reply pasted HTML into the chat text. The user NEVER sees chat markup — pages exist only through render_ui. Re-issue that content now as a render_ui call (re-use the page id if it updates an existing page), then reply with one plain sentence."
+
 export const makeCanvasSession = (args: {
   readonly conversationId: ConversationId
 }): Effect.Effect<CanvasSession, never, CanvasRunServices> =>
   makeSession<CanvasEvent, CanvasRunServices>({
     conversationId: args.conversationId,
     onError: (message) => ({ type: "error", message }),
-    runTurn: (text, publish) =>
-      runAgent(
-        { system: canvasAgentPrompt, toolkit: canvasToolkit, maxSteps: 24 },
-        args.conversationId,
-        text,
-        { onEvent: publish },
-      ).pipe(
+    runTurn: (text, publish) => {
+      const config = { system: canvasAgentPrompt, toolkit: canvasToolkit, maxSteps: 24 }
+      const turn = (message: string) =>
+        runAgent(config, args.conversationId, message, { onEvent: publish })
+      return turn(text).pipe(
+        Effect.flatMap((result) =>
+          looksLikeHtmlDump(result.finalText) ? turn(HTML_DUMP_CORRECTIVE) : Effect.succeed(result),
+        ),
         Effect.provide(makeCanvasHandlers((entry) => publish({ type: "ui_render", entry }))),
         Effect.asVoid,
-      ),
+      )
+    },
   })

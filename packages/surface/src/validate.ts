@@ -21,11 +21,18 @@ export interface UiFinding {
     | "a11y-min"
     | "no-arbitrary-values"
     | "no-self-trigger"
+    | "alpine-expr"
   readonly detail: string
 }
 
+export interface ValidateUiOptions {
+  /** The surface vendors Alpine.js: admit its directives and gate their
+   *  EXPRESSIONS (local state only — no network/storage/navigation/globals). */
+  readonly alpine?: boolean
+}
+
 const TAG_RE = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?>/g
-const ATTR_RE = /([a-zA-Z_][a-zA-Z0-9_:.-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g
+const ATTR_RE = /([a-zA-Z_@:][a-zA-Z0-9_:.@-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g
 
 interface TagToken {
   readonly name: string
@@ -58,8 +65,8 @@ const textBetween = (html: string, openEnd: number, tag: string): string => {
 /** 1 · Everything the sanitizer would silently strip is a violation the model
  *  must SEE — a dropped tag/attr means the model reached for banned vocabulary
  *  (script, iframe, svg, on*, style…), and silent repair teaches it nothing. */
-const dangerousVocabulary = (html: string): ReadonlyArray<UiFinding> =>
-  [...new Set(sanitizeHtml(html).dropped)].map((dropped) => ({
+const dangerousVocabulary = (html: string, alpine: boolean): ReadonlyArray<UiFinding> =>
+  [...new Set(sanitizeHtml(html, { alpine }).dropped)].map((dropped) => ({
     rule: "dangerous-vocabulary",
     detail: `the sanitizer would strip "${dropped}" — remove it and use the ef-* kit / plain HTML instead`,
   }))
@@ -180,15 +187,56 @@ const noSelfTrigger = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFinding
 
 /* ------------------------------------------------------------------ */
 
+/** 6 · Alpine expression vocabulary: directives hold page-LOCAL state and
+ *  DOM logic, nothing else. Network, storage, navigation, and global access
+ *  in an expression are exfiltration/escape attempts (the CSP is the browser
+ *  backstop; this gate is the model feedback). `x-html` re-opens raw HTML
+ *  injection; `x-teleport` can hijack chrome — both always rejected. */
+const FOREIGN_API =
+  /\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|eval|Function|globalThis|window|document|location|navigator|localStorage|sessionStorage|indexedDB|cookie|Reflect|Proxy|constructor|__proto__|prototype|process|require|import)\b/
+
+const ALPINE_DIRECTIVE = /^(x-|@|:)/
+
+const alpineExpr = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFinding> =>
+  tokens.flatMap((t) =>
+    [...t.attrs.entries()].flatMap(([name, value]) => {
+      if (!ALPINE_DIRECTIVE.test(name)) return []
+      if (name === "x-html" || name === "x-teleport") {
+        return [
+          {
+            rule: "alpine-expr" as const,
+            detail: `<${t.name}> uses ${name} — banned (raw HTML injection / chrome hijack); author the markup directly or use x-text`,
+          },
+        ]
+      }
+      const hit = FOREIGN_API.exec(value)
+      return hit === null
+        ? []
+        : [
+            {
+              rule: "alpine-expr" as const,
+              detail: `${name}="${value.slice(0, 60)}" references "${hit[1]}" — Alpine expressions are page-LOCAL state only (no network, storage, navigation, or global access); anything needing the agent or persistence goes through an htmx /action/ post`,
+            },
+          ]
+    }),
+  )
+
+/* ------------------------------------------------------------------ */
+
 /** Run every UI gate over one `render_ui` html payload; empty = pass. */
-export const validateUi = (html: string): ReadonlyArray<UiFinding> => {
+export const validateUi = (
+  html: string,
+  options: ValidateUiOptions = {},
+): ReadonlyArray<UiFinding> => {
+  const alpine = options.alpine === true
   const tokens = tokenize(html)
   return [
-    ...dangerousVocabulary(html),
+    ...dangerousVocabulary(html, alpine),
     ...hxWiring(html, tokens),
     ...a11yMin(html, tokens),
     ...noArbitraryValues(tokens),
     ...noSelfTrigger(tokens),
+    ...(alpine ? alpineExpr(tokens) : []),
   ]
 }
 
