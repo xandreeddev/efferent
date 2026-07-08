@@ -18,6 +18,15 @@ providers edge + surface substrate; NEVER touches the old packages
   `ef-`/`ui-` prefixes the sanitizer forbids in agent content — the shell
   can't be spoofed.
 - **No filesystem, no shell, no code tools** — structural, not prompt-level.
+- **Two kinds of interactivity**: page-LOCAL state (timers, toggles, tabs)
+  is vendored Alpine.js — sanitize's alpine mode admits the directives,
+  validateUi's `alpine-expr` family bans foreign APIs in expressions, and a
+  strict CSP on the shell is the browser backstop (no external connects).
+  AGENT work stays htmx `/action/` posts. The `cv-*` design system in
+  app.css is the component vocabulary the prompt teaches.
+- **Chat is a caption channel**: a reply that pastes HTML as chat text is
+  detected (`looksLikeHtmlDump`) and corrected with ONE bounded follow-up
+  turn — the pomodoro-as-snippet failure can't recur silently.
 - **Replay ≡ live**: the WS pump folds the session ledger through the same
   `reduceEvent` on connect and live (`foldLedger` pins it in tests).
 
@@ -36,7 +45,8 @@ assets/          app.css/app.js chrome + pinned vendored htmx/ws-ext/tailwind
 ```
 
 v1 simplifications: binds 127.0.0.1 only (no boot token), no mermaid, no
-reference drawer, chrome tabs client-side only.
+reference drawer, chrome tabs client-side only. Vendored: htmx + ws ext +
+tailwind runtime + alpinejs (pinned in vendor/README.md).
 
 ## Tests
 

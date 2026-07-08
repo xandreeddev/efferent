@@ -11,6 +11,7 @@ export const renderShell = (): string =>
 <script src="/assets/tailwind.min.js"></script>
 <script src="/assets/htmx.min.js"></script>
 <script src="/assets/htmx-ext-ws.js"></script>
+<script defer src="/assets/alpine.min.js"></script>
 <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>

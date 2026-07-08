@@ -14,5 +14,8 @@
     "@xandreed/providers": "workspace:*",
     "@xandreed/surface": "workspace:*",
     "effect": "^3.21.4"
+  },
+  "devDependencies": {
+    "alpinejs": "^3.15.12"
   }
 }

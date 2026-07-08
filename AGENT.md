@@ -39,9 +39,11 @@ packages/
 │                 conversation store · local auth/settings · fs/shell
 ├── surface/      the UI substrate (pure): the html tagged template · the
 │                 allowlist sanitizer (the security boundary; attack tests are
-│                 the spec) · sanitizeMathml · validateUi (the FEEDBACK
-│                 boundary: dangerous-vocabulary / hx-wiring / a11y-min /
-│                 no-arbitrary-values / no-self-trigger) · protocol contract
+│                 the spec; opt-in alpine mode admits x-*/@*/:* directives,
+│                 never x-html/x-teleport/URL binds) · sanitizeMathml ·
+│                 validateUi (the FEEDBACK boundary: dangerous-vocabulary /
+│                 hx-wiring / a11y-min / no-arbitrary-values / no-self-trigger
+│                 / alpine-expr) · protocol contract
 ├── smith/        the CODER at the forge (smith → engine+providers+foundry):
 │                 spec-driven — refine (propose_spec is the only write; the
 │                 human :locks) → forge with the engine's DIRECT coder as the
@@ -59,9 +61,12 @@ packages/
 │                 dedup memory. Replies NEVER graduate to auto-post.
 ├── canvas/       the ui-builder (canvas → engine+providers+surface): builds
 │                 interactive PAGES from natural language; render_ui is the
-│                 ONE output channel and every call runs surface's UI gates —
-│                 a violation bounces with the findings; no fs/shell/code
-│                 tools at all. htmx-over-WS, no client framework.
+│                 ONE output channel (an HTML-in-chat reply is bounced) and
+│                 every call runs surface's UI gates — a violation bounces
+│                 with the findings; no fs/shell/code tools at all. Pages =
+│                 the cv-* design system + htmx-over-WS for agent actions +
+│                 vendored Alpine.js for page-LOCAL state (timers/toggles),
+│                 CSP-pinned. No React ever.
 └── scenarios/    evals v3 (top of the graph — imports agents): scenario packs
                   over agent worlds — ordered steps, deterministic evidence
                   checks (event trail / persisted conversation / workspace),

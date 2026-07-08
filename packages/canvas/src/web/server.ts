@@ -19,9 +19,27 @@ const ASSETS: Record<string, { readonly path: string; readonly type: string }> =
   "/assets/htmx.min.js": { path: "vendor/htmx.min.js", type: "text/javascript" },
   "/assets/htmx-ext-ws.js": { path: "vendor/htmx-ext-ws.js", type: "text/javascript" },
   "/assets/tailwind.min.js": { path: "vendor/tailwind.min.js", type: "text/javascript" },
+  "/assets/alpine.min.js": { path: "vendor/alpine.min.js", type: "text/javascript" },
   "/assets/app.js": { path: "app.js", type: "text/javascript" },
   "/assets/app.css": { path: "app.css", type: "text/css" },
 }
+
+/** The browser-level backstop behind the sanitizer + expression gate: even
+ *  an expression that slips through cannot reach the network, load foreign
+ *  code, or navigate a form off-origin. Alpine's standard build evaluates
+ *  expressions via Function — hence 'unsafe-eval' (scoped to OUR vendored
+ *  scripts by script-src 'self'); the Tailwind runtime injects inline
+ *  <style> — hence style-src 'unsafe-inline'. */
+const CSP = [
+  "default-src 'none'",
+  "script-src 'self' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
+  "font-src 'self'",
+  "form-action 'self'",
+  "base-uri 'none'",
+].join("; ")
 
 const TOPIC = "frags"
 
@@ -75,7 +93,9 @@ export const serveCanvas = (args: {
         const url = new URL(req.url)
         if (url.pathname === "/ws" && srv.upgrade(req)) return undefined
         if (url.pathname === "/") {
-          return new Response(renderShell(), { headers: { "content-type": "text/html" } })
+          return new Response(renderShell(), {
+            headers: { "content-type": "text/html", "content-security-policy": CSP },
+          })
         }
         const asset = ASSETS[url.pathname]
         if (asset !== undefined) {
