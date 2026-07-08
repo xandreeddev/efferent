@@ -1,11 +1,12 @@
 import type { TextareaRenderable } from "@opentui/core"
 import { For, Show } from "solid-js"
-import { useKeyboard, usePaste } from "@opentui/solid"
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
 import { dispatch, dispatchPaste } from "../keys.js"
 import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
+import { attemptRowView } from "../presentation/floor.js"
 import type { GateCell } from "../presentation/floor.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
@@ -36,6 +37,8 @@ const cellGlyph = (state: GateCell["state"]): string =>
           : glyph.pending
 
 const FEED_ROWS = 18
+/** Rows the fixed chrome (header, panels heads, status, composer) occupies. */
+const CHROME_ROWS = 14
 
 /** The header: brand · task · attempt/phase heartbeat (mode-aware). */
 const Header = (props: { ctx: SmithTuiContext }) => {
@@ -185,27 +188,60 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** The attempt × gate matrix — the factory floor's centrepiece. */
+/** The attempt × gate matrix — the factory floor's centrepiece. Rows render
+ *  through the BOUNDED view model: few gates = named cells (clipped), many
+ *  gates = a tally + the one gate that matters now — a row can never
+ *  overflow the panel into the feed. */
 const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
   const floor = props.ctx.store.floor
   return (
-    <box flexDirection="column" width={46} flexShrink={0} marginTop={1}>
+    <box flexDirection="column" width={52} flexShrink={0} marginTop={1}>
       <text fg={tokens.text.dim}>attempts</text>
       <Show
         when={floor().attempts.length > 0}
         fallback={<text fg={tokens.state.pending}>  (waiting for the first attempt)</text>}
       >
-        <For each={floor().attempts}>
+        <For each={floor().attempts.map(attemptRowView)}>
           {(row) => (
             <box flexDirection="row">
               <text fg={tokens.text.dim} flexShrink={0}>{`  #${row.attempt} `}</text>
-              <For each={row.gates}>
-                {(cell) => (
-                  <text fg={cellColor(cell.state)} flexShrink={0} wrapMode="none">
-                    {`${cellGlyph(cell.state)} ${cell.name}${cell.state === "fail" ? `(${cell.findings})` : ""}  `}
-                  </text>
-                )}
-              </For>
+              <Show
+                when={row.mode === "cells"}
+                fallback={
+                  <>
+                    <text fg={tokens.state.ok} flexShrink={0} wrapMode="none">
+                      {`${glyph.pass}${row.counts.pass} `}
+                    </text>
+                    <text
+                      fg={row.counts.fail > 0 ? tokens.state.error : tokens.text.dim}
+                      flexShrink={0}
+                      wrapMode="none"
+                    >
+                      {`${glyph.fail}${row.counts.fail} `}
+                    </text>
+                    <text fg={tokens.state.pending} flexShrink={0} wrapMode="none">
+                      {`${glyph.pending}${row.counts.pending + row.counts.running + row.counts.skip} `}
+                    </text>
+                    <Show when={Option.isSome(row.active)}>
+                      <text
+                        fg={cellColor(Option.getOrThrow(row.active).state)}
+                        flexShrink={1}
+                        wrapMode="none"
+                      >
+                        {`${cellGlyph(Option.getOrThrow(row.active).state)} ${Option.getOrThrow(row.active).name}`}
+                      </text>
+                    </Show>
+                  </>
+                }
+              >
+                <For each={row.cells}>
+                  {(cell) => (
+                    <text fg={cellColor(cell.state)} flexShrink={1} wrapMode="none">
+                      {`${cellGlyph(cell.state)} ${cell.name}${cell.state === "fail" ? `(${cell.findings})` : ""}  `}
+                    </text>
+                  )}
+                </For>
+              </Show>
               <Show when={row.files > 0}>
                 <text fg={tokens.text.dim} flexShrink={0}>{`· ${row.files}f`}</text>
               </Show>
@@ -227,10 +263,13 @@ const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
-/** The live activity feed — the coder's tool calls, spawns, retries. */
+/** The live activity feed — the coder's tool calls, spawns, retries. Sized
+ *  to the terminal so a tall window shows work, not blank rows. */
 const Feed = (props: { ctx: SmithTuiContext }) => {
   const floor = props.ctx.store.floor
-  const visible = () => floor().feed.slice(-FEED_ROWS)
+  const dimensions = useTerminalDimensions()
+  const rows = () => Math.max(FEED_ROWS, Math.min(60, dimensions().height - CHROME_ROWS))
+  const visible = () => floor().feed.slice(-rows())
   return (
     <box flexDirection="column" flexGrow={1} marginTop={1} marginLeft={2}>
       <text fg={tokens.text.dim}>activity</text>
@@ -248,14 +287,18 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
   const floor = store.floor
   const rolesLine = () =>
     `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}`
-  const outcome = () =>
-    Option.getOrElse(
-      Option.orElse(floor().outcome, () => floor().error),
-      () => "",
-    )
+  const outcome = () => Option.getOrElse(floor().outcome, () => "")
   const outcomeColor = () => (floor().phase === "done" ? tokens.state.ok : tokens.state.error)
   return (
     <box flexDirection="column" flexShrink={0} marginTop={1}>
+      <Show when={Option.isSome(floor().error)}>
+        <box flexDirection="row">
+          <text fg={tokens.state.error} flexShrink={0}>{`${glyph.fail} forge error: `}</text>
+          <text fg={tokens.state.error} wrapMode="word" flexShrink={1}>
+            {Option.getOrElse(floor().error, () => "")}
+          </text>
+        </box>
+      </Show>
       <Show when={outcome().length > 0}>
         <box flexDirection="row">
           {/* The outcome never shrinks — the (long) artifact path clips instead. */}

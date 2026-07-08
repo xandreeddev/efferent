@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import { Finding, GateName, GateReport, RuleId, Spec } from "@xandreed/foundry"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
-import { initialFloor, reduceFloor } from "./floor.js"
+import type { GateCell, GateCellState } from "./floor.js"
+import { initialFloor, reduceFloor, attemptRowView } from "./floor.js"
 
 const spec = Effect.runSync(
   Schema.decodeUnknown(Spec)({
@@ -93,5 +94,50 @@ describe("reduceFloor", () => {
     const floor = fold([{ type: "forge_error", message: "boom" }])
     expect(floor.phase).toBe("failed")
     expect(Option.getOrThrow(floor.error)).toBe("boom")
+  })
+})
+
+describe("attemptRowView — bounded by construction", () => {
+  const cell = (name: string, state: GateCellState): GateCell => ({ name, state, findings: 0 })
+
+  test("few gates render as cells with clipped names", () => {
+    const view = attemptRowView({
+      attempt: 1,
+      files: 2,
+      gates: [
+        cell("bun-test", "pass"),
+        cell("accept-a-very-long-gate-name-that-exceeds-the-budget", "running"),
+      ],
+    })
+    expect(view.mode).toBe("cells")
+    expect(view.cells[1]?.name.length).toBeLessThanOrEqual(24)
+    expect(view.cells[1]?.name.endsWith("…")).toBe(true)
+  })
+
+  test("many gates collapse to counts + the gate that matters (running first)", () => {
+    const view = attemptRowView({
+      attempt: 2,
+      files: 18,
+      gates: [
+        cell("g1", "pass"),
+        cell("g2", "pass"),
+        cell("g3", "fail"),
+        cell("g4", "running"),
+        cell("g5", "pending"),
+        cell("g6", "pending"),
+      ],
+    })
+    expect(view.mode).toBe("compact")
+    expect(view.counts).toEqual({ pass: 2, fail: 1, running: 1, pending: 2, skip: 0 })
+    expect(Option.getOrThrow(view.active).name).toBe("g4")
+  })
+
+  test("no running gate → the first failure is named; else the next pending", () => {
+    const failed = attemptRowView({
+      attempt: 1,
+      files: 0,
+      gates: [cell("a", "pass"), cell("b", "fail"), cell("c", "pending"), cell("d", "pending"), cell("e", "pending")],
+    })
+    expect(Option.getOrThrow(failed.active).name).toBe("b")
   })
 })
