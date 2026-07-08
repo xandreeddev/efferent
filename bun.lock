@@ -81,6 +81,7 @@
         "@effect/ai": "^0.35.0",
         "@xandreed/engine": "workspace:*",
         "@xandreed/foundry": "workspace:*",
+        "@xandreed/math": "workspace:*",
         "@xandreed/providers": "workspace:*",
         "@xandreed/smith": "workspace:*",
         "effect": "^3.21.4",

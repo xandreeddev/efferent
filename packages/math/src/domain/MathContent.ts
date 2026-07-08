@@ -1,4 +1,5 @@
 import { Either, Schema } from "effect"
+import { sanitizeMathml } from "@xandreed/surface"
 
 /**
  * The structured content vocabulary of the `efferent math` surface. The math
@@ -132,7 +133,10 @@ const firstLine = (s: string): string => {
  * Used identically by the tool handler, the replay path, and the evals — so
  * what the model gets away with live is exactly what replays later.
  */
-export const parseMathItems = (input: unknown): ParsedMathItems => {
+export const parseMathItems = (
+  input: unknown,
+  sessionSeen: ReadonlySet<string> = new Set(),
+): ParsedMathItems => {
   const items = Array.isArray(input) ? input : []
   const accepted: Array<MathItem> = []
   const rejected: Array<RejectedMathItem> = []
@@ -161,7 +165,7 @@ export const parseMathItems = (input: unknown): ParsedMathItems => {
       accepted.push(item)
       return
     }
-    const reason = validateExercise(item, seenIds)
+    const reason = validateExercise(item, seenIds, sessionSeen)
     if (reason !== undefined) {
       rejected.push({ index, id: item.id, reason })
       return
@@ -172,9 +176,31 @@ export const parseMathItems = (input: unknown): ParsedMathItems => {
   return { accepted, rejected }
 }
 
-const validateExercise = (ex: MathExercise, seenIds: ReadonlySet<string>): string | undefined => {
+/** `undefined` = the mathml is fine (absent, or strictly valid). */
+const mathmlProblem = (mathml: string | undefined, where: string): string | undefined =>
+  mathml === undefined || mathml.trim() === "" || sanitizeMathml(mathml).ok
+    ? undefined
+    : `${where} mathml was rejected by the strict sanitizer — use presentation MathML only (one well-formed <math> root, layout elements/attributes, no semantics/annotation/scripts) or omit the mathml field`
+
+const validateExercise = (
+  ex: MathExercise,
+  seenIds: ReadonlySet<string>,
+  sessionSeen: ReadonlySet<string>,
+): string | undefined => {
   if (ex.id.trim().length === 0) return "exercise id is empty"
   if (seenIds.has(ex.id)) return `duplicate exercise id '${ex.id}' in this call`
+  if (sessionSeen.has(ex.id)) {
+    return `exercise id '${ex.id}' was already served this session — write a NEW exercise with a new id`
+  }
+  const mathml =
+    mathmlProblem(ex.mathml, "the exercise") ??
+    (ex.choices ?? [])
+      .map((c) => mathmlProblem(c.mathml, `choice '${c.id}'`))
+      .find((r) => r !== undefined) ??
+    ex.solution
+      .map((s, i) => mathmlProblem(s.mathml, `solution step ${i + 1}`))
+      .find((r) => r !== undefined)
+  if (mathml !== undefined) return mathml
   if (ex.prompt.trim().length === 0) return "prompt is empty"
   if (/[?]\s*\/\s*[?]|\?\?/.test(ex.prompt)) return "prompt contains placeholder '?' content"
   // There is NO picture on this surface (MathML can't draw shapes) — a prompt
