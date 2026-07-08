@@ -2,13 +2,17 @@ import { batch, createSignal } from "solid-js"
 import type { Accessor } from "solid-js"
 import { Option } from "effect"
 import type { Effect } from "effect"
-import type { SettingsStore, SpecDoc } from "@xandreed/engine"
+import type { AuthStore, FileSystem, ModelRole, SettingsStore, Shell, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../../domain/SmithConfig.js"
 import type { FloorState } from "../presentation/floor.js"
 import { initialFloor, reduceFloor } from "../presentation/floor.js"
 import type { RefineState } from "../presentation/refine.js"
 import { initialRefine, reduceRefine, withUserLine } from "../presentation/refine.js"
+import type { WorkspaceView } from "../presentation/workspace.js"
+import { emptyWorkspace } from "../presentation/workspace.js"
+import type { LoginFlow } from "../presentation/loginFlow.js"
+import type { SelectState } from "../presentation/selectBox.js"
 
 export interface RolesReadout {
   readonly general: string
@@ -16,7 +20,34 @@ export interface RolesReadout {
   readonly fast: string
 }
 
-export type SmithMode = "refine" | "forge"
+/** idle = the persistent workspace dashboard (`bare smith`). */
+export type SmithMode = "idle" | "refine" | "forge"
+
+/** What a picker Enter means (routes `submitSelect` in the key handler). */
+export type SelectPurpose =
+  | { readonly tag: "model"; readonly role: ModelRole }
+  | { readonly tag: "logout" }
+
+/** ONE inline contextual surface at a time — select picker or the login
+ *  flow; while open, the composer unmounts and keys route here. */
+export type Overlay =
+  | { readonly kind: "none" }
+  | {
+      readonly kind: "select"
+      readonly purpose: SelectPurpose
+      readonly sel: SelectState<Option.Option<string>>
+    }
+  | { readonly kind: "login"; readonly flow: LoginFlow }
+
+/** An in-flight OAuth authorization the driver races (callback vs paste). */
+export interface OAuthSession {
+  readonly verifier: string
+  /** Interrupt the waiter fiber + close the loopback server. */
+  readonly stop: () => void
+}
+
+/** Everything a TUI action may reach through `ctx.run`. */
+export type SmithUiServices = SettingsStore | AuthStore | FileSystem | Shell
 
 export interface SmithStore {
   readonly floor: Accessor<FloorState>
@@ -36,14 +67,32 @@ export interface SmithStore {
   /** The session fiber's exit code once it finished naturally. */
   readonly exitCode: Accessor<number | undefined>
   readonly setExitCode: (code: number) => void
-  readonly roles: RolesReadout
+  readonly roles: Accessor<RolesReadout>
+  readonly setRoles: (roles: RolesReadout) => void
+  /** The inline contextual surface (picker / login) — ONE at a time. */
+  readonly overlay: Accessor<Overlay>
+  readonly setOverlay: (overlay: Overlay) => void
+  readonly closeOverlay: () => void
+  /** The in-flight OAuth authorization, if any (Esc/exit tears it down). */
+  readonly oauth: Accessor<Option.Option<OAuthSession>>
+  readonly setOauth: (session: Option.Option<OAuthSession>) => void
+  /** The composer registers its clear so the Esc rule can reach it. */
+  readonly registerComposerClear: (clear: () => void) => void
+  readonly clearComposer: () => void
+  /** The workspace dashboard (idle mode): specs · runs · lessons. */
+  readonly workspace: Accessor<WorkspaceView>
+  readonly setWorkspace: (view: WorkspaceView) => void
+  /** Fresh floor for the NEXT forge run (a persistent session runs many). */
+  readonly resetFloor: (task: string, maxAttempts: number) => void
+  /** Fresh refine state for the NEXT idea. */
+  readonly resetRefine: () => void
 }
 
 export interface SmithTuiContext {
   readonly store: SmithStore
   readonly runConfig: SmithRunConfig
-  /** UI→Effect bridge (the captured Runtime); commands reach the SettingsStore. */
-  readonly run: <A, E>(effect: Effect.Effect<A, E, SettingsStore>) => Promise<A>
+  /** UI→Effect bridge (the captured Runtime); actions reach settings/auth/fs/shell. */
+  readonly run: <A, E>(effect: Effect.Effect<A, E, SmithUiServices>) => Promise<A>
   /** Interrupt the running forge session (Esc). */
   readonly interrupt: () => void
   /** End the TUI with an exit code (`:quit`, Ctrl-C). */
@@ -52,8 +101,12 @@ export interface SmithTuiContext {
   readonly sendRefine?: (text: string) => void
   /** Refine mode: `:lock` — the human's approval. */
   readonly lock?: () => void
-  /** Refine mode: `:forge` — transition to the forge on the locked spec. */
-  readonly forge?: () => void
+  /** `:forge [slug]` — forge the locked draft, or a named locked spec. */
+  readonly forge?: (slug?: string) => void
+  /** Workspace mode: plain composer text — starts/continues a refine. */
+  readonly sendText?: (text: string) => void
+  /** Workspace mode: `:new` — drop the current draft, back to the dashboard. */
+  readonly newSpec?: () => void
 }
 
 export const createSmithStore = (
@@ -70,6 +123,11 @@ export const createSmithStore = (
   const [spinner, setSpinner] = createSignal(0)
   const [notice, setNotice] = createSignal("")
   const [exitCode, setExitCodeSig] = createSignal<number | undefined>(undefined)
+  const [workspace, setWorkspaceSig] = createSignal<WorkspaceView>(emptyWorkspace)
+  const [rolesSig, setRolesSig] = createSignal<RolesReadout>(roles)
+  const [overlay, setOverlaySig] = createSignal<Overlay>({ kind: "none" })
+  const [oauth, setOauthSig] = createSignal<Option.Option<OAuthSession>>(Option.none())
+  const composerClear = { current: () => {} }
   return {
     floor,
     reduce: (event) =>
@@ -89,7 +147,21 @@ export const createSmithStore = (
     setNotice,
     exitCode,
     setExitCode: (code) => setExitCodeSig(code),
-    roles,
+    roles: rolesSig,
+    setRoles: (next) => setRolesSig(next),
+    overlay,
+    setOverlay: (next) => setOverlaySig(next),
+    closeOverlay: () => setOverlaySig({ kind: "none" }),
+    oauth,
+    setOauth: (session) => setOauthSig(session),
+    registerComposerClear: (clear) => {
+      composerClear.current = clear
+    },
+    clearComposer: () => composerClear.current(),
+    workspace,
+    setWorkspace: (view) => setWorkspaceSig(view),
+    resetFloor: (task, maxAttempts) => setFloor(initialFloor(task, maxAttempts)),
+    resetRefine: () => setRefine(initialRefine),
   }
 }
 

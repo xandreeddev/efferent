@@ -7,6 +7,8 @@ import { dispatch } from "../keys.js"
 import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import type { GateCell } from "../presentation/floor.js"
+import { OverlayView } from "./Overlay.js"
+import { Workspace } from "./Workspace.js"
 
 const TRANSCRIPT_ROWS = 20
 
@@ -41,6 +43,9 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
   const forging = () => floor().phase === "implementing" || floor().phase === "gating"
   const heartbeat = () => {
+    if (store.mode() === "idle") {
+      return "describe what to build — :forge <slug> · :model · :login · :quit"
+    }
     if (store.mode() === "refine") {
       return store.busy()
         ? `${spin()} refining…`
@@ -56,17 +61,19 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   }
   const busyColor = () => (store.busy() || forging() ? tokens.state.running : tokens.text.dim)
   const title = () =>
-    store.mode() === "refine"
-      ? Option.getOrElse(
-          Option.map(store.refine().draft, (d) => String(d.slug)),
-          () => props.ctx.runConfig.task,
-        )
-      : floor().task
+    store.mode() === "idle"
+      ? props.ctx.runConfig.cwd
+      : store.mode() === "refine"
+        ? Option.getOrElse(
+            Option.map(store.refine().draft, (d) => String(d.slug)),
+            () => props.ctx.runConfig.task,
+          )
+        : floor().task
   return (
     <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.brand} flexShrink={0}>{glyph.brand}</text>
       <text fg={tokens.text.bright} flexShrink={0}>
-        {store.mode() === "refine" ? "smith spec " : "smith "}
+        {store.mode() === "idle" ? "smith · " : store.mode() === "refine" ? "smith spec " : "smith "}
       </text>
       <text fg={tokens.text.dim} flexGrow={1} wrapMode="none">
         {title()}
@@ -224,6 +231,8 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
   const roles = store.roles
   const floor = store.floor
+  const rolesLine = () =>
+    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}`
   const outcome = () =>
     Option.getOrElse(
       Option.orElse(floor().outcome, () => floor().error),
@@ -245,12 +254,12 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
       </Show>
       <Show when={Option.isSome(floor().conversationRef)}>
         <text fg={tokens.text.dim} wrapMode="none">
-          {`session ${Option.getOrElse(floor().conversationRef, () => "")} — open it in efferent with :browse`}
+          {`session ${Option.getOrElse(floor().conversationRef, () => "")} — persisted in .efferent/smith.db`}
         </text>
       </Show>
       <box flexDirection="row">
         <text fg={tokens.text.dim} wrapMode="none" flexGrow={1}>
-          {`● general ${roles.general}   code ${roles.code}   fast ${roles.fast}`}
+          {rolesLine()}
         </text>
         <text fg={tokens.state.warn} wrapMode="none" flexShrink={0}>
           {store.notice()}
@@ -274,6 +283,10 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
       runTuiCommand(props.ctx, value)
       return
     }
+    if (props.ctx.sendText !== undefined) {
+      props.ctx.sendText(value)
+      return
+    }
     if (props.ctx.store.mode() === "refine" && props.ctx.sendRefine !== undefined) {
       props.ctx.sendRefine(value)
       return
@@ -281,9 +294,13 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     props.ctx.store.setNotice("prefix commands with ':' (try :quit)")
   }
   const placeholder = () =>
-    props.ctx.store.mode() === "refine"
-      ? "refine the spec… — :lock when right, :forge to build, Ctrl-C quits"
-      : ":quit · :model [code|fast] <p:m> · :set k v — Esc interrupts, Ctrl-C quits"
+    props.ctx.store.mode() === "idle"
+      ? "describe what to build… — :model · :login · :quit"
+      : props.ctx.store.mode() === "refine"
+        ? "refine the spec… — :lock when right, :forge to build"
+        : props.ctx.sendText !== undefined
+          ? "type the next idea… — :new for the dashboard, :quit to leave"
+          : ":quit · :model [code|fast] — Esc interrupts, Ctrl-C quits"
   return (
     <box flexDirection="row" flexShrink={0} marginTop={1}>
       <text fg={tokens.accent.input} flexShrink={0}>{glyph.caret}</text>
@@ -291,6 +308,7 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
         ref={(renderable: TextareaRenderable) => {
           ref.current = renderable
           renderable.focus()
+          props.ctx.store.registerComposerClear(() => renderable.setText(""))
         }}
         height={1}
         flexGrow={1}
@@ -308,25 +326,33 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
  *  mode (the floor). Borderless, token-driven — the cli's layout language. */
 export const App = (props: { ctx: SmithTuiContext }) => {
   useKeyboard((key) => dispatch(props.ctx, key))
+  const mode = () => props.ctx.store.mode()
+  const overlayOpen = () => props.ctx.store.overlay().kind !== "none"
   return (
     <box flexDirection="column" flexGrow={1} padding={1}>
       <Header ctx={props.ctx} />
-      <Show
-        when={props.ctx.store.mode() === "forge"}
-        fallback={
-          <box flexDirection="row" flexGrow={1}>
-            <Transcript ctx={props.ctx} />
-            <SpecPanel ctx={props.ctx} />
-          </box>
-        }
-      >
+      <Show when={mode() === "idle"}>
+        <Workspace ctx={props.ctx} />
+      </Show>
+      <Show when={mode() === "refine"}>
+        <box flexDirection="row" flexGrow={1}>
+          <Transcript ctx={props.ctx} />
+          <SpecPanel ctx={props.ctx} />
+        </box>
+      </Show>
+      <Show when={mode() === "forge"}>
         <box flexDirection="row" flexGrow={1}>
           <AttemptPanel ctx={props.ctx} />
           <Feed ctx={props.ctx} />
         </box>
       </Show>
       <StatusRows ctx={props.ctx} />
-      <CommandLine ctx={props.ctx} />
+      {/* ONE surface owns the bottom: the composer, or the open overlay
+          (unmounting the textarea kills the focus fight; the ref re-focuses
+          on remount). */}
+      <Show when={!overlayOpen()} fallback={<OverlayView ctx={props.ctx} />}>
+        <CommandLine ctx={props.ctx} />
+      </Show>
     </box>
   )
 }
