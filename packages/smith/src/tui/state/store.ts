@@ -27,6 +27,7 @@ export type SmithMode = "idle" | "refine" | "forge"
 export type SelectPurpose =
   | { readonly tag: "model"; readonly role: ModelRole }
   | { readonly tag: "logout" }
+  | { readonly tag: "resume" }
 
 /** ONE inline contextual surface at a time — select picker or the login
  *  flow; while open, the composer unmounts and keys route here. */
@@ -119,6 +120,8 @@ export interface SmithTuiContext {
   readonly sendText?: (text: string) => void
   /** Workspace mode: `:new` — drop the current draft, back to the dashboard. */
   readonly newSpec?: () => void
+  /** Workspace mode: `:resume <conversationId>` — load a previous session. */
+  readonly resume?: (conversationId: string) => void
 }
 
 export const createSmithStore = (

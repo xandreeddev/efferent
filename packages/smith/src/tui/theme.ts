@@ -16,6 +16,14 @@ const palette = {
   rule: "#3a3a40",
   gray: "#9a958a",
   cursorLine: "#2a2a30",
+  chartreuse: "#a3e635",
+} as const
+
+/** The fixed brand triad — theme-independent; the mark is a stable identity. */
+export const BRAND = {
+  ember: palette.ember,
+  chartreuse: palette.chartreuse,
+  verdigris: palette.verdigris,
 } as const
 
 export const tokens = {
@@ -52,5 +60,6 @@ export const glyph = {
   cursorBlock: "█",
   rule: "─",
   bullet: "·",
+  logoBar: "▔",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const
