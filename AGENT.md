@@ -12,8 +12,9 @@ project rules — alias identity, OPSEC, weekly cadence. Plan docs live under
 `sdk-adapters` / `cli` / `web` / `evals`) was frozen, its learnings
 re-authored into the packages below, and then DELETED. The published npm
 package `efferent` (the old CLI) remains on the registry but no longer
-receives updates; `packages/website` + `examples/` stay in-tree as its frozen
-documentation. Everything current is source-run (`bun run <agent>`).
+receives updates; its `examples/` were removed 2026-07-08 and
+`packages/website` now documents THE CURRENT LINE (Astro, deploys to GitHub
+Pages via docs.yml). Everything current is source-run (`bun run <agent>`).
 
 ## Architecture
 

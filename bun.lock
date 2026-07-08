@@ -17,10 +17,6 @@
         "typescript": "^5.9.3",
       },
     },
-    "examples": {
-      "name": "@xandreed/examples",
-      "version": "0.0.6",
-    },
     "packages/canvas": {
       "name": "@xandreed/canvas",
       "version": "0.1.0",
@@ -628,8 +624,6 @@
     "@xandreed/canvas": ["@xandreed/canvas@workspace:packages/canvas"],
 
     "@xandreed/engine": ["@xandreed/engine@workspace:packages/engine"],
-
-    "@xandreed/examples": ["@xandreed/examples@workspace:examples"],
 
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 

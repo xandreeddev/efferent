@@ -16,7 +16,7 @@ export const NPM = "https://www.npmjs.com/package/efferent"
 export const topNav = [
   { label: "Docs", href: "/docs/getting-started" },
   { label: "Ecosystem", href: "/#ecosystem" },
-  { label: "Examples", href: "/docs/examples" },
+  { label: "Agents", href: "/docs/agents/smith" },
 ]
 
 export interface DocItem {
@@ -31,66 +31,28 @@ export interface DocGroup {
 export const docsNav: DocGroup[] = [
   {
     group: "Start here",
-    items: [
-      { slug: "getting-started", label: "Getting started" },
-      { slug: "your-first-agent", label: "Your first agent" },
-    ],
+    items: [{ slug: "getting-started", label: "Getting started" }],
   },
   {
     group: "Concepts",
     items: [
       { slug: "concepts/architecture", label: "Architecture" },
-      { slug: "concepts/personal-assistant", label: "The personal assistant" },
-      { slug: "concepts/runtime", label: "The runtime" },
-      { slug: "concepts/agent-loop", label: "The agent loop" },
-      { slug: "concepts/tools", label: "Tools & toolkits" },
-      { slug: "concepts/providers", label: "Providers & models" },
-      { slug: "concepts/compaction", label: "Context compaction" },
-      { slug: "concepts/sub-agents", label: "Sub-agents" },
-      { slug: "concepts/fleet", label: "The fleet" },
-      { slug: "concepts/daemon", label: "The daemon" },
-      { slug: "concepts/control-plane", label: "Control plane & jobs" },
-      { slug: "concepts/agent-messaging", label: "Agent messaging" },
-      { slug: "concepts/skills", label: "Skills" },
+      { slug: "concepts/harness", label: "The harness doctrine" },
+      { slug: "concepts/foundry", label: "Foundry — the factory" },
+      { slug: "concepts/engine", label: "Engine — the kernel" },
+      { slug: "concepts/providers", label: "Providers — the edge" },
+      { slug: "concepts/surface", label: "Surface — the UI substrate" },
+      { slug: "concepts/evals", label: "Evals — scenario packs" },
       { slug: "concepts/observability", label: "Observability" },
-      { slug: "concepts/evals", label: "Evals" },
     ],
   },
   {
-    group: "Guides",
+    group: "The agents",
     items: [
-      { slug: "guides/define-a-tool", label: "Define a tool" },
-      { slug: "guides/composition-root", label: "Composition root" },
-      { slug: "guides/hooks", label: "Hooks" },
-      { slug: "guides/compression-policy", label: "Compression policy" },
-      { slug: "guides/coding-agent", label: "The coding agent" },
-      { slug: "guides/sub-agents", label: "Spawning sub-agents" },
-      { slug: "guides/fleet", label: "Run a fleet" },
-      { slug: "guides/using-efferent", label: "Using efferent" },
-    ],
-  },
-  {
-    group: "Reference",
-    items: [
-      { slug: "reference/agent-config", label: "AgentConfig" },
-      { slug: "reference/run-agent", label: "runAgent" },
-      { slug: "reference/hooks", label: "AgentHooks" },
-      { slug: "reference/compression", label: "Compression & Compaction" },
-      { slug: "reference/ports", label: "Ports" },
-      { slug: "reference/adapters", label: "Adapter layers" },
-      { slug: "reference/settings", label: "Settings" },
-      { slug: "reference/cli", label: "CLI & modes" },
-    ],
-  },
-  {
-    group: "Examples",
-    items: [
-      { slug: "examples", label: "Overview" },
-      { slug: "examples/dice-agent", label: "Dice agent" },
-      { slug: "examples/calc-agent", label: "Calculator agent" },
-      { slug: "examples/file-agent", label: "File agent" },
-      { slug: "examples/hooks-agent", label: "Hooks agent" },
-      { slug: "examples/compression-agent", label: "Compression agent" },
+      { slug: "agents/smith", label: "smith — the coder" },
+      { slug: "agents/math", label: "math — the tutor" },
+      { slug: "agents/canvas", label: "canvas — the page builder" },
+      { slug: "agents/social", label: "social — the drafter" },
     ],
   },
 ]
@@ -98,67 +60,70 @@ export const docsNav: DocGroup[] = [
 /** Flat, ordered list of doc slugs — drives prev/next. */
 export const docsOrder: DocItem[] = docsNav.flatMap((g) => g.items)
 
-/** The two flagship products announced on the landing. */
+/** The two flagship pillars announced on the landing. */
 export const products = [
   {
-    name: "efferent SDK",
+    name: "The factory",
     logo: "sdk" as const,
-    tag: "@xandreed/sdk-core",
+    tag: "@xandreed/foundry",
     accent: "var(--ember)",
     blurb:
-      "The agent framework: entities, ports, and use cases as Effect Layers; tools as an @effect/ai Toolkit; every error tagged; the provider a runtime choice. Build your own agent in a handful of lines.",
-    points: ["The agent loop as one Effect", "Ports & adapters, typed errors", "Cache-safe context compaction"],
-    href: "/docs/concepts/architecture",
-    cta: "Explore the SDK",
+      "The developer's real output is not code but the system that produces code: a locked spec, an implementor, chained deterministic gates, typed findings routed back as the next brief. The gates declare victory — never the model.",
+    points: [
+      "forge: implement → snapshot → gates → feedback → retry",
+      "Zero-baseline static rules on every commit",
+      "The repo runs its own gates on itself",
+    ],
+    href: "/docs/concepts/foundry",
+    cta: "Enter the factory",
   },
   {
-    name: "efferent CLI",
+    name: "The agent line",
     logo: "cli" as const,
-    tag: "the efferent CLI",
+    tag: "bun run smith · math · canvas · social",
     accent: "var(--verdigris)",
     blurb:
-      "One CLI that runs agents on the runtime — a borderless full-screen terminal UI, headless print / json / rpc, or a persistent per-workspace daemon. File + shell + web tools and a sub-agent fleet; the bundled coding agent runs with `efferent code`. One npm install.",
-    points: ["TUI · headless · daemon", "Sub-agents over a context tree", "Multi-provider, subscription or key"],
-    href: "/docs/getting-started",
-    cta: "Get started",
+      "Purpose-built agents on one shared kernel — a spec-driven coder in a workspace TUI, a math tutor that grades server-side, a page builder whose only output channel is gated HTML, and a social drafter a human must approve. Each one shaped by the strength of its validation oracle.",
+    points: [
+      "One pure Effect kernel, providers at the edge",
+      "Every conversation persisted — auditable evidence",
+      "Scenario packs as each agent's regression battery",
+    ],
+    href: "/docs/agents/smith",
+    cta: "Meet the agents",
   },
 ]
 
 /** The broader "one codebase" capabilities, shown as a grid. */
 export const capabilities = [
   {
-    title: "Multi-provider router",
-    desc: "One LanguageModel port; Google / OpenAI / Anthropic / local resolved per request from your login and /model choice.",
+    title: "The forge loop",
+    desc: "Spec in, FactoryRun out: implement → snapshot → staged gate pipeline → typed feedback → retry, bounded by attempts and a wall-clock budget.",
+    href: "/docs/concepts/foundry",
+  },
+  {
+    title: "Zero-baseline gates",
+    desc: "No try/catch, no let, no loops, no nullable returns — every rule violation anywhere fails typecheck. The baseline only shrinks.",
+    href: "/docs/concepts/foundry",
+  },
+  {
+    title: "The routed LanguageModel",
+    desc: "Model selection and credentials re-resolve on every call — switch models or log in mid-session and the next turn uses it.",
     href: "/docs/concepts/providers",
   },
   {
-    title: "Context compaction",
-    desc: "Compression that never rewrites the cached prefix — a customizable policy on the agent, on by default.",
-    href: "/docs/concepts/compaction",
+    title: "Reasoning, tokens, and the trail",
+    desc: "Every turn persists its model, spend, and thinking to SQLite; the TUI renders them live with a context-window gauge.",
+    href: "/docs/concepts/engine",
   },
   {
-    title: "Sub-agents & context tree",
-    desc: "One generic run_agent tool spawns folder-scoped sub-agents; resume, branch, or hand off — every spawn persists.",
-    href: "/docs/concepts/sub-agents",
-  },
-  {
-    title: "Fleet & orchestration",
-    desc: "One workspace, many sessions, one seat: fire named agent roles from a live session, attach to any of them, give the fleet a goal with a verifier, schedule with cron — fibers in one runtime.",
-    href: "/docs/concepts/fleet",
-  },
-  {
-    title: "Colocated evals",
-    desc: "An Effect-native eval harness where the task can be the real agent loop — in the codebase, not bolted on.",
+    title: "Scenario evals",
+    desc: "Ordered steps over a real agent world, deterministic evidence checks, committed baselines compared by default — key-free in CI.",
     href: "/docs/concepts/evals",
   },
   {
     title: "Observability",
-    desc: "OpenTelemetry spans and metrics across the run — trace-first, inert until you turn export on.",
+    desc: "OTLP traces with per-turn reasoning and usage, token/latency metrics, a Grafana dashboard, and file logs — one compose file away.",
     href: "/docs/concepts/observability",
-  },
-  {
-    title: "Skills",
-    desc: "Drop markdown in .efferent/skills/ — names inject into the prompt, bodies lazy-load on demand.",
-    href: "/docs/concepts/skills",
   },
 ]

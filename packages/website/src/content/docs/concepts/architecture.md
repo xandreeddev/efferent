@@ -1,68 +1,51 @@
 ---
-title: Architecture — ports & adapters on Effect
-description: How efferent is layered — a pure domain of ports and use cases, concrete adapters, and thin drivers — with dependencies pointing strictly inward.
-sidebar:
-  label: Architecture
-  order: 1
+title: Architecture
+description: The package graph — foundry, engine, providers, surface, four agents, and the scenario packs — with one enforced dependency direction.
 ---
 
-efferent is a ports-and-adapters (hexagonal) design expressed in [Effect](https://effect.website).
-Three layers, with dependencies pointing **strictly inward**:
+The repo is a small set of packages with **one enforced dependency direction**,
+gated in CI by foundry's boundaries rule — an illegal import is a failing
+finding, not a review comment.
 
 ```
 packages/
-├── sdk-core/      pure domain: entities, ports, use cases, prompts   (depends on effect + @effect/ai)
-├── sdk-adapters/  Layer impls of the ports                           (depends on sdk-core + external SDKs)
-└── cli/           the CLI that runs agents: TUI / print / json / rpc / daemon (bundles the coding agent)
+├── foundry/      THE FIXED POINT — the factory: forge loop + static-analysis
+│                 gates + the ratchet baseline machinery. Imports nothing internal.
+├── engine/       the agent KERNEL (pure; effect + @effect/ai only): entities,
+│                 ports, the loop, prompt mapping, the session chassis.
+├── providers/    the EDGE: routed LanguageModel, SQLite conversation store,
+│                 auth/settings, fs/shell, telemetry. providers → engine.
+├── surface/      the UI substrate (pure): html template, allowlist sanitizer,
+│                 validateUi — the security and feedback boundaries.
+├── smith/        the coder        → engine + providers + foundry
+├── math/         the tutor        → engine + providers + surface
+├── canvas/       the page builder → engine + providers + surface
+├── social/       the drafter      → engine + providers
+└── scenarios/    evals — the TOP of the graph; may import agents;
+                  nothing imports scenarios.
 ```
 
-`cli → sdk-adapters → sdk-core`. The core imports nothing from its siblings; adapters import the core
-plus the one external SDK they wrap; drivers compose the `Layer`s at the very edge and hand off to
-`BunRuntime.runMain`. Your own agent is just another driver.
+## The rules the gates enforce
 
-## Ports are services
+Every package rides a **zero-entry ratchet baseline** — `bun run typecheck`
+runs tsc plus the full gate suite, and any new violation anywhere fails:
 
-A **port** is a `Context.Tag` service in `@xandreed/sdk-core` describing a capability the domain needs
-from the outside world — a file system, a shell, a conversation store, an LLM. Each port ships its
-tagged errors next to it. The use cases program against the *tag*, never a concrete implementation:
+- **Errors are values** — no `try`/`catch`/`throw`; typed errors are
+  `Schema.TaggedError`; foreign promises cross via `Effect.tryPromise`.
+- **State is a fold** — no `let`, no loop statements; `Effect.iterate`,
+  `Effect.reduce`, array combinators, `Ref`.
+- **Absence is `Option`**, union branching is `Match`, no `as any`
+  laundering, entities carry branded id fields.
+- **Tool failures are data** — toolkits use a shared `Failure` struct with
+  `failureMode: "return"`, so the model corrects itself in the same run.
+- **Ports are `Context.Tag` services** in the engine; adapters are one
+  `<Thing>Live` Layer each in providers; composition happens at each agent's
+  `main.ts` edge and nowhere else.
 
-```ts
-import { FileSystem } from "@xandreed/sdk-core"
+## History — the drop
 
-const readConfig = Effect.gen(function* () {
-  const fs = yield* FileSystem          // the port, by tag
-  return yield* fs.read("efferent.json") // returns a typed Effect<…, FileError, …>
-})
-```
-
-The full set: `ConversationStore`, `ContextTreeStore`, `FileSystem`, `Shell`, `Http`, `WebSearch`,
-`AuthStore`, `SettingsStore`, `ModelRegistry`, `LlmInfo`, `UtilityLlm`, `Approval`, `AuthFlow`. See the
-[ports reference](/docs/reference/ports/).
-
-## Adapters are Layers
-
-An **adapter** in `@xandreed/sdk-adapters` provides exactly one port as a `Layer` named `<Thing>Live`.
-External promises go through `Effect.tryPromise`, mapped into the port's tagged error — an untyped error
-never escapes. Keys and config are resolved *per call* (never captured at layer-build), so a `:login` or
-`/model` switch applies on the next request with no rebuild. See the
-[adapters reference](/docs/reference/adapters/).
-
-## Use cases are Effects
-
-The domain logic — the [agent loop](/docs/concepts/agent-loop/), [handoff](/docs/concepts/compaction/),
-[sub-agent spawning](/docs/concepts/sub-agents/) — lives in `usecases/` as Effects over the ports. No
-IO; the only SDK allowed in the core is `@effect/ai` (provider-agnostic: `LanguageModel`, `Tool`,
-`Toolkit`, `Prompt`). Provider packages live in adapters.
-
-:::note
-**No `try` / `catch` / `throw` in the core.** Error handling is Effect's typed errors
-(`Effect.fail`, `Effect.catchTag`, …), enforced by an AST scan in the typecheck gate. Errors are part of
-each function's type, so the compiler tells you what can go wrong.
-:::
-
-## Composition happens at the edge
-
-A driver assembles the layers once and provides them to `runAgent`. Because everything is a `Layer`, you
-swap an implementation by swapping an import — Postgres for SQLite, a stub LLM for a real one in tests,
-an in-memory store for evals. That single seam is what makes the agent loop the same code in the TUI, in
-a one-shot script, in CI, and in your app. See [the composition root](/docs/guides/composition-root/).
+The original runtime (an SDK + CLI + web app) was frozen, its learnings
+re-authored into the packages above, and then deleted in one commit
+(2026-07-07). What survived is the doctrine, not the code: the new line was
+born under its own gates, with an empty baseline, and the audit numbers that
+motivated the rewrite are recorded in [the factory's docs](/docs/concepts/foundry).
