@@ -14,6 +14,9 @@ prompt engineering, the gates are the judge, nothing in between
 smith → engine + providers + foundry, never any old-line package.
 
 ```bash
+bun run smith --cwd ~/code/toy                    # TTY → the PERSISTENT workspace session:
+#   dashboard (specs · forge runs · lessons) → type an idea → refine → :lock → :forge
+#   (floor live in-session) → :new → next idea. :model [code|fast] pickers · :login/:logout.
 bun run smith spec "a stats module with tests" --cwd ~/code/toy   # TTY → refine mode
 #   … refine in the composer · :lock approves · :forge builds in the same TUI
 bun run smith spec "<idea>" --cwd <dir> -p [--yes]  # one unattended draft on stdout (--yes locks)
@@ -38,11 +41,10 @@ general `opencode:kimi-k2.6` (+ `openCodeThinkingMode: "high"`) · code
 (local-over-global, `EFFERENT_MODEL`, `~/.efferent/auth.json` via `:login`
 there) WINS over these defaults; `--model/--code-model/--fast-model` flags win
 over everything (`settings/smithSettings.ts` — the overlay applies on READS
-and never persists a smith default). The implementor root runs on GENERAL and
-delegates code-heavy pieces to `role:"code"` sub-agents (the house code-tier
-routing); smith also defaults `autoLoop: false` (the foundry pipeline IS the
-gate — no Opus swarm gate), `agentMode: "direct"`, `maxSteps: 40`,
-`subAgentMaxChildren: 4`, `subAgentMaxDepth: 1`.
+and never persists a smith default). The roles are LIVE: the refiner runs on
+GENERAL, the forge implementor runs on CODE (`runForgeSession` scopes the
+implementor's LanguageModel through providers' `roleModelView("code")` —
+`codeModel ?? model`), and one-shot helpers run on FAST (`UtilityLlm`).
 
 ## Layout (boundaries: smith → sdk-core + sdk-adapters + foundry, never cli)
 
@@ -78,13 +80,20 @@ src/
 │                      runForgeSessionWith is the scripted-implementor test seam
 ├── presentation/      eventLines — pure SmithEvent → text (headless lines + feed labels)
 ├── headless/print.ts  -p mode: live event lines, flush-sentinel printer
-└── tui/               refine mode (transcript + live SpecPanel + composer; :lock · :forge
-                       transitions the SAME TUI into the floor) + the factory floor:
-                       theme (single static token set) · presentation/{floor,refine}
-                       (pure reducers) · state/ (signals) · events/pump · commands
-                       (:quit/:lock/:forge/:model/:set) · keys (Esc interrupt · Ctrl-C
-                       quit) · view/App.tsx · runtime (withTuiChassis: shared scoped
-                       renderer + pump + exit Deferred; runTui / runTuiRefine)
+└── tui/               THREE modes on one chassis (runtime: withTuiChassis — scoped
+                       renderer + pump + exit Deferred; runTui / runTuiRefine /
+                       runTuiWorkspace). Workspace = the persistent session: idle
+                       dashboard (specs · runs · lessons) ⇄ refine ⇄ forge, exit only
+                       by :quit. theme (single token set; no hex/glyph outside it) ·
+                       presentation/{floor,refine,workspace,selectBox,promptBox,
+                       loginFlow,modelCatalog} (pure machines, fold-tested) · state/
+                       (signals + the ONE overlay: select picker | login flow) ·
+                       view/ui/{atoms,BottomMenu,PromptBody} (the MenuRow discipline:
+                       one row shape for every menu) · actions/{model,login} (drivers;
+                       anthropic OAuth = PKCE + loopback server RACING a pasted
+                       redirect, state===verifier CSRF) · login/oauthServer · commands
+                       (:quit/:new/:lock/:forge [slug]/:model [code|fast]/:login/
+                       :logout) · keys (ONE Esc rule: overlay → forge → composer)
 ```
 
 ## Rules

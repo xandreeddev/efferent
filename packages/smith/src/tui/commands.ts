@@ -1,17 +1,17 @@
-import { Effect, Match, Option } from "effect"
-import { SettingsStore } from "@xandreed/engine"
+import { Match, Option } from "effect"
+import { logout, openLoginFlow } from "./actions/login.js"
+import { openModelPicker, submitModel } from "./actions/model.js"
 import type { SmithTuiContext } from "./state/store.js"
 
 /**
- * The `:` commands — minimal on the new line:
- *   :quit / :q     end the TUI (exit code = the finished run's, else 130)
- *   :lock          refine mode: approve + lock the current draft
- *   :forge         refine mode: forge the locked spec (in this TUI)
- *   :model <p:m>   persist the GENERAL model to .efferent/config.json
+ * The `:` commands — only ones that WORK:
+ *   :quit / :q            end the TUI (exit code = the finished run's, else 130)
+ *   :new                  drop the current draft, back to the dashboard
+ *   :lock                 approve + lock the current draft
+ *   :forge [slug]         forge the locked draft, or a named locked spec
+ *   :model [code|fast] [p:m]   picker for the role (or set directly)
+ *   :login / :logout [p]  provider manager / remove a credential
  * Models are pinned at run start, so a switch applies to the NEXT run.
- * Role models (code/fast) and arbitrary keys are edited in
- * `.efferent/config.json` directly — the engine's settings surface is
- * deliberately small.
  */
 export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
   const words = raw.replace(/^:/, "").trim().split(/\s+/)
@@ -20,44 +20,56 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     Match.whenOr("quit", "q", () => {
       ctx.exit(ctx.store.exitCode() ?? 130)
     }),
+    Match.when("new", () => {
+      if (ctx.newSpec === undefined) {
+        ctx.store.setNotice(":new only applies in the workspace session")
+        return
+      }
+      ctx.newSpec()
+    }),
     Match.when("lock", () => {
       if (ctx.lock === undefined) {
-        ctx.store.setNotice(":lock only applies in refine mode")
+        ctx.store.setNotice(":lock needs a refine session")
         return
       }
       ctx.lock()
     }),
     Match.when("forge", () => {
       if (ctx.forge === undefined) {
-        ctx.store.setNotice(":forge only applies in refine mode")
+        ctx.store.setNotice(":forge needs a refine/workspace session")
+        return
+      }
+      const slug = words[1]
+      if (slug !== undefined && slug.length > 0) {
+        ctx.forge(slug)
         return
       }
       ctx.forge()
     }),
     Match.when("model", () => {
-      const selection = words[1]
-      if (selection === undefined || selection.length === 0 || !selection.includes(":")) {
-        ctx.store.setNotice("usage: :model <provider:modelId>")
+      const first = words[1] ?? ""
+      const role = first === "code" || first === "fast" ? first : "general"
+      const selection = first === "code" || first === "fast" ? (words[2] ?? "") : first
+      if (selection.includes(":")) {
+        submitModel(ctx, role, Option.some(selection))
         return
       }
-      void ctx.run(
-        Effect.flatMap(SettingsStore, (store) =>
-          store.setRole("general", Option.some(selection)),
-        ).pipe(
-          Effect.tap(() =>
-            Effect.sync(() =>
-              ctx.store.setNotice(`model = ${selection} — applies to the next run`),
-            ),
-          ),
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() => ctx.store.setNotice(`failed: ${String(cause)}`)),
-          ),
-        ),
-      )
+      if (selection.length > 0) {
+        ctx.store.setNotice("usage: :model [code|fast] [provider:modelId]")
+        return
+      }
+      openModelPicker(ctx, role)
+    }),
+    Match.when("login", () => {
+      openLoginFlow(ctx)
+    }),
+    Match.when("logout", () => {
+      const provider = words[1]
+      logout(ctx, provider !== undefined && provider.length > 0 ? Option.some(provider) : Option.none())
     }),
     Match.orElse(() => {
       ctx.store.setNotice(
-        `unknown command: :${command} (try :quit · :model — other keys: edit .efferent/config.json)`,
+        `unknown command: :${command} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :login · :logout)`,
       )
     }),
   )

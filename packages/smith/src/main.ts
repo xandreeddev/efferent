@@ -27,6 +27,7 @@ import { trivialSpecDoc } from "./spec/toForgeSpec.js"
 const USAGE = `smith — the spec-driven agent in the factory (foundry forge + the efferent coder)
 
 Usage:
+  bun run smith [--cwd <dir>]                 the persistent workspace session (TTY only)
   bun run smith spec "<rough idea>" [flags]   refine a SpecDoc (-p: one unattended draft; --yes locks)
   bun run smith forge <slug|spec.md> [flags]  forge a LOCKED spec
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
@@ -190,7 +191,9 @@ if (isDirectRun) {
     process.exit(0)
   }
   const command = Option.getOrUndefined(state.command)
-  if ((task === undefined && command === undefined) || state.errors.length > 0) {
+  const bare = task === undefined && command === undefined
+  const bareInteractive = bare && !state.headless && process.stdout.isTTY === true
+  if ((bare && !bareInteractive) || state.errors.length > 0) {
     state.errors.forEach((error) => console.error(`smith: ${error}`))
     console.error(USAGE)
     process.exit(2)
@@ -220,6 +223,12 @@ if (isDirectRun) {
       console.error(
         `roles: general ${role(resolved.model)} · code ${role(resolved.codeModel)} · fast ${role(resolved.fastModel)}`,
       )
+    }
+
+    // Bare `smith [--cwd]` on a TTY — the persistent workspace session.
+    if (bareInteractive) {
+      const { runTuiWorkspace } = yield* Effect.promise(() => import("./tui/runtime.js"))
+      return yield* runTuiWorkspace(run)
     }
 
     // `smith spec "<idea>"` — the refine pipeline.
