@@ -31,6 +31,23 @@ const CURATED: ReadonlyArray<string> = [
   "google:gemini-3.5-flash",
 ]
 
+/** Curated context windows for the ctx gauge — best-effort constants per
+ *  model family (the same no-network stance as the picker). Unknown → None
+ *  and the gauge shows the absolute count only. */
+const CONTEXT_WINDOWS: ReadonlyArray<readonly [RegExp, number]> = [
+  [/kimi-k2/i, 256_000],
+  [/deepseek/i, 128_000],
+  [/qwen3/i, 256_000],
+  [/glm-/i, 128_000],
+  [/grok-code/i, 256_000],
+  [/claude/i, 200_000],
+  [/gpt-5/i, 400_000],
+  [/gemini-3/i, 1_000_000],
+]
+
+export const contextWindowOf = (model: string): Option.Option<number> =>
+  Option.fromNullable(CONTEXT_WINDOWS.find(([pattern]) => pattern.test(model))?.[1])
+
 const ROLE_TITLE: Record<ModelRole, string> = {
   general: "Select the GENERAL model (refine + the session brain)",
   code: "Select the CODE model (the forge implementor)",
