@@ -111,6 +111,30 @@ export const reduceConversation = (
     Match.orElse(() => state),
   )
 
-/** "1.2k" past a thousand — token counts stay scannable at any size. */
+/** "1.2k" past a thousand ("256k" when round) — scannable at any size. */
 export const fmtTokens = (n: number): string =>
-  n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+  n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n)
+
+/** The LIVE context cost: the latest turn's input tokens ARE the context —
+ *  everything the model was just sent. None until a turn completes. */
+export const contextTokens = (state: ConversationState): Option.Option<number> =>
+  Option.fromNullable(
+    state.blocks.reduce<number | undefined>(
+      (latest, block) => (block.kind === "assistant" ? block.tokens.input : latest),
+      undefined,
+    ),
+  )
+
+/** "ctx 17.9k/256k (7%)" — the gauge the status strip renders; absolute-only
+ *  when the model's window is unknown. */
+export const contextGauge = (
+  used: Option.Option<number>,
+  window: Option.Option<number>,
+): Option.Option<string> =>
+  Option.map(used, (tokens) =>
+    Option.match(window, {
+      onNone: () => `ctx ${fmtTokens(tokens)}`,
+      onSome: (max) =>
+        `ctx ${fmtTokens(tokens)}/${fmtTokens(max)} (${Math.round((tokens / max) * 100)}%)`,
+    }),
+  )

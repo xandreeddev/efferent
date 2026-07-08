@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import type { LoopEvent } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
-import { initialConversation, reduceConversation, withUserBlock } from "./conversation.js"
+import {
+  contextGauge,
+  contextTokens,
+  initialConversation,
+  reduceConversation,
+  withUserBlock,
+} from "./conversation.js"
 
 const agent = (event: LoopEvent): SmithEvent => ({ type: "agent", event })
 
@@ -56,6 +62,26 @@ describe("the conversation fold", () => {
     expect(state.blocks).toEqual([
       { kind: "assistant", text: "", model: Option.none(), tokens: { input: 1, output: 1 } },
     ])
+  })
+
+  test("contextTokens reads the LATEST turn's input; the gauge formats", () => {
+    const state = [
+      agent({ type: "assistant_message", turnIndex: 0, text: "a", reasoning: "", toolCalls: [], usage }),
+      agent({
+        type: "assistant_message",
+        turnIndex: 1,
+        text: "b",
+        reasoning: "",
+        toolCalls: [],
+        usage: { inputTokens: 17_900, outputTokens: 85, totalTokens: 17_985, cacheReadTokens: 0 },
+      }),
+    ].reduce(reduceConversation, initialConversation)
+    expect(Option.getOrThrow(contextTokens(state))).toBe(17_900)
+    expect(Option.isNone(contextTokens(initialConversation))).toBe(true)
+    expect(
+      Option.getOrThrow(contextGauge(Option.some(17_900), Option.some(256_000))),
+    ).toBe("ctx 17.9k/256k (7%)")
+    expect(Option.getOrThrow(contextGauge(Option.some(500), Option.none()))).toBe("ctx 500")
   })
 
   test("refine_error lands as a DURABLE error block in the story", () => {
