@@ -184,3 +184,61 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     ),
     Match.exhaustive,
   )
+
+/* ------------------------------------------------------------------ */
+/* The attempt-row VIEW model — bounded by construction                */
+/* ------------------------------------------------------------------ */
+
+/** Above this many gates, a row renders as counts + the one gate that
+ *  matters now — a spec with 8 accept checks must never overflow the
+ *  panel into its neighbour (live-caught: cells bled into the feed). */
+export const GATE_CELLS_MAX = 4
+const CELL_NAME_BUDGET = 24
+
+export interface AttemptRowView {
+  readonly attempt: number
+  readonly files: number
+  readonly mode: "cells" | "compact"
+  /** cells mode only — names clipped to the budget. */
+  readonly cells: ReadonlyArray<GateCell>
+  /** compact mode only — the tally across every gate. */
+  readonly counts: {
+    readonly pass: number
+    readonly fail: number
+    readonly running: number
+    readonly pending: number
+    readonly skip: number
+  }
+  /** compact mode only — the gate to NAME: running > first fail > next pending. */
+  readonly active: Option.Option<GateCell>
+}
+
+const clipName = (name: string): string =>
+  name.length <= CELL_NAME_BUDGET ? name : `${name.slice(0, CELL_NAME_BUDGET - 1)}…`
+
+export const attemptRowView = (row: AttemptRow): AttemptRowView => {
+  const counts = row.gates.reduce(
+    (acc, cell) => ({ ...acc, [cell.state]: (acc[cell.state] ?? 0) + 1 }),
+    { pass: 0, fail: 0, running: 0, pending: 0, skip: 0 } as Record<GateCellState, number>,
+  )
+  const active = Option.fromNullable(
+    row.gates.find((c) => c.state === "running") ??
+      row.gates.find((c) => c.state === "fail") ??
+      row.gates.find((c) => c.state === "pending"),
+  )
+  return {
+    attempt: row.attempt,
+    files: row.files,
+    mode: row.gates.length <= GATE_CELLS_MAX ? "cells" : "compact",
+    cells: row.gates.map((cell) => ({ ...cell, name: clipName(cell.name) })),
+    counts: {
+      pass: counts.pass,
+      fail: counts.fail,
+      running: counts.running,
+      pending: counts.pending,
+      skip: counts.skip,
+    },
+    active: Option.map(active, (cell) => ({ ...cell, name: clipName(cell.name) })),
+  }
+}
+
