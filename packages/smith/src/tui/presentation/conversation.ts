@@ -37,6 +37,10 @@ export type ConversationBlock =
     }
   /** A turn that DIED — durable in the story, unlike the transient notice. */
   | { readonly kind: "error"; readonly text: string }
+  /** A BOUNDED stop (step cap, loop breaker) — not a failure, but it must
+   *  never be silent: an invisible partial outcome reads as a hang
+   *  (live-caught: 16 exploration steps, then nothing). */
+  | { readonly kind: "notice"; readonly text: string }
 
 export interface ConversationState {
   readonly blocks: ReadonlyArray<ConversationBlock>
@@ -115,6 +119,17 @@ export const reduceConversation = (
               : []),
           )
         }),
+        Match.when({ type: "agent_end" }, (end) =>
+          end.outcome === "ok"
+            ? state
+            : push(state, {
+                kind: "notice",
+                text:
+                  end.reason === "step-cap"
+                    ? 'stopped at the per-message step ceiling before finishing — the session is SAVED; send another message (e.g. "continue") to keep going'
+                    : "stopped after repeating the same tool call with no progress — the session is saved; rephrase or narrow the ask",
+              }),
+        ),
         Match.orElse(() => state),
       ),
     ),
