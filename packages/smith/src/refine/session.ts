@@ -52,6 +52,9 @@ export interface RefineSessionOptions {
   readonly unattended: boolean
   /** Refine an existing spec in place. */
   readonly slug?: SpecSlug
+  /** Continue an EXISTING conversation instead of creating one (`:resume`) —
+   *  the model keeps its full history; the UI replays it separately. */
+  readonly resume?: ConversationId
   /** Test seam; absent ⇒ the real refiner agent over `runAgent`. */
   readonly agent?: RefineAgent
 }
@@ -64,7 +67,8 @@ export const makeRefineSession = (
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const context = yield* Effect.context<ImplementorServices>()
-    const conversationId = yield* store.create(cwd).pipe(Effect.orDie)
+    const conversationId =
+      options.resume ?? (yield* store.create(cwd).pipe(Effect.orDie))
     const draftRef = yield* Ref.make(Option.none<{ slug: SpecSlug; path: string }>())
 
     // ONE handler record for the whole session — the layer (real agent) and

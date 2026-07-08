@@ -113,7 +113,9 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
   const cwd = mkdtempSync(join(tmpdir(), "smith-tui-test-"))
   const run = testRunConfig(cwd)
   const setRoleCalls: Array<{ role: ModelRole; selection: Option.Option<string> }> = []
-  const credentials = options.credentials ?? new Map<string, Credential>()
+  const credentials =
+    options.credentials ??
+    new Map<string, Credential>([["opencode", { type: "api_key", key: "test" }]])
 
   const services = Layer.mergeAll(
     LocalFileSystemLive,

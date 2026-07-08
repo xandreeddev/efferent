@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
+import { join } from "node:path"
 import { Effect, Option } from "effect"
 import { makeScriptedImplementor } from "@xandreed/foundry"
 import { runForgeSessionWith } from "../forge/session.js"
@@ -186,5 +188,67 @@ describe("the smith TUI — frame-level regressions", () => {
     const dashboard = await waitFrame(tui, (f) => f.includes("✓ accepted (attempt 1)"))
     expect(dashboard).toContain("✓ accepted (attempt 1)")
     expect(dashboard).toContain("create-out-txt-containing-done")
+  })
+
+  test("an UNCONFIGURED workspace boots into the onboarding checklist", async () => {
+    const tui = await boot({ credentials: new Map() })
+    const frame = await waitFrame(tui, (f) => f.includes("no provider connected"))
+    expect(frame).toContain("E F F E R E N T")
+    expect(frame).toContain("no provider connected")
+    expect(frame).toContain(":login opens the provider manager")
+    expect(frame).toContain("then describe what to build")
+    expect(frame).not.toContain("forge runs")
+  })
+
+  test("a configured workspace shows the brand mark and the provider strip", async () => {
+    const tui = await boot()
+    const frame = await waitFrame(tui, (f) => f.includes("providers"))
+    expect(frame).toContain("E F F E R E N T")
+    expect(frame).toContain("✓ opencode")
+    expect(frame).toContain("api key")
+    expect(frame).toContain("anthropic")
+    expect(frame).toContain("sessions (:resume)")
+  })
+
+  test(":resume lists previous sessions and REPLAYS one into the live transcript", async () => {
+    const tui = await boot()
+    // Seed a finished conversation straight into the workspace db — the same
+    // rows the store writes.
+    const db = new Database(join(tui.cwd, ".efferent", "smith.db"))
+    const cid = "00000000-0000-4000-8000-00000000fee1"
+    db.query(
+      "INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)",
+    ).run(cid, tui.cwd, "the fibonacci helper", Date.now() - 120_000)
+    db.query(
+      "INSERT INTO messages (conversation_id, position, content, created_at) VALUES (?, ?, ?, ?)",
+    ).run(cid, 0, JSON.stringify({ role: "user", content: "write a fibonacci helper" }), 1)
+    db.query(
+      "INSERT INTO messages (conversation_id, position, content, created_at) VALUES (?, ?, ?, ?)",
+    ).run(
+      cid,
+      1,
+      JSON.stringify({
+        role: "assistant",
+        content: [{ type: "text", text: "Drafted the fibonacci spec with two checks." }],
+      }),
+      2,
+    )
+    db.close()
+
+    // :new refreshes the dashboard — the seeded session appears.
+    await tui.setup.mockInput.typeText(":new")
+    tui.setup.mockInput.pressEnter()
+    const listed = await waitFrame(tui, (f) => f.includes("the fibonacci helper"))
+    expect(listed).toContain("the fibonacci helper")
+
+    await tui.setup.mockInput.typeText(":resume")
+    tui.setup.mockInput.pressEnter()
+    const picker = await waitFrame(tui, (f) => f.includes("Resume a session"))
+    expect(picker).toContain("the fibonacci helper")
+    await settle()
+    tui.setup.mockInput.pressEnter()
+    const resumed = await waitFrame(tui, (f) => f.includes("session resumed"))
+    expect(resumed).toContain("write a fibonacci helper")
+    expect(resumed).toContain("Drafted the fibonacci spec")
   })
 })
