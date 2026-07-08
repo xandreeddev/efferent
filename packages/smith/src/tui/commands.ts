@@ -1,4 +1,5 @@
 import { Match, Option } from "effect"
+import { resolveCommand } from "./presentation/palette.js"
 import { logout, openLoginFlow } from "./actions/login.js"
 import { openModelPicker, submitModel } from "./actions/model.js"
 import type { SmithTuiContext } from "./state/store.js"
@@ -15,7 +16,9 @@ import type { SmithTuiContext } from "./state/store.js"
  */
 export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
   const words = raw.replace(/^:/, "").trim().split(/\s+/)
-  const command = words[0] ?? ""
+  const typed = words[0] ?? ""
+  // Unique-prefix resolution — what the palette shows is what Enter runs.
+  const command = Option.getOrElse(resolveCommand(typed), () => typed)
   Match.value(command).pipe(
     Match.whenOr("quit", "q", () => {
       ctx.exit(ctx.store.exitCode() ?? 130)
@@ -69,7 +72,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     }),
     Match.orElse(() => {
       ctx.store.setNotice(
-        `unknown command: :${command} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :login · :logout)`,
+        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :login · :logout)`,
       )
     }),
   )
