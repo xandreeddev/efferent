@@ -1,10 +1,16 @@
 export {
   ANTHROPIC_OAUTH_BETA,
+  beginAnthropicOAuth,
   CLAUDE_CODE_SYSTEM,
+  exchangeAnthropicCode,
+  generatePkce,
+  parseAuthorizationInput,
   refreshAnthropicToken,
 } from "./auth/anthropicOAuth.js"
+export type { AuthRedirect, OAuthBegin, Pkce, RefreshedTokens } from "./auth/anthropicOAuth.js"
 export { authPaths, LocalAuthStoreLive } from "./auth/localAuth.js"
 export { LocalSettingsStoreLive } from "./settings/localSettings.js"
+export { roleModelView } from "./settings/roleView.js"
 export {
   fromChatCompletion,
   makeCompatLanguageModel,

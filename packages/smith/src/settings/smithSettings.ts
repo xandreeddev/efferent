@@ -8,7 +8,7 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
  * The smith settings overlay on the ENGINE's store, applied to every read.
  * Precedence (highest first): CLI flags > user config
  * (`.efferent/config.json`, local-over-global) > smith model defaults.
- * `setModel` passes through UN-overlaid, so a smith default is never
+ * `setRole` passes through UN-overlaid, so a smith default is never
  * persisted to the user's config.
  */
 export const applySmithSettings = (
@@ -40,7 +40,7 @@ export const smithSettingsStore = (
       const inner = yield* SettingsStore
       return {
         load: Effect.map(inner.load, (settings) => applySmithSettings(settings, run)),
-        setModel: inner.setModel,
+        setRole: inner.setRole,
       }
     }),
   )

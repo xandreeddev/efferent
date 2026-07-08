@@ -1,4 +1,4 @@
-import { Effect, Match } from "effect"
+import { Effect, Match, Option } from "effect"
 import { SettingsStore } from "@xandreed/engine"
 import type { SmithTuiContext } from "./state/store.js"
 
@@ -41,7 +41,9 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
         return
       }
       void ctx.run(
-        Effect.flatMap(SettingsStore, (store) => store.setModel(selection)).pipe(
+        Effect.flatMap(SettingsStore, (store) =>
+          store.setRole("general", Option.some(selection)),
+        ).pipe(
           Effect.tap(() =>
             Effect.sync(() =>
               ctx.store.setNotice(`model = ${selection} — applies to the next run`),

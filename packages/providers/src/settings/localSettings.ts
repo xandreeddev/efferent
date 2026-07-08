@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Layer, Option } from "effect"
 import { EngineSettings, SettingsError, SettingsStore } from "@xandreed/engine"
+import type { ModelRole } from "@xandreed/engine"
 
 /**
  * Settings from the SAME `config.json` files the previous line writes —
@@ -44,23 +45,38 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
         fastModel: asString(merged["fastModel"]),
       })
     }),
-    setModel: (selection: string) =>
+    setRole: (role: ModelRole, selection: Option.Option<string>) =>
       Effect.gen(function* () {
         const path = join(cwd, ".efferent", "config.json")
+        const key = ROLE_KEYS[role]
         const current = yield* readConfig(path)
-        yield* Effect.tryPromise({
-          try: async () => {
-            await mkdir(dirname(path), { recursive: true })
-            const tmp = `${path}.tmp-${process.pid}`
-            await writeFile(
-              tmp,
-              JSON.stringify({ ...current, model: selection }, null, 2),
-              "utf-8",
-            )
-            await rename(tmp, path)
-          },
-          catch: (e) =>
-            new SettingsError({ message: `config.json write failed: ${String(e)}` }),
+        // Some = write the key; None = drop it (the role falls back to its
+        // default). Every other key in the file is preserved untouched.
+        const next = Option.match(selection, {
+          onNone: () =>
+            Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
+          onSome: (value) => ({ ...current, [key]: value }),
         })
+        yield* writeConfigAtomic(path, next)
       }),
+  })
+
+const ROLE_KEYS: Record<ModelRole, string> = {
+  general: "model",
+  code: "codeModel",
+  fast: "fastModel",
+}
+
+const writeConfigAtomic = (
+  path: string,
+  config: Record<string, unknown>,
+): Effect.Effect<void, SettingsError> =>
+  Effect.tryPromise({
+    try: async () => {
+      await mkdir(dirname(path), { recursive: true })
+      const tmp = `${path}.tmp-${process.pid}`
+      await writeFile(tmp, JSON.stringify(config, null, 2), "utf-8")
+      await rename(tmp, path)
+    },
+    catch: (e) => new SettingsError({ message: `config.json write failed: ${String(e)}` }),
   })

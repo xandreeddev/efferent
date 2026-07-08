@@ -1,5 +1,5 @@
 import { Effect, Fiber, Option, Queue } from "effect"
-import type { FileSystem, SpecDoc } from "@xandreed/engine"
+import type { AuthStore, FileSystem, SettingsStore, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
@@ -13,7 +13,7 @@ import { runForgeSession } from "../forge/session.js"
 export const runHeadless = (
   run: SmithRunConfig,
   doc: Option.Option<SpecDoc> = Option.none(),
-): Effect.Effect<number, never, ImplementorServices | FileSystem> =>
+): Effect.Effect<number, never, ImplementorServices | FileSystem | SettingsStore | AuthStore> =>
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<Option.Option<SmithEvent>>()
     const publish = (event: SmithEvent) =>
