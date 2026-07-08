@@ -1,7 +1,7 @@
 ---
 import Icon from "./Icon.astro"
 import BrandLogo from "./BrandLogo.astro"
-import { href, GITHUB, NPM } from "../lib/nav"
+import { href, GITHUB } from "../lib/nav"
 ---
 
 <footer class="ft">
@@ -10,28 +10,28 @@ import { href, GITHUB, NPM } from "../lib/nav"
       <a class="brand" href={href("/")} aria-label="efferent home">
         <BrandLogo height={26} />
       </a>
-      <p>A coding-agent SDK on Effect.ts + Bun — built in public.</p>
+      <p>A family of purpose-built agents on Effect.ts + Bun — built in public.</p>
     </div>
 
     <nav class="ft-cols" aria-label="Footer">
       <div>
         <h4>Docs</h4>
         <a href={href("/docs/getting-started")}>Getting started</a>
-        <a href={href("/docs/your-first-agent")}>Your first agent</a>
-        <a href={href("/docs/concepts/architecture")}>Concepts</a>
-        <a href={href("/docs/reference/agent-config")}>Reference</a>
+        <a href={href("/docs/concepts/harness")}>The harness doctrine</a>
+        <a href={href("/docs/concepts/architecture")}>Architecture</a>
+        <a href={href("/docs/concepts/foundry")}>The factory</a>
       </div>
       <div>
-        <h4>Ecosystem</h4>
-        <a href={href("/#ecosystem")}>The SDK</a>
-        <a href={href("/docs/getting-started")}>The CLI</a>
-        <a href={href("/docs/concepts/evals")}>Evals</a>
-        <a href={href("/docs/examples")}>Examples</a>
+        <h4>The agents</h4>
+        <a href={href("/docs/agents/smith")}>smith — the coder</a>
+        <a href={href("/docs/agents/math")}>math — the tutor</a>
+        <a href={href("/docs/agents/canvas")}>canvas — the page builder</a>
+        <a href={href("/docs/agents/social")}>social — the drafter</a>
       </div>
       <div>
         <h4>Project</h4>
         <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
-        <a href={NPM} target="_blank" rel="noopener">npm</a>
+        <a href={href("/docs/concepts/observability")}>Observability</a>
       </div>
     </nav>
   </div>
@@ -40,7 +40,6 @@ import { href, GITHUB, NPM } from "../lib/nav"
     <span>MIT licensed · built with Effect, Bun &amp; Astro</span>
     <span class="ft-social">
       <a href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"><Icon name="github" size={16} /></a>
-      <a href={NPM} target="_blank" rel="noopener" aria-label="npm"><Icon name="npm" size={16} /></a>
     </span>
   </div>
 </footer>

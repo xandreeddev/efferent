@@ -5,48 +5,41 @@ import ProductLogo from "../components/ProductLogo.astro"
 import Icon from "../components/Icon.astro"
 import { href, products, capabilities, GITHUB } from "../lib/nav"
 
-const heroCode = `import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Schema } from "effect"
-import { runAgent, type AgentConfig } from "@xandreed/sdk-core"
+const heroCode = `$ bun run smith --cwd ~/code/toy
 
-const Roll = Tool.make("roll_dice", {
-  description: "Roll an N-sided die.",
-  parameters: { sides: Schema.Number },
-  success: Schema.Struct({ value: Schema.Number }),
-  failure: Schema.Struct({ error: Schema.String }),
-  failureMode: "return",
-})
+▌smith · ~/code/toy
+▌ specs · forge runs · lessons
 
-const toolkit = Toolkit.make(Roll)
-const handlers = toolkit.toLayer(toolkit.of({
-  roll_dice: ({ sides }) =>
-    Effect.succeed({ value: 1 + Math.floor(Math.random() * sides) }),
-}))
+❯ a stats module with tests
+  ▸ Exploring the workspace before proposing a spec…
+  ● ls(.)  ● read_file(package.json)
+  Spec draft is up — :lock when it's right.
+  └ opencode:kimi-k2.6 · 2.1k in · 240 out
 
-const config = {
-  key: "dice-agent",
-  prompt: { name: "dice", version: "1.0.0", text: "Roll when asked." },
-  toolkit,
-} satisfies AgentConfig<any>
+:lock   → spec locked — :forge to build
+:forge  → implement → snapshot → gates → accepted (attempt 1)
 
-await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
+  ✓ typecheck  ✓ bun-test  ✓ accept-stats-tests
+  artifact .foundry/runs/f3a1.json · exit 0
+
+● general kimi-k2.6  code kimi-k2.7  ctx 17.9k/256k (7%)`
 ---
 
 <BaseLayout
   title="efferent"
-  description="An open-source agent runtime on Effect.ts + Bun — a composable SDK plus one CLI that runs agents (TUI, headless, or a persistent daemon). The loop, a multi-provider router, cache-safe context compaction, and a persistent sub-agent fleet, composed as Effects in your codebase."
+  description="A family of purpose-built agents on a shared Effect.ts kernel — a spec-driven coder, a math tutor, a page builder, a social drafter — where deterministic gates declare victory, never the model."
 >
   <!-- HERO -->
   <section class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
-        <p class="eyebrow">The efferent ecosystem</p>
-        <h1>An agent runtime,<br /><span class="grad">composed on Effect.</span></h1>
+        <p class="eyebrow">The agent line</p>
+        <h1>Agents where the gates<br /><span class="grad">declare victory.</span></h1>
         <p class="sub">
-          An open-source SDK for building agents — and one CLI that runs them: an interactive TUI,
-          headless modes, or a persistent per-workspace daemon. The loop, the multi-provider router,
-          cache-safe context compaction, and a sub-agent fleet live in your codebase as composable
-          Effects, not buried in a CLI.
+          A family of purpose-built agents on one shared Effect.ts kernel — a spec-driven coder,
+          a server-graded math tutor, a gated page builder, a human-approved social drafter.
+          Validation and looping are enforced in deterministic code, never advisory; how much
+          autonomy each agent earns is set by the strength of its validation oracle.
         </p>
         <div class="hero-cta">
           <a class="btn btn-primary" href={href("/docs/getting-started")}>
@@ -55,14 +48,14 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
           <a class="btn btn-ghost" href={href("/#ecosystem")}>Explore the ecosystem</a>
         </div>
         <div class="cmd">
-          <code><span class="prompt">$</span> npm i -g efferent</code>
-          <button class="copy" data-copy="npm i -g efferent" aria-label="Copy install command">Copy</button>
+          <code><span class="prompt">$</span> bun run smith --cwd .</code>
+          <button class="copy" data-copy="bun run smith --cwd ." aria-label="Copy run command">Copy</button>
         </div>
       </div>
 
       <div class="hero-code">
-        <SourceFile code={heroCode} file="dice-agent.ts" lang="ts" />
-        <p class="hero-code-cap">A real agent in a handful of lines — the same shape powers the coding agent.</p>
+        <SourceFile code={heroCode} file="smith — the workspace session" lang="text" />
+        <p class="hero-code-cap">Refine a spec with the human, lock it, forge under gates — the whole factory in one terminal.</p>
       </div>
     </div>
   </section>
@@ -71,9 +64,9 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
   <section class="section" id="ecosystem">
     <div class="section-inner">
       <header class="sec-head">
-        <p class="eyebrow">Two products, one codebase</p>
+        <p class="eyebrow">Two pillars, one codebase</p>
         <h2>The ecosystem</h2>
-        <p class="sec-sub">A pure-domain SDK, and the apps built on it. Each app is a thin driver composing the same Layers.</p>
+        <p class="sec-sub">The factory that verifies the work, and the agents that do it — thin drivers composing the same Layers.</p>
       </header>
 
       <div class="products">
@@ -127,11 +120,11 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
       <p class="eyebrow">Why Effect</p>
       <h2>Typed errors, Layers, and a loop you can read.</h2>
       <p>
-        efferent is the wedge: the agent loop, the context tree, cache-safe context compaction, the
-        multi-provider router, and approval are all composable <code>Layer</code>s and Effects in a pure-domain package —
-        typed errors end to end, no <code>try</code>/<code>catch</code>, provider selection a runtime
-        concern. Each agent is a thin driver that composes those Layers at the edge and hands off to Bun.
-        No build step: Bun runs the TypeScript directly.
+        The agent loop is one <code>Effect.iterate</code> fold; every capability an agent needs from
+        outside is a <code>Context.Tag</code> port with <code>Layer</code> adapters at the edge; errors
+        are typed values end to end — no <code>try</code>/<code>catch</code> anywhere, and the repo's
+        own gates fail the build if one appears. Provider selection is a runtime concern re-resolved
+        on every call. No build step: Bun runs the TypeScript directly.
       </p>
     </div>
   </section>
@@ -139,7 +132,7 @@ await runAgent(config, id, "Roll a d20").pipe(Effect.provide(handlers))`
   <!-- CTA -->
   <section class="section">
     <div class="section-inner cta">
-      <h2>Build your first agent in minutes.</h2>
+      <h2>Clone the factory. Run the agents.</h2>
       <div class="hero-cta">
         <a class="btn btn-primary" href={href("/docs/getting-started")}>Get started <Icon name="arrow" size={16} /></a>
         <a class="btn btn-ghost" href={GITHUB} target="_blank" rel="noopener">
