@@ -1,4 +1,5 @@
 import { Match, Option } from "effect"
+import { quitCode } from "./keys.js"
 import { resolveCommand } from "./presentation/palette.js"
 import { logout, openLoginFlow } from "./actions/login.js"
 import { openModelPicker, submitModel } from "./actions/model.js"
@@ -21,7 +22,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
   const command = Option.getOrElse(resolveCommand(typed), () => typed)
   Match.value(command).pipe(
     Match.whenOr("quit", "q", () => {
-      ctx.exit(ctx.store.exitCode() ?? 130)
+      ctx.exit(quitCode(ctx.store.exitCode()))
     }),
     Match.when("new", () => {
       if (ctx.newSpec === undefined) {

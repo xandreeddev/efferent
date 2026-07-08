@@ -76,6 +76,9 @@ export interface SmithStore {
   /** The session fiber's exit code once it finished naturally. */
   readonly exitCode: Accessor<number | undefined>
   readonly setExitCode: (code: number) => void
+  /** Epoch ms of the first Ctrl-C press (double-press quit window). */
+  readonly ctrlCPendingAt: Accessor<number>
+  readonly setCtrlCPendingAt: (at: number) => void
   readonly roles: Accessor<RolesReadout>
   readonly setRoles: (roles: RolesReadout) => void
   /** The inline contextual surface (picker / login) — ONE at a time. */
@@ -140,11 +143,17 @@ export const createSmithStore = (
   const composerRead = { current: (): string => "" }
   const [busySince, setBusySince] = createSignal(0)
   const [lastEventAt, setLastEventAt] = createSignal(0)
+  const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
   return {
     floor,
     reduce: (event) =>
       batch(() => {
         setLastEventAt(Date.now())
+        // A refine failure must be IMPOSSIBLE to miss — the SpecPanel slot
+        // alone hid provider errors from users watching the composer.
+        if (event.type === "refine_error") {
+          setNotice(`refine error: ${event.message.slice(0, 120)}`)
+        }
         setFloor((state) => reduceFloor(state, event))
         setRefine((state) => reduceRefine(state, event))
       }),
@@ -170,6 +179,8 @@ export const createSmithStore = (
     setNotice,
     exitCode,
     setExitCode: (code) => setExitCodeSig(code),
+    ctrlCPendingAt,
+    setCtrlCPendingAt: (at) => setCtrlCPendingAt(at),
     roles: rolesSig,
     setRoles: (next) => setRolesSig(next),
     overlay,

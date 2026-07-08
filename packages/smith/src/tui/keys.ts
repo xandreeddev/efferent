@@ -26,7 +26,19 @@ export interface Key {
   readonly ctrl?: boolean
   /** The literal characters typed (printables ride here). */
   readonly sequence?: string
+  /** kitty protocol also delivers repeat/release — quit only on press. */
+  readonly eventType?: string
 }
+
+/** Second Ctrl-C within this window quits; a lone press just warns —
+ *  immune to a single stray byte at boot, and a deliberate exit stays
+ *  two keystrokes away (the old TUI's proven rule). */
+export const CTRL_C_WINDOW_MS = 1_500
+
+/** The exit code a USER-initiated quit reports: a finished run's code, or
+ *  0 — quitting an idle session is success, not an error (130 made every
+ *  clean quit print bun's "error: script exited" line — live-caught). */
+export const quitCode = (finished: number | undefined): number => finished ?? 0
 
 /** The typed characters in a key event — printables only. Terminals without
  *  bracketed paste deliver pasted text as MULTI-char sequences; accept the
@@ -130,7 +142,14 @@ const routeLoginKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "login" 
  */
 export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
   if (key.ctrl === true && key.name === "c") {
-    ctx.exit(ctx.store.exitCode() ?? 130)
+    if (key.eventType !== undefined && key.eventType !== "press") return
+    const now = Date.now()
+    if (now - ctx.store.ctrlCPendingAt() <= CTRL_C_WINDOW_MS) {
+      ctx.exit(quitCode(ctx.store.exitCode()))
+      return
+    }
+    ctx.store.setCtrlCPendingAt(now)
+    ctx.store.setNotice("press Ctrl-C again to quit (or :quit)")
     return
   }
   const overlay = ctx.store.overlay()
