@@ -9,6 +9,8 @@ import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
 import type { GateCell } from "../presentation/floor.js"
 import { contextGauge, contextTokens } from "../presentation/conversation.js"
+import { flowView } from "../presentation/flow.js"
+import type { FlowStep } from "../presentation/flow.js"
 import { contextWindowOf } from "../presentation/modelCatalog.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
@@ -254,7 +256,7 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
   const doc = () => Option.getOrUndefined(refine().draft)
   const badgeColor = () => (refine().locked ? tokens.state.ok : tokens.state.warn)
   return (
-    <box flexDirection="column" width={52} flexShrink={0} marginTop={1} marginLeft={2}>
+    <box flexDirection="column" marginTop={1}>
       <box flexDirection="row">
         <text fg={tokens.text.dim} flexGrow={1}>spec</text>
         <Show when={doc() !== undefined}>
@@ -302,10 +304,47 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
  *  through the BOUNDED view model: few gates = named cells (clipped), many
  *  gates = a tally + the one gate that matters now — a row can never
  *  overflow the panel into the feed. */
+/** The flow stepper — WHERE the session is in the pipeline, always at the
+ *  top of the side panel: what's done, what's live, what only the human can
+ *  do next (the "hard to understand which phase we're in" complaint). */
+const FlowPanel = (props: { ctx: SmithTuiContext }) => {
+  const { store } = props.ctx
+  const steps = () => flowView(store.mode(), store.refine(), store.floor())
+  const stepGlyph = (state: FlowStep["state"]): string =>
+    state === "done" ? glyph.pass : state === "current" ? "●" : "○"
+  const stepColor = (state: FlowStep["state"]): string =>
+    state === "done"
+      ? tokens.state.ok
+      : state === "current"
+        ? tokens.state.running
+        : tokens.state.pending
+  return (
+    <box flexDirection="column" flexShrink={0} marginTop={1}>
+      <text fg={tokens.text.dim}>the flow</text>
+      <For each={steps()}>
+        {(step) => (
+          <box flexDirection="row">
+            <text fg={stepColor(step.state)} flexShrink={0}>{`  ${stepGlyph(step.state)} `}</text>
+            <text
+              fg={step.state === "current" ? tokens.text.bright : tokens.text.default}
+              flexShrink={0}
+            >
+              {step.label.padEnd(7)}
+            </text>
+            <text fg={tokens.text.dim} wrapMode="none" flexShrink={1}>
+              {step.detail}
+            </text>
+          </box>
+        )}
+      </For>
+    </box>
+  )
+}
+
 const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
   const floor = props.ctx.store.floor
   return (
-    <box flexDirection="column" width={52} flexShrink={0} marginTop={1} marginLeft={2}>
+    <box flexDirection="column" marginTop={1}>
       <text fg={tokens.text.dim}>attempts</text>
       <Show
         when={floor().attempts.length > 0}
@@ -533,13 +572,19 @@ export const App = (props: { ctx: SmithTuiContext }) => {
       <Show when={mode() === "refine"}>
         <box flexDirection="row" flexGrow={1}>
           <ConversationPane ctx={props.ctx} label="conversation — the refiner" />
-          <SpecPanel ctx={props.ctx} />
+          <box flexDirection="column" width={52} flexShrink={0} marginLeft={2}>
+            <FlowPanel ctx={props.ctx} />
+            <SpecPanel ctx={props.ctx} />
+          </box>
         </box>
       </Show>
       <Show when={mode() === "forge"}>
         <box flexDirection="row" flexGrow={1}>
           <ConversationPane ctx={props.ctx} label="conversation — the implementor" />
-          <AttemptPanel ctx={props.ctx} />
+          <box flexDirection="column" width={52} flexShrink={0} marginLeft={2}>
+            <FlowPanel ctx={props.ctx} />
+            <AttemptPanel ctx={props.ctx} />
+          </box>
         </box>
       </Show>
       <StatusRows ctx={props.ctx} />
