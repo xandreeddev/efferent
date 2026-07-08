@@ -3,7 +3,8 @@
 // config.json tiers, same SQLite conversation store) minus the TUI-cli extras,
 // with the smith settings overlay on top and a headless-safe Approval.
 
-import { homedir } from "node:os"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Logger, Option } from "effect"
 import { BunContext } from "@effect/platform-bun"
@@ -34,6 +35,9 @@ Usage:
   bun run smith spec "<rough idea>" [flags]   refine a SpecDoc (-p: one unattended draft; --yes locks)
   bun run smith forge <slug|spec.md> [flags]  forge a LOCKED spec
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
+  bun run smith selftest                      the factory smoke test: a canned prompt forges
+                                              to completion in a THROWAWAY workspace (real
+                                              providers, real gates; exit 0 = the stack works)
 
 Flags:
   --cwd <dir>            workspace to forge IN PLACE (default: process.cwd())
@@ -58,6 +62,7 @@ config. Exit: 0 accepted/locked · 1 rejected · 2 error.`
 
 interface ParseState {
   readonly command: Option.Option<"spec" | "forge">
+  readonly selftest: boolean
   readonly yes: boolean
   readonly task: Option.Option<string>
   readonly cwd: string
@@ -79,6 +84,7 @@ interface ParseState {
 
 const initialState: ParseState = {
   command: Option.none(),
+  selftest: false,
   yes: false,
   task: Option.none(),
   cwd: process.cwd(),
@@ -139,6 +145,7 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
     if (Option.isNone(state.command) && Option.isNone(state.task)) {
       if (token === "spec") return { ...state, command: Option.some("spec" as const) }
       if (token === "forge") return { ...state, command: Option.some("forge" as const) }
+      if (token === "selftest" && !state.selftest) return { ...state, selftest: true }
     }
     return Option.isNone(state.task)
       ? { ...state, task: Option.some(token) }
@@ -151,6 +158,39 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
       }
     : folded
 }
+
+/** The selftest: ONE canned prompt that forges to completion in a throwaway
+ *  seeded workspace — auth, router, gateway, loop, and gates all prove
+ *  themselves in a single honest exit code. The old line had exactly this
+ *  ("inject a prompt, run the test to completion"); it caught what scripted
+ *  twins cannot. */
+export const SELFTEST_TASK =
+  "Create src/add.ts exporting a pure function add(a: number, b: number): number returning their sum, and src/add.test.ts covering it with bun:test (describe/test/expect, at least three cases)."
+export const SELFTEST_ACCEPTANCE: ReadonlyArray<string> = [
+  "src/add.ts exports add(a, b) returning the sum",
+  "src/add.test.ts covers it and bun test exits 0",
+]
+
+const seedSelftestWorkspace = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), "smith-selftest-"))
+  // A package.json arms the bun-test gate; nothing else is needed.
+  writeFileSync(
+    join(dir, "package.json"),
+    `${JSON.stringify({ name: "smith-selftest", type: "module", private: true }, null, 2)}\n`,
+  )
+  return dir
+}
+
+/** Fold the selftest overrides onto a parsed run (pure; the seeded cwd is
+ *  passed in so tests can use a plain temp dir). */
+export const toSelftestRun = (base: SmithRunConfig, cwd: string): SmithRunConfig => ({
+  ...base,
+  cwd,
+  task: SELFTEST_TASK,
+  acceptance: SELFTEST_ACCEPTANCE,
+  headless: true,
+  maxAttempts: Math.min(base.maxAttempts, 3),
+})
 
 export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => ({
   task,
@@ -195,14 +235,20 @@ if (isDirectRun) {
     process.exit(0)
   }
   const command = Option.getOrUndefined(state.command)
-  const bare = task === undefined && command === undefined
+  const bare = task === undefined && command === undefined && !state.selftest
   const bareInteractive = bare && !state.headless && process.stdout.isTTY === true
   if ((bare && !bareInteractive) || state.errors.length > 0) {
     state.errors.forEach((error) => console.error(`smith: ${error}`))
     console.error(USAGE)
     process.exit(2)
   }
-  const run = toRunConfig(state, task ?? "")
+  const parsedRun = toRunConfig(state, task ?? "")
+  const run = state.selftest ? toSelftestRun(parsedRun, seedSelftestWorkspace()) : parsedRun
+  if (state.selftest) {
+    console.error(
+      `smith selftest — the factory smoke test (REAL providers) · workspace ${run.cwd}`,
+    )
+  }
   const interactive = !run.headless && process.stdout.isTTY === true
   // Bun auto-loads the LAUNCH dir's .env, and smith always launches from the
   // efferent repo root — a stale EFFERENT_MODEL there would silently override

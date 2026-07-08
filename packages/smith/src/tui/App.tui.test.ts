@@ -258,6 +258,47 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(resumed).toContain("Drafted the fibonacci spec")
   })
 
+  test("a LONG conversation keeps the tail at the bottom and the chrome intact", async () => {
+    // The fused-rows class: 40 turns of reasoning + tools + tags once made
+    // yoga COMPRESS block heights and interleave text. The scrollbox +
+    // flexShrink-0 blocks must keep the newest turn readable and the status
+    // strip un-overdrawn at any history length.
+    const tui = await boot()
+    tui.store.setMode("refine")
+    tui.store.addUserLine("stress the pane")
+    Array.from({ length: 40 }, (_, i) => i).forEach((i) => {
+      tui.store.reduce({
+        type: "agent",
+        event: {
+          type: "assistant_message",
+          turnIndex: i,
+          text: `turn ${i} reply — every row stays honest under load`,
+          reasoning: `thinking about step ${i} with enough words that the line wraps at least once across the pane`,
+          model: "opencode:kimi-k2.6",
+          toolCalls: [],
+          usage: { inputTokens: 1000 + i, outputTokens: 40, totalTokens: 1040 + i, cacheReadTokens: 0 },
+        },
+      })
+      tui.store.reduce({
+        type: "agent",
+        event: { type: "tool_start", turnIndex: i, toolCallId: `t${i}`, toolName: "read_file", args: { path: `src/f${i}.ts` } },
+      })
+      tui.store.reduce({
+        type: "agent",
+        event: { type: "tool_end", turnIndex: i, toolCallId: `t${i}`, toolName: "read_file", args: {}, ok: true, result: {} },
+      })
+    })
+    const frame = await waitFrame(tui, (f) => f.includes("turn 39 reply"))
+    // The newest turn owns the bottom of the story…
+    expect(frame).toContain("turn 39 reply")
+    expect(frame).toContain("└ opencode:kimi-k2.6")
+    // …the ctx gauge reads the LATEST turn's input tokens (the scripted
+    // model "g" has no known window → absolute only)…
+    expect(frame).toContain("ctx 1k")
+    // …and the chrome survives — the status strip is not overdrawn.
+    expect(frame).toContain("● general")
+  })
+
   test("a spec with MANY checks renders the compact gate tally, never overflow", async () => {
     const tui = await boot({
       seams: {
