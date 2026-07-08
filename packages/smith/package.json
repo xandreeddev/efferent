@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The agent in the factory: a coding agent whose outer loop is @xandreed/foundry's forge \u2014 the efferent coder implements, the gate pipeline judges, typed feedback drives the retry.",
+  "description": "The agent in the factory: a coding agent whose outer loop is @xandreed/foundry's forge — the efferent coder implements, the gate pipeline judges, typed feedback drives the retry.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./tui-testing": "./src/tui/testing.ts"
   },
   "dependencies": {
     "@effect/ai": "^0.35.0",

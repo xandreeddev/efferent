@@ -10,7 +10,7 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { loadForgeLessons, runForgeSession } from "../forge/session.js"
 import { makeRefineSession } from "../refine/session.js"
-import type { RefineSession } from "../refine/session.js"
+import type { RefineAgent, RefineSession } from "../refine/session.js"
 import { listSpecs, loadSpecDoc } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
 import { readRuns } from "@xandreed/foundry"
@@ -20,7 +20,7 @@ import { createSmithStore } from "./state/store.js"
 import type { SmithStore, SmithTuiContext } from "./state/store.js"
 import { App } from "./view/App.js"
 
-type TuiServices = ImplementorServices | FileSystem | SettingsStore | AuthStore
+export type TuiServices = ImplementorServices | FileSystem | SettingsStore | AuthStore
 
 /** The scoped chassis every smith TUI mode shares: queue+pump, renderer,
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */
@@ -33,8 +33,9 @@ const withTuiChassis = (
     readonly rt: Runtime.Runtime<TuiServices>
     readonly exitDeferred: Deferred.Deferred<number>
   }) => Effect.Effect<SmithTuiContext, never, TuiServices | Scope.Scope>,
-): Effect.Effect<number, never, TuiServices> =>
-  Effect.scoped(
+): Effect.Effect<number, never, TuiServices> => {
+  const bootedAt = Date.now()
+  return Effect.scoped(
     Effect.gen(function* () {
       const queue = yield* Queue.unbounded<SmithEvent>()
       const publish = (event: SmithEvent) =>
@@ -82,7 +83,17 @@ const withTuiChassis = (
       )
       return yield* Deferred.await(exitDeferred)
     }),
+  ).pipe(
+    // After the scope closed (terminal restored): one self-describing line —
+    // "mystery exits" become a code + an uptime instead of a guessing game.
+    Effect.tap((code) =>
+      Effect.sync(() => {
+        const seconds = ((Date.now() - bootedAt) / 1000).toFixed(1)
+        console.error(`smith: session ended (code ${code} after ${seconds}s)`)
+      }),
+    ),
   )
+}
 
 /**
  * The factory-floor TUI: the cli's three-runtime bridge (Effect owns the forge
@@ -226,11 +237,46 @@ export const runTuiRefine = (
  * the SAME session with the floor live; completion refreshes the dashboard
  * and the next idea starts over. Exit only via :quit / Ctrl-C.
  */
-export const runTuiWorkspace = (
+/** The chassis surface a workspace body builds its context over — exported
+ *  so the TUI test harness can mount the SAME wiring over a test renderer. */
+export interface WorkspaceChassis {
+  readonly store: SmithStore
+  readonly publish: (event: SmithEvent) => Effect.Effect<void>
+  readonly rt: Runtime.Runtime<TuiServices>
+  readonly exitDeferred: Deferred.Deferred<number>
+}
+
+/** Test seams: production uses the real refiner agent + runForgeSession;
+ *  the TUI battery injects the scripted twins (the SAME seams the scenario
+ *  packs drive). */
+export interface WorkspaceSeams {
+  readonly refineAgent?: RefineAgent
+  readonly forgeRunner?: typeof runForgeSession
+}
+
+export const makeWorkspaceBody = (
   run: SmithRunConfig,
-): Effect.Effect<number, never, TuiServices> =>
-  withTuiChassis(run, "idle", ({ exitDeferred, publish, rt, store }) =>
+  seams: WorkspaceSeams = {},
+) =>
+  ({ exitDeferred, publish, rt, store }: WorkspaceChassis): Effect.Effect<
+    SmithTuiContext,
+    never,
+    TuiServices | Scope.Scope
+  > =>
     Effect.gen(function* () {
+      // NOTHING forked may die silently — a crashed driver action surfaces
+      // on the notice line (live-caught: a swallowed defect looked like
+      // "nothing happens" to the user).
+      const forked = <A, E>(label: string, effect: Effect.Effect<A, E, TuiServices>) =>
+        Runtime.runFork(rt)(
+          effect.pipe(
+            Effect.catchAllCause((cause) =>
+              Effect.sync(() => {
+                store.setNotice(`${label} crashed: ${String(cause).slice(0, 140)}`)
+              }),
+            ),
+          ),
+        )
       const refineRef = yield* Ref.make(Option.none<RefineSession>())
       const forgeFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
       const turnFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
@@ -279,9 +325,8 @@ export const runTuiWorkspace = (
       })
 
       const sendText = (text: string): void => {
-        Runtime.runFork(
-          rt,
-        )(
+        forked(
+          "send",
           Effect.gen(function* () {
             const running = yield* Ref.get(forgeFiberRef)
             if (Option.isSome(running)) {
@@ -307,6 +352,7 @@ export const runTuiWorkspace = (
                 Effect.gen(function* () {
                   const created = yield* makeRefineSession(run.cwd, publish, {
                     unattended: false,
+                    ...(seams.refineAgent !== undefined ? { agent: seams.refineAgent } : {}),
                   })
                   yield* Ref.set(refineRef, Option.some(created))
                   yield* Effect.sync(() => {
@@ -317,7 +363,8 @@ export const runTuiWorkspace = (
                   return created
                 }),
             })
-            const fiber = Runtime.runFork(rt)(
+            const fiber = forked(
+              "turn",
               turn(session, text).pipe(
                 Effect.ensuring(Ref.set(turnFiberRef, Option.none())),
               ),
@@ -328,9 +375,8 @@ export const runTuiWorkspace = (
       }
 
       const startForge = (slug: Option.Option<string>): void => {
-        Runtime.runFork(
-          rt,
-        )(
+        forked(
+          "forge",
           Effect.gen(function* () {
             const running = yield* Ref.get(forgeFiberRef)
             if (Option.isSome(running)) {
@@ -370,8 +416,9 @@ export const runTuiWorkspace = (
               store.resetFloor(doc.value.goal, run.maxAttempts)
               store.setMode("forge")
             })
+            const forgeRunner = seams.forgeRunner ?? runForgeSession
             const fiber = Runtime.runFork(rt)(
-              runForgeSession({ ...run, task: doc.value.goal }, publish, doc).pipe(
+              forgeRunner({ ...run, task: doc.value.goal }, publish, doc).pipe(
                 Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
                 Effect.catchAll(() => Effect.succeed(2)),
                 Effect.tap((code) => Effect.sync(() => store.setExitCode(code))),
@@ -464,6 +511,10 @@ export const runTuiWorkspace = (
           Runtime.runFork(rt)(dropRefine)
         },
       }
-    }),
-  )
+    })
+
+export const runTuiWorkspace = (
+  run: SmithRunConfig,
+): Effect.Effect<number, never, TuiServices> =>
+  withTuiChassis(run, "idle", makeWorkspaceBody(run))
 
