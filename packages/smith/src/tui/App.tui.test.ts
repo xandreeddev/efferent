@@ -176,10 +176,15 @@ describe("the smith TUI — frame-level regressions", () => {
     // The conversation pane carries the user's line at full width.
     expect(drafted).toContain("❯ make an out file")
     expect(drafted).toContain("conversation — the refiner")
+    // The flow stepper names the phase and the human's next move.
+    expect(drafted).toContain("the flow")
+    expect(drafted).toContain("draft up — iterate in the composer")
+    expect(drafted).toContain(":lock when the spec is right")
 
     await tui.setup.mockInput.typeText(":lock")
     tui.setup.mockInput.pressEnter()
-    await waitFrame(tui, (f) => f.includes("locked"))
+    const lockedFrame = await waitFrame(tui, (f) => f.includes("locked by you"))
+    expect(lockedFrame).toContain(":forge to build")
 
     await tui.setup.mockInput.typeText(":forge")
     tui.setup.mockInput.pressEnter()
