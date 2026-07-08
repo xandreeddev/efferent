@@ -26,6 +26,17 @@ export interface SanitizeResult {
   readonly dropped: ReadonlyArray<string>
 }
 
+export interface SanitizeOptions {
+  /** Admit Alpine.js directives (`x-*`, `@event`, `:bind` shorthands and the
+   *  `<template>` element for x-if/x-for) — page-LOCAL client state for
+   *  surfaces that vendor Alpine and pin a CSP. `x-html` (raw HTML
+   *  injection), `x-teleport` (chrome hijack), and binds onto URL/style
+   *  attributes (`:href`, `x-bind:src`, `:style`, …) stay banned; the
+   *  expression VOCABULARY is validateUi's `alpine-expr` family, and the
+   *  browser CSP is the backstop. */
+  readonly alpine?: boolean
+}
+
 export const SANITIZE_MAX_BYTES = 262_144
 
 /** Elements whose entire content is discarded. */
@@ -103,7 +114,28 @@ const SAFE_HREF = /^(https?:\/\/|\/|#|mailto:)/i
 const SAFE_SRC = /^(https:\/\/|\/)/i
 const EXTERNAL = /^https?:\/\//i
 
-const ATTR_RE = /([a-zA-Z_][a-zA-Z0-9_:.-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g
+const ATTR_RE = /([a-zA-Z_@:][a-zA-Z0-9_:.@-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g
+
+/** Alpine directive names: `x-data`, `x-on:click.prevent`, `@click.enter`,
+ *  `:class`. Nothing else — a stray `:` or `@` attribute is not Alpine. */
+const ALPINE_NAME =
+  /^(x-[a-z][a-z0-9-]*(?::[a-zA-Z0-9_-]+)?(?:\.[a-zA-Z0-9-]+)*|@[a-z][a-z0-9-]*(?:\.[a-zA-Z0-9-]+)*|:[a-z][a-z0-9-]*)$/
+
+/** Directives banned even in alpine mode. */
+const ALPINE_BANNED = new Set(["x-html", "x-teleport"])
+
+/** Attributes that may never be BOUND dynamically (URL/style laundering —
+ *  a bound value bypasses the static href/src/action checks above). */
+const ALPINE_BANNED_BIND = new Set([
+  "href", "src", "srcset", "action", "formaction", "style",
+])
+
+const alpineBindTarget = (name: string): string | undefined =>
+  name.startsWith("x-bind:")
+    ? name.slice("x-bind:".length)
+    : name.startsWith(":")
+      ? name.slice(1)
+      : undefined
 
 /* ------------------------------------------------------------------ */
 /* Attributes                                                          */
@@ -122,7 +154,16 @@ interface AttrVerdict {
   readonly external?: boolean
 }
 
-const judgeAttr = (tag: string, name: string, value: string): AttrVerdict => {
+const judgeAttr = (tag: string, name: string, value: string, alpine: boolean): AttrVerdict => {
+  if (alpine && ALPINE_NAME.test(name)) {
+    const bind = alpineBindTarget(name)
+    const banned =
+      ALPINE_BANNED.has(name) ||
+      (bind !== undefined && (ALPINE_BANNED_BIND.has(bind) || bind.startsWith("on")))
+    return banned
+      ? { keep: false, outValue: value, note: `${tag}[${name}]` }
+      : { keep: true, outValue: value }
+  }
   if (name === "id") {
     const ok = SAFE_ID.test(value) && !FORBIDDEN_ID.test(value)
     return { keep: ok, outValue: value, ...(ok ? {} : { note: `${tag}[id=${value}]` }) }
@@ -184,7 +225,7 @@ const judgeAttr = (tag: string, name: string, value: string): AttrVerdict => {
   return { keep: false, outValue: value, note: `${tag}[${name}]` }
 }
 
-const sanitizeAttrs = (tag: string, attrText: string): AttrState => {
+const sanitizeAttrs = (tag: string, attrText: string, alpine: boolean): AttrState => {
   const folded = [...attrText.matchAll(ATTR_RE)]
     .filter((m) => (m[0] ?? "").trim() !== "")
     .reduce<AttrState>(
@@ -218,7 +259,7 @@ const sanitizeAttrs = (tag: string, attrText: string): AttrState => {
         // We set target/rel ourselves on external links; agent-provided drop silently.
         if (name === "target" || name === "rel") return st
 
-        const verdict = judgeAttr(tag, name, value)
+        const verdict = judgeAttr(tag, name, value, alpine)
         return {
           out: verdict.keep ? `${st.out} ${name}="${escapeHtml(verdict.outValue)}"` : st.out,
           dropped: verdict.note !== undefined ? [...st.dropped, verdict.note] : st.dropped,
@@ -285,7 +326,7 @@ const skipDropped = (input: string, from: number, name: string): number => {
   return end.i
 }
 
-const step = (src: string, st: WalkState): WalkState => {
+const step = (src: string, st: WalkState, alpine: boolean): WalkState => {
   const lt = src.indexOf("<", st.i)
   if (lt === -1) {
     return { ...st, i: src.length, out: st.out + escText(src.slice(st.i)) }
@@ -324,7 +365,10 @@ const step = (src: string, st: WalkState): WalkState => {
     const selfClosed = (openMatch[3] ?? "") === "/"
     const i = lt + openMatch[0].length
 
-    if (DROP_WITH_CONTENTS.has(name)) {
+    // In alpine mode <template> is a first-class container (x-if / x-for);
+    // its children sanitize like any other markup.
+    const templateOk = alpine && name === "template"
+    if (DROP_WITH_CONTENTS.has(name) && !templateOk) {
       return {
         ...st,
         out,
@@ -332,7 +376,7 @@ const step = (src: string, st: WalkState): WalkState => {
         i: !selfClosed && !VOID_TAGS.has(name) ? skipDropped(src, i, name) : i,
       }
     }
-    if (!ALLOWED_TAGS.has(name)) {
+    if (!ALLOWED_TAGS.has(name) && !templateOk) {
       // Unwrap: children keep processing; the tag itself vanishes.
       return {
         ...st,
@@ -346,7 +390,7 @@ const step = (src: string, st: WalkState): WalkState => {
       }
     }
 
-    const attrs = sanitizeAttrs(name, attrText)
+    const attrs = sanitizeAttrs(name, attrText, alpine)
     const dropped = [...st.dropped, ...attrs.dropped]
     if (VOID_TAGS.has(name)) {
       return { ...st, out: `${out}<${name}${attrs.out} />`, i, dropped }
@@ -368,7 +412,8 @@ const step = (src: string, st: WalkState): WalkState => {
 }
 
 /** Sanitize agent-authored HTML into a self-contained, allowlisted fragment. */
-export const sanitizeHtml = (input: string): SanitizeResult => {
+export const sanitizeHtml = (input: string, options: SanitizeOptions = {}): SanitizeResult => {
+  const alpine = options.alpine === true
   const truncated = input.length > SANITIZE_MAX_BYTES
   const src = truncated ? input.slice(0, SANITIZE_MAX_BYTES) : input
 
@@ -382,7 +427,7 @@ export const sanitizeHtml = (input: string): SanitizeResult => {
       } as WalkState,
       {
         while: (st) => st.i < src.length,
-        body: (st) => Effect.sync(() => step(src, st)),
+        body: (st) => Effect.sync(() => step(src, st, alpine)),
       },
     ),
   )

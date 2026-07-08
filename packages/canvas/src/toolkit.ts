@@ -68,7 +68,7 @@ export const makeCanvasHandlers = (
             message: `this render is ${html.length} bytes (cap ${HTML_MAX_BYTES}) — split it: render the page skeleton first, then stream sections with mode:"append"`,
           })
         }
-        const findings = validateUi(html)
+        const findings = validateUi(html, { alpine: true })
         if (findings.length > 0) {
           return yield* Effect.fail({
             error: "UiRejected",
