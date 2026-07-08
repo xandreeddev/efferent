@@ -22,6 +22,9 @@ bun run smith spec "a stats module with tests" --cwd ~/code/toy   # TTY → refi
 bun run smith spec "<idea>" --cwd <dir> -p [--yes]  # one unattended draft on stdout (--yes locks)
 bun run smith forge <slug|.efferent/specs/x.md>     # forge a LOCKED spec
 bun run smith "<task>" --cwd <dir> [-p]             # shorthand: trivial locked spec + forge
+bun run smith selftest                              # the factory SMOKE TEST: a canned prompt
+#   forges to completion in a throwaway seeded workspace on REAL providers — exit 0 = auth,
+#   router, gateway, loop, and gates all work RIGHT NOW (the dogfood the scripted twins can't be)
 ```
 
 The SpecDoc lives at `<cwd>/.efferent/specs/<slug>.md` — git-committable
