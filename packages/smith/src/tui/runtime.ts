@@ -144,7 +144,6 @@ export const runTuiRefine = (
           })
           const draft = yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
           yield* Effect.sync(() => {
-            store.setBusy(false)
             if (autoLock && Option.isSome(draft) && !store.refine().locked) {
               store.setNotice("draft ready — auto-locking (--yes)")
             }
@@ -152,7 +151,7 @@ export const runTuiRefine = (
           if (autoLock && Option.isSome(draft) && !store.refine().locked) {
             yield* session.lock.pipe(Effect.catchAll(() => Effect.void))
           }
-        })
+        }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
 
       // The opening turn: the idea itself.
       yield* Effect.forkScoped(turn(idea))
@@ -234,6 +233,7 @@ export const runTuiWorkspace = (
     Effect.gen(function* () {
       const refineRef = yield* Ref.make(Option.none<RefineSession>())
       const forgeFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
+      const turnFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
 
       // The dashboard reads: specs (undecodable ones dropped — one hand-edited
       // file can't blank the view), the forge-run history, the lessons brief.
@@ -253,6 +253,9 @@ export const runTuiWorkspace = (
       })
       yield* refreshWorkspace
 
+      // busy resets via `ensuring` — a failed OR INTERRUPTED turn must never
+      // leave the session locked (live-caught: a stalled model call froze the
+      // whole TUI with no way out).
       const turn = (
         session: RefineSession,
         text: string,
@@ -263,9 +266,8 @@ export const runTuiWorkspace = (
             store.setBusy(true)
           })
           yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
-          yield* Effect.sync(() => store.setBusy(false))
           yield* refreshWorkspace
-        })
+        }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
 
       const dropRefine = Effect.gen(function* () {
         yield* Ref.set(refineRef, Option.none())
@@ -315,7 +317,12 @@ export const runTuiWorkspace = (
                   return created
                 }),
             })
-            yield* turn(session, text)
+            const fiber = Runtime.runFork(rt)(
+              turn(session, text).pipe(
+                Effect.ensuring(Ref.set(turnFiberRef, Option.none())),
+              ),
+            )
+            yield* Ref.set(turnFiberRef, Option.some(fiber))
           }),
         )
       }
@@ -382,12 +389,14 @@ export const runTuiWorkspace = (
         // A live forge fiber and any OAuth loopback server must die BEFORE
         // the renderer restores, or the process outlives the terminal.
         Runtime.runFork(rt)(
-          Effect.flatMap(Ref.get(forgeFiberRef), (fiber) =>
-            Option.match(fiber, {
-              onNone: () => Effect.void,
-              onSome: (f) => Fiber.interrupt(f).pipe(Effect.asVoid),
-            }),
-          ),
+          Effect.forEach([forgeFiberRef, turnFiberRef], (ref) =>
+            Effect.flatMap(Ref.get(ref), (fiber) =>
+              Option.match(fiber, {
+                onNone: () => Effect.void,
+                onSome: (f) => Fiber.interrupt(f).pipe(Effect.asVoid),
+              }),
+            ),
+          ).pipe(Effect.asVoid),
         )
         Option.match(store.oauth(), {
           onNone: () => undefined,
@@ -406,13 +415,20 @@ export const runTuiWorkspace = (
           Runtime.runFork(
             rt,
           )(
-            Effect.flatMap(Ref.get(forgeFiberRef), (fiber) =>
-              Option.match(fiber, {
+            Effect.gen(function* () {
+              const turnFiber = yield* Ref.get(turnFiberRef)
+              if (Option.isSome(turnFiber)) {
+                yield* Fiber.interrupt(turnFiber.value)
+                yield* Effect.sync(() => store.setNotice("turn interrupted"))
+                return
+              }
+              const forgeFiber = yield* Ref.get(forgeFiberRef)
+              yield* Option.match(forgeFiber, {
                 onNone: () =>
                   Effect.sync(() => store.setNotice("nothing to interrupt")),
                 onSome: (f) => Fiber.interrupt(f).pipe(Effect.asVoid),
-              }),
-            ),
+              })
+            }),
           )
         },
         exit: (code) => {

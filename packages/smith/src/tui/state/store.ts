@@ -59,6 +59,15 @@ export interface SmithStore {
   readonly addUserLine: (text: string) => void
   readonly busy: Accessor<boolean>
   readonly setBusy: (busy: boolean) => void
+  /** Epoch ms when the current turn/run started (0 = idle) — the elapsed
+   *  readout that makes a SLOW model call visible instead of dead air. */
+  readonly busySince: Accessor<number>
+  /** Epoch ms of the last agent event — silence beyond a threshold renders
+   *  the "model is slow" hint. */
+  readonly lastEventAt: Accessor<number>
+  /** The composer registers a text reader so the : palette can follow it. */
+  readonly registerComposerRead: (read: () => string) => void
+  readonly composerText: () => string
   readonly spinner: Accessor<number>
   readonly tickSpinner: () => void
   /** One-line transient note (command feedback, interrupt notice). */
@@ -128,10 +137,14 @@ export const createSmithStore = (
   const [overlay, setOverlaySig] = createSignal<Overlay>({ kind: "none" })
   const [oauth, setOauthSig] = createSignal<Option.Option<OAuthSession>>(Option.none())
   const composerClear = { current: () => {} }
+  const composerRead = { current: (): string => "" }
+  const [busySince, setBusySince] = createSignal(0)
+  const [lastEventAt, setLastEventAt] = createSignal(0)
   return {
     floor,
     reduce: (event) =>
       batch(() => {
+        setLastEventAt(Date.now())
         setFloor((state) => reduceFloor(state, event))
         setRefine((state) => reduceRefine(state, event))
       }),
@@ -140,7 +153,17 @@ export const createSmithStore = (
     refine,
     addUserLine: (text) => setRefine((state) => withUserLine(state, text)),
     busy,
-    setBusy: (value) => setBusySig(value),
+    setBusy: (value) => {
+      setBusySig(value)
+      setBusySince(value ? Date.now() : 0)
+      if (value) setLastEventAt(Date.now())
+    },
+    busySince,
+    lastEventAt,
+    registerComposerRead: (read) => {
+      composerRead.current = read
+    },
+    composerText: () => composerRead.current(),
     spinner,
     tickSpinner: () => setSpinner((n) => n + 1),
     notice,

@@ -6,6 +6,7 @@ import {
   loginBackspace,
   loginMove,
 } from "./presentation/loginFlow.js"
+import type { LoginFlow } from "./presentation/loginFlow.js"
 import {
   filterAppend,
   filterBackspace,
@@ -91,6 +92,16 @@ const routeLoginKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "login" 
     ),
     Match.when("escape", () => {
       if (overlay.flow.step === "oauth") stopOAuthSession(ctx)
+      // Cancel the most specific thing FIRST: an active filter clears
+      // before the step retreats.
+      if (overlay.flow.step === "home" && overlay.flow.sel.filter.length > 0) {
+        const cleared = [...overlay.flow.sel.filter].reduce<LoginFlow>(
+          (f) => loginBackspace(f),
+          overlay.flow,
+        )
+        ctx.store.setOverlay({ ...overlay, flow: cleared })
+        return
+      }
       Option.match(loginBack(overlay.flow), {
         onNone: () => ctx.store.closeOverlay(),
         onSome: (flow) => ctx.store.setOverlay({ ...overlay, flow }),
