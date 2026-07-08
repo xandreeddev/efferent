@@ -28,12 +28,13 @@ export interface Key {
   readonly sequence?: string
 }
 
-const isPrintable = (key: Key): boolean =>
-  key.ctrl !== true &&
-  typeof key.sequence === "string" &&
-  key.sequence.length === 1 &&
-  key.sequence >= " " &&
-  key.sequence !== "\x7f"
+/** The typed characters in a key event — printables only. Terminals without
+ *  bracketed paste deliver pasted text as MULTI-char sequences; accept the
+ *  whole chunk (control chars stripped) instead of dropping it. */
+const printableChars = (key: Key): string =>
+  key.ctrl === true || typeof key.sequence !== "string"
+    ? ""
+    : [...key.sequence].filter((ch) => ch >= " " && ch !== "\x7f").join("")
 
 /** Re-open the model select with the free-text escape row appended when the
  *  filter looks like `provider:modelId`. */
@@ -75,9 +76,10 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
       })
     }),
     Match.orElse(() => {
-      if (isPrintable(key)) {
+      const chars = printableChars(key)
+      if (chars.length > 0) {
         ctx.store.setOverlay(
-          withCustomRow({ ...overlay, sel: filterAppend(overlay.sel, key.sequence ?? "") }),
+          withCustomRow({ ...overlay, sel: filterAppend(overlay.sel, chars) }),
         )
       }
     }),
@@ -112,8 +114,9 @@ const routeLoginKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "login" 
     ),
     Match.when("return", () => advanceLogin(ctx, loginAdvance(overlay.flow))),
     Match.orElse(() => {
-      if (isPrintable(key)) {
-        ctx.store.setOverlay({ ...overlay, flow: loginAppend(overlay.flow, key.sequence ?? "") })
+      const chars = printableChars(key)
+      if (chars.length > 0) {
+        ctx.store.setOverlay({ ...overlay, flow: loginAppend(overlay.flow, chars) })
       }
     }),
   )
@@ -149,3 +152,24 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
     ctx.store.clearComposer()
   }
 }
+
+/**
+ * Bracketed pastes arrive as their OWN event (`usePaste`), never through the
+ * key stream — an API key or a redirect URL pasted into an overlay prompt
+ * lands here. No overlay open → the composer textarea owns the paste.
+ */
+export const dispatchPaste = (ctx: SmithTuiContext, text: string): void => {
+  const clean = [...text].filter((ch) => ch >= " " && ch !== "\x7f").join("")
+  if (clean.length === 0) return
+  const overlay = ctx.store.overlay()
+  if (overlay.kind === "select") {
+    ctx.store.setOverlay(
+      withCustomRow({ ...overlay, sel: filterAppend(overlay.sel, clean) }),
+    )
+    return
+  }
+  if (overlay.kind === "login") {
+    ctx.store.setOverlay({ ...overlay, flow: loginAppend(overlay.flow, clean) })
+  }
+}
+
