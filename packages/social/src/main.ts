@@ -7,6 +7,7 @@ import {
   LanguageModelLive,
   LocalAuthStoreLive,
   LocalSettingsStoreLive,
+  TracingLive,
 } from "@xandreed/providers"
 
 import { PlaywrightXPlatformLive } from "./adapters/PlaywrightXPlatform.js"
@@ -78,7 +79,8 @@ const cli = Command.run(root, {
 })
 
 const program = cli(process.argv).pipe(
-  Effect.provide(BunContext.layer)
+  Effect.provide(BunContext.layer),
+  Effect.provide(TracingLive("social"))
 ) as Effect.Effect<void, any, never>
 
 BunRuntime.runMain(program)
