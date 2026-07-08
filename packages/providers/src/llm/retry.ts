@@ -21,7 +21,13 @@ import { Duration, Effect, Schedule } from "effect"
  * interaction policy the engine doesn't carry; add it when live use demands.
  */
 
-export const LLM_REQUEST_TIMEOUT_MS = 120_000
+// 300s, not 120: the compat path is NON-streaming and the gateway's models
+// think by DEFAULT (live-probed: 400+ reasoning tokens unprompted), so the
+// whole thinking time counts against this timeout before a single body byte
+// arrives — the old line streamed, where first-byte came fast. The timeout
+// exists to catch hung sockets; at 120s it would classify a healthy slow
+// thinking turn as transient and retry it into the same wall.
+export const LLM_REQUEST_TIMEOUT_MS = 300_000
 export const MAX_HONORED_RETRY_AFTER_MS = 60_000
 
 export type ErrorClass = "transient" | "permanent"

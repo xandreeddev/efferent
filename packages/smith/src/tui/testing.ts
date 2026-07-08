@@ -12,6 +12,8 @@ import {
   Shell,
   ShellResult,
   SettingsStore,
+  UtilityCompletion,
+  UtilityLlm,
 } from "@xandreed/engine"
 import type { SpecDoc } from "@xandreed/engine"
 import type { Credential, ModelRole } from "@xandreed/engine"
@@ -123,6 +125,15 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     Layer.succeed(LanguageModel.LanguageModel, {} as never),
     Layer.succeed(Shell, {
       exec: () => Effect.succeed(new ShellResult({ stdout: "", stderr: "", exitCode: 0 })),
+    }),
+    Layer.succeed(UtilityLlm, {
+      complete: () =>
+        Effect.succeed(
+          new UtilityCompletion({
+            text: "scripted session title",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 },
+          }),
+        ),
     }),
     Layer.succeed(SettingsStore, {
       load: Effect.succeed(options.settings ?? defaultSettings),

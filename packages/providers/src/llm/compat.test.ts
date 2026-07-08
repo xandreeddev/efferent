@@ -123,6 +123,25 @@ describe("makeCompatLanguageModel", () => {
     ])
   })
 
+  test("BOTH reasoning vocabularies parse into a reasoning part", async () => {
+    // OpenRouter-style `reasoning` (kimi-k2.6) and DeepSeek-native
+    // `reasoning_content` (kimi-k2.7-code, deepseek) — live-probed 2026-07-08.
+    const viaReasoning = await Effect.runPromise(
+      fromChatCompletion("Test", {
+        choices: [{ finish_reason: "stop", message: { content: "ok", reasoning: "because…" } }],
+      }),
+    )
+    expect(viaReasoning[0]).toEqual({ type: "reasoning", text: "because…" })
+    const viaReasoningContent = await Effect.runPromise(
+      fromChatCompletion("Test", {
+        choices: [
+          { finish_reason: "stop", message: { content: "ok", reasoning_content: "since…" } },
+        ],
+      }),
+    )
+    expect(viaReasoningContent[0]).toEqual({ type: "reasoning", text: "since…" })
+  })
+
   test("cached-token vendor fallbacks are read (prompt_cache_hit_tokens et al.)", async () => {
     const parts = await Effect.runPromise(
       fromChatCompletion("Test", {

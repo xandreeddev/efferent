@@ -9,6 +9,12 @@ import type { FloorState } from "../presentation/floor.js"
 import { initialFloor, reduceFloor } from "../presentation/floor.js"
 import type { RefineState } from "../presentation/refine.js"
 import { initialRefine, reduceRefine, withUserLine } from "../presentation/refine.js"
+import type { ConversationState } from "../presentation/conversation.js"
+import {
+  initialConversation,
+  reduceConversation,
+  withUserBlock,
+} from "../presentation/conversation.js"
 import type { WorkspaceView } from "../presentation/workspace.js"
 import { emptyWorkspace } from "../presentation/workspace.js"
 import type { LoginFlow } from "../presentation/loginFlow.js"
@@ -57,6 +63,9 @@ export interface SmithStore {
   readonly mode: Accessor<SmithMode>
   readonly setMode: (mode: SmithMode) => void
   readonly refine: Accessor<RefineState>
+  /** The conversation pane's blocks — user/reasoning/assistant/tool. */
+  readonly conversation: Accessor<ConversationState>
+  readonly resetConversation: () => void
   readonly addUserLine: (text: string) => void
   readonly busy: Accessor<boolean>
   readonly setBusy: (busy: boolean) => void
@@ -133,6 +142,7 @@ export const createSmithStore = (
     initialFloor(run.task, run.maxAttempts),
   )
   const [refine, setRefine] = createSignal<RefineState>(initialRefine)
+  const [conversation, setConversation] = createSignal<ConversationState>(initialConversation)
   const [modeSig, setModeSig] = createSignal<SmithMode>(mode)
   const [busy, setBusySig] = createSignal(false)
   const [spinner, setSpinner] = createSignal(0)
@@ -159,11 +169,17 @@ export const createSmithStore = (
         }
         setFloor((state) => reduceFloor(state, event))
         setRefine((state) => reduceRefine(state, event))
+        setConversation((state) => reduceConversation(state, event))
       }),
     mode: modeSig,
     setMode: (next) => setModeSig(next),
     refine,
-    addUserLine: (text) => setRefine((state) => withUserLine(state, text)),
+    conversation,
+    resetConversation: () => setConversation(initialConversation),
+    addUserLine: (text) => {
+      setRefine((state) => withUserLine(state, text))
+      setConversation((state) => withUserBlock(state, text))
+    },
     busy,
     setBusy: (value) => {
       setBusySig(value)

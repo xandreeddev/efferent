@@ -35,7 +35,7 @@ packages/
 │                 (re-resolves .efferent/config.json selection + auth.json key
 │                 PER CALL; OpenAI-compatible client for the opencode gateway;
 │                 anthropic subscription auth + cache breakpoints; transient
-│                 retries, 120s timeout, empty-response rejection) · SQLite
+│                 retries, 300s timeout, empty-response rejection) · SQLite
 │                 conversation store · local auth/settings · fs/shell
 ├── surface/      the UI substrate (pure): the html tagged template · the
 │                 allowlist sanitizer (the security boundary; attack tests are

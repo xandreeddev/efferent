@@ -128,7 +128,10 @@ interface ChatCompletion {
     readonly finish_reason?: string
     readonly message?: {
       readonly content?: string | null
+      /** DeepSeek-native vocabulary (kimi-k2.7-code, deepseek serve this). */
       readonly reasoning_content?: string | null
+      /** OpenRouter-style vocabulary (kimi-k2.6 via Moonshot serves this). */
+      readonly reasoning?: string | null
       readonly tool_calls?: ReadonlyArray<{
         readonly id?: string
         readonly function?: { readonly name?: string; readonly arguments?: string }
@@ -169,7 +172,10 @@ export const fromChatCompletion = (
       )
     }
     const message = choice.message ?? {}
-    const reasoning = message.reasoning_content
+    // The gateway fronts multiple upstreams with two reasoning vocabularies —
+    // models think by DEFAULT (no request param), so missing either field
+    // silently drops the thinking (live-caught on kimi-k2.6).
+    const reasoning = message.reasoning_content ?? message.reasoning
     const text = message.content
     const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
       Effect.try({
