@@ -10,6 +10,7 @@ import {
   toPromptMessages,
   withToolCallIds,
   withUsageOnAssistant,
+  extractModel,
 } from "./mapping.js"
 
 describe("withToolCallIds", () => {
@@ -115,3 +116,31 @@ describe("withUsageOnAssistant / assistantUsage", () => {
     expect((tail[0] as { providerOptions?: unknown }).providerOptions).toBeUndefined()
   })
 })
+
+describe("the model stamp", () => {
+  test("extractModel reads the router's finish metadata; the assistant message carries it", () => {
+    const content = [
+      { type: "text", text: "hi" },
+      {
+        type: "finish",
+        reason: "stop",
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        metadata: { router: { model: "opencode:kimi-k2.7-code" } },
+      },
+    ]
+    const model = extractModel(content)
+    expect(Option.getOrThrow(model)).toBe("opencode:kimi-k2.7-code")
+    const messages = withUsageOnAssistant(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }] }],
+      { inputTokens: 5, outputTokens: 3, totalTokens: 8, cacheReadTokens: 0 },
+      model,
+    )
+    const stamped = messages[0]?.providerOptions as { engine?: { model?: string } }
+    expect(stamped.engine?.model).toBe("opencode:kimi-k2.7-code")
+  })
+
+  test("no stamp → None, and the usage stamp stays model-free", () => {
+    expect(Option.isNone(extractModel([{ type: "finish", reason: "stop" }]))).toBe(true)
+  })
+})
+

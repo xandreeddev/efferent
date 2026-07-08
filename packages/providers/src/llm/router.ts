@@ -77,11 +77,39 @@ export const generateWith = (
     ).pipe(
       rejectEmptyResponse(label),
       retryableLlm(label),
+      Effect.map((res) => stampResponse(res, label)),
       Effect.withSpan("providers.generate", {
         attributes: { "llm.model": label },
       }),
     )
   }).pipe(Effect.scoped)
+
+const stampModel = (part: unknown, label: string): unknown => {
+  if (typeof part !== "object" || part === null) return part
+  const p = part as { readonly type?: unknown; readonly metadata?: unknown }
+  if (p.type !== "finish") return part
+  const metadata =
+    typeof p.metadata === "object" && p.metadata !== null
+      ? (p.metadata as Record<string, unknown>)
+      : {}
+  return { ...p, metadata: { ...metadata, router: { model: label } } }
+}
+
+/**
+ * Stamp the RESOLVED selection onto the finish part — the trail must answer
+ * "which model produced this message" from the db alone. The response MUST be
+ * rebuilt as a real `GenerateTextResponse`: it's a class whose
+ * text/finishReason/usage are prototype GETTERS, so a `{...res}` spread
+ * silently strips them — finishReason read as undefined and the loop treated
+ * every tool turn as "done" (the one-tool-call-then-dead bug, live-caught).
+ */
+export const stampResponse = (
+  res: { readonly content: ReadonlyArray<unknown> },
+  label: string,
+): LanguageModel.GenerateTextResponse<never> =>
+  new LanguageModel.GenerateTextResponse(
+    res.content.map((part) => stampModel(part, label)) as never,
+  )
 
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.

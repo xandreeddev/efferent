@@ -10,6 +10,7 @@ import { BunContext } from "@effect/platform-bun"
 import { SettingsStore } from "@xandreed/engine"
 import {
   LanguageModelLive,
+  UtilityLlmLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalShellLive,
@@ -173,6 +174,7 @@ export const smithAppLive = (run: SmithRunConfig) =>
     LocalFileSystemLive,
     LocalShellLive,
     LanguageModelLive,
+  UtilityLlmLive,
   ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(

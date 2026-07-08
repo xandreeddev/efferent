@@ -6,6 +6,7 @@ import type { AgentMessage, AgentResult } from "../domain/Message.js"
 import { addUsage, zeroUsage } from "../domain/TokenUsage.js"
 import type { TokenUsage } from "../domain/TokenUsage.js"
 import {
+  extractModel,
   extractUsage,
   responseReasoning,
   responseText,
@@ -184,7 +185,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         // fans out into events + persisted messages (durable UI identity).
         const content = withToolCallIds(res.content as ReadonlyArray<unknown>, state.turnIndex)
         const usage = extractUsage(res.usage, content)
-        const tail = withUsageOnAssistant(responseToAgentMessages(content), usage)
+        const model = extractModel(content)
+        const tail = withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
         // position is known when its event is emitted (UIs key on it).
         const positions = yield* options.onTail?.(tail) ?? Effect.succeed([])
@@ -201,6 +203,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           reasoning: responseReasoning(content),
           toolCalls,
           usage,
+          ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
           ...Option.match(assistantPosition, {
             onNone: () => ({}),
             onSome: (position) => ({ position }),
