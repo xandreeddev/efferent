@@ -125,6 +125,9 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
         `  ⊙ workspace memory: +${e.created} created · ${e.corroborated} corroborated · ${e.updated} updated · ${e.invalidated} invalidated`,
       ),
     ),
+    Match.when({ type: "skills_distilled" }, (e) =>
+      Option.some(`  ✎ distilled skill${e.names.length === 1 ? "" : "s"} from memory: ${e.names.join(", ")}`),
+    ),
     Match.when({ type: "ship_step" }, (e) =>
       Option.some(
         `${e.ok ? "✓" : "✗"} ship ${e.step}${e.detail.length > 0 ? ` — ${clip(e.detail, 120)}` : ""}`,

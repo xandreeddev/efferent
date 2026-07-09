@@ -69,6 +69,10 @@ export type SmithEvent =
       readonly corroborated: number
       readonly invalidated: number
     }
+  /** The curator distilled corroborated memory into `learned-<topic>` skill
+   *  files — the loop authoring its own procedures. Names of the skills now
+   *  present; only emitted when at least one was written. */
+  | { readonly type: "skills_distilled"; readonly names: ReadonlyArray<string> }
   /** The SHIP sequence (branch → stage → commit → push → PR) — one event per
    *  step; a failed step stops the sequence, its detail carries the stderr. */
   | {
