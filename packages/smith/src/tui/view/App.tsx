@@ -181,13 +181,18 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               )
             }
             if (block.kind === "assistant") {
+              // ONE turn-header glyph: a leading assistant (no reasoning)
+              // opens with the SAME "▸ tag" line a thinking turn does — a
+              // story mixing ▸-headed and └-headed turns read as two
+              // different things (live complaint), and └ implied hanging
+              // off something above when it opened its group.
               return (
                 <box flexDirection="column" flexShrink={0} marginTop={block.leading ? 1 : 0}>
+                  <Show when={block.leading}>
+                    <text fg={tokens.text.dim} wrapMode="none">{`  ▸ ${block.tag}`}</text>
+                  </Show>
                   <Show when={block.text.length > 0}>
                     <text fg={tokens.text.bright} wrapMode="word">{`  ${block.text}`}</text>
-                  </Show>
-                  <Show when={block.leading}>
-                    <text fg={tokens.text.dim} wrapMode="none">{`  └ ${block.tag}`}</text>
                   </Show>
                 </box>
               )
