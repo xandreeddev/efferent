@@ -48,3 +48,36 @@ export const resolveCommand = (word: string): Option.Option<string> => {
     ? Option.map(Option.fromNullable(prefixed[0]), (c) => c.name)
     : Option.none()
 }
+
+/** The longest string every name shares as a prefix (the shell-tab-complete
+ *  common-stem). Empty when the set disagrees at char 0. */
+const commonPrefix = (names: ReadonlyArray<string>): string =>
+  names.reduce(
+    (stem, name) => {
+      const bound = Math.min(stem.length, name.length)
+      const cut = Array.from({ length: bound }).findIndex((_, i) => stem[i] !== name[i])
+      return cut === -1 ? stem.slice(0, bound) : stem.slice(0, cut)
+    },
+    names[0] ?? "",
+  )
+
+/**
+ * Tab-completion for the `:` composer — the completed line, or `None` when
+ * there is nothing to add. Only the FIRST token completes (a command with an
+ * argument is already chosen). A unique match fills the whole command and a
+ * trailing space (ready for its argument); several matches extend to their
+ * shared stem (`:l` → `:lo`); a line already sitting on the branch point
+ * (`:lo` → lock/login/logout) returns `None` — the palette shows the fork.
+ */
+export const completeCommand = (input: string): Option.Option<string> => {
+  if (!input.startsWith(":")) return Option.none()
+  const rest = input.slice(1)
+  // A space means the command is committed; completion is the arg's job, not ours.
+  if (/\s/.test(rest) || rest.length === 0) return Option.none()
+  const token = rest.toLowerCase()
+  const matches = PALETTE_COMMANDS.filter((c) => c.name.startsWith(token))
+  if (matches.length === 0) return Option.none()
+  if (matches.length === 1) return Option.some(`:${matches[0]?.name} `)
+  const stem = commonPrefix(matches.map((c) => c.name))
+  return stem.length > token.length ? Option.some(`:${stem}`) : Option.none()
+}

@@ -70,6 +70,25 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(narrowed).not.toContain(":login  set up providers")
   })
 
+  test("Tab completes a unique ':' command in the composer", async () => {
+    const tui = await boot()
+    await tui.setup.mockInput.typeText(":mo")
+    tui.setup.mockInput.pressTab()
+    await tui.frame()
+    // The composer buffer now holds the full command + a trailing space,
+    // ready for its argument — no stray tab character.
+    expect(tui.store.composerText()).toBe(":model ")
+  })
+
+  test("Tab extends an ambiguous ':' prefix to the shared stem", async () => {
+    const tui = await boot()
+    await tui.setup.mockInput.typeText(":l")
+    tui.setup.mockInput.pressTab()
+    await tui.frame()
+    // lock / login / logout share 'lo' — Tab fills to the branch point.
+    expect(tui.store.composerText()).toBe(":lo")
+  })
+
   test(":model opens the picker; arrows + Enter persist the role", async () => {
     const tui = await boot()
     await tui.setup.mockInput.typeText(":model")
