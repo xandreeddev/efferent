@@ -472,6 +472,17 @@ export const makeWorkspaceBody = (
               }
               return Effect.void
             })
+            // The RECOVERED draft announces itself AFTER the replay (the
+            // reset above would wipe an earlier event): the SpecPanel, the
+            // flow stepper, and :lock are live the moment you resume — a
+            // resumed session with a spec on disk was a DEADLOCK before
+            // ("nothing to lock", and the model refused to re-propose).
+            const draft = yield* session.currentDraft
+            yield* Option.match(draft, {
+              onNone: () => Effect.void,
+              onSome: (ref) =>
+                publish({ type: "spec_draft", doc: ref.doc, path: ref.path }),
+            })
             yield* Effect.sync(() =>
               store.setNotice("session resumed — continue refining, or :new to leave it"),
             )

@@ -1,8 +1,8 @@
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
-import { ConversationStore, runAgent } from "@xandreed/engine"
+import { ConversationStore, runAgent, SpecSlug } from "@xandreed/engine"
 import { loadForgeLessons } from "../forge/session.js"
-import type { ConversationId, SpecDoc, SpecSlug } from "@xandreed/engine"
+import type { AgentMessage, ConversationId, SpecDoc } from "@xandreed/engine"
 import {
   makeSpecRefinerHandlers,
   specRefinerAgentConfig,
@@ -59,6 +59,33 @@ export interface RefineSessionOptions {
   readonly agent?: RefineAgent
 }
 
+/** The LAST successful propose_spec result in a persisted trail — the draft
+ *  linkage a resumed session must recover (the tool's success carries
+ *  {slug, path}). Pure over the message list; exported for tests. */
+export const lastProposedDraft = (
+  messages: ReadonlyArray<AgentMessage>,
+): Option.Option<{ slug: SpecSlug; path: string }> =>
+  Option.fromNullable(
+    messages.reduce<{ slug: SpecSlug; path: string } | undefined>((latest, message) => {
+      if (message.role !== "tool" || !Array.isArray(message.content)) return latest
+      return message.content.reduce((acc, part) => {
+        const p = part as {
+          readonly type?: string
+          readonly toolName?: string
+          readonly isError?: boolean
+          readonly output?: { readonly slug?: unknown; readonly path?: unknown }
+        }
+        return p.type === "tool-result" &&
+          p.toolName === "propose_spec" &&
+          p.isError !== true &&
+          typeof p.output?.slug === "string" &&
+          typeof p.output?.path === "string"
+          ? { slug: SpecSlug.make(p.output.slug), path: p.output.path }
+          : acc
+      }, latest)
+    }, undefined),
+  )
+
 export const makeRefineSession = (
   cwd: string,
   publish: (event: SmithEvent) => Effect.Effect<void>,
@@ -69,12 +96,26 @@ export const makeRefineSession = (
     const context = yield* Effect.context<ImplementorServices>()
     const conversationId =
       options.resume ?? (yield* store.create(cwd).pipe(Effect.orDie))
-    const draftRef = yield* Ref.make(Option.none<{ slug: SpecSlug; path: string }>())
+    // RESUME recovers the draft linkage from the TRAIL: draftRef is
+    // in-memory, so without this a resumed session says "nothing to lock"
+    // while the spec sits on disk and the model — which remembers proposing
+    // — refuses to re-propose. A live DEADLOCK.
+    const recovered = yield* Option.match(Option.fromNullable(options.resume), {
+      onNone: () => Effect.succeed(Option.none<{ slug: SpecSlug; path: string }>()),
+      onSome: (cid) =>
+        store.list(cid).pipe(
+          Effect.map(lastProposedDraft),
+          Effect.orElseSucceed(() => Option.none<{ slug: SpecSlug; path: string }>()),
+        ),
+    })
+    const draftRef = yield* Ref.make(recovered)
 
     // ONE handler record for the whole session — the layer (real agent) and
-    // the scripted seam share the same slug identity + draft tracking.
+    // the scripted seam share the same slug identity + draft tracking. A
+    // recovered slug keeps re-proposes updating the SAME spec file.
+    const sessionSlug = options.slug ?? Option.getOrUndefined(Option.map(recovered, (r) => r.slug))
     const handlers = yield* makeSpecRefinerHandlers(cwd, {
-      ...(options.slug !== undefined ? { slug: options.slug } : {}),
+      ...(sessionSlug !== undefined ? { slug: sessionSlug } : {}),
       onProposed: (slug, path) => Ref.set(draftRef, Option.some({ slug, path })),
     })
     const refinerLayer = specRefinerToolkit.toLayer(handlers)

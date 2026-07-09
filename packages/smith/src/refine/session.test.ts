@@ -94,6 +94,65 @@ describe("makeRefineSession — scripted E2E (no keys, no LLM)", () => {
     expect(events.map((event) => event.type)).toEqual(["spec_draft", "spec_locked"])
   })
 
+  test("RESUME recovers the draft from the TRAIL — lock works without a new propose", async () => {
+    // The deadlock class: a session resumed after propose_spec had no
+    // in-memory draftRef → ":lock" refused while the spec sat on disk and
+    // the model (which remembers proposing) would not re-propose.
+    const fs = memoryFs()
+    const cid = ConversationId.make("00000000-0000-4000-8000-00000000dead")
+    const storeWithTrail = Layer.succeed(ConversationStore, {
+      create: () => Effect.succeed(cid),
+      list: () =>
+        Effect.succeed([
+          { role: "user", content: "build a widget" },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "p1",
+                toolName: "propose_spec",
+                isError: false,
+                output: {
+                  slug: "refined-build-a-widget",
+                  path: `${CWD}/.efferent/specs/refined-build-a-widget.md`,
+                  status: "draft",
+                },
+              },
+            ],
+          },
+        ]),
+    } as never)
+    const services = Layer.mergeAll(
+      Layer.succeed(Shell, {} as never),
+      Layer.succeed(LanguageModel.LanguageModel, {} as never),
+      storeWithTrail,
+    )
+
+    const { first, locked } = await Effect.gen(function* () {
+      // Seed the workspace: the spec FILE the original session wrote.
+      const original = yield* makeRefineSession(CWD, () => Effect.void, {
+        unattended: true,
+        agent: scriptedAgent,
+      })
+      yield* original.send("build a widget")
+      // A fresh session RESUMING the conversation — no propose this time.
+      const resumed = yield* makeRefineSession(CWD, () => Effect.void, {
+        unattended: true,
+        agent: scriptedAgent,
+        resume: cid,
+      })
+      const first = yield* resumed.currentDraft
+      const locked = yield* resumed.lock
+      return { first, locked }
+    }).pipe(Effect.provide(Layer.mergeAll(fs.layer, services)), Effect.runPromise)
+
+    expect(Option.isSome(first)).toBe(true)
+    if (Option.isNone(first)) return
+    expect(first.value.doc.goal).toBe("Refined: build a widget")
+    expect(locked.doc.status).toBe("locked")
+  })
+
   test("locking with no draft is a typed refusal", async () => {
     const fs = memoryFs()
     const result = await Effect.gen(function* () {
