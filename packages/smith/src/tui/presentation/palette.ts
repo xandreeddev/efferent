@@ -20,12 +20,13 @@ export const PALETTE_COMMANDS: ReadonlyArray<PaletteCommand> = [
   { name: "forge", usage: ":forge [slug]", desc: "build the locked draft (or a named spec)" },
   { name: "ship", usage: ":ship", desc: "branch, commit, push + PR the last ACCEPTED run" },
   { name: "model", usage: ":model [code|fast] [p:m]", desc: "switch a model role (picker or direct)" },
+  { name: "settings", usage: ":settings", desc: "the settings menu — roles + session knobs" },
   { name: "resume", usage: ":resume [id]", desc: "load a previous session into this one" },
   { name: "login", usage: ":login", desc: "set up providers — API keys / anthropic OAuth" },
   { name: "logout", usage: ":logout [provider]", desc: "remove a provider credential" },
 ]
 
-export const PALETTE_VISIBLE = 9
+export const PALETTE_VISIBLE = 10
 
 /** The rows to show for the current composer text; empty = no palette. */
 export const computePalette = (input: string): ReadonlyArray<PaletteCommand> => {

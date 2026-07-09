@@ -100,6 +100,22 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
         ),
       })
     }),
+    Match.when("settings", () => {
+      // The settings MENU rides the ONE select overlay (searchable, ↑/↓,
+      // Enter edits, Esc exits — the design system, not a new surface).
+      // Rows: the model roles with their CURRENT values as tags; Enter on a
+      // row opens the existing model picker for that role.
+      const roles = ctx.store.roles()
+      ctx.store.setOverlay({
+        kind: "select",
+        purpose: { tag: "settings" },
+        sel: openSelect("settings", [
+          { value: Option.some("general"), label: "general model", tag: roles.general },
+          { value: Option.some("code"), label: "code model", tag: roles.code },
+          { value: Option.some("fast"), label: "fast model", tag: roles.fast },
+        ]),
+      })
+    }),
     Match.when("login", () => {
       openLoginFlow(ctx)
     }),
@@ -109,7 +125,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     }),
     Match.orElse(() => {
       ctx.store.setNotice(
-        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :ship · :model [code|fast] · :resume · :login · :logout)`,
+        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :ship · :model [code|fast] · :settings · :resume · :login · :logout)`,
       )
     }),
   )

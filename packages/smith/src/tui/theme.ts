@@ -48,7 +48,7 @@ export const tokens = {
 
 export const glyph = {
   brand: "▌",
-  caret: "❯ ",
+  caret: "> ",
   pass: "✓",
   fail: "✗",
   skip: "◌",
