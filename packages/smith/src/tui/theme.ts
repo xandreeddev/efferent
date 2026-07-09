@@ -60,6 +60,7 @@ export const glyph = {
   cursorBlock: "█",
   rule: "─",
   bullet: "·",
+  queued: "⋯",
   logoBar: "▔",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const

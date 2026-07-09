@@ -267,13 +267,26 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
           header's tiny clock — the pane looked dead for minutes on a long
           turn ("the session hung"). */}
       <Show when={store.busy()}>
-        <box flexDirection="row" flexShrink={0}>
+        <box flexDirection="row" flexShrink={0} marginTop={1}>
           <text fg={tokens.state.running} flexShrink={0}>
             {`  ${spin()} thinking… ${elapsed()}s`}
           </text>
           <text fg={tokens.text.dim} wrapMode="none">
             {"  — Esc interrupts · wheel/PgUp scrolls the story"}
           </text>
+        </box>
+      </Show>
+      {/* Messages typed mid-turn wait here IN VIEW, then all go into the next
+          turn at once — never dropped, never held to the session's end. */}
+      <Show when={store.queued().length > 0}>
+        <box flexDirection="column" flexShrink={0}>
+          <For each={store.queued()}>
+            {(msg) => (
+              <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
+                {`  ${glyph.queued} queued  ${msg.length > 80 ? `${msg.slice(0, 80)}…` : msg}`}
+              </text>
+            )}
+          </For>
         </box>
       </Show>
     </box>

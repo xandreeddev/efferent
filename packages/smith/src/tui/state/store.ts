@@ -81,6 +81,13 @@ export interface SmithStore {
   /** The composer registers a text writer so Tab-completion can fill it. */
   readonly registerComposerSet: (set: (text: string) => void) => void
   readonly setComposer: (text: string) => void
+  /** Messages typed while a turn is in flight — shown as pending, then
+   *  drained into the NEXT turn all at once (never dropped, never deferred to
+   *  session end). */
+  readonly queued: Accessor<ReadonlyArray<string>>
+  readonly enqueue: (text: string) => void
+  /** Return every queued message and clear the queue in one step. */
+  readonly drainQueue: () => ReadonlyArray<string>
   readonly spinner: Accessor<number>
   readonly tickSpinner: () => void
   /** One-line transient note (command feedback, interrupt notice). */
@@ -163,6 +170,7 @@ export const createSmithStore = (
   const [busySince, setBusySince] = createSignal(0)
   const [lastEventAt, setLastEventAt] = createSignal(0)
   const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
+  const [queued, setQueued] = createSignal<ReadonlyArray<string>>([])
   return {
     floor,
     reduce: (event) =>
@@ -206,6 +214,13 @@ export const createSmithStore = (
       composerSet.current = set
     },
     setComposer: (text) => composerSet.current(text),
+    queued,
+    enqueue: (text) => setQueued((q) => [...q, text]),
+    drainQueue: () => {
+      const current = queued()
+      setQueued([])
+      return current
+    },
     spinner,
     tickSpinner: () => setSpinner((n) => n + 1),
     notice,
