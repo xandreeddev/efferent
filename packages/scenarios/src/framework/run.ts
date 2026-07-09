@@ -172,18 +172,74 @@ export const runScenario = <W>(
   )
 }
 
-/** Register a scenario in a pack: erases the world by pre-binding the runner. */
+/** All-hard-checks-green — the pass@k pass criterion for one sample. */
+const hardGreen = (result: ScenarioResult): boolean =>
+  result.status === "ran" &&
+  result.checks.every((check) => check.severity !== "hard" || check.pass)
+
+/**
+ * Run a scenario k times SEQUENTIALLY (each sample boots its own world) and
+ * aggregate: `combined`/`score` become means over the samples, `passRate` is
+ * the all-hard-green fraction, checks/judges shown are the LAST sample's.
+ * A mode-skip is deterministic — returned as-is from the first sample. An
+ * errored sample scores 0 and drags the mean (fail-closed), status stays
+ * "ran" as long as any sample ran.
+ */
+const runSampled = <W>(
+  raw: Scenario<W>,
+  mode: ScenarioMode,
+  judgeWeight: number,
+  samples: number,
+): Effect.Effect<ScenarioResult> =>
+  Effect.forEach(Array.from({ length: samples }), () =>
+    runScenario(raw, mode, judgeWeight),
+  ).pipe(
+    Effect.map((results) => {
+      const first = results[0]
+      if (first === undefined || first.status === "skipped") {
+        return first ?? {
+          name: raw.name,
+          status: "error" as const,
+          checks: [],
+          judges: [],
+          score: 0,
+          combined: 0,
+          detail: "no samples ran",
+        }
+      }
+      const ran = results.filter((r) => r.status === "ran")
+      const last = ran[ran.length - 1] ?? first
+      const scores = results.map((r) => r.combined)
+      const mean = (xs: ReadonlyArray<number>) =>
+        xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length
+      return {
+        ...last,
+        status: ran.length > 0 ? ("ran" as const) : ("error" as const),
+        score: mean(results.map((r) => r.score)),
+        combined: mean(scores),
+        samples: {
+          count: results.length,
+          scores: scores.map((s) => Number(s.toFixed(4))),
+          passRate: results.filter(hardGreen).length / results.length,
+        },
+      }
+    }),
+  )
+
+/** Register a scenario in a pack: erases the world by pre-binding the runner.
+ *  `samples` defaults to 1 — byte-identical to the unsampled runner. */
 export const scenario = <W>(s: Scenario<W>): BoundScenario => ({
   name: s.name,
   modes: s.modes,
-  run: (mode, judgeWeight) => runScenario(s, mode, judgeWeight),
+  run: (mode, judgeWeight, samples = 1) =>
+    samples <= 1 ? runScenario(s, mode, judgeWeight) : runSampled(s, mode, judgeWeight, samples),
 })
 
 export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackReport> =>
   Effect.gen(function* () {
     const judgeWeight = pack.judgeWeight ?? 0.3
     const scenarios = yield* Effect.forEach(pack.scenarios, (s) =>
-      s.run(mode, judgeWeight),
+      s.run(mode, judgeWeight, pack.samples ?? 1),
     )
     const ran = scenarios.filter((s) => s.status === "ran")
     const errored = scenarios.some((s) => s.status === "error")

@@ -55,6 +55,20 @@ export interface Pack {
   readonly threshold: number
   /** Judge weight when judges run (live mode); deterministic weight is the rest. */
   readonly judgeWeight?: number
+  /** Samples per scenario (pass@k for stochastic prompts) — each scenario
+   *  runs k times, its recorded score is the MEAN. Default 1 (today's
+   *  behavior, byte-identical). */
+  readonly samples?: number
+  /** Baseline regression tolerance for THIS pack (live batteries are
+   *  noisier). Default 0.05. */
+  readonly tolerance?: number
+  /** Provenance stamped into reports + minted baselines — prompt version
+   *  constants ("judge-prompt": "1.0.0"), so a baseline delta is
+   *  attributable to the prompt change that caused it. */
+  readonly meta?: Record<string, string>
+  /** Pack-level derived lines appended to the report (e.g. the calibration
+   *  battery's false-block / false-pass rates). */
+  readonly summary?: (report: PackReport) => ReadonlyArray<string>
   readonly scenarios: ReadonlyArray<BoundScenario>
 }
 
@@ -66,6 +80,7 @@ export interface BoundScenario {
   readonly run: (
     mode: ScenarioMode,
     judgeWeight: number,
+    samples?: number,
   ) => Effect.Effect<ScenarioResult>
 }
 
@@ -96,8 +111,17 @@ export interface ScenarioResult {
   /** Deterministic score: checks passed / checks evaluated (a hard fail marks
    *  the remaining steps' checks failed — fail-closed). */
   readonly score: number
-  /** score folded with judge mean at the pack's judgeWeight (live mode). */
+  /** score folded with judge mean at the pack's judgeWeight (live mode).
+   *  Under k>1 samples this is the MEAN of the per-sample combined scores. */
   readonly combined: number
+  /** Present only when the scenario ran with k>1 samples: the per-sample
+   *  combined scores and the fraction whose hard checks were ALL green.
+   *  checks/judges above are the LAST sample's (for display). */
+  readonly samples?: {
+    readonly count: number
+    readonly scores: ReadonlyArray<number>
+    readonly passRate: number
+  }
   readonly detail?: string
 }
 
