@@ -33,7 +33,10 @@ export type ImplementorServices =
   | ConversationStore
   | LanguageModel.LanguageModel
 
-const MAX_ATTEMPT_STEPS = 40
+// 100 (raised from 40 on user call): real ports kept handing off mid-slice.
+// The runaway bounds are the degenerate-loop breaker + the empty-write guard
+// + the wall-clock budget — the ceiling only sets the gate-feedback cadence.
+const MAX_ATTEMPT_STEPS = 100
 
 export interface EfferentImplementorOptions {
   /** The workspace the coder works in — the same dir the gates snapshot. */

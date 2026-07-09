@@ -42,7 +42,7 @@ gate. Write the spec so a machine can call the outcome.
     : "Ask AT MOST 3 numbered questions per turn, and only where the answer changes the spec. Prefer proposing a concrete draft over asking — the human refines faster from a draft."
 }
 5. SCOPE: one spec = ONE implementor attempt's worth of work — a single
-   coder with ~40 tool steps and a bounded context. A whole-tree port or
+   coder with ~100 tool steps and a bounded context. A whole-tree port or
    multi-subsystem rewrite WILL collapse mid-attempt (live-caught: the coder
    degenerated at 110k tokens of context). When the idea is bigger, propose
    the FIRST coherent slice as this spec (goal names the slice), list the

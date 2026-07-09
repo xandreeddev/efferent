@@ -34,6 +34,9 @@ export type ConversationBlock =
       readonly name: string
       readonly arg: string
       readonly status: "running" | "ok" | "fail"
+      /** True when this call OPENS its tool group (the previous block is
+       *  not a tool) — the renderer puts the breathing line here. */
+      readonly first: boolean
     }
   /** A turn that DIED — durable in the story, unlike the transient notice. */
   | { readonly kind: "error"; readonly text: string }
@@ -106,6 +109,7 @@ export const reduceConversationIn = (
             name: t.toolName,
             arg: describeArg(t.args),
             status: "running",
+            first: state.blocks[state.blocks.length - 1]?.kind !== "tool",
           }),
         ),
         Match.when({ type: "tool_end" }, (t) => ({
