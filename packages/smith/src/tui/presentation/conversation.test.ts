@@ -24,8 +24,8 @@ describe("the conversation fold", () => {
       agent({ type: "tool_end", turnIndex: 0, toolCallId: "t2", toolName: "bash", args: {}, ok: false, result: {} }),
     ].reduce(reduceConversation, initialConversation)
     expect(state.blocks).toEqual([
-      { kind: "tool", id: "t1", name: "read_file", arg: "a.ts", status: "ok" },
-      { kind: "tool", id: "t2", name: "bash", arg: "bun test", status: "fail" },
+      { kind: "tool", id: "t1", name: "read_file", arg: "a.ts", status: "ok", first: true },
+      { kind: "tool", id: "t2", name: "bash", arg: "bun test", status: "fail", first: false },
     ])
   })
 

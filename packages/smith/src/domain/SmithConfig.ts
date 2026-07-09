@@ -22,15 +22,18 @@ export const SMITH_MODEL_DEFAULTS = {
  *   (the "kimi 2.6 HIGH" ask); `:set openCodeThinkingMode off` to disable.
  * - `agentMode: "direct"` — the implementor root codes hands-on (no
  *   coordinator); code-heavy pieces still delegate by ROLE to the code tier.
- * - `maxSteps: 40` — one forge attempt is one substantial coder turn (the
- *   stock 20 is sized for interactive chat).
+ * - `maxSteps: 100` — one forge attempt is one substantial coder turn (the
+ *   stock 20 is sized for interactive chat; raised 40 → 100 on user call
+ *   after real ports kept handing off mid-slice — the empty-write guard +
+ *   the degenerate breaker now bound a confused run, so the ceiling can be
+ *   generous; gates still interleave between attempts).
  * - small child/depth caps — the implementor may fan out a few role-scoped
  *   helpers, never a deep swarm.
  */
 export const SMITH_SETTING_DEFAULTS = {
   openCodeThinkingMode: "high",
   agentMode: "direct",
-  maxSteps: 40,
+  maxSteps: 100,
   subAgentMaxChildren: 4,
   subAgentMaxDepth: 1,
 } as const
