@@ -100,6 +100,11 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
       ),
     ),
     Match.when({ type: "forge_error" }, (e) => Option.some(`✗ forge failed: ${e.message}`)),
+    Match.when({ type: "ship_step" }, (e) =>
+      Option.some(
+        `${e.ok ? "✓" : "✗"} ship ${e.step}${e.detail.length > 0 ? ` — ${clip(e.detail, 120)}` : ""}`,
+      ),
+    ),
     Match.when({ type: "agent" }, (e) =>
       Option.map(agentEventLabel(e), (label) => `    ${label}`),
     ),

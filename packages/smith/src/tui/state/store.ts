@@ -131,6 +131,8 @@ export interface SmithTuiContext {
   readonly newSpec?: () => void
   /** Workspace mode: `:resume <conversationId>` — load a previous session. */
   readonly resume?: (conversationId: string) => void
+  /** `:ship` — branch/commit/push/PR the last ACCEPTED forge run's work. */
+  readonly ship?: () => void
 }
 
 export const createSmithStore = (

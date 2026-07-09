@@ -51,6 +51,13 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
       }
       ctx.forge()
     }),
+    Match.when("ship", () => {
+      if (ctx.ship === undefined) {
+        ctx.store.setNotice(":ship only applies in the workspace session")
+        return
+      }
+      ctx.ship()
+    }),
     Match.when("model", () => {
       const first = words[1] ?? ""
       const role = first === "code" || first === "fast" ? first : "general"
@@ -102,7 +109,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     }),
     Match.orElse(() => {
       ctx.store.setNotice(
-        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :model [code|fast] · :resume · :login · :logout)`,
+        `unknown command: :${typed} (:quit · :new · :lock · :forge [slug] · :ship · :model [code|fast] · :resume · :login · :logout)`,
       )
     }),
   )
