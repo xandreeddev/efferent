@@ -123,6 +123,21 @@ const toToolChoice = (choice: unknown): unknown => {
   return "auto"
 }
 
+/**
+ * FORCE thinking on the families that think adaptively. Live forensics
+ * (2026-07-09): kimi-k2.7-code skipped thinking on 24 turns of one forge run
+ * and emitted degenerate skeleton tool calls (write_file with an EMPTY body,
+ * 24 output tokens, finish "tool-calls") on exactly those turns — the
+ * no-think ↔ empty-call correlation was 24/24. Deepseek-style families take
+ * `thinking: {type: "enabled"}`; qwen takes `enable_thinking`. Disabling is
+ * never sent (kimi-k2.7+ rejects it outright); unknown families get nothing.
+ */
+export const thinkingParams = (model: string): Record<string, unknown> => {
+  if (/kimi-k2|deepseek/i.test(model)) return { thinking: { type: "enabled" } }
+  if (/qwen/i.test(model)) return { enable_thinking: true }
+  return {}
+}
+
 interface ChatCompletion {
   readonly choices?: ReadonlyArray<{
     readonly finish_reason?: string
@@ -232,6 +247,7 @@ export const makeCompatLanguageModel = (
           model: config.model,
           messages: toChatMessages(options.prompt),
           stream: false,
+          ...thinkingParams(config.model),
           ...(tools.length > 0
             ? { tools, tool_choice: toToolChoice(options.toolChoice) }
             : {}),
