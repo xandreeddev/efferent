@@ -7,7 +7,7 @@
 > [!WARNING]
 > **This repo is in a high state of flux.** It's built in public and moving fast — package layout, commands, settings, and docs can change or break between commits without notice, and `main` is not guaranteed stable. The previously published npm packages (`efferent`, `@xandreed/cli`) are the **frozen previous line** and no longer receive updates — everything current is **source-run** with Bun.
 
-**Docs site:** [xandreed.dev/efferent](https://xandreed.dev/efferent/) · getting started, the concepts, and one page per agent.
+**Docs site:** [xandreeddev.github.io/efferent](https://xandreeddev.github.io/efferent/) · getting started, the concepts, and one page per agent.
 
 ## The line
 
@@ -81,7 +81,7 @@ CI runs all three plus the forge-loop E2E. The repo's own gates run on the repo'
 
 ## Docs
 
-- **[the docs site](https://xandreed.dev/efferent/)** — getting started, concepts, the agents.
+- **[the docs site](https://xandreeddev.github.io/efferent/)** — getting started, concepts, the agents.
 - **[`docs/foundry.md`](./docs/foundry.md)** — the factory design (loop, gates, ratchet).
 - **[`docs/evals-v3.md`](./docs/evals-v3.md)** — the scenario-pack eval design.
 - **[`docs/roadmap.md`](./docs/roadmap.md)** — what's not built yet, and what's consciously skipped.
