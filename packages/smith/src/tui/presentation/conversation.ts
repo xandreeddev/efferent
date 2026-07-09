@@ -1,4 +1,5 @@
-import { Match, Option } from "effect"
+import { Array as Arr, Match, Option } from "effect"
+import type { FactoryRun } from "@xandreed/foundry"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 
 /**
@@ -44,6 +45,16 @@ export type ConversationBlock =
    *  never be silent: an invisible partial outcome reads as a hang
    *  (live-caught: 16 exploration steps, then nothing). */
   | { readonly kind: "notice"; readonly text: string }
+  /** The run's VERDICT — the loudest block in the story. A user watched a
+   *  run get ACCEPTED and concluded it died: the flow stepper's result row
+   *  alone was not loud enough. The verdict lands IN the conversation, as
+   *  durable as the ⚠ notices. */
+  | {
+      readonly kind: "result"
+      readonly ok: boolean
+      readonly text: string
+      readonly artifact: string
+    }
 
 export interface ConversationState {
   readonly blocks: ReadonlyArray<ConversationBlock>
@@ -89,6 +100,33 @@ const partialNotice = (mode: "refine" | "forge", reason: string): string =>
     : reason === "step-cap"
       ? 'stopped at the per-message step ceiling before finishing — the session is SAVED; send another message (e.g. "continue") to keep going'
       : "stopped after repeating the same tool call with no progress — the session is saved; rephrase or narrow the ask"
+
+const attempts = (n: number): string => `${n} attempt${n === 1 ? "" : "s"}`
+
+/** `forge_end` → the verdict block. The finding count is the FINAL attempt's
+ *  still-failing findings (what stands between the work and acceptance), not
+ *  the sum over retries. */
+const resultBlock = (run: FactoryRun, artifact: string): ConversationBlock =>
+  Match.value(run.outcome).pipe(
+    Match.tag("accepted", () => ({
+      kind: "result" as const,
+      ok: true,
+      text: `ACCEPTED after ${attempts(run.attempts.length)}`,
+      artifact,
+    })),
+    Match.tag("rejected", (outcome) => {
+      const failing = Arr.lastNonEmpty(run.attempts).report.failures.flatMap(
+        (failure) => failure.findings,
+      ).length
+      return {
+        kind: "result" as const,
+        ok: false,
+        text: `REJECTED (${outcome.reason}) after ${attempts(run.attempts.length)} · ${failing} finding${failing === 1 ? "" : "s"} still failing`,
+        artifact,
+      }
+    }),
+    Match.exhaustive,
+  )
 
 /** The fold, mode-curried. `reduceConversation` below stays the refine-worded
  *  binding — safe as a bare Array.reduce callback, where a positional mode
@@ -160,6 +198,10 @@ export const reduceConversationIn = (
     ),
     Match.when({ type: "refine_error" }, (e) =>
       push(state, { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
+    ),
+    Match.when({ type: "forge_end" }, (e) => push(state, resultBlock(e.run, e.artifact))),
+    Match.when({ type: "forge_error" }, (e) =>
+      push(state, { kind: "error", text: clip(`forge failed: ${e.message}`, REASONING_BUDGET) }),
     ),
     Match.orElse(() => state),
   )
