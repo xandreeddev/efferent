@@ -98,6 +98,7 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     Match.when({ type: "context_folded" }, () => state),
     Match.when({ type: "ship_step" }, () => state),
     Match.when({ type: "memory_updated" }, () => state),
+    Match.when({ type: "capabilities" }, () => state),
     Match.when({ type: "forge_start" }, (e) => ({
       ...state,
       gateNames: e.gateNames,

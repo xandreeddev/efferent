@@ -1,6 +1,7 @@
 import { Array as Arr, Match, Option } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
+import { capabilitiesPhrase } from "../../presentation/eventLines.js"
 
 /**
  * The conversation pane's fold — the FULL story of a session as ordered
@@ -210,6 +211,12 @@ export const reduceConversationIn = (
       push(state, {
         kind: "notice",
         text: `red-first: ${e.names.join(", ")} already PASS on the untouched workspace — these checks cannot measure this spec's work; tighten the spec or expect a vacuous accept`,
+      }),
+    ),
+    Match.when({ type: "capabilities" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `harness: ${capabilitiesPhrase(e)} loaded for this run`,
       }),
     ),
     Match.when({ type: "context_folded" }, (e) =>
