@@ -24,7 +24,7 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
-import { discoverGateSuite } from "../gates/suite.js"
+import { discoverGateSuite, vacuousAccepts } from "../gates/suite.js"
 import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
 /** Map foundry's loop hooks onto the smith event stream. */
@@ -83,11 +83,19 @@ export const runForgeSessionWith = <R>(
 > =>
   Effect.gen(function* () {
     const spec = yield* buildSpec(run, doc)
-    const { gateNames, pipeline } = yield* discoverGateSuite(
+    const { gateNames, pipeline, acceptGates } = yield* discoverGateSuite(
       gateRequestFromSpec(run, doc),
       publish,
     )
     yield* publish({ type: "forge_start", spec, gateNames, doc })
+
+    // RED-FIRST, before attempt 1 spends anything: an accept check that is
+    // already green on the untouched workspace cannot measure the work.
+    // Warn and proceed — the human watching can Esc and tighten the spec.
+    const vacuous = yield* vacuousAccepts(acceptGates, snapshotWorkspace(run.cwd))
+    yield* vacuous.length > 0
+      ? publish({ type: "vacuous_checks", names: vacuous })
+      : Effect.void
 
     const result = yield* forge({
       spec,

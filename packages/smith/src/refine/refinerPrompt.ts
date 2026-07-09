@@ -3,7 +3,7 @@
  * locked-worthy SpecDoc. It never implements; its one write is the
  * `propose_spec` tool (the only way the draft changes), and the human locks.
  */
-export const SPEC_REFINER_PROMPT_VERSION = "1.1.0"
+export const SPEC_REFINER_PROMPT_VERSION = "1.2.0"
 
 export const specRefinerPrompt = (
   cwd: string,
@@ -33,7 +33,9 @@ gate. Write the spec so a machine can call the outcome.
      objectively checkable by reading the code.
    - checks: name + command pairs (e.g. "stats-tests: bun test src/stats.test.ts").
      Each command is ONE line of shell (join statements with ";"); anything
-     longer belongs in a test file the check then runs.
+     longer belongs in a test file the check then runs. RED-FIRST: a check
+     must FAIL on the workspace as it is NOW — one that already passes
+     cannot measure the work (the forge warns about vacuous checks).
    - constraints: what must NOT change; house rules to respect.
    - nonGoals: explicit scope fences — what this spec deliberately excludes.
 4. ${

@@ -1,12 +1,21 @@
 import { tmpdir } from "node:os"
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { withTempWorkspace, writeWorkspaceFile } from "@xandreed/foundry"
+import {
+  Finding,
+  GateCrash,
+  GateName,
+  RuleId,
+  withTempWorkspace,
+  WorkspaceError,
+  writeWorkspaceFile,
+} from "@xandreed/foundry"
+import type { Gate } from "@xandreed/foundry"
 import { LocalFileSystemLive } from "@xandreed/providers"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import { gateRequestFromSpec } from "../spec/toForgeSpec.js"
-import { discoverGateSuite } from "./suite.js"
+import { discoverGateSuite, vacuousAccepts } from "./suite.js"
 
 const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig => ({
   task: "t",
@@ -92,5 +101,45 @@ describe("discoverGateSuite", () => {
     )
     expect(exit._tag).toBe("Failure")
     expect(String(exit)).toContain("no gates discoverable")
+  })
+
+  test("vacuousAccepts: RED-FIRST names only the already-green checks; crashes read as red", async () => {
+    const gate = (name: string, findings: ReadonlyArray<Finding>): Gate<never> => ({
+      name: GateName.make(name),
+      kind: "test",
+      deterministic: true,
+      run: () => Effect.succeed(findings),
+    })
+    const crashing: Gate<never> = {
+      name: GateName.make("accept-crashes"),
+      kind: "test",
+      deterministic: true,
+      run: () =>
+        Effect.fail(new GateCrash({ gate: GateName.make("accept-crashes"), message: "boom" })),
+    }
+    const red = new Finding({
+      rule: RuleId.make("test/accept-red"),
+      severity: "error",
+      message: "not built yet",
+      location: Option.none(),
+      fixHint: Option.none(),
+    })
+    const snapshot = Effect.succeed({ rootDir: "/tmp/x", files: [] })
+    const vacuous = await Effect.runPromise(
+      vacuousAccepts(
+        [gate("accept-green", []), gate("accept-red", [red]), crashing],
+        snapshot,
+      ),
+    )
+    // Only the pre-green check is vacuous; a red or crashing one measures work.
+    expect(vacuous).toEqual(["accept-green"])
+    // An unsnapshottable workspace is advisory-silent, never an error.
+    const silent = await Effect.runPromise(
+      vacuousAccepts(
+        [gate("accept-green", [])],
+        Effect.fail(new WorkspaceError({ message: "gone" })),
+      ),
+    )
+    expect(silent).toEqual([])
   })
 })
