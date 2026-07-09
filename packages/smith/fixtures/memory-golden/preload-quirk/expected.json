@@ -1,0 +1,12 @@
+{
+  "expected": [
+    { "topic": "build-quirk", "statement": "bun test must run with --preload ./test/setup.ts (registers custom matchers) or tests fail" },
+    { "topic": "convention", "statement": "source files use kebab-case names" },
+    { "topic": "dependency", "statement": "lodash is pinned to 4.17.19 which lacks sortedUniqBy; use the src/vendor/lodash-extras.ts wrapper" }
+  ],
+  "distractors": [
+    "ported stats.py",
+    "12 tests pass",
+    "wrote stats-helpers.test.ts"
+  ]
+}

@@ -25,6 +25,8 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
+import { curateWorkspaceMemory } from "../memory/curate.js"
+import { loadWorkspaceMemory } from "../memory/inject.js"
 import { discoverGateSuite, vacuousAccepts } from "../gates/suite.js"
 import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
@@ -189,12 +191,17 @@ export const runForgeSession = (
   Effect.gen(function* () {
     const lessons = yield* loadForgeLessons(run.cwd)
     const rules = yield* loadWorkspaceRules(run.cwd)
-    return yield* runForgeSessionWith(
+    const memory = yield* loadWorkspaceMemory(run.cwd)
+    const result = yield* runForgeSessionWith(
       run,
       publish,
-      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons, rules }).pipe(
+      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons, rules, memory }).pipe(
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
       ),
       doc,
     )
+    // MEMORY v2 curation rides the PRODUCTION session only — deliberately
+    // outside runForgeSessionWith, which is the scripted (LLM-free) test seam.
+    yield* curateWorkspaceMemory({ cwd: run.cwd, run: result.run, publish })
+    return result
   })

@@ -1,0 +1,8 @@
+{
+  "expected": [],
+  "distractors": [
+    "off-by-one in pagination",
+    "one-character fix",
+    "8 tests pass"
+  ]
+}

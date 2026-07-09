@@ -218,6 +218,12 @@ export const reduceConversationIn = (
         text: `context folded at ${fmtTokens(e.tokens)} tokens — attempt ${e.attempt} resumes from a handoff summary + the gate brief`,
       }),
     ),
+    Match.when({ type: "memory_updated" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `workspace memory curated — ${e.created} new · ${e.corroborated} corroborated · ${e.updated} updated · ${e.invalidated} invalidated (.efferent/memory/ledger.jsonl)`,
+      }),
+    ),
     // Ship steps ride the TOOL block shape — the ● color language (green ok /
     // red failed) reads exactly right for a git sequence.
     Match.when({ type: "ship_step" }, (e) =>
