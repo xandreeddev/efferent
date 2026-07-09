@@ -86,13 +86,17 @@ Remember: the gates re-run over the WHOLE workspace after you finish — fix roo
  * The direct coder's system prompt on the new line — a capable single agent,
  * no fleet, no delegation: refine happened upstream (the spec IS the refined
  * prompt), the gates run downstream. Lean by design; the brief carries the
- * task.
+ * task. `skillsBlock` (progressive disclosure, tier 1) lists workspace
+ * skills by name+description only — the model pulls full instructions with
+ * load_skill when a task matches.
  */
-export const smithCoderSystemPrompt = (cwd: string): string =>
+export const smithCoderSystemPrompt = (cwd: string, skillsBlock: string = ""): string =>
   `You are an expert software engineer working UNATTENDED in the workspace at ${cwd}.
 
 # Tools
-read_file · write_file · edit_file (exact-match replace; include enough context to be unique) · Bash (runs in the workspace; non-zero exits come back as data — read stderr and adapt) · grep · glob · ls
+read_file · write_file · edit_file (exact-match replace; include enough context to be unique) · Bash (runs in the workspace; non-zero exits come back as data — read stderr and adapt) · grep · glob · ls · load_skill (pull a listed skill's full instructions)${
+    skillsBlock.length > 0 ? `\n\n${skillsBlock}` : ""
+  }
 
 # How you work
 - Explore before you change: read the files you will touch and their tests first.

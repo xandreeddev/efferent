@@ -10,6 +10,7 @@ import {
   specRefinerToolkit,
 } from "./refiner.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
+import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
 import { loadSpecDoc, lockSpecDoc } from "../spec/store.js"
 
 /** What a refine session needs from the environment — the coder's
@@ -131,10 +132,12 @@ export const makeRefineSession = (
     const tools: RefineTools = { propose: handlers.propose_spec }
     const lessons = yield* loadForgeLessons(cwd)
     const rules = yield* loadWorkspaceRules(cwd)
+    const skillsBlock = renderSkillsBlock(yield* discoverSkills(cwd))
     const config = specRefinerAgentConfig(cwd, {
       unattended: options.unattended,
       lessons,
       rules,
+      skills: skillsBlock.length > 0 ? Option.some(skillsBlock) : Option.none(),
     })
 
     const realAgent: RefineAgent = (cid, prompt) =>

@@ -1,7 +1,8 @@
 import { isAbsolute, join, normalize, relative } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/engine"
+import { discoverSkills, readSkill } from "../skills/skills.js"
 
 /**
  * The direct coder's toolkit on the NEW LINE — a capable single agent doing
@@ -110,8 +111,28 @@ export const Ls = Tool.make("ls", {
   failureMode: "return",
 })
 
+export const LoadSkill = Tool.make("load_skill", {
+  description:
+    "Load the FULL instructions of a workspace skill listed under 'Skills available'. Call this BEFORE doing work a skill covers. Returns {name, instructions}.",
+  parameters: {
+    name: Schema.String.annotations({ description: "The skill's name exactly as listed." }),
+  },
+  success: Schema.Struct({ name: Schema.String, instructions: Schema.String }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 /** The full coder kit. */
-export const smithCodingToolkit = Toolkit.make(ReadFile, WriteFile, EditFile, Bash, Grep, Glob, Ls)
+export const smithCodingToolkit = Toolkit.make(
+  ReadFile,
+  WriteFile,
+  EditFile,
+  Bash,
+  Grep,
+  Glob,
+  Ls,
+  LoadSkill,
+)
 /** The refiner's read-only exploration subset. */
 export const readOnlyToolkit = Toolkit.make(ReadFile, Grep, Glob, Ls)
 
@@ -291,6 +312,26 @@ export const makeSmithCodingHandlers = (cwd: string) =>
             .list(resolve(params.path ?? "."))
             .pipe(Effect.mapError((e) => ({ error: "LsFailed", message: e.message })))
           return { entries }
+        }),
+
+      load_skill: (params: { name: string }) =>
+        Effect.gen(function* () {
+          const body = yield* readSkill(cwd, params.name).pipe(
+            Effect.provideService(FileSystem, fs),
+          )
+          if (Option.isNone(body)) {
+            const available = yield* discoverSkills(cwd).pipe(
+              Effect.provideService(FileSystem, fs),
+            )
+            return yield* Effect.fail({
+              error: "UnknownSkill",
+              message:
+                available.length === 0
+                  ? `no skill named "${params.name}" — this workspace defines no skills`
+                  : `no skill named "${params.name}" — available: ${available.map((s) => s.name).join(", ")}`,
+            })
+          }
+          return { name: params.name, instructions: body.value }
         }),
     })
   })
