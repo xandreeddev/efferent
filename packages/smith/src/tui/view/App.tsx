@@ -482,22 +482,7 @@ const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
 /** Outcome + roles + notice — the two quiet status rows above the input. */
 const StatusRows = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
-  const roles = store.roles
   const floor = store.floor
-  // The LIVE context gauge: the latest turn's input tokens vs the active
-  // model's window (code drives forge, general drives refine).
-  const gauge = () => {
-    const activeModel = store.mode() === "forge" ? roles().code : roles().general
-    return Option.getOrElse(
-      Option.map(
-        contextGauge(contextTokens(store.conversation()), contextWindowOf(activeModel)),
-        (text) => `   ${text}`,
-      ),
-      () => "",
-    )
-  }
-  const rolesLine = () =>
-    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}`
   const outcome = () => Option.getOrElse(floor().outcome, () => "")
   const outcomeColor = () => (floor().phase === "done" ? tokens.state.ok : tokens.state.error)
   return (
@@ -526,14 +511,6 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
           {`session ${Option.getOrElse(floor().conversationRef, () => "")} — persisted in .efferent/smith.db`}
         </text>
       </Show>
-      <box flexDirection="row">
-        <text fg={tokens.text.dim} wrapMode="none" flexGrow={1}>
-          {rolesLine()}
-        </text>
-        <text fg={tokens.state.warn} wrapMode="none" flexShrink={0}>
-          {store.notice()}
-        </text>
-      </box>
     </box>
   )
 }
@@ -571,7 +548,7 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
           ? "type the next idea… — :new for the dashboard, :quit to leave"
           : ":quit · :model [code|fast] — Esc interrupts, Ctrl-C quits"
   return (
-    <box flexDirection="row" flexShrink={0} marginTop={1}>
+    <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.input} flexShrink={0}>{glyph.caret}</text>
       <textarea
         ref={(renderable: TextareaRenderable) => {
@@ -623,6 +600,66 @@ const Palette = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
+/**
+ * The agy-style INPUT FRAME: a transient status line above a full-width rule,
+ * the composer between two rules, and a footer — hints left, the model
+ * readout right. The input zone reads as its OWN region, never fused with
+ * the story above it.
+ *
+ *     <notice — right-aligned, transient>
+ *   ────────────────────────────────────
+ *   ❯ input…
+ *     <palette — completions, inside the frame>
+ *   ────────────────────────────────────
+ *   : for commands · Tab completes        ● general … code … fast … <gauge>
+ */
+const ComposerFrame = (props: { ctx: SmithTuiContext }) => {
+  const { store } = props.ctx
+  const roles = store.roles
+  const dimensions = useTerminalDimensions()
+  // App pads 1 on each side — the rule spans the padded content width.
+  const rule = () => glyph.rule.repeat(Math.max(0, dimensions().width - 2))
+  // The LIVE context gauge: the latest turn's input tokens vs the active
+  // model's window (code drives forge, general drives refine).
+  const gauge = () => {
+    const activeModel = store.mode() === "forge" ? roles().code : roles().general
+    return Option.getOrElse(
+      Option.map(
+        contextGauge(contextTokens(store.conversation()), contextWindowOf(activeModel)),
+        (text) => `   ${text}`,
+      ),
+      () => "",
+    )
+  }
+  const rolesLine = () =>
+    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}`
+  return (
+    <box flexDirection="column" flexShrink={0} marginTop={1}>
+      <Show when={store.notice().length > 0}>
+        <box flexDirection="row">
+          <text flexGrow={1} wrapMode="none">{""}</text>
+          <text fg={tokens.state.warn} wrapMode="none" flexShrink={0}>
+            {store.notice()}
+          </text>
+        </box>
+      </Show>
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{rule()}</text>
+      <CommandLine ctx={props.ctx} />
+      <Palette ctx={props.ctx} />
+      <text fg={tokens.text.muted} wrapMode="none" flexShrink={0}>{rule()}</text>
+      <box flexDirection="row">
+        <text fg={tokens.text.dim} wrapMode="none" flexShrink={0}>
+          {": for commands · Tab completes"}
+        </text>
+        <text flexGrow={1} wrapMode="none">{""}</text>
+        <text fg={tokens.text.dim} wrapMode="none" flexShrink={1}>
+          {rolesLine()}
+        </text>
+      </box>
+    </box>
+  )
+}
+
 /** The factory: refine mode (transcript + live SpecPanel) flows into forge
  *  mode (the floor). Borderless, token-driven — the cli's layout language. */
 export const App = (props: { ctx: SmithTuiContext }) => {
@@ -657,8 +694,7 @@ export const App = (props: { ctx: SmithTuiContext }) => {
           (unmounting the textarea kills the focus fight; the ref re-focuses
           on remount). */}
       <Show when={!overlayOpen()} fallback={<OverlayView ctx={props.ctx} />}>
-        <CommandLine ctx={props.ctx} />
-        <Palette ctx={props.ctx} />
+        <ComposerFrame ctx={props.ctx} />
       </Show>
     </box>
   )
