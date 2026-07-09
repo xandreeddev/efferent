@@ -141,6 +141,14 @@ describe("makeCompatLanguageModel", () => {
       }),
     )
     expect((calls[0]?.body as { thinking?: unknown }).thinking).toEqual({ type: "enabled" })
+    // The CODE variant rides HIGH effort (live-probed: 103 → 398 reasoning
+    // tokens on the same prompt); the conversational tiers stay light.
+    expect((calls[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("high")
+    expect(thinkingParams("kimi-k2.7-code")).toEqual({
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+    })
+    expect(thinkingParams("kimi-k2.6")).toEqual({ thinking: { type: "enabled" } })
     expect(thinkingParams("deepseek-v4-flash")).toEqual({ thinking: { type: "enabled" } })
     expect(thinkingParams("qwen3-coder")).toEqual({ enable_thinking: true })
     expect(thinkingParams("glm-4.7")).toEqual({})
