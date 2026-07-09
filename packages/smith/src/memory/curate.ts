@@ -28,6 +28,10 @@ import { appendMemoryEvents, memoryLedgerPath, readMemoryLedger } from "./ledger
  * failure writes nothing and never fails the run.
  */
 
+/** Bump when extractPrompt/consolidatePrompt change — the memory battery
+ *  records it (the two prompts version together; they form one pipeline). */
+export const MEMORY_PROMPTS_VERSION = "1.0.0"
+
 const STATEMENT_CAP_CHARS = 300
 const MAX_CREATES_PER_RUN = 5
 const MAX_ACTIVE_RECORDS = 50

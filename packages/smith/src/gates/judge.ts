@@ -22,6 +22,10 @@ const EXCLUDED = /(^|\/)(node_modules|\.git|\.foundry|\.efferent|dist|build)(\/|
 
 const JUDGE_GATE = GateName.make("judge")
 
+/** Bump when `judgePrompt` changes — the calibration battery records it in
+ *  its baseline so a score delta is attributable to the prompt change. */
+export const JUDGE_PROMPT_VERSION = "1.0.0"
+
 const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n[…clipped…]`
 

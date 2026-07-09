@@ -4,6 +4,12 @@
 deletes the distill suites and the Verifier support the migration would otherwise
 carry). Breaking: the v2 `EvalSpec` (`data → task → scorers`) API is removed.
 
+> **Note (2026-07-10):** the design landed in `packages/scenarios` (this doc's
+> `packages/evals` paths read as `packages/scenarios`); foundry's stranded
+> `EvalContract.ts` was retired — the scenarios framework is the ONE eval type
+> system. The keyed batteries run through `bun run evals:live` (see
+> `packages/scenarios/CLAUDE.md`).
+
 ## Why a revamp
 
 The agent line (`docs/agents/`) ships four agents whose definition-of-done is a
