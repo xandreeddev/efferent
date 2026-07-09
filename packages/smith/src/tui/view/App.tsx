@@ -566,6 +566,12 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
           renderable.focus()
           props.ctx.store.registerComposerClear(() => renderable.setText(""))
           props.ctx.store.registerComposerRead(() => renderable.plainText)
+          props.ctx.store.registerComposerSet((text) => {
+            renderable.setText(text)
+            // setText resets buffer state — put the cursor back at the end so
+            // the completed line keeps typing forward, not from column 0.
+            renderable.cursorOffset = text.length
+          })
         }}
         height={1}
         flexGrow={1}

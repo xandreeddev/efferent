@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { computePalette, PALETTE_COMMANDS, resolveCommand } from "./palette.js"
+import { completeCommand, computePalette, PALETTE_COMMANDS, resolveCommand } from "./palette.js"
 
 describe("the : palette", () => {
   test("a bare ':' shows every command", () => {
@@ -25,5 +25,29 @@ describe("the : palette", () => {
     expect(Option.isNone(resolveCommand("lo"))).toBe(true) // lock/login/logout
     expect(Option.isNone(resolveCommand("zzz"))).toBe(true)
     expect(Option.isNone(resolveCommand(""))).toBe(true)
+  })
+
+  test("completeCommand: unique match fills the command + a trailing space", () => {
+    expect(Option.getOrThrow(completeCommand(":mo"))).toBe(":model ")
+    expect(Option.getOrThrow(completeCommand(":q"))).toBe(":quit ")
+    expect(Option.getOrThrow(completeCommand(":s"))).toBe(":ship ")
+    expect(Option.getOrThrow(completeCommand(":re"))).toBe(":resume ")
+    // A fully-typed command still gets its trailing space (ready for an arg).
+    expect(Option.getOrThrow(completeCommand(":forge"))).toBe(":forge ")
+  })
+
+  test("completeCommand: several matches extend to the shared stem, then stop", () => {
+    // l → lock/login/logout all share 'lo'.
+    expect(Option.getOrThrow(completeCommand(":l"))).toBe(":lo")
+    // Already at the branch point — the palette shows the fork, nothing to add.
+    expect(Option.isNone(completeCommand(":lo"))).toBe(true)
+    expect(Option.isNone(completeCommand(":log"))).toBe(true) // login/logout
+  })
+
+  test("completeCommand: no-op on non-commands, committed args, and misses", () => {
+    expect(Option.isNone(completeCommand("build a parser"))).toBe(true)
+    expect(Option.isNone(completeCommand(":"))).toBe(true)
+    expect(Option.isNone(completeCommand(":forge my-slug"))).toBe(true) // arg already typed
+    expect(Option.isNone(completeCommand(":zzz"))).toBe(true)
   })
 })
