@@ -1,6 +1,6 @@
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
 import { For, Show } from "solid-js"
-import { useKeyboard, usePaste } from "@opentui/solid"
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
 import { dispatch, dispatchPaste } from "../keys.js"
@@ -212,9 +212,10 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 </box>
               )
             }
-            // One bullet, color = state (the agy pattern): amber running,
-            // green done, red failed — the glyph itself stays quiet. Paths
-            // render RELATIVE to the workspace — absolute prefixes are noise.
+            // The agy color language: bullet AND tool NAME carry the state
+            // color (green done / blue running / red failed) so the action
+            // pops; only the argument stays muted. Paths render RELATIVE to
+            // the workspace — absolute prefixes are noise.
             const statusColor =
               block.status === "ok"
                 ? tokens.state.ok
@@ -224,8 +225,9 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             return (
               <box flexDirection="row" flexShrink={0}>
                 <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
+                <text fg={statusColor} flexShrink={0}>{block.name}</text>
                 <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
-                  {`${block.name}(${relArg(block.arg)})`}
+                  {`(${relArg(block.arg)})`}
                 </text>
               </box>
             )
@@ -337,6 +339,28 @@ const FlowPanel = (props: { ctx: SmithTuiContext }) => {
           </box>
         )}
       </For>
+    </box>
+  )
+}
+
+/** The side column: the flow stepper pinned on top, the artifact (spec or
+ *  attempts) SCROLLABLE below — 40% of the terminal, never a fixed 52. */
+const SidePanel = (props: { ctx: SmithTuiContext; artifact: "spec" | "attempts" }) => {
+  const dimensions = useTerminalDimensions()
+  const width = () => Math.max(44, Math.floor(dimensions().width * 0.4))
+  return (
+    <box flexDirection="column" width={width()} flexShrink={0} marginLeft={2}>
+      <FlowPanel ctx={props.ctx} />
+      <scrollbox
+        flexGrow={1}
+        scrollY={true}
+        scrollX={false}
+        contentOptions={{ flexDirection: "column" }}
+      >
+        <Show when={props.artifact === "spec"} fallback={<AttemptPanel ctx={props.ctx} />}>
+          <SpecPanel ctx={props.ctx} />
+        </Show>
+      </scrollbox>
     </box>
   )
 }
@@ -572,19 +596,13 @@ export const App = (props: { ctx: SmithTuiContext }) => {
       <Show when={mode() === "refine"}>
         <box flexDirection="row" flexGrow={1}>
           <ConversationPane ctx={props.ctx} label="conversation — the refiner" />
-          <box flexDirection="column" width={52} flexShrink={0} marginLeft={2}>
-            <FlowPanel ctx={props.ctx} />
-            <SpecPanel ctx={props.ctx} />
-          </box>
+          <SidePanel ctx={props.ctx} artifact="spec" />
         </box>
       </Show>
       <Show when={mode() === "forge"}>
         <box flexDirection="row" flexGrow={1}>
           <ConversationPane ctx={props.ctx} label="conversation — the implementor" />
-          <box flexDirection="column" width={52} flexShrink={0} marginLeft={2}>
-            <FlowPanel ctx={props.ctx} />
-            <AttemptPanel ctx={props.ctx} />
-          </box>
+          <SidePanel ctx={props.ctx} artifact="attempts" />
         </box>
       </Show>
       <StatusRows ctx={props.ctx} />
