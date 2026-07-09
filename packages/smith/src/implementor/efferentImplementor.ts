@@ -202,10 +202,10 @@ export const makeEfferentImplementorLive = (
       const externalTools =
         mcp.descriptors.length === 0
           ? ""
-          : `## External MCP tools (user-configured servers)\n${mcp.descriptors
+          : `## External MCP tools (user-configured servers — call mcp_describe{server, tool} for a tool's parameter schema, then mcp_call{server, tool, args} to run it)\n${mcp.descriptors
               .map(
                 (d) =>
-                  `- mcp__${d.server}__${d.name}: ${Option.getOrElse(d.description, () => "(no description)")}`,
+                  `- ${d.server} / ${d.name}: ${Option.getOrElse(d.description, () => "(no description)")}`,
               )
               .join("\n")}`
 
