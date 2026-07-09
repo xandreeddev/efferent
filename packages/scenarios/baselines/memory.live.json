@@ -1,0 +1,14 @@
+{
+  "mode": "live",
+  "mean": 1,
+  "scenarios": {
+    "extract:nothing-durable": 1,
+    "extract:preload-quirk": 1,
+    "consolidate:corroborate-and-create": 1,
+    "consolidate:update-correction": 1
+  },
+  "versions": {
+    "memory-prompts": "1.0.0"
+  },
+  "mintedAt": "2026-07-09T23:34:38.570Z"
+}

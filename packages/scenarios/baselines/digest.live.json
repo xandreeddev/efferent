@@ -1,0 +1,15 @@
+{
+  "mode": "live",
+  "mean": 1,
+  "scenarios": {
+    "dead-ends-heavy": 1,
+    "long-clipped": 1,
+    "prior-handoff-fold": 1,
+    "simple-run": 1
+  },
+  "versions": {
+    "digest-prompt": "1.0.0"
+  },
+  "samples": 2,
+  "mintedAt": "2026-07-09T23:39:32.253Z"
+}

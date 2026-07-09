@@ -1,0 +1,6 @@
+{
+  "label": "sound",
+  "goal": "Create src/add.ts exporting a pure function add(a: number, b: number): number returning their sum, with a test.",
+  "acceptance": ["add returns the sum for positive, negative, and zero inputs", "a test file covers those cases"],
+  "why": "a real implementation with real assertions — the baseline sound case"
+}

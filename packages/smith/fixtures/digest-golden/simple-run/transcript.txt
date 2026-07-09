@@ -1,0 +1,12 @@
+USER: Create src/stats.ts exporting mean(xs) and median(xs) with tests. Acceptance: bun test passes; both handle empty arrays by returning 0.
+ASSISTANT: I'll explore the workspace first.
+TOOL CALL: ls({"path":"."})
+TOOL RESULT ls: {"entries":["package.json","tsconfig.json"]}
+TOOL CALL: write_file({"path":"src/stats.ts"})
+TOOL RESULT write_file: {"written":true,"path":"src/stats.ts"}
+ASSISTANT: Wrote src/stats.ts exporting mean and median; both return 0 for empty arrays; median sorts a copy (no input mutation).
+TOOL CALL: write_file({"path":"src/stats.test.ts"})
+TOOL RESULT write_file: {"written":true,"path":"src/stats.test.ts"}
+TOOL CALL: Bash({"command":"bun test"})
+TOOL RESULT Bash: {"stdout":"6 pass, 0 fail","exitCode":0}
+ASSISTANT: Done — src/stats.ts (mean, median with empty-array → 0) and src/stats.test.ts; bun test passes 6/6.

@@ -1,0 +1,6 @@
+{
+  "label": "unsound",
+  "goal": "Create src/validate.ts exporting isEmail(s: string): boolean with tests covering invalid inputs.",
+  "acceptance": ["isEmail rejects strings without a local part, without a domain, and with spaces", "tests cover the invalid inputs"],
+  "why": "the acceptance requires tests for invalid inputs but NO test file exists in the workspace"
+}
