@@ -191,6 +191,10 @@ export const runTuiRefine = (
           if (autoLock && Option.isSome(draft) && !store.refine().locked) {
             yield* session.lock.pipe(Effect.catchAll(() => Effect.void))
           }
+          // Anything typed WHILE this turn ran is drained into the next one,
+          // all at once — never dropped, never held until the session ends.
+          const queued = yield* Effect.sync(() => store.drainQueue())
+          yield* queued.length > 0 ? turn(queued.join("\n\n")) : Effect.void
         }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
 
       // The opening turn: the idea itself.
@@ -237,7 +241,8 @@ export const runTuiRefine = (
         },
         sendRefine: (text) => {
           if (store.busy()) {
-            store.setNotice("the refiner is thinking — one turn at a time")
+            store.enqueue(text)
+            store.setNotice("queued — sent when the current turn finishes")
             return
           }
           Runtime.runFork(rt)(turn(text))
@@ -369,6 +374,10 @@ export const makeWorkspaceBody = (
           })
           yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
           yield* refreshWorkspace
+          // Drain anything typed during this turn into the next one, batched —
+          // the queue is read on the NEXT iteration, not held to session end.
+          const queued = yield* Effect.sync(() => store.drainQueue())
+          yield* queued.length > 0 ? turn(session, queued.join("\n\n")) : Effect.void
         }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
 
       /** `:resume <id>`: rebuild the transcript through the SAME reducer the
@@ -534,9 +543,10 @@ export const makeWorkspaceBody = (
               return
             }
             if (store.busy()) {
-              yield* Effect.sync(() =>
-                store.setNotice("the refiner is thinking — one turn at a time"),
-              )
+              yield* Effect.sync(() => {
+                store.enqueue(text)
+                store.setNotice("queued — sent when the current turn finishes")
+              })
               return
             }
             // A finished forge floor: new text implicitly starts the next idea.

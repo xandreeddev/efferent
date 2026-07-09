@@ -171,6 +171,47 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(tui.store.busy()).toBe(false)
   })
 
+  test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {
+    const tui = await boot({ seams: { refineAgent: stalledRefineAgent } })
+    await tui.setup.mockInput.typeText("build me something")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, () => tui.store.busy())
+    // A second submission while the turn is in flight: queued, not dropped.
+    await tui.setup.mockInput.typeText("also add tests")
+    tui.setup.mockInput.pressEnter()
+    const queued = await waitFrame(tui, (f) => f.includes("queued"))
+    expect(queued).toContain("also add tests")
+    expect(tui.store.queued()).toContain("also add tests")
+  })
+
+  test("queued messages are drained into the NEXT turn, all at once", async () => {
+    const tui = await boot({
+      seams: {
+        refineAgent: proposingRefineAgent({
+          goal: "Create out.txt containing done.",
+          acceptance: ["out.txt exists"],
+          checks: [{ name: "out-exists", command: "test -f out.txt" }],
+        }),
+      },
+    })
+    // Pre-queue a message; the first turn must drain it into a second turn —
+    // deterministic (no timing race), exercising the exact drain path.
+    tui.store.enqueue("and a second thought")
+    await tui.setup.mockInput.typeText("first thought")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, () => {
+      const users = tui.store.conversation().blocks.filter((b) => b.kind === "user")
+      return users.length >= 2 && !tui.store.busy()
+    })
+    const users = tui.store
+      .conversation()
+      .blocks.flatMap((b) => (b.kind === "user" ? [b.text] : []))
+    expect(users).toContain("first thought")
+    expect(users.some((t) => t.includes("and a second thought"))).toBe(true)
+    // The queue is emptied by the drain, not left pending.
+    expect(tui.store.queued()).toEqual([])
+  })
+
   test("the FULL loop: idea → draft → :lock → :forge → gates green → dashboard grows", async () => {
     const tui = await boot({
       seams: {
