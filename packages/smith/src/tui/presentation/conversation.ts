@@ -101,9 +101,11 @@ export const reduceConversation = (
           const reasoning = m.reasoning.trim()
           const text = m.text.trim()
           const tokens = { input: m.usage.inputTokens, output: m.usage.outputTokens }
+          // "turn" labels WHOSE tokens these are — one model call, not the
+          // session (the session-level number is the ctx gauge).
           const tag = [
             ...Option.match(Option.fromNullable(m.model), { onNone: () => [], onSome: (id) => [id] }),
-            `${fmtTokens(tokens.input)} in · ${fmtTokens(tokens.output)} out`,
+            `turn ${fmtTokens(tokens.input)} in · ${fmtTokens(tokens.output)} out`,
           ].join(" · ")
           const hasReasoning = reasoning.length > 0
           // ONE meta line per turn: on the "▸" header when the model thought,
