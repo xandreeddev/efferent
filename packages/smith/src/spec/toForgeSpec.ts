@@ -32,6 +32,8 @@ export interface GateSuiteRequest {
   readonly noTest: boolean
   /** Machine-checkable acceptance from the spec → `accept-<name>` command gates. */
   readonly checks: ReadonlyArray<SpecCheck>
+  /** The rank-4 LLM judge — spec-controlled, default ON. */
+  readonly judge: boolean
 }
 
 /**
@@ -78,5 +80,6 @@ export const gateRequestFromSpec = (
     ),
     noTest: run.noTest || Option.match(gates, { onNone: () => false, onSome: (g) => g.noTest }),
     checks: Option.match(doc, { onNone: () => [], onSome: (d) => d.checks }),
+    judge: Option.match(gates, { onNone: () => true, onSome: (g) => g.judge }),
   }
 }

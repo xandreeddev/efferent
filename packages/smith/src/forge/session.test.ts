@@ -2,7 +2,15 @@ import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { makeScriptedImplementor, withTempWorkspace, writeWorkspaceFile } from "@xandreed/foundry"
+import {
+  Finding,
+  GateName,
+  makeScriptedImplementor,
+  RuleId,
+  withTempWorkspace,
+  writeWorkspaceFile,
+} from "@xandreed/foundry"
+import type { Gate, TsProject } from "@xandreed/foundry"
 import { SpecDoc } from "@xandreed/engine"
 import { LocalFileSystemLive } from "@xandreed/providers"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
@@ -182,6 +190,81 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
     expect(result.run.outcome._tag).toBe("accepted")
     expect(result.run.spec.goal).toBe(doc.goal)
     expect(result.run.spec.acceptance).toEqual(doc.acceptance)
+  })
+
+  test("an extra JUDGE gate runs LAST; its rejection briefs the next attempt", async () => {
+    const events: SmithEvent[] = []
+    const publish = (event: SmithEvent) =>
+      Effect.sync(() => {
+        events.push(event)
+      })
+    const state = { judged: 0 }
+    const scriptedJudge: Gate<TsProject> = {
+      name: GateName.make("judge"),
+      kind: "judge",
+      deterministic: false,
+      run: () =>
+        Effect.sync(() => {
+          state.judged += 1
+          return state.judged === 1
+            ? [
+                new Finding({
+                  rule: RuleId.make("judge/needs-work"),
+                  severity: "error",
+                  message: "out.txt reads as a stub",
+                  location: Option.none(),
+                  fixHint: Option.none(),
+                }),
+              ]
+            : []
+        }),
+    }
+
+    const doc = Effect.runSync(
+      Schema.decodeUnknown(SpecDoc)({
+        slug: "judge-loop",
+        status: "locked",
+        created: "2026-07-09T10:00:00Z",
+        locked: "2026-07-09T10:05:00Z",
+        goal: "Create out.txt in the workspace.",
+        acceptance: ["out.txt exists"],
+        constraints: [],
+        nonGoals: [],
+        checks: [{ name: "out-exists", command: "test -f out.txt" }],
+        limits: { maxAttempts: 3, budgetMinutes: 5 },
+        gates: { noTest: true },
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      withTempWorkspace(tmpdir(), (dir) =>
+        Effect.gen(function* () {
+          yield* writeWorkspaceFile(dir, "package.json", `{ "name": "toy" }`)
+          const implementor = makeScriptedImplementor([
+            [{ path: "out.txt", content: "stub\n" }],
+            [{ path: "out.txt", content: "real content\n" }],
+          ])
+          return yield* runForgeSessionWith(
+            { ...runFor(dir), task: doc.goal },
+            publish,
+            implementor,
+            Option.some(doc),
+            () => [scriptedJudge],
+          ).pipe(Effect.provide(LocalFileSystemLive))
+        }),
+      ),
+    )
+
+    // Deterministic gates were green; only the JUDGE rejected attempt 1.
+    expect(result.run.outcome._tag).toBe("accepted")
+    expect(result.run.attempts.length).toBe(2)
+    expect(Option.getOrThrow(result.run.attempts[0]!.feedback)).toContain("judge/needs-work")
+    expect(Option.getOrThrow(result.run.attempts[0]!.feedback)).toContain("stub")
+    // Rank order: the accept gate STARTS before the judge in every attempt.
+    const starts = events.filter((e) => e.type === "gate_start").map((e) =>
+      e.type === "gate_start" ? e.gate : "",
+    )
+    expect(starts.indexOf("accept-out-exists")).toBeLessThan(starts.indexOf("judge"))
   })
 
   test("RED-FIRST: a check that already passes on the untouched workspace is flagged vacuous", async () => {
