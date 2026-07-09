@@ -17,7 +17,7 @@ import { completeCommand } from "./presentation/palette.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
-import { submitModel } from "./actions/model.js"
+import { openModelPicker, submitModel } from "./actions/model.js"
 import { logout } from "./actions/login.js"
 import type { Overlay, SmithTuiContext } from "./state/store.js"
 
@@ -87,6 +87,17 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
             Option.match(value, {
               onNone: () => ctx.store.setNotice("nothing selected"),
               onSome: (id) => ctx.resume?.(id),
+            })
+            return
+          }
+          if (overlay.purpose.tag === "settings") {
+            // A settings row EDITS that setting: role rows open the model
+            // picker (the picker's Esc falls back to the closed state).
+            ctx.store.closeOverlay()
+            Option.match(value, {
+              onNone: () => ctx.store.setNotice("nothing selected"),
+              onSome: (row) =>
+                openModelPicker(ctx, row === "code" || row === "fast" ? row : "general"),
             })
             return
           }

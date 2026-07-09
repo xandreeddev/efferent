@@ -173,20 +173,37 @@ describe("the smith TUI — frame-level regressions", () => {
 
   test("the composer is FRAMED: rule above, rule below, footer hints + model readout", async () => {
     const tui = await boot()
-    const frame = await waitFrame(tui, (f) => f.includes("❯"))
-    const lines = frame.split("\n")
     const isRule = (line: string) => /─{40,}/.test(line)
-    const caretAt = lines.findIndex((line) => line.includes("❯"))
-    expect(caretAt).toBeGreaterThan(0)
-    // A full-width rule directly above the input and another below it (the
-    // palette may sit between the input and the bottom rule).
-    expect(isRule(lines[caretAt - 1] ?? "")).toBe(true)
-    const below = lines.slice(caretAt + 1).findIndex(isRule)
-    expect(below).toBeGreaterThanOrEqual(0)
+    const frame = await waitFrame(tui, (f) => f.split("\n").some(isRule))
+    const lines = frame.split("\n")
+    // The frame's rules are the ONLY full-width rules — the composer sits
+    // directly under the first, bare (no placeholder tooltip).
+    const ruleIdxs = lines.flatMap((line, index) => (isRule(line) ? [index] : []))
+    expect(ruleIdxs.length).toBeGreaterThanOrEqual(2)
+    const [top, bottom] = [ruleIdxs[0] ?? -1, ruleIdxs[ruleIdxs.length - 1] ?? -1]
+    expect((lines[top + 1] ?? "").trimStart().startsWith(">")).toBe(true)
+    expect((lines[top + 1] ?? "")).not.toContain("describe what to build") // no placeholder
     // The footer under the bottom rule: hints left, the model readout right.
-    const footer = lines[caretAt + 1 + below + 1] ?? ""
+    const footer = lines[bottom + 1] ?? ""
     expect(footer).toContain(": for commands")
     expect(footer).toContain("● general g")
+  })
+
+  test(":settings opens the menu (roles + current values); Enter edits via the model picker", async () => {
+    const tui = await boot()
+    await tui.setup.mockInput.typeText(":settings")
+    tui.setup.mockInput.pressEnter()
+    const menu = await waitFrame(tui, (f) => f.includes("general model"))
+    expect(menu).toContain("code model")
+    expect(menu).toContain("fast model")
+    // Current values render as tags (the harness roles are g/c/f).
+    expect(menu).toContain("g")
+    // Enter on the highlighted row (general) opens the MODEL PICKER — the
+    // settings menu composes the existing design-system overlays.
+    tui.setup.mockInput.pressEnter()
+    const picker = await waitFrame(tui, (f) => f.includes("Select the GENERAL model"))
+    expect(picker).toContain("Select the GENERAL model")
+    expect(tui.store.overlay().kind).toBe("select")
   })
 
   test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {
@@ -252,7 +269,7 @@ describe("the smith TUI — frame-level regressions", () => {
     const drafted = await waitFrame(tui, (f) => f.includes("Create out.txt containing done."))
     expect(drafted).toContain("draft")
     // The conversation pane carries the user's line at full width.
-    expect(drafted).toContain("❯ make an out file")
+    expect(drafted).toContain("> make an out file")
     expect(drafted).toContain("conversation — the refiner")
     // The flow stepper names the phase and the human's next move.
     expect(drafted).toContain("the flow")

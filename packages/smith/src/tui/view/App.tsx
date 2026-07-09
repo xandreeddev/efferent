@@ -60,16 +60,17 @@ const Header = (props: { ctx: SmithTuiContext }) => {
       Date.now() - store.lastEventAt() > 30_000
     )
   }
+  // STATE only, never command tooltips — the footer owns the hints and the
+  // flow stepper owns the workflow guidance (help copy duplicated in three
+  // places read as noise; live complaint).
   const heartbeat = () => {
-    if (store.mode() === "idle") {
-      return "describe what to build — :forge <slug> · :model · :login · :quit"
-    }
+    if (store.mode() === "idle") return ""
     if (store.mode() === "refine") {
       return store.busy()
         ? `${spin()} refining… ${elapsed()}s${stalled() ? " — the model is SLOW to respond; Esc cancels" : ""}`
         : store.refine().locked
-          ? "spec locked — :forge to build"
-          : ":lock when the spec is right"
+          ? "locked"
+          : "drafting"
     }
     return forging()
       ? `${spin()} ${floor().phase} · attempt ${floor().attempts.length}/${floor().maxAttempts}${stalled() ? " — SLOW; Esc interrupts" : ""}`
@@ -270,9 +271,6 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
         <box flexDirection="row" flexShrink={0} marginTop={1}>
           <text fg={tokens.state.running} flexShrink={0}>
             {`  ${spin()} thinking… ${elapsed()}s`}
-          </text>
-          <text fg={tokens.text.dim} wrapMode="none">
-            {"  — Esc interrupts · wheel/PgUp scrolls the story"}
           </text>
         </box>
       </Show>
@@ -485,7 +483,15 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
   const floor = store.floor
   const outcome = () => Option.getOrElse(floor().outcome, () => "")
   const outcomeColor = () => (floor().phase === "done" ? tokens.state.ok : tokens.state.error)
+  // With nothing to say, render NOTHING — an empty box still spends its
+  // marginTop as a phantom blank row above the composer ("too much space",
+  // live complaint).
+  const hasContent = () =>
+    Option.isSome(floor().error) ||
+    outcome().length > 0 ||
+    Option.isSome(floor().conversationRef)
   return (
+    <Show when={hasContent()}>
     <box flexDirection="column" flexShrink={0} marginTop={1}>
       <Show when={Option.isSome(floor().error)}>
         <box flexDirection="row">
@@ -512,6 +518,7 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
         </text>
       </Show>
     </box>
+    </Show>
   )
 }
 
@@ -539,14 +546,7 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     }
     props.ctx.store.setNotice("prefix commands with ':' (try :quit)")
   }
-  const placeholder = () =>
-    props.ctx.store.mode() === "idle"
-      ? "describe what to build… — :model · :login · :quit"
-      : props.ctx.store.mode() === "refine"
-        ? "refine the spec… — :lock when right, :forge to build"
-        : props.ctx.sendText !== undefined
-          ? "type the next idea… — :new for the dashboard, :quit to leave"
-          : ":quit · :model [code|fast] — Esc interrupts, Ctrl-C quits"
+  // NO placeholder — the input is bare (agy). The footer owns the hints.
   return (
     <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.input} flexShrink={0}>{glyph.caret}</text>
@@ -566,7 +566,6 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
         height={1}
         flexGrow={1}
         keyBindings={[{ name: "return", action: "submit" }]}
-        placeholder={placeholder()}
         textColor={tokens.text.default}
         wrapMode="none"
         onSubmit={submit}
@@ -608,7 +607,7 @@ const Palette = (props: { ctx: SmithTuiContext }) => {
  *
  *     <notice — right-aligned, transient>
  *   ────────────────────────────────────
- *   ❯ input…
+ *   > input…
  *     <palette — completions, inside the frame>
  *   ────────────────────────────────────
  *   : for commands · Tab completes        ● general … code … fast … <gauge>
