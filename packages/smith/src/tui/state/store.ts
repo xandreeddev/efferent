@@ -12,7 +12,7 @@ import { initialRefine, reduceRefine, withUserLine } from "../presentation/refin
 import type { ConversationState } from "../presentation/conversation.js"
 import {
   initialConversation,
-  reduceConversation,
+  reduceConversationIn,
   withUserBlock,
 } from "../presentation/conversation.js"
 import type { WorkspaceView } from "../presentation/workspace.js"
@@ -169,7 +169,11 @@ export const createSmithStore = (
         }
         setFloor((state) => reduceFloor(state, event))
         setRefine((state) => reduceRefine(state, event))
-        setConversation((state) => reduceConversation(state, event))
+        // The fold's mode picks the RIGHT advice on a bounded stop: forge
+        // continues itself (gates → next attempt), refine waits for you.
+        setConversation((state) =>
+          reduceConversationIn(modeSig() === "forge" ? "forge" : "refine")(state, event),
+        )
       }),
     mode: modeSig,
     setMode: (next) => setModeSig(next),

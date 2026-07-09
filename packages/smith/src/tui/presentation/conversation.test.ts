@@ -7,6 +7,7 @@ import {
   contextTokens,
   initialConversation,
   reduceConversation,
+  reduceConversationIn,
   withUserBlock,
 } from "./conversation.js"
 
@@ -146,6 +147,20 @@ describe("the conversation fold", () => {
       agent({ type: "agent_end", outcome: "ok", reason: "completed", finalText: "done" }),
     )
     expect(ok.blocks).toEqual([])
+  })
+
+  test("in FORGE mode a bounded stop explains the loop continues ITSELF", () => {
+    // "send another message" is refine advice — a capped forge ATTEMPT
+    // auto-continues via gates → feedback → next attempt (live confusion).
+    const forge = reduceConversationIn("forge")(
+      initialConversation,
+      agent({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" }),
+    )
+    const notice = forge.blocks[0]
+    expect(notice?.kind).toBe("notice")
+    if (notice?.kind !== "notice") return
+    expect(notice.text).toContain("next attempt automatically")
+    expect(notice.text).not.toContain("send another message")
   })
 
   test("refine_error lands as a DURABLE error block in the story", () => {
