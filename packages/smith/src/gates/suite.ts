@@ -6,7 +6,7 @@ import {
   loadConfig,
   makeTypecheckGate,
 } from "@xandreed/foundry"
-import type { Gate, Pipeline, TsProject } from "@xandreed/foundry"
+import type { Gate, Pipeline, TsProject, Workspace, WorkspaceError } from "@xandreed/foundry"
 import { FileSystem } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { GateSuiteRequest } from "../spec/toForgeSpec.js"
@@ -15,7 +15,41 @@ import { makeCommandGate } from "./commandGate.js"
 export interface GateSuite {
   readonly pipeline: Pipeline<TsProject>
   readonly gateNames: ReadonlyArray<string>
+  /** The spec's own accept gates, UNwrapped — the red-first probe runs these
+   *  against the untouched workspace without gate_start noise. */
+  readonly acceptGates: ReadonlyArray<Gate<never>>
 }
+
+/**
+ * RED-FIRST: the accept gates that already PASS on the untouched workspace.
+ * A grep-style check that is green before any work happens is VACUOUS — it
+ * cannot measure this spec's work, and an all-vacuous suite would accept a
+ * no-op run. TDD's red-first discipline applied to the gate suite. Advisory
+ * by design: a crash or an unsnapshottable workspace reads as "not vacuous"
+ * (the check is red — exactly what red-first wants), never an error.
+ */
+export const vacuousAccepts = (
+  gates: ReadonlyArray<Gate<never>>,
+  snapshot: Effect.Effect<Workspace, WorkspaceError>,
+): Effect.Effect<ReadonlyArray<string>> =>
+  gates.length === 0
+    ? Effect.succeed([])
+    : snapshot.pipe(
+        Effect.flatMap((workspace) =>
+          Effect.forEach(gates, (gate) =>
+            gate.run(workspace).pipe(
+              Effect.map((findings) =>
+                findings.some((finding) => finding.severity === "error")
+                  ? []
+                  : [String(gate.name)],
+              ),
+              Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+            ),
+          ),
+        ),
+        Effect.map((batches) => batches.flat()),
+        Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+      )
 
 /** Decorate a gate so its start is visible on the smith event stream. */
 export const withGateEvents = <R>(
@@ -114,5 +148,6 @@ export const discoverGateSuite = (
     return {
       pipeline: { gates: wrapped, policy: "staged" as const },
       gateNames: gates.map((gate) => String(gate.name)),
+      acceptGates,
     }
   })

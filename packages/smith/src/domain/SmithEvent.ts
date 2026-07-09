@@ -25,6 +25,9 @@ export type SmithEvent =
       /** The locked SpecDoc driving this run (None on the legacy flag path). */
       readonly doc: Option.Option<SpecDoc>
     }
+  /** RED-FIRST: accept checks that already PASS on the untouched workspace —
+   *  vacuous (they cannot measure this spec's work). A warning, not a stop. */
+  | { readonly type: "vacuous_checks"; readonly names: ReadonlyArray<string> }
   | { readonly type: "attempt_start"; readonly attempt: number }
   | {
       readonly type: "implement_end"

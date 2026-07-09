@@ -206,6 +206,12 @@ export const reduceConversationIn = (
     Match.when({ type: "refine_error" }, (e) =>
       push(state, { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
     ),
+    Match.when({ type: "vacuous_checks" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `red-first: ${e.names.join(", ")} already PASS on the untouched workspace — these checks cannot measure this spec's work; tighten the spec or expect a vacuous accept`,
+      }),
+    ),
     Match.when({ type: "forge_end" }, (e) => push(state, resultBlock(e.run, e.artifact))),
     Match.when({ type: "forge_error" }, (e) =>
       push(state, { kind: "error", text: clip(`forge failed: ${e.message}`, REASONING_BUDGET) }),
