@@ -28,6 +28,15 @@ export type SmithEvent =
   /** RED-FIRST: accept checks that already PASS on the untouched workspace —
    *  vacuous (they cannot measure this spec's work). A warning, not a stop. */
   | { readonly type: "vacuous_checks"; readonly names: ReadonlyArray<string> }
+  /** The harness capabilities loaded for this run — workspace skills and the
+   *  external MCP tools, surfaced once at session start so what the coder can
+   *  reach is VISIBLE (progressive disclosure is otherwise silent). */
+  | {
+      readonly type: "capabilities"
+      readonly skills: number
+      readonly mcpServers: number
+      readonly mcpTools: number
+    }
   | { readonly type: "attempt_start"; readonly attempt: number }
   /** ATTEMPT-BOUNDARY COMPACTION: the trail outgrew the healthy context range
    *  and was folded into a handoff summary before this attempt ran. */
