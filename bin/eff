@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Short alias for `efferent` — delegates to the same fresh-source launcher.
-exec "$(cd "$(dirname "$0")" && pwd)/efferent" "$@"

@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# Dev launcher for the CODER — runs `efferent code` (the in-process focused
-# coder subcommand) off the TS SOURCE so edits are live with no rebuild. Same
-# repo-as-cwd + EFFERENT_CWD trick as bin/efferent (see there).
-set -euo pipefail
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
-export EFFERENT_CWD="${EFFERENT_CWD:-$PWD}"
-cd "$REPO"
-exec bun "$REPO/packages/cli/src/main.ts" code "$@"
