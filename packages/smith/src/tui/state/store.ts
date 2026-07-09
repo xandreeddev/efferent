@@ -34,6 +34,8 @@ export type SelectPurpose =
   | { readonly tag: "model"; readonly role: ModelRole }
   | { readonly tag: "logout" }
   | { readonly tag: "resume" }
+  /** The settings MENU (agy shape): rows are settings, Enter edits one. */
+  | { readonly tag: "settings" }
 
 /** ONE inline contextual surface at a time — select picker or the login
  *  flow; while open, the composer unmounts and keys route here. */

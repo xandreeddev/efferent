@@ -30,7 +30,8 @@ describe("the : palette", () => {
   test("completeCommand: unique match fills the command + a trailing space", () => {
     expect(Option.getOrThrow(completeCommand(":mo"))).toBe(":model ")
     expect(Option.getOrThrow(completeCommand(":q"))).toBe(":quit ")
-    expect(Option.getOrThrow(completeCommand(":s"))).toBe(":ship ")
+    expect(Option.getOrThrow(completeCommand(":sh"))).toBe(":ship ")
+    expect(Option.getOrThrow(completeCommand(":se"))).toBe(":settings ")
     expect(Option.getOrThrow(completeCommand(":re"))).toBe(":resume ")
     // A fully-typed command still gets its trailing space (ready for an arg).
     expect(Option.getOrThrow(completeCommand(":forge"))).toBe(":forge ")
@@ -42,6 +43,7 @@ describe("the : palette", () => {
     // Already at the branch point — the palette shows the fork, nothing to add.
     expect(Option.isNone(completeCommand(":lo"))).toBe(true)
     expect(Option.isNone(completeCommand(":log"))).toBe(true) // login/logout
+    expect(Option.isNone(completeCommand(":s"))).toBe(true) // ship/settings
   })
 
   test("completeCommand: no-op on non-commands, committed args, and misses", () => {
