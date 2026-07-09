@@ -1,6 +1,6 @@
 import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
-import { Effect, Match, Option } from "effect"
+import { Effect, Match, Metric, Option } from "effect"
 import type { LoopEvent } from "../domain/LoopEvent.js"
 import type { AgentMessage, AgentResult } from "../domain/Message.js"
 import { addUsage, zeroUsage } from "../domain/TokenUsage.js"
@@ -83,6 +83,32 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
 export const DEFAULT_MAX_STEPS = 100
 export const DEFAULT_TOOL_CONCURRENCY = 4
 
+/**
+ * The loop's own quality metrics (Day-4 "trajectory efficiency" vitals) —
+ * pure `effect` Metric, exported to Prometheus by providers' TracingLive:
+ * `engine_runs_total{engine_outcome,engine_reason}` (task completion rate),
+ * `engine_tool_calls_total{engine_tool,engine_ok}` (usage frequency +
+ * failed-call rate), `engine_corrections_total{engine_kind}` (malformed
+ * recoveries and degenerate nudges — the self-correction count).
+ */
+const engineRuns = Metric.counter("engine.runs", {
+  description: "agent runs by outcome and reason",
+  incremental: true,
+})
+const engineToolCalls = Metric.counter("engine.tool_calls", {
+  description: "tool calls by tool name and result",
+  incremental: true,
+})
+const engineCorrections = Metric.counter("engine.corrections", {
+  description: "self-corrections by kind (malformed recovery, degenerate nudge)",
+  incremental: true,
+})
+const tagged = <Type, In, Out>(
+  metric: Metric.Metric<Type, In, Out>,
+  tags: Record<string, string>,
+): Metric.Metric<Type, In, Out> =>
+  Object.entries(tags).reduce((m, [key, value]) => Metric.tagged(m, key, value), metric)
+
 /** Consecutive malformed responses tolerated before the run fails for real. */
 const MAX_MALFORMED = 3
 
@@ -134,6 +160,10 @@ interface LoopState {
   readonly staleTurns: number
   readonly usage: TokenUsage
   readonly phase: Phase
+  /** Trajectory vitals — annotated on the run span at the end. */
+  readonly toolCalls: number
+  readonly toolFailures: number
+  readonly corrections: number
 }
 
 export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
@@ -187,6 +217,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             600,
           )
           yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
+          yield* Metric.increment(tagged(engineCorrections, { "engine.kind": "malformed" }))
           const corrective: AgentMessage = {
             role: "user",
             content:
@@ -202,6 +233,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             newTail: [...state.newTail, corrective],
             turnIndex: state.turnIndex + 1,
             malformedStreak: streak,
+            corrections: state.corrections + 1,
           } satisfies LoopState
         }
 
@@ -244,7 +276,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             args: tc.args,
           }),
         )
-        yield* Effect.forEach(responseToolResults(content), (tr) =>
+        const toolResults = responseToolResults(content)
+        yield* Effect.forEach(toolResults, (tr) =>
           onEvent({
             type: "tool_end",
             turnIndex: state.turnIndex,
@@ -253,7 +286,16 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             args: argsByCallId.get(tr.id) ?? {},
             ok: tr.ok,
             result: tr.result,
-          }),
+          }).pipe(
+            Effect.zipRight(
+              Metric.increment(
+                tagged(engineToolCalls, {
+                  "engine.tool": tr.toolName,
+                  "engine.ok": tr.ok ? "true" : "false",
+                }),
+              ),
+            ),
+          ),
         )
 
         // --- Degenerate-loop circuit breaker ---
@@ -267,6 +309,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             ? [{ role: "user", content: DEGENERATE_REPEAT_NUDGE }]
             : []
         yield* nudge.length > 0 ? (options.onTail?.(nudge) ?? Effect.void) : Effect.void
+        yield* nudge.length > 0
+          ? Metric.increment(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }))
+          : Effect.void
 
         const finalText = text.length > 0 ? text : state.finalText
         const turnIndex = state.turnIndex + 1
@@ -322,6 +367,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           staleTurns: stale,
           usage: addUsage(state.usage, usage),
           phase,
+          toolCalls: state.toolCalls + toolCalls.length,
+          toolFailures: state.toolFailures + toolResults.filter((tr) => !tr.ok).length,
+          corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
         } satisfies LoopState
       })
 
@@ -336,6 +384,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         staleTurns: 0,
         usage: zeroUsage,
         phase: "continue",
+        toolCalls: 0,
+        toolFailures: 0,
+        corrections: 0,
       } as LoopState,
       { while: (state) => state.phase === "continue", body: step },
     )
@@ -354,13 +405,21 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
       Match.exhaustive,
     )
     yield* onEvent({ type: "agent_end", outcome, reason, finalText: final.finalText })
-    // The run span states its verdict — a one-turn trace that claims
-    // "completed" with tool calls pending is visible at a glance.
+    yield* Metric.increment(
+      tagged(engineRuns, { "engine.outcome": outcome, "engine.reason": reason }),
+    )
+    // The run span states its verdict AND its trajectory vitals — a
+    // "completed" run with 25 steps, five failed calls, and three
+    // corrections is a low-quality success visible at a glance (Day 4).
     yield* Effect.annotateCurrentSpan({
       "engine.outcome": outcome,
       "engine.reason": reason,
       "engine.turns": final.turnIndex,
       "engine.usage.total_tokens": final.usage.totalTokens,
+      "engine.tool_calls": final.toolCalls,
+      "engine.tool_calls.failed": final.toolFailures,
+      "engine.corrections": final.corrections,
+      error: outcome !== "ok",
     })
     return {
       finalText: final.finalText,

@@ -127,7 +127,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "request duration — p50 / p95",
+      "title": "request duration — p50 / p95 / p99",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
       "targets": [
@@ -140,6 +140,11 @@
           "refId": "B",
           "expr": "histogram_quantile(0.95, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
           "legendFormat": "p95 — {{llm_model}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "p99 — {{llm_model}}"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
@@ -173,6 +178,64 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "engine — trajectory quality",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "agent runs by outcome (completion rate)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (engine_outcome, engine_reason) (increase(engine_runs_total{job=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{engine_outcome}} — {{engine_reason}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "tool calls by tool (failed dashed)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (engine_tool) (rate(engine_tool_calls_total{job=~\"$service\",engine_ok=\"true\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{engine_tool}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (engine_tool) (rate(engine_tool_calls_total{job=~\"$service\",engine_ok=\"false\"}[$__rate_interval])) * 60",
+          "legendFormat": "FAILED {{engine_tool}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "self-corrections per minute",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (engine_kind) (rate(engine_corrections_total{job=~\"$service\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{engine_kind}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
     }
   ]
 }
