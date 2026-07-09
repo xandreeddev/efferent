@@ -26,6 +26,10 @@ tools, the step cap is hit, or a breaker fires:
   progress gets one nudge, then a forced stop with a typed partial outcome.
 - **Incremental persistence** — every turn's messages land in the store the
   moment they exist, so a crash loses nothing past the last completed turn.
+- **Within-run compaction** — past a token threshold the buffer folds into a
+  summary handoff plus the newest turns (the cut never splits a tool
+  call/result pair), and the store checkpoints the covered position. Best
+  effort: any failure just continues unfolded.
 
 Every turn also persists **what produced it**: the resolved
 `provider:modelId` and the token usage are stamped onto the assistant
@@ -36,9 +40,19 @@ from the database alone.
 ## Ports
 
 `ConversationStore` · `SettingsStore` · `AuthStore` · `FileSystem` · `Shell` ·
-`UtilityLlm` — each a `Context.Tag` service with `Schema.TaggedError` errors.
-[Providers](/docs/concepts/providers) implements them; agents compose the
-layers at their `main.ts` edge.
+`UtilityLlm` · `McpClient` — each a `Context.Tag` service with
+`Schema.TaggedError` errors. [Providers](/docs/concepts/providers) implements
+them; agents compose the layers at their `main.ts` edge.
+
+## External tools — MCP by progressive disclosure
+
+The kernel's MCP bridge turns any number of user-configured servers into a
+**constant two-tool cost**: the prompt lists `server/tool — description`
+(names only), `mcp_describe` reveals one tool's real input schema on demand,
+and `mcp_call` invokes it. Tool-level failures, transport errors, and unknown
+names all return as data the loop's corrective machinery handles — never a
+dead turn. Configuration (`mcpServers` in `.efferent/config.json`) is the
+consent boundary: no config, no processes.
 
 ## The session chassis
 

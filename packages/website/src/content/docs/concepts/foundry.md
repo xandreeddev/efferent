@@ -34,11 +34,25 @@ audit trail.
 
 ## The gates
 
-Gates are pure static checks or command gates (a shell command whose exit
-code is the verdict). The repo's own suite — the same one `bun run typecheck`
-runs — enforces the Effect idioms: no `try`/`catch`, no `let`/loops, no
-nullable returns, no tag switches, no `as any`, plus the boundaries rule that
-pins the package graph.
+A gate is a **value** — `{name, kind, deterministic, run}` — and a pipeline
+is data. Kinds rank by cost: `static` (0) → `typecheck` (1) → `test` (2) →
+`eval` (3) → `judge` (4). The staged policy runs everything **within** a rank
+(maximize feedback per expensive attempt) and fails fast **across** ranks —
+never run tests on code that doesn't typecheck, never spend judge tokens on
+code that fails the AST rules. A gate that cannot *run* folds to a failure
+carrying a `gate-crashed` finding: **fail-closed, never a silent pass**.
+
+The deterministic ranks are pure static checks over one shared `ts.Program`
+(the Effect idioms: no `try`/`catch`, no `let`/loops, no nullable returns, no
+tag switches, no `as any`; plus the boundaries rule that pins the package
+graph) and command gates — a shell command whose exit code is the verdict.
+
+Rank 4 is the **judge**: an LLM gate that runs last, judges only what
+determinism cannot (intent fulfillment, honesty of the implementation), and
+is marked non-deterministic on its verdict. In smith it's ON by default and
+fail-closed — an unparseable verdict is a failure. A **red-first probe**
+warns when a spec's accept check already passes on the untouched workspace:
+a check that is green before any work cannot measure the work.
 
 ## The ratchet
 
