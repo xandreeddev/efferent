@@ -171,6 +171,24 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(tui.store.busy()).toBe(false)
   })
 
+  test("the composer is FRAMED: rule above, rule below, footer hints + model readout", async () => {
+    const tui = await boot()
+    const frame = await waitFrame(tui, (f) => f.includes("❯"))
+    const lines = frame.split("\n")
+    const isRule = (line: string) => /─{40,}/.test(line)
+    const caretAt = lines.findIndex((line) => line.includes("❯"))
+    expect(caretAt).toBeGreaterThan(0)
+    // A full-width rule directly above the input and another below it (the
+    // palette may sit between the input and the bottom rule).
+    expect(isRule(lines[caretAt - 1] ?? "")).toBe(true)
+    const below = lines.slice(caretAt + 1).findIndex(isRule)
+    expect(below).toBeGreaterThanOrEqual(0)
+    // The footer under the bottom rule: hints left, the model readout right.
+    const footer = lines[caretAt + 1 + below + 1] ?? ""
+    expect(footer).toContain(": for commands")
+    expect(footer).toContain("● general g")
+  })
+
   test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {
     const tui = await boot({ seams: { refineAgent: stalledRefineAgent } })
     await tui.setup.mockInput.typeText("build me something")
