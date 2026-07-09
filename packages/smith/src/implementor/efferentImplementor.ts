@@ -175,6 +175,7 @@ export const makeEfferentImplementorLive = (
     Effect.gen(function* () {
       const context = yield* Effect.context<ImplementorServices>()
       const store = yield* ConversationStore
+      const utility = yield* UtilityLlm
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
       )
@@ -215,7 +216,19 @@ export const makeEfferentImplementorLive = (
                 : event.type === "assistant_message"
                   ? Ref.set(contextRef, event.usage.inputTokens)
                   : Effect.void
-              ).pipe(Effect.zipRight(options.publish({ type: "agent", event })))
+              ).pipe(
+                Effect.zipRight(
+                  // A mid-run fold rides the SAME pane vocabulary as the
+                  // attempt-boundary fold — one notice, one meaning.
+                  event.type === "compaction"
+                    ? options.publish({
+                        type: "context_folded",
+                        attempt: input.attempt,
+                        tokens: event.tokens,
+                      })
+                    : options.publish({ type: "agent", event }),
+                ),
+              )
 
             const brief = Option.match(input.feedback, {
               onNone: () =>
@@ -250,6 +263,17 @@ export const makeEfferentImplementorLive = (
                 system: smithCoderSystemPrompt(options.cwd),
                 toolkit: smithCodingToolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
+                // WITHIN-attempt compaction: same threshold and digest as the
+                // attempt-boundary fold — a single long attempt no longer
+                // outgrows the healthy range before a gate rejection saves it.
+                compaction: {
+                  thresholdTokens: CHECKPOINT_THRESHOLD_TOKENS,
+                  keepTurns: 2,
+                  summarize: (transcript, previous) =>
+                    utility
+                      .complete(digestPrompt(renderTrailForDigest(transcript), previous))
+                      .pipe(Effect.map((digest) => digest.text)),
+                },
               },
               cid,
               brief,

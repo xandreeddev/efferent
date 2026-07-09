@@ -45,6 +45,14 @@ export class ConversationStore extends Context.Tag("@xandreed/engine/Conversatio
       id: ConversationId,
       summary: string,
     ) => Effect.Effect<void, StoreError>
+    /** A fold up to an EXPLICIT position (the within-run compaction seam):
+     *  rows at or before it are covered by the summary; `listActive` returns
+     *  only the rows after. `checkpoint` folds everything appended so far. */
+    readonly checkpointAt: (
+      id: ConversationId,
+      summary: string,
+      messagePosition: number,
+    ) => Effect.Effect<void, StoreError>
     readonly latestCheckpoint: (
       id: ConversationId,
     ) => Effect.Effect<Option.Option<Checkpoint>, StoreError>

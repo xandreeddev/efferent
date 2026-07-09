@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, Layer, Ref, Schema, Stream } from "effect"
+import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { Failure } from "../domain/Failure.js"
 import type { LoopEvent } from "../domain/LoopEvent.js"
 import { DEGENERATE_REPEAT_NUDGE, runLoop } from "./loop.js"
@@ -176,5 +176,111 @@ describe("runLoop", () => {
           : [{ type: "text", text: "done" }, finish("stop")],
     )
     expect(seen).toEqual(["assistant", "tool", "assistant"])
+  })
+
+  test("the compact seam folds at a turn boundary — the NEXT call sends summary + kept tail", async () => {
+    const prompts: Array<string> = []
+    const spy = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      return yield* LanguageModel.make({
+        generateText: (options) =>
+          Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+            Effect.tap((n) =>
+              Effect.sync(() => {
+                prompts[n] = JSON.stringify(options.prompt.content)
+              }),
+            ),
+            Effect.map(
+              (n) =>
+                (n === 0
+                  ? [
+                      { type: "tool-call", id: "c1", name: "echo", params: { value: "x" } },
+                      finish("tool-calls"),
+                    ]
+                  : [{ type: "text", text: "done" }, finish("stop")]) as never,
+            ),
+          ),
+        streamText: () => Stream.die("not scripted") as never,
+      })
+    })
+    const { events, onEvent } = collect()
+    const result = await Effect.runPromise(
+      runLoop({
+        system: "sys",
+        messages: [user("the ORIGINAL brief")],
+        toolkit: kit,
+        onEvent,
+        // Fold everything before the just-finished turn's assistant message.
+        compact: (messages) =>
+          Effect.succeed(
+            Option.some({
+              summary: "THE MID-RUN SUMMARY",
+              keepFrom: messages.findIndex((m) => m.role === "assistant"),
+            }),
+          ),
+      }).pipe(
+        Effect.provide(handlers),
+        Effect.provideServiceEffect(LanguageModel.LanguageModel, spy),
+      ),
+    )
+    expect(result.finalText).toBe("done")
+    // Call 1's prompt: the handoff replaced the original head; the turn's
+    // assistant + tool messages survive verbatim.
+    expect(prompts[1]).toContain("THE MID-RUN SUMMARY")
+    expect(prompts[1]).not.toContain("the ORIGINAL brief")
+    expect(prompts[1]).toContain("echo")
+    // newTail is persistence-truth: untouched by the load-side rewrite.
+    expect(result.newTail.map((m) => m.role)).toEqual(["assistant", "tool", "assistant"])
+    const compaction = events.find((e) => e.type === "compaction")
+    expect(compaction?.type === "compaction" && compaction.kept).toBe(2)
+  })
+
+  test("an invalid plan (cut on a tool message) is IGNORED — the run continues unfolded", async () => {
+    const prompts: Array<string> = []
+    const spy = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      return yield* LanguageModel.make({
+        generateText: (options) =>
+          Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+            Effect.tap((n) =>
+              Effect.sync(() => {
+                prompts[n] = JSON.stringify(options.prompt.content)
+              }),
+            ),
+            Effect.map(
+              (n) =>
+                (n === 0
+                  ? [
+                      { type: "tool-call", id: "c1", name: "echo", params: { value: "x" } },
+                      finish("tool-calls"),
+                    ]
+                  : [{ type: "text", text: "done" }, finish("stop")]) as never,
+            ),
+          ),
+        streamText: () => Stream.die("not scripted") as never,
+      })
+    })
+    const { events, onEvent } = collect()
+    await Effect.runPromise(
+      runLoop({
+        system: "sys",
+        messages: [user("the ORIGINAL brief")],
+        toolkit: kit,
+        onEvent,
+        compact: (messages) =>
+          Effect.succeed(
+            Option.some({
+              summary: "BAD PLAN",
+              keepFrom: messages.findIndex((m) => m.role === "tool"),
+            }),
+          ),
+      }).pipe(
+        Effect.provide(handlers),
+        Effect.provideServiceEffect(LanguageModel.LanguageModel, spy),
+      ),
+    )
+    expect(prompts[1]).toContain("the ORIGINAL brief")
+    expect(prompts[1]).not.toContain("BAD PLAN")
+    expect(events.some((e) => e.type === "compaction")).toBe(false)
   })
 })

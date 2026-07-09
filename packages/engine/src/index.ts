@@ -43,6 +43,7 @@ export {
   assistantUsage,
   extractUsage,
   handoffToMessage,
+  safeKeepFrom,
   responseReasoning,
   responseText,
   responseToAgentMessages,
@@ -60,9 +61,9 @@ export {
   DEGENERATE_REPEAT_NUDGE,
   runLoop,
 } from "./loop/loop.js"
-export type { RunLoopOptions } from "./loop/loop.js"
+export type { CompactionPlan, RunLoopOptions } from "./loop/loop.js"
 export { runAgent } from "./loop/runAgent.js"
-export type { AgentConfig } from "./loop/runAgent.js"
+export type { AgentConfig, CompactionPolicy } from "./loop/runAgent.js"
 
 // session
 export { makeSession } from "./session/chassis.js"
