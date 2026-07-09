@@ -1,5 +1,6 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Array as Arr, Effect, Option, Ref, Schema } from "effect"
+import { snapshotWorkspace } from "@xandreed/foundry"
 import {
   DEFAULT_SPEC_LIMITS,
   encodeSpecDocText,
@@ -18,10 +19,17 @@ import {
   makeSmithCodingHandlers,
   ReadFile,
 } from "../implementor/codingToolkit.js"
+import { makeCommandGate } from "../gates/commandGate.js"
+import { vacuousAccepts } from "../gates/suite.js"
 import { specRefinerPrompt } from "./refinerPrompt.js"
 
 /** Where a workspace's specs live, relative to its root. */
 export const SPECS_DIR = ".efferent/specs"
+
+/** The red-first probe runs at PROPOSE time, inside an interactive refine
+ *  turn — much tighter than a forge gate's five minutes. A check slower than
+ *  this belongs in a test file the check then runs. */
+const RED_FIRST_TIMEOUT_MS = 30_000
 
 /**
  * The refiner's ONE write: propose (or wholly replace) the spec draft.
@@ -31,7 +39,7 @@ export const SPECS_DIR = ".efferent/specs"
  */
 export const ProposeSpec = Tool.make("propose_spec", {
   description:
-    "Propose the spec draft — every call REPLACES the whole draft (same file, same slug, for the entire session). goal: one imperative paragraph. acceptance: verifiable criteria — machine-checkable ones MUST have a matching checks entry. checks: {name, command} pairs where the command is ONE line of shell that exits 0 iff the criterion holds, and must FAIL on the workspace as it is NOW (red-first). constraints: what must not change (unattended assumptions go here, prefixed 'assumption:'). nonGoals: explicit scope fences. Returns {slug, path, status: 'draft'} — only the human can lock it.",
+    "Propose the spec draft — every call REPLACES the whole draft (same file, same slug, for the entire session). goal: one imperative paragraph. acceptance: verifiable criteria — machine-checkable ones MUST have a matching checks entry. checks: {name, command} pairs where the command is ONE line of shell that exits 0 iff the criterion holds, and must FAIL on the workspace as it is NOW (red-first — ENFORCED: the checks run when you propose, and any that already pass are rejected). Never write a check describing the CURRENT state ('no X yet', 'file absent') — that is a precondition, not acceptance; state it as a constraint instead. constraints: what must not change (unattended assumptions go here, prefixed 'assumption:'). nonGoals: explicit scope fences. Returns {slug, path, status: 'draft'} — only the human can lock it.",
   parameters: {
     goal: Schema.String.annotations({ description: "One imperative paragraph." }),
     acceptance: Schema.Array(Schema.String).annotations({
@@ -118,6 +126,29 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
             return yield* Effect.fail({
               error: "InvalidSpec",
               message: `check "${multiline.name}" has a multi-line command — make it a single line (join statements with ';', or move the logic into a test file and run that)`,
+            })
+          }
+          // RED-FIRST, ENFORCED at the source (the doctrine: validation in
+          // deterministic code, never advisory): run each proposed check
+          // against the workspace NOW — the same probe forge uses — and
+          // bounce any that already pass. A green-before-the-work check is
+          // a precondition, not acceptance; it would accept a no-op run.
+          // Infra failures read as red (unsnapshottable workspace, crash),
+          // exactly like the forge-side probe.
+          const vacuous = yield* vacuousAccepts(
+            Arr.map(params.checks ?? [], (check) =>
+              makeCommandGate({
+                name: check.name,
+                argv: ["bash", "-c", check.command],
+                timeoutMs: RED_FIRST_TIMEOUT_MS,
+              }),
+            ),
+            snapshotWorkspace(cwd),
+          )
+          if (vacuous.length > 0) {
+            return yield* Effect.fail({
+              error: "VacuousChecks",
+              message: `check(s) ${vacuous.join(", ")} already PASS on the untouched workspace — red-first: an acceptance check must FAIL before the work and pass only once the work is done. A check that describes the current state ("no X yet") is a precondition, not acceptance: drop it or restate it as a constraint, then re-propose.`,
             })
           }
           const slug = yield* mintSlug(params.goal)

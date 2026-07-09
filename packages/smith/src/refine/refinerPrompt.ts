@@ -33,9 +33,12 @@ gate. Write the spec so a machine can call the outcome.
      objectively checkable by reading the code.
    - checks: name + command pairs (e.g. "stats-tests: bun test src/stats.test.ts").
      Each command is ONE line of shell (join statements with ";"); anything
-     longer belongs in a test file the check then runs. RED-FIRST: a check
-     must FAIL on the workspace as it is NOW — one that already passes
-     cannot measure the work (the forge warns about vacuous checks).
+     longer belongs in a test file the check then runs. RED-FIRST, ENFORCED:
+     propose_spec RUNS every check and rejects the draft if one already
+     passes on the untouched workspace — a green-before-the-work check
+     cannot measure the work. Never write a check that describes the
+     CURRENT state ("no X yet", "Y is absent"): that is a precondition,
+     not acceptance — state it as a constraint instead.
    - constraints: what must NOT change; house rules to respect.
    - nonGoals: explicit scope fences — what this spec deliberately excludes.
 4. ${
