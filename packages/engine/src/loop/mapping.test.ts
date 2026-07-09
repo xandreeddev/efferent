@@ -7,11 +7,35 @@ import {
   responseToAgentMessages,
   responseToolCalls,
   responseToolResults,
+  safeKeepFrom,
   toPromptMessages,
   withToolCallIds,
   withUsageOnAssistant,
   extractModel,
 } from "./mapping.js"
+
+const assistantMsg: AgentMessage = { role: "assistant", content: [{ type: "text", text: "a" }] }
+const toolMsg: AgentMessage = {
+  role: "tool",
+  content: [{ type: "tool-result", toolCallId: "t" as never, toolName: "x", output: {} }],
+}
+const userMsg: AgentMessage = { role: "user", content: "u" }
+
+describe("safeKeepFrom", () => {
+  test("keeps N assistant turns; the cut always lands ON an assistant message", () => {
+    const buffer = [userMsg, assistantMsg, toolMsg, assistantMsg, toolMsg, assistantMsg, toolMsg]
+    expect(Option.getOrThrow(safeKeepFrom(buffer, 2))).toBe(3)
+    expect(Option.getOrThrow(safeKeepFrom(buffer, 1))).toBe(5)
+    expect(buffer[Option.getOrThrow(safeKeepFrom(buffer, 2))]?.role).toBe("assistant")
+  })
+
+  test("None when the buffer is too small to fold, or the cut would be index 0", () => {
+    expect(Option.isNone(safeKeepFrom([userMsg, assistantMsg, toolMsg], 1))).toBe(true)
+    expect(Option.isNone(safeKeepFrom([userMsg, assistantMsg, toolMsg], 5))).toBe(true)
+    expect(Option.isNone(safeKeepFrom([assistantMsg, toolMsg, assistantMsg], 2))).toBe(true)
+    expect(Option.isNone(safeKeepFrom([], 2))).toBe(true)
+  })
+})
 
 describe("withToolCallIds", () => {
   test("mints deterministic ids for id-less calls/results; keeps provider ids", () => {

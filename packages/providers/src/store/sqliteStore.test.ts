@@ -92,6 +92,28 @@ describe("SqliteConversationStoreLive", () => {
     )
   })
 
+  test("checkpointAt folds at an EXPLICIT position; a later full checkpoint supersedes it", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const id = yield* store.create()
+        yield* store.append(id, user("p0"))
+        yield* store.append(id, user("p1"))
+        yield* store.append(id, user("p2"))
+        // Mid-run fold covering rows 0..1 — row 2 stays active.
+        yield* store.checkpointAt(id, "MID FOLD", 1)
+        expect(yield* store.listActive(id)).toEqual([user("p2")])
+        expect(Option.getOrThrow(yield* store.latestCheckpoint(id)).messagePosition).toBe(1)
+        // The attempt-boundary fold (MAX position) wins as the latest.
+        yield* store.checkpoint(id, "FULL FOLD")
+        const latest = Option.getOrThrow(yield* store.latestCheckpoint(id))
+        expect(latest.summary).toBe("FULL FOLD")
+        expect(latest.messagePosition).toBe(2)
+        expect(yield* store.listActive(id)).toEqual([])
+      }),
+    )
+  })
+
   test("positions are per-conversation (no cross-talk)", async () => {
     await withStore(
       Effect.gen(function* () {

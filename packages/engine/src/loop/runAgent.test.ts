@@ -43,6 +43,13 @@ const memoryStore = Effect.gen(function* () {
             ),
           )
         }),
+      checkpointAt: (_id, summary, messagePosition) =>
+        Ref.set(
+          fold,
+          Option.some(
+            new Checkpoint({ conversationId: cid, messagePosition, summary, createdAt: 0 }),
+          ),
+        ),
       latestCheckpoint: () => Ref.get(fold),
       setTitle: () => Effect.void,
       listByWorkspace: () => Effect.succeed([]),
@@ -131,6 +138,150 @@ describe("runAgent", () => {
         // The folded original is NOT re-fed.
         expect(joined).not.toContain("old stuff")
         expect(joined).toContain("next")
+      }),
+    )
+  })
+
+  test("WITHIN-run compaction: past the threshold, checkpointAt covers the folded rows exactly", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* memoryStore
+        const prompts: Array<string> = []
+        const calls = yield* Ref.make(0)
+        // Two tool turns then stop: keepTurns=1 needs a SECOND assistant
+        // turn before a safe cut exists (the fold keeps one turn verbatim).
+        const bigModel = LanguageModel.make({
+          generateText: (options) =>
+            Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+              Effect.tap((n) =>
+                Effect.sync(() => {
+                  prompts[n] = JSON.stringify(options.prompt.content)
+                }),
+              ),
+              Effect.map(
+                (n) =>
+                  (n < 2
+                    ? [
+                        { type: "tool-call", id: `c${n}`, name: "noop", params: { value: "x" } },
+                        {
+                          type: "finish",
+                          reason: "tool-calls",
+                          usage: { inputTokens: 90_000, outputTokens: 5, totalTokens: 90_005 },
+                        },
+                      ]
+                    : [
+                        { type: "text", text: "done" },
+                        {
+                          type: "finish",
+                          reason: "stop",
+                          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                        },
+                      ]) as never,
+              ),
+            ),
+          streamText: () => Stream.die("not scripted") as never,
+        })
+
+        const result = yield* runAgent(
+          {
+            system: "sys",
+            toolkit: emptyKit,
+            compaction: {
+              thresholdTokens: 50_000,
+              keepTurns: 1,
+              summarize: () => Effect.succeed("MID-RUN HANDOFF"),
+            },
+          },
+          cid,
+          "the big brief",
+        ).pipe(
+          Effect.provide(emptyHandlers),
+          Effect.provideServiceEffect(LanguageModel.LanguageModel, bigModel),
+          Effect.provide(store.layer),
+        )
+        expect(result.finalText).toBe("done")
+
+        // Rows: prompt(0) a(1) t(2) a(3) t(4) a(5). The fold after turn 2
+        // keeps the last assistant turn: checkpoint at position 2, listActive
+        // returns exactly the kept rows.
+        const persisted = yield* Effect.gen(function* () {
+          const s = yield* ConversationStore
+          const checkpoint = yield* s.latestCheckpoint(cid)
+          const active = yield* s.listActive(cid)
+          return { checkpoint, active }
+        }).pipe(Effect.provide(store.layer))
+        const checkpoint = Option.getOrThrow(persisted.checkpoint)
+        expect(checkpoint.summary).toBe("MID-RUN HANDOFF")
+        expect(checkpoint.messagePosition).toBe(2)
+        expect(persisted.active.map((m) => m.role)).toEqual(["assistant", "tool", "assistant"])
+        // Call 3 ran on summary + kept tail, not the original brief.
+        expect(prompts[2]).toContain("MID-RUN HANDOFF")
+        expect(prompts[2]).not.toContain("the big brief")
+      }),
+    )
+  })
+
+  test("a failing summarizer skips the fold — the run continues on the full buffer", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* memoryStore
+        const calls = yield* Ref.make(0)
+        const prompts: Array<string> = []
+        const bigModel = LanguageModel.make({
+          generateText: (options) =>
+            Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+              Effect.tap((n) =>
+                Effect.sync(() => {
+                  prompts[n] = JSON.stringify(options.prompt.content)
+                }),
+              ),
+              Effect.map(
+                (n) =>
+                  (n < 2
+                    ? [
+                        { type: "tool-call", id: `c${n}`, name: "noop", params: { value: "x" } },
+                        {
+                          type: "finish",
+                          reason: "tool-calls",
+                          usage: { inputTokens: 90_000, outputTokens: 5, totalTokens: 90_005 },
+                        },
+                      ]
+                    : [
+                        { type: "text", text: "done" },
+                        {
+                          type: "finish",
+                          reason: "stop",
+                          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                        },
+                      ]) as never,
+              ),
+            ),
+          streamText: () => Stream.die("not scripted") as never,
+        })
+        const result = yield* runAgent(
+          {
+            system: "sys",
+            toolkit: emptyKit,
+            compaction: {
+              thresholdTokens: 50_000,
+              keepTurns: 1,
+              summarize: () => Effect.fail("fast tier down"),
+            },
+          },
+          cid,
+          "the big brief",
+        ).pipe(
+          Effect.provide(emptyHandlers),
+          Effect.provideServiceEffect(LanguageModel.LanguageModel, bigModel),
+          Effect.provide(store.layer),
+        )
+        expect(result.finalText).toBe("done")
+        const checkpoint = yield* Effect.gen(function* () {
+          const s = yield* ConversationStore
+          return yield* s.latestCheckpoint(cid)
+        }).pipe(Effect.provide(store.layer))
+        expect(Option.isNone(checkpoint)).toBe(true)
+        expect(prompts[2]).toContain("the big brief")
       }),
     )
   })

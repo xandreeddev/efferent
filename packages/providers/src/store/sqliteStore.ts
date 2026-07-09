@@ -135,6 +135,14 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
             ).run(id, summary, Date.now())
           }),
 
+        checkpointAt: (id: ConversationId, summary: string, messagePosition: number) =>
+          tryDb(() => {
+            db.query(
+              `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
+               VALUES (?1, ?2, ?3, ?4)`,
+            ).run(id, messagePosition, summary, Date.now())
+          }),
+
         latestCheckpoint: (id: ConversationId) =>
           tryDb(() =>
             Option.map(
