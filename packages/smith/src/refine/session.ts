@@ -1,16 +1,25 @@
+import type { LanguageModel } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
 import { ConversationStore, runAgent, SpecSlug } from "@xandreed/engine"
 import { loadForgeLessons } from "../forge/session.js"
-import type { AgentMessage, ConversationId, SpecDoc } from "@xandreed/engine"
+import type { AgentMessage, ConversationId, FileSystem, Shell, SpecDoc } from "@xandreed/engine"
 import {
   makeSpecRefinerHandlers,
   specRefinerAgentConfig,
   specRefinerToolkit,
 } from "./refiner.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
-import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { loadSpecDoc, lockSpecDoc } from "../spec/store.js"
+
+/** What a refine session needs from the environment — the coder's
+ *  `ImplementorServices` minus the fast tier (only the implementor's
+ *  attempt-boundary compaction rides `UtilityLlm`). */
+export type RefineServices =
+  | FileSystem
+  | Shell
+  | ConversationStore
+  | LanguageModel.LanguageModel
 
 export interface DraftRef {
   readonly doc: SpecDoc
@@ -90,10 +99,10 @@ export const makeRefineSession = (
   cwd: string,
   publish: (event: SmithEvent) => Effect.Effect<void>,
   options: RefineSessionOptions,
-): Effect.Effect<RefineSession, never, ImplementorServices> =>
+): Effect.Effect<RefineSession, never, RefineServices> =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
-    const context = yield* Effect.context<ImplementorServices>()
+    const context = yield* Effect.context<RefineServices>()
     const conversationId =
       options.resume ?? (yield* store.create(cwd).pipe(Effect.orDie))
     // RESUME recovers the draft linkage from the TRAIL: draftRef is

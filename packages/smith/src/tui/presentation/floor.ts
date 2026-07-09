@@ -92,8 +92,9 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     Match.when({ type: "spec_draft" }, () => state),
     Match.when({ type: "spec_locked" }, () => state),
     Match.when({ type: "refine_error" }, () => state),
-    // The red-first warning lives in the conversation story; the floor is inert.
+    // Red-first and compaction live in the conversation story; the floor is inert.
     Match.when({ type: "vacuous_checks" }, () => state),
+    Match.when({ type: "context_folded" }, () => state),
     Match.when({ type: "forge_start" }, (e) => ({
       ...state,
       gateNames: e.gateNames,
