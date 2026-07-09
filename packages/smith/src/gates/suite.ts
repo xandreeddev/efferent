@@ -81,6 +81,9 @@ export const withGateEvents = <R>(
 export const discoverGateSuite = (
   request: GateSuiteRequest,
   publish: (event: SmithEvent) => Effect.Effect<void>,
+  /** Edge-composed additions (the judge gate) — R already discharged there;
+   *  the staged pipeline orders them by rank like any other gate. */
+  extraGates: ReadonlyArray<Gate<TsProject>> = [],
 ): Effect.Effect<GateSuite, ConfigError, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
@@ -134,6 +137,7 @@ export const discoverGateSuite = (
       ...typecheck,
       ...testGate,
       ...acceptGates,
+      ...extraGates,
     ]
     if (!Arr.isNonEmptyReadonlyArray(gates)) {
       return yield* Effect.fail(
