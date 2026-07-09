@@ -59,6 +59,11 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
         })}\n  gates: ${e.gateNames.join(" → ")} · attempts ≤ ${e.spec.limits.maxAttempts}`,
       ),
     ),
+    Match.when({ type: "vacuous_checks" }, (e) =>
+      Option.some(
+        `⚠ red-first: ${e.names.join(", ")} already pass on the UNTOUCHED workspace — they cannot measure this spec's work`,
+      ),
+    ),
     Match.when({ type: "attempt_start" }, (e) =>
       Option.some(`\n── attempt ${e.attempt} ──`),
     ),
