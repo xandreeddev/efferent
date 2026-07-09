@@ -13,6 +13,7 @@ import type { AgentConfig, SpecSlug } from "@xandreed/engine"
 import {
   Glob,
   Grep,
+  LoadSkill,
   Ls,
   makeSmithCodingHandlers,
   ReadFile,
@@ -57,8 +58,8 @@ export const ProposeSpec = Tool.make("propose_spec", {
   failureMode: "return",
 })
 
-/** Read-only exploration + the one write. */
-export const specRefinerToolkit = Toolkit.make(ReadFile, Grep, Glob, Ls, ProposeSpec)
+/** Read-only exploration + skills + the one write. */
+export const specRefinerToolkit = Toolkit.make(ReadFile, Grep, Glob, Ls, LoadSkill, ProposeSpec)
 
 export interface SpecRefinerOptions {
   /** Refine an EXISTING spec in place (resume); absent ⇒ mint from the first goal. */
@@ -97,6 +98,7 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
       grep: coding.grep,
       glob: coding.glob,
       ls: coding.ls,
+      load_skill: coding.load_skill,
       propose_spec: (params: {
         readonly goal: string
         readonly acceptance: ReadonlyArray<string>
@@ -163,10 +165,12 @@ export const specRefinerAgentConfig = (
     readonly unattended: boolean
     readonly lessons?: Option.Option<string>
     readonly rules?: Option.Option<string>
+    readonly skills?: Option.Option<string>
   } = { unattended: false },
 ): AgentConfig<(typeof specRefinerToolkit)["tools"]> => ({
   system: [
     specRefinerPrompt(cwd, options),
+    ...Option.toArray(options.skills ?? Option.none()),
     ...Option.toArray(options.rules ?? Option.none()),
     ...Option.toArray(
       Option.map(

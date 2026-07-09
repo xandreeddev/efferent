@@ -6,6 +6,7 @@ import { ConversationStore, FileSystem, runAgent, Shell, UtilityLlm } from "@xan
 import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
+import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
 import { makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
 import { renderBrief, renderRetryBrief, smithCoderSystemPrompt } from "./prompt.js"
 
@@ -178,6 +179,9 @@ export const makeEfferentImplementorLive = (
       const context = yield* Effect.context<ImplementorServices>()
       const store = yield* ConversationStore
       const utility = yield* UtilityLlm
+      // Skills discovered ONCE per forge run — the system prompt stays
+      // byte-stable across turns (prompt-cache friendly).
+      const skills = renderSkillsBlock(yield* discoverSkills(options.cwd))
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
       )
@@ -261,7 +265,7 @@ export const makeEfferentImplementorLive = (
             // silent success.
             yield* runAgent(
               {
-                system: smithCoderSystemPrompt(options.cwd),
+                system: smithCoderSystemPrompt(options.cwd, skills),
                 toolkit: smithCodingToolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
                 // WITHIN-attempt compaction: same threshold and digest as the
