@@ -4,6 +4,23 @@ import type { SmithEvent } from "../domain/SmithEvent.js"
 
 const MAX_FINDING_LINES = 8
 
+/** The one-line phrase both the headless printer and the TUI notice share for
+ *  a `capabilities` event — "2 skills · 1 MCP server (5 tools)". Omits a zero
+ *  side; the caller only emits the event when at least one side is non-zero. */
+export const capabilitiesPhrase = (c: {
+  readonly skills: number
+  readonly mcpServers: number
+  readonly mcpTools: number
+}): string => {
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`
+  return [
+    c.skills > 0 ? plural(c.skills, "skill") : "",
+    c.mcpTools > 0 ? `${plural(c.mcpServers, "MCP server")} (${plural(c.mcpTools, "tool")})` : "",
+  ]
+    .filter((part) => part.length > 0)
+    .join(" · ")
+}
+
 export const clip = (text: string, max: number): string => {
   const oneLine = text.split("\n")[0] ?? ""
   return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max)}…`
@@ -63,6 +80,9 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
       Option.some(
         `⚠ red-first: ${e.names.join(", ")} already pass on the UNTOUCHED workspace — they cannot measure this spec's work`,
       ),
+    ),
+    Match.when({ type: "capabilities" }, (e) =>
+      Option.some(`  ⚙ harness: ${capabilitiesPhrase(e)}`),
     ),
     Match.when({ type: "attempt_start" }, (e) =>
       Option.some(`\n── attempt ${e.attempt} ──`),

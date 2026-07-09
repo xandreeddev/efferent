@@ -30,6 +30,18 @@ describe("the conversation fold", () => {
     ])
   })
 
+  test("a capabilities event renders a harness notice at session start", () => {
+    const state = reduceConversation(initialConversation, {
+      type: "capabilities",
+      skills: 2,
+      mcpServers: 1,
+      mcpTools: 5,
+    })
+    expect(state.blocks).toEqual([
+      { kind: "notice", text: "harness: 2 skills · 1 MCP server (5 tools) loaded for this run" },
+    ])
+  })
+
   test("a THINKING turn: the ▸ header carries the meta; the reply carries none", () => {
     const state = reduceConversation(
       withUserBlock(initialConversation, "port the module"),

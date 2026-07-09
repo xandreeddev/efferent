@@ -191,7 +191,8 @@ export const makeEfferentImplementorLive = (
       const utility = yield* UtilityLlm
       // Skills discovered ONCE per forge run — the system prompt stays
       // byte-stable across turns (prompt-cache friendly).
-      const skills = renderSkillsBlock(yield* discoverSkills(options.cwd))
+      const skillMetas = yield* discoverSkills(options.cwd)
+      const skills = renderSkillsBlock(skillMetas)
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
       )
@@ -199,6 +200,19 @@ export const makeEfferentImplementorLive = (
       // snapshot once per run; an unreachable server yields the empty bridge.
       const mcp = yield* buildMcpBridge
       const toolkit = Toolkit.merge(smithCodingToolkit, mcp.toolkit)
+
+      // Surface the loaded capabilities ONCE, at session start — progressive
+      // disclosure is otherwise invisible (skills/MCP tools only appear when
+      // the coder reaches for one). Silent when the workspace has neither.
+      const mcpServers = new Set(mcp.descriptors.map((d) => d.server)).size
+      yield* skillMetas.length > 0 || mcp.descriptors.length > 0
+        ? options.publish({
+            type: "capabilities",
+            skills: skillMetas.length,
+            mcpServers,
+            mcpTools: mcp.descriptors.length,
+          })
+        : Effect.void
       const externalTools =
         mcp.descriptors.length === 0
           ? ""
