@@ -1,145 +1,141 @@
-# Roadmap
+# Roadmap — the agent line
 
-Living backlog of what's **not yet built** in efferent — what's coming next, what's optional, and what we're consciously skipping. Up to date with `main` as of the last edit to this file.
+Living backlog of what's **not yet built** in efferent — rewritten 2026-07-09
+for the agent line (engine / providers / surface / foundry + smith / math /
+canvas / social + scenarios). The previous revision of this file described
+the OLD line (`packages/cli`, `agentLoop.ts`, the fleet/daemon) — deleted in
+THE DROP (2026-07-07); its still-relevant items are carried over below, its
+obsolete ones are recorded at the bottom so they stop reading as open.
 
-For *what's shipped*, see `AGENT.md` (architecture) and `../README.md` (feature tour).
+For *what's shipped*, see the package `CLAUDE.md`s and `docs/foundry.md`.
 
 ---
 
-## Tier 1 — next up (visible polish + capability)
+## Recently closed (was on this roadmap; now on main)
 
-These are low-to-medium effort on the current Effect stack and unlock the biggest UX wins.
+| was | shipped as |
+|---|---|
+| Compaction (unimplemented hook) | within-attempt fold (engine `CompactionPolicy`, #163) + attempt-boundary fold (#159/#160) |
+| Two-tier model selection | THREE roles (general/code/fast), config + flags + `:model`, role-scoped views |
+| Per-turn persistence flush | incremental tail persistence + incremental run artifacts (#106, #61) |
+| MCP — consume ("wait until needed") | engine `McpClient` port + progressive-disclosure bridge (`mcp_describe`/`mcp_call`, #168/#171) |
+| Memory directory | memory v2 — curated JSONL ledger + brief injection (#164) + skills distill (#173) |
+| Evals — independent judge | the judge GATE (default-ON, code tier, fail-closed, #165) + the trajectory critic (manual) |
+| Extensions (as a concept) | SKILLS — file-based instructions, 3-tier progressive disclosure (#167); behavior stays build-in-code |
+| Sandboxing | bubblewrap coder Bash, default ON (#169) |
+| Post-accept git workflow | `:ship` — branch → commit → push → PR (#162) |
 
-### Channels & triggers (event-driven front door)
-The fleet (named roles, comms bus, directive + verifier, cron + the `schedule` tool, the `:fleet` cockpit, a headless daemon — see the fleet concept/guide on the docs site) can be spawned, coordinated, given a goal, and cron-scheduled — but work only *arrives* via the human or the cron tick. A **trigger** generalises that: `cron` (built) · `webhook`/HTTP · `manual`, each routing an external event into a fresh agent run, hosted by the daemon (`code/modes/daemon.ts`). Define triggers as files like agents/tools (`.efferent/triggers/*.md`), reuse the `loadTools`-style discovery + `substituteTemplate` (`code/usecases/loadTools.ts`) to fill the task from the event payload, and ship **GitHub** (`pull_request` / `issue_comment` webhook) as the first adapter → fires the `reviewer` role on a PR. This is the front door that turns the fleet into a real background assistant: review-on-PR, a scheduled social agent, background ops. New pieces: a listener port (Bun.serve), webhook secret (HMAC) verification, and event→trigger routing; the fire path (fresh conversation → `JobController.submitJob` with `interactionPolicy: "headless"` + a seeded mission) already exists in the daemon — a trigger just becomes another `Job` source.
-
-### The self-improving loop — remaining pieces
-The core loop **shipped** (`efferent distill`): Reflector (`distill()`, fast tier) → Opus verify gate (`ClaudeHeadlessVerifierLive`, `claude -p`, fail-closed) → Curator (`persistArtifact` delta-merge) → auto-loaded `# Constraints`. Full as-built map + the literature grounding (ACE / AWM / SkillOps): [`self-improving-loop.md`](./self-improving-loop.md). What's left: **(10) a daemon-integrated nightly `distill` job** — works by OS crontab today (`0 3 * * * efferent distill --since …`), but a first-class scheduled run emitting `needs_human` for high-confidence rejects needs its own job kind on the cron path (distill is a pipeline, not an agent turn); **counter feedback** — the delta-item `helpful`/`harmful` counters are written but nothing increments them yet (needs a `read_skill`/retrieval → outcome signal); **embedding dedup + the SkillOps-lite maintenance pass** (`retire`/`merge` on utility + redundancy + failure-risk) — designed but unbuilt, needs an embedding substrate. Pairs with the **independent `--judge`** item below (the eval-side analog of the verify gate).
-
-### Per-turn persistence flush
-`runAgent` / `runSpawnedAgent` append the whole run's tail once the loop returns, so a crash mid-run loses the turns already taken. Flush each turn's tail as it lands (in `core/usecases/agentLoop.ts` via a hook, or in the `runAgent` driver) so the transcript survives a mid-run exit. This is the lightweight half of "durable execution" — full per-step event-log **replay** (resuming mid-run without re-running completed steps) stays out of scope: it only earns its complexity for long background daemon runs and trades against re-running non-idempotent steps; the transcript + `:resume` covers the rest.
+## Tier 1 — next up
 
 ### Token-level streaming
-The loop uses `LanguageModel.generateText` per turn (one round-trip → one append). Switch to `LanguageModel.streamText` and map `Response.StreamPart`s (`TextStart/Delta/End`, `ReasoningStart/Delta/End`, `ToolParamsStart/Delta/End`, `ToolCallPart`, `ToolResultPart`, `FinishPart`) onto new `AgentEvent` variants. The router already implements `streamText`; the pieces to touch are `core/usecases/agentLoop.ts`, `core/usecases/promptMapping.ts`, `cli/src/events.ts`, and the scrollback's assistant-block renderer (it needs to accept partial text and live-update). Tool-arg deltas can drive a "tool call forming" pill state.
+The engine loop is `generateText` per turn (one round-trip → one append);
+providers' compat client is v1 non-streaming. Map `streamText` parts onto
+new LoopEvents so the TUI shows text/reasoning as it forms and tool-arg
+deltas can drive a "call forming" state. Touches: engine `loop.ts`/
+`LoopEvent`, providers `compat.ts`, the conversation-pane assistant block.
+The biggest visible-latency win on slow thinking models.
 
-### Approval beyond bash
-The rule-keyed `Approval` port + TUI modal ship for bash (allow once / session / project rules, deny-with-reason fed back to the model), and the **human-decision channel now exists end-to-end**: a `needs_human` `AgentEvent` surfaced as the TUI "decisions need you" roster (`DecisionsBar`), plus the unattended-cron **headless parking approval** (`workspace/headlessApproval.ts`) that parks-and-denies anything the judge can't clear instead of allowing it blind. Still deferred: extending the same consent shape to out-of-cwd writes and network egress, and a `:approvals` view to list/revoke the project rules persisted in `Settings.approvedBashRules`.
+### Non-model settings in `:settings`
+The settings menu (#176) edits the model roles only because the
+`SettingsStore` port exposes `load` + `setRole` and nothing else. Extend the
+port with a generic keyed setter (validated per key), then grow the menu:
+`sandbox`, `maxAttempts`, `budgetMillis`, thinking mode. The menu UI already
+composes the select overlay — this is a port + adapter change.
 
-### Compaction
-`onTransformContext` is wired (`agentLoop.ts:48`) but no mode provides an implementation. Implement `core/usecases/compaction.ts`: when input tokens exceed a budget fraction of `LlmInfo.contextWindow`, summarise the older window via a fast-tier model call and replace those turns with a single synthetic message — the same shape `handoffToMessage` already produces for `:handoff`. `@effect/ai`'s `Tokenizer` gives us counts. Trigger off the status-bar gauge that's already shown. Reuses the `fast` role below (or a fixed model).
+### TodoWrite + plan visibility
+A `todo_write` tool in the coder toolkit + a side-panel section rendering
+the live list. Cheap; keeps long forge attempts legible and feeds the
+trajectory metrics (plan-adherence is measurable once the plan is data).
 
-### Two-tier model selection (`main` / `fast`)
-Today `Settings.model` is a single `"<provider>:<modelId>"`. A second tier lets helper calls (tool-output summaries, approval judgments, session titles) run on a cheaper/faster model:
-- **fast** — helper calls (e.g. `gemini-3.5-flash`, `claude-haiku`)
+### Cost tracking
+Usage (input/output/cache tokens) is already counted per turn and shown in
+the gauge; multiply by per-model pricing for a session $ readout in the
+frame footer. Needs a small `pricing` table (constant defaults, config
+override) — informational, no budgeting.
 
-Touch points: extend `Settings` schema with `fastModel?`; teach `ModelRegistry` to expose `current(tier)`; helper calls default to `fast`. `:model` keeps switching `main`; add `:model fast` / `:set fastModel <…>`.
-
----
+### fallbackModel
+The provider-outage ladder retries patiently but there is still no
+cross-provider failover (`fallbackModel` is designed but unset). One
+settings key + a router fallback rung.
 
 ## Tier 2 — capability depth
 
-### Per-conversation OpenAI `prompt_cache_key`
-Today the router sets a stable static `prompt_cache_key`. Threading the conversation id would tighten cache routing across resumed sessions. Single-file change in `adapters/src/llm/router.ts`.
+### TUI parity with the old line (deliberately re-earned, not ported)
+The old TUI had: per-pane `/` search with highlight, turn/tool folding, a
+fold cursor, vi-modal navigation, tree-sitter code highlighting, Ctrl-R
+tool-output expand, ↑ prompt-history recall. The smith TUI re-built the
+chassis lean; these come back one at a time as usage demands them. Next
+candidates by live-session friction: **tool-output expand** (agy's
+`ctrl+o`), **↑ history recall**, **vi mode** (deferred by user call
+2026-07-09; the old `viMode` reducer survives in git history).
 
-### Explicit Gemini context caching
-Implicit context caching is live (stable prefix → `cachedContentTokenCount` surfaces in the gauge). Explicit `cachedContent` resources would let us cache + reuse a known instruction/skill prefix across conversations — but `@effect/ai-google@0.14` always sends full `contents` and `Config` omits `contents`/`tools`/`systemInstruction`, so it isn't expressible without forking the adapter. Watch upstream; reconsider when a `Config.cachedContent` lands. Cost optimisation, not correctness.
-
-### Wider code-highlight language coverage
-Markdown prose, fenced code blocks, and diff hunks are all syntax-highlighted now (tree-sitter via `view/syntax.ts` + the `getTreeSitterClient()` singleton; `web-tree-sitter` is a declared dep, the worker is destroyed on exit). But `@opentui/core` only bundles grammar WASM for **JS / TS / markdown / zig** (`assets/`), so python/rust/go/json/bash/yaml/etc. render un-highlighted. To extend: source the extra `tree-sitter-<lang>.wasm` + `highlights.scm` and register them via `client.addFiletypeParser({ filetype, wasm, queries })` (or ship them under a data dir + `setDataPath`). Decide whether to bundle a curated set (bigger install) or fetch-on-demand into `~/.efferent`. Also still un-styled: `#` heading **colour** in prose (marked headings route around the `markup.heading` scope, which only styles table headers — would need a custom `renderNode`).
-
-### Human-driven resume/branch from `:tree`
-The agent already resumes/branches persisted sub-agent contexts via `run_agent({ seedFromNode, seedMode })`, and `:tree` browses + drops (`d`) nodes. The missing half is a key in the tree view that *re-runs* a node from the UI: pick the node, choose resume vs branch, type the task — then drive a real run through the submit pipeline (event queue, busy flag, fiber ownership). All the seeding machinery exists in core; the work is TUI submit-level wiring.
-
-### TodoWrite tool + planning panel
-A `todo_write` tool in `codingToolkit.ts` + a foldable section in the activity pane (`sidePane.ts`) showing the live todo list. Cheap to ship, helps long multi-step turns stay coherent.
+### `@`-file references in the composer
+`@path` in a refine/task message expands to the file's content (bounded) in
+the turn. Trivial parse; decide globs/binary policy.
 
 ### MCP — expose
-`@effect/ai`'s `McpServer.toolkit()` is a direct bridge from our existing toolkit to an MCP server. Means other agents can call into efferent — both as a CLI integration test surface and as a way to make our tools usable from Claude Desktop / Cursor / Cline. Low-med effort.
+`@effect/ai`'s `McpServer.toolkit()` bridges our toolkits to an MCP server:
+other agents (Claude Desktop/Code, Cursor) could drive smith's tools. Low
+effort, good build-in-public artifact.
 
-### `@`-file references in input
-Parse `@path/to/file` in user input → expand to a `read_file` block prepended to the message (or to a fenced code block inline). Common UX in mature agents. Trivial parse; the question is what to do with binary paths and globs.
+### Judge calibration
+The judge gate runs default-ON but has never been calibrated: build a small
+labeled set (sound/unsound workspaces from real runs), measure
+agreement/false-block rate, tune the prompt. Do before trusting the judge
+on anything beyond intent/honesty.
 
-### Cost tracking
-We already track `inputTokens` / `outputTokens` / `cacheReadTokens` per turn (status bar gauge). Multiply by per-model pricing for a session $ readout (and a per-turn one when expanded). Add a `pricing.json` (or a `Pricing` port that fetches it). Informational; no budgeting yet.
+### Foundry gate growth
+- Mutation-testing gate (StrykerJS incremental) — the anti-"tests that
+  assert nothing" meta-gate.
+- fast-check property gate.
+- Promote smith's command/test gate into foundry's built-ins.
 
-### Handoff & web-search spend tracking
+### Scenarios v3 remainder
+Trajectory-typed scorers (`ScorerArgsV2.trajectory`), samples/pass@k, the
+first live pack that uses judges, wiring the trajectory critic into a
+scheduled (non-CI) run.
 
-Two billed-LLM call sites are uncounted: handoff briefs (`:handoff`, `seedMode: "handoff"`) and web search (`search_web`). Both are real spend that doesn't appear in `byRole` — add usage reporting to their callers. See [`models.md`](./models.md) for the full call-site inventory.
+### Provider-level cache tightening
+Per-conversation OpenAI `prompt_cache_key`; explicit Gemini `cachedContent`
+when `@effect/ai-google` exposes it. Cost, not correctness.
 
-### Evals — independent judge model (`--judge`)
+## Tier 3 — later
 
-The `llmJudge`/`qualityRubric` scorers run on the in-context `LanguageModel` (the same router/general model the agent uses), so the `quality` axis is subject to the loop provider's flakiness — a transient gateway error can score a correct solution 0. The `RunConfig.judge` field + `--judge` flag are parsed but **inert** (`settingsLayer` doesn't apply them). Wire a separate `JudgeModel` (a distinct `LanguageModel` pinned to `config.judge`, built per-call from the `AuthStore` like the router) that the scorers resolve instead — ideally a strong, stable, INDEPENDENT grader (e.g. `anthropic:claude-sonnet-4-6`), which is both more reliable and better methodology. Until then, rank with the objective `tests` axis of the `feature` suite (gateway-independent), not the rubric.
-
----
-
-## Tier 3 — extensions + later
-
-### MCP — consume
-External MCP servers exposed as tools inside our loop. `@effect/ai` only hosts MCP servers today; consuming them needs a custom client. Material work. Wait until at least one MCP-only tool we want appears.
-
-### Extensions-as-Layers
-The on-thesis answer to pi's runtime extension system: an extension is a default-exported `Layer` that merges a `Toolkit` (and optionally hooks, slash commands, side-pane widgets) into the agent at composition. Typed end-to-end, no `jiti`/runtime-eval, validated for tool-name collisions. Discovery from `.efferent/extensions/` + `~/.efferent/extensions/`. This is the headline differentiator vs pi when we ship it.
-
-### Shell hooks (Pre/PostToolUse)
-A small event bus around tool calls — user-provided shell commands triggered on `pre-tool-use` / `post-tool-use` / `turn-end` for things like running a formatter after every `edit_file`. Pairs with the extension system. Claude Code has these.
-
-### Memory directory
-A `~/.efferent/memory/` (or per-project `.efferent/memory/`) with file-per-fact persistent notes the agent can `read`/`write`/`search`. New `Memory` port + a small retrieval policy (recency + keyword for v1; embeddings later). Pairs with the @-file references above.
-
-### Session branching
-Today top-level history is flat — `:resume <id>` continues a conversation, and `:context` + `:build` curates a new one. (The *sub-agent* layer already branches: `run_agent` resume/branch over the persistent context tree.) Conversation-level branching would let `:branch` fork from any point in the conversation viewer and switch between forks. The `checkpoints` table model already supports the data shape; the UI is the work.
-
-### Image attachments
-`@effect/ai` `Prompt` has `FilePart`s; the CLI just needs an input syntax (`:attach <path>`) and to encode the bytes. Useful for screenshots-of-errors flows.
-
-### Live bash output streaming
-Today bash returns stdout/stderr as a blob when done; streaming chunks back to the model in real time would let it react to long-running builds. Touches `Shell` port (currently `exec` → result) — need a `spawn` variant returning a stream.
-
-### Native (non-shell-out) grep
-`grep` shells out to system `grep -rnE`. A pure-TS implementation over `Bun.Glob` + `Bun.file` would remove the dependency and unlock structured matches (with context lines in the result struct, not just printed). Quality-of-life; not blocking anything.
-
-### LSP tool
-A real win for language-aware navigation (find-references, go-to-definition). Big integration — needs LSP client + a server-launcher per language. Park until the extension system lands; LSP is naturally an extension.
-
----
+- **Session branching** — fork a conversation from any message; the
+  checkpoint model already supports the data shape, the UI is the work.
+- **Image attachments** — `FilePart`s exist in `@effect/ai`; needs input
+  syntax + encoding.
+- **Live bash streaming** — `Shell.spawn` variant returning a stream so the
+  model reacts to long builds mid-run.
+- **Native grep** — pure-TS over `Bun.Glob` for structured matches.
+- **LSP tool** — park until a concrete need; naturally skill-shaped.
+- **Wider code-highlight coverage** — the new TUI has NO syntax
+  highlighting yet; if/when it returns, `@opentui/core` bundles only
+  JS/TS/markdown/zig grammars.
 
 ## Known rough edges
 
-These are unfixed bugs/blockers, documented fully in [`journeys.md`](./journeys.md).
+- `--cwd` outside the repo dies on the Solid preload (bunfig is
+  cwd-relative) — error message should say so.
+- Shell adapter: no process group on timeout kill; unbounded buffering
+  before truncation.
+- Fast input bursts: Enter in the same terminal chunk as text can land as a
+  newline instead of running a `:` command.
 
-- **`--cwd` outside repo crashes** — running from source with `cwd` outside the repo dies on the missing Solid transform (bunfig preload is cwd-relative). The failure message should say to use `--cwd` from the repo root or use the npm bundle. (journeys.md item 3)
-- **Shell adapter hardening** — no process group on timeout kill (grandchildren may survive); unbounded output buffering before truncation. (journeys.md item 5)
-- **Live credentialed smoke** — the populated live journey (spawn → running nodes → resume) still needs a credentialed smoke. bash approval mid-turn, OAuth round-trip, and a live `run_agent` spawn with tool use remain unexercised. (journeys.md item 1)
-- **Fast input bursts** — Enter inside the same terminal chunk as text can land as a newline instead of running a `:` command. Typing-speed input is fine. (journeys.md item 2)
-- **Daemon may linger after `/shutdown`** (latent, unverified) — the web driver found that Bun stays alive after the main effect completes because global daemon-fiber timers (the workspace sweeper's sleep loop) keep the event loop busy; `efferent web` exits explicitly (`mode.ts`). The detached `daemon serve` process likely has the same zombie behavior after `efferent daemon stop` — verify and apply the same explicit exit if so.
+## Dropped with the old line (recorded so they stop reading as open)
 
-## Web UI follow-ups (v2 shipped: canvas-first pages, mermaid, viewing-context, replay persistence)
+- **Channels & triggers / daemon / fleet cockpit** — the new line has no
+  fleet; agents are packages. Revisit only if a product needs a daemon.
+- **Approval beyond bash** — replaced by the doctrine: gates outside,
+  sandbox around the coder, no in-loop approval judge.
+- **`:tree` resume/branch** — no fleet tree; smith has `:resume` over
+  conversations.
+- **Old web UI follow-ups** — the web package was deleted; canvas is the
+  UI-builder now.
+- **Extensions-as-Layers marketplace framing** — superseded by
+  skills (instructions) + MCP (external tools); behavior stays in code.
 
-- **Daemon-mounted web UI** — serve the same UI from the shared workspace daemon so browser + TUI share sessions. The pump already needs only a `Workspace` + a session id; the missing piece is per-fleet rosters (the scope runtime — and thus swarm-vs-direct — is built once per workspace today).
-- **Canvas snapshot on the checkpoint** — pages replay from the ACTIVE message window (`canvasReplay.ts`), so pages rendered before a handoff fold vanish on a reseed (a live process keeps them in memory). Carry a canvas snapshot on the checkpoint to make replay fold-proof.
-- **Workspace cards across restarts** — file/diff/source cards still derive from LIVE events only (pages now replay; the refs drawer starts empty after a restart). Re-derive from tool results in the seed walk.
-- **Checkpoints divider on the web rail** — `SessionState` carries no checkpoint list, so the `⚑ folded` divider is absent (conscious cut).
-- **Sub-agent `render_ui`** — the tool is root-only; `ui_render.nodeId` already carries attribution, so extending to spawned agents is a `roleToolEntries` gate away (`buildScopeRuntime.ts`). Needs a page-id namespace policy first (interleaved authorship).
-- **Approval sheet UX** — the web sheet posts decisions but has no session/project-scope explanation text.
-- **Live product-search eval case** — the `web-ui` suite's `comparison-page` is deliberately offline/deterministic; add a live `search_web`-driven product case once its flakiness is assessed.
-- **Wider chart vocabulary** — mermaid `pie`/`xychart-beta` cover basic data viz; richer charts (bar groups, scatter) would need a chart lib or server-rendered SVG through a sanitizer allowance.
+## Consciously skipped (unchanged)
 
----
-
-## Consciously skipped
-
-These are *not* on the roadmap. Revisit only if a concrete need surfaces.
-
-- **Plugins marketplace** — extensions-as-Layers is the on-thesis answer; a marketplace is off-thesis for a lean Effect CLI.
-- **Out-of-process coordinator mode** — Claude Code's heavyweight `coordinatorMode` spawns agents in separate processes. Efferent's coordinator is an in-process agent role using `run_agent` over the persistent context tree — the out-of-process version is what's skipped.
-- **Cron / remote-trigger / scheduling** — agents that fire on a schedule or react to webhooks. Outside the CLI's wedge.
-- **ToolSearch** — only useful at large tool counts (Claude Code carries a vast tool surface). With our handful, it's pointless.
-- **Output styles** — purely cosmetic theming. We have the per-pane accent system; that's enough.
-- **Full keybindings editor** — vi/insert + Ctrl-hjkl pane switching is the model; per-key remapping would only complicate it.
-- **`tool.respond` safety prompts over RPC** — the RPC mode is a programmatic surface; if a host wants to prompt a human, it does so before sending the next message.
-
----
-
-## Mouse support — keyboard-first, OpenTUI-native selection
-
-Navigation is fully keyboard-modal: `Ctrl-hjkl` panes, `j/k`/arrows scroll, a **fold cursor** (`{}`/`[]` paragraph/message · `gg/G` ends · `⇥`/`↵` fold), `/` per-pane search. Since the OpenTUI cutover the renderer runs with `useMouse: true` — drag-select is OpenTUI-native and `y` yanks the selection to the clipboard via OSC 52 (this replaced the old hand-rolled TUI's "no mouse-reporting mode" stance). No other mouse interactions (clicking, scrolling panes) are bound, and none are planned — the keyboard is the interface.
+Plugins marketplace · out-of-process coordinator · ToolSearch ·
+output styles · full keybindings editor.
