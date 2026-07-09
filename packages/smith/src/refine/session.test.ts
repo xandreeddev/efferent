@@ -4,6 +4,7 @@ import { LanguageModel } from "@effect/ai"
 import { ConversationStore, FileSystem, Shell } from "@xandreed/engine"
 import { ConversationId } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
+import { makeSpecRefinerHandlers } from "./refiner.js"
 import { makeRefineSession } from "./session.js"
 import type { RefineAgent } from "./session.js"
 
@@ -96,6 +97,44 @@ describe("makeRefineSession — scripted E2E (no keys, no LLM)", () => {
 
     // Event sequence: the draft, then the lock.
     expect(events.map((event) => event.type)).toEqual(["spec_draft", "spec_locked"])
+  })
+
+  test("RED-FIRST enforced at propose: a check that already passes BOUNCES; a red one lands", async () => {
+    // Live-caught: the refiner authored "no-ts-project-yet" — a check
+    // describing the CURRENT state, green before any work — and nobody
+    // caught it until the forge-side warning. Now propose_spec runs the
+    // probe itself and bounces vacuous checks as failure-as-data.
+    const { mkdtempSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const cwd = mkdtempSync(join(tmpdir(), "smith-redfirst-"))
+    const fs = memoryFs()
+
+    const drive = (command: string) =>
+      Effect.gen(function* () {
+        const handlers = yield* makeSpecRefinerHandlers(cwd)
+        return yield* handlers.propose_spec({
+          goal: "Create out.txt containing done.",
+          acceptance: ["out.txt exists"],
+          constraints: undefined,
+          nonGoals: undefined,
+          checks: [{ name: "probe", command }],
+          maxAttempts: undefined,
+          budgetMinutes: undefined,
+        }).pipe(Effect.either)
+      }).pipe(Effect.provide(Layer.mergeAll(fs.layer, stubServices)), Effect.runPromise)
+
+    // `true` passes on the untouched workspace → vacuous → bounce, no write.
+    const green = await drive("true")
+    expect(green._tag).toBe("Left")
+    expect(JSON.stringify(green)).toContain("VacuousChecks")
+    expect(JSON.stringify(green)).toContain("red-first")
+    expect([...fs.files.keys()].some((path) => path.includes("specs"))).toBe(false)
+
+    // `test -f out.txt` fails now (red) → the draft lands.
+    const red = await drive("test -f out.txt")
+    expect(red._tag).toBe("Right")
+    expect([...fs.files.keys()].some((path) => path.includes("specs"))).toBe(true)
   })
 
   test("RESUME recovers the draft from the TRAIL — lock works without a new propose", async () => {
