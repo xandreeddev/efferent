@@ -34,6 +34,7 @@ const runFor = (cwd: string): SmithRunConfig => ({
   testCommand: Option.none(),
   noTest: false,
   configPath: Option.none(),
+  ship: false,
 })
 
 describe("loadWorkspaceRules — the AGENTS.md convention", () => {

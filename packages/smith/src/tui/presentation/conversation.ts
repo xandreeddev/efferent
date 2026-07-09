@@ -218,6 +218,18 @@ export const reduceConversationIn = (
         text: `context folded at ${fmtTokens(e.tokens)} tokens — attempt ${e.attempt} resumes from a handoff summary + the gate brief`,
       }),
     ),
+    // Ship steps ride the TOOL block shape — the ● color language (green ok /
+    // red failed) reads exactly right for a git sequence.
+    Match.when({ type: "ship_step" }, (e) =>
+      push(state, {
+        kind: "tool",
+        id: `ship-${e.step}`,
+        name: `ship ${e.step}`,
+        arg: clip(e.detail, ARG_BUDGET),
+        status: e.ok ? "ok" : "fail",
+        first: state.blocks[state.blocks.length - 1]?.kind !== "tool",
+      }),
+    ),
     Match.when({ type: "forge_end" }, (e) => push(state, resultBlock(e.run, e.artifact))),
     Match.when({ type: "forge_error" }, (e) =>
       push(state, { kind: "error", text: clip(`forge failed: ${e.message}`, REASONING_BUDGET) }),

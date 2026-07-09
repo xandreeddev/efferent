@@ -5,6 +5,7 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { renderEventLines } from "../presentation/eventLines.js"
 import { runForgeSession } from "../forge/session.js"
+import { renderShipPlan, runShip } from "../forge/ship.js"
 
 /**
  * `-p` mode: run the forge session with every event rendered live as stdout
@@ -36,7 +37,13 @@ export const runHeadless = (
     )
 
     const outcome = yield* runForgeSession(run, publish, doc).pipe(
-      Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
+      Effect.flatMap((result) =>
+        // --ship: the follow-through on acceptance — branch/commit/push/PR.
+        // Ship failures never change the forge exit code; the events tell.
+        run.ship && result.run.outcome._tag === "accepted"
+          ? runShip(renderShipPlan(run.cwd, doc, result.run), publish).pipe(Effect.as(0))
+          : Effect.succeed(result.run.outcome._tag === "accepted" ? 0 : 1),
+      ),
       Effect.catchAll(() => Effect.succeed(2)),
     )
     // Flush: the None sentinel ends the printer after every queued event printed.

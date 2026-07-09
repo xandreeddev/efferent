@@ -51,6 +51,7 @@ Flags:
   --config <f>           explicit foundry GateSuiteConfig module for the gate suite
   --test-cmd "<cmd>"     test gate command (bash -c; default: bun test when package.json exists)
   --no-test              suppress the test gate
+  --ship                 after an ACCEPTED run: branch, commit, push, open a PR
   --yes                  lock the refined draft without review (spec -p mode)
   -p, --headless         print mode (no TUI)
   -h, --help             this help
@@ -77,6 +78,7 @@ interface ParseState {
   readonly testCommand: Option.Option<string>
   readonly noTest: boolean
   readonly configPath: Option.Option<string>
+  readonly ship: boolean
   readonly help: boolean
   readonly pending: Option.Option<string>
   readonly errors: ReadonlyArray<string>
@@ -99,6 +101,7 @@ const initialState: ParseState = {
   testCommand: Option.none(),
   noTest: false,
   configPath: Option.none(),
+  ship: false,
   help: false,
   pending: Option.none(),
   errors: [],
@@ -109,6 +112,7 @@ const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
   "--headless": (s) => ({ ...s, headless: true }),
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
+  "--ship": (s) => ({ ...s, ship: true }),
   "--yes": (s) => ({ ...s, yes: true }),
   "--help": (s) => ({ ...s, help: true }),
   "-h": (s) => ({ ...s, help: true }),
@@ -204,6 +208,7 @@ export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => 
   testCommand: state.testCommand,
   noTest: state.noTest,
   configPath: state.configPath,
+  ship: state.ship,
 })
 
 /** The full service stack one smith session runs on — the NEW LINE: engine

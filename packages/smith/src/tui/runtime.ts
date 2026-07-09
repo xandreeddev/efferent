@@ -9,6 +9,8 @@ import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { loadForgeLessons, runForgeSession } from "../forge/session.js"
+import { renderShipPlan, runShip } from "../forge/ship.js"
+import type { ShipPlan } from "../forge/ship.js"
 import { makeRefineSession } from "../refine/session.js"
 import type { RefineAgent, RefineSession } from "../refine/session.js"
 import { listSpecs, loadSpecDoc } from "../spec/store.js"
@@ -307,6 +309,8 @@ export const makeWorkspaceBody = (
       const refineRef = yield* Ref.make(Option.none<RefineSession>())
       const forgeFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
       const turnFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
+      // The last ACCEPTED run's ship plan — `:ship` consumes it (once).
+      const shipPlanRef = yield* Ref.make(Option.none<ShipPlan>())
 
       // The dashboard reads: specs (undecodable ones dropped — one hand-edited
       // file can't blank the view), the forge-run history, the lessons brief.
@@ -626,6 +630,15 @@ export const makeWorkspaceBody = (
             const forgeRunner = seams.forgeRunner ?? runForgeSession
             const fiber = Runtime.runFork(rt)(
               forgeRunner({ ...run, task: doc.value.goal }, publish, doc).pipe(
+                // An ACCEPTED run arms `:ship`; anything else disarms it.
+                Effect.tap((result) =>
+                  Ref.set(
+                    shipPlanRef,
+                    result.run.outcome._tag === "accepted"
+                      ? Option.some(renderShipPlan(run.cwd, doc, result.run))
+                      : Option.none(),
+                  ),
+                ),
                 Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
                 Effect.catchAll(() => Effect.succeed(2)),
                 Effect.tap((code) => Effect.sync(() => store.setExitCode(code))),
@@ -718,6 +731,39 @@ export const makeWorkspaceBody = (
           Runtime.runFork(rt)(dropRefine)
         },
         resume: resumeSession,
+        ship: () => {
+          forked(
+            "ship",
+            Effect.gen(function* () {
+              const plan = yield* Ref.get(shipPlanRef)
+              yield* Option.match(plan, {
+                onNone: () =>
+                  Effect.sync(() =>
+                    store.setNotice("nothing to ship — :ship follows an ACCEPTED forge run"),
+                  ),
+                onSome: (p) =>
+                  runShip(p, publish).pipe(
+                    Effect.tap((url) =>
+                      Effect.sync(() =>
+                        store.setNotice(
+                          Option.match(url, {
+                            onNone: () => "ship stopped — see the pane for the failed step",
+                            onSome: (u) => `shipped: ${u}`,
+                          }),
+                        ),
+                      ),
+                    ),
+                    // A successful ship disarms the plan; a failed one stays
+                    // armed so a fixed environment can retry with :ship.
+                    Effect.tap((url) =>
+                      Option.isSome(url) ? Ref.set(shipPlanRef, Option.none()) : Effect.void,
+                    ),
+                    Effect.asVoid,
+                  ),
+              })
+            }),
+          )
+        },
       }
     })
 

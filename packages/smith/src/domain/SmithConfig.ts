@@ -76,4 +76,6 @@ export interface SmithRunConfig {
   readonly noTest: boolean
   /** `--config <f>` — explicit foundry GateSuiteConfig module. */
   readonly configPath: Option.Option<string>
+  /** `--ship` — after an ACCEPTED run: branch, commit, push, open a PR. */
+  readonly ship: boolean
 }
