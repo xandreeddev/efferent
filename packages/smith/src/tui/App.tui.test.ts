@@ -195,6 +195,15 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(done).toContain("✓ ACCEPTED after 1 attempt")
     expect(done).toContain("artifact .foundry/runs/")
 
+    // :ship follows the acceptance — the harness Shell answers the git/gh
+    // sequence, the PR URL lands on the notice line, the steps in the pane.
+    await tui.setup.mockInput.typeText(":ship")
+    tui.setup.mockInput.pressEnter()
+    // Wait on the LAST pane row (the queue pumps events after the notice sets).
+    const shipped = await waitFrame(tui, (f) => f.includes("ship pr"), 200)
+    expect(shipped).toContain("shipped: https://github.com/test/repo/pull/1")
+    expect(shipped).toContain("ship commit")
+
     await tui.setup.mockInput.typeText(":new")
     tui.setup.mockInput.pressEnter()
     const dashboard = await waitFrame(tui, (f) => f.includes("✓ accepted (attempt 1)"))

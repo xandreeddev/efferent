@@ -29,6 +29,7 @@ const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig
   testCommand: Option.none(),
   noTest: false,
   configPath: Option.none(),
+  ship: false,
   ...over,
 })
 

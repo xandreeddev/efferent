@@ -88,6 +88,7 @@ export const testRunConfig = (cwd: string): SmithRunConfig => ({
   testCommand: Option.none(),
   noTest: true,
   configPath: Option.none(),
+  ship: false,
 })
 
 /** A refiner that immediately proposes a fixed spec — the scripted twin. */
@@ -124,7 +125,19 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     SqliteConversationStoreLive(join(cwd, ".efferent", "smith.db")),
     Layer.succeed(LanguageModel.LanguageModel, {} as never),
     Layer.succeed(Shell, {
-      exec: () => Effect.succeed(new ShellResult({ stdout: "", stderr: "", exitCode: 0 })),
+      // Command-aware canned answers so the :ship battery can run end to end.
+      exec: (command: string) =>
+        Effect.succeed(
+          new ShellResult({
+            stdout: command.startsWith("git rev-parse")
+              ? "main"
+              : command.startsWith("gh pr create")
+                ? "https://github.com/test/repo/pull/1"
+                : "",
+            stderr: "",
+            exitCode: 0,
+          }),
+        ),
     }),
     Layer.succeed(UtilityLlm, {
       complete: () =>

@@ -51,4 +51,12 @@ export type SmithEvent =
       readonly artifact: string
     }
   | { readonly type: "forge_error"; readonly message: string }
+  /** The SHIP sequence (branch → stage → commit → push → PR) — one event per
+   *  step; a failed step stops the sequence, its detail carries the stderr. */
+  | {
+      readonly type: "ship_step"
+      readonly step: string
+      readonly ok: boolean
+      readonly detail: string
+    }
   | { readonly type: "agent"; readonly event: LoopEvent }
