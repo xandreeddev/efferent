@@ -71,6 +71,22 @@ describe("the smith coding handlers — the direct coder's hands", () => {
     )
   })
 
+  test("an EMPTY write is refused as data — the long-context collapse guard", async () => {
+    // The degenerate-loop signature: write_file(path, "") repeated at 110k
+    // context. The refusal gives the model a corrective instead of a
+    // no-progress success.
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    await withHandlers(cwd, (h) =>
+      Effect.gen(function* () {
+        const refused = yield* h
+          .write_file({ path: "src/empty.ts", content: "" })
+          .pipe(Effect.either)
+        expect(refused._tag).toBe("Left")
+        expect(JSON.stringify(refused)).toContain("EmptyContent")
+      }),
+    )
+  })
+
   test("Bash runs in the workspace; a non-zero exit is a RESULT, not an error", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     await withHandlers(cwd, (h) =>

@@ -171,6 +171,17 @@ export const makeSmithCodingHandlers = (cwd: string) =>
       write_file: (params: { path: string; content: string }) =>
         Effect.gen(function* () {
           yield* writeGuard(params.path)
+          // An empty write is (almost) never the intent — and it is the
+          // signature of long-context output collapse: a coder at 110k
+          // tokens emitted write_file(path, "") five straight turns
+          // (live-caught on a whole-tree port). Failure-as-data turns the
+          // degenerate loop into a corrective signal the model can act on.
+          if (params.content.length === 0) {
+            return yield* Effect.fail({
+              error: "EmptyContent",
+              message: `refusing to write an EMPTY ${params.path} — provide the full file body (use edit_file to blank a file intentionally)`,
+            })
+          }
           const target = resolve(params.path)
           const dir = target.split("/").slice(0, -1).join("/")
           yield* fs.mkdir(dir).pipe(Effect.catchAll(() => Effect.void))
