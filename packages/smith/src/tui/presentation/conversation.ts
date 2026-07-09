@@ -212,6 +212,12 @@ export const reduceConversationIn = (
         text: `red-first: ${e.names.join(", ")} already PASS on the untouched workspace — these checks cannot measure this spec's work; tighten the spec or expect a vacuous accept`,
       }),
     ),
+    Match.when({ type: "context_folded" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `context folded at ${fmtTokens(e.tokens)} tokens — attempt ${e.attempt} resumes from a handoff summary + the gate brief`,
+      }),
+    ),
     Match.when({ type: "forge_end" }, (e) => push(state, resultBlock(e.run, e.artifact))),
     Match.when({ type: "forge_error" }, (e) =>
       push(state, { kind: "error", text: clip(`forge failed: ${e.message}`, REASONING_BUDGET) }),
