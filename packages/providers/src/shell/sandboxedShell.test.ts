@@ -6,7 +6,9 @@ import { Effect } from "effect"
 import { Shell } from "@xandreed/engine"
 import { bwrapArgs, SandboxedShellLive } from "./sandboxedShell.js"
 
-const hasBwrap = Bun.spawnSync(["bwrap", "--version"]).exitCode === 0
+// `command -v` returns non-zero when bwrap is absent — never throws (a bare
+// spawn of a missing executable would). CI has no bwrap; these tests skip.
+const hasBwrap = Bun.spawnSync(["bash", "-c", "command -v bwrap"]).exitCode === 0
 
 describe("bwrapArgs", () => {
   test("binds the workspace rw, root ro, fresh /tmp + HOME, dies with parent", () => {
