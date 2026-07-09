@@ -1,4 +1,5 @@
 import { join } from "node:path"
+import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConfigError,
@@ -14,8 +15,10 @@ import {
 import type {
   ForgeHooks,
   ForgeResult,
+  Gate,
   Implementor,
   ImplementorError,
+  TsProject,
   WorkspaceError,
 } from "@xandreed/foundry"
 import { FileSystem } from "@xandreed/engine"
@@ -27,6 +30,7 @@ import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { curateWorkspaceMemory } from "../memory/curate.js"
 import { loadWorkspaceMemory } from "../memory/inject.js"
+import { makeSmithJudgeGate } from "../gates/judge.js"
 import { discoverGateSuite, vacuousAccepts } from "../gates/suite.js"
 import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
@@ -79,6 +83,8 @@ export const runForgeSessionWith = <R>(
   publish: (event: SmithEvent) => Effect.Effect<void>,
   implementor: Layer.Layer<Implementor, never, R>,
   doc: Option.Option<SpecDoc> = Option.none(),
+  /** Edge-composed gates (the judge) — empty on the scripted test seam. */
+  extraGates: (spec: Spec) => ReadonlyArray<Gate<TsProject>> = () => [],
 ): Effect.Effect<
   ForgeResult,
   ConfigError | ImplementorError | WorkspaceError,
@@ -89,6 +95,7 @@ export const runForgeSessionWith = <R>(
     const { gateNames, pipeline, acceptGates } = yield* discoverGateSuite(
       gateRequestFromSpec(run, doc),
       publish,
+      extraGates(spec),
     )
     yield* publish({ type: "forge_start", spec, gateNames, doc })
 
@@ -192,6 +199,26 @@ export const runForgeSession = (
     const lessons = yield* loadForgeLessons(run.cwd)
     const rules = yield* loadWorkspaceRules(run.cwd)
     const memory = yield* loadWorkspaceMemory(run.cwd)
+
+    // The JUDGE (default ON; spec opts out): a one-shot strong-tier call,
+    // closed over the ambient services HERE so the gate stays R = never and
+    // the scripted seam stays LLM-free.
+    const services = yield* Effect.context<SettingsStore | AuthStore>()
+    const judgeCall = (prompt: string) =>
+      LanguageModel.generateText({ prompt }).pipe(
+        Effect.map((response) => response.text),
+        Effect.provide(
+          LanguageModelLive.pipe(
+            Layer.provide(roleModelView("code")),
+            Layer.provide(Layer.succeedContext(services)),
+          ),
+        ),
+      )
+    const judgeGates = (spec: Spec): ReadonlyArray<Gate<TsProject>> =>
+      gateRequestFromSpec(run, doc).judge
+        ? [makeSmithJudgeGate({ spec, doc, call: judgeCall })]
+        : []
+
     const result = yield* runForgeSessionWith(
       run,
       publish,
@@ -199,6 +226,7 @@ export const runForgeSession = (
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
       ),
       doc,
+      judgeGates,
     )
     // MEMORY v2 curation rides the PRODUCTION session only — deliberately
     // outside runForgeSessionWith, which is the scripted (LLM-free) test seam.

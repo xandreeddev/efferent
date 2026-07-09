@@ -44,6 +44,8 @@ export class SpecGates extends Schema.Class<SpecGates>("SpecGates")({
   config: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
   testCommand: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
   noTest: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  /** The rank-4 LLM judge — ON by default; a spec opts out with `judge: false`. */
+  judge: Schema.optionalWith(Schema.Boolean, { default: () => true }),
 }) {}
 
 export class SpecDoc extends Schema.Class<SpecDoc>("SpecDoc")({

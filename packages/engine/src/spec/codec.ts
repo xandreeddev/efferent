@@ -161,6 +161,7 @@ export const decodeSpecDocText = (
           ? { testCommand: fields["testCommand"] }
           : {}),
         ...(fields["noTest"] !== undefined ? { noTest: fields["noTest"] === "true" } : {}),
+        ...(fields["judge"] !== undefined ? { judge: fields["judge"] === "true" } : {}),
       },
     }
     return yield* Schema.decodeUnknown(SpecDoc)(candidate).pipe(
@@ -191,6 +192,8 @@ export const encodeSpecDocText = (doc: SpecDoc): string => {
       onSome: (c) => [`testCommand: ${c}`],
     }),
     ...(doc.gates.noTest ? ["noTest: true"] : []),
+    // Default true — only the opt-OUT is worth a frontmatter line.
+    ...(doc.gates.judge ? [] : ["judge: false"]),
     "---",
   ].join("\n")
   const section = (header: SectionHeader, items: ReadonlyArray<string>): string =>
