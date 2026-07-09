@@ -78,4 +78,8 @@ export interface SmithRunConfig {
   readonly configPath: Option.Option<string>
   /** `--ship` — after an ACCEPTED run: branch, commit, push, open a PR. */
   readonly ship: boolean
+  /** Sandbox the CODER's Bash with bubblewrap (default ON; `--no-sandbox`
+   *  opts out). Gates and :ship always run unsandboxed — they are the
+   *  human's own commands and need the real HOME. */
+  readonly sandbox: boolean
 }

@@ -43,6 +43,7 @@ const runFor = (cwd: string): SmithRunConfig => ({
   noTest: true,
   configPath: Option.none(),
   ship: false,
+  sandbox: false,
 })
 
 /** The refine session's captured context wants the run services even though

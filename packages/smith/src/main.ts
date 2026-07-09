@@ -53,6 +53,7 @@ Flags:
   --test-cmd "<cmd>"     test gate command (bash -c; default: bun test when package.json exists)
   --no-test              suppress the test gate
   --ship                 after an ACCEPTED run: branch, commit, push, open a PR
+  --no-sandbox           run the coder's Bash without the bubblewrap sandbox
   --yes                  lock the refined draft without review (spec -p mode)
   -p, --headless         print mode (no TUI)
   -h, --help             this help
@@ -80,6 +81,7 @@ interface ParseState {
   readonly noTest: boolean
   readonly configPath: Option.Option<string>
   readonly ship: boolean
+  readonly sandbox: boolean
   readonly help: boolean
   readonly pending: Option.Option<string>
   readonly errors: ReadonlyArray<string>
@@ -103,6 +105,7 @@ const initialState: ParseState = {
   noTest: false,
   configPath: Option.none(),
   ship: false,
+  sandbox: true,
   help: false,
   pending: Option.none(),
   errors: [],
@@ -114,6 +117,7 @@ const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
   "--ship": (s) => ({ ...s, ship: true }),
+  "--no-sandbox": (s) => ({ ...s, sandbox: false }),
   "--yes": (s) => ({ ...s, yes: true }),
   "--help": (s) => ({ ...s, help: true }),
   "-h": (s) => ({ ...s, help: true }),
@@ -210,6 +214,7 @@ export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => 
   noTest: state.noTest,
   configPath: state.configPath,
   ship: state.ship,
+  sandbox: state.sandbox,
 })
 
 /** The full service stack one smith session runs on — the NEW LINE: engine
