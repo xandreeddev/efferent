@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Array as Arr, Effect, Layer, Option, Ref } from "effect"
 import { GateName, RuleId, WorkspacePath } from "../domain/Brands.js"
+import { WorkspaceError } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import { ForgeLimits, Spec } from "../domain/Spec.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
@@ -46,12 +47,14 @@ const failingUntil = (green: number, calls: Ref.Ref<number>): Gate<never> => ({
     ),
 })
 
-const memorySink = (paths: Ref.Ref<ReadonlyArray<string>>) =>
+/** Records `path → outcome tag` per persist call — the upsert story. */
+const memorySink = (writes: Ref.Ref<ReadonlyArray<{ path: string; outcome: string }>>) =>
   Layer.succeed(RunSink, {
     persist: (run) =>
-      Ref.update(paths, (all) => [...all, `.foundry/runs/${run.id}.json`]).pipe(
-        Effect.as(`.foundry/runs/${run.id}.json`),
-      ),
+      Ref.update(writes, (all) => [
+        ...all,
+        { path: `.foundry/runs/${run.id}.json`, outcome: run.outcome._tag },
+      ]).pipe(Effect.as(`.foundry/runs/${run.id}.json`)),
   })
 
 describe("forge — the factory loop", () => {
@@ -59,18 +62,18 @@ describe("forge — the factory loop", () => {
     const program = Effect.gen(function* () {
       const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
       const calls = yield* Ref.make(0)
-      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
       const result = yield* forge({
         spec: spec(3),
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
       }).pipe(
-        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(artifacts))),
+        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(writes))),
       )
-      return { result, briefs: yield* Ref.get(briefs), artifacts: yield* Ref.get(artifacts) }
+      return { result, briefs: yield* Ref.get(briefs), writes: yield* Ref.get(writes) }
     })
-    const { result, briefs, artifacts } = await Effect.runPromise(program)
+    const { result, briefs, writes } = await Effect.runPromise(program)
 
     expect(result.run.outcome._tag).toBe("accepted")
     expect(result.run.attempts.length).toBe(2)
@@ -80,22 +83,54 @@ describe("forge — the factory loop", () => {
     expect(Option.isSome(second)).toBe(true)
     expect(Option.getOrThrow(second)).toContain("effect/no-let")
     expect(Option.getOrThrow(second)).toContain("rejected attempt 1")
-    // The artifact was persisted exactly once, and forge reports its path.
-    expect(artifacts).toEqual([result.artifact])
+    // INCREMENTAL persistence: every attempt upserts the SAME artifact as
+    // in-flight; the final strict persist overwrites with the real outcome.
+    expect(writes.map((w) => w.outcome)).toEqual(["in-flight", "in-flight", "accepted"])
+    expect(new Set(writes.map((w) => w.path)).size).toBe(1)
+    expect(writes[writes.length - 1]!.path).toBe(result.artifact)
+  })
+
+  test("a mid-run sink failure never kills the run; the final persist stays strict", async () => {
+    const flakySink = (attempted: Ref.Ref<number>) =>
+      Layer.succeed(RunSink, {
+        persist: (run) =>
+          Ref.updateAndGet(attempted, (n) => n + 1).pipe(
+            Effect.flatMap((n) =>
+              run.outcome._tag === "in-flight"
+                ? Effect.fail(new WorkspaceError({ message: `disk full (write ${n})` }))
+                : Effect.succeed(`.foundry/runs/${run.id}.json`),
+            ),
+          ),
+      })
+    const program = Effect.gen(function* () {
+      const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
+      const calls = yield* Ref.make(0)
+      const attempted = yield* Ref.make(0)
+      const result = yield* forge({
+        spec: spec(3),
+        pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+      }).pipe(Effect.provide(Layer.mergeAll(recordingImplementor(briefs), flakySink(attempted))))
+      return { result, attempted: yield* Ref.get(attempted) }
+    })
+    const { result, attempted } = await Effect.runPromise(program)
+    expect(result.run.outcome._tag).toBe("accepted")
+    expect(attempted).toBe(3) // 2 refused partials + the strict final
   })
 
   test("attempts-exhausted: a never-green pipeline stops at the cap with every report intact", async () => {
     const program = Effect.gen(function* () {
       const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
       const calls = yield* Ref.make(0)
-      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
       return yield* forge({
         spec: spec(2),
         pipeline: { gates: Arr.of(failingUntil(99, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
       }).pipe(
-        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(artifacts))),
+        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(writes))),
       )
     })
     const result = await Effect.runPromise(program)
@@ -111,7 +146,7 @@ describe("forge — the factory loop", () => {
     const program = Effect.gen(function* () {
       const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
       const calls = yield* Ref.make(0)
-      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
       const seen = yield* Ref.make<ReadonlyArray<string>>([])
       const note = (entry: string) => Ref.update(seen, (all) => [...all, entry])
       yield* forge({
@@ -128,7 +163,7 @@ describe("forge — the factory loop", () => {
           onOutcome: (run) => note(`outcome:${run.outcome._tag}`),
         },
       }).pipe(
-        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(artifacts))),
+        Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(writes))),
       )
       return yield* Ref.get(seen)
     })
@@ -155,13 +190,13 @@ describe("forge — the factory loop", () => {
     })
     const program = Effect.gen(function* () {
       const calls = yield* Ref.make(0)
-      const artifacts = yield* Ref.make<ReadonlyArray<string>>([])
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
       return yield* forge({
         spec: spec(2),
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
-      }).pipe(Effect.provide(Layer.mergeAll(refImplementor, memorySink(artifacts))))
+      }).pipe(Effect.provide(Layer.mergeAll(refImplementor, memorySink(writes))))
     })
     const result = await Effect.runPromise(program)
 

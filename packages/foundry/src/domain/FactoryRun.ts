@@ -17,12 +17,18 @@ export class AttemptRecord extends Schema.Class<AttemptRecord>("AttemptRecord")(
 /**
  * How the run ended. A rejected run is a RESULT, not an error — the report
  * is the deliverable; only infrastructure failures ride the error channel.
+ * `in-flight` marks a mid-run upsert: the loop persists after EVERY attempt
+ * (same run id, same file), so a killed run keeps its forensics and its
+ * failed attempts still feed `deriveLessons`. A run that finishes overwrites
+ * the marker with the real outcome; one that reads `in-flight` at rest was
+ * interrupted.
  */
 export const AcceptedOutcome = Schema.TaggedStruct("accepted", { attempt: AttemptNumber })
 export const RejectedOutcome = Schema.TaggedStruct("rejected", {
   reason: Schema.Literal("attempts-exhausted", "budget-exhausted"),
 })
-export const RunOutcome = Schema.Union(AcceptedOutcome, RejectedOutcome)
+export const InFlightOutcome = Schema.TaggedStruct("in-flight", {})
+export const RunOutcome = Schema.Union(AcceptedOutcome, RejectedOutcome, InFlightOutcome)
 export type RunOutcome = typeof RunOutcome.Type
 
 /** The durable, self-describing artifact one `forge` produces. */

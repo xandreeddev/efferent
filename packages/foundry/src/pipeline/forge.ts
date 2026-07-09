@@ -1,7 +1,13 @@
 import { Array as Arr, Clock, Duration, Effect, Match, Option, Schedule, Schema } from "effect"
 import { AttemptNumber, RunId } from "../domain/Brands.js"
 import type { ImplementorError, WorkspaceError } from "../domain/Errors.js"
-import { AcceptedOutcome, AttemptRecord, FactoryRun, RejectedOutcome } from "../domain/FactoryRun.js"
+import {
+  AcceptedOutcome,
+  AttemptRecord,
+  FactoryRun,
+  InFlightOutcome,
+  RejectedOutcome,
+} from "../domain/FactoryRun.js"
 import type { RunOutcome } from "../domain/FactoryRun.js"
 import type { Spec } from "../domain/Spec.js"
 import type { GateReport } from "../domain/Verdict.js"
@@ -83,12 +89,39 @@ export const forge = <R>(
   Effect.gen(function* () {
     const startedAt = yield* Clock.currentTimeMillis
     const deadline = startedAt + options.spec.limits.budgetMillis
+    // Minted at the START so every mid-run persist upserts the SAME artifact.
+    const runId = Schema.decodeSync(RunId)(crypto.randomUUID())
+    const sink = yield* RunSink
     const hooks: Required<ForgeHooks> = {
       onAttemptStart: options.hooks?.onAttemptStart ?? (() => Effect.void),
       onImplemented: options.hooks?.onImplemented ?? (() => Effect.void),
       onReport: options.hooks?.onReport ?? (() => Effect.void),
       onOutcome: options.hooks?.onOutcome ?? (() => Effect.void),
     }
+
+    // Attempts land in the artifact AS THEY FINISH: a run killed mid-flight
+    // used to leave NO artifact at all — no forensics, and `deriveLessons`
+    // learned nothing from the most instructive failures. Best-effort by
+    // design (a forensics write must never kill a paid run); the FINAL
+    // persist below stays strict.
+    const persistPartial = (
+      records: ReadonlyArray<AttemptRecord>,
+      endedAt: number,
+    ): Effect.Effect<void> =>
+      Arr.isNonEmptyReadonlyArray(records)
+        ? sink
+            .persist(
+              new FactoryRun({
+                id: runId,
+                spec: options.spec,
+                attempts: records,
+                outcome: InFlightOutcome.make({}),
+                startedAt,
+                endedAt,
+              }),
+            )
+            .pipe(Effect.asVoid, Effect.catchAll(() => Effect.void))
+        : Effect.void
 
     const attemptOnce = (state: LoopState): Effect.Effect<LoopState, ImplementorError | WorkspaceError, R | Implementor> =>
       Effect.gen(function* () {
@@ -129,6 +162,7 @@ export const forge = <R>(
           implementorRef: receipt.ref ?? Option.none(),
         })
         yield* hooks.onReport(state.attempt, report, feedback)
+        yield* persistPartial([...state.records, record], attemptEnd)
         return {
           attempt:
             phase === "continue" ? AttemptNumber.make(state.attempt + 1) : state.attempt,
@@ -170,7 +204,7 @@ export const forge = <R>(
     const run = yield* Arr.isNonEmptyReadonlyArray(records)
       ? Effect.map(Clock.currentTimeMillis, (endedAt) =>
           new FactoryRun({
-            id: Schema.decodeSync(RunId)(crypto.randomUUID()),
+            id: runId,
             spec: options.spec,
             attempts: records,
             outcome,
@@ -180,7 +214,7 @@ export const forge = <R>(
         )
       : Effect.dieMessage("unreachable: the first attempt always records")
 
-    const sink = yield* RunSink
+    // The strict, authoritative persist — overwrites the in-flight marker.
     const artifact = yield* sink.persist(run)
     yield* hooks.onOutcome(run)
     return { run, artifact }
