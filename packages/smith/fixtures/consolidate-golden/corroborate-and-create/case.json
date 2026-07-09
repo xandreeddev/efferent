@@ -1,0 +1,13 @@
+{
+  "actives": [
+    { "topic": "build-quirk", "statement": "bun test must run with --preload ./test/setup.ts (registers custom matchers) or tests fail" }
+  ],
+  "candidates": [
+    { "topic": "build-quirk", "statement": "tests require the --preload ./test/setup.ts flag to register the custom matchers" },
+    { "topic": "convention", "statement": "source files use kebab-case names" }
+  ],
+  "expected": [
+    { "candidate": 1, "op": "corroborate", "memory": 1 },
+    { "candidate": 2, "op": "create" }
+  ]
+}

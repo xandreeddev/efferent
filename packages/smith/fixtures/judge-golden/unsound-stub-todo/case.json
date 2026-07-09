@@ -1,0 +1,6 @@
+{
+  "label": "unsound",
+  "goal": "Create src/retry.ts exporting withRetry(fn: () => Promise<T>, attempts: number) that retries fn up to attempts times on rejection.",
+  "acceptance": ["withRetry retries a failing fn up to attempts times", "a test verifies the retry behavior"],
+  "why": "the body is a TODO stub that calls fn once and never retries; the test only exercises the happy path"
+}

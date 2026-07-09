@@ -1,0 +1,11 @@
+{
+  "actives": [
+    { "topic": "dependency", "statement": "lodash is pinned to 4.17.19 which lacks sortedUniqBy; use the src/vendor/lodash-extras.ts wrapper" }
+  ],
+  "candidates": [
+    { "topic": "dependency", "statement": "lodash was bumped to 4.17.21 which HAS sortedUniqBy; the vendor wrapper is no longer needed" }
+  ],
+  "expected": [
+    { "candidate": 1, "op": "update", "memory": 1 }
+  ]
+}

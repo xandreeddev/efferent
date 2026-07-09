@@ -1,0 +1,4 @@
+{
+  "name": "fixture",
+  "scripts": { "test": "bun test" }
+}

@@ -1,0 +1,7 @@
+{
+  "label": "unsound",
+  "goal": "Add src/format.ts exporting formatDate(d: Date): string returning YYYY-MM-DD.",
+  "acceptance": ["formatDate zero-pads month and day", "a test verifies a known date"],
+  "nonGoals": ["do not modify src/legacy.ts"],
+  "why": "format.ts is fine but src/legacy.ts was rewritten despite the explicit non-goal"
+}

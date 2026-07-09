@@ -12,6 +12,9 @@ import type { Baseline } from "./framework/baseline.js"
 import { renderReport } from "./framework/report.js"
 import { BASELINE_DIR } from "./main.js"
 import { preflightAuth } from "./live/llm.js"
+import { digestPack } from "./packs/digest.js"
+import { judgeCalibrationPack } from "./packs/judgeCalibration.js"
+import { memoryPack } from "./packs/memory.js"
 
 /**
  * `bun run evals:live [battery …] [--samples n] [--json] [--update-baselines] [--no-check]`
@@ -27,9 +30,13 @@ import { preflightAuth } from "./live/llm.js"
  * credential / unknown battery.
  */
 
-/** The live batteries land with E2 (judge-calibration, digest, memory) and
- *  E3 (refiner, smith-spec live) — the registry is the ONE growth point. */
-export const LIVE_PACKS: Record<string, Pack> = {}
+/** The refiner + smith-spec live batteries land with E3 — the registry is
+ *  the ONE growth point. */
+export const LIVE_PACKS: Record<string, Pack> = {
+  "judge-calibration": judgeCalibrationPack,
+  digest: digestPack,
+  memory: memoryPack,
+}
 
 export const parseLiveArgs = (
   argv: ReadonlyArray<string>,
