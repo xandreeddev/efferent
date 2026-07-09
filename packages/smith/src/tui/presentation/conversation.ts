@@ -17,7 +17,7 @@ export type ConversationBlock =
       readonly kind: "reasoning"
       readonly text: string
       readonly tag: string
-      readonly tokens: { readonly input: number; readonly output: number }
+      readonly tokens: { readonly input: number; readonly output: number; readonly cached: number }
     }
   | {
       readonly kind: "assistant"
@@ -26,7 +26,7 @@ export type ConversationBlock =
       /** True when this block STARTS its turn (no reasoning before it) —
        *  it then owns the blank line and the "└ tag" meta line. */
       readonly leading: boolean
-      readonly tokens: { readonly input: number; readonly output: number }
+      readonly tokens: { readonly input: number; readonly output: number; readonly cached: number }
     }
   | {
       readonly kind: "tool"
@@ -100,12 +100,19 @@ export const reduceConversation = (
         Match.when({ type: "assistant_message" }, (m) => {
           const reasoning = m.reasoning.trim()
           const text = m.text.trim()
-          const tokens = { input: m.usage.inputTokens, output: m.usage.outputTokens }
+          const tokens = {
+            input: m.usage.inputTokens,
+            output: m.usage.outputTokens,
+            cached: m.usage.cacheReadTokens,
+          }
           // "turn" labels WHOSE tokens these are — one model call, not the
-          // session (the session-level number is the ctx gauge).
+          // session (the session-level number is the ctx gauge). The cached
+          // share shows what the prefix cache absorbed of the input.
           const tag = [
             ...Option.match(Option.fromNullable(m.model), { onNone: () => [], onSome: (id) => [id] }),
-            `turn ${fmtTokens(tokens.input)} in · ${fmtTokens(tokens.output)} out`,
+            `turn ${fmtTokens(tokens.input)} in${
+              tokens.cached > 0 ? ` (${fmtTokens(tokens.cached)} cached)` : ""
+            } · ${fmtTokens(tokens.output)} out`,
           ].join(" · ")
           const hasReasoning = reasoning.length > 0
           // ONE meta line per turn: on the "▸" header when the model thought,

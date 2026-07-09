@@ -46,14 +46,14 @@ describe("the conversation fold", () => {
       kind: "reasoning",
       text: "The Python module maps to two TS files because…",
       tag: "opencode:kimi-k2.7-code · turn 1 in · 1 out",
-      tokens: { input: 1, output: 1 },
+      tokens: { input: 1, output: 1, cached: 0 },
     })
     expect(state.blocks[2]).toEqual({
       kind: "assistant",
       text: "Done — two files written.",
       tag: "opencode:kimi-k2.7-code · turn 1 in · 1 out",
       leading: false,
-      tokens: { input: 1, output: 1 },
+      tokens: { input: 1, output: 1, cached: 0 },
     })
   })
 
@@ -84,9 +84,28 @@ describe("the conversation fold", () => {
         text: "",
         tag: "turn 1 in · 1 out",
         leading: true,
-        tokens: { input: 1, output: 1 },
+        tokens: { input: 1, output: 1, cached: 0 },
       },
     ])
+  })
+
+  test("the tag shows the CACHED share of input when the prefix cache hit", () => {
+    const state = reduceConversation(
+      initialConversation,
+      agent({
+        type: "assistant_message",
+        turnIndex: 0,
+        text: "ok",
+        reasoning: "",
+        model: "opencode:kimi-k2.6",
+        toolCalls: [],
+        usage: { inputTokens: 15_600, outputTokens: 135, totalTokens: 15_735, cacheReadTokens: 14_336 },
+      }),
+    )
+    const assistant = state.blocks[0]
+    expect(assistant?.kind).toBe("assistant")
+    if (assistant?.kind !== "assistant") return
+    expect(assistant.tag).toBe("opencode:kimi-k2.6 · turn 15.6k in (14.3k cached) · 135 out")
   })
 
   test("contextTokens reads the LATEST turn's input; the gauge formats", () => {
