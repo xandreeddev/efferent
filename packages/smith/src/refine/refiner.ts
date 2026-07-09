@@ -30,7 +30,7 @@ export const SPECS_DIR = ".efferent/specs"
  */
 export const ProposeSpec = Tool.make("propose_spec", {
   description:
-    "Propose the spec draft (or replace the current draft wholly). goal: one imperative paragraph. acceptance: verifiable criteria — machine-checkable ones MUST have a matching checks entry. checks: {name, command} pairs where the command exits 0 iff the criterion holds. constraints: what must not change (unattended assumptions go here, prefixed 'assumption:'). nonGoals: explicit scope fences.",
+    "Propose the spec draft — every call REPLACES the whole draft (same file, same slug, for the entire session). goal: one imperative paragraph. acceptance: verifiable criteria — machine-checkable ones MUST have a matching checks entry. checks: {name, command} pairs where the command is ONE line of shell that exits 0 iff the criterion holds, and must FAIL on the workspace as it is NOW (red-first). constraints: what must not change (unattended assumptions go here, prefixed 'assumption:'). nonGoals: explicit scope fences. Returns {slug, path, status: 'draft'} — only the human can lock it.",
   parameters: {
     goal: Schema.String.annotations({ description: "One imperative paragraph." }),
     acceptance: Schema.Array(Schema.String).annotations({
