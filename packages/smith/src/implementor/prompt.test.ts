@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Spec } from "@xandreed/foundry"
-import { renderRetryBrief, renderTaskBrief } from "./prompt.js"
+import { renderBrief, renderRetryBrief, renderTaskBrief } from "./prompt.js"
 
 const spec = Effect.runSync(
   Schema.decodeUnknown(Spec)({
@@ -37,5 +37,16 @@ describe("implementor briefs", () => {
     const brief = renderRetryBrief(feedback)
     expect(brief).toContain(feedback)
     expect(brief).toContain("REJECTED")
+  })
+
+  test("workspace RULES render before lessons — the human's instructions outrank history", () => {
+    const rules = "## Workspace rules (AGENTS.md — the human's standing instructions; obey them)\nNever touch src/legacy/."
+    const lessons = "## Lessons from past forge runs in this workspace\n- [effect/no-let] failed twice"
+    const brief = renderBrief(spec, Option.none(), Option.some(lessons), Option.some(rules))
+    expect(brief).toContain("Never touch src/legacy/")
+    expect(brief).toContain("failed twice")
+    expect(brief.indexOf("Workspace rules")).toBeLessThan(brief.indexOf("Lessons from past forge runs"))
+    // Absent extras leave the base brief untouched.
+    expect(renderBrief(spec, Option.none())).toBe(renderTaskBrief(spec))
   })
 })
