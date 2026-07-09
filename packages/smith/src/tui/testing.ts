@@ -91,6 +91,7 @@ export const testRunConfig = (cwd: string): SmithRunConfig => ({
   noTest: true,
   configPath: Option.none(),
   ship: false,
+  sandbox: false,
 })
 
 /** A refiner that immediately proposes a fixed spec — the scripted twin. */
