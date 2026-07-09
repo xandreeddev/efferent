@@ -8,6 +8,7 @@ import type { TokenUsage } from "../domain/TokenUsage.js"
 import {
   extractModel,
   extractUsage,
+  handoffToMessage,
   responseReasoning,
   responseText,
   responseToAgentMessages,
@@ -17,6 +18,19 @@ import {
   withToolCallIds,
   withUsageOnAssistant,
 } from "./mapping.js"
+
+/**
+ * A mid-run fold the `compact` callback hands back: everything before
+ * `keepFrom` is replaced by `handoffToMessage(summary)`; `messages[keepFrom..]`
+ * survive verbatim. CONTRACT: `keepFrom` must index an assistant message
+ * (never split a tool-call from its results) — `safeKeepFrom` guarantees it;
+ * the loop ignores a plan that violates the contract (the run continues
+ * unfolded, best-effort).
+ */
+export interface CompactionPlan {
+  readonly summary: string
+  readonly keepFrom: number
+}
 
 /**
  * The provider-agnostic agent loop. `@effect/ai` resolves ONE step's tool
@@ -53,6 +67,17 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   readonly onTail?: (
     messages: ReadonlyArray<AgentMessage>,
   ) => Effect.Effect<ReadonlyArray<number>, never, R>
+  /**
+   * The WITHIN-RUN compaction seam, consulted at turn boundaries while the
+   * run continues. Receives the buffer the NEXT turn would send plus the
+   * just-finished turn's usage (its `inputTokens` IS the live context cost);
+   * `Some(plan)` rewrites the buffer to summary + kept tail. The loop stays
+   * pure — the callback owns thresholds, summarization, and persistence.
+   */
+  readonly compact?: (
+    messages: ReadonlyArray<AgentMessage>,
+    lastTurnUsage: TokenUsage,
+  ) => Effect.Effect<Option.Option<CompactionPlan>, never, R>
 }
 
 export const DEFAULT_MAX_STEPS = 100
@@ -257,8 +282,38 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         yield* broke
           ? Effect.logWarning(`breaking a degenerate tool-call loop after ${stale} stale turns`)
           : Effect.void
+
+        // --- Within-run compaction (turn boundaries only) ---
+        // Consulted only while the run CONTINUES; the buffer rewrite is
+        // load-side (persisted history and `newTail` untouched). A plan that
+        // violates the assistant-boundary contract is ignored, never applied.
+        const nextMessages = [...state.messages, ...tail, ...nudge]
+        const plan =
+          phase === "continue" && options.compact !== undefined
+            ? yield* options.compact(nextMessages, usage)
+            : Option.none<CompactionPlan>()
+        const applied = Option.filter(
+          plan,
+          (p) =>
+            p.keepFrom > 0 &&
+            p.keepFrom < nextMessages.length &&
+            nextMessages[p.keepFrom]?.role === "assistant",
+        )
+        yield* Option.match(applied, {
+          onNone: () => Effect.void,
+          onSome: (p) =>
+            onEvent({
+              type: "compaction",
+              turnIndex: state.turnIndex,
+              tokens: usage.inputTokens,
+              kept: nextMessages.length - p.keepFrom,
+            }),
+        })
         return {
-          messages: [...state.messages, ...tail, ...nudge],
+          messages: Option.match(applied, {
+            onNone: () => nextMessages,
+            onSome: (p) => [handoffToMessage(p.summary), ...nextMessages.slice(p.keepFrom)],
+          }),
           newTail: [...state.newTail, ...tail, ...nudge],
           finalText: broke && finalText.length === 0 ? DEGENERATE_LOOP_STOP : finalText,
           turnIndex,

@@ -30,6 +30,25 @@ export const handoffToMessage = (summary: string): AgentMessage => ({
     summary,
 })
 
+/**
+ * The largest SAFE fold cut keeping at least `keepTurns` assistant turns
+ * verbatim: the cut always lands ON an assistant message (a tool message
+ * follows its assistant, so a tool-call is never split from its results),
+ * and never at index 0 (something must fold). `None` when the buffer is too
+ * small to fold at all.
+ */
+export const safeKeepFrom = (
+  messages: ReadonlyArray<AgentMessage>,
+  keepTurns: number,
+): Option.Option<number> => {
+  const assistantIndexes = messages.flatMap((message, index) =>
+    message.role === "assistant" ? [index] : [],
+  )
+  if (assistantIndexes.length <= keepTurns) return Option.none()
+  const cut = assistantIndexes[assistantIndexes.length - keepTurns]
+  return cut === undefined || cut <= 0 ? Option.none() : Option.some(cut)
+}
+
 /** The read-side projection of a response content part (type-erased). */
 interface AnyPart {
   readonly type: string

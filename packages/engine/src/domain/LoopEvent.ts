@@ -47,6 +47,15 @@ export type LoopEvent =
       readonly ok: boolean
       readonly result: unknown
     }
+  /** The mid-run fold: the buffer outgrew the healthy context range and the
+   *  older turns were replaced by a handoff summary — `kept` verbatim
+   *  messages survive after it. A load-side rewrite; nothing is deleted. */
+  | {
+      readonly type: "compaction"
+      readonly turnIndex: number
+      readonly tokens: number
+      readonly kept: number
+    }
   | {
       readonly type: "agent_end"
       readonly outcome: "ok" | "partial"
