@@ -74,7 +74,25 @@ const push = (
 export const withUserBlock = (state: ConversationState, text: string): ConversationState =>
   push(state, { kind: "user", text })
 
-export const reduceConversation = (
+/** A bounded stop means DIFFERENT things per mode: in refine the HUMAN
+ *  continues the session; in forge the LOOP continues itself (snapshot →
+ *  gates → feedback → next attempt) — advising "send a message" there
+ *  misled a live run into looking stuck. */
+const partialNotice = (mode: "refine" | "forge", reason: string): string =>
+  mode === "forge"
+    ? reason === "step-cap"
+      ? "the attempt hit its step ceiling — the snapshot goes to the gates; their findings brief the next attempt automatically"
+      : "the attempt stalled repeating the same tool call — the gates judge what landed; their findings brief the next attempt"
+    : reason === "step-cap"
+      ? 'stopped at the per-message step ceiling before finishing — the session is SAVED; send another message (e.g. "continue") to keep going'
+      : "stopped after repeating the same tool call with no progress — the session is saved; rephrase or narrow the ask"
+
+/** The fold, mode-curried. `reduceConversation` below stays the refine-worded
+ *  binding — safe as a bare Array.reduce callback, where a positional mode
+ *  parameter would collide with reduce's index argument. */
+export const reduceConversationIn = (
+  mode: "refine" | "forge",
+) => (
   state: ConversationState,
   event: SmithEvent,
 ): ConversationState =>
@@ -131,13 +149,7 @@ export const reduceConversation = (
         Match.when({ type: "agent_end" }, (end) =>
           end.outcome === "ok"
             ? state
-            : push(state, {
-                kind: "notice",
-                text:
-                  end.reason === "step-cap"
-                    ? 'stopped at the per-message step ceiling before finishing — the session is SAVED; send another message (e.g. "continue") to keep going'
-                    : "stopped after repeating the same tool call with no progress — the session is saved; rephrase or narrow the ask",
-              }),
+            : push(state, { kind: "notice", text: partialNotice(mode, end.reason) }),
         ),
         Match.orElse(() => state),
       ),
@@ -147,6 +159,9 @@ export const reduceConversation = (
     ),
     Match.orElse(() => state),
   )
+
+/** The refine-worded binding (the Array.reduce-safe default). */
+export const reduceConversation = reduceConversationIn("refine")
 
 /** "1.2k" past a thousand ("256k" when round) — scannable at any size. */
 export const fmtTokens = (n: number): string =>
