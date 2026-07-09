@@ -62,10 +62,14 @@ export const runLine = (run: FactoryRun): RunLine => {
   const gatesFailed = run.attempts
     .flatMap((a) => a.report.verdicts)
     .filter((v) => v._tag === "fail").length
+  // An at-rest `in-flight` artifact is a run that was KILLED mid-work (or is
+  // still running in another session) — visible forensics, not an error.
   const outcome =
     run.outcome._tag === "accepted"
       ? `✓ accepted (attempt ${run.outcome.attempt})`
-      : `✗ rejected — ${run.outcome.reason}`
+      : run.outcome._tag === "rejected"
+        ? `✗ rejected — ${run.outcome.reason}`
+        : `◌ in flight — ${run.attempts.length} attempt(s) recorded`
   const rejects = gatesFailed > 0 ? ` · ${gatesFailed} gate reject(s)` : ""
   return {
     text: `${outcome} · ${clip(run.spec.goal, 48)}${rejects}`,

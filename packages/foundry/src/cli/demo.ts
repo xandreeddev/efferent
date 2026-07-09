@@ -121,7 +121,9 @@ const printRun = ({ artifact, run }: ForgeResult): number => {
     `\noutcome: ${
       run.outcome._tag === "accepted"
         ? `ACCEPTED on attempt ${run.outcome.attempt}`
-        : `REJECTED (${run.outcome.reason})`
+        : run.outcome._tag === "rejected"
+          ? `REJECTED (${run.outcome.reason})`
+          : "IN FLIGHT (interrupted mid-run)"
     }`,
   )
   console.log(`artifact: ${artifact}`)

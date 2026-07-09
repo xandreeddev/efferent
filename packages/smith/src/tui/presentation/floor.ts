@@ -164,7 +164,9 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
       outcome: Option.some(
         e.run.outcome._tag === "accepted"
           ? `accepted (attempt ${e.run.outcome.attempt})`
-          : `rejected — ${e.run.outcome.reason}`,
+          : e.run.outcome._tag === "rejected"
+            ? `rejected — ${e.run.outcome.reason}`
+            : "in flight",
       ),
       artifact: Option.some(e.artifact),
     })),
