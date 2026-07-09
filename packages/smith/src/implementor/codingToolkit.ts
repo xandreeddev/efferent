@@ -17,11 +17,12 @@ const OUTPUT_CAP_CHARS = 16_000
 const DEFAULT_BASH_TIMEOUT_MS = 5 * 60_000
 
 export const ReadFile = Tool.make("read_file", {
-  description: "Read a file (workspace-relative or absolute path). Large files are clipped — use offset/limit to page.",
+  description:
+    "Read one file. Returns {content, truncated} — content over 48k chars is clipped with a marker; page big files with offset/limit. Reads may leave the workspace (dependency sources are fair game).",
   parameters: {
-    path: Schema.String,
-    offset: Schema.optional(Schema.Number.annotations({ description: "1-based first line." })),
-    limit: Schema.optional(Schema.Number.annotations({ description: "Max lines." })),
+    path: Schema.String.annotations({ description: "Workspace-relative or absolute path." }),
+    offset: Schema.optional(Schema.Number.annotations({ description: "1-based first line (default 1)." })),
+    limit: Schema.optional(Schema.Number.annotations({ description: "Max lines from offset (default: to end)." })),
   },
   success: Schema.Struct({ content: Schema.String, truncated: Schema.Boolean }),
   failure: Failure,
@@ -29,8 +30,12 @@ export const ReadFile = Tool.make("read_file", {
 })
 
 export const WriteFile = Tool.make("write_file", {
-  description: "Create or overwrite one file inside the workspace.",
-  parameters: { path: Schema.String, content: Schema.String },
+  description:
+    "Create or overwrite ONE file inside the workspace (writes outside it are refused). Provide the FULL file body — empty content is refused; use edit_file to blank a file intentionally. Side effect: missing parent directories are created. Returns {written, path}.",
+  parameters: {
+    path: Schema.String.annotations({ description: "Workspace-relative (or absolute inside the workspace)." }),
+    content: Schema.String.annotations({ description: "The complete file body." }),
+  },
   success: Schema.Struct({ written: Schema.Boolean, path: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -38,14 +43,14 @@ export const WriteFile = Tool.make("write_file", {
 
 export const EditFile = Tool.make("edit_file", {
   description:
-    "Replace exact text in a file. Provide edits: [{oldText, newText}] (or a single flat oldText/newText pair). oldText must match EXACTLY once — include enough surrounding context to be unique.",
+    'Replace exact text in one workspace file. Provide edits: [{oldText, newText}] (or a single flat oldText/newText pair). Each oldText must match EXACTLY once, whitespace included — include surrounding lines to make it unique. Example: {path: "src/a.ts", oldText: "const x = 1", newText: "const x = 2"}. Returns {edited, path, applied: number of edits applied}.',
   parameters: {
-    path: Schema.String,
+    path: Schema.String.annotations({ description: "Workspace-relative (or absolute inside the workspace)." }),
     edits: Schema.optional(
       Schema.Array(Schema.Struct({ oldText: Schema.String, newText: Schema.String })),
     ),
-    oldText: Schema.optional(Schema.String),
-    newText: Schema.optional(Schema.String),
+    oldText: Schema.optional(Schema.String.annotations({ description: "Flat single-edit form: the exact text to replace." })),
+    newText: Schema.optional(Schema.String.annotations({ description: "Flat single-edit form: the replacement." })),
   },
   success: Schema.Struct({ edited: Schema.Boolean, path: Schema.String, applied: Schema.Number }),
   failure: Failure,
@@ -54,10 +59,12 @@ export const EditFile = Tool.make("edit_file", {
 
 export const Bash = Tool.make("Bash", {
   description:
-    "Run a shell command in the workspace (bash -c). Non-zero exits come back as results with stderr — read and adapt. Default timeout 5 minutes.",
+    "Run one shell command (bash -c) with cwd = the workspace root. A non-zero exit is a RESULT, not an error: returns {stdout, stderr, exitCode} — read stderr and adapt. Output over 16k chars is clipped with a marker.",
   parameters: {
-    command: Schema.String,
-    timeout: Schema.optional(Schema.Number.annotations({ description: "Timeout in ms." })),
+    command: Schema.String.annotations({ description: "The command line to run." }),
+    timeout: Schema.optional(
+      Schema.Number.annotations({ description: "Timeout in ms (default 300000 = 5 minutes)." }),
+    ),
   },
   success: Schema.Struct({
     stdout: Schema.String,
@@ -69,10 +76,11 @@ export const Bash = Tool.make("Bash", {
 })
 
 export const Grep = Tool.make("grep", {
-  description: "Search file contents (grep -rnE) under a workspace directory.",
+  description:
+    'Search file contents with an extended regex (grep -rnE; node_modules and .git excluded). Returns {matches: "path:line:text" lines (first 200), truncated}.',
   parameters: {
-    pattern: Schema.String,
-    dir: Schema.optional(Schema.String.annotations({ description: "Relative dir (default .)." })),
+    pattern: Schema.String.annotations({ description: "Extended (ERE) regex matched against file contents." }),
+    dir: Schema.optional(Schema.String.annotations({ description: 'Directory to search, workspace-relative (default ".").' })),
   },
   success: Schema.Struct({ matches: Schema.String, truncated: Schema.Boolean }),
   failure: Failure,
@@ -80,10 +88,11 @@ export const Grep = Tool.make("grep", {
 })
 
 export const Glob = Tool.make("glob", {
-  description: "Find files by name pattern (find -name) under the workspace.",
+  description:
+    "Find files by NAME pattern (find -name) — matches file names, not full paths. Returns {paths (first 200), truncated}.",
   parameters: {
-    pattern: Schema.String.annotations({ description: "e.g. *.ts or store*.md" }),
-    dir: Schema.optional(Schema.String),
+    pattern: Schema.String.annotations({ description: 'A file-name pattern, e.g. "*.ts" or "store*.md".' }),
+    dir: Schema.optional(Schema.String.annotations({ description: 'Directory to search under, workspace-relative (default ".").' })),
   },
   success: Schema.Struct({ paths: Schema.Array(Schema.String), truncated: Schema.Boolean }),
   failure: Failure,
@@ -91,8 +100,11 @@ export const Glob = Tool.make("glob", {
 })
 
 export const Ls = Tool.make("ls", {
-  description: "List a workspace directory.",
-  parameters: { path: Schema.optional(Schema.String) },
+  description:
+    "List one directory's entries (names only, not recursive). Returns {entries}.",
+  parameters: {
+    path: Schema.optional(Schema.String.annotations({ description: 'Directory, workspace-relative (default ".").' })),
+  },
   success: Schema.Struct({ entries: Schema.Array(Schema.String) }),
   failure: Failure,
   failureMode: "return",
