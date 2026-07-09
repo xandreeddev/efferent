@@ -45,13 +45,13 @@ describe("the conversation fold", () => {
     expect(state.blocks[1]).toEqual({
       kind: "reasoning",
       text: "The Python module maps to two TS files because…",
-      tag: "opencode:kimi-k2.7-code · 1 in · 1 out",
+      tag: "opencode:kimi-k2.7-code · turn 1 in · 1 out",
       tokens: { input: 1, output: 1 },
     })
     expect(state.blocks[2]).toEqual({
       kind: "assistant",
       text: "Done — two files written.",
-      tag: "opencode:kimi-k2.7-code · 1 in · 1 out",
+      tag: "opencode:kimi-k2.7-code · turn 1 in · 1 out",
       leading: false,
       tokens: { input: 1, output: 1 },
     })
@@ -82,7 +82,7 @@ describe("the conversation fold", () => {
       {
         kind: "assistant",
         text: "",
-        tag: "1 in · 1 out",
+        tag: "turn 1 in · 1 out",
         leading: true,
         tokens: { input: 1, output: 1 },
       },
