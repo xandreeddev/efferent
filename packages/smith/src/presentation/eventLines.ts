@@ -80,7 +80,13 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
     }),
     Match.when({ type: "forge_end" }, (e) =>
       Option.some(
-        `\n${e.run.outcome._tag === "accepted" ? "✓ ACCEPTED" : `✗ REJECTED (${e.run.outcome.reason})`} after ${e.run.attempts.length} attempt(s)\n  artifact: ${e.artifact}`,
+        `\n${
+          e.run.outcome._tag === "accepted"
+            ? "✓ ACCEPTED"
+            : e.run.outcome._tag === "rejected"
+              ? `✗ REJECTED (${e.run.outcome.reason})`
+              : "◌ IN FLIGHT"
+        } after ${e.run.attempts.length} attempt(s)\n  artifact: ${e.artifact}`,
       ),
     ),
     Match.when({ type: "forge_error" }, (e) => Option.some(`✗ forge failed: ${e.message}`)),

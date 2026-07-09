@@ -125,6 +125,13 @@ const resultBlock = (run: FactoryRun, artifact: string): ConversationBlock =>
         artifact,
       }
     }),
+    // forge_end never carries the mid-run upsert marker; type-complete anyway.
+    Match.tag("in-flight", () => ({
+      kind: "result" as const,
+      ok: false,
+      text: `still in flight after ${attempts(run.attempts.length)}`,
+      artifact,
+    })),
     Match.exhaustive,
   )
 
