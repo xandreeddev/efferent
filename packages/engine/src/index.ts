@@ -64,6 +64,9 @@ export {
 export type { CompactionPlan, RunLoopOptions } from "./loop/loop.js"
 export { runAgent } from "./loop/runAgent.js"
 export type { AgentConfig, CompactionPolicy } from "./loop/runAgent.js"
+export { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "./ports/McpClient.js"
+export { buildMcpBridge, emptyMcpBridge, mcpToolName, toolFromDescriptor } from "./mcp/bridge.js"
+export type { McpBridge, McpBridgedTool } from "./mcp/bridge.js"
 
 // session
 export { makeSession } from "./session/chassis.js"

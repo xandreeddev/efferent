@@ -2,7 +2,16 @@ import type { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { WorkspacePath } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, runAgent, Shell, UtilityLlm } from "@xandreed/engine"
+import {
+  buildMcpBridge,
+  ConversationStore,
+  FileSystem,
+  McpClient,
+  runAgent,
+  Shell,
+  UtilityLlm,
+} from "@xandreed/engine"
+import { Toolkit } from "@effect/ai"
 import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
@@ -33,6 +42,7 @@ export type ImplementorServices =
   | Shell
   | ConversationStore
   | UtilityLlm
+  | McpClient
   | LanguageModel.LanguageModel
 
 // 100 (raised from 40 on user call): real ports kept handing off mid-slice.
@@ -185,6 +195,19 @@ export const makeEfferentImplementorLive = (
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
       )
+      // External MCP tools (user-configured servers) merge into the kit —
+      // snapshot once per run; an unreachable server yields the empty bridge.
+      const mcp = yield* buildMcpBridge
+      const toolkit = Toolkit.merge(smithCodingToolkit, mcp.toolkit)
+      const externalTools =
+        mcp.descriptors.length === 0
+          ? ""
+          : `## External MCP tools (user-configured servers)\n${mcp.descriptors
+              .map(
+                (d) =>
+                  `- mcp__${d.server}__${d.name}: ${Option.getOrElse(d.description, () => "(no description)")}`,
+              )
+              .join("\n")}`
 
       const conversationRef = yield* Ref.make(Option.none<ConversationId>())
       // The latest turn's input tokens ARE the live context cost — tracked
@@ -265,8 +288,11 @@ export const makeEfferentImplementorLive = (
             // silent success.
             yield* runAgent(
               {
-                system: smithCoderSystemPrompt(options.cwd, skills),
-                toolkit: smithCodingToolkit,
+                system: smithCoderSystemPrompt(
+                  options.cwd,
+                  [skills, externalTools].filter((block) => block.length > 0).join("\n\n"),
+                ),
+                toolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
                 // WITHIN-attempt compaction: same threshold and digest as the
                 // attempt-boundary fold — a single long attempt no longer
@@ -285,6 +311,7 @@ export const makeEfferentImplementorLive = (
               { onEvent },
             ).pipe(
               Effect.provide(handlers),
+              Effect.provide(mcp.handlers),
               Effect.provide(context),
               Effect.mapError(
                 (cause) =>
