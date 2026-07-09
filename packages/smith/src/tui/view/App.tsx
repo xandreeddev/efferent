@@ -168,14 +168,14 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             // (the ▸ header or a leading assistant), everything inside a
             // turn — thought, text, tools — stays flush.
             if (block.kind === "reasoning") {
-              // The turn HEADER pops (bright), the thought under it recedes
-              // (dim) — the ▸ line is navigation, the reasoning is texture.
+              // Header AND thought render bright (user call) — the dim
+              // treatment read as "everything grayish".
               return (
                 <box flexDirection="column" flexShrink={0} marginTop={1}>
                   <text fg={tokens.text.bright} wrapMode="none">{`  ▸ ${block.tag}`}</text>
                   <box flexDirection="row">
                     <text flexShrink={0}>{"    "}</text>
-                    <text fg={tokens.text.dim} wrapMode="word" flexShrink={1}>
+                    <text fg={tokens.text.bright} wrapMode="word" flexShrink={1}>
                       {block.text}
                     </text>
                   </box>
@@ -230,7 +230,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                   ? tokens.state.error
                   : tokens.state.running
             return (
-              <box flexDirection="row" flexShrink={0}>
+              <box flexDirection="row" flexShrink={0} marginTop={block.first ? 1 : 0}>
                 <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
                 <text fg={statusColor} flexShrink={0}>{block.name}</text>
                 <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
