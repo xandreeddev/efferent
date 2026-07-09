@@ -9,6 +9,8 @@ import { Deferred, Effect, Layer, Option, Queue, Schema, Scope } from "effect"
 import {
   AuthStore,
   EngineSettings,
+  McpClient,
+  McpError,
   Shell,
   ShellResult,
   SettingsStore,
@@ -124,6 +126,11 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     LocalFileSystemLive,
     SqliteConversationStoreLive(join(cwd, ".efferent", "smith.db")),
     Layer.succeed(LanguageModel.LanguageModel, {} as never),
+    Layer.succeed(McpClient, {
+      listTools: Effect.succeed([]),
+      callTool: () =>
+        Effect.fail(new McpError({ server: "test", message: "no MCP in the test harness" })),
+    }),
     Layer.succeed(Shell, {
       // Command-aware canned answers so the :ship battery can run end to end.
       exec: (command: string) =>

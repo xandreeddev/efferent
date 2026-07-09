@@ -16,6 +16,7 @@ import {
   LocalAuthStoreLive,
   LocalFileSystemLive,
   LocalShellLive,
+  McpClientLive,
   SqliteConversationStoreLive,
   TracingLive,
 } from "@xandreed/providers"
@@ -221,7 +222,8 @@ export const smithAppLive = (run: SmithRunConfig) =>
     LocalFileSystemLive,
     LocalShellLive,
     LanguageModelLive,
-  UtilityLlmLive,
+    UtilityLlmLive,
+    McpClientLive(run.cwd, homedir()),
   ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
