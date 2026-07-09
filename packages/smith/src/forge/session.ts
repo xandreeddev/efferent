@@ -23,7 +23,12 @@ import type {
 } from "@xandreed/foundry"
 import { FileSystem } from "@xandreed/engine"
 import type { AuthStore, SettingsStore, SpecDoc } from "@xandreed/engine"
-import { LanguageModelLive, roleModelView } from "@xandreed/providers"
+import {
+  LanguageModelLive,
+  LocalShellLive,
+  roleModelView,
+  SandboxedShellLive,
+} from "@xandreed/providers"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"
@@ -224,6 +229,10 @@ export const runForgeSession = (
       publish,
       makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons, rules, memory }).pipe(
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
+        // The SANDBOX applies to the coder's Bash ONLY: gates run the
+        // human's own commands and :ship needs the real HOME (gh/ssh) —
+        // both stay on the app-level local shell.
+        Layer.provide(run.sandbox ? SandboxedShellLive(run.cwd) : LocalShellLive),
       ),
       doc,
       judgeGates,
