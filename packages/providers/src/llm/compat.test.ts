@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Tool } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import { Failure } from "@xandreed/engine"
-import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
+import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
   ((_url: unknown, _init?: unknown) =>
@@ -121,6 +121,29 @@ describe("makeCompatLanguageModel", () => {
         usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8, cachedInputTokens: 0 },
       },
     ])
+  })
+
+  test("thinking is FORCED for the adaptive families, absent otherwise", async () => {
+    // 24/24 no-think turns emitted degenerate empty tool calls (live
+    // forensics) — kimi/deepseek get thinking:{type:"enabled"}, qwen gets
+    // enable_thinking, unknown families get nothing.
+    const { calls, impl } = capture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* makeCompatLanguageModel({
+          moduleName: "Test",
+          chatUrl: "https://gw.example/chat",
+          apiKey: "k",
+          model: "kimi-k2.7-code",
+          fetchImpl: impl,
+        })
+        return yield* svc.generateText({ prompt: [{ role: "user", content: "hi" }] } as never)
+      }),
+    )
+    expect((calls[0]?.body as { thinking?: unknown }).thinking).toEqual({ type: "enabled" })
+    expect(thinkingParams("deepseek-v4-flash")).toEqual({ thinking: { type: "enabled" } })
+    expect(thinkingParams("qwen3-coder")).toEqual({ enable_thinking: true })
+    expect(thinkingParams("glm-4.7")).toEqual({})
   })
 
   test("BOTH reasoning vocabularies parse into a reasoning part", async () => {
