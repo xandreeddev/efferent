@@ -1,0 +1,6 @@
+{
+  "label": "sound",
+  "goal": "Create src/clamp.ts exporting clamp(x: number, lo: number, hi: number): number.",
+  "acceptance": ["clamp bounds x into [lo, hi]", "a test covers below/inside/above"],
+  "why": "small but complete and honest — minimalism is not unsoundness"
+}

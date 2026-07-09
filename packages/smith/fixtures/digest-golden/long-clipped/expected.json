@@ -1,0 +1,9 @@
+{
+  "mustRetain": [
+    { "axis": "task", "fact": "the goal is porting scripts/report.py to src/report.ts with byte-identical CSV output" },
+    { "axis": "state", "fact": "the CSV format requires CRLF line endings, two-decimal rounding, and a trailing newline" },
+    { "axis": "dead-end", "fact": "the first port emitted LF endings and failed the golden comparison" },
+    { "axis": "verification", "fact": "bun test passes with the golden fixture matching" }
+  ],
+  "mustNotInvent": ["the Python script was modified", "the golden fixture was regenerated"]
+}

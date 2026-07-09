@@ -38,28 +38,45 @@ const MAX_ACTIVE_RECORDS = 50
 const MIN_TRAIL_CHARS = 2_000
 const CURATE_TIMEOUT_MS = 45_000
 
-const CandidateFact = Schema.Struct({ topic: MemoryTopic, statement: Schema.String })
-type CandidateFact = typeof CandidateFact.Type
-const ExtractOutput = Schema.parseJson(Schema.Array(CandidateFact))
+export const CandidateFact = Schema.Struct({ topic: MemoryTopic, statement: Schema.String })
+export type CandidateFact = typeof CandidateFact.Type
+export const ExtractOutput = Schema.parseJson(Schema.Array(CandidateFact))
 
-const VerbOut = Schema.Union(
-  Schema.Struct({ op: Schema.Literal("create"), candidate: Schema.Number }),
-  Schema.Struct({ op: Schema.Literal("corroborate"), memory: Schema.Number }),
+/** The consolidation prompt presents actives as "M1" / candidates as "C1",
+ *  and the model often ECHOES that label instead of the bare index — both
+ *  must decode (live-caught by the memory battery: every update/corroborate
+ *  with "memory": "M1" was silently dropped). */
+const IndexRef = Schema.Union(
+  Schema.Number,
+  Schema.transform(
+    Schema.String.pipe(Schema.pattern(/^[CMcm]?\d+$/)),
+    Schema.Number,
+    {
+      strict: true,
+      decode: (text) => Number(text.replace(/^[CMcm]/, "")),
+      encode: (index) => String(index),
+    },
+  ),
+)
+
+export const VerbOut = Schema.Union(
+  Schema.Struct({ op: Schema.Literal("create"), candidate: IndexRef }),
+  Schema.Struct({ op: Schema.Literal("corroborate"), memory: IndexRef }),
   Schema.Struct({
     op: Schema.Literal("update"),
-    memory: Schema.Number,
+    memory: IndexRef,
     statement: Schema.String,
   }),
   Schema.Struct({
     op: Schema.Literal("invalidate"),
-    memory: Schema.Number,
+    memory: IndexRef,
     reason: Schema.String,
   }),
 )
-const ConsolidateOutput = Schema.parseJson(Schema.Array(VerbOut))
+export const ConsolidateOutput = Schema.parseJson(Schema.Array(VerbOut))
 
 /** Models fence JSON; the parse must not care. */
-const stripFences = (text: string): string => {
+export const stripFences = (text: string): string => {
   const trimmed = text.trim()
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed)
   return fenced?.[1] ?? trimmed

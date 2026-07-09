@@ -1,0 +1,8 @@
+{
+  "mustRetain": [
+    { "axis": "task", "fact": "the goal is a stats module with mean and median where empty arrays return 0" },
+    { "axis": "state", "fact": "median now averages the two middle values for even-length arrays" },
+    { "axis": "verification", "fact": "bun test passes with 8 tests after the fix" }
+  ],
+  "mustNotInvent": ["mean was rewritten", "the median fix is still failing"]
+}

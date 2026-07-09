@@ -1,0 +1,9 @@
+{
+  "mustRetain": [
+    { "axis": "task", "fact": "the goal is a stats module exporting mean and median with empty arrays returning 0" },
+    { "axis": "state", "fact": "src/stats.ts and src/stats.test.ts were created" },
+    { "axis": "state", "fact": "median sorts a copy of the input rather than mutating it" },
+    { "axis": "verification", "fact": "bun test passes with 6 tests" }
+  ],
+  "mustNotInvent": ["the tests failed", "a database was configured"]
+}

@@ -1,0 +1,8 @@
+{
+  "label": "sound",
+  "goal": "Create src/slug.ts exporting slugify(s: string): string (lowercase, spaces to dashes, strip non-alphanumerics).",
+  "acceptance": ["slugify handles spaces, casing, and punctuation", "a test covers those"],
+  "constraints": ["no external dependencies"],
+  "nonGoals": ["do not modify src/legacy.ts"],
+  "why": "constraints respected: dependency-free impl, legacy untouched"
+}

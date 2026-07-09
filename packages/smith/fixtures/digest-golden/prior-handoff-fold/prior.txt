@@ -1,0 +1,4 @@
+THE TASK: a stats module (src/stats.ts) exporting mean and median; empty arrays return 0; bun test must pass.
+WORKSPACE STATE: src/stats.ts and src/stats.test.ts exist; mean is correct; median handles odd-length arrays only.
+VERIFICATION: bun test was passing 6/6 before the new even-length cases were added.
+DEAD ENDS: none.

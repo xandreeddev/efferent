@@ -1,0 +1,9 @@
+{
+  "mustRetain": [
+    { "axis": "task", "fact": "the goal is an argv parser supporting --key value pairs and boolean --flags" },
+    { "axis": "dead-end", "fact": "a regex-based tokenizer was tried and abandoned because quoted values with spaces broke it" },
+    { "axis": "state", "fact": "the final parseArgs is a fold over argv tokens" },
+    { "axis": "verification", "fact": "bun test passes with 7 tests" }
+  ],
+  "mustNotInvent": ["the regex approach was kept", "an external argument-parsing library was added"]
+}
