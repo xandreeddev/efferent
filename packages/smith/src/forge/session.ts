@@ -18,7 +18,8 @@ import type {
   ImplementorError,
   WorkspaceError,
 } from "@xandreed/foundry"
-import type { AuthStore, FileSystem, SettingsStore, SpecDoc } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/engine"
+import type { AuthStore, SettingsStore, SpecDoc } from "@xandreed/engine"
 import { LanguageModelLive, roleModelView } from "@xandreed/providers"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
@@ -133,6 +134,44 @@ export const loadForgeLessons = (cwd: string): Effect.Effect<Option.Option<strin
     }),
   )
 
+/** The AGENTS.md convention, in precedence order. */
+const RULE_FILES = ["AGENTS.md", "CLAUDE.md", ".efferent/rules.md"]
+/** A rules file is standing context, not a wiki — the tail past the cap is
+ *  dropped with a visible marker. */
+const RULES_CAP_CHARS = 8_000
+
+/**
+ * The workspace's standing instruction file — the human's rules reach every
+ * brief the way the forge-history lessons do. First existing, non-empty file
+ * wins; an unreadable file reads as absent (the rules are an aid, never a
+ * reason a run can't start).
+ */
+export const loadWorkspaceRules = (
+  cwd: string,
+): Effect.Effect<Option.Option<string>, never, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem
+    return yield* Effect.reduce(RULE_FILES, Option.none<string>(), (found, name) =>
+      Option.isSome(found)
+        ? Effect.succeed(found)
+        : fs.exists(join(cwd, name)).pipe(
+            Effect.flatMap((has) => (has ? fs.read(join(cwd, name)) : Effect.succeed(""))),
+            Effect.map((text) => {
+              const body = text.trim()
+              if (body.length === 0) return Option.none<string>()
+              const clipped =
+                body.length <= RULES_CAP_CHARS
+                  ? body
+                  : `${body.slice(0, RULES_CAP_CHARS)}\n[…rules clipped…]`
+              return Option.some(
+                `## Workspace rules (${name} — the human's standing instructions; obey them)\n${clipped}`,
+              )
+            }),
+            Effect.catchAll(() => Effect.succeed(Option.none<string>())),
+          ),
+    )
+  })
+
 /** The production session: the efferent coder as the Implementor, with the
  *  workspace's forge-history lessons folded into the attempt-1 brief. The
  *  implementor's LanguageModel is scoped to the CODE role (`codeModel ??
@@ -147,13 +186,15 @@ export const runForgeSession = (
   ConfigError | ImplementorError | WorkspaceError,
   ImplementorServices | FileSystem | SettingsStore | AuthStore
 > =>
-  Effect.flatMap(loadForgeLessons(run.cwd), (lessons) =>
-    runForgeSessionWith(
+  Effect.gen(function* () {
+    const lessons = yield* loadForgeLessons(run.cwd)
+    const rules = yield* loadWorkspaceRules(run.cwd)
+    return yield* runForgeSessionWith(
       run,
       publish,
-      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons }).pipe(
+      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons, rules }).pipe(
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
       ),
       doc,
-    ),
-  )
+    )
+  })

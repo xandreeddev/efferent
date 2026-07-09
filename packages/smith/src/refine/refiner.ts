@@ -152,22 +152,30 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
     })
   })
 
-/** The refiner as an engine AgentConfig. Forge-history lessons (foundry's
- *  deterministic memory) ride the system prompt so the SPEC addresses the
- *  workspace's recurring gate rejections — constraints and checks born from
- *  evidence, not vibes. */
+/** The refiner as an engine AgentConfig. The workspace's standing RULES file
+ *  (AGENTS.md convention — the human's instructions) and the forge-history
+ *  lessons (foundry's deterministic memory) both ride the system prompt so
+ *  the SPEC respects the house rules and addresses recurring gate
+ *  rejections — constraints and checks born from evidence, not vibes. */
 export const specRefinerAgentConfig = (
   cwd: string,
   options: {
     readonly unattended: boolean
     readonly lessons?: Option.Option<string>
+    readonly rules?: Option.Option<string>
   } = { unattended: false },
 ): AgentConfig<(typeof specRefinerToolkit)["tools"]> => ({
-  system: Option.match(options.lessons ?? Option.none(), {
-    onNone: () => specRefinerPrompt(cwd, options),
-    onSome: (text) =>
-      `${specRefinerPrompt(cwd, options)}\n\n# Past forge history in this workspace\n${text}\nWhen a lesson is relevant to this spec, encode it as a CONSTRAINT or a machine CHECK — the next run should not bounce on a known failure.`,
-  }),
+  system: [
+    specRefinerPrompt(cwd, options),
+    ...Option.toArray(options.rules ?? Option.none()),
+    ...Option.toArray(
+      Option.map(
+        options.lessons ?? Option.none(),
+        (text) =>
+          `# Past forge history in this workspace\n${text}\nWhen a lesson is relevant to this spec, encode it as a CONSTRAINT or a machine CHECK — the next run should not bounce on a known failure.`,
+      ),
+    ),
+  ].join("\n\n"),
   toolkit: specRefinerToolkit,
   // 32, not 16: exploring a real codebase before proposing (ls + read_file
   // across dozens of modules) ate 16 steps with no spec yet — the run hit

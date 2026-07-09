@@ -2,7 +2,7 @@ import type { LanguageModel } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
 import { ConversationStore, runAgent, SpecSlug } from "@xandreed/engine"
-import { loadForgeLessons } from "../forge/session.js"
+import { loadForgeLessons, loadWorkspaceRules } from "../forge/session.js"
 import type { AgentMessage, ConversationId, FileSystem, Shell, SpecDoc } from "@xandreed/engine"
 import {
   makeSpecRefinerHandlers,
@@ -130,9 +130,11 @@ export const makeRefineSession = (
     const refinerLayer = specRefinerToolkit.toLayer(handlers)
     const tools: RefineTools = { propose: handlers.propose_spec }
     const lessons = yield* loadForgeLessons(cwd)
+    const rules = yield* loadWorkspaceRules(cwd)
     const config = specRefinerAgentConfig(cwd, {
       unattended: options.unattended,
       lessons,
+      rules,
     })
 
     const realAgent: RefineAgent = (cid, prompt) =>
