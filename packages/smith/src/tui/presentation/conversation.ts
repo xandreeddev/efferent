@@ -231,6 +231,12 @@ export const reduceConversationIn = (
         text: `workspace memory curated — ${e.created} new · ${e.corroborated} corroborated · ${e.updated} updated · ${e.invalidated} invalidated (.efferent/memory/ledger.jsonl)`,
       }),
     ),
+    Match.when({ type: "skills_distilled" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `distilled ${e.names.length} skill${e.names.length === 1 ? "" : "s"} from corroborated memory: ${e.names.join(", ")}`,
+      }),
+    ),
     // Ship steps ride the TOOL block shape — the ● color language (green ok /
     // red failed) reads exactly right for a git sequence.
     Match.when({ type: "ship_step" }, (e) =>

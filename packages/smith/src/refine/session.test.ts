@@ -29,6 +29,10 @@ const memoryFs = () => {
           .map((path) => path.slice(dir.length + 1)),
       ),
     mkdir: () => Effect.void,
+    remove: (path: string) =>
+      Effect.sync(() => {
+        files.delete(path)
+      }),
   } as never)
   return { files, layer }
 }

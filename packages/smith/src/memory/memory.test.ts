@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { describe, expect, test } from "bun:test"
@@ -6,6 +6,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { FactoryRun } from "@xandreed/foundry"
 import { ConversationStore, UtilityCompletion, UtilityLlm } from "@xandreed/engine"
 import type { AgentMessage } from "@xandreed/engine"
+import { LocalFileSystemLive } from "@xandreed/providers"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import {
   CorroborateMemory,
@@ -183,6 +184,7 @@ describe("curateWorkspaceMemory", () => {
     const { events, publish } = collectEvents()
     await Effect.runPromise(
       curateWorkspaceMemory({ cwd, run: run(CID), publish }).pipe(
+        Effect.provide(LocalFileSystemLive),
         Effect.provide(storeWith(longTrail)),
         Effect.provide(
           scriptedUtility([
@@ -212,6 +214,7 @@ describe("curateWorkspaceMemory", () => {
     const { events, publish } = collectEvents()
     await Effect.runPromise(
       curateWorkspaceMemory({ cwd, run: run(CID), publish }).pipe(
+        Effect.provide(LocalFileSystemLive),
         Effect.provide(storeWith(longTrail)),
         Effect.provide(
           scriptedUtility([
@@ -228,11 +231,43 @@ describe("curateWorkspaceMemory", () => {
     expect(events[0]?.type === "memory_updated" && events[0].corroborated).toBe(1)
   })
 
+  test("a memory reaching the corroboration bar distills a learned-<topic> skill", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-mem-"))
+    const path = memoryLedgerPath(cwd)
+    // Seed a convention already confirmed twice (create + one corroborate).
+    await Effect.runPromise(
+      appendMemoryEvents(path, [
+        CreateMemory.make({ id: id(1), topic: "convention", statement: "no barrel files", provenance: prov("r0", "2026-01-01") }),
+        CorroborateMemory.make({ id: id(1), provenance: prov("r1", "2026-01-02") }),
+      ]),
+    )
+    const { events, publish } = collectEvents()
+    await Effect.runPromise(
+      curateWorkspaceMemory({ cwd, run: run(CID), publish }).pipe(
+        Effect.provide(LocalFileSystemLive),
+        Effect.provide(storeWith(longTrail)),
+        Effect.provide(
+          scriptedUtility([
+            '[{"topic":"convention","statement":"barrel files are banned"}]',
+            '[{"op":"corroborate","memory":1}]',
+          ]),
+        ),
+      ),
+    )
+    // The third independent confirmation crosses the bar → the skill is authored.
+    const records = foldMemory(await Effect.runPromise(readMemoryLedger(path)))
+    expect(records[0]?.corroboration).toBe(3)
+    const distilled = events.find((e) => e.type === "skills_distilled")
+    expect(distilled?.type === "skills_distilled" && distilled.names).toEqual(["learned-convention"])
+    expect(existsSync(join(cwd, ".efferent", "skills", "learned-convention.md"))).toBe(true)
+  })
+
   test("undecodable extraction writes NOTHING and never fails", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-mem-"))
     const { events, publish } = collectEvents()
     await Effect.runPromise(
       curateWorkspaceMemory({ cwd, run: run(CID), publish }).pipe(
+        Effect.provide(LocalFileSystemLive),
         Effect.provide(storeWith(longTrail)),
         Effect.provide(scriptedUtility(["I think the memories are as follows: ..."])),
       ),
@@ -247,6 +282,7 @@ describe("curateWorkspaceMemory", () => {
     const state = { calls: 0 }
     await Effect.runPromise(
       curateWorkspaceMemory({ cwd, run: run(CID), publish }).pipe(
+        Effect.provide(LocalFileSystemLive),
         Effect.provide(storeWith([{ role: "user", content: "tiny" }])),
         Effect.provide(
           Layer.succeed(UtilityLlm, {
