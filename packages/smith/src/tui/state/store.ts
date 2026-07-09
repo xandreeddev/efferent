@@ -78,6 +78,9 @@ export interface SmithStore {
   /** The composer registers a text reader so the : palette can follow it. */
   readonly registerComposerRead: (read: () => string) => void
   readonly composerText: () => string
+  /** The composer registers a text writer so Tab-completion can fill it. */
+  readonly registerComposerSet: (set: (text: string) => void) => void
+  readonly setComposer: (text: string) => void
   readonly spinner: Accessor<number>
   readonly tickSpinner: () => void
   /** One-line transient note (command feedback, interrupt notice). */
@@ -156,6 +159,7 @@ export const createSmithStore = (
   const [oauth, setOauthSig] = createSignal<Option.Option<OAuthSession>>(Option.none())
   const composerClear = { current: () => {} }
   const composerRead = { current: (): string => "" }
+  const composerSet = { current: (_text: string): void => {} }
   const [busySince, setBusySince] = createSignal(0)
   const [lastEventAt, setLastEventAt] = createSignal(0)
   const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
@@ -198,6 +202,10 @@ export const createSmithStore = (
       composerRead.current = read
     },
     composerText: () => composerRead.current(),
+    registerComposerSet: (set) => {
+      composerSet.current = set
+    },
+    setComposer: (text) => composerSet.current(text),
     spinner,
     tickSpinner: () => setSpinner((n) => n + 1),
     notice,

@@ -13,6 +13,7 @@ import {
   moveSelect,
   selectedValue,
 } from "./presentation/selectBox.js"
+import { completeCommand } from "./presentation/palette.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
@@ -167,6 +168,15 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
   }
   if (overlay.kind === "login") {
     routeLoginKey(ctx, overlay, key)
+    return
+  }
+  // Tab completes a `:` command in the composer (shell-style). No overlay is
+  // open here, so the composer owns the key; a non-command line is a no-op.
+  if (key.name === "tab") {
+    Option.match(completeCommand(ctx.store.composerText()), {
+      onNone: () => {},
+      onSome: (completed) => ctx.store.setComposer(completed),
+    })
     return
   }
   if (key.name === "escape") {
