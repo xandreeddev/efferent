@@ -39,13 +39,20 @@ describe("implementor briefs", () => {
     expect(brief).toContain("REJECTED")
   })
 
-  test("workspace RULES render before lessons — the human's instructions outrank history", () => {
+  test("brief extras render in authority order: rules → lessons → memory", () => {
     const rules = "## Workspace rules (AGENTS.md — the human's standing instructions; obey them)\nNever touch src/legacy/."
     const lessons = "## Lessons from past forge runs in this workspace\n- [effect/no-let] failed twice"
-    const brief = renderBrief(spec, Option.none(), Option.some(lessons), Option.some(rules))
+    const memory = "## Workspace memory (curated from past sessions — verify before relying on it)\n- [gotcha] bun test needs --preload"
+    const brief = renderBrief(spec, Option.none(), {
+      lessons: Option.some(lessons),
+      rules: Option.some(rules),
+      memory: Option.some(memory),
+    })
     expect(brief).toContain("Never touch src/legacy/")
     expect(brief).toContain("failed twice")
+    expect(brief).toContain("bun test needs --preload")
     expect(brief.indexOf("Workspace rules")).toBeLessThan(brief.indexOf("Lessons from past forge runs"))
+    expect(brief.indexOf("Lessons from past forge runs")).toBeLessThan(brief.indexOf("Workspace memory"))
     // Absent extras leave the base brief untouched.
     expect(renderBrief(spec, Option.none())).toBe(renderTaskBrief(spec))
   })

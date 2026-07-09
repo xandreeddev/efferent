@@ -42,22 +42,32 @@ export const renderSpecBrief = (doc: SpecDoc): string => {
 ${OPERATING_RULES}`
 }
 
+/** The optional context blocks that ride the attempt-1 brief, in authority
+ *  order: the human's RULES file first, then the deterministic gate LESSONS,
+ *  then the curated workspace MEMORY (weakest — "verify before relying"). */
+export interface BriefExtras {
+  readonly rules?: Option.Option<string>
+  readonly lessons?: Option.Option<string>
+  readonly memory?: Option.Option<string>
+}
+
 /** The attempt-1 brief: the full SpecDoc when the run is spec-driven, plus
- *  the workspace's standing RULES file (the human's instructions — they
- *  outrank history, so they render first) and the forge-history lessons
- *  (foundry's deterministic memory — recurring gate rejections the coder
- *  should get right the FIRST time). */
+ *  the workspace's standing extras (see {@link BriefExtras}). */
 export const renderBrief = (
   spec: Spec,
   doc: Option.Option<SpecDoc>,
-  lessons: Option.Option<string> = Option.none(),
-  rules: Option.Option<string> = Option.none(),
+  extras: BriefExtras = {},
 ): string => {
   const base = Option.match(doc, {
     onNone: () => renderTaskBrief(spec),
     onSome: renderSpecBrief,
   })
-  return [base, ...Option.toArray(rules), ...Option.toArray(lessons)].join("\n\n")
+  return [
+    base,
+    ...Option.toArray(extras.rules ?? Option.none()),
+    ...Option.toArray(extras.lessons ?? Option.none()),
+    ...Option.toArray(extras.memory ?? Option.none()),
+  ].join("\n\n")
 }
 
 /**
