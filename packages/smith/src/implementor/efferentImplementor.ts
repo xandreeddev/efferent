@@ -165,6 +165,8 @@ export interface EfferentImplementorOptions {
   /** The workspace's standing rules file (AGENTS.md convention), pre-rendered —
    *  the human's instructions outrank history in the brief. */
   readonly rules?: Option.Option<string>
+  /** The curated workspace memory block (memory v2), pre-rendered. */
+  readonly memory?: Option.Option<string>
 }
 
 export const makeEfferentImplementorLive = (
@@ -232,12 +234,11 @@ export const makeEfferentImplementorLive = (
 
             const brief = Option.match(input.feedback, {
               onNone: () =>
-                renderBrief(
-                  input.spec,
-                  options.doc,
-                  options.lessons ?? Option.none(),
-                  options.rules ?? Option.none(),
-                ),
+                renderBrief(input.spec, options.doc, {
+                  lessons: options.lessons ?? Option.none(),
+                  rules: options.rules ?? Option.none(),
+                  memory: options.memory ?? Option.none(),
+                }),
               onSome: renderRetryBrief,
             })
 

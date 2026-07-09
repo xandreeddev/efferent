@@ -51,6 +51,15 @@ export type SmithEvent =
       readonly artifact: string
     }
   | { readonly type: "forge_error"; readonly message: string }
+  /** MEMORY v2: the post-forge curator appended verbs to the workspace's
+   *  memory ledger — the counts per consolidation verb. */
+  | {
+      readonly type: "memory_updated"
+      readonly created: number
+      readonly updated: number
+      readonly corroborated: number
+      readonly invalidated: number
+    }
   /** The SHIP sequence (branch → stage → commit → push → PR) — one event per
    *  step; a failed step stops the sequence, its detail carries the stderr. */
   | {
