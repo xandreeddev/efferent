@@ -162,6 +162,9 @@ export interface EfferentImplementorOptions {
   /** Rendered forge-history lessons (foundry's deterministic memory) — folded
    *  into the attempt-1 brief; retries already carry the gate feedback. */
   readonly lessons?: Option.Option<string>
+  /** The workspace's standing rules file (AGENTS.md convention), pre-rendered —
+   *  the human's instructions outrank history in the brief. */
+  readonly rules?: Option.Option<string>
 }
 
 export const makeEfferentImplementorLive = (
@@ -216,7 +219,12 @@ export const makeEfferentImplementorLive = (
 
             const brief = Option.match(input.feedback, {
               onNone: () =>
-                renderBrief(input.spec, options.doc, options.lessons ?? Option.none()),
+                renderBrief(
+                  input.spec,
+                  options.doc,
+                  options.lessons ?? Option.none(),
+                  options.rules ?? Option.none(),
+                ),
               onSome: renderRetryBrief,
             })
 

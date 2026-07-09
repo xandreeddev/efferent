@@ -43,21 +43,21 @@ ${OPERATING_RULES}`
 }
 
 /** The attempt-1 brief: the full SpecDoc when the run is spec-driven, plus
- *  the workspace's forge-history lessons (foundry's deterministic memory —
- *  recurring gate rejections the coder should get right the FIRST time). */
+ *  the workspace's standing RULES file (the human's instructions — they
+ *  outrank history, so they render first) and the forge-history lessons
+ *  (foundry's deterministic memory — recurring gate rejections the coder
+ *  should get right the FIRST time). */
 export const renderBrief = (
   spec: Spec,
   doc: Option.Option<SpecDoc>,
   lessons: Option.Option<string> = Option.none(),
+  rules: Option.Option<string> = Option.none(),
 ): string => {
   const base = Option.match(doc, {
     onNone: () => renderTaskBrief(spec),
     onSome: renderSpecBrief,
   })
-  return Option.match(lessons, {
-    onNone: () => base,
-    onSome: (text) => `${base}\n\n${text}`,
-  })
+  return [base, ...Option.toArray(rules), ...Option.toArray(lessons)].join("\n\n")
 }
 
 /**

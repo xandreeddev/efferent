@@ -8,7 +8,7 @@ import { LocalFileSystemLive } from "@xandreed/providers"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
-import { runForgeSessionWith } from "./session.js"
+import { loadWorkspaceRules, runForgeSessionWith } from "./session.js"
 
 const FAILING_TEST = `import { expect, test } from "bun:test"
 test("sum", () => {
@@ -34,6 +34,45 @@ const runFor = (cwd: string): SmithRunConfig => ({
   testCommand: Option.none(),
   noTest: false,
   configPath: Option.none(),
+})
+
+describe("loadWorkspaceRules — the AGENTS.md convention", () => {
+  test("first existing file wins (AGENTS.md > CLAUDE.md); absent/empty read as None", async () => {
+    const { both, claudeOnly, empty, none } = await Effect.runPromise(
+      withTempWorkspace(tmpdir(), (dir) =>
+        Effect.gen(function* () {
+          const none = yield* loadWorkspaceRules(dir)
+          yield* writeWorkspaceFile(dir, "CLAUDE.md", "claude rules here")
+          const claudeOnly = yield* loadWorkspaceRules(dir)
+          yield* writeWorkspaceFile(dir, "AGENTS.md", "agents rules WIN")
+          const both = yield* loadWorkspaceRules(dir)
+          yield* writeWorkspaceFile(dir, "AGENTS.md", "   \n  ")
+          const empty = yield* loadWorkspaceRules(dir)
+          return { none, claudeOnly, both, empty }
+        }),
+      ).pipe(Effect.provide(LocalFileSystemLive)),
+    )
+    expect(Option.isNone(none)).toBe(true)
+    expect(Option.getOrThrow(claudeOnly)).toContain("claude rules here")
+    expect(Option.getOrThrow(claudeOnly)).toContain("CLAUDE.md")
+    expect(Option.getOrThrow(both)).toContain("agents rules WIN")
+    expect(Option.getOrThrow(both)).toContain("Workspace rules (AGENTS.md")
+    // An empty AGENTS.md falls through to the next candidate, not to None.
+    expect(Option.getOrThrow(empty)).toContain("claude rules here")
+  })
+
+  test("an oversized rules file is clipped with a visible marker", async () => {
+    const rules = await Effect.runPromise(
+      withTempWorkspace(tmpdir(), (dir) =>
+        writeWorkspaceFile(dir, "AGENTS.md", "x".repeat(20_000)).pipe(
+          Effect.flatMap(() => loadWorkspaceRules(dir)),
+        ),
+      ).pipe(Effect.provide(LocalFileSystemLive)),
+    )
+    const text = Option.getOrThrow(rules)
+    expect(text).toContain("[…rules clipped…]")
+    expect(text.length).toBeLessThan(9_000)
+  })
 })
 
 describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
