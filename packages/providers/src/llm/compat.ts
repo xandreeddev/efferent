@@ -133,6 +133,14 @@ const toToolChoice = (choice: unknown): unknown => {
  * never sent (kimi-k2.7+ rejects it outright); unknown families get nothing.
  */
 export const thinkingParams = (model: string): Record<string, unknown> => {
+  // The CODE variants get HIGH effort on top — live-probed on kimi-k2.7-code:
+  // enabled alone thought 103 tokens, enabled + reasoning_effort:"high"
+  // thought 398 on the same prompt (accepted, no 400). Coding turns trade
+  // latency for correctness; the interactive/fast tiers stay on plain
+  // enabled.
+  if (/kimi-k2[\w.]*-code/i.test(model)) {
+    return { thinking: { type: "enabled" }, reasoning_effort: "high" }
+  }
   if (/kimi-k2|deepseek/i.test(model)) return { thinking: { type: "enabled" } }
   if (/qwen/i.test(model)) return { enable_thinking: true }
   return {}
