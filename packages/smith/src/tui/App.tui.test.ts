@@ -190,6 +190,10 @@ describe("the smith TUI — frame-level regressions", () => {
     tui.setup.mockInput.pressEnter()
     const done = await waitFrame(tui, (f) => f.includes("accepted (attempt 1)"), 200)
     expect(done).toContain("accept-out-exists")
+    // The verdict is UNMISSABLE: it lands in the conversation story itself,
+    // not only in the stepper (a live run was accepted and read as dead).
+    expect(done).toContain("✓ ACCEPTED after 1 attempt")
+    expect(done).toContain("artifact .foundry/runs/")
 
     await tui.setup.mockInput.typeText(":new")
     tui.setup.mockInput.pressEnter()

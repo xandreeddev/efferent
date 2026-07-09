@@ -219,6 +219,27 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 </box>
               )
             }
+            if (block.kind === "result") {
+              // The VERDICT must be unmissable: a run was ACCEPTED and the
+              // user concluded it died (live-caught) — the stepper's result
+              // row alone doesn't register when you're watching the story.
+              const verdictColor = block.ok ? tokens.state.ok : tokens.state.error
+              return (
+                <box flexDirection="column" flexShrink={0} marginTop={1}>
+                  <box flexDirection="row">
+                    <text fg={verdictColor} flexShrink={0}>
+                      {`  ${block.ok ? glyph.pass : glyph.fail} `}
+                    </text>
+                    <text fg={verdictColor} wrapMode="word" flexShrink={1}>
+                      {block.text}
+                    </text>
+                  </box>
+                  <text fg={tokens.text.muted} wrapMode="none">
+                    {`    artifact ${relArg(block.artifact)}`}
+                  </text>
+                </box>
+              )
+            }
             // The agy color language: bullet AND tool NAME carry the state
             // color (green done / blue running / red failed) so the action
             // pops; only the argument stays muted. Paths render RELATIVE to

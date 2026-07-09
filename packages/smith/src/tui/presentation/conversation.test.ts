@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Option, Schema } from "effect"
+import { FactoryRun } from "@xandreed/foundry"
 import type { LoopEvent } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import {
@@ -161,6 +162,76 @@ describe("the conversation fold", () => {
     if (notice?.kind !== "notice") return
     expect(notice.text).toContain("next attempt automatically")
     expect(notice.text).not.toContain("send another message")
+  })
+
+  test("forge_end lands the VERDICT as a durable result block", () => {
+    // A run was ACCEPTED and the user concluded it died — the verdict must
+    // land in the story itself, as durable as the ⚠ notices.
+    const run = (outcome: unknown) =>
+      Schema.decodeUnknownSync(FactoryRun)({
+        id: "11111111-1111-4111-8111-111111111111",
+        spec: { goal: "port the module", acceptance: [], limits: { maxAttempts: 3, budgetMillis: 1000 } },
+        attempts: [
+          {
+            attempt: 1,
+            report: { verdicts: [{ _tag: "pass", gate: "typecheck", durationMs: 1, findings: [] }] },
+            filesTouched: [],
+            durationMs: 5,
+          },
+          {
+            attempt: 2,
+            report: {
+              verdicts: [
+                {
+                  _tag: "fail",
+                  gate: "bun-test",
+                  durationMs: 1,
+                  findings: [
+                    { rule: "test/exit-code", severity: "error", message: "2 tests failed" },
+                    { rule: "test/exit-code", severity: "error", message: "timeout in stats.test.ts" },
+                  ],
+                },
+              ],
+            },
+            filesTouched: [],
+            durationMs: 5,
+          },
+        ],
+        outcome,
+        startedAt: 0,
+        endedAt: 10,
+      })
+    const accepted = reduceConversationIn("forge")(initialConversation, {
+      type: "forge_end",
+      run: run({ _tag: "accepted", attempt: 2 }),
+      artifact: "/ws/.foundry/runs/x.json",
+    })
+    expect(accepted.blocks).toEqual([
+      { kind: "result", ok: true, text: "ACCEPTED after 2 attempts", artifact: "/ws/.foundry/runs/x.json" },
+    ])
+    const rejected = reduceConversationIn("forge")(initialConversation, {
+      type: "forge_end",
+      run: run({ _tag: "rejected", reason: "attempts-exhausted" }),
+      artifact: "/ws/.foundry/runs/x.json",
+    })
+    expect(rejected.blocks).toEqual([
+      {
+        kind: "result",
+        ok: false,
+        text: "REJECTED (attempts-exhausted) after 2 attempts · 2 findings still failing",
+        artifact: "/ws/.foundry/runs/x.json",
+      },
+    ])
+  })
+
+  test("forge_error lands as a DURABLE error block (not just the transient notice)", () => {
+    const state = reduceConversationIn("forge")(initialConversation, {
+      type: "forge_error",
+      message: "ImplementorError: provider unreachable",
+    })
+    expect(state.blocks).toEqual([
+      { kind: "error", text: "forge failed: ImplementorError: provider unreachable" },
+    ])
   })
 
   test("refine_error lands as a DURABLE error block in the story", () => {
