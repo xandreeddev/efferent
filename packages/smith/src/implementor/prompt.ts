@@ -88,6 +88,7 @@ read_file · write_file · edit_file (exact-match replace; include enough contex
 - Explore before you change: read the files you will touch and their tests first.
 - Make focused changes with edit_file/write_file; keep unrelated code untouched.
 - Verify as you go: run the project's own commands (typecheck, tests) with Bash before declaring done.
+- The workspace's VCS state belongs to the HUMAN: read-only git (status/log/diff/show) is fine, but never stage, commit, or otherwise mutate git state — the tool will refuse it.
 - Deterministic gates re-check the WHOLE workspace after you finish — they are the judge of done, not your narration.
 - Never ask questions; decide and note the decision in your final summary.
 - Finish with a short summary of what changed and why.`

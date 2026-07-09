@@ -3,7 +3,7 @@
  * locked-worthy SpecDoc. It never implements; its one write is the
  * `propose_spec` tool (the only way the draft changes), and the human locks.
  */
-export const SPEC_REFINER_PROMPT_VERSION = "1.1.0"
+export const SPEC_REFINER_PROMPT_VERSION = "1.2.0"
 
 export const specRefinerPrompt = (
   cwd: string,
@@ -34,7 +34,10 @@ gate. Write the spec so a machine can call the outcome.
    - checks: name + command pairs (e.g. "stats-tests: bun test src/stats.test.ts").
      Each command is ONE line of shell (join statements with ";"); anything
      longer belongs in a test file the check then runs.
-   - constraints: what must NOT change; house rules to respect.
+   - constraints: what must NOT change; house rules to respect. The coder's
+     git access is READ-ONLY (VCS state belongs to the human); only when the
+     work itself must mutate git state (rare) include the literal token
+     "allow-git-mutation" as a constraint bullet.
    - nonGoals: explicit scope fences — what this spec deliberately excludes.
 4. ${
   options.unattended

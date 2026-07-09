@@ -2,18 +2,20 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
+import { SpecDoc } from "@xandreed/engine"
 import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
-import { makeSmithCodingHandlers } from "./codingToolkit.js"
+import { gitMutation, makeSmithCodingHandlers, specAllowsGitMutation } from "./codingToolkit.js"
 
 const withHandlers = <A>(
   cwd: string,
   run: (
     handlers: Effect.Effect.Success<ReturnType<typeof makeSmithCodingHandlers>>,
   ) => Effect.Effect<A, unknown>,
+  git: { readonly allowMutation: boolean } = { allowMutation: false },
 ): Promise<A> =>
   Effect.runPromise(
-    makeSmithCodingHandlers(cwd)
+    makeSmithCodingHandlers(cwd, git)
       .pipe(
         Effect.flatMap(run),
         Effect.provide(LocalFileSystemLive),
@@ -97,6 +99,66 @@ describe("the smith coding handlers — the direct coder's hands", () => {
         expect(fail.exitCode).toBe(3)
       }),
     )
+  })
+
+  test("gitMutation: mutating subcommands are named, read-only git and non-git pass", () => {
+    // The live incident: the coder ran plain `git add`, staged the whole
+    // port, and the user's `git diff` showed nothing — the work looked lost.
+    expect(gitMutation("git add .")).toEqual(Option.some("add"))
+    expect(gitMutation("git status && git commit -m 'wip'")).toEqual(Option.some("commit"))
+    expect(gitMutation("git -C sub -c user.email=x rebase main")).toEqual(Option.some("rebase"))
+    expect(gitMutation("cd src; /usr/bin/git stash pop")).toEqual(Option.some("stash"))
+    // Fail-closed: an unknown subcommand is refused too, not waved through.
+    expect(gitMutation("git frobnicate")).toEqual(Option.some("frobnicate"))
+    expect(gitMutation("git log --oneline | head -5")).toEqual(Option.none())
+    expect(gitMutation("git diff HEAD~1 && git status")).toEqual(Option.none())
+    expect(gitMutation("bun test && grep -rn addEventListener src")).toEqual(Option.none())
+  })
+
+  test("Bash refuses git mutation as failure-data; the spec constraint opts in", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    await withHandlers(cwd, (h) =>
+      Effect.gen(function* () {
+        const refused = yield* h.Bash({ command: "git add -A" }).pipe(Effect.either)
+        expect(refused._tag).toBe("Left")
+        expect(JSON.stringify(refused)).toContain("GitMutationRefused")
+        expect(JSON.stringify(refused)).toContain("belongs to the HUMAN")
+        // Read-only git still executes (a non-repo just exits non-zero — data).
+        const status = yield* h.Bash({ command: "git status" })
+        expect(status.exitCode).not.toBe(0)
+      }),
+    )
+    // The escape hatch: handlers built with allowMutation execute the command.
+    await withHandlers(
+      cwd,
+      (h) =>
+        Effect.gen(function* () {
+          const ran = yield* h.Bash({ command: "git add -A" })
+          expect(ran.exitCode).not.toBe(0) // not a repo — but it RAN
+        }),
+      { allowMutation: true },
+    )
+  })
+
+  test("specAllowsGitMutation reads the constraints bullet", () => {
+    const doc = (constraints: ReadonlyArray<string>) =>
+      Schema.decodeUnknownSync(SpecDoc)({
+        slug: "port-the-module",
+        status: "locked",
+        created: "2026-07-09T00:00:00Z",
+        goal: "port it",
+        acceptance: [],
+        constraints,
+        nonGoals: [],
+        checks: [],
+        limits: { maxAttempts: 3, budgetMinutes: 15 },
+        gates: {},
+      })
+    expect(specAllowsGitMutation(Option.none())).toBe(false)
+    expect(specAllowsGitMutation(Option.some(doc(["keep exports stable"])))).toBe(false)
+    expect(
+      specAllowsGitMutation(Option.some(doc(["allow-git-mutation: the task rewrites history"]))),
+    ).toBe(true)
   })
 
   test("write_file creates parent dirs; read_file pages with offset/limit", async () => {

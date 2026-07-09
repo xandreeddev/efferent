@@ -6,7 +6,11 @@ import { ConversationStore, FileSystem, runAgent, Shell } from "@xandreed/engine
 import type { ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
-import { makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
+import {
+  makeSmithCodingHandlers,
+  smithCodingToolkit,
+  specAllowsGitMutation,
+} from "./codingToolkit.js"
 import { renderBrief, renderRetryBrief, smithCoderSystemPrompt } from "./prompt.js"
 
 /**
@@ -60,7 +64,11 @@ export const makeEfferentImplementorLive = (
       const context = yield* Effect.context<ImplementorServices>()
       const store = yield* ConversationStore
       const handlers = yield* Layer.build(
-        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
+        smithCodingToolkit.toLayer(
+          makeSmithCodingHandlers(options.cwd, {
+            allowMutation: specAllowsGitMutation(options.doc),
+          }),
+        ),
       )
 
       const conversationRef = yield* Ref.make(Option.none<ConversationId>())

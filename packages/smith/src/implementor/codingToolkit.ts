@@ -1,7 +1,8 @@
 import { isAbsolute, join, normalize, relative } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/engine"
+import type { SpecDoc } from "@xandreed/engine"
 
 /**
  * The direct coder's toolkit on the NEW LINE — a capable single agent doing
@@ -128,11 +129,77 @@ const occurrences = (haystack: string, needle: string): number =>
   needle.length === 0 ? 0 : haystack.split(needle).length - 1
 
 /**
+ * Git subcommands the coder may run freely — the ones that only READ the
+ * repository. Everything else touches VCS state (index, HEAD, refs, stash),
+ * and the workspace's VCS state belongs to the HUMAN: a live coder ran
+ * `git add` mid-port, staging the whole tree — the user's plain `git diff`
+ * then showed nothing and the work looked lost. A fail-closed ALLOW-list,
+ * not a mutation deny-list: an unknown subcommand is refused with guidance.
+ */
+const READ_ONLY_GIT: ReadonlySet<string> = new Set([
+  "status", "log", "diff", "show", "blame", "grep",
+  "ls-files", "ls-tree", "ls-remote", "cat-file",
+  "rev-parse", "rev-list", "describe", "shortlog", "name-rev",
+  "merge-base", "for-each-ref", "show-ref", "check-ignore", "check-attr",
+  "count-objects", "whatchanged", "reflog", "var", "help", "version",
+])
+
+/** The escape hatch: the spec itself may authorize VCS mutation with a
+ *  constraints bullet carrying the literal token `allow-git-mutation`. */
+export const specAllowsGitMutation = (doc: Option.Option<SpecDoc>): boolean =>
+  Option.match(doc, {
+    onNone: () => false,
+    onSome: (spec) => spec.constraints.some((line) => line.includes("allow-git-mutation")),
+  })
+
+/** First non-flag token after `git`, skipping `-C <path>` / `-c <k=v>` pairs. */
+const gitSubcommand = (tokens: ReadonlyArray<string>): Option.Option<string> =>
+  tokens.reduce<{ readonly skip: boolean; readonly found: Option.Option<string> }>(
+    (acc, token) =>
+      Option.isSome(acc.found)
+        ? acc
+        : acc.skip
+          ? { skip: false, found: Option.none() }
+          : token === "-C" || token === "-c"
+            ? { skip: true, found: Option.none() }
+            : token.startsWith("-")
+              ? acc
+              : { skip: false, found: Option.some(token) },
+    { skip: false, found: Option.none() },
+  ).found
+
+/**
+ * The first git invocation in `command` that is NOT read-only, if any. A
+ * tripwire against the coder's ORDINARY behavior (it ran plain `git add`),
+ * not a shell sandbox: segments are split on separators and scanned for a
+ * `git` word — adversarial quoting is out of scope, the gates are the
+ * security boundary.
+ */
+export const gitMutation = (command: string): Option.Option<string> =>
+  Option.fromNullable(
+    command
+      .split(/(?:&&|\|\||[;|&\n()])/)
+      .flatMap((segment) => {
+        const tokens = segment.trim().split(/\s+/)
+        const at = tokens.findIndex((t) => t === "git" || t.endsWith("/git"))
+        if (at < 0) return []
+        return Option.match(gitSubcommand(tokens.slice(at + 1)), {
+          onNone: () => [],
+          onSome: (sub) => (READ_ONLY_GIT.has(sub) ? [] : [sub]),
+        })
+      })[0],
+  )
+
+/**
  * Handlers over the engine's FileSystem + Shell, bound to one workspace.
  * Reads may leave the workspace (dependency sources are fair game); WRITES
- * may not — the cwd-prefix guard is the sandbox.
+ * may not — the cwd-prefix guard is the sandbox. Git mutation is refused by
+ * default (`specAllowsGitMutation` over the locked doc is the opt-in).
  */
-export const makeSmithCodingHandlers = (cwd: string) =>
+export const makeSmithCodingHandlers = (
+  cwd: string,
+  git: { readonly allowMutation: boolean } = { allowMutation: false },
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const shell = yield* Shell
@@ -234,6 +301,13 @@ export const makeSmithCodingHandlers = (cwd: string) =>
 
       Bash: (params: { command: string; timeout?: number | undefined }) =>
         Effect.gen(function* () {
+          const offender = git.allowMutation ? Option.none<string>() : gitMutation(params.command)
+          if (Option.isSome(offender)) {
+            return yield* Effect.fail({
+              error: "GitMutationRefused",
+              message: `refusing \`git ${offender.value}\` — the workspace's VCS state (index, HEAD, refs, stash) belongs to the HUMAN; read-only git (status/log/diff/show/blame) is fine. Do the work with the file tools and leave staging/committing to the user (a spec may opt in with a constraints bullet containing "allow-git-mutation").`,
+            })
+          }
           const result = yield* shell
             .exec(params.command, {
               cwd,
