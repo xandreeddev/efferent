@@ -1,6 +1,7 @@
 import { Array as Arr, Effect, Option, Schema } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
-import { ConversationId, ConversationStore, UtilityLlm } from "@xandreed/engine"
+import { ConversationId, ConversationStore, FileSystem, UtilityLlm } from "@xandreed/engine"
+import { distillSkillsFromMemory } from "../skills/distill.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { renderTrailForDigest } from "../implementor/efferentImplementor.js"
 import {
@@ -178,7 +179,7 @@ export const curateWorkspaceMemory = (options: {
   readonly cwd: string
   readonly run: FactoryRun
   readonly publish: (event: SmithEvent) => Effect.Effect<void>
-}): Effect.Effect<void, never, UtilityLlm | ConversationStore> =>
+}): Effect.Effect<void, never, UtilityLlm | ConversationStore | FileSystem> =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const utility = yield* UtilityLlm
@@ -237,6 +238,17 @@ export const curateWorkspaceMemory = (options: {
       corroborated: tally.corroborated,
       invalidated: tally.invalidated,
     })
+
+    // Distill: any memory the ledger now shows as repeatedly confirmed becomes
+    // a `learned-<topic>` skill (and a demoted topic's file is removed). Reads
+    // the ledger back so the projection reflects the just-appended verbs.
+    const distilled = yield* distillSkillsFromMemory({
+      cwd: options.cwd,
+      actives: foldMemory(yield* readMemoryLedger(path)),
+    })
+    yield* distilled.length > 0
+      ? options.publish({ type: "skills_distilled", names: distilled })
+      : Effect.void
   }).pipe(
     Effect.timeout(CURATE_TIMEOUT_MS),
     Effect.withSpan("smith.memory"),
