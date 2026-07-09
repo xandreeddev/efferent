@@ -1,9 +1,9 @@
 import { Effect, Fiber, Option, Queue } from "effect"
 import { encodeSpecDocText } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
-import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { renderEventLines } from "../presentation/eventLines.js"
 import { makeRefineSession } from "./session.js"
+import type { RefineServices } from "./session.js"
 
 /**
  * `smith spec "<idea>" -p [--yes]`: ONE unattended refiner turn — the draft
@@ -14,7 +14,7 @@ export const runHeadlessRefine = (
   cwd: string,
   idea: string,
   lockAfter: boolean,
-): Effect.Effect<number, never, ImplementorServices> =>
+): Effect.Effect<number, never, RefineServices> =>
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<Option.Option<SmithEvent>>()
     const publish = (event: SmithEvent) =>

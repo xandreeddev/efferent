@@ -2,8 +2,8 @@ import type { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { WorkspacePath } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, runAgent, Shell } from "@xandreed/engine"
-import type { ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
+import { ConversationStore, FileSystem, runAgent, Shell, UtilityLlm } from "@xandreed/engine"
+import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
 import { makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
@@ -31,12 +31,125 @@ export type ImplementorServices =
   | FileSystem
   | Shell
   | ConversationStore
+  | UtilityLlm
   | LanguageModel.LanguageModel
 
 // 100 (raised from 40 on user call): real ports kept handing off mid-slice.
 // The runaway bounds are the degenerate-loop breaker + the empty-write guard
 // + the wall-clock budget — the ceiling only sets the gate-feedback cadence.
 const MAX_ATTEMPT_STEPS = 100
+
+// ATTEMPT-BOUNDARY COMPACTION. Retries resend the FULL trail (cache-warm but
+// unbounded): the live whole-tree port grew 73k→110k input tokens across
+// attempts and kimi-k2.7-code degenerated well before its 256k window (80k
+// siblings were healthy). Past this threshold, a gate rejection becomes a
+// fold point: the trail is digested into a handoff (fast model) and the next
+// attempt starts from summary + gate brief. claw-code — the product that
+// surfaced this — ships auto-compaction @200k/256k; we fold earlier because
+// quality drops long before the window fills.
+const CHECKPOINT_THRESHOLD_TOKENS = 80_000
+/** The digest call rides the FAST tier — keep the transcript inside its
+ *  window; the brief (head) and the newest state (tail) survive a clip. */
+const DIGEST_TRANSCRIPT_CAP_CHARS = 120_000
+const PART_CLIP_CHARS = 400
+
+const clipTo = (text: string, cap: number): string =>
+  text.length <= cap ? text : `${text.slice(0, cap)}…`
+
+const renderMessage = (message: AgentMessage): string => {
+  if (message.role === "user") return `USER: ${clipTo(message.content, PART_CLIP_CHARS * 2)}`
+  if (message.role === "assistant") {
+    return message.content
+      .map((part) =>
+        part.type === "text"
+          ? `ASSISTANT: ${clipTo(part.text, PART_CLIP_CHARS)}`
+          : part.type === "reasoning"
+            ? `THOUGHT: ${clipTo(part.text, PART_CLIP_CHARS)}`
+            : `TOOL CALL: ${part.toolName}(${clipTo(JSON.stringify(part.input), 160)})`,
+      )
+      .join("\n")
+  }
+  return message.content
+    .map(
+      (part) =>
+        `TOOL RESULT ${part.toolName}${part.isError === true ? " (ERROR)" : ""}: ${clipTo(
+          JSON.stringify(part.output),
+          240,
+        )}`,
+    )
+    .join("\n")
+}
+
+/** The trail as a dense transcript for the digest call. Over the cap, the
+ *  HEAD (the original brief — the task) and the TAIL (the newest state) both
+ *  survive; only the middle exploration is dropped. */
+export const renderTrailForDigest = (messages: ReadonlyArray<AgentMessage>): string => {
+  const rendered = messages.map(renderMessage)
+  const joined = rendered.join("\n")
+  if (joined.length <= DIGEST_TRANSCRIPT_CAP_CHARS) return joined
+  const head = rendered[0] ?? ""
+  const tail = rendered
+    .slice(1)
+    .join("\n")
+    .slice(-(DIGEST_TRANSCRIPT_CAP_CHARS - head.length))
+  return `${head}\n[…mid-transcript clipped…]\n${tail}`
+}
+
+/** The handoff instruction — the digest is the ONLY memory the next attempt
+ *  keeps, so it must restate the task, the workspace state, and the dead ends. */
+export const digestPrompt = (
+  transcript: string,
+  previous: Option.Option<string>,
+): string => `You are compacting a coding agent's working conversation between verification attempts. Write the HANDOFF the same agent resumes from — it will see ONLY your summary plus the next instruction, never this transcript again.
+
+Preserve, in this order:
+1. THE TASK — the goal, acceptance criteria, and constraints from the original brief.
+2. WORKSPACE STATE — every file created or modified and what it now contains (exports, signatures, key decisions).
+3. VERIFICATION — commands run and their outcomes; findings already fixed.
+4. DEAD ENDS — approaches tried and abandoned, so they are not repeated.
+
+Dense prose and lists; no narration, no praise.${Option.match(previous, {
+  onNone: () => "",
+  onSome: (prior) => `\n\nAn EARLIER handoff already covers the oldest turns — fold its facts in:\n${prior}`,
+})}
+
+TRANSCRIPT:
+${transcript}`
+
+/**
+ * Fold the conversation's active window into a checkpoint summary. BEST-EFFORT
+ * by design: any failure (store, fast model, empty digest) simply leaves the
+ * trail unfolded — the attempt runs on full context, exactly as before this
+ * feature existed. A successful fold publishes `context_folded` so the pane
+ * shows why the next attempt opens from a summary.
+ */
+export const foldConversation = (options: {
+  readonly conversationId: ConversationId
+  readonly attempt: number
+  readonly contextTokens: number
+  readonly publish: (event: SmithEvent) => Effect.Effect<void>
+}): Effect.Effect<void, never, ConversationStore | UtilityLlm> =>
+  Effect.gen(function* () {
+    const store = yield* ConversationStore
+    const utility = yield* UtilityLlm
+    const active = yield* store.listActive(options.conversationId)
+    if (active.length === 0) return
+    const previous = yield* store
+      .latestCheckpoint(options.conversationId)
+      .pipe(Effect.map(Option.map((checkpoint) => checkpoint.summary)))
+    const digest = yield* utility.complete(digestPrompt(renderTrailForDigest(active), previous))
+    const summary = digest.text.trim()
+    if (summary.length === 0) return
+    yield* store.checkpoint(options.conversationId, summary)
+    yield* options.publish({
+      type: "context_folded",
+      attempt: options.attempt,
+      tokens: options.contextTokens,
+    })
+  }).pipe(
+    Effect.withSpan("smith.fold", { attributes: { "context.tokens": options.contextTokens } }),
+    Effect.catchAll(() => Effect.void),
+  )
 
 export interface EfferentImplementorOptions {
   /** The workspace the coder works in — the same dir the gates snapshot. */
@@ -64,6 +177,9 @@ export const makeEfferentImplementorLive = (
       )
 
       const conversationRef = yield* Ref.make(Option.none<ConversationId>())
+      // The latest turn's input tokens ARE the live context cost — tracked
+      // from the loop's own events, read at the next attempt boundary.
+      const contextRef = yield* Ref.make(0)
       const conversation = Effect.gen(function* () {
         const existing = yield* Ref.get(conversationRef)
         if (Option.isSome(existing)) return existing.value
@@ -93,7 +209,9 @@ export const makeEfferentImplementorLive = (
                       onSome: (path) => (all.includes(path) ? all : [...all, path]),
                     }),
                   )
-                : Effect.void
+                : event.type === "assistant_message"
+                  ? Ref.set(contextRef, event.usage.inputTokens)
+                  : Effect.void
               ).pipe(Effect.zipRight(options.publish({ type: "agent", event })))
 
             const brief = Option.match(input.feedback, {
@@ -101,6 +219,19 @@ export const makeEfferentImplementorLive = (
                 renderBrief(input.spec, options.doc, options.lessons ?? Option.none()),
               onSome: renderRetryBrief,
             })
+
+            // A RETRY over an outgrown trail folds first: the gate rejection
+            // is the natural compaction point; the summary + this brief
+            // replace the full history the next turn would have resent.
+            const grown = yield* Ref.get(contextRef)
+            yield* Option.isSome(input.feedback) && grown > CHECKPOINT_THRESHOLD_TOKENS
+              ? foldConversation({
+                  conversationId: cid,
+                  attempt: input.attempt,
+                  contextTokens: grown,
+                  publish: options.publish,
+                }).pipe(Effect.zipRight(Ref.set(contextRef, 0)), Effect.provide(context))
+              : Effect.void
 
             // The turn's prose is not the deliverable — the workspace state the
             // gates snapshot is; the run is driven for its side effects. Loop

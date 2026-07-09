@@ -29,6 +29,9 @@ export type SmithEvent =
    *  vacuous (they cannot measure this spec's work). A warning, not a stop. */
   | { readonly type: "vacuous_checks"; readonly names: ReadonlyArray<string> }
   | { readonly type: "attempt_start"; readonly attempt: number }
+  /** ATTEMPT-BOUNDARY COMPACTION: the trail outgrew the healthy context range
+   *  and was folded into a handoff summary before this attempt ran. */
+  | { readonly type: "context_folded"; readonly attempt: number; readonly tokens: number }
   | {
       readonly type: "implement_end"
       readonly attempt: number

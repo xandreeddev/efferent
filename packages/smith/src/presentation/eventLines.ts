@@ -67,6 +67,11 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
     Match.when({ type: "attempt_start" }, (e) =>
       Option.some(`\n── attempt ${e.attempt} ──`),
     ),
+    Match.when({ type: "context_folded" }, (e) =>
+      Option.some(
+        `  ⇣ context folded at ${Math.round(e.tokens / 1000)}k tokens — attempt ${e.attempt} resumes from a handoff summary`,
+      ),
+    ),
     Match.when({ type: "implement_end" }, (e) =>
       Option.some(
         `  implemented: ${e.filesTouched.length} file(s) touched${Option.match(e.ref, {
