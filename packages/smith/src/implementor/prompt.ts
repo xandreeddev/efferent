@@ -2,6 +2,10 @@ import { Option } from "effect"
 import type { Spec } from "@xandreed/foundry"
 import type { SpecDoc } from "@xandreed/engine"
 
+/** Bump when the coder system prompt or the brief framing changes — the
+ *  smith-spec live battery records it. */
+export const SMITH_CODER_PROMPT_VERSION = "1.0.0"
+
 const OPERATING_RULES = `## Operating rules
 - Work directly in this workspace and implement the task fully.
 - After you finish, DETERMINISTIC quality gates verify the whole workspace (typecheck, tests, static rules). Leaving it green is part of the task — run what you can locally before declaring done.

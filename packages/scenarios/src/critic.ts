@@ -12,50 +12,18 @@ import {
   SqliteConversationStoreLive,
 } from "@xandreed/providers"
 import { renderTrailForDigest } from "@xandreed/smith"
+import { gradesToReason, gradesToScore, Grades, criticRubric, lastGradesJson } from "./judges/trajectoryCritic.js"
 
 /**
- * The TRAJECTORY CRITIC (agent-as-a-judge, Day-4 pattern): grade a real
- * forge run's PROCESS on the six axes the deterministic gates cannot see.
- * Manual and keyed — never CI (the scripted packs stay the regression bar):
+ * The trajectory critic CLI — a thin driver over `judges/trajectoryCritic.ts`
+ * (the same rubric/parse/score the live scenario packs use as a Judge).
+ * Manual and keyed — never CI:
  *
  *   bun packages/scenarios/src/critic.ts <workspace-cwd>
  *
  * Reads the newest conversation from the workspace's smith.db + its newest
- * run artifact, feeds trail + outcome to the STRONG tier with the rubric,
- * prints the graded table.
+ * run artifact, grades the PROCESS on the strong tier, prints the table.
  */
-
-const Grades = Schema.parseJson(
-  Schema.Struct({
-    planning: Schema.Number,
-    tool_selection: Schema.Number,
-    interpretation: Schema.Number,
-    efficiency: Schema.Number,
-    robustness: Schema.Number,
-    summary: Schema.String,
-  }),
-)
-
-const rubric = (transcript: string, outcome: string): string => `You are a trajectory CRITIC for a coding agent. Grade the PROCESS below — not the final code (deterministic gates already judged that). Score each axis 1-5 (5 = excellent):
-
-- planning: was the reasoning coherent and goal-directed (no context pollution, no repetitive loops)?
-- tool_selection: right tools, valid parameters, no unnecessary or hallucinated calls?
-- interpretation: did the agent correctly read tool RESULTS — especially error states — and react to them?
-- efficiency: steps proportionate to the task (no redundant calls, no thrash)?
-- robustness: failures retried or reported honestly, never papered over?
-
-Run outcome: ${outcome}
-
-TRANSCRIPT:
-${transcript}
-
-Reason briefly per axis, then end with EXACTLY one JSON object on the last line:
-{"planning": n, "tool_selection": n, "interpretation": n, "efficiency": n, "robustness": n, "summary": "one sentence"}`
-
-const lastJson = (text: string): string => {
-  const start = text.lastIndexOf('{"planning"')
-  return start >= 0 ? text.slice(start).trim() : text.trim()
-}
 
 const program = (cwd: string) =>
   Effect.gen(function* () {
@@ -74,16 +42,11 @@ const program = (cwd: string) =>
     })
 
     const reply = yield* LanguageModel.generateText({
-      prompt: rubric(renderTrailForDigest(trail), outcome),
+      prompt: criticRubric(renderTrailForDigest(trail), outcome),
     })
-    const grades = yield* Schema.decodeUnknown(Grades)(lastJson(reply.text))
+    const grades = yield* Schema.decodeUnknown(Grades)(lastGradesJson(reply.text))
     console.log(`trajectory critic — ${cwd} (${outcome})`)
-    console.log(`  planning        ${grades.planning}/5`)
-    console.log(`  tool selection  ${grades.tool_selection}/5`)
-    console.log(`  interpretation  ${grades.interpretation}/5`)
-    console.log(`  efficiency      ${grades.efficiency}/5`)
-    console.log(`  robustness      ${grades.robustness}/5`)
-    console.log(`  ${grades.summary}`)
+    console.log(`  score ${gradesToScore(grades).toFixed(2)} — ${gradesToReason(grades)}`)
     return 0
   })
 

@@ -106,6 +106,9 @@ export const renderTrailForDigest = (messages: ReadonlyArray<AgentMessage>): str
   return `${head}\n[…mid-transcript clipped…]\n${tail}`
 }
 
+/** Bump when `digestPrompt` changes — the digest battery records it. */
+export const DIGEST_PROMPT_VERSION = "1.0.0"
+
 /** The handoff instruction — the digest is the ONLY memory the next attempt
  *  keeps, so it must restate the task, the workspace state, and the dead ends. */
 export const digestPrompt = (

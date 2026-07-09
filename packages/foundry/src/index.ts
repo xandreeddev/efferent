@@ -5,7 +5,6 @@
 // domain
 export * from "./domain/Brands.js"
 export * from "./domain/Errors.js"
-export * from "./domain/EvalContract.js"
 export * from "./domain/FactoryRun.js"
 export * from "./domain/Finding.js"
 export * from "./domain/Rules.js"

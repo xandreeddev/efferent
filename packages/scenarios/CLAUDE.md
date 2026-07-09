@@ -10,7 +10,26 @@ imports scenarios.
 bun run scenarios [pack …] [--mode scripted|live] [--json]
 bun run scenarios -- --update-baselines     # rewrite the committed ratchet files
 bun run scenarios -- --no-check             # skip the baseline comparison
+
+bun run evals:live [battery …] [--samples n] [--update-baselines]   # the KEYED batteries
 ```
+
+## evals:live — the pre-merge ritual for prompt changes
+
+`src/evalsLive.ts` runs the KEYED batteries (never CI): the judge-gate
+calibration set, the refiner/digest/memory golden sets, and the scored live
+smith run — all as live-mode `Pack`s through the SAME runner/baseline
+machinery. Each eval'd prompt carries a version constant recorded in the
+pack's `meta` and the minted baseline; drift prints a warning so every
+score delta is attributable. **The ritual: change a prompt → bump its
+version constant → `bun run evals:live <battery>` → review the delta →
+`--update-baselines` in the same PR.** Framework extras: `Pack.samples`
+(pass@k for stochastic prompts — a scenario's recorded score is the mean),
+`Pack.tolerance` (per-pack regression wobble), `Pack.summary` (derived
+lines, e.g. calibration false-block/false-pass). Cost of a FULL run ≈ 1M
+tokens (dominated by the live forge); the per-change ritual runs ONE
+battery. The trajectory critic lives in `src/judges/trajectoryCritic.ts` as
+a reusable `Judge<W>`; `src/critic.ts` stays its manual CLI.
 
 - **framework/** — `model` (Scenario/Step/Check/Judge/Pack; worlds erased by
   PRE-BINDING the runner, no casts), `run` (scoped boot → step fold — a hard

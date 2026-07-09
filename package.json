@@ -13,6 +13,7 @@
     "smith": "bun packages/smith/src/main.ts",
     "canvas": "bun packages/canvas/src/main.ts",
     "scenarios": "bun packages/scenarios/src/main.ts",
+    "evals:live": "bun packages/scenarios/src/evalsLive.ts",
     "smith:dev": "bun --hot packages/smith/src/main.ts",
     "obs:up": "docker compose -f docker-compose.observability.yml up -d",
     "obs:down": "docker compose -f docker-compose.observability.yml down",
