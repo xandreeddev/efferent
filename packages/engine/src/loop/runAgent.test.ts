@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Effect, FiberRef, Layer, Option, Ref, Schema, Stream } from "effect"
 import { Failure } from "../domain/Failure.js"
 import { Checkpoint, ConversationId } from "../domain/Message.js"
 import type { AgentMessage } from "../domain/Message.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
+import { CurrentPromptCacheKey } from "./cacheKey.js"
 import { runAgent } from "./runAgent.js"
 
 const cid = ConversationId.make("00000000-0000-4000-8000-000000000002")
@@ -284,5 +285,36 @@ describe("runAgent", () => {
         expect(prompts[2]).toContain("the big brief")
       }),
     )
+  })
+
+  test("the run stamps CurrentPromptCacheKey with the conversation id for every call", async () => {
+    const seen: Array<string> = []
+    const spyModel = LanguageModel.make({
+      generateText: () =>
+        Effect.gen(function* () {
+          const key = yield* FiberRef.get(CurrentPromptCacheKey)
+          seen.push(Option.getOrElse(key, () => "(none)"))
+          return [
+            { type: "text", text: "ok" },
+            {
+              type: "finish",
+              reason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ] as never
+        }),
+      streamText: () => Stream.die("not scripted") as never,
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* memoryStore
+        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "hello").pipe(
+          Effect.provide(emptyHandlers),
+          Effect.provideServiceEffect(LanguageModel.LanguageModel, spyModel),
+          Effect.provide(store.layer),
+        )
+      }),
+    )
+    expect(seen).toEqual([String(cid)])
   })
 })

@@ -4,6 +4,7 @@ import type { LoopEvent } from "../domain/LoopEvent.js"
 import type { AgentMessage, ConversationId } from "../domain/Message.js"
 import type { TokenUsage } from "../domain/TokenUsage.js"
 import { ConversationStore } from "../ports/ConversationStore.js"
+import { CurrentPromptCacheKey } from "./cacheKey.js"
 import { handoffToMessage, safeKeepFrom } from "./mapping.js"
 import { runLoop } from "./loop.js"
 import type { CompactionPlan } from "./loop.js"
@@ -148,5 +149,9 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       ...(config.compaction !== undefined ? { compact: compactWith(config.compaction) } : {}),
       ...(config.streaming !== undefined ? { streaming: config.streaming } : {}),
       onTail,
-    })
+    }).pipe(
+      // One conversation, one server-side cache lane: adapters that support
+      // a prompt cache key read this for every call in the run.
+      Effect.locally(CurrentPromptCacheKey, Option.some(String(conversationId))),
+    )
   })

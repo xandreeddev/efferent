@@ -1,6 +1,7 @@
 import { AiError, LanguageModel, Tool } from "@effect/ai"
 import type { Prompt } from "@effect/ai"
-import { Effect, Option, Stream } from "effect"
+import { Effect, FiberRef, Option, Stream } from "effect"
+import { CurrentPromptCacheKey } from "@xandreed/engine"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage } from "./sse.js"
 
@@ -223,22 +224,32 @@ export const fromChatCompletion = (
   })
 
 /** The one request shape both paths send; only `stream` differs (streaming
- *  additionally asks the gateway to attach usage to the final chunk). */
+ *  additionally asks the gateway to attach usage to the final chunk). The
+ *  engine's per-conversation cache identity rides as `prompt_cache_key` —
+ *  one conversation, one server-side cache lane (parallel sessions stop
+ *  evicting each other's prefixes); absent when no run stamped one. */
 const chatRequestBody = (
   config: CompatConfig,
   options: { readonly prompt: Prompt.Prompt; readonly tools: ReadonlyArray<Tool.Any>; readonly toolChoice?: unknown },
   streaming: boolean,
-): Json => {
-  const tools = toChatTools(options.tools)
-  return {
-    model: config.model,
-    messages: toChatMessages(options.prompt),
-    stream: streaming,
-    ...(streaming ? { stream_options: { include_usage: true } } : {}),
-    ...thinkingParams(config.model),
-    ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
-  }
-}
+): Effect.Effect<Json> =>
+  FiberRef.get(CurrentPromptCacheKey).pipe(
+    Effect.map((cacheKey) => {
+      const tools = toChatTools(options.tools)
+      return {
+        model: config.model,
+        messages: toChatMessages(options.prompt),
+        stream: streaming,
+        ...(streaming ? { stream_options: { include_usage: true } } : {}),
+        ...Option.match(cacheKey, {
+          onNone: () => ({}),
+          onSome: (key) => ({ prompt_cache_key: key }),
+        }),
+        ...thinkingParams(config.model),
+        ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
+      }
+    }),
+  )
 
 const postChat = (
   config: CompatConfig,
@@ -295,7 +306,7 @@ export const makeCompatLanguageModel = (
         const res = yield* postChat(
           config,
           "generateText",
-          chatRequestBody(config, options, false),
+          yield* chatRequestBody(config, options, false),
         )
         if (!res.ok) {
           return yield* failStatus(config, "generateText", res)
@@ -321,7 +332,7 @@ export const makeCompatLanguageModel = (
           const res = yield* postChat(
             config,
             "streamText",
-            chatRequestBody(config, options, true),
+            yield* chatRequestBody(config, options, true),
           )
           if (!res.ok) {
             return yield* failStatus(config, "streamText", res)
