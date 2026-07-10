@@ -11,6 +11,18 @@ const DEFAULT_TIMEOUT_MS = 5 * 60_000
  * infrastructure failures.
  */
 export const LocalShellLive = Layer.succeed(Shell, {
-  exec: (command: string, options?: { readonly cwd?: string; readonly timeoutMs?: number }) =>
-    spawnBounded(["bash", "-c", command], options?.cwd, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+  exec: (
+    command: string,
+    options?: {
+      readonly cwd?: string
+      readonly timeoutMs?: number
+      readonly onChunk?: (chunk: string) => void
+    },
+  ) =>
+    spawnBounded(
+      ["bash", "-c", command],
+      options?.cwd,
+      options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      options?.onChunk,
+    ),
 })

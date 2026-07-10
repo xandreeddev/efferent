@@ -21,7 +21,14 @@ export class Shell extends Context.Tag("@xandreed/engine/Shell")<
   {
     readonly exec: (
       command: string,
-      options?: { readonly cwd?: string; readonly timeoutMs?: number },
+      options?: {
+        readonly cwd?: string
+        readonly timeoutMs?: number
+        /** BEST-EFFORT live tap: called with each output chunk (stdout and
+         *  stderr) as it arrives, so a long build stops looking dead. Sync
+         *  and advisory — the settled `ShellResult` stays the contract. */
+        readonly onChunk?: (chunk: string) => void
+      },
     ) => Effect.Effect<ShellResult, ShellError>
   }
 >() {}

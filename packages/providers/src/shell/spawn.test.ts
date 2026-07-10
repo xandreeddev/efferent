@@ -53,4 +53,20 @@ describe("spawnBounded", () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toContain("this-binary-does-not-exist-xyz")
   })
+
+  test("onChunk taps output live while the settled result stays whole", async () => {
+    const chunks: Array<string> = []
+    const result = await Effect.runPromise(
+      spawnBounded(
+        ["bash", "-c", "echo one; sleep 0.05; echo two"],
+        undefined,
+        5_000,
+        (chunk) => void chunks.push(chunk),
+      ),
+    )
+    expect(result.stdout).toContain("one")
+    expect(result.stdout).toContain("two")
+    expect(chunks.length).toBeGreaterThanOrEqual(2)
+    expect(chunks.join("")).toContain("one")
+  })
 })

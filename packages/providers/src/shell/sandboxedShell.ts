@@ -80,7 +80,11 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
       return {
         exec: (
           command: string,
-          options?: { readonly cwd?: string; readonly timeoutMs?: number },
+          options?: {
+            readonly cwd?: string
+            readonly timeoutMs?: number
+            readonly onChunk?: (chunk: string) => void
+          },
         ) =>
           spawnBounded(
             sandboxed
@@ -88,6 +92,7 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
               : ["bash", "-c", command],
             sandboxed ? undefined : (options?.cwd ?? workspace),
             options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            options?.onChunk,
           ),
       }
     }),
