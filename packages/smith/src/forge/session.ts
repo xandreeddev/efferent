@@ -195,6 +195,9 @@ export const runForgeSession = (
   run: SmithRunConfig,
   publish: (event: SmithEvent) => Effect.Effect<void>,
   doc: Option.Option<SpecDoc> = Option.none(),
+  /** The TUI's mid-turn steering seam — queued text lands at the coder's
+   *  next step (absent in headless mode; there is no queue to drain). */
+  pendingInput?: () => Effect.Effect<Option.Option<string>>,
 ): Effect.Effect<
   ForgeResult,
   ConfigError | ImplementorError | WorkspaceError,
@@ -227,7 +230,15 @@ export const runForgeSession = (
     const result = yield* runForgeSessionWith(
       run,
       publish,
-      makeEfferentImplementorLive({ cwd: run.cwd, publish, doc, lessons, rules, memory }).pipe(
+      makeEfferentImplementorLive({
+        cwd: run.cwd,
+        publish,
+        doc,
+        lessons,
+        rules,
+        memory,
+        ...(pendingInput !== undefined ? { pendingInput } : {}),
+      }).pipe(
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),
         // The SANDBOX applies to the coder's Bash ONLY: gates run the
         // human's own commands and :ship needs the real HOME (gh/ssh) —

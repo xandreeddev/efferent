@@ -51,6 +51,19 @@ const joinReplayText = (parts: ReadonlyArray<ReplayPart>, type: "text" | "reason
     .join("")
     .trim()
 
+/** The MID-TURN steering thunk (the engine's `pendingInput` seam): drain the
+ *  queue at a step boundary, land the text as a user block, and say so —
+ *  queued messages stop waiting for the whole run to finish. */
+const steerFromQueue = (store: SmithStore) => (): Effect.Effect<Option.Option<string>> =>
+  Effect.sync(() => {
+    const queued = store.drainQueue()
+    if (queued.length === 0) return Option.none<string>()
+    const text = queued.join("\n\n")
+    store.addUserLine(text)
+    store.setNotice("steered — your message reached the running turn")
+    return Option.some(text)
+  })
+
 /** The scoped chassis every smith TUI mode shares: queue+pump, renderer,
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */
 const withTuiChassis = (
@@ -173,6 +186,7 @@ export const runTuiRefine = (
     Effect.gen(function* () {
       const session = yield* makeRefineSession(run.cwd, publish, {
         unattended: autoLock,
+        pendingInput: steerFromQueue(store),
       })
       yield* publish({ type: "refine_start", idea: Option.some(idea) })
 
@@ -220,6 +234,7 @@ export const runTuiRefine = (
               { ...run, task: doc.goal },
               publish,
               Option.some(doc),
+              steerFromQueue(store),
             ).pipe(
               Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
               Effect.catchAll(() => Effect.succeed(2)),
@@ -242,7 +257,7 @@ export const runTuiRefine = (
         sendRefine: (text) => {
           if (store.busy()) {
             store.enqueue(text)
-            store.setNotice("queued — sent when the current turn finishes")
+            store.setNotice("queued — steered in at the next step")
             return
           }
           Runtime.runFork(rt)(turn(text))
@@ -390,6 +405,7 @@ export const makeWorkspaceBody = (
             const session = yield* makeRefineSession(run.cwd, publish, {
               unattended: false,
               resume: cid,
+              pendingInput: steerFromQueue(store),
               ...(seams.refineAgent !== undefined ? { agent: seams.refineAgent } : {}),
             })
             yield* Ref.set(refineRef, Option.some(session))
@@ -537,15 +553,18 @@ export const makeWorkspaceBody = (
           Effect.gen(function* () {
             const running = yield* Ref.get(forgeFiberRef)
             if (Option.isSome(running)) {
-              yield* Effect.sync(() =>
-                store.setNotice("a forge is running — Esc interrupts it first"),
-              )
+              // Text typed mid-forge STEERS the coder: it lands at the next
+              // loop step through the pendingInput seam (was a refusal).
+              yield* Effect.sync(() => {
+                store.enqueue(text)
+                store.setNotice("queued — the coder reads it at its next step")
+              })
               return
             }
             if (store.busy()) {
               yield* Effect.sync(() => {
                 store.enqueue(text)
-                store.setNotice("queued — sent when the current turn finishes")
+                store.setNotice("queued — steered in at the next step")
               })
               return
             }
@@ -561,6 +580,7 @@ export const makeWorkspaceBody = (
                 Effect.gen(function* () {
                   const created = yield* makeRefineSession(run.cwd, publish, {
                     unattended: false,
+                    pendingInput: steerFromQueue(store),
                     ...(seams.refineAgent !== undefined ? { agent: seams.refineAgent } : {}),
                   })
                   yield* Ref.set(refineRef, Option.some(created))
@@ -639,7 +659,7 @@ export const makeWorkspaceBody = (
             })
             const forgeRunner = seams.forgeRunner ?? runForgeSession
             const fiber = Runtime.runFork(rt)(
-              forgeRunner({ ...run, task: doc.value.goal }, publish, doc).pipe(
+              forgeRunner({ ...run, task: doc.value.goal }, publish, doc, steerFromQueue(store)).pipe(
                 // An ACCEPTED run arms `:ship`; anything else disarms it.
                 Effect.tap((result) =>
                   Ref.set(

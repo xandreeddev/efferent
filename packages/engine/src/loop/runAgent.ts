@@ -62,6 +62,8 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
   prompt: string,
   options?: {
     readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, never, R>
+    /** The mid-turn steering seam — see `RunLoopOptions.pendingInput`. */
+    readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
   },
 ) =>
   Effect.gen(function* () {
@@ -142,6 +144,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       ...(config.maxSteps !== undefined ? { maxSteps: config.maxSteps } : {}),
       ...(config.pollableTools !== undefined ? { pollableTools: config.pollableTools } : {}),
       ...(options?.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
+      ...(options?.pendingInput !== undefined ? { pendingInput: options.pendingInput } : {}),
       ...(config.compaction !== undefined ? { compact: compactWith(config.compaction) } : {}),
       ...(config.streaming !== undefined ? { streaming: config.streaming } : {}),
       onTail,

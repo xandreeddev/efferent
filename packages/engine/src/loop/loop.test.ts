@@ -325,6 +325,81 @@ describe("runLoop", () => {
   })
 })
 
+describe("runLoop steering (pendingInput)", () => {
+  test("text queued mid-run lands as a user message BEFORE the next model call", async () => {
+    const prompts: Array<string> = []
+    const spy = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      return yield* LanguageModel.make({
+        generateText: (options) =>
+          Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+            Effect.tap((n) =>
+              Effect.sync(() => {
+                prompts[n] = JSON.stringify(options.prompt.content)
+              }),
+            ),
+            Effect.map(
+              (n) =>
+                (n === 0
+                  ? [
+                      { type: "tool-call", id: "c1", name: "echo", params: { value: "x" } },
+                      finish("tool-calls"),
+                    ]
+                  : [{ type: "text", text: "done" }, finish("stop")]) as never,
+            ),
+          ),
+        streamText: () => Stream.die("not scripted") as never,
+      })
+    })
+    const persisted: Array<string> = []
+    const queue: Array<string> = ["focus on the ERROR path, not the happy path"]
+    const result = await Effect.runPromise(
+      runLoop({
+        system: "sys",
+        messages: [user("go")],
+        toolkit: kit,
+        pendingInput: () => Effect.sync(() => Option.fromNullable(queue.shift())),
+        onTail: (tail) =>
+          Effect.sync(() => {
+            persisted.push(...tail.map((m) => m.role))
+            return [] as ReadonlyArray<number>
+          }),
+      }).pipe(
+        Effect.provide(handlers),
+        Effect.provideServiceEffect(LanguageModel.LanguageModel, spy),
+      ),
+    )
+    expect(result.finalText).toBe("done")
+    // The steering text is IN the second call's prompt…
+    expect(prompts[1]).toContain("focus on the ERROR path")
+    // …persisted through onTail…
+    expect(persisted).toEqual(["assistant", "tool", "user", "assistant"])
+    // …and part of the durable tail.
+    const steer = result.newTail.find(
+      (m) => m.role === "user" && m.content.includes("focus on the ERROR path"),
+    )
+    expect(steer).toBeDefined()
+  })
+
+  test("a finished run never consults the seam mid-loop (the last turn skips it)", async () => {
+    const consulted: Array<number> = []
+    await run(
+      runLoop({
+        system: "sys",
+        messages: [user("hi")],
+        toolkit: kit,
+        pendingInput: () =>
+          Effect.sync(() => {
+            consulted.push(1)
+            return Option.none<string>()
+          }),
+      }),
+      () => [{ type: "text", text: "instant" }, finish("stop")],
+    )
+    expect(consulted).toHaveLength(0)
+  })
+})
+
 describe("runLoop streaming", () => {
   const script = (call: number): ReadonlyArray<unknown> =>
     call === 0
