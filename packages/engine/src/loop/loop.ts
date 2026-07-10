@@ -87,6 +87,15 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * `generateText` transparently — for the REST of the run, not per turn.
    */
   readonly streaming?: boolean
+  /**
+   * MID-TURN steering, consulted at turn boundaries while the run
+   * continues (the `compact` seam's twin): `Some(text)` appends a user
+   * message the NEXT model call sees — a human's course correction lands
+   * at the next step instead of after the whole run. Injected after any
+   * fold (steering must never be compacted away) and persisted via
+   * `onTail` like every other appended message.
+   */
+  readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
 }
 
 export const DEFAULT_MAX_STEPS = 100
@@ -434,12 +443,29 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
               kept: nextMessages.length - p.keepFrom,
             }),
         })
+
+        // --- Mid-turn steering (turn boundaries, running runs only) ---
+        // Consulted AFTER the fold so a steering message can never be
+        // compacted away before the model sees it.
+        const steered =
+          phase === "continue" && options.pendingInput !== undefined
+            ? yield* options.pendingInput()
+            : Option.none<string>()
+        const steerTail: ReadonlyArray<AgentMessage> = Option.match(steered, {
+          onNone: () => [],
+          onSome: (text) => [{ role: "user", content: text }],
+        })
+        yield* steerTail.length > 0 ? (options.onTail?.(steerTail) ?? Effect.void) : Effect.void
+
         return {
-          messages: Option.match(applied, {
-            onNone: () => nextMessages,
-            onSome: (p) => [handoffToMessage(p.summary), ...nextMessages.slice(p.keepFrom)],
-          }),
-          newTail: [...state.newTail, ...tail, ...nudge],
+          messages: [
+            ...Option.match(applied, {
+              onNone: () => nextMessages,
+              onSome: (p) => [handoffToMessage(p.summary), ...nextMessages.slice(p.keepFrom)],
+            }),
+            ...steerTail,
+          ],
+          newTail: [...state.newTail, ...tail, ...nudge, ...steerTail],
           finalText: broke && finalText.length === 0 ? DEGENERATE_LOOP_STOP : finalText,
           turnIndex,
           malformedStreak: 0,
