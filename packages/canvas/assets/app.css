@@ -1,32 +1,11 @@
-/* canvas chrome — the agent styles page CONTENT with Tailwind; this styles the shell. */
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; background: #101014; color: #e8e6e3; font: 15px/1.5 system-ui, sans-serif; }
-.ef-shell { display: flex; flex-direction: column; min-height: 100vh; }
-.ef-topbar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-bottom: 1px solid #26262c; }
-.ef-mark { font-weight: 600; letter-spacing: 0.02em; color: #d97742; white-space: nowrap; }
-.ef-tabs-bar { display: flex; gap: 6px; overflow-x: auto; }
-.ef-tab-btn { background: transparent; color: #a7a29b; border: 1px solid #2c2c33; border-radius: 6px; padding: 4px 12px; cursor: pointer; font: inherit; }
-.ef-tab-btn.is-active { color: #e8e6e3; border-color: #d97742; }
-.ef-pages-host { flex: 1; overflow-y: auto; }
-.ef-page-host { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
-.ef-page-host[hidden] { display: none; }
-.ef-dockbar { position: sticky; bottom: 0; background: #16161b; border-top: 1px solid #26262c; padding: 8px 14px; }
-.ef-status-strip { min-height: 18px; font-size: 13px; color: #a7a29b; padding-bottom: 4px; display: flex; gap: 12px; }
-.ef-spin::before { content: "⣻ "; color: #d97742; }
-.ef-reply-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ef-ask { display: flex; gap: 8px; }
-.ef-ask-input { flex: 1; background: #101014; color: inherit; border: 1px solid #2c2c33; border-radius: 8px; padding: 8px 12px; font: inherit; }
-.ef-ask-input:focus { outline: none; border-color: #d97742; }
-.ef-ask-send { background: #d97742; color: #101014; border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
-
-
-/* ------------------------------------------------------------------ */
-/* The cv-* design system — the component vocabulary agent pages use.   */
-/* Curated, dark-native, consistent with the chrome. The prompt         */
-/* documents each; Tailwind utilities fill LAYOUT gaps only.            */
-/* ------------------------------------------------------------------ */
+/* canvas chrome — the agent styles page CONTENT with Tailwind; this styles the shell.
+ * EVERY colour is a --cv-* token, chrome included — the accent changes in ONE
+ * line (the audit found #d97742 hardcoded 6×; missing one left the mark
+ * off-brand). The chrome hairline rides --cv-line (was a near-identical
+ * #26262c; unified). */
 :root {
+  color-scheme: dark;
+  --cv-bg-page: #101014;
   --cv-bg: #16161b;
   --cv-bg-raised: #1c1c22;
   --cv-line: #2c2c33;
@@ -37,7 +16,32 @@ body { margin: 0; background: #101014; color: #e8e6e3; font: 15px/1.5 system-ui,
   --cv-warn: #e0b050;
   --cv-danger: #d06060;
 }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--cv-bg-page); color: var(--cv-text); font: 15px/1.5 system-ui, sans-serif; }
+.ef-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.ef-topbar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; border-bottom: 1px solid var(--cv-line); }
+.ef-mark { font-weight: 600; letter-spacing: 0.02em; color: var(--cv-accent); white-space: nowrap; }
+.ef-tabs-bar { display: flex; gap: 6px; overflow-x: auto; }
+.ef-tab-btn { background: transparent; color: var(--cv-text-dim); border: 1px solid var(--cv-line); border-radius: 6px; padding: 4px 12px; cursor: pointer; font: inherit; }
+.ef-tab-btn.is-active { color: var(--cv-text); border-color: var(--cv-accent); }
+.ef-pages-host { flex: 1; overflow-y: auto; }
+.ef-page-host { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+.ef-page-host[hidden] { display: none; }
+.ef-dockbar { position: sticky; bottom: 0; background: var(--cv-bg); border-top: 1px solid var(--cv-line); padding: 8px 14px; }
+.ef-status-strip { min-height: 18px; font-size: 13px; color: var(--cv-text-dim); padding-bottom: 4px; display: flex; gap: 12px; }
+.ef-spin::before { content: "\28fb "; color: var(--cv-accent); }
+.ef-reply-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-ask { display: flex; gap: 8px; }
+.ef-ask-input { flex: 1; background: var(--cv-bg-page); color: inherit; border: 1px solid var(--cv-line); border-radius: 8px; padding: 8px 12px; font: inherit; }
+.ef-ask-input:focus { outline: none; border-color: var(--cv-accent); }
+.ef-ask-send { background: var(--cv-accent); color: var(--cv-bg-page); border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
 
+
+/* ------------------------------------------------------------------ */
+/* The cv-* design system — the component vocabulary agent pages use.   */
+/* Curated, dark-native, consistent with the chrome. The prompt         */
+/* documents each; Tailwind utilities fill LAYOUT gaps only.            */
+/* ------------------------------------------------------------------ */
 .cv-page { display: flex; flex-direction: column; gap: 20px; }
 .cv-hero { padding: 8px 0 4px; border-bottom: 1px solid var(--cv-line); }
 .cv-hero h1 { margin: 0 0 4px; font-size: 26px; line-height: 1.2; }
@@ -51,13 +55,13 @@ body { margin: 0; background: #101014; color: #e8e6e3; font: 15px/1.5 system-ui,
 .cv-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .cv-btn { background: var(--cv-bg-raised); color: var(--cv-text); border: 1px solid var(--cv-line); border-radius: 8px; padding: 8px 16px; font: inherit; cursor: pointer; }
 .cv-btn:hover { border-color: var(--cv-accent); }
-.cv-btn--primary { background: var(--cv-accent); color: #101014; border-color: var(--cv-accent); font-weight: 600; }
+.cv-btn--primary { background: var(--cv-accent); color: var(--cv-bg-page); border-color: var(--cv-accent); font-weight: 600; }
 .cv-btn--ghost { background: transparent; }
 .cv-btn--danger { border-color: var(--cv-danger); color: var(--cv-danger); }
 
 .cv-field { display: flex; flex-direction: column; gap: 4px; }
 .cv-label { font-size: 13px; color: var(--cv-text-dim); }
-.cv-input { background: #101014; color: var(--cv-text); border: 1px solid var(--cv-line); border-radius: 8px; padding: 8px 12px; font: inherit; }
+.cv-input { background: var(--cv-bg-page); color: var(--cv-text); border: 1px solid var(--cv-line); border-radius: 8px; padding: 8px 12px; font: inherit; }
 .cv-input:focus { outline: none; border-color: var(--cv-accent); }
 
 .cv-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px; }
