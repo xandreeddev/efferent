@@ -84,6 +84,7 @@
       "dependencies": {
         "@effect/ai": "^0.35.0",
         "@opentui/core": "0.3.1",
+        "@xandreed/canvas": "workspace:*",
         "@xandreed/engine": "workspace:*",
         "@xandreed/foundry": "workspace:*",
         "@xandreed/math": "workspace:*",

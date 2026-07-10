@@ -3,5 +3,9 @@
   "mean": 1,
   "scenarios": {
     "admission + session dedupe (scripted twin)": 1
-  }
+  },
+  "versions": {
+    "math-prompt": "2.0.0"
+  },
+  "mintedAt": "2026-07-10T20:00:25.603Z"
 }

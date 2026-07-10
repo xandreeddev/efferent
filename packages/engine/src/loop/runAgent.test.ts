@@ -55,6 +55,7 @@ const memoryStore = Effect.gen(function* () {
       setTitle: () => Effect.void,
       listByWorkspace: () => Effect.succeed([]),
       fork: () => Effect.succeed(cid),
+    prune: () => Effect.succeed(0),
     }),
     rows,
   }

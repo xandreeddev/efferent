@@ -33,7 +33,9 @@ src/
 │              reasoning/usage/finish_reason) + a 5s metric reader for the
 │              router's llm.* metrics (token counters, request counter by
 │              outcome, duration histogram — Grafana "efferent — llm");
-│              default localhost:4318, silent when no collector ·
+│              default localhost:4318, silent when no collector — spans
+│              carry MODEL CONTENT (clipped reasoning): the endpoint must
+│              stay loopback/trusted ·
 │              FileLoggerLive(path) — append-only logfmt file logger (the
 │              TUI must never console-log)
 ├── store/     SqliteConversationStoreLive — bun:sqlite, its OWN db file

@@ -6,7 +6,7 @@ import { DIGEST_PROMPT_VERSION, digestPrompt } from "@xandreed/smith"
 import type { Judge, Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
 import { listCases } from "../live/fixtures.js"
-import { utilityTier } from "../live/llm.js"
+import { generalTierCall, utilityTier } from "../live/llm.js"
 
 /**
  * The DIGEST battery — the compaction handoff is the coder's ONLY memory
@@ -56,6 +56,12 @@ interface DigestWorld {
   readonly transcript: string
   readonly expected: DigestExpected
   readonly digest: Ref.Ref<string>
+  /** WRITES the digest — the fast tier, production parity (foldConversation
+   *  rides UtilityLlm). */
+  readonly generate: (prompt: string) => Effect.Effect<string, unknown>
+  /** PROBES the digest — the GENERAL tier, deliberately a different model
+   *  from the writer: yes/no probes on the model that wrote the digest
+   *  grade its own homework (audit). */
   readonly complete: (prompt: string) => Effect.Effect<string, unknown>
 }
 
@@ -97,13 +103,14 @@ const digestScenario = (name: string) =>
       const fixture = yield* readDigestCase(FIXTURES, name).pipe(Effect.orDie)
       const digest = yield* Ref.make("")
       const utility = yield* Layer.build(utilityTier(process.cwd()))
-      const complete = (prompt: string) =>
+      const generate = (prompt: string) =>
         UtilityLlm.pipe(
           Effect.flatMap((service) => service.complete(prompt)),
           Effect.map((response) => response.text),
           Effect.provide(utility),
         )
-      return { transcript: fixture.transcript, expected: fixture.expected, digest, complete }
+      const complete = generalTierCall(process.cwd())
+      return { transcript: fixture.transcript, expected: fixture.expected, digest, generate, complete }
     }),
     steps: [
       {
@@ -111,7 +118,7 @@ const digestScenario = (name: string) =>
         act: (world) =>
           Effect.gen(function* () {
             const fixture = yield* readDigestCase(FIXTURES, name).pipe(Effect.orDie)
-            const reply = yield* world.complete(digestPrompt(world.transcript, fixture.prior))
+            const reply = yield* world.generate(digestPrompt(world.transcript, fixture.prior))
             yield* Ref.set(world.digest, reply.trim())
           }),
         checks: [

@@ -225,8 +225,22 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
             message: `"${path}" is outside the workspace (${cwd}) — writes are confined to it`,
           })
 
+    // Credentials never flow into the conversation: a read of auth.json
+    // would PERSIST the keys verbatim into the workspace's smith.db (and
+    // stream them to every subscribed UI). Bash under the default sandbox
+    // has no real HOME; this guard closes the read_file path, sandbox on
+    // or off.
+    const isCredentialFile = (path: string): boolean =>
+      normalize(resolve(path)).endsWith("/.efferent/auth.json")
+
     const readFile = (params: { path: string; offset?: number | undefined; limit?: number | undefined }) =>
       Effect.gen(function* () {
+        if (isCredentialFile(params.path)) {
+          return yield* Effect.fail({
+            error: "CredentialFile",
+            message: `"${params.path}" holds provider credentials — it is never readable through the coder's tools`,
+          })
+        }
         const content = yield* fs
           .read(resolve(params.path))
           .pipe(Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })))

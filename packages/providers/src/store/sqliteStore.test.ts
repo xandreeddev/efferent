@@ -214,6 +214,29 @@ describe("SqliteConversationStoreLive", () => {
     )
   })
 
+  test("prune removes whole conversations older than the cutoff, nothing newer", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const old = yield* store.create("/ws")
+        yield* store.append(old, user("ancient"))
+        yield* store.checkpoint(old, "OLD FOLD")
+        const cutoff = Date.now() + 1
+        yield* Effect.sleep("5 millis")
+        const fresh = yield* store.create("/ws")
+        yield* store.append(fresh, user("recent"))
+        expect(yield* store.prune(cutoff)).toBe(1)
+        expect(yield* store.list(old)).toHaveLength(0)
+        expect(Option.isNone(yield* store.latestCheckpoint(old))).toBe(true)
+        const listed = yield* store.listByWorkspace("/ws")
+        expect(listed).toHaveLength(1)
+        expect(listed[0]!.id).toBe(fresh)
+        // Idempotent: nothing older remains.
+        expect(yield* store.prune(cutoff)).toBe(0)
+      }),
+    )
+  })
+
   test("one undecodable row degrades to a skip — the rest of the trail loads", async () => {
     const dbPath = freshDbPath()
     await withStoreAt(

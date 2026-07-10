@@ -29,7 +29,7 @@ import type { Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
 import { eventCount, eventOrder, eventWhere, fileContains, fileExists } from "../framework/evidence.js"
 import { CRITIC_RUBRIC_VERSION, makeTrajectoryCritic } from "../judges/trajectoryCritic.js"
-import { codeTierCall } from "../live/llm.js"
+import { generalTierCall } from "../live/llm.js"
 
 /**
  * The smith-spec pack: the refine → lock → forge pipeline as a SCENARIO —
@@ -259,7 +259,10 @@ const liveScenario = scenario<SmithLiveWorld>({
             : `${last.run.outcome._tag} after ${last.run.attempts.length} attempt(s)`,
         )
       },
-      call: codeTierCall(process.cwd()),
+      // GENERAL tier, deliberately NOT the code tier: the implementor runs
+      // on codeModel — a critic on the same model grades its own homework
+      // (audit). Different model, independent opinion.
+      call: generalTierCall(process.cwd()),
     }),
   ],
 })

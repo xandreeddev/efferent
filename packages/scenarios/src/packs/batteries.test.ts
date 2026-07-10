@@ -143,6 +143,7 @@ describe("scoring folds (canned completions — no keys)", () => {
             mustNotInvent: ["a database exists"],
           },
           digest: ref,
+          generate: () => Effect.succeed("unused in this fold test"),
           // Canned: facts literally present in the handoff → yes; else no.
           complete: (prompt: string) =>
             Effect.succeed(

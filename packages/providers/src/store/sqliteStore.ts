@@ -207,6 +207,27 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
             db.query(`UPDATE conversations SET title = ? WHERE id = ?`).run(title, id)
           }),
 
+        prune: (beforeEpochMs: number) =>
+          tryDb(() => {
+            const removed = db.transaction(() => {
+              const ids = (
+                db
+                  .query(`SELECT id FROM conversations WHERE created_at < ?`)
+                  .all(beforeEpochMs) as ReadonlyArray<{ id: string }>
+              ).map((row) => row.id)
+              ids.forEach((id) => {
+                db.query(`DELETE FROM messages WHERE conversation_id = ?`).run(id)
+                db.query(`DELETE FROM checkpoints WHERE conversation_id = ?`).run(id)
+                db.query(`DELETE FROM conversations WHERE id = ?`).run(id)
+              })
+              return ids.length
+            })()
+            // Reclaim the deleted pages from the WAL — deletion without this
+            // shrinks nothing on disk.
+            db.exec("PRAGMA wal_checkpoint(TRUNCATE);")
+            return removed
+          }),
+
         fork: (id: ConversationId, upToPosition?: number) =>
           tryDb(() =>
             Option.fromNullable(
