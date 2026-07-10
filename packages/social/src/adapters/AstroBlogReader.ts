@@ -2,8 +2,9 @@ import { Effect, Layer } from "effect"
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { BlogReader, type BlogPost } from "../ports/BlogReader.js"
+import { WORKSPACE_TREE } from "../domain/paths.js"
 
-const BLOG_POSTS_DIR = "/home/user/Workspace/xandreed/blog/src/content/posts"
+const BLOG_POSTS_DIR = join(WORKSPACE_TREE, "blog", "src", "content", "posts")
 
 const parseFrontmatter = (rawContent: string): {
   readonly title: string
