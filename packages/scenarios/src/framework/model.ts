@@ -62,6 +62,9 @@ export interface Pack {
   /** Baseline regression tolerance for THIS pack (live batteries are
    *  noisier). Default 0.05. */
   readonly tolerance?: number
+  /** Ratchet EVERY scenario against its minted score (not just the pack
+   *  mean) — one case can no longer pay for another's regression. */
+  readonly perScenarioRatchet?: boolean
   /** Provenance stamped into reports + minted baselines — prompt version
    *  constants ("judge-prompt": "1.0.0"), so a baseline delta is
    *  attributable to the prompt change that caused it. */

@@ -63,17 +63,35 @@ export const writeBaseline = (
  *  are noisier). */
 export const DEFAULT_TOLERANCE = 0.05
 
-/** `Some(message)` when the report regressed beyond the tolerance. */
+/** `Some(message)` when the report regressed beyond the tolerance. With
+ *  `perScenario`, EVERY scenario is a ratchet — a per-case drop past the
+ *  tolerance fails even when the pack mean holds (one case can no longer
+ *  pay for another's regression). */
 export const compareBaseline = (
   report: PackReport,
   baseline: Baseline,
   tolerance: number,
-): Option.Option<string> =>
-  report.mean < baseline.mean - tolerance
-    ? Option.some(
-        `REGRESSION vs committed baseline: mean ${report.mean.toFixed(3)} < ${baseline.mean.toFixed(3)} − ${tolerance}`,
-      )
-    : Option.none()
+  perScenario = false,
+): Option.Option<string> => {
+  const meanDrop =
+    report.mean < baseline.mean - tolerance
+      ? [
+          `mean ${report.mean.toFixed(3)} < ${baseline.mean.toFixed(3)} − ${tolerance}`,
+        ]
+      : []
+  const caseDrops = !perScenario
+    ? []
+    : report.scenarios.flatMap((result) => {
+        const minted = baseline.scenarios[result.name]
+        return result.status === "ran" && minted !== undefined && result.combined < minted - tolerance
+          ? [`"${result.name}" ${result.combined.toFixed(3)} < ${minted.toFixed(3)} − ${tolerance}`]
+          : []
+      })
+  const drops = [...meanDrop, ...caseDrops]
+  return drops.length === 0
+    ? Option.none()
+    : Option.some(`REGRESSION vs committed baseline: ${drops.join(" · ")}`)
+}
 
 /** `Some(warning)` when the pack's current prompt versions differ from the
  *  ones the baseline was minted for — not a failure (the score gate is the
