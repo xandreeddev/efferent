@@ -14,6 +14,7 @@ import {
   selectedValue,
 } from "./presentation/selectBox.js"
 import { completeCommand } from "./presentation/palette.js"
+import { recallStep } from "./presentation/history.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
@@ -215,6 +216,19 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
   // ctrl+o: expand/collapse the newest tool block's output in the story.
   if (key.ctrl === true && key.name === "o") {
     ctx.store.toggleToolExpand()
+    return
+  }
+  // ↑/↓ prompt recall — engages only on an empty composer (or while the
+  // recalled entry is still shown verbatim); mid-edit, the key falls
+  // through to the textarea untouched.
+  if (key.name === "up" || key.name === "down") {
+    Option.match(recallStep(ctx.store.history(), key.name, ctx.store.composerText()), {
+      onNone: () => {},
+      onSome: (recall) => {
+        ctx.store.setHistory(recall.state)
+        ctx.store.setComposer(recall.text)
+      },
+    })
     return
   }
   // Tab completes a `:` command in the composer (shell-style). No overlay is
