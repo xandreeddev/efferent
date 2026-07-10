@@ -1,7 +1,7 @@
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Deferred, Effect, Fiber, Option, Queue, Ref, Runtime, Scope } from "effect"
+import { Deferred, Effect, Fiber, Option, Queue, Ref, Runtime, Schema, Scope } from "effect"
 import { SettingsStore } from "@xandreed/engine"
 import type { AuthStore } from "@xandreed/engine"
 import type { FileSystem, SpecDoc } from "@xandreed/engine"
@@ -10,6 +10,7 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { loadForgeLessons, runForgeSession } from "../forge/session.js"
 import { renderShipPlan, runShip } from "../forge/ship.js"
+import { followUpTarget, runFollowUpTurn } from "../forge/followUp.js"
 import type { ShipPlan } from "../forge/ship.js"
 import { makeRefineSession } from "../refine/session.js"
 import type { RefineAgent, RefineSession } from "../refine/session.js"
@@ -302,6 +303,8 @@ export interface WorkspaceChassis {
 export interface WorkspaceSeams {
   readonly refineAgent?: RefineAgent
   readonly forgeRunner?: typeof runForgeSession
+  /** Post-run follow-up turns (scripted in the battery). */
+  readonly followUp?: typeof runFollowUpTurn
 }
 
 export const makeWorkspaceBody = (
@@ -332,6 +335,9 @@ export const makeWorkspaceBody = (
       const turnFiberRef = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
       // The last ACCEPTED run's ship plan — `:ship` consumes it (once).
       const shipPlanRef = yield* Ref.make(Option.none<ShipPlan>())
+      // The last run's implementor conversation — post-run FOLLOW-UP
+      // continues it (free-form: "test the edges", "run the evals").
+      const followUpRef = yield* Ref.make(Option.none<ConversationId>())
 
       // The dashboard reads: specs (undecodable ones dropped — one hand-edited
       // file can't blank the view), the forge-run history, the lessons brief.
@@ -540,6 +546,7 @@ export const makeWorkspaceBody = (
 
       const dropRefine = Effect.gen(function* () {
         yield* Ref.set(refineRef, Option.none())
+        yield* Ref.set(followUpRef, Option.none())
         yield* Effect.sync(() => {
           store.resetRefine()
           store.resetConversation()
@@ -553,7 +560,11 @@ export const makeWorkspaceBody = (
           "send",
           Effect.gen(function* () {
             const running = yield* Ref.get(forgeFiberRef)
-            if (Option.isSome(running)) {
+            const phase = store.floor().phase
+            // The fiber outlives the VERDICT by a beat (arming, refresh,
+            // ensuring) — the floor phase is the honest "still working"
+            // signal, or text typed right after ✓ ACCEPTED queues forever.
+            if (Option.isSome(running) && phase !== "done" && phase !== "failed") {
               // Text typed mid-forge STEERS the coder: it lands at the next
               // loop step through the pendingInput seam (was a refusal).
               yield* Effect.sync(() => {
@@ -569,8 +580,39 @@ export const makeWorkspaceBody = (
               })
               return
             }
-            // A finished forge floor: new text implicitly starts the next idea.
+            // A finished forge floor with an armed follow-up: plain text
+            // CONTINUES the coder's conversation — full run context, full
+            // toolkit, no spec pipeline (the human is directing; they
+            // re-:forge when the next slice deserves the gates).
             if (store.mode() === "forge") {
+              const target = yield* Ref.get(followUpRef)
+              if (Option.isSome(target)) {
+                const fiber = forked(
+                  "follow-up",
+                  Effect.gen(function* () {
+                    yield* Effect.sync(() => {
+                      store.addUserLine(text)
+                      store.setBusy(true)
+                    })
+                    yield* (seams.followUp ?? runFollowUpTurn)(
+                      run,
+                      target.value,
+                      text,
+                      publish,
+                      steerFromQueue(store),
+                    ).pipe(Effect.catchAll((error) =>
+                      publish({ type: "forge_error", message: `follow-up: ${String(error)}` }),
+                    ))
+                    const queued = yield* Effect.sync(() => store.drainQueue())
+                    yield* queued.length > 0
+                      ? Effect.sync(() => sendText(queued.join("\n\n")))
+                      : Effect.void
+                  }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false)))),
+                )
+                yield* Ref.set(turnFiberRef, Option.some(fiber))
+                return
+              }
+              // No follow-up target: new text starts the next idea.
               yield* dropRefine
             }
             const existing = yield* Ref.get(refineRef)
@@ -668,6 +710,32 @@ export const makeWorkspaceBody = (
                     result.run.outcome._tag === "accepted"
                       ? Option.some(renderShipPlan(run.cwd, doc, result.run))
                       : Option.none(),
+                  ),
+                ),
+                // ANY finished run arms follow-up (a rejected run is the one
+                // you most want to interrogate) — plain text now continues
+                // the coder's conversation instead of starting a new spec.
+                Effect.tap((result) =>
+                  Ref.set(
+                    followUpRef,
+                    followUpTarget(
+                      result.run.attempts.map((attempt) => attempt.implementorRef),
+                    ).pipe(
+                      // SAFE decode — a malformed ref disarms follow-up, it
+                      // must never kill the finished run's fiber (the brand
+                      // constructor THROWS; live-caught in the battery).
+                      Option.flatMap((id) =>
+                        Schema.decodeUnknownOption(ConversationId)(id),
+                      ),
+                    ),
+                  ).pipe(
+                    Effect.zipRight(
+                      Effect.sync(() => {
+                        store.setNotice(
+                          "run finished — follow up freely (the coder keeps its context) · :new for the next idea",
+                        )
+                      }),
+                    ),
                   ),
                 ),
                 Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
