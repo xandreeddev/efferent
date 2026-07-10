@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
+import { parseJsonWarn } from "@xandreed/engine"
 
 /**
  * The social agent's hard policy — every number/list a deterministic gate
@@ -56,12 +57,12 @@ export const loadPolicy = (path: string): Effect.Effect<SocialPolicy> =>
     try: () => readFile(path, "utf-8"),
     catch: () => "missing" as const,
   }).pipe(
-    Effect.map((text) => {
-      const parsed = Effect.runSync(
-        Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined }).pipe(
-          Effect.orElseSucceed(() => undefined),
-        ),
-      )
+    // Corrupt ≠ absent: a malformed policy.json warns before the defaults
+    // apply (fail-closed either way, but silently losing a loosened cap
+    // reads as "the policy vanished").
+    Effect.flatMap((text) => parseJsonWarn(text, path)),
+    Effect.map((maybe) => {
+      const parsed = Option.getOrUndefined(maybe)
       if (parsed === undefined) return DEFAULT_POLICY
       const overlay = decodePartial(parsed)
       if (overlay._tag !== "Right") return DEFAULT_POLICY

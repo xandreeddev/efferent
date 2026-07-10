@@ -43,7 +43,7 @@ export { Shell, ShellError, ShellResult } from "./ports/Shell.js"
 export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/UtilityLlm.js"
 
 // util
-export { asJsonRecord, parseJsonWarn } from "./util/json.js"
+export { asJsonRecord, decodeJsonLines, parseJsonOption, parseJsonWarn } from "./util/json.js"
 
 // loop
 export {

@@ -1,4 +1,5 @@
-import { Effect, Option } from "effect"
+import { Option } from "effect"
+import { parseJsonOption } from "@xandreed/engine"
 
 /**
  * The math shell's browser ↔ server protocol — path constants (shared by the
@@ -40,13 +41,9 @@ const asRecord = (v: unknown): Record<string, unknown> | undefined =>
 
 /** Parse a raw WS text frame. `None` for garbage (drop silently). */
 export const parseClientMessage = (rawText: string): Option.Option<ClientMessage> => {
-  const obj = asRecord(
-    Effect.runSync(
-      Effect.try({ try: () => JSON.parse(rawText) as unknown, catch: () => undefined }).pipe(
-        Effect.orElseSucceed(() => undefined),
-      ),
-    ),
-  )
+  // Wire noise drops SILENTLY by design — parseJsonOption, not the warning
+  // variant (a garbage frame is not a corrupt config).
+  const obj = asRecord(Option.getOrUndefined(parseJsonOption(rawText)))
   if (obj === undefined) return Option.none()
   const type = typeof obj["type"] === "string" ? obj["type"] : undefined
   if (type === "resync") return Option.some({ type: "resync" })
