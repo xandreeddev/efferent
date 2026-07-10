@@ -36,6 +36,10 @@ export type SelectPurpose =
   | { readonly tag: "resume" }
   /** The settings MENU (agy shape): rows are settings, Enter edits one. */
   | { readonly tag: "settings" }
+  /** The fallback-model picker (`:settings` → fallback model). */
+  | { readonly tag: "fallback-model" }
+  /** A numeric preset picker for one keyed setting. */
+  | { readonly tag: "setting-number"; readonly key: "maxAttempts" | "budgetMillis" }
 
 /** ONE inline contextual surface at a time — select picker or the login
  *  flow; while open, the composer unmounts and keys route here. */
