@@ -260,6 +260,12 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
               },
             )
           }
+          if (applied.toggleFold === true) {
+            ctx.store.toggleFolds()
+            ctx.store.setNotice(
+              ctx.store.folds() ? "folds ON — finished tool groups collapse (za / :fold)" : "folds off",
+            )
+          }
           if (applied.state.mode === "insert") ctx.store.focusComposer()
         },
       })

@@ -414,3 +414,39 @@ export const contextGauge = (
         `ctx ${fmtTokens(tokens)}/${fmtTokens(max)} (${Math.round((tokens / max) * 100)}%)`,
     }),
   )
+
+/**
+ * FOLDS: with folds on, a COMPLETED tool group (consecutive tool blocks,
+ * none still running) collapses to its opener — one line naming the count
+ * and the distinct tools. `None` = render this block normally; `Some("")`
+ * = skip (a folded group member); `Some(line)` = the fold line.
+ */
+export const foldedToolLine = (
+  blocks: ReadonlyArray<ConversationBlock>,
+  index: number,
+): Option.Option<string> => {
+  const block = blocks[index]
+  if (block === undefined || block.kind !== "tool") return Option.none()
+  // The group starts at the nearest opener at-or-before this block.
+  const start = blocks.reduce<number>(
+    (found, b, i) => (i <= index && b.kind === "tool" && b.first ? i : found),
+    index,
+  )
+  // …and runs while consecutive non-opener tool blocks follow.
+  const runLength = blocks
+    .slice(start)
+    .findIndex((b, i) => i > 0 && (b.kind !== "tool" || b.first))
+  const size = runLength === -1 ? blocks.length - start : runLength
+  const members = blocks.slice(start, start + size) as ReadonlyArray<
+    Extract<ConversationBlock, { kind: "tool" }>
+  >
+  // Running groups and singletons stay expanded — the fold is for FINISHED
+  // exploration noise, never for what is happening right now.
+  if (members.some((m) => m.status === "running")) return Option.none()
+  if (size < 2) return Option.none()
+  if (index !== start) return Option.some("")
+  const distinct = [...new Set(members.map((m) => m.name))]
+  return Option.some(
+    `${size} tool calls · ${distinct.slice(0, 4).join(", ")}${distinct.length > 4 ? ", …" : ""}`,
+  )
+}
