@@ -678,6 +678,19 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
             // the completed line keeps typing forward, not from column 0.
             renderable.cursorOffset = text.length
           })
+          // vi: normal mode PARKS the textarea (blur) and moves the cursor
+          // through these; insert re-focuses.
+          props.ctx.store.registerComposerCursor(
+            () => renderable.cursorOffset,
+            (at) => {
+              renderable.cursorOffset = at
+            },
+          )
+          props.ctx.store.registerComposerFocus(
+            () => renderable.focus(),
+            () => renderable.blur(),
+          )
+          props.ctx.store.registerComposerSubmit(() => submit())
         }}
         height={1}
         flexGrow={1}
@@ -750,8 +763,10 @@ const ComposerFrame = (props: { ctx: SmithTuiContext }) => {
     const spend = store.sessionCost()
     return spend > 0 ? `   ${fmtCost(spend)}` : ""
   }
+  const viBadge = () =>
+    store.viEnabled() && store.vi().mode === "normal" ? "   -- NORMAL --" : ""
   const rolesLine = () =>
-    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}${cost()}`
+    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}${cost()}${viBadge()}`
   return (
     <box flexDirection="column" flexShrink={0} marginTop={1}>
       <Show when={store.notice().length > 0}>

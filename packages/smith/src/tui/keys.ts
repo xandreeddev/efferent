@@ -16,6 +16,8 @@ import {
 import { completeCommand } from "./presentation/palette.js"
 import { recallStep } from "./presentation/history.js"
 import { cycleSearch, searchNotice } from "./presentation/search.js"
+import { initialVi, viNormalStep } from "./presentation/vi.js"
+import type { ViEdit } from "./presentation/vi.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
@@ -25,6 +27,7 @@ import {
   openNumberPicker,
   submitSetting,
   toggleSandbox,
+  toggleViMode,
 } from "./actions/settings.js"
 import { logout } from "./actions/login.js"
 import type { Overlay, SmithTuiContext } from "./state/store.js"
@@ -108,6 +111,7 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
               onSome: (row) => {
                 if (row === "fallbackModel") return openFallbackPicker(ctx)
                 if (row === "sandbox") return toggleSandbox(ctx)
+                if (row === "viMode") return toggleViMode(ctx)
                 if (row === "maxAttempts" || row === "budgetMillis") {
                   return openNumberPicker(ctx, row)
                 }
@@ -213,6 +217,54 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
   if (overlay.kind === "login") {
     routeLoginKey(ctx, overlay, key)
     return
+  }
+  // --- vi mode (enabled via :settings / config "viMode") ---
+  // Insert = the composer exactly as without vi; Esc parks the textarea
+  // (blur — a parked textarea can never swallow motion keys) and enters
+  // normal. In NORMAL, Esc falls THROUGH to the session's one Esc rule.
+  if (ctx.store.viEnabled() && key.ctrl !== true) {
+    const vi = ctx.store.vi()
+    if (vi.mode === "insert" && key.name === "escape") {
+      ctx.store.setVi({ mode: "normal", pending: Option.none() })
+      ctx.store.blurComposer()
+      return
+    }
+    if (vi.mode === "normal" && key.name !== "escape") {
+      if (key.name === "return") {
+        // Enter in normal SUBMITS the line (the composer's own binding is
+        // parked with the blur) and re-enters insert for the next prompt.
+        ctx.store.setVi(initialVi)
+        ctx.store.focusComposer()
+        ctx.store.submitComposer()
+        return
+      }
+      const typed = printableChars(key)
+      const edit = typed.length === 1
+        ? viNormalStep(vi, typed, ctx.store.composerText(), ctx.store.composerCursor())
+        : Option.none<ViEdit>()
+      Option.match(edit, {
+        onNone: () => {},
+        onSome: (applied) => {
+          ctx.store.setVi(applied.state)
+          if (applied.text !== undefined) ctx.store.setComposer(applied.text)
+          if (applied.cursor !== undefined) ctx.store.setComposerCursor(applied.cursor)
+          if (applied.recall !== undefined) {
+            Option.match(
+              recallStep(ctx.store.history(), applied.recall, ctx.store.composerText()),
+              {
+                onNone: () => {},
+                onSome: (recall) => {
+                  ctx.store.setHistory(recall.state)
+                  ctx.store.setComposer(recall.text)
+                },
+              },
+            )
+          }
+          if (applied.state.mode === "insert") ctx.store.focusComposer()
+        },
+      })
+      return
+    }
   }
   // ctrl+o: expand/collapse the newest tool block's output in the story.
   if (key.ctrl === true && key.name === "o") {
