@@ -1,5 +1,5 @@
 import { AiError } from "@effect/ai"
-import { Duration, Effect, Schedule } from "effect"
+import { Duration, Effect, Ref, Schedule, Stream } from "effect"
 
 /**
  * Transient-failure resilience for every routed LLM call — the survival
@@ -57,17 +57,17 @@ const fastRetries = Schedule.exponential(Duration.seconds(1)).pipe(
   Schedule.intersect(Schedule.recurs(3)),
 )
 
-const timeoutError = (label: string): AiError.UnknownError =>
+const timeoutError = (label: string, method: string, timeoutMs: number): AiError.UnknownError =>
   new AiError.UnknownError({
     module: "Router",
-    method: "generateText",
-    description: `the ${label} request exceeded ${LLM_REQUEST_TIMEOUT_MS / 1000}s and was cut off`,
+    method,
+    description: `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`,
   })
 
-const emptyError = (label: string): AiError.UnknownError =>
+const emptyError = (label: string, method: string): AiError.UnknownError =>
   new AiError.UnknownError({
     module: "Router",
-    method: "generateText",
+    method,
     description: `${label} returned an empty response (no text, tool call, or reasoning) — treated as a transient provider failure`,
   })
 
@@ -86,7 +86,7 @@ export const rejectEmptyResponse =
     effect.pipe(
       Effect.filterOrFail(
         (res) => res.content.some(isContentPart),
-        () => emptyError(label),
+        () => emptyError(label, "generateText"),
       ),
     )
 
@@ -97,7 +97,7 @@ export const retryableLlm =
     effect.pipe(
       Effect.timeoutFail({
         duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
-        onTimeout: () => timeoutError(label),
+        onTimeout: () => timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS),
       }),
       Effect.retry({
         schedule: fastRetries,
@@ -108,4 +108,77 @@ export const retryableLlm =
           ? Effect.logWarning(`${label}: transient failure exhausted retries: ${String(error)}`)
           : Effect.void,
       ),
+    )
+
+/** Content-part identity, on the ENCODED stream vocabulary: a non-empty
+ *  text/reasoning delta or a tool call. The retry gate arms on it, the
+ *  empty guard counts it — S1 guarantees empty deltas never reach here. */
+const isContentPartEncoded = (part: unknown): boolean => {
+  const p = part as { readonly type?: string; readonly delta?: string } | null
+  if (p === null || typeof p !== "object") return false
+  if (p.type === "tool-call") return true
+  return (
+    (p.type === "text-delta" || p.type === "reasoning-delta") &&
+    typeof p.delta === "string" &&
+    p.delta.length > 0
+  )
+}
+
+const isFinishPartEncoded = (part: unknown): boolean =>
+  (part as { readonly type?: string } | null)?.type === "finish"
+
+/**
+ * The STREAM twin of {@link retryableLlm}, with semantics a settled call
+ * doesn't need:
+ *
+ * - Retry covers connection + PRE-first-content failures only. Once a
+ *   content part has flowed to the consumer, a replayed stream would emit
+ *   duplicates — so after content, failures are final (a `Ref`-armed gate on
+ *   the retry schedule).
+ * - The empty guard WITHHOLDS the finish part: a finish with zero content
+ *   parts fails as the transient empty-response error instead of
+ *   fake-completing the turn — and, being pre-content by definition, it
+ *   rides the same retries.
+ * - The timeout is per-PART idle time (bounds time-to-first-part AND a
+ *   mid-stream hang), not whole-request — a long healthy stream never trips
+ *   it while tokens flow.
+ */
+export const retryableLlmStream =
+  (label: string, timeoutMs: number = LLM_REQUEST_TIMEOUT_MS) =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E | AiError.UnknownError, R> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const contentSeen = yield* Ref.make(false)
+        return stream.pipe(
+          Stream.mapEffect((part) =>
+            isContentPartEncoded(part)
+              ? Ref.set(contentSeen, true).pipe(Effect.as(part))
+              : isFinishPartEncoded(part)
+                ? Ref.get(contentSeen).pipe(
+                    Effect.flatMap((seen) =>
+                      seen ? Effect.succeed(part) : Effect.fail(emptyError(label, "streamText")),
+                    ),
+                  )
+                : Effect.succeed(part),
+          ),
+          Stream.timeoutFail(
+            () => timeoutError(label, "streamText", timeoutMs),
+            Duration.millis(timeoutMs),
+          ),
+          Stream.retry(
+            fastRetries.pipe(
+              Schedule.whileInputEffect((error: E | AiError.UnknownError) =>
+                Ref.get(contentSeen).pipe(
+                  Effect.map((seen) => !seen && classifyLlmError(error) === "transient"),
+                ),
+              ),
+            ),
+          ),
+          Stream.tapError((error) =>
+            classifyLlmError(error) === "transient"
+              ? Effect.logWarning(`${label}: transient stream failure was final: ${String(error)}`)
+              : Effect.void,
+          ),
+        )
+      }),
     )

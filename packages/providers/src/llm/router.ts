@@ -1,6 +1,6 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { Effect, Layer, Metric, Option, Stream } from "effect"
+import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
 import {
   AuthStore,
   formatModelSelection,
@@ -9,7 +9,7 @@ import {
 } from "@xandreed/engine"
 import type { ModelSelection } from "@xandreed/engine"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
-import { rejectEmptyResponse, retryableLlm } from "./retry.js"
+import { rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
 
 /**
  * The routed `LanguageModel`: every call re-reads the settings selection and
@@ -175,6 +175,135 @@ export const stampResponse = (
     res.content.map((part) => stampModel(part, label)) as never,
   )
 
+/** What the stream telemetry accumulates while parts flow — exactly the
+ *  facts `generateWith` reads off the settled response. */
+interface StreamStats {
+  readonly textChars: number
+  readonly reasoning: string
+  readonly toolNames: ReadonlyArray<string>
+}
+
+const accumulateStats = (stats: StreamStats, part: unknown): StreamStats => {
+  const p = part as {
+    readonly type?: string
+    readonly delta?: string
+    readonly name?: string
+  }
+  if (p.type === "text-delta") {
+    return { ...stats, textChars: stats.textChars + (p.delta ?? "").length }
+  }
+  if (p.type === "reasoning-delta") {
+    return { ...stats, reasoning: stats.reasoning + (p.delta ?? "") }
+  }
+  if (p.type === "tool-call") {
+    return { ...stats, toolNames: [...stats.toolNames, p.name ?? ""] }
+  }
+  return stats
+}
+
+/**
+ * The stream twin of `generateWith`'s telemetry: accumulate over the flowing
+ * parts, and when the finish part passes, write the SAME span attributes and
+ * token counters a settled call would — byte-identical values on identical
+ * content. Outcome + duration finalize per terminal state (`onDone` /
+ * `tapErrorCause`), so retries inside count once, like the settled path.
+ */
+export const tapStreamTelemetry =
+  (label: string) =>
+  <E, R>(stream: Stream.Stream<unknown, E, R>): Stream.Stream<unknown, E, R> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const stats = yield* Ref.make<StreamStats>({
+          textChars: 0,
+          reasoning: "",
+          toolNames: [],
+        })
+        const startedAt = yield* Clock.currentTimeMillis
+        const recordDuration = Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            Metric.update(byModel(llmDuration, label), Duration.millis(now - startedAt)),
+          ),
+        )
+        return stream.pipe(
+          Stream.mapEffect((part) => {
+            const p = part as {
+              readonly type?: string
+              readonly reason?: string
+              readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number }
+            }
+            if (p.type !== "finish") {
+              return Ref.update(stats, (s) => accumulateStats(s, part)).pipe(Effect.as(part))
+            }
+            return Ref.get(stats).pipe(
+              Effect.flatMap((s) =>
+                Effect.annotateCurrentSpan({
+                  "llm.finish_reason": String(p.reason),
+                  "llm.usage.input_tokens": p.usage?.inputTokens ?? 0,
+                  "llm.usage.output_tokens": p.usage?.outputTokens ?? 0,
+                  "llm.response_chars": s.textChars,
+                  "llm.tool_calls": s.toolNames.join(","),
+                  "llm.reasoning": s.reasoning.slice(0, 500),
+                }),
+              ),
+              Effect.zipRight(
+                Effect.all(
+                  [
+                    Metric.incrementBy(byModel(llmInputTokens, label), p.usage?.inputTokens ?? 0),
+                    Metric.incrementBy(
+                      byModel(llmOutputTokens, label),
+                      p.usage?.outputTokens ?? 0,
+                    ),
+                  ],
+                  { discard: true },
+                ),
+              ),
+              Effect.as(part),
+            )
+          }),
+          Stream.onDone(() =>
+            Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "ok")).pipe(
+              Effect.zipRight(recordDuration),
+            ),
+          ),
+          Stream.tapErrorCause(() =>
+            Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "error")).pipe(
+              Effect.zipRight(recordDuration),
+            ),
+          ),
+        )
+      }),
+    )
+
+/** Build + call one provider streamText for an explicit selection — the
+ *  stream twin of {@link generateWith}: same resolution, same option
+ *  shaping (anthropic cache breakpoints inherit for free), same stamp, the
+ *  stream-aware retry, and finish-part telemetry. */
+export const streamWith = (
+  selection: ModelSelection,
+  options: unknown,
+): Stream.Stream<unknown, unknown, AuthStore | HttpClient.HttpClient> =>
+  Stream.unwrapScoped(
+    Effect.gen(function* () {
+      const auth = yield* AuthStore
+      const label = formatModelSelection(selection)
+      const credential = Option.getOrUndefined(yield* auth.get(selection.provider))
+      const key = Option.getOrUndefined(yield* auth.resolveKey(selection.provider))
+      const built = yield* buildProvider(selection, credential, key)
+      return (
+        built.svc.streamText(
+          shapeOptions(selection, built.prependClaudeCode, options) as never,
+        ) as Stream.Stream<unknown, unknown>
+      ).pipe(
+        retryableLlmStream(label),
+        Stream.map((part) => stampModel(part, label)),
+        tapStreamTelemetry(label),
+        Stream.withSpan("providers.generate", {
+          attributes: { "llm.model": label },
+        }),
+      )
+    }),
+  )
+
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.
  * Requires `SettingsStore` + `AuthStore`; brings its own fetch-backed
@@ -197,9 +326,14 @@ export const LanguageModelLive = Layer.effect(
         Effect.fail(
           configError("generateObject is not wired on the new line yet"),
         )) as never,
-      streamText: (() =>
-        Stream.fail(
-          configError("streamText is not wired on the new line yet — use generateText"),
+      streamText: ((options: unknown) =>
+        Stream.unwrap(
+          currentSelection.pipe(
+            Effect.map((selection) => streamWith(selection, options)),
+          ),
+        ).pipe(
+          Stream.provideSomeContext(context),
+          Stream.provideService(HttpClient.HttpClient, http),
         )) as never,
     }
     return service
