@@ -162,6 +162,42 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
             db.query(`UPDATE conversations SET title = ? WHERE id = ?`).run(title, id)
           }),
 
+        fork: (id: ConversationId, upToPosition?: number) =>
+          tryDb(() => {
+            const source = db
+              .query(`SELECT workspace_dir, title FROM conversations WHERE id = ?`)
+              .get(id) as { workspace_dir: string | null; title: string | null } | null
+            if (source === null) {
+              return Effect.runSync(
+                Effect.fail(new StoreError({ message: `conversation ${id} not found` })),
+              )
+            }
+            const forkId = ConversationId.make(crypto.randomUUID())
+            const cap = upToPosition ?? Number.MAX_SAFE_INTEGER
+            db.query(
+              `INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)`,
+            ).run(
+              forkId,
+              source.workspace_dir,
+              source.title === null ? null : `fork: ${source.title}`,
+              Date.now(),
+            )
+            db.query(
+              `INSERT INTO messages (conversation_id, position, content, created_at)
+               SELECT ?2, position, content, created_at FROM messages
+               WHERE conversation_id = ?1 AND position <= ?3`,
+            ).run(id, forkId, cap)
+            // The latest checkpoint WITHIN range rides along, so a forked
+            // long session loads its active window exactly like the source.
+            db.query(
+              `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
+               SELECT ?2, message_position, summary, created_at FROM checkpoints
+               WHERE conversation_id = ?1 AND message_position <= ?3
+               ORDER BY message_position DESC LIMIT 1`,
+            ).run(id, forkId, cap)
+            return forkId
+          }),
+
         listByWorkspace: (workspaceDir: string) =>
           tryDb(() =>
             (
