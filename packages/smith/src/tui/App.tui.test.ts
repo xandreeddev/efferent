@@ -196,6 +196,11 @@ describe("the smith TUI — frame-level regressions", () => {
     const menu = await waitFrame(tui, (f) => f.includes("general model"))
     expect(menu).toContain("code model")
     expect(menu).toContain("fast model")
+    // The P2.1 keys ride the same menu with their current values as tags.
+    expect(menu).toContain("fallback model")
+    expect(menu).toContain("sandbox")
+    expect(menu).toContain("max forge attempts")
+    expect(menu).toContain("forge budget")
     // Current values render as tags (the harness roles are g/c/f).
     expect(menu).toContain("g")
     // Enter on the highlighted row (general) opens the MODEL PICKER — the
@@ -204,6 +209,20 @@ describe("the smith TUI — frame-level regressions", () => {
     const picker = await waitFrame(tui, (f) => f.includes("Select the GENERAL model"))
     expect(picker).toContain("Select the GENERAL model")
     expect(tui.store.overlay().kind).toBe("select")
+  })
+
+  test(":settings → fallback model opens ITS picker with a clear row", async () => {
+    const tui = await boot()
+    await tui.setup.mockInput.typeText(":settings")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("fallback model"))
+    // Filter down to the fallback row, then Enter.
+    await tui.setup.mockInput.typeText("fallback")
+    tui.setup.mockInput.pressEnter()
+    const picker = await waitFrame(tui, (f) => f.includes("Select the FALLBACK model"))
+    expect(picker).toContain("none")
+    const overlay = tui.store.overlay()
+    expect(overlay.kind === "select" && overlay.purpose.tag).toBe("fallback-model")
   })
 
   test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {

@@ -18,6 +18,12 @@ import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
 import { openModelPicker, submitModel } from "./actions/model.js"
+import {
+  openFallbackPicker,
+  openNumberPicker,
+  submitSetting,
+  toggleSandbox,
+} from "./actions/settings.js"
 import { logout } from "./actions/login.js"
 import type { Overlay, SmithTuiContext } from "./state/store.js"
 
@@ -91,14 +97,39 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
             return
           }
           if (overlay.purpose.tag === "settings") {
-            // A settings row EDITS that setting: role rows open the model
-            // picker (the picker's Esc falls back to the closed state).
+            // A settings row EDITS that setting through the design system's
+            // existing overlays: roles → the model picker, fallback → its
+            // picker, sandbox → an in-place toggle, numerics → presets.
             ctx.store.closeOverlay()
             Option.match(value, {
               onNone: () => ctx.store.setNotice("nothing selected"),
-              onSome: (row) =>
-                openModelPicker(ctx, row === "code" || row === "fast" ? row : "general"),
+              onSome: (row) => {
+                if (row === "fallbackModel") return openFallbackPicker(ctx)
+                if (row === "sandbox") return toggleSandbox(ctx)
+                if (row === "maxAttempts" || row === "budgetMillis") {
+                  return openNumberPicker(ctx, row)
+                }
+                return openModelPicker(ctx, row === "code" || row === "fast" ? row : "general")
+              },
             })
+            return
+          }
+          if (overlay.purpose.tag === "fallback-model") {
+            submitSetting(ctx, "fallbackModel", value)
+            return
+          }
+          if (overlay.purpose.tag === "setting-number") {
+            const key = overlay.purpose.key
+            submitSetting(
+              ctx,
+              key,
+              value,
+              Option.getOrUndefined(
+                Option.map(value, (raw) =>
+                  key === "budgetMillis" ? `${Math.round(Number(raw) / 60_000)}m` : raw,
+                ),
+              ),
+            )
             return
           }
           // logout picker: the value IS the provider id.
