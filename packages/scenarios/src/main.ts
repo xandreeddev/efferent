@@ -10,6 +10,7 @@ import {
   writeBaseline,
 } from "./framework/baseline.js"
 import { defaultExtras, renderReport } from "./framework/report.js"
+import { canvasPack } from "./packs/canvas.js"
 import { mathPack } from "./packs/math.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 import { tuiPack } from "./packs/tui.js"
@@ -24,7 +25,12 @@ import { tuiPack } from "./packs/tui.js"
  * The keyed live batteries have their own entry: `bun run evals:live`.
  */
 
-const PACKS = { math: mathPack, "smith-spec": smithSpecPack, tui: tuiPack } as const
+const PACKS = {
+  canvas: canvasPack,
+  math: mathPack,
+  "smith-spec": smithSpecPack,
+  tui: tuiPack,
+} as const
 
 export const BASELINE_DIR = join(import.meta.dir, "..", "baselines")
 

@@ -7,7 +7,8 @@ export interface Prompt {
   readonly text: string
 }
 
-const MATH_PROMPT_VERSION = "2.0.0"
+/** Exported for pack meta (the ritual: change prompt → bump → battery). */
+export const MATH_PROMPT_VERSION = "2.0.0"
 
 /**
  * The `render_math` contract — the tutor's ONLY tool and only output channel.

@@ -1,0 +1,8 @@
+{
+  "mode": "scripted",
+  "mean": 1,
+  "scenarios": {
+    "render_ui gate bounce → corrective re-render (scripted twin)": 1
+  },
+  "mintedAt": "2026-07-10T20:00:25.585Z"
+}

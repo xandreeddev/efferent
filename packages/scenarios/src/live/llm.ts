@@ -40,6 +40,18 @@ export const codeTierCall = (cwd: string) => {
 export const generalTier = (cwd: string): Layer.Layer<LanguageModel.LanguageModel> =>
   LanguageModelLive.pipe(Layer.provide(stores(cwd)))
 
+/** One GENERAL-tier completion — the JUDGE tier for graded work produced on
+ *  other tiers (the critic must not ride the same model as the implementor
+ *  it grades, nor the digest probes the model that wrote the digest). */
+export const generalTierCall = (cwd: string) => {
+  const model = generalTier(cwd)
+  return (prompt: string): Effect.Effect<string, unknown> =>
+    LanguageModel.generateText({ prompt }).pipe(
+      Effect.map((response) => response.text),
+      Effect.provide(model),
+    )
+}
+
 /** The RESOLVED model ids per role, as provenance meta — merged into every
  *  live pack's `meta` so a model swap surfaces as version drift against the
  *  minted baseline exactly like a prompt bump (the models live in gitignored

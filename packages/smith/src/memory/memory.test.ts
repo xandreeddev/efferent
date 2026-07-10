@@ -156,6 +156,7 @@ const storeWith = (messages: ReadonlyArray<AgentMessage>) =>
     setTitle: () => Effect.void,
     listByWorkspace: () => Effect.succeed([]),
     fork: (id) => Effect.succeed(id),
+    prune: () => Effect.succeed(0),
   })
 
 const scriptedUtility = (responses: ReadonlyArray<string>) => {

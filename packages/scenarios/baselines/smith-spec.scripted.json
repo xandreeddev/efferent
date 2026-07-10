@@ -3,5 +3,10 @@
   "mean": 1,
   "scenarios": {
     "refine → lock → forge (scripted twin)": 1
-  }
+  },
+  "versions": {
+    "coder-prompt": "1.1.0",
+    "critic-rubric": "1.0.0"
+  },
+  "mintedAt": "2026-07-10T20:00:25.716Z"
 }

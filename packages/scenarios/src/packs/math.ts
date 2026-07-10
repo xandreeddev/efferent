@@ -6,7 +6,7 @@ import { Context, Effect, Layer, Ref, Stream } from "effect"
 import { ConversationStore } from "@xandreed/engine"
 import type { AgentMessage } from "@xandreed/engine"
 import { SqliteConversationStoreLive } from "@xandreed/providers"
-import { composeAgentMessage, makeMathSession } from "@xandreed/math"
+import { composeAgentMessage, makeMathSession, MATH_PROMPT_VERSION } from "@xandreed/math"
 import type { MathSession, MathSessionEvent } from "@xandreed/math"
 import type { Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
@@ -132,6 +132,7 @@ const rejectionReasons = (events: ReadonlyArray<MathSessionEvent>): ReadonlyArra
 export const mathPack: Pack = {
   name: "math",
   threshold: 0.95,
+  meta: { "math-prompt": MATH_PROMPT_VERSION },
   scenarios: [
     scenario<MathWorld>({
       name: "admission + session dedupe (scripted twin)",

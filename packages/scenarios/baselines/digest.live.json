@@ -1,15 +1,18 @@
 {
   "mode": "live",
-  "mean": 1,
+  "mean": 0.95,
   "scenarios": {
     "dead-ends-heavy": 1,
-    "long-clipped": 1,
-    "prior-handoff-fold": 1,
-    "simple-run": 1
+    "long-clipped": 0.95,
+    "prior-handoff-fold": 0.95,
+    "simple-run": 0.9
   },
   "versions": {
-    "digest-prompt": "1.0.0"
+    "digest-prompt": "1.0.0",
+    "model.general": "opencode:kimi-k2.6",
+    "model.code": "opencode:kimi-k2.7-code",
+    "model.fast": "opencode:deepseek-v4-flash"
   },
   "samples": 2,
-  "mintedAt": "2026-07-09T23:39:32.253Z"
+  "mintedAt": "2026-07-10T20:10:50.307Z"
 }

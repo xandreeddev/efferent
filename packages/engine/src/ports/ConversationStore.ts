@@ -71,5 +71,11 @@ export class ConversationStore extends Context.Tag("@xandreed/engine/Conversatio
       id: ConversationId,
       upToPosition?: number,
     ) => Effect.Effect<ConversationId, StoreError>
+    /** RETENTION: delete whole conversations created before `beforeEpochMs`
+     *  (messages + checkpoints + the conversation row) and reclaim the
+     *  space. Nothing calls this automatically — deletion is a deliberate,
+     *  human-initiated act on an otherwise append-only store. Returns the
+     *  number of conversations removed. */
+    readonly prune: (beforeEpochMs: number) => Effect.Effect<number, StoreError>
   }
 >() {}

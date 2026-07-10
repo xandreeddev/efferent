@@ -6,7 +6,10 @@
   },
   "versions": {
     "coder-prompt": "1.1.0",
-    "critic-rubric": "1.0.0"
+    "critic-rubric": "1.0.0",
+    "model.general": "opencode:kimi-k2.6",
+    "model.code": "opencode:kimi-k2.7-code",
+    "model.fast": "opencode:deepseek-v4-flash"
   },
-  "mintedAt": "2026-07-10T07:45:59.509Z"
+  "mintedAt": "2026-07-10T20:13:54.630Z"
 }

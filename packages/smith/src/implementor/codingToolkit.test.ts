@@ -22,6 +22,24 @@ const withHandlers = <A>(
   )
 
 describe("the smith coding handlers — the direct coder's hands", () => {
+  test("read_file refuses the credentials file — sandbox on or off", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    await withHandlers(cwd, (h) =>
+      Effect.gen(function* () {
+        const denied = yield* h
+          .read_file({ path: `${process.env.HOME}/.efferent/auth.json` })
+          .pipe(Effect.either)
+        expect(denied._tag).toBe("Left")
+        expect(JSON.stringify(denied)).toContain("credentials")
+        // A relative dodge resolves to the same file and is equally refused.
+        const dodged = yield* h
+          .read_file({ path: "../../../../../../../..//" + `${process.env.HOME}/.efferent/auth.json`.slice(1) })
+          .pipe(Effect.either)
+        expect(dodged._tag).toBe("Left")
+      }),
+    )
+  })
+
   test("edit_file: exact single match applies; ambiguity and misses bounce with guidance", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     writeFileSync(join(cwd, "a.ts"), "const x = 1\nconst y = 1\n")
