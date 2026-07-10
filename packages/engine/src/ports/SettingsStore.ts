@@ -23,6 +23,7 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
   fastModel: optionField(Schema.String),
   fallbackModel: optionField(Schema.String),
   sandbox: optionField(Schema.Boolean),
+  viMode: optionField(Schema.Boolean),
   maxAttempts: optionField(Schema.Number),
   budgetMillis: optionField(Schema.Number),
 }) {}
@@ -36,7 +37,13 @@ export type ModelRole = "general" | "code" | "fast"
 
 /** The non-role keys the keyed setter may write — a closed vocabulary, so a
  *  typo can never land a dead key in the user's config. */
-export const SETTINGS_KEYS = ["fallbackModel", "sandbox", "maxAttempts", "budgetMillis"] as const
+export const SETTINGS_KEYS = [
+  "fallbackModel",
+  "sandbox",
+  "viMode",
+  "maxAttempts",
+  "budgetMillis",
+] as const
 export type SettingsKey = (typeof SETTINGS_KEYS)[number]
 
 /**

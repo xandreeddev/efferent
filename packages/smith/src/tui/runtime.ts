@@ -97,6 +97,7 @@ const withTuiChassis = (
         },
         mode,
       )
+      store.setViEnabled(Option.getOrElse(settings.viMode, () => false))
 
       const exitDeferred = yield* Deferred.make<number>()
       const renderer = yield* Effect.acquireRelease(
