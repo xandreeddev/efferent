@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Option } from "effect"
 import type { Pack, PackReport } from "./model.js"
+import type { Baseline } from "./baseline.js"
 import {
   compareBaseline,
   readBaseline,
