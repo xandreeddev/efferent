@@ -73,6 +73,13 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
       }
       openModelPicker(ctx, role)
     }),
+    Match.when("branch", () => {
+      if (ctx.branch === undefined) {
+        ctx.store.setNotice(":branch only applies in the workspace session")
+        return
+      }
+      ctx.branch()
+    }),
     Match.when("resume", () => {
       if (ctx.resume === undefined) {
         ctx.store.setNotice(":resume only applies in the workspace session")

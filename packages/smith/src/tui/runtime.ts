@@ -761,6 +761,29 @@ export const makeWorkspaceBody = (
           Runtime.runFork(rt)(dropRefine)
         },
         resume: resumeSession,
+        branch: () => {
+          forked(
+            "branch",
+            Effect.gen(function* () {
+              const session = yield* Ref.get(refineRef)
+              yield* Option.match(session, {
+                onNone: () =>
+                  Effect.sync(() =>
+                    store.setNotice("nothing to branch — start or :resume a session first"),
+                  ),
+                onSome: (s) =>
+                  Effect.gen(function* () {
+                    const conv = yield* ConversationStore
+                    const forkId = yield* conv.fork(s.conversationId).pipe(Effect.orDie)
+                    yield* Effect.sync(() => {
+                      store.setNotice("branched — this is the FORK; the original is untouched")
+                      resumeSession(String(forkId))
+                    })
+                  }),
+              })
+            }),
+          )
+        },
         ship: () => {
           forked(
             "ship",
