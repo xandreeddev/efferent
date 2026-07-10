@@ -1,6 +1,7 @@
 /* efferent math — the standalone practice app's stylesheet.
  * Token-painted ONLY: every colour is var(--tok-*) from tokens.css (the math
- * shell hard-stamps <html data-theme="math">, the light design-system theme).
+ * shell hard-stamps <html data-theme="efferent">, the default dark theme —
+ * tokens.css's :root).
  * No Tailwind, no kit.css, no app.css — this file owns the whole surface.
  * Scales are local (math.css is the only stylesheet besides tokens.css). */
 

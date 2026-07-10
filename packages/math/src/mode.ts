@@ -10,7 +10,7 @@
  */
 import { HttpServer } from "@effect/platform"
 import { BunHttpServer } from "@effect/platform-bun"
-import { Deferred, Effect, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Layer } from "effect"
 import { ConversationStore, Shell } from "@xandreed/engine"
 import { WS_PATH } from "./web/contract.js"
 import { makeMathSession, type MathRunServices } from "./session.js"
@@ -126,14 +126,33 @@ export const runMathMode = (
 
     // Teardown on EVERY exit: interrupt the in-flight turn, then exit
     // explicitly — global daemon-fiber timers otherwise keep Bun alive.
-    yield* serve.pipe(
+    // The exit code is HONEST: a port-bind or store failure must not print
+    // "stopped" and exit 0 (the double-swallow hid every crash; audit).
+    const outcome = yield* serve.pipe(
       Effect.ensuring(
         Effect.sync(() => process.stderr.write("efferent math: server closed, finalizing…\n")).pipe(
           Effect.zipRight(session.shutdown),
         ),
       ),
-      Effect.catchAll(() => Effect.void),
+      Effect.exit,
     )
-    yield* Effect.sync(() => process.stderr.write("efferent math: stopped\n"))
-    yield* Effect.sync(() => process.exit(0))
-  }).pipe(Effect.catchAll(() => Effect.void))
+    yield* Exit.match(outcome, {
+      onSuccess: () =>
+        Effect.sync(() => {
+          process.stderr.write("efferent math: stopped\n")
+          process.exit(0)
+        }),
+      onFailure: (cause) =>
+        Effect.sync(() => {
+          process.stderr.write(`efferent math: FAILED\n${Cause.pretty(cause)}\n`)
+          process.exit(1)
+        }),
+    })
+  }).pipe(
+    Effect.catchAllCause((cause) =>
+      Effect.sync(() => {
+        process.stderr.write(`efferent math: FAILED\n${Cause.pretty(cause)}\n`)
+        process.exit(1)
+      }),
+    ),
+  )

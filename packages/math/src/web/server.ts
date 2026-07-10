@@ -57,6 +57,21 @@ const COOKIE = "efmath"
  *  instant because the refill lands while the student solves. */
 const REFILL_AT = 2
 
+/** The browser-level backstop behind `sanitizeMathml` (the canvas server's
+ *  posture, STRICTER here: no Alpine, no Tailwind runtime — so no
+ *  unsafe-eval, no unsafe-inline). Even markup that slipped the sanitizer
+ *  cannot reach the network, load foreign code, or post a form off-origin. */
+const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
+  "font-src 'self'",
+  "form-action 'self'",
+  "base-uri 'none'",
+].join("; ")
+
 const noContent = HttpServerResponse.empty({ status: 204 })
 const unauthorized = HttpServerResponse.text("unauthorized", { status: 401 })
 
@@ -177,6 +192,7 @@ export const mathRouter = (deps: {
             "set-cookie",
             `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`,
           ),
+          HttpServerResponse.setHeader("content-security-policy", CSP),
         )
       }),
     ),

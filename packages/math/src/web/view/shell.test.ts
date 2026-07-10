@@ -41,10 +41,12 @@ describe("math shell", () => {
     expect(card).toBeLessThan(controls)
   })
 
-  test("the design-system light theme is hard-stamped — no picker, no localStorage script", () => {
+  test("the default DARK theme is hard-stamped — no picker, no localStorage script", () => {
     const out = renderMathShell(view)
-    expect(out).toContain(`<html lang="en" data-theme="math">`)
-    expect(out).toContain(`<meta name="color-scheme" content="light" />`)
+    // "efferent" is tokens.css's :root — the stamp must name a theme that
+    // actually exists (data-theme="math" matched NOTHING; live-caught).
+    expect(out).toContain(`<html lang="en" data-theme="efferent">`)
+    expect(out).toContain(`<meta name="color-scheme" content="dark" />`)
     expect(out).not.toContain("localStorage")
     expect(out).not.toContain("ef-theme-pick")
   })
