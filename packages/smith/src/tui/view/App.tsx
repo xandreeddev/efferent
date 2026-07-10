@@ -4,6 +4,7 @@ import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
 import { dispatch, dispatchPaste } from "../keys.js"
+import { currentHit, searchNotice, startSearch } from "../presentation/search.js"
 import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
@@ -118,6 +119,19 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
     if (key.name === "pageup") scroll.current?.scrollBy(-8)
     if (key.name === "pagedown") scroll.current?.scrollBy(8)
   })
+  // Follow the /search: jump the viewport toward the current hit
+  // (proportional — block heights vary; the highlight does the precision).
+  createEffect(() => {
+    Option.match(currentHit(store.search()), {
+      onNone: () => {},
+      onSome: (at) => {
+        const box = scroll.current
+        const total = conversation().blocks.length
+        if (box === undefined || total === 0) return
+        box.scrollTop = Math.max(0, Math.floor((at / total) * box.scrollHeight - 4))
+      },
+    })
+  })
   const spin = () => glyph.spinner[store.spinner() % glyph.spinner.length]
   const elapsed = () => {
     store.spinner()
@@ -153,7 +167,15 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
         }
       >
         <For each={conversation().blocks}>
-          {(block) => {
+          {(block, index) => {
+            // The /search highlight: the CURRENT hit block wears the subtle
+            // cursor-line background; ctrl+n/ctrl+p move it.
+            const hit = () =>
+              Option.getOrElse(
+                Option.map(currentHit(store.search()), (at) => at === index()),
+                () => false,
+              )
+            const body = (() => {
             // Every block is flexShrink 0 on the COLUMN axis: yoga would
             // otherwise COMPRESS block heights to fit and the text would
             // overdraw its neighbors (live-caught fused rows) — excess
@@ -291,6 +313,12 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                     <text fg={tokens.text.dim} wrapMode="none">{"      …"}</text>
                   </Show>
                 </Show>
+              </box>
+            )
+            })()
+            return (
+              <box flexShrink={0} backgroundColor={hit() ? tokens.cursorLine : "transparent"}>
+                {body}
               </box>
             )
           }}
@@ -584,6 +612,19 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     if (value.length === 0) return
     if (value.startsWith(":")) {
       runTuiCommand(props.ctx, value)
+      return
+    }
+    // "/query" searches the story (vim muscle memory); bare "/" clears.
+    if (value.startsWith("/")) {
+      const found = startSearch(props.ctx.store.conversation().blocks, value.slice(1))
+      props.ctx.store.setSearch(found)
+      props.ctx.store.setNotice(
+        Option.match(found, {
+          onNone: () =>
+            value.trim() === "/" ? "search cleared" : `no hits for "${value.slice(1).trim()}"`,
+          onSome: searchNotice,
+        }),
+      )
       return
     }
     if (props.ctx.sendText !== undefined) {

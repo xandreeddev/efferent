@@ -12,6 +12,7 @@ import { initialRefine, reduceRefine, withUserLine } from "../presentation/refin
 import { costOf } from "../presentation/modelCatalog.js"
 import { initialHistory, pushHistory } from "../presentation/history.js"
 import type { HistoryState } from "../presentation/history.js"
+import type { SearchState } from "../presentation/search.js"
 import type { ConversationState } from "../presentation/conversation.js"
 import {
   initialConversation,
@@ -111,6 +112,9 @@ export interface SmithStore {
   /** The composer's ↑/↓ prompt ring (session-local, cap 50). */
   readonly history: Accessor<HistoryState>
   readonly setHistory: (state: HistoryState) => void
+  /** The live /search over the story, when one is active. */
+  readonly search: Accessor<Option.Option<SearchState>>
+  readonly setSearch: (state: Option.Option<SearchState>) => void
   /** One-line transient note (command feedback, interrupt notice). */
   readonly notice: Accessor<string>
   readonly setNotice: (text: string) => void
@@ -197,6 +201,7 @@ export const createSmithStore = (
   const [sessionCost, setSessionCost] = createSignal(0)
   const [toolExpand, setToolExpand] = createSignal(false)
   const [history, setHistory] = createSignal<HistoryState>(initialHistory)
+  const [search, setSearch] = createSignal<Option.Option<SearchState>>(Option.none())
   const apply = (event: SmithEvent): void => {
     setLastEventAt(Date.now())
     // The COST fold: every finished turn's usage priced at its model (the
@@ -228,7 +233,10 @@ export const createSmithStore = (
     setMode: (next) => setModeSig(next),
     refine,
     conversation,
-    resetConversation: () => setConversation(initialConversation),
+    resetConversation: () => {
+      setConversation(initialConversation)
+      setSearch(Option.none())
+    },
     addUserLine: (text) => {
       setRefine((state) => withUserLine(state, text))
       setConversation((state) => withUserBlock(state, text))
@@ -264,6 +272,8 @@ export const createSmithStore = (
     toggleToolExpand: () => setToolExpand((on) => !on),
     history,
     setHistory,
+    search,
+    setSearch,
     notice,
     setNotice,
     exitCode,
