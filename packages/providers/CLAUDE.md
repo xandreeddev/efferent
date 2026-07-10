@@ -37,7 +37,10 @@ src/
 │              FileLoggerLive(path) — append-only logfmt file logger (the
 │              TUI must never console-log)
 ├── store/     SqliteConversationStoreLive — bun:sqlite, its OWN db file
-│              (never the frozen line's efferent.db), atomic positions
+│              (never the frozen line's efferent.db), atomic positions;
+│              PRAGMA user_version + append-only MIGRATIONS; reads DECODE
+│              rows (a corrupt row is skipped with a warning, never bricks
+│              the trail); fork is one transaction; busy_timeout 5s; 0600
 ├── fs/ shell/ LocalFileSystemLive · LocalShellLive (non-zero exit = result)
 ```
 
