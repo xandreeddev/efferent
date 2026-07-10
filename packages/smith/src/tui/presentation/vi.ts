@@ -6,14 +6,15 @@ import { Option } from "effect"
  * small and predictable:
  *
  * - insert (the default; the composer behaves exactly as without vi) and
- *   normal (Esc leaves insert; in normal the textarea is BLURRED, so keys
- *   can never leak into the buffer).
+ *   normal (Esc leaves insert; the textarea stays FOCUSED so the block
+ *   cursor stays visible — the key layer preventDefaults every normal-mode
+ *   key before the textarea sees it, so nothing can leak into the buffer).
  * - motions: h l 0 $ w b · edits: x, dd, dw · inserts: i a I A ·
  *   j/k delegate to the prompt ring (the ↑/↓ recall — vim muscle memory).
  * - Esc IN normal falls through to the session's Esc (interrupt/clear) —
  *   one Esc rule, unchanged.
  *
- * Pure: the key layer owns focus/blur and applying the returned edit.
+ * Pure: the key layer owns swallowing keys and applying the returned edit.
  */
 
 export type ViMode = "insert" | "normal"

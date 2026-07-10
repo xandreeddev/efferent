@@ -40,6 +40,10 @@ export interface Key {
   readonly sequence?: string
   /** kitty protocol also delivers repeat/release — quit only on press. */
   readonly eventType?: string
+  /** OpenTUI guarantees global handlers run BEFORE renderable handlers —
+   *  calling this stops the focused textarea from also acting on the key
+   *  (vi normal mode swallows everything without unfocusing). */
+  readonly preventDefault?: () => void
 }
 
 /** Second Ctrl-C within this window quits; a lone press just warns —
@@ -219,22 +223,26 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
     return
   }
   // --- vi mode (enabled via :settings / config "viMode") ---
-  // Insert = the composer exactly as without vi; Esc parks the textarea
-  // (blur — a parked textarea can never swallow motion keys) and enters
-  // normal. In NORMAL, Esc falls THROUGH to the session's one Esc rule.
+  // Insert = the composer exactly as without vi. Esc enters NORMAL with the
+  // textarea STILL FOCUSED — the block cursor stays visible and tracks the
+  // motions; key leaks are impossible because preventDefault runs before
+  // any renderable handler (the old park/blur predated knowing that, and
+  // it cost the cursor). In NORMAL, Esc falls THROUGH to the one Esc rule.
   if (ctx.store.viEnabled() && key.ctrl !== true) {
     const vi = ctx.store.vi()
     if (vi.mode === "insert" && key.name === "escape") {
+      key.preventDefault?.()
       ctx.store.setVi({ mode: "normal", pending: Option.none() })
-      ctx.store.blurComposer()
       return
     }
     if (vi.mode === "normal" && key.name !== "escape") {
+      // EVERY normal-mode key is swallowed here — handled or not, it must
+      // never reach the buffer (a stray key inserting itself breaks vi).
+      key.preventDefault?.()
       if (key.name === "return") {
-        // Enter in normal SUBMITS the line (the composer's own binding is
-        // parked with the blur) and re-enters insert for the next prompt.
+        // Enter in normal SUBMITS the line and re-enters insert for the
+        // next prompt (the composer's own return binding was swallowed).
         ctx.store.setVi(initialVi)
-        ctx.store.focusComposer()
         ctx.store.submitComposer()
         return
       }
@@ -266,7 +274,6 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
               ctx.store.folds() ? "folds ON — finished tool groups collapse (za / :fold)" : "folds off",
             )
           }
-          if (applied.state.mode === "insert") ctx.store.focusComposer()
         },
       })
       return

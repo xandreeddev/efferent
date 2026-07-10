@@ -116,7 +116,21 @@ const withTuiChassis = (
       yield* Effect.forkScoped(runEventPump(queue, store.reduceBatch))
       yield* Effect.forkScoped(
         Effect.forever(
-          Effect.sync(() => store.tickSpinner()).pipe(Effect.delay("120 millis")),
+          Effect.sync(() => {
+            // The tick only drives the BUSY clocks (heartbeat spinner,
+            // elapsed, slow-hint) — an idle session gets ZERO periodic
+            // signal writes, so nothing re-renders at rest (the palette
+            // and burst check are event-driven off onContentChange).
+            const phase = store.floor().phase
+            if (
+              store.busy() ||
+              phase === "implementing" ||
+              phase === "gating" ||
+              phase === "boot"
+            ) {
+              store.tickSpinner()
+            }
+          }).pipe(Effect.delay("120 millis")),
         ),
       )
 
@@ -662,7 +676,11 @@ export const makeWorkspaceBody = (
           "forge",
           Effect.gen(function* () {
             const running = yield* Ref.get(forgeFiberRef)
-            if (Option.isSome(running)) {
+            // unsafePoll: only a fiber that hasn't EXITED blocks the next
+            // run — the set-after-fork vs ensuring-clear race can strand a
+            // finished fiber in the ref, and a stale Some must not wedge
+            // every future :forge behind "already running".
+            if (Option.isSome(running) && running.value.unsafePoll() === null) {
               yield* Effect.sync(() => store.setNotice("a forge is already running"))
               return
             }

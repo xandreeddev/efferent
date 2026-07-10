@@ -114,9 +114,8 @@ export const toggleViMode = (ctx: SmithTuiContext): void => {
   const next = !ctx.store.viEnabled()
   ctx.store.setViEnabled(next)
   if (!next) {
-    // Leaving vi with the textarea parked would strand the composer.
+    // Leaving vi mid-NORMAL must clear the badge and the block cursor.
     ctx.store.setVi({ mode: "insert", pending: Option.none() })
-    ctx.store.focusComposer()
   }
   void ctx.run(
     Effect.flatMap(SettingsStore, (store) =>
