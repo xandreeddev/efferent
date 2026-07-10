@@ -5,6 +5,7 @@ import { makeSession } from "./chassis.js"
 
 type Ev =
   | { readonly type: "note"; readonly text: string }
+  | { readonly type: "delta"; readonly text: string }
   | { readonly type: "error"; readonly message: string }
 
 const cid = ConversationId.make("00000000-0000-4000-8000-000000000001")
@@ -109,6 +110,41 @@ describe("makeSession", () => {
         const collected = yield* Fiber.join(taker)
         const seqs = [...collected].map((e) => e.seq)
         expect(seqs).toEqual([1, 2])
+      }),
+    )
+  })
+
+  test("isTransient routes to the lossy channel: never ledgered, never replayed, delivered live", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const session = yield* makeSession<Ev, never>({
+          conversationId: cid,
+          runTurn: (text, publish) =>
+            publish({ type: "delta", text: `${text}:d1` }).pipe(
+              Effect.zipRight(publish({ type: "delta", text: `${text}:d2` })),
+              Effect.zipRight(publish({ type: "note", text })),
+            ),
+          onError: (message) => ({ type: "error", message }),
+          isTransient: (event) => event.type === "delta",
+        })
+        const taker = yield* Effect.fork(
+          Stream.runCollect(Stream.take(session.transient, 2)),
+        )
+        yield* Effect.sleep("5 millis")
+        yield* session.send("go")
+        // The ledger holds ONLY the finalizer — a delta flood never grows it.
+        const { log, cursor } = yield* session.state
+        expect(cursor).toBe(1)
+        expect(log.map((e) => e.event)).toEqual([{ type: "note", text: "go" }])
+        // Replay sees no deltas either.
+        const replayed = yield* Stream.runCollect(Stream.take(session.subscribe(0), 1))
+        expect([...replayed].map((e) => e.event.type)).toEqual(["note"])
+        // But the live transient subscriber received them, in order.
+        const deltas = yield* Fiber.join(taker)
+        expect([...deltas].map((e) => (e.type === "delta" ? e.text : "?"))).toEqual([
+          "go:d1",
+          "go:d2",
+        ])
       }),
     )
   })

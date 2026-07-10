@@ -35,6 +35,9 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   readonly maxSteps?: number
   readonly pollableTools?: ReadonlyArray<string>
   readonly compaction?: CompactionPolicy
+  /** Stream turns (`assistant_delta` events while tokens flow); falls back
+   *  to settled turns on a pre-first-part failure. Default false. */
+  readonly streaming?: boolean
 }
 
 /** Turns to wait after a fold before folding again — anti-thrash. */
@@ -140,6 +143,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       ...(config.pollableTools !== undefined ? { pollableTools: config.pollableTools } : {}),
       ...(options?.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
       ...(config.compaction !== undefined ? { compact: compactWith(config.compaction) } : {}),
+      ...(config.streaming !== undefined ? { streaming: config.streaming } : {}),
       onTail,
     })
   })

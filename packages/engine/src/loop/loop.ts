@@ -1,6 +1,7 @@
 import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
-import { Effect, Match, Metric, Option } from "effect"
+import { Effect, Match, Metric, Option, Ref, Stream } from "effect"
+import { foldStreamParts } from "./streamFold.js"
 import type { LoopEvent } from "../domain/LoopEvent.js"
 import type { AgentMessage, AgentResult } from "../domain/Message.js"
 import { addUsage, zeroUsage } from "../domain/TokenUsage.js"
@@ -78,6 +79,14 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
     messages: ReadonlyArray<AgentMessage>,
     lastTurnUsage: TokenUsage,
   ) => Effect.Effect<Option.Option<CompactionPlan>, never, R>
+  /**
+   * Route turns through `streamText`, folding the parts back into the
+   * settled turn shape while fanning `assistant_delta` events as tokens
+   * flow. Default FALSE. A stream that fails before its first part
+   * (scripted providers' `Stream.die` included) falls back to
+   * `generateText` transparently — for the REST of the run, not per turn.
+   */
+  readonly streaming?: boolean
 }
 
 export const DEFAULT_MAX_STEPS = 100
@@ -164,6 +173,9 @@ interface LoopState {
   readonly toolCalls: number
   readonly toolFailures: number
   readonly corrections: number
+  /** Flips false after a pre-first-part stream failure — the rest of the
+   *  run goes straight to `generateText`, no per-turn re-probe. */
+  readonly streamingHealthy: boolean
 }
 
 export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
@@ -186,12 +198,81 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           ...toPromptMessages(state.messages),
         ] as never)
 
-        const outcome = yield* LanguageModel.generateText({
+        const callOptions = {
           prompt,
           toolkit,
           concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
-        }).pipe(
-          Effect.map((res) => ({ _tag: "ok" as const, res })),
+        }
+
+        /** Both paths land on the SAME settled shape — after this point the
+         *  turn body is identical code, streamed or not. */
+        const settled = (streamingHealthy: boolean) =>
+          LanguageModel.generateText(callOptions).pipe(
+            Effect.map((res) => ({
+              _tag: "ok" as const,
+              content: res.content as ReadonlyArray<unknown>,
+              finishReason: res.finishReason as string,
+              usage: res.usage as unknown,
+              streamingHealthy,
+            })),
+          )
+
+        // The streamed twin: fold parts into the settled shape, fanning
+        // assistant_delta events while tokens flow. A failure or defect
+        // BEFORE the first part (a scripted provider's Stream.die, a broken
+        // gateway) falls back to generateText for the rest of the run;
+        // after the first part, failures ride the existing turn handling
+        // (tool handlers may already have run — a replay would duplicate).
+        const streamed = Effect.gen(function* () {
+          const partSeen = yield* Ref.make(false)
+          const folded = yield* foldStreamParts(
+            LanguageModel.streamText(callOptions).pipe(
+              Stream.tap(() => Ref.set(partSeen, true)),
+            ),
+            (delta) =>
+              onEvent({
+                type: "assistant_delta",
+                turnIndex: state.turnIndex,
+                channel: delta.channel,
+                id: delta.id,
+                delta: delta.delta,
+              }),
+          ).pipe(
+            Effect.map((turn) =>
+              Option.some({
+                _tag: "ok" as const,
+                content: turn.content,
+                finishReason: turn.finishReason,
+                usage: turn.usage,
+                streamingHealthy: true,
+              }),
+            ),
+            Effect.catchAll((err) =>
+              Ref.get(partSeen).pipe(
+                Effect.flatMap((armed) =>
+                  armed ? Effect.fail(err) : Effect.succeed(Option.none<never>()),
+                ),
+              ),
+            ),
+            Effect.catchAllDefect((defect) =>
+              Ref.get(partSeen).pipe(
+                Effect.flatMap((armed) =>
+                  armed ? Effect.die(defect) : Effect.succeed(Option.none<never>()),
+                ),
+              ),
+            ),
+          )
+          return yield* Option.match(folded, {
+            onSome: Effect.succeed,
+            onNone: () =>
+              Effect.logWarning(
+                "streaming failed before any part arrived — falling back to generateText for this run",
+              ).pipe(Effect.zipRight(settled(false))),
+          })
+        })
+
+        const useStreaming = options.streaming === true && state.streamingHealthy
+        const outcome = yield* (useStreaming ? streamed : settled(state.streamingHealthy)).pipe(
           Effect.catchAll((err) =>
             (err as { readonly _tag?: string } | null)?._tag === "MalformedOutput"
               ? Effect.succeed({ _tag: "malformed" as const, err })
@@ -237,11 +318,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           } satisfies LoopState
         }
 
-        const res = outcome.res
         // Mint deterministic ids for id-less tool calls BEFORE the content
         // fans out into events + persisted messages (durable UI identity).
-        const content = withToolCallIds(res.content as ReadonlyArray<unknown>, state.turnIndex)
-        const usage = extractUsage(res.usage, content)
+        const content = withToolCallIds(outcome.content, state.turnIndex)
+        const usage = extractUsage(outcome.usage, content)
         const model = extractModel(content)
         const tail = withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
@@ -315,7 +395,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
 
         const finalText = text.length > 0 ? text : state.finalText
         const turnIndex = state.turnIndex + 1
-        const wantsMore = res.finishReason === "tool-calls" && toolCalls.length > 0
+        const wantsMore = outcome.finishReason === "tool-calls" && toolCalls.length > 0
         const broke = sig !== "" && stale >= REPEAT_BREAK_AT
         const phase: Phase = broke
           ? "degenerate-loop"
@@ -370,6 +450,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           toolCalls: state.toolCalls + toolCalls.length,
           toolFailures: state.toolFailures + toolResults.filter((tr) => !tr.ok).length,
           corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
+          streamingHealthy: outcome.streamingHealthy,
         } satisfies LoopState
       })
 
@@ -387,6 +468,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         toolCalls: 0,
         toolFailures: 0,
         corrections: 0,
+        streamingHealthy: true,
       } as LoopState,
       { while: (state) => state.phase === "continue", body: step },
     )
