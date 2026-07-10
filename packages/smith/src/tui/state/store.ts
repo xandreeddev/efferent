@@ -122,6 +122,9 @@ export interface SmithStore {
   readonly setViEnabled: (on: boolean) => void
   readonly vi: Accessor<ViState>
   readonly setVi: (state: ViState) => void
+  /** za / :fold — collapse finished tool groups to one line each. */
+  readonly folds: Accessor<boolean>
+  readonly toggleFolds: () => void
   /** The composer registers cursor get/set for vi motions. */
   readonly registerComposerCursor: (get: () => number, set: (at: number) => void) => void
   readonly composerCursor: () => number
@@ -223,6 +226,7 @@ export const createSmithStore = (
   const [search, setSearch] = createSignal<Option.Option<SearchState>>(Option.none())
   const [viEnabled, setViEnabled] = createSignal(false)
   const [vi, setVi] = createSignal<ViState>(initialVi)
+  const [folds, setFolds] = createSignal(false)
   const composerCursor = { current: (): number => 0 }
   const composerCursorSet = { current: (_at: number): void => {} }
   const composerFocus = { current: () => {} }
@@ -304,6 +308,8 @@ export const createSmithStore = (
     setViEnabled,
     vi,
     setVi,
+    folds,
+    toggleFolds: () => setFolds((on) => !on),
     registerComposerCursor: (get, set) => {
       composerCursor.current = get
       composerCursorSet.current = set

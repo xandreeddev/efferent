@@ -73,6 +73,12 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
       }
       openModelPicker(ctx, role)
     }),
+    Match.when("fold", () => {
+      ctx.store.toggleFolds()
+      ctx.store.setNotice(
+        ctx.store.folds() ? "folds ON — finished tool groups collapse (za / :fold)" : "folds off",
+      )
+    }),
     Match.when("branch", () => {
       if (ctx.branch === undefined) {
         ctx.store.setNotice(":branch only applies in the workspace session")

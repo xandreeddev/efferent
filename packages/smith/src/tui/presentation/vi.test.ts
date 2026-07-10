@@ -62,4 +62,14 @@ describe("vi normal mode", () => {
     expect(step("j", "", 0).recall).toBe("down")
     expect(Option.isNone(viNormalStep(normal, "q", "abc", 0))).toBe(true)
   })
+
+  test("za toggles folds; z + anything else cancels", () => {
+    const zPending = step("z", "", 0)
+    expect(Option.getOrThrow(zPending.state.pending)).toBe("z")
+    const toggled = Option.getOrThrow(viNormalStep(zPending.state, "a", "", 0))
+    expect(toggled.toggleFold).toBe(true)
+    const cancelled = Option.getOrThrow(viNormalStep(zPending.state, "x", "", 0))
+    expect(cancelled.toggleFold).toBeUndefined()
+    expect(Option.isNone(cancelled.state.pending)).toBe(true)
+  })
 })

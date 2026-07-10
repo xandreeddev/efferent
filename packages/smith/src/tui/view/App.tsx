@@ -5,6 +5,7 @@ import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
 import { dispatch, dispatchPaste } from "../keys.js"
 import { currentHit, searchNotice, startSearch } from "../presentation/search.js"
+import { foldedToolLine } from "../presentation/conversation.js"
 import { glyph, tokens } from "../theme.js"
 import type { SmithTuiContext } from "../state/store.js"
 import { attemptRowView } from "../presentation/floor.js"
@@ -175,6 +176,12 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 Option.map(currentHit(store.search()), (at) => at === index()),
                 () => false,
               )
+            // FOLDS: a finished tool group collapses to its opener's line;
+            // members render nothing (Show keeps Solid's keyed identity).
+            const fold = () =>
+              store.folds()
+                ? foldedToolLine(conversation().blocks, index())
+                : Option.none<string>()
             const body = (() => {
             // Every block is flexShrink 0 on the COLUMN axis: yoga would
             // otherwise COMPRESS block heights to fit and the text would
@@ -318,7 +325,19 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             })()
             return (
               <box flexShrink={0} backgroundColor={hit() ? tokens.cursorLine : "transparent"}>
-                {body}
+                <Show
+                  when={Option.isSome(fold())}
+                  fallback={body}
+                >
+                  <Show when={Option.getOrElse(fold(), () => "").length > 0}>
+                    <box flexDirection="row" flexShrink={0} marginTop={1}>
+                      <text fg={tokens.text.dim} flexShrink={0}>{"  ▸ "}</text>
+                      <text fg={tokens.text.dim} wrapMode="none">
+                        {Option.getOrElse(fold(), () => "")}
+                      </text>
+                    </box>
+                  </Show>
+                </Show>
               </box>
             )
           }}
