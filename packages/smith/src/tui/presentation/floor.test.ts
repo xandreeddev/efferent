@@ -140,4 +140,36 @@ describe("attemptRowView — bounded by construction", () => {
     })
     expect(Option.getOrThrow(failed.active).name).toBe("b")
   })
+
+  test("todo_write REPLACES the plan; malformed args leave it untouched", () => {
+    const plan = (todos: unknown) =>
+      ({
+        type: "agent",
+        event: {
+          type: "tool_start",
+          turnIndex: 0,
+          toolCallId: "t",
+          toolName: "todo_write",
+          args: { todos },
+        },
+      }) as const
+    const first = reduceFloor(initialFloor("t", 3), plan([
+      { text: "read the code", status: "done" },
+      { text: "write the fix", status: "in_progress" },
+      { text: "run the tests", status: "pending" },
+    ]))
+    expect(first.todos).toEqual([
+      { text: "read the code", status: "done" },
+      { text: "write the fix", status: "in_progress" },
+      { text: "run the tests", status: "pending" },
+    ])
+    // Replace-whole-list: the second call's list IS the plan.
+    const second = reduceFloor(first, plan([{ text: "ship it", status: "in_progress" }]))
+    expect(second.todos).toEqual([{ text: "ship it", status: "in_progress" }])
+    // Malformed: not an array → untouched; bad items are dropped.
+    expect(reduceFloor(second, plan("nope")).todos).toEqual(second.todos)
+    expect(
+      reduceFloor(second, plan([{ text: "ok", status: "pending" }, { nope: true }])).todos,
+    ).toEqual([{ text: "ok", status: "pending" }])
+  })
 })
