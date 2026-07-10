@@ -181,6 +181,9 @@ export interface EfferentImplementorOptions {
   readonly rules?: Option.Option<string>
   /** The curated workspace memory block (memory v2), pre-rendered. */
   readonly memory?: Option.Option<string>
+  /** MID-TURN steering (the engine's `pendingInput` seam): a human's note
+   *  typed while an attempt runs lands at the coder's next step. */
+  readonly pendingInput?: () => Effect.Effect<Option.Option<string>>
 }
 
 export const makeEfferentImplementorLive = (
@@ -328,7 +331,12 @@ export const makeEfferentImplementorLive = (
               },
               cid,
               brief,
-              { onEvent },
+              {
+                onEvent,
+                ...(options.pendingInput !== undefined
+                  ? { pendingInput: options.pendingInput }
+                  : {}),
+              },
             ).pipe(
               Effect.provide(handlers),
               Effect.provide(mcp.handlers),

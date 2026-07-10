@@ -67,6 +67,9 @@ export interface RefineSessionOptions {
   readonly resume?: ConversationId
   /** Test seam; absent ⇒ the real refiner agent over `runAgent`. */
   readonly agent?: RefineAgent
+  /** MID-TURN steering (the engine's `pendingInput` seam): text typed while
+   *  a turn runs lands at the next step instead of after the whole turn. */
+  readonly pendingInput?: () => Effect.Effect<Option.Option<string>>
 }
 
 /** The LAST successful propose_spec result in a persisted trail — the draft
@@ -143,6 +146,7 @@ export const makeRefineSession = (
     const realAgent: RefineAgent = (cid, prompt) =>
       runAgent(config, cid, prompt, {
         onEvent: (event) => publish({ type: "agent", event }),
+        ...(options.pendingInput !== undefined ? { pendingInput: options.pendingInput } : {}),
       }).pipe(
         Effect.provide(refinerLayer),
         Effect.provide(context),
