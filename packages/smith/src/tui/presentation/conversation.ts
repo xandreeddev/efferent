@@ -309,6 +309,9 @@ export const reduceConversationIn = (
     Match.when({ type: "refine_error" }, (e) =>
       push(sealStreaming(state), { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
     ),
+    Match.when({ type: "file_refs" }, (e) =>
+      push(state, { kind: "notice", text: `file refs: ${e.notes.join(" · ")}` }),
+    ),
     Match.when({ type: "vacuous_checks" }, (e) =>
       push(state, {
         kind: "notice",
