@@ -21,6 +21,10 @@ export interface CheckArgs {
   readonly configPath: string
   readonly baselinePath: Option.Option<string>
   readonly updateBaseline: boolean
+  /** `--update-baseline` is SHRINK-ONLY by default — grandfathering a NEW
+   *  finding requires this explicit flag (the ratchet must never grow by
+   *  accident in a routine re-mint). */
+  readonly allowGrow?: boolean
 }
 
 /** Load + Schema-validate a `GateSuiteConfig` module (default export). */
@@ -142,6 +146,15 @@ export const runCheck = (
           const baseline = yield* readBaseline(baselinePath)
           const diff = diffAgainstBaseline(entries, baseline)
           if (args.updateBaseline) {
+            if (diff.fresh.length > 0 && args.allowGrow !== true) {
+              yield* Effect.sync(() => {
+                console.log(
+                  `baseline: REFUSING to grow — ${diff.fresh.length} NEW finding${diff.fresh.length === 1 ? "" : "s"} would be grandfathered (fix them, or pass --allow-grow deliberately):`,
+                )
+                diff.fresh.forEach((entry) => console.log(`  ${renderFindingLine(entry.finding)}`))
+              })
+              return 1
+            }
             yield* writeBaseline(baselinePath, diff.current)
             yield* Effect.sync(() =>
               console.log(`baseline updated: ${diff.current.length} grandfathered findings → ${baselinePath}`),

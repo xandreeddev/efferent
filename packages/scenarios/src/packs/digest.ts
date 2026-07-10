@@ -145,6 +145,9 @@ export const digestPack: Pack = {
   threshold: 0.8,
   samples: 2,
   judgeWeight: 0.8,
+  // One golden case regressing must not hide behind another's headroom.
+  perScenarioRatchet: true,
+  perScenarioTolerance: 0.2,
   meta: { "digest-prompt": DIGEST_PROMPT_VERSION },
   scenarios: listCases(FIXTURES).map(digestScenario),
 }

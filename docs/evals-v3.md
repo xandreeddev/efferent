@@ -71,10 +71,14 @@ CheckResult = { pass: boolean, detail?: string }
   record findings without stopping.
 - **Judges** run once per scenario on the finished world, only in live mode —
   anchored-rubric LLM judges (the calibration machinery already guards them).
-- **Scoring.** deterministic score = weighted checks passed (hard checks weigh
-  the step; soft checks weigh within it); scenario mean folds judges in at the
-  suite's declared judge weight (default 0.3). Samples/pass@k/pass^k/stdev work
-  exactly as in v2 — the scenario replaces the case one-for-one in the stats.
+- **Scoring.** deterministic score = checks passed / checks evaluated, FLAT
+  across hard and soft (the planned hard/soft weighting never shipped — a
+  hard failure instead fail-closes the remaining steps, so it already
+  dominates). Beware the dilution: soft checks raise the floor under a hard
+  failure, so packs whose score must be exact (the calibration battery) use
+  a single hard check per scenario. The scenario folds judges in at the
+  pack's declared judge weight (default 0.3); `samples: k` runs a scenario
+  k times and records the mean.
 
 ## Evidence library (`framework/evidence.ts`)
 

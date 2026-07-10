@@ -310,6 +310,9 @@ export const memoryPack: Pack = {
   name: "memory",
   threshold: 0.9,
   judgeWeight: 0.7,
+  // One golden case regressing must not hide behind another's headroom.
+  perScenarioRatchet: true,
+  perScenarioTolerance: 0.15,
   meta: { "memory-prompts": MEMORY_PROMPTS_VERSION },
   scenarios: [
     ...listCases(EXTRACT_FIXTURES).map(extractScenario),

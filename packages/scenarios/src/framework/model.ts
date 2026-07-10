@@ -65,6 +65,11 @@ export interface Pack {
   /** Ratchet EVERY scenario against its minted score (not just the pack
    *  mean) — one case can no longer pay for another's regression. */
   readonly perScenarioRatchet?: boolean
+  /** Per-CASE tolerance when the per-scenario ratchet is on. Defaults to
+   *  the pack tolerance — but a k-sampled case moves in 1/k steps, so a
+   *  pack with samples: 3 wants ≥ 1/3 here or ONE flaky sample fails the
+   *  ratchet (a zero-tolerance gate wearing a tolerance; audit). */
+  readonly perScenarioTolerance?: number
   /** Provenance stamped into reports + minted baselines — prompt version
    *  constants ("judge-prompt": "1.0.0"), so a baseline delta is
    *  attributable to the prompt change that caused it. */

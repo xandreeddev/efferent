@@ -315,6 +315,10 @@ export const refinerPack: Pack = {
   samples: 2,
   judgeWeight: 0.4,
   tolerance: 0.1,
+  // One golden case regressing must not hide behind another's headroom;
+  // per-case is looser than the mean gate (k=2 + a judge = noisier cases).
+  perScenarioRatchet: true,
+  perScenarioTolerance: 0.2,
   meta: {
     "refiner-prompt": SPEC_REFINER_PROMPT_VERSION,
     "spec-quality-rubric": SPEC_QUALITY_RUBRIC_VERSION,

@@ -55,8 +55,17 @@ export const writeBaseline = (
   pack: Pack,
 ): void => {
   const path = baselinePath(dir, report.pack, report.mode)
+  const next = toBaseline(report, pack)
+  // A no-op re-mint must not churn the committed file: identical scores +
+  // provenance keep the ORIGINAL mintedAt (diff noise reads as change).
+  const unchanged = Option.match(readBaseline(dir, report.pack, report.mode), {
+    onNone: () => false,
+    onSome: (prev) =>
+      JSON.stringify({ ...prev, mintedAt: "" }) === JSON.stringify({ ...next, mintedAt: "" }),
+  })
+  if (unchanged) return
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(toBaseline(report, pack), null, 2) + "\n")
+  writeFileSync(path, JSON.stringify(next, null, 2) + "\n")
 }
 
 /** The default wobble tolerance; a pack may declare its own (live batteries
@@ -65,13 +74,15 @@ export const DEFAULT_TOLERANCE = 0.05
 
 /** `Some(message)` when the report regressed beyond the tolerance. With
  *  `perScenario`, EVERY scenario is a ratchet — a per-case drop past the
- *  tolerance fails even when the pack mean holds (one case can no longer
- *  pay for another's regression). */
+ *  per-scenario tolerance (defaults to the pack tolerance) fails even when
+ *  the pack mean holds (one case can no longer pay for another's
+ *  regression). */
 export const compareBaseline = (
   report: PackReport,
   baseline: Baseline,
   tolerance: number,
   perScenario = false,
+  perScenarioTolerance = tolerance,
 ): Option.Option<string> => {
   const meanDrop =
     report.mean < baseline.mean - tolerance
@@ -83,14 +94,34 @@ export const compareBaseline = (
     ? []
     : report.scenarios.flatMap((result) => {
         const minted = baseline.scenarios[result.name]
-        return result.status === "ran" && minted !== undefined && result.combined < minted - tolerance
-          ? [`"${result.name}" ${result.combined.toFixed(3)} < ${minted.toFixed(3)} − ${tolerance}`]
+        return result.status === "ran" &&
+          minted !== undefined &&
+          result.combined < minted - perScenarioTolerance
+          ? [
+              `"${result.name}" ${result.combined.toFixed(3)} < ${minted.toFixed(3)} − ${perScenarioTolerance}`,
+            ]
           : []
       })
   const drops = [...meanDrop, ...caseDrops]
   return drops.length === 0
     ? Option.none()
     : Option.some(`REGRESSION vs committed baseline: ${drops.join(" · ")}`)
+}
+
+/** Baseline entries no scenario in this run carries anymore — a RENAMED
+ *  fixture/scenario silently sheds its ratchet (the baseline keeps grading
+ *  a ghost while the renamed case starts fresh); surface it for review. */
+export const orphanedEntries = (
+  report: PackReport,
+  baseline: Baseline,
+): ReadonlyArray<string> => {
+  const names = new Set(report.scenarios.map((s) => s.name))
+  return Object.keys(baseline.scenarios)
+    .filter((name) => !names.has(name))
+    .map(
+      (name) =>
+        `baseline entry "${name}" matches no scenario in this run — renamed? its ratchet was shed; review and --update-baselines`,
+    )
 }
 
 /** `Some(warning)` when the pack's current prompt versions differ from the
@@ -102,9 +133,10 @@ export const versionDrift = (
 ): Option.Option<string> => {
   const current = pack.meta ?? {}
   const minted = baseline.versions ?? {}
-  const drifted = Object.keys({ ...current, ...minted }).filter(
-    (key) => current[key] !== minted[key],
-  )
+  // Only keys the baseline WAS minted with can drift — a provenance key
+  // added since (e.g. the model ids landing after the first mint) is new
+  // information, not a change; it rides in on the next legitimate re-mint.
+  const drifted = Object.keys(minted).filter((key) => current[key] !== minted[key])
   return drifted.length === 0
     ? Option.none()
     : Option.some(
