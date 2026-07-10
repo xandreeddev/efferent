@@ -65,11 +65,11 @@ const coerceSettingValue = (
       onSome: () => Effect.succeed(raw as unknown),
     })
   }
-  if (key === "sandbox") {
+  if (key === "sandbox" || key === "viMode") {
     if (raw === "true" || raw === "on") return Effect.succeed(true as unknown)
     if (raw === "false" || raw === "off") return Effect.succeed(false as unknown)
     return Effect.fail(
-      new SettingsError({ message: `sandbox must be true/false — got "${raw}"` }),
+      new SettingsError({ message: `${key} must be true/false — got "${raw}"` }),
     )
   }
   // maxAttempts / budgetMillis: positive integers (foundry re-validates the
@@ -109,6 +109,7 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
         fastModel: asString(merged["fastModel"]),
         fallbackModel: asString(merged["fallbackModel"]),
         sandbox: asBoolean(merged["sandbox"]),
+        viMode: asBoolean(merged["viMode"]),
         maxAttempts: asNumber(merged["maxAttempts"]),
         budgetMillis: asNumber(merged["budgetMillis"]),
       })

@@ -13,6 +13,8 @@ import { costOf } from "../presentation/modelCatalog.js"
 import { initialHistory, pushHistory } from "../presentation/history.js"
 import type { HistoryState } from "../presentation/history.js"
 import type { SearchState } from "../presentation/search.js"
+import { initialVi } from "../presentation/vi.js"
+import type { ViState } from "../presentation/vi.js"
 import type { ConversationState } from "../presentation/conversation.js"
 import {
   initialConversation,
@@ -115,6 +117,23 @@ export interface SmithStore {
   /** The live /search over the story, when one is active. */
   readonly search: Accessor<Option.Option<SearchState>>
   readonly setSearch: (state: Option.Option<SearchState>) => void
+  /** vi mode: enabled flag (settings-seeded, :settings toggles live). */
+  readonly viEnabled: Accessor<boolean>
+  readonly setViEnabled: (on: boolean) => void
+  readonly vi: Accessor<ViState>
+  readonly setVi: (state: ViState) => void
+  /** The composer registers cursor get/set for vi motions. */
+  readonly registerComposerCursor: (get: () => number, set: (at: number) => void) => void
+  readonly composerCursor: () => number
+  readonly setComposerCursor: (at: number) => void
+  /** The composer registers focus/blur so normal mode can PARK the
+   *  textarea (a blurred textarea can never swallow motion keys). */
+  readonly registerComposerFocus: (focus: () => void, blur: () => void) => void
+  readonly focusComposer: () => void
+  readonly blurComposer: () => void
+  /** The composer registers its submit so normal-mode Enter can send. */
+  readonly registerComposerSubmit: (submit: () => void) => void
+  readonly submitComposer: () => void
   /** One-line transient note (command feedback, interrupt notice). */
   readonly notice: Accessor<string>
   readonly setNotice: (text: string) => void
@@ -202,6 +221,13 @@ export const createSmithStore = (
   const [toolExpand, setToolExpand] = createSignal(false)
   const [history, setHistory] = createSignal<HistoryState>(initialHistory)
   const [search, setSearch] = createSignal<Option.Option<SearchState>>(Option.none())
+  const [viEnabled, setViEnabled] = createSignal(false)
+  const [vi, setVi] = createSignal<ViState>(initialVi)
+  const composerCursor = { current: (): number => 0 }
+  const composerCursorSet = { current: (_at: number): void => {} }
+  const composerFocus = { current: () => {} }
+  const composerBlur = { current: () => {} }
+  const composerSubmit = { current: () => {} }
   const apply = (event: SmithEvent): void => {
     setLastEventAt(Date.now())
     // The COST fold: every finished turn's usage priced at its model (the
@@ -274,6 +300,26 @@ export const createSmithStore = (
     setHistory,
     search,
     setSearch,
+    viEnabled,
+    setViEnabled,
+    vi,
+    setVi,
+    registerComposerCursor: (get, set) => {
+      composerCursor.current = get
+      composerCursorSet.current = set
+    },
+    composerCursor: () => composerCursor.current(),
+    setComposerCursor: (at) => composerCursorSet.current(at),
+    registerComposerFocus: (focus, blur) => {
+      composerFocus.current = focus
+      composerBlur.current = blur
+    },
+    focusComposer: () => composerFocus.current(),
+    blurComposer: () => composerBlur.current(),
+    registerComposerSubmit: (submit) => {
+      composerSubmit.current = submit
+    },
+    submitComposer: () => composerSubmit.current(),
     notice,
     setNotice,
     exitCode,

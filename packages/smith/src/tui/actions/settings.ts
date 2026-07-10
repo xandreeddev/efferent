@@ -49,6 +49,12 @@ export const openSettingsMenu = (ctx: SmithTuiContext): void => {
               desc: "Enter toggles",
             },
             {
+              value: Option.some("viMode"),
+              label: "vi mode (composer)",
+              tag: ctx.store.viEnabled() ? "on" : "off",
+              desc: "Enter toggles — applies NOW",
+            },
+            {
               value: Option.some("maxAttempts"),
               label: "max forge attempts",
               tag: Option.match(settings.maxAttempts, {
@@ -97,6 +103,29 @@ export const submitSetting = (
             ctx.store.setNotice(error.message)
           }),
         ),
+      ),
+    ),
+  )
+}
+
+/** Enter on the vi row FLIPS it — live (the key layer reads the store) and
+ *  persisted (the config key survives the session). */
+export const toggleViMode = (ctx: SmithTuiContext): void => {
+  const next = !ctx.store.viEnabled()
+  ctx.store.setViEnabled(next)
+  if (!next) {
+    // Leaving vi with the textarea parked would strand the composer.
+    ctx.store.setVi({ mode: "insert", pending: Option.none() })
+    ctx.store.focusComposer()
+  }
+  void ctx.run(
+    Effect.flatMap(SettingsStore, (store) =>
+      store.set("viMode", Option.some(next ? "true" : "false")).pipe(
+        Effect.map(() => {
+          ctx.store.setNotice(`vi mode ${next ? "on — Esc for NORMAL, i to type" : "off"}`)
+          openSettingsMenu(ctx)
+        }),
+        Effect.catchAll((error) => Effect.sync(() => ctx.store.setNotice(error.message))),
       ),
     ),
   )
