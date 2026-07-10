@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { join } from "node:path"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Metric, Option, Schema } from "effect"
 import { GateCrash, GateName, makeJudgeGate } from "@xandreed/foundry"
 import type { Gate, Spec, Workspace } from "@xandreed/foundry"
 import type { SpecDoc } from "@xandreed/engine"
@@ -145,6 +145,17 @@ First reason step by step. Then end your reply with EXACTLY one JSON object on t
  * The judge gate, closed over a one-shot strong-tier call supplied at the
  * session edge (composition happens there; the gate itself is `R = never`).
  */
+/** The judge's verdict counter — `smith_judge_verdicts_total{verdict}` in
+ *  Prometheus (via providers' TracingLive), the P4.1 telemetry the
+ *  calibration battery tunes against: false-block/false-pass move HERE in
+ *  production, agreement moves in the battery. */
+const judgeVerdicts = Metric.counter("smith.judge.verdicts", {
+  description: "judge gate verdicts by outcome",
+  incremental: true,
+})
+const countVerdict = (verdict: "sound" | "unsound" | "crash"): Effect.Effect<void> =>
+  Metric.increment(Metric.tagged(judgeVerdicts, "verdict", verdict)).pipe(Effect.asVoid)
+
 export const makeSmithJudgeGate = (options: {
   readonly spec: Spec
   readonly doc: Option.Option<SpecDoc>
@@ -180,6 +191,16 @@ export const makeSmithJudgeGate = (options: {
             }),
         ),
       )
+      yield* countVerdict(verdict.sound ? "sound" : "unsound")
+      yield* Effect.annotateCurrentSpan({
+        "smith.judge.sound": verdict.sound,
+        "smith.judge.reasons": verdict.reasons.slice(0, 3).join(" | ").slice(0, 300),
+      })
       return { sound: verdict.sound, reasons: verdict.reasons }
-    }),
+    }).pipe(
+      // A crash (unreachable model, unparseable verdict) counts too — a
+      // fail-closed judge that crashes often is a signal, not noise.
+      Effect.tapError(() => countVerdict("crash")),
+      Effect.withSpan("smith.judge"),
+    ),
   )
