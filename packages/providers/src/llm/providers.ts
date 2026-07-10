@@ -3,9 +3,9 @@ import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { GoogleClient, GoogleLanguageModel } from "@effect/ai-google"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "@effect/platform"
-import { Effect, Redacted } from "effect"
+import { Effect, FiberRef, Option, Redacted } from "effect"
 import type { Scope } from "effect"
-import { AuthError } from "@xandreed/engine"
+import { AuthError, CurrentPromptCacheKey } from "@xandreed/engine"
 import type { Credential, ModelSelection } from "@xandreed/engine"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
@@ -152,14 +152,22 @@ export const buildProvider = (
   if (selection.provider === "openai") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : OpenAiClient.make({ apiKey: key }).pipe(
-          Effect.flatMap((client) =>
-            OpenAiLanguageModel.make({
-              model: selection.modelId,
-              config: { prompt_cache_key: "efferent" },
-            }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
+      : Effect.flatMap(FiberRef.get(CurrentPromptCacheKey), (cacheKey) =>
+          OpenAiClient.make({ apiKey: key }).pipe(
+            Effect.flatMap((client) =>
+              OpenAiLanguageModel.make({
+                model: selection.modelId,
+                // The per-conversation cache lane, same as the compat path —
+                // one shared constant lane cross-evicts between conversations
+                // (construction happens per call, inside the run's fiber, so
+                // the FiberRef is set here).
+                config: {
+                  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+                },
+              }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
+            ),
+            Effect.map((svc) => ({ svc, prependClaudeCode: false })),
           ),
-          Effect.map((svc) => ({ svc, prependClaudeCode: false })),
         )
   }
   return Effect.fail(

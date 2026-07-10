@@ -281,6 +281,8 @@ const failStatus = (
       try: () => res.text(),
       catch: (e) => aiUnknown(config.moduleName, method, e),
     })
+    // (forEach, not Object.fromEntries — this lib config's Headers type has
+    // no entries(); the mutation is contained to this literal.)
     const headers: Record<string, string> = {}
     res.headers.forEach((value, headerName) => {
       headers[headerName] = value

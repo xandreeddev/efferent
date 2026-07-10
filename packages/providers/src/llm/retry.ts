@@ -12,9 +12,11 @@ import { Duration, Effect, Ref, Schedule, Stream } from "effect"
  * - An HTTP 200 with no text/tool-call/reasoning content is rejected as a
  *   transient failure (the "empty response that fake-completes a turn
  *   mid-thought" class) and rides the same retries.
- * - A `Retry-After` beyond {@link MAX_HONORED_RETRY_AFTER_MS} is a daily
- *   quota, not an outage — it fails fast rather than parking the run
- *   (the uncapped-Retry-After lesson).
+ * - A 429 whose `Retry-After` exceeds {@link MAX_HONORED_RETRY_AFTER_MS} is
+ *   a daily quota, not an outage — {@link classifyLlmError} calls it
+ *   PERMANENT so it fails fast instead of burning retries into the same
+ *   wall (the uncapped-Retry-After lesson: never park a run on a quota).
+ *   The fast-retry schedule itself never sleeps on the header.
  *
  * The previous line's multi-phase patient ladder (30-minute interactive
  * outage waits) is deliberately NOT ported yet — it needs a per-run
@@ -32,18 +34,41 @@ export const MAX_HONORED_RETRY_AFTER_MS = 60_000
 
 export type ErrorClass = "transient" | "permanent"
 
+/** `Retry-After` millis — the integer-seconds form or the HTTP-date form. */
+const retryAfterMillis = (
+  headers: Record<string, string> | undefined,
+): number | undefined => {
+  const raw = headers?.["retry-after"]
+  if (raw === undefined) return undefined
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds)) return seconds * 1000
+  const at = Date.parse(raw)
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
+}
+
 export const classifyLlmError = (error: unknown): ErrorClass => {
   const e = error as
     | {
         readonly _tag?: string
-        readonly response?: { readonly status?: number }
+        readonly response?: {
+          readonly status?: number
+          readonly headers?: Record<string, string>
+        }
         readonly description?: string
       }
     | null
   if (e === null || typeof e !== "object") return "permanent"
   if (e._tag === "HttpResponseError") {
     const status = e.response?.status ?? 0
-    return status === 429 || status >= 500 ? "transient" : "permanent"
+    if (status === 429) {
+      const wait = retryAfterMillis(e.response?.headers)
+      // Beyond the honored cap this is a daily quota — retrying in seconds
+      // hits the same wall; fail fast and let the caller change model.
+      return wait !== undefined && wait > MAX_HONORED_RETRY_AFTER_MS
+        ? "permanent"
+        : "transient"
+    }
+    return status >= 500 ? "transient" : "permanent"
   }
   // Transport/timeout/empty-body failures arrive as UnknownError (fetch
   // rejection, our timeout, the empty-response rejection below).

@@ -18,6 +18,25 @@ describe("classifyLlmError", () => {
     expect(classifyLlmError({ _tag: "MalformedOutput" })).toBe("permanent")
     expect(classifyLlmError("boom")).toBe("permanent")
   })
+
+  test("429 with a Retry-After beyond the honored cap is a DAILY QUOTA — permanent", () => {
+    const quota429 = (retryAfter: string) => ({
+      _tag: "HttpResponseError",
+      response: { status: 429, headers: { "retry-after": retryAfter } },
+    })
+    // Seconds form: 1h is a quota, 5s is an outage blip.
+    expect(classifyLlmError(quota429("3600"))).toBe("permanent")
+    expect(classifyLlmError(quota429("5"))).toBe("transient")
+    // HTTP-date form: far future = quota.
+    expect(classifyLlmError(quota429(new Date(Date.now() + 7_200_000).toUTCString()))).toBe(
+      "permanent",
+    )
+    // No header / garbage header: plain transient 429.
+    expect(
+      classifyLlmError({ _tag: "HttpResponseError", response: { status: 429, headers: {} } }),
+    ).toBe("transient")
+    expect(classifyLlmError(quota429("soon-ish"))).toBe("transient")
+  })
 })
 
 describe("rejectEmptyResponse", () => {
