@@ -28,6 +28,9 @@ export type SmithEvent =
   /** RED-FIRST: accept checks that already PASS on the untouched workspace —
    *  vacuous (they cannot measure this spec's work). A warning, not a stop. */
   | { readonly type: "vacuous_checks"; readonly names: ReadonlyArray<string> }
+  /** `@path` refs in a composer message that did NOT inline (missing,
+   *  binary, glob, budget) — advisory notes for the notice line. */
+  | { readonly type: "file_refs"; readonly notes: ReadonlyArray<string> }
   /** The harness capabilities loaded for this run — workspace skills and the
    *  external MCP tools, surfaced once at session start so what the coder can
    *  reach is VISIBLE (progressive disclosure is otherwise silent). */
