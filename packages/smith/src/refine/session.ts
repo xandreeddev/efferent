@@ -4,6 +4,7 @@ import { ConfigError } from "@xandreed/foundry"
 import { ConversationStore, runAgent, SpecSlug } from "@xandreed/engine"
 import { loadForgeLessons, loadWorkspaceRules } from "../forge/session.js"
 import type { AgentMessage, ConversationId, FileSystem, Shell, SpecDoc } from "@xandreed/engine"
+import { expandFileRefs } from "./fileRefs.js"
 import {
   makeSpecRefinerHandlers,
   specRefinerAgentConfig,
@@ -184,7 +185,13 @@ export const makeRefineSession = (
       currentDraft: readDraft,
       send: (text) =>
         Effect.gen(function* () {
-          yield* agent(conversationId, text, tools)
+          // @path refs expand into inline file blocks (bounded; notes ride
+          // the notice line via refine_error? no — they are advisory only).
+          const expanded = yield* expandFileRefs(cwd, text).pipe(Effect.provide(context))
+          yield* expanded.notes.length > 0
+            ? publish({ type: "file_refs", notes: expanded.notes })
+            : Effect.void
+          yield* agent(conversationId, expanded.text, tools)
           const draft = yield* readDraft
           yield* Option.match(draft, {
             onNone: () => Effect.void,

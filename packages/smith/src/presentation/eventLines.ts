@@ -76,6 +76,9 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
         })}\n  gates: ${e.gateNames.join(" → ")} · attempts ≤ ${e.spec.limits.maxAttempts}`,
       ),
     ),
+    Match.when({ type: "file_refs" }, (e) =>
+      Option.some(`  ⚠ file refs: ${e.notes.join(" · ")}`),
+    ),
     Match.when({ type: "vacuous_checks" }, (e) =>
       Option.some(
         `⚠ red-first: ${e.names.join(", ")} already pass on the UNTOUCHED workspace — they cannot measure this spec's work`,
