@@ -63,7 +63,7 @@ const program = Effect.gen(function* () {
           ? Option.none<Baseline>()
           : readBaseline(BASELINE_DIR, report.pack, report.mode)
         const regression = Option.flatMap(baseline, (b) =>
-          compareBaseline(report, b, pack.tolerance ?? DEFAULT_TOLERANCE),
+          compareBaseline(report, b, pack.tolerance ?? DEFAULT_TOLERANCE, pack.perScenarioRatchet === true),
         )
         if (args.update) writeBaseline(BASELINE_DIR, report, pack)
         return { pack, report, regression }
