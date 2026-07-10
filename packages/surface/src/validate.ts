@@ -20,6 +20,7 @@ export interface UiFinding {
     | "hx-wiring"
     | "a11y-min"
     | "no-arbitrary-values"
+    | "no-color-utilities"
     | "no-self-trigger"
     | "alpine-expr"
   readonly detail: string
@@ -164,6 +165,27 @@ const noArbitraryValues = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFin
     }))
   })
 
+/** 4b · No Tailwind COLOR utilities: colours come from the cv-* design
+ *  tokens, so a retheme changes ONE :root block — a page painted with
+ *  `bg-red-500` won't follow (the "Tailwind for LAYOUT gaps only" contract
+ *  was prompt-level; this makes it structural). Catches `bg-red-500`,
+ *  `text-emerald-400/50`, `border-white`, `from-purple-900`… — layout
+ *  utilities (`flex`, `gap-4`, `md:grid-cols-2`) pass untouched. */
+const COLOR_PREFIX =
+  /^(?:[a-z-]+:)*(?:bg|text|border|ring|outline|fill|stroke|from|via|to|divide|decoration|accent|caret|shadow|placeholder)-/
+const COLOR_NAME =
+  /^(?:[a-z-]+:)*[a-z]+-(?:(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}|white|black)(?:\/\d{1,3})?$/
+const noColorUtilities = (tokens: ReadonlyArray<TagToken>): ReadonlyArray<UiFinding> =>
+  tokens.flatMap((t) => {
+    const classes = (t.attrs.get("class") ?? "")
+      .split(/\s+/)
+      .filter((cls) => COLOR_PREFIX.test(cls) && COLOR_NAME.test(cls))
+    return classes.map((cls) => ({
+      rule: "no-color-utilities" as const,
+      detail: `class "${cls}" paints a Tailwind palette colour — use the cv-* kit (cv-badge--ok, cv-card--accent, …) or plain semantic markup; colours come from the design tokens so the page retheme stays one edit`,
+    }))
+  })
+
 /* ------------------------------------------------------------------ */
 
 /** 5 · No SELF-FIRING triggers: `hx-trigger="load"` / `every Ns` / `revealed`
@@ -235,6 +257,7 @@ export const validateUi = (
     ...hxWiring(html, tokens),
     ...a11yMin(html, tokens),
     ...noArbitraryValues(tokens),
+    ...noColorUtilities(tokens),
     ...noSelfTrigger(tokens),
     ...(alpine ? alpineExpr(tokens) : []),
   ]

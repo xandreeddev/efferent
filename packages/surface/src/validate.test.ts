@@ -73,6 +73,20 @@ describe("validateUi — the ui-builder's hard gates", () => {
     expect(rules(`<div hx-get="/action/ui" data-hx-trigger="load"></div><input name="ui-id" value="p" />`)).toContain("no-self-trigger")
   })
 
+  test("no-color-utilities: palette colours are rejected; layout utilities pass", () => {
+    expect(rules(`<div class="cv-card bg-red-500">x</div>`)).toContain("no-color-utilities")
+    expect(rules(`<span class="text-emerald-400/50">x</span>`)).toContain("no-color-utilities")
+    expect(rules(`<div class="border-white">x</div>`)).toContain("no-color-utilities")
+    expect(rules(`<div class="md:hover:bg-purple-900">x</div>`)).toContain("no-color-utilities")
+    // Layout stays free: flex/grid/gap/width — including fraction widths the
+    // progress-bar contract depends on — and the cv-* kit itself.
+    expect(
+      rules(`<div class="flex gap-4 md:grid-cols-2 max-w-lg mt-2 w-1/2 cv-badge--ok">x</div>`),
+    ).not.toContain("no-color-utilities")
+    // text-SIZE is not a colour.
+    expect(rules(`<p class="text-lg text-center">x</p>`)).not.toContain("no-color-utilities")
+  })
+
   test("findings accumulate across families and render deterministically", () => {
     const bad = `
       <script>x</script>
