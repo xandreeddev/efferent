@@ -37,6 +37,7 @@ Usage:
   bun run smith spec "<rough idea>" [flags]   refine a SpecDoc (-p: one unattended draft; --yes locks)
   bun run smith forge <slug|spec.md> [flags]  forge a LOCKED spec
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
+  bun run smith mcp [--cwd <dir>]             serve the READ-ONLY workspace tools over MCP stdio
   bun run smith selftest                      the factory smoke test: a canned prompt forges
                                               to completion in a THROWAWAY workspace (real
                                               providers, real gates; exit 0 = the stack works)
@@ -65,7 +66,7 @@ there), .efferent/config.json local-over-global; smith defaults sit UNDER your
 config. Exit: 0 accepted/locked · 1 rejected · 2 error.`
 
 interface ParseState {
-  readonly command: Option.Option<"spec" | "forge">
+  readonly command: Option.Option<"spec" | "forge" | "mcp">
   readonly selftest: boolean
   readonly yes: boolean
   readonly task: Option.Option<string>
@@ -157,6 +158,7 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
       if (token === "spec") return { ...state, command: Option.some("spec" as const) }
       if (token === "forge") return { ...state, command: Option.some("forge" as const) }
       if (token === "selftest" && !state.selftest) return { ...state, selftest: true }
+      if (token === "mcp") return { ...state, command: Option.some("mcp" as const) }
     }
     return Option.isNone(state.task)
       ? { ...state, task: Option.some(token) }
@@ -265,6 +267,23 @@ if (isDirectRun) {
     process.exit(0)
   }
   const command = Option.getOrUndefined(state.command)
+  // `smith mcp` — the read-only workspace tools over stdio. Runs BEFORE the
+  // model/settings machinery: an MCP server needs no key and must not touch
+  // stdout with anything but JSON-RPC.
+  if (command === "mcp") {
+    const { runMcpServe } = await import("./mcp/serve.js")
+    await Effect.runPromise(
+      runMcpServe(state.cwd).pipe(
+        Effect.catchAll((cause) =>
+          Effect.sync(() => {
+            console.error(`smith mcp: ${String(cause)}`)
+            return undefined as never
+          }),
+        ),
+      ) as Effect.Effect<never>,
+    )
+    process.exit(2)
+  }
   const bare = task === undefined && command === undefined && !state.selftest
   const bareInteractive = bare && !state.headless && process.stdout.isTTY === true
   if ((bare && !bareInteractive) || state.errors.length > 0) {
