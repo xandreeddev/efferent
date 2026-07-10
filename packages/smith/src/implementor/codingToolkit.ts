@@ -3,6 +3,7 @@ import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Option, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/engine"
 import { discoverSkills, readSkill } from "../skills/skills.js"
+import { nativeGlob, nativeGrep } from "./nativeSearch.js"
 
 /**
  * The direct coder's toolkit on the NEW LINE — a capable single agent doing
@@ -304,28 +305,19 @@ export const makeSmithCodingHandlers = (cwd: string) =>
 
       grep: (params: { pattern: string; dir?: string | undefined }) =>
         Effect.gen(function* () {
+          // Native (pure-TS over Bun.Glob + reads): no system-grep
+          // dependency, deterministic sorted walk, binary files skipped.
           const dir = resolve(params.dir ?? ".")
-          const result = yield* shell
-            .exec(
-              `grep -rnE --exclude-dir=node_modules --exclude-dir=.git -- ${JSON.stringify(params.pattern)} ${JSON.stringify(dir)} | head -200`,
-              { cwd },
-            )
-            .pipe(Effect.mapError((e) => ({ error: "GrepFailed", message: e.message })))
-          const clipped = clipText(result.stdout, OUTPUT_CAP_CHARS)
-          return { matches: clipped.text, truncated: clipped.truncated }
+          const result = yield* nativeGrep(dir, params.pattern)
+          const clipped = clipText(result.matches, OUTPUT_CAP_CHARS)
+          return { matches: clipped.text, truncated: result.truncated || clipped.truncated }
         }),
 
       glob: (params: { pattern: string; dir?: string | undefined }) =>
         Effect.gen(function* () {
           const dir = resolve(params.dir ?? ".")
-          const result = yield* shell
-            .exec(
-              `find ${JSON.stringify(dir)} -name ${JSON.stringify(params.pattern)} -not -path "*/node_modules/*" -not -path "*/.git/*" | head -200`,
-              { cwd },
-            )
-            .pipe(Effect.mapError((e) => ({ error: "GlobFailed", message: e.message })))
-          const paths = result.stdout.split("\n").filter((line) => line.length > 0)
-          return { paths, truncated: paths.length >= 200 }
+          const result = yield* nativeGlob(dir, params.pattern)
+          return { paths: result.paths, truncated: result.truncated }
         }),
 
       ls: (params: { path?: string | undefined }) =>
