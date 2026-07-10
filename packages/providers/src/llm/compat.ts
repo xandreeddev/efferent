@@ -1,6 +1,8 @@
 import { AiError, LanguageModel, Tool } from "@effect/ai"
 import type { Prompt } from "@effect/ai"
 import { Effect, Option, Stream } from "effect"
+import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
+import type { CompletionUsage } from "./sse.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -8,9 +10,10 @@ import { Effect, Option, Stream } from "effect"
  * gateways like OpenCode's speak the same protocol at a different base URL
  * with a Bearer key, so this client is parameterized by `chatUrl` + `apiKey`.
  *
- * v1 is deliberately NON-streaming (`stream: false`): the engine's loop
- * consumes whole turns via `generateText`, so SSE assembly buys nothing yet.
- * `streamText` fails with a clear error until a driver needs it.
+ * `generateText` consumes whole turns (`stream: false`); `streamText` runs
+ * the same request with `stream: true` through the pure SSE state machine in
+ * `sse.ts`. Errors BEFORE any stream part surface with the same taxonomy as
+ * `generateText` — that boundary is what the retry gate (router) keys on.
  */
 
 type Json = Record<string, unknown>
@@ -161,21 +164,7 @@ interface ChatCompletion {
       }>
     }
   }>
-  readonly usage?: {
-    readonly prompt_tokens?: number
-    readonly completion_tokens?: number
-    readonly total_tokens?: number
-    readonly prompt_cache_hit_tokens?: number
-    readonly cached_tokens?: number
-    readonly prompt_tokens_details?: { readonly cached_tokens?: number }
-  }
-}
-
-const finishReason = (raw: string | undefined): string => {
-  if (raw === "tool_calls") return "tool-calls"
-  if (raw === "length") return "length"
-  if (raw === "content_filter") return "content-filter"
-  return "stop"
+  readonly usage?: CompletionUsage
 }
 
 /** Parse one non-streaming completion into `@effect/ai` encoded parts. */
@@ -216,12 +205,6 @@ export const fromChatCompletion = (
           }),
       }),
     )
-    const usage = body.usage ?? {}
-    const cached =
-      usage.prompt_cache_hit_tokens ??
-      usage.cached_tokens ??
-      usage.prompt_tokens_details?.cached_tokens ??
-      0
     return [
       ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
         ? [{ type: "reasoning", text: reasoning }]
@@ -232,66 +215,95 @@ export const fromChatCompletion = (
       ...toolCalls,
       {
         type: "finish",
-        reason: toolCalls.length > 0 ? "tool-calls" : finishReason(choice.finish_reason),
-        usage: {
-          inputTokens: usage.prompt_tokens ?? 0,
-          outputTokens: usage.completion_tokens ?? 0,
-          totalTokens: usage.total_tokens ?? 0,
-          cachedInputTokens: cached,
-        },
+        reason:
+          toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
+        usage: usageFromCompletion(body.usage),
       },
     ]
   })
 
+/** The one request shape both paths send; only `stream` differs (streaming
+ *  additionally asks the gateway to attach usage to the final chunk). */
+const chatRequestBody = (
+  config: CompatConfig,
+  options: { readonly prompt: Prompt.Prompt; readonly tools: ReadonlyArray<Tool.Any>; readonly toolChoice?: unknown },
+  streaming: boolean,
+): Json => {
+  const tools = toChatTools(options.tools)
+  return {
+    model: config.model,
+    messages: toChatMessages(options.prompt),
+    stream: streaming,
+    ...(streaming ? { stream_options: { include_usage: true } } : {}),
+    ...thinkingParams(config.model),
+    ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
+  }
+}
+
+const postChat = (
+  config: CompatConfig,
+  method: string,
+  body: Json,
+): Effect.Effect<Response, AiError.AiError> =>
+  Effect.tryPromise({
+    try: () =>
+      (config.fetchImpl ?? fetch)(config.chatUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      }),
+    catch: (e) => aiUnknown(config.moduleName, method, e),
+  })
+
+/** A non-OK status → `HttpResponseError` with the status + a body excerpt —
+ *  identical taxonomy on both paths (the retry classifier reads it). */
+const failStatus = (
+  config: CompatConfig,
+  method: string,
+  res: Response,
+): Effect.Effect<never, AiError.AiError> =>
+  Effect.gen(function* () {
+    const text = yield* Effect.tryPromise({
+      try: () => res.text(),
+      catch: (e) => aiUnknown(config.moduleName, method, e),
+    })
+    const headers: Record<string, string> = {}
+    res.headers.forEach((value, headerName) => {
+      headers[headerName] = value
+    })
+    return yield* Effect.fail(
+      new AiError.HttpResponseError({
+        module: config.moduleName,
+        method,
+        reason: "StatusCode",
+        request: requestInfo(config.chatUrl),
+        response: { status: res.status, headers },
+        description: text.slice(0, 500),
+      }),
+    )
+  })
+
 export const makeCompatLanguageModel = (
   config: CompatConfig,
-): Effect.Effect<LanguageModel.Service> => {
-  const doFetch = config.fetchImpl ?? fetch
-  return LanguageModel.make({
+): Effect.Effect<LanguageModel.Service> =>
+  LanguageModel.make({
     generateText: (options) =>
       Effect.gen(function* () {
-        const tools = toChatTools(options.tools)
-        const body: Json = {
-          model: config.model,
-          messages: toChatMessages(options.prompt),
-          stream: false,
-          ...thinkingParams(config.model),
-          ...(tools.length > 0
-            ? { tools, tool_choice: toToolChoice(options.toolChoice) }
-            : {}),
+        const res = yield* postChat(
+          config,
+          "generateText",
+          chatRequestBody(config, options, false),
+        )
+        if (!res.ok) {
+          return yield* failStatus(config, "generateText", res)
         }
-        const res = yield* Effect.tryPromise({
-          try: () =>
-            doFetch(config.chatUrl, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                authorization: `Bearer ${config.apiKey}`,
-              },
-              body: JSON.stringify(body),
-            }),
-          catch: (e) => aiUnknown(config.moduleName, "generateText", e),
-        })
         const text = yield* Effect.tryPromise({
           try: () => res.text(),
           catch: (e) => aiUnknown(config.moduleName, "generateText", e),
         })
-        if (!res.ok) {
-          const headers: Record<string, string> = {}
-          res.headers.forEach((value, headerName) => {
-            headers[headerName] = value
-          })
-          return yield* Effect.fail(
-            new AiError.HttpResponseError({
-              module: config.moduleName,
-              method: "generateText",
-              reason: "StatusCode",
-              request: requestInfo(config.chatUrl),
-              response: { status: res.status, headers },
-              description: text.slice(0, 500),
-            }),
-          )
-        }
         const parsed = yield* Effect.try({
           try: () => JSON.parse(text) as ChatCompletion,
           catch: () =>
@@ -303,13 +315,28 @@ export const makeCompatLanguageModel = (
         })
         return (yield* fromChatCompletion(config.moduleName, parsed)) as never
       }),
-    streamText: () =>
-      Stream.fail(
-        aiUnknown(
-          config.moduleName,
-          "streamText",
-          "streaming is not implemented on the new line yet — use generateText",
-        ),
+    streamText: (options) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const res = yield* postChat(
+            config,
+            "streamText",
+            chatRequestBody(config, options, true),
+          )
+          if (!res.ok) {
+            return yield* failStatus(config, "streamText", res)
+          }
+          const body = res.body
+          if (body === null) {
+            return yield* Effect.fail(
+              new AiError.MalformedOutput({
+                module: config.moduleName,
+                method: "streamText",
+                description: "the streaming response carried no body",
+              }),
+            )
+          }
+          return sseStreamParts({ moduleName: config.moduleName, body })
+        }),
       ) as never,
   })
-}
