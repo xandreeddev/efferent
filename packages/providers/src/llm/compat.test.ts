@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "@effect/ai"
-import { Effect, Schema } from "effect"
-import { Failure } from "@xandreed/engine"
+import { Effect, Option, Schema } from "effect"
+import { CurrentPromptCacheKey, Failure } from "@xandreed/engine"
 import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
@@ -209,5 +209,25 @@ describe("makeCompatLanguageModel", () => {
   test("Echo tool declaration shape is exported for the request", () => {
     // Pin the JSON-schema mapping the gateway sees.
     expect(Tool.isUserDefined(Echo)).toBe(true)
+  })
+
+  test("the engine's cache identity rides as prompt_cache_key; absent when unstamped", async () => {
+    const { calls, impl } = capture()
+    const svc = await Effect.runPromise(
+      makeCompatLanguageModel({
+        moduleName: "Test",
+        chatUrl: "https://gw.example/chat",
+        apiKey: "k",
+        model: "m",
+        fetchImpl: impl,
+      }),
+    )
+    const request = svc.generateText({ prompt: [{ role: "user", content: "hi" }] } as never)
+    await Effect.runPromise(
+      request.pipe(Effect.locally(CurrentPromptCacheKey, Option.some("conv-abc"))),
+    )
+    await Effect.runPromise(request)
+    expect((calls[0]?.body as { prompt_cache_key?: string }).prompt_cache_key).toBe("conv-abc")
+    expect("prompt_cache_key" in (calls[1]?.body as Record<string, unknown>)).toBe(false)
   })
 })
