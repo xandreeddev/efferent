@@ -1,0 +1,1 @@
+add a stats module (mean, median) with tests, matching how this repo does things

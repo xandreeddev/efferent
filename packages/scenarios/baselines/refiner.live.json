@@ -1,0 +1,17 @@
+{
+  "mode": "live",
+  "mean": 0.9825000000000002,
+  "scenarios": {
+    "existing-conventions": 0.98,
+    "oversized-idea": 0.99,
+    "red-first-trap": 0.99,
+    "tiny-utility": 0.99,
+    "vague-idea": 0.9625
+  },
+  "versions": {
+    "refiner-prompt": "1.2.0",
+    "spec-quality-rubric": "1.0.0"
+  },
+  "samples": 2,
+  "mintedAt": "2026-07-10T00:12:18.025Z"
+}
