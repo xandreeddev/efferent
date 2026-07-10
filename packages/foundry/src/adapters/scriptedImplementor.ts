@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { WorkspacePath } from "../domain/Brands.js"
 import { ImplementorError } from "../domain/Errors.js"
 import { Implementor } from "../ports/Implementor.js"
@@ -12,10 +12,13 @@ export interface ScriptedWrite {
 /**
  * A deterministic implementor: attempt N writes `steps[N-1]` — how the loop
  * is exercised key-free in tests and CI (an attempt past the script writes
- * nothing, so the verdict repeats until a cap trips).
+ * nothing, so the verdict repeats until a cap trips). An optional `ref`
+ * stamps every receipt (provenance-dependent consumers — smith's post-run
+ * follow-up — test against it).
  */
 export const makeScriptedImplementor = (
   steps: ReadonlyArray<ReadonlyArray<ScriptedWrite>>,
+  options: { readonly ref?: string } = {},
 ): Layer.Layer<Implementor> =>
   Layer.succeed(Implementor, {
     implement: ({ attempt, workspaceDir }) => {
@@ -24,7 +27,10 @@ export const makeScriptedImplementor = (
         writeWorkspaceFile(workspaceDir, write.path, write.content),
       ).pipe(
         Effect.mapError((e) => new ImplementorError({ attempt, message: e.message })),
-        Effect.as({ filesTouched: writes.map((w) => WorkspacePath.make(w.path)) }),
+        Effect.as({
+          filesTouched: writes.map((w) => WorkspacePath.make(w.path)),
+          ...(options.ref !== undefined ? { ref: Option.some(options.ref) } : {}),
+        }),
       )
     },
   })
