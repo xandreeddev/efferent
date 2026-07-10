@@ -2,6 +2,10 @@
  * The smith design system — the cli convention (palette → semantic tokens +
  * glyphs; no raw hex or glyph literal outside this file), trimmed to one
  * static theme (no live switcher; smith is a focused single view).
+ *
+ * DARK-TERMINAL NATIVE: the palette assumes a dark background (ink on white
+ * is ~1.5:1 — unreadable). A light variant means a second palette selected
+ * at startup, not per-token overrides.
  */
 const palette = {
   ink: "#d8d4c8",
@@ -57,6 +61,10 @@ export const glyph = {
   pointer: ">",
   more: { above: "↑", below: "↓" },
   activeTag: "◀",
+  disclosure: "▸",
+  warn: "⚠",
+  dot: "●",
+  circle: "○",
   cursorBlock: "█",
   rule: "─",
   bullet: "·",

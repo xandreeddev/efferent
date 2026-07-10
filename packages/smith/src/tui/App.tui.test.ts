@@ -541,4 +541,30 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(done).toMatch(/✓\d+ ✗\d+/)
     expect(done).not.toContain("a-rather-long-acceptance-check-name-7")
   })
+
+  test("vi NORMAL: keys are swallowed (never inserted), motions edit, i re-enters insert", async () => {
+    const tui = await boot()
+    tui.store.setViEnabled(true)
+    await tui.setup.mockInput.typeText("hello")
+    await waitFrame(tui, () => tui.store.composerText() === "hello")
+    tui.setup.mockInput.pressEscape()
+    await waitFrame(tui, () => tui.store.vi().mode === "normal")
+    const badge = await waitFrame(tui, (f) => f.includes("-- NORMAL --"))
+    expect(badge).toContain("-- NORMAL --")
+    // The textarea stays FOCUSED in normal mode — these keys reach dispatch
+    // first (preventDefault), so they must EDIT, never insert themselves:
+    // 0 → line start, x → delete under cursor.
+    await tui.setup.mockInput.typeText("0")
+    await tui.setup.mockInput.typeText("x")
+    await waitFrame(tui, () => tui.store.composerText() === "ello")
+    expect(tui.store.composerText()).toBe("ello")
+    // i re-enters insert; typing lands in the buffer again (at the cursor,
+    // which x left at column 0).
+    await tui.setup.mockInput.typeText("i")
+    await waitFrame(tui, () => tui.store.vi().mode === "insert")
+    await tui.setup.mockInput.typeText("h")
+    await waitFrame(tui, () => tui.store.composerText() === "hello")
+    expect(tui.store.composerText()).toBe("hello")
+    expect(tui.store.vi().mode).toBe("insert")
+  }, 15_000)
 })

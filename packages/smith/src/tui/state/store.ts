@@ -90,9 +90,15 @@ export interface SmithStore {
   /** Epoch ms of the last agent event — silence beyond a threshold renders
    *  the "model is slow" hint. */
   readonly lastEventAt: Accessor<number>
-  /** The composer registers a text reader so the : palette can follow it. */
+  /** The composer registers a text reader so key handling reads the EXACT
+   *  buffer (pre-key truth at dispatch time). */
   readonly registerComposerRead: (read: () => string) => void
   readonly composerText: () => string
+  /** The REACTIVE mirror of the composer text — fed by the textarea's
+   *  onContentChange, so the palette re-derives when the text actually
+   *  changes instead of polling the clock. */
+  readonly composerLive: Accessor<string>
+  readonly syncComposerLive: (text: string) => void
   /** The composer registers a text writer so Tab-completion can fill it. */
   readonly registerComposerSet: (set: (text: string) => void) => void
   readonly setComposer: (text: string) => void
@@ -129,11 +135,6 @@ export interface SmithStore {
   readonly registerComposerCursor: (get: () => number, set: (at: number) => void) => void
   readonly composerCursor: () => number
   readonly setComposerCursor: (at: number) => void
-  /** The composer registers focus/blur so normal mode can PARK the
-   *  textarea (a blurred textarea can never swallow motion keys). */
-  readonly registerComposerFocus: (focus: () => void, blur: () => void) => void
-  readonly focusComposer: () => void
-  readonly blurComposer: () => void
   /** The composer registers its submit so normal-mode Enter can send. */
   readonly registerComposerSubmit: (submit: () => void) => void
   readonly submitComposer: () => void
@@ -229,9 +230,8 @@ export const createSmithStore = (
   const [folds, setFolds] = createSignal(false)
   const composerCursor = { current: (): number => 0 }
   const composerCursorSet = { current: (_at: number): void => {} }
-  const composerFocus = { current: () => {} }
-  const composerBlur = { current: () => {} }
   const composerSubmit = { current: () => {} }
+  const [composerLive, setComposerLive] = createSignal("")
   const apply = (event: SmithEvent): void => {
     setLastEventAt(Date.now())
     // The COST fold: every finished turn's usage priced at its model (the
@@ -284,10 +284,17 @@ export const createSmithStore = (
       composerRead.current = read
     },
     composerText: () => composerRead.current(),
+    composerLive,
+    syncComposerLive: (text) => setComposerLive(text),
     registerComposerSet: (set) => {
       composerSet.current = set
     },
-    setComposer: (text) => composerSet.current(text),
+    setComposer: (text) => {
+      composerSet.current(text)
+      // Programmatic writes mirror immediately — onContentChange also fires,
+      // but reactive readers must never lag a set by a frame.
+      setComposerLive(text)
+    },
     queued,
     enqueue: (text) => setQueued((q) => [...q, text]),
     drainQueue: () => {
@@ -316,12 +323,6 @@ export const createSmithStore = (
     },
     composerCursor: () => composerCursor.current(),
     setComposerCursor: (at) => composerCursorSet.current(at),
-    registerComposerFocus: (focus, blur) => {
-      composerFocus.current = focus
-      composerBlur.current = blur
-    },
-    focusComposer: () => composerFocus.current(),
-    blurComposer: () => composerBlur.current(),
     registerComposerSubmit: (submit) => {
       composerSubmit.current = submit
     },
@@ -342,7 +343,10 @@ export const createSmithStore = (
     registerComposerClear: (clear) => {
       composerClear.current = clear
     },
-    clearComposer: () => composerClear.current(),
+    clearComposer: () => {
+      composerClear.current()
+      setComposerLive("")
+    },
     workspace,
     setWorkspace: (view) => setWorkspaceSig(view),
     resetFloor: (task, maxAttempts) => setFloor(initialFloor(task, maxAttempts)),

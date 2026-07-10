@@ -1,5 +1,5 @@
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
-import { createEffect, For, Show } from "solid-js"
+import { createEffect, createMemo, For, Show } from "solid-js"
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
@@ -17,8 +17,6 @@ import { contextWindowOf, fmtCost } from "../presentation/modelCatalog.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
 import { computePalette } from "../presentation/palette.js"
-
-const TRANSCRIPT_ROWS = 20
 
 const cellColor = (state: GateCell["state"]): string =>
   state === "pass"
@@ -202,7 +200,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               // treatment read as "everything grayish".
               return (
                 <box flexDirection="column" flexShrink={0} marginTop={1}>
-                  <text fg={tokens.text.bright} wrapMode="none">{`  ▸ ${block.tag}`}</text>
+                  <text fg={tokens.text.bright} wrapMode="none">{`  ${glyph.disclosure} ${block.tag}`}</text>
                   <box flexDirection="row">
                     <text flexShrink={0}>{"    "}</text>
                     <text fg={tokens.text.bright} wrapMode="word" flexShrink={1}>
@@ -221,7 +219,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
               return (
                 <box flexDirection="column" flexShrink={0} marginTop={block.leading ? 1 : 0}>
                   <Show when={block.leading}>
-                    <text fg={tokens.text.bright} wrapMode="none">{`  ▸ ${block.tag}`}</text>
+                    <text fg={tokens.text.bright} wrapMode="none">{`  ${glyph.disclosure} ${block.tag}`}</text>
                   </Show>
                   <Show when={block.text.length > 0}>
                     <text fg={tokens.text.bright} wrapMode="word">{`  ${block.text}`}</text>
@@ -242,7 +240,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             if (block.kind === "notice") {
               return (
                 <box flexDirection="row" flexShrink={0} marginTop={1}>
-                  <text fg={tokens.state.warn} flexShrink={0}>{"  ⚠ "}</text>
+                  <text fg={tokens.state.warn} flexShrink={0}>{`  ${glyph.warn} `}</text>
                   <text fg={tokens.state.warn} wrapMode="word" flexShrink={1}>
                     {block.text}
                   </text>
@@ -294,7 +292,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
             return (
               <box flexDirection="column" flexShrink={0} marginTop={block.first ? 1 : 0}>
                 <box flexDirection="row">
-                  <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
+                  <text fg={statusColor} flexShrink={0}>{`  ${glyph.dot} `}</text>
                   <text fg={statusColor} flexShrink={0}>{block.name}</text>
                   <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
                     {`(${relArg(block.arg)})`}
@@ -331,7 +329,7 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 >
                   <Show when={Option.getOrElse(fold(), () => "").length > 0}>
                     <box flexDirection="row" flexShrink={0} marginTop={1}>
-                      <text fg={tokens.text.dim} flexShrink={0}>{"  ▸ "}</text>
+                      <text fg={tokens.text.dim} flexShrink={0}>{`  ${glyph.disclosure} `}</text>
                       <text fg={tokens.text.dim} wrapMode="none">
                         {Option.getOrElse(fold(), () => "")}
                       </text>
@@ -401,7 +399,7 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
           <text fg={tokens.text.dim} marginTop={1}>  checks (run as gates)</text>
           <For each={doc()?.checks ?? []}>
             {(check) => (
-              <text fg={tokens.state.ok} wrapMode="none">{`    ✓ ${check.name}: ${check.command}`}</text>
+              <text fg={tokens.state.ok} wrapMode="none">{`    ${glyph.pass} ${check.name}: ${check.command}`}</text>
             )}
           </For>
         </Show>
@@ -432,7 +430,7 @@ const FlowPanel = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
   const steps = () => flowView(store.mode(), store.refine(), store.floor())
   const stepGlyph = (state: FlowStep["state"]): string =>
-    state === "done" ? glyph.pass : state === "current" ? "●" : "○"
+    state === "done" ? glyph.pass : state === "current" ? glyph.dot : glyph.circle
   const stepColor = (state: FlowStep["state"]): string =>
     state === "done"
       ? tokens.state.ok
@@ -557,7 +555,7 @@ const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
               }
               wrapMode="none"
             >
-              {`  ${todo.status === "done" ? "✓" : todo.status === "in_progress" ? "▸" : "·"} ${todo.text}`}
+              {`  ${todo.status === "done" ? glyph.pass : todo.status === "in_progress" ? glyph.disclosure : glyph.pending} ${todo.text}`}
             </text>
           )}
         </For>
@@ -666,12 +664,9 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
   }
   // FAST-INPUT BURST: a terminal delivering "text\r" as ONE stdin chunk
   // never fires the return keybinding — the newline lands IN the buffer and
-  // the message silently doesn't send. Poll (the palette's spinner-tick
-  // pattern): an embedded newline splits — head submits, tail keeps typing.
-  createEffect(() => {
-    props.ctx.store.spinner()
-    const renderable = ref.current
-    if (renderable === undefined) return
+  // the message silently doesn't send. onContentChange catches it the
+  // moment it lands: head submits, tail keeps typing.
+  const splitBurst = (renderable: TextareaRenderable): void => {
     const text = renderable.plainText
     const at = [...text].findIndex((ch) => ch === "\r" || ch === "\n")
     if (at < 0) return
@@ -680,6 +675,17 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     renderable.setText(tail)
     renderable.cursorOffset = tail.length
     submitText(head)
+  }
+  // vim's visual contract, all STEADY (a blinking cursor resets phase on
+  // every frame — during streaming it reads as flicker; live complaint):
+  // BLOCK in normal (and without vi), LINE in insert.
+  createEffect(() => {
+    const renderable = ref.current
+    if (renderable === undefined) return
+    const viOn = props.ctx.store.viEnabled()
+    const normal = viOn && props.ctx.store.vi().mode === "normal"
+    renderable.cursorStyle =
+      viOn && !normal ? { style: "line", blinking: false } : { style: "block", blinking: false }
   })
   // NO placeholder — the input is bare (agy). The footer owns the hints.
   return (
@@ -689,6 +695,13 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
         ref={(renderable: TextareaRenderable) => {
           ref.current = renderable
           renderable.focus()
+          renderable.cursorStyle = { style: "block", blinking: false }
+          // The reactive mirror + the burst split, both EVENT-driven — this
+          // is what retired the 8×/s spinner polling here and in the palette.
+          renderable.onContentChange = () => {
+            props.ctx.store.syncComposerLive(renderable.plainText)
+            splitBurst(renderable)
+          }
           props.ctx.store.registerComposerClear(() => renderable.setText(""))
           props.ctx.store.registerComposerRead(() => renderable.plainText)
           props.ctx.store.registerComposerSet((text) => {
@@ -697,17 +710,13 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
             // the completed line keeps typing forward, not from column 0.
             renderable.cursorOffset = text.length
           })
-          // vi: normal mode PARKS the textarea (blur) and moves the cursor
-          // through these; insert re-focuses.
+          // vi: normal-mode motions move the REAL cursor (the textarea stays
+          // focused; keys are swallowed upstream by preventDefault).
           props.ctx.store.registerComposerCursor(
             () => renderable.cursorOffset,
             (at) => {
               renderable.cursorOffset = at
             },
-          )
-          props.ctx.store.registerComposerFocus(
-            () => renderable.focus(),
-            () => renderable.blur(),
           )
           props.ctx.store.registerComposerSubmit(() => submit())
         }}
@@ -723,12 +732,9 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
 }
 
 /** The live `:` palette — command matches render under the composer as you
- *  type (polled off the spinner tick; the textarea has no input event). */
+ *  type. Event-driven: composerLive changes exactly when the text does. */
 const Palette = (props: { ctx: SmithTuiContext }) => {
-  const rows = () => {
-    props.ctx.store.spinner()
-    return computePalette(props.ctx.store.composerText().trim())
-  }
+  const rows = createMemo(() => computePalette(props.ctx.store.composerLive().trim()))
   return (
     <Show when={rows().length > 0}>
       <box flexDirection="column" flexShrink={0}>
@@ -785,7 +791,7 @@ const ComposerFrame = (props: { ctx: SmithTuiContext }) => {
   const viBadge = () =>
     store.viEnabled() && store.vi().mode === "normal" ? "   -- NORMAL --" : ""
   const rolesLine = () =>
-    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}${cost()}${viBadge()}`
+    `${glyph.dot} general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}${cost()}${viBadge()}`
   return (
     <box flexDirection="column" flexShrink={0} marginTop={1}>
       <Show when={store.notice().length > 0}>
