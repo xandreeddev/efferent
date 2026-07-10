@@ -70,4 +70,38 @@ describe("the baseline module", () => {
     const bare = toBaseline(report(), pack())
     expect(Option.isNone(versionDrift(pack(), bare))).toBe(true)
   })
+
+  test("perScenario ratchet: a case drop fails even when the mean holds", () => {
+    const baseline: Baseline = {
+      mode: "live",
+      mean: 0.9,
+      scenarios: { "case-a": 1.0, "case-b": 0.8 },
+    }
+    const report: PackReport = {
+      pack: "p",
+      mode: "live",
+      mean: 0.9,
+      threshold: 0.5,
+      passed: true,
+      scenarios: [
+        { name: "case-a", status: "ran", checks: [], judges: [], score: 0.7, combined: 0.7 },
+        { name: "case-b", status: "ran", checks: [], judges: [], score: 1.1, combined: 1.1 },
+      ],
+    }
+    // Mean-only: fine (0.9 ≥ 0.9 − 0.05).
+    expect(Option.isNone(compareBaseline(report, baseline, 0.05))).toBe(true)
+    // Per-scenario: case-a dropped 1.0 → 0.7.
+    const caught = Option.getOrThrow(compareBaseline(report, baseline, 0.05, true))
+    expect(caught).toContain("case-a")
+    expect(caught).not.toContain("case-b")
+    // Skipped results and unminted cases never ratchet.
+    const withSkip: PackReport = {
+      ...report,
+      scenarios: [
+        { name: "case-a", status: "skipped", checks: [], judges: [], score: 0, combined: 0 },
+        { name: "brand-new", status: "ran", checks: [], judges: [], score: 0.1, combined: 0.1 },
+      ],
+    }
+    expect(Option.isNone(compareBaseline(withSkip, baseline, 0.05, true))).toBe(true)
+  })
 })

@@ -172,6 +172,9 @@ export const judgeCalibrationPack: Pack = {
   name: "judge-calibration",
   threshold: 0.8,
   samples: 3,
+  // Per-CASE ratchet: a sound case going false-block can never be paid
+  // for by an unsound case's margin — agreement is per-label, not a mean.
+  perScenarioRatchet: true,
   meta: { "judge-prompt": JUDGE_PROMPT_VERSION },
   summary: calibrationSummary,
   scenarios: listCases(FIXTURES).map(judgeScenario),
