@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Metric, Option, Schema } from "effect"
 import { Spec, WorkspacePath } from "@xandreed/foundry"
 import type { Workspace } from "@xandreed/foundry"
 import { extractVerdictJson, gatherEvidence, judgePrompt, makeSmithJudgeGate } from "./judge.js"
@@ -101,5 +101,39 @@ describe("makeSmithJudgeGate", () => {
       expect(exit._tag).toBe("Failure")
       expect(String(exit)).toContain("GateCrash")
     })
+  })
+
+  test("verdicts move the smith.judge.verdicts counter by outcome", async () => {
+    const counter = (verdict: string) =>
+      Effect.runPromise(
+        Metric.value(
+          Metric.tagged(
+            Metric.counter("smith.judge.verdicts", {
+              description: "judge gate verdicts by outcome",
+              incremental: true,
+            }),
+            "verdict",
+            verdict,
+          ),
+        ),
+      ).then((state) => state.count)
+    const before = await counter("unsound")
+    const beforeCrash = await counter("crash")
+    const gate = makeSmithJudgeGate({
+      spec,
+      doc: Option.none(),
+      call: () => Effect.succeed('{"sound": false, "reasons": ["hardcoded output"]}'),
+    })
+    const findings = await Effect.runPromise(gate.run(workspace))
+    expect(findings).toHaveLength(1)
+    expect((await counter("unsound")) - before).toBe(1)
+    // A crash counts too — a frequently-crashing fail-closed judge is signal.
+    const crashing = makeSmithJudgeGate({
+      spec,
+      doc: Option.none(),
+      call: () => Effect.fail("provider down"),
+    })
+    await Effect.runPromiseExit(crashing.run(workspace))
+    expect((await counter("crash")) - beforeCrash).toBe(1)
   })
 })
