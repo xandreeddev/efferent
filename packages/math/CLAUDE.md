@@ -5,8 +5,8 @@
 (question + answer key + hint + worked solution) through its ONE tool,
 `render_math`; the SERVER grades every answer instantly against the exercise's
 own key — no model round-trip, no chat. Private, source-run only
-(`bun run math`); depends on sdk-core + sdk-adapters + @xandreed/web and
-NEVER on the cli (boundaries-gated both ways).
+(`bun run math`); depends on `@xandreed/engine` + `@xandreed/providers` +
+`@xandreed/surface` and nothing else internal (boundaries-gated).
 
 ```bash
 bun run math --grade 4 --theme "fractions" --open   # generate before the browser opens
@@ -32,11 +32,11 @@ bun run math --resume <conversationId>              # continue a practice sessio
   persisted log through the same `parseMathItems` + `putItems` the live path
   uses (`--resume` serves answered exercises as answered, never again).
 
-## Layout (boundaries: math → core + adapters + web, never cli)
+## Layout (boundaries: math → engine + providers + surface)
 
 ```
 src/
-├── main.ts        argv fold → composition root (sdk-adapters at the edge, BunContext) → runMathMode
+├── main.ts        argv fold → composition root (providers at the edge, BunContext) → runMathMode
 ├── mode.ts        the driver: fresh-or-resumed conversation → MathSession → pump → HTTP server
 ├── session.ts     the chassis (smith pattern): ONE persisted conversation + an append-only
 │                  event ledger (AgentEvent ∪ math_render); send serializes turns; interrupt
@@ -47,17 +47,20 @@ src/
 ├── protocol.ts    [action]/[progress] compose + parse (Option-returning; one module, no drift)
 ├── domain/        MathContent: item schemas + parseMathItems (admission) + gradeAnswer (oracle)
 └── web/           the product UI: model (pure state machine) · reduce (session events → model)
-                   · replay · render (model → @xandreed/web math views) · pump (model Ref +
-                   OOB fragment hub) · server (typed /action/* routes; check/reveal/report/
-                   next/setup are server-instant; more/harder/easier/topic fire ONE agent turn,
-                   coalesced while generating) · openBrowser
+                   · replay · render (model → the view modules) · view/ (shell/topbar/stage/
+                   exercise card/controls/setup — pure server-rendered strings over surface's
+                   `html`) · pump (model Ref + OOB fragment hub) · server (typed /action/*
+                   routes + CSP; check/reveal/report/next/setup are server-instant;
+                   more/harder/easier/topic fire ONE agent turn, coalesced while
+                   generating) · openBrowser · static (frozen assets: tokens.css —
+                   `:root` IS the default "efferent" dark theme — math.css, math.js)
 ```
 
-The math VIEWS (topbar/stage/exercise card/controls/setup, math.css/math.js,
-`sanitizeMathml`) live in `@xandreed/web` — pure server-rendered strings, the
-same package the web canvas uses. Model-authored MathML renders ONLY through
-the strict rejecting `sanitizeMathml` (one well-formed `<math>`, presentation
-elements + layout attributes only; anything else simply doesn't display).
+Math owns its views and assets END TO END (`src/web/view/` + `assets/`);
+only the `html` template, `render`, and the strict rejecting `sanitizeMathml`
+come from `@xandreed/surface`. Model-authored MathML renders ONLY through
+`sanitizeMathml` (one well-formed `<math>`, presentation elements + layout
+attributes only; anything else simply doesn't display).
 
 ## Rules
 

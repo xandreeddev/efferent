@@ -7,9 +7,10 @@ import type { MathShellView } from "./types.js"
 /**
  * The standalone `efferent math` document — a PRODUCT shell, not the web
  * canvas: no chat composer, no transcript drawer, no tabs, no Tailwind. The
- * design-system light theme is hard-stamped (`<html data-theme="math">` — no
- * picker, no localStorage script), every visible surface paints `--tok-*`
- * tokens through math.css, and the only scripts are htmx + its ws extension +
+ * default DARK theme is hard-stamped (`<html data-theme="efferent">` — no
+ * picker, no localStorage script; "efferent" is tokens.css's `:root`), every
+ * visible surface paints `--tok-*` tokens through math.css, and the only
+ * scripts are htmx + its ws extension +
  * the tiny math.js (hardening, conn badge, resync, focus). Interactions are
  * typed `/action/*` POSTs rendered by the server; DOM updates arrive as OOB
  * fragments over the WebSocket (`mathBodyContents` is shared with the
@@ -17,11 +18,11 @@ import type { MathShellView } from "./types.js"
  */
 export const renderMathShell = (view: MathShellView): string => {
   const doc = html`<!doctype html>
-<html lang="en" data-theme="math">
+<html lang="en" data-theme="efferent">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="light" />
+<meta name="color-scheme" content="dark" />
 <title>${view.title}</title>
 <link rel="icon" href="data:," />
 <link rel="stylesheet" href="${assetHref("tokens.css")}" />

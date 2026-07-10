@@ -1,3 +1,8 @@
+/* The math design tokens. `:root` IS the default (efferent) theme — there
+ * is deliberately NO duplicate [data-theme="efferent"] block: editing one
+ * copy of two silently no-ops (live-caught by the audit). A data-theme
+ * attribute selects an OVERRIDE block (one-dark / tokyo-night). All themes
+ * are dark; --tok-text-dim must hold >=4.5:1 on --tok-surface-page. */
 :root {
   --tok-accent-conversation: #ffa657;
   --tok-accent-side: #2dd4bf;
@@ -8,59 +13,7 @@
   --tok-text-assistant: #ffa657;
   --tok-text-heading: #6cb6ff;
   --tok-text-muted: #9e9a93;
-  --tok-text-dim: #6e6a63;
-  --tok-state-running: #e3b341;
-  --tok-state-ok: #8ec07c;
-  --tok-state-error: #f47067;
-  --tok-marker-select: #a3e635;
-  --tok-marker-cursor: #a3e635;
-  --tok-marker-handoff: #2dd4bf;
-  --tok-marker-loaded: #8ec07c;
-  --tok-match-current: #a3e635;
-  --tok-match-other: #ffa657;
-  --tok-match-line: #3a321d;
-  --tok-match-currentLine: #5a4a1f;
-  --tok-match-word-bg: #ffa657;
-  --tok-match-word-fg: #1c1916;
-  --tok-match-wordCurrent-bg: #a3e635;
-  --tok-match-wordCurrent-fg: #1c1916;
-  --tok-cursorLine: #322d26;
-  --tok-info: #9e9a93;
-  --tok-error: #f47067;
-  --tok-surface-page: #14120f;
-  --tok-surface-panel: #1c1916;
-  --tok-surface-raised: #24201b;
-  --tok-surface-border: #322d26;
-  --tok-surface-shadow: #0a0806cc;
-  --tok-syntax-heading: #6cb6ff;
-  --tok-syntax-raw: #8ec07c;
-  --tok-syntax-quote: #9e9a93;
-  --tok-syntax-list: #9e9a93;
-  --tok-syntax-link: #ffa657;
-  --tok-syntax-linkUrl: #6e6a63;
-  --tok-syntax-keyword: #dcbdfb;
-  --tok-syntax-string: #8ec07c;
-  --tok-syntax-escape: #39c5cf;
-  --tok-syntax-number: #f69d50;
-  --tok-syntax-function: #6cb6ff;
-  --tok-syntax-type: #e3b341;
-  --tok-syntax-comment: #857f76;
-  --tok-syntax-variable: #f47067;
-  --tok-syntax-param: #f69d50;
-  --tok-syntax-punctuation: #b3aea6;
-}
-
-:root[data-theme="efferent"] {
-  --tok-accent-conversation: #ffa657;
-  --tok-accent-side: #2dd4bf;
-  --tok-accent-input: #a3e635;
-  --tok-border-unfocused: #6e6a63;
-  --tok-text-default: #e6e1d9;
-  --tok-text-user: #cfc9c0;
-  --tok-text-assistant: #ffa657;
-  --tok-text-heading: #6cb6ff;
-  --tok-text-muted: #9e9a93;
-  --tok-text-dim: #6e6a63;
+  --tok-text-dim: #857f76;
   --tok-state-running: #e3b341;
   --tok-state-ok: #8ec07c;
   --tok-state-error: #f47067;
@@ -112,7 +65,7 @@
   --tok-text-assistant: #5fd7ff;
   --tok-text-heading: #61afef;
   --tok-text-muted: #9ca3af;
-  --tok-text-dim: #6b7280;
+  --tok-text-dim: #7e8798;
   --tok-state-running: #e5c07b;
   --tok-state-ok: #98c379;
   --tok-state-error: #e06c75;
@@ -164,7 +117,7 @@
   --tok-text-assistant: #7aa2f7;
   --tok-text-heading: #7aa2f7;
   --tok-text-muted: #737aa2;
-  --tok-text-dim: #545c7e;
+  --tok-text-dim: #737aa2;
   --tok-state-running: #e0af68;
   --tok-state-ok: #9ece6a;
   --tok-state-error: #f7768e;
