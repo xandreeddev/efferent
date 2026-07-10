@@ -37,7 +37,9 @@
       "@xandreed/smith": ["packages/smith/src/index.ts"],
       "@xandreed/smith/*": ["packages/smith/src/*"],
       "@xandreed/math": ["packages/math/src/index.ts"],
-      "@xandreed/math/*": ["packages/math/src/*"]
+      "@xandreed/math/*": ["packages/math/src/*"],
+      "@xandreed/social": ["packages/social/src/index.ts"],
+      "@xandreed/social/*": ["packages/social/src/*"]
     }
   }
 }

@@ -1,9 +1,9 @@
-# Solid JSX transform for the OpenTUI TUI (packages/cli/src/cli/*.tsx).
+# Solid JSX transform for the OpenTUI TUI (packages/smith/src/tui/**/*.tsx).
 # The preload registers a Bun plugin scoped to `.tsx`/`.jsx` files only — plain
-# `.ts` across sdk-core/sdk-adapters/code is untouched, so the "Bun runs .ts
-# directly, no build step" convention holds everywhere except the JSX-only cli dir.
+# `.ts` everywhere else is untouched, so the "Bun runs .ts directly, no build
+# step" convention holds everywhere except the JSX-only TUI dir.
 # Loading this does NOT import the native @opentui/core, so non-TUI runs
-# (tests, evals, print/json/rpc modes) never touch the native lib.
+# (tests, evals, headless -p) never touch the native lib.
 preload = ["@opentui/solid/preload"]
 
 # `bun test` does not honor the top-level `preload`; it reads `[test] preload`.

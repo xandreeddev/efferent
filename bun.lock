@@ -112,16 +112,14 @@
       "name": "@xandreed/social",
       "version": "0.0.0",
       "dependencies": {
-        "@xandreed/engine": "workspace:*",
-        "@xandreed/providers": "workspace:*",
-        "playwright": "^1.49.0",
-      },
-      "devDependencies": {
         "@effect/ai": "^0.35.0",
         "@effect/cli": "^0.75.1",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
+        "@xandreed/engine": "workspace:*",
+        "@xandreed/providers": "workspace:*",
         "effect": "^3.21.4",
+        "playwright": "^1.49.0",
       },
     },
     "packages/surface": {

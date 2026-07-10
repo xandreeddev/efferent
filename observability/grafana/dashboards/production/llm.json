@@ -1,36 +1,54 @@
 {
   "uid": "efferent-llm",
-  "title": "efferent — llm",
-  "tags": ["efferent", "llm"],
+  "title": "efferent \u2014 llm",
+  "tags": [
+    "efferent",
+    "llm"
+  ],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "10s",
-  "time": { "from": "now-3h", "to": "now" },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "service",
         "label": "agent (service)",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(llm_requests_total, job)",
         "includeAll": true,
         "multi": true,
         "allValue": ".*",
         "refresh": 2,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       },
       {
         "name": "model",
         "label": "model",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "query": "label_values(llm_requests_total{job=~\"$service\"}, llm_model)",
         "includeAll": true,
         "multi": true,
         "allValue": ".*",
         "refresh": 2,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       }
     ]
   },
@@ -39,50 +57,100 @@
       "id": 1,
       "type": "stat",
       "title": "input tokens (range)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(increase(llm_usage_input_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
     },
     {
       "id": 2,
       "type": "stat",
       "title": "output tokens (range)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(increase(llm_usage_output_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
     },
     {
       "id": 3,
       "type": "stat",
       "title": "requests (range)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(increase(llm_requests_total{job=~\"$service\",llm_model=~\"$model\"}[$__range]))"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
     },
     {
       "id": 4,
       "type": "stat",
       "title": "errors (range)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "targets": [
         {
           "refId": "A",
@@ -96,8 +164,14 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
             ]
           }
         },
@@ -108,82 +182,139 @@
       "id": 5,
       "type": "timeseries",
       "title": "token throughput (per minute)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum by (llm_model) (rate(llm_usage_input_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
-          "legendFormat": "in — {{llm_model}}"
+          "legendFormat": "in \u2014 {{llm_model}}"
         },
         {
           "refId": "B",
           "expr": "sum by (llm_model) (rate(llm_usage_output_tokens_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
-          "legendFormat": "out — {{llm_model}}"
+          "legendFormat": "out \u2014 {{llm_model}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 6,
       "type": "timeseries",
-      "title": "request duration — p50 / p95 / p99",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "title": "request duration \u2014 p50 / p95 / p99",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "histogram_quantile(0.5, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
-          "legendFormat": "p50 — {{llm_model}}"
+          "legendFormat": "p50 \u2014 {{llm_model}}"
         },
         {
           "refId": "B",
           "expr": "histogram_quantile(0.95, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
-          "legendFormat": "p95 — {{llm_model}}"
+          "legendFormat": "p95 \u2014 {{llm_model}}"
         },
         {
           "refId": "C",
           "expr": "histogram_quantile(0.99, sum by (le, llm_model) (rate(llm_request_duration_milliseconds_bucket{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])))",
-          "legendFormat": "p99 — {{llm_model}}"
+          "legendFormat": "p99 \u2014 {{llm_model}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 7,
       "type": "timeseries",
       "title": "requests per minute by outcome",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum by (llm_model, outcome) (rate(llm_requests_total{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) * 60",
-          "legendFormat": "{{outcome}} — {{llm_model}}"
+          "legendFormat": "{{outcome}} \u2014 {{llm_model}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 8,
       "type": "timeseries",
       "title": "mean request duration",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum by (llm_model) (rate(llm_request_duration_milliseconds_sum{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval])) / sum by (llm_model) (rate(llm_request_duration_milliseconds_count{job=~\"$service\",llm_model=~\"$model\"}[$__rate_interval]))",
-          "legendFormat": "mean — {{llm_model}}"
+          "legendFormat": "mean \u2014 {{llm_model}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 9,
       "type": "row",
-      "title": "engine — trajectory quality",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "title": "engine \u2014 trajectory quality",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
       "collapsed": false,
       "panels": []
     },
@@ -191,23 +322,44 @@
       "id": 10,
       "type": "timeseries",
       "title": "agent runs by outcome (completion rate)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 22
+      },
       "targets": [
         {
           "refId": "A",
           "expr": "sum by (engine_outcome, engine_reason) (increase(engine_runs_total{job=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{engine_outcome}} — {{engine_reason}}"
+          "legendFormat": "{{engine_outcome}} \u2014 {{engine_reason}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 11,
       "type": "timeseries",
       "title": "tool calls by tool (failed dashed)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      },
       "targets": [
         {
           "refId": "A",
@@ -220,14 +372,27 @@
           "legendFormat": "FAILED {{engine_tool}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 12,
       "type": "timeseries",
       "title": "self-corrections per minute",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 22
+      },
       "targets": [
         {
           "refId": "A",
@@ -235,7 +400,44 @@
           "legendFormat": "{{engine_kind}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "judge verdicts per minute (sound / unsound / crash)",
+      "description": "smith's judge gate \u2014 smith_judge_verdicts_total by verdict. A rising 'crash' means the gate is failing closed; rising 'unsound' means the coder is being caught.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (verdict) (rate(smith_judge_verdicts_total[5m])) * 60",
+          "legendFormat": "{{verdict}}"
+        }
+      ]
     }
   ]
 }

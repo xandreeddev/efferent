@@ -35,7 +35,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.0
 
       # The docs site is a workspace member — install the whole workspace from
       # the root lockfile, then build/check inside its package dir.
