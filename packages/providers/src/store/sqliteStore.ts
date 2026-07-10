@@ -1,50 +1,92 @@
 import { Database } from "bun:sqlite"
-import { mkdirSync } from "node:fs"
+import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Either, Layer, Option, Schema } from "effect"
 import {
+  AgentMessage,
   Checkpoint,
   ConversationId,
   ConversationStore,
   ConversationSummary,
   StoreError,
 } from "@xandreed/engine"
-import type { AgentMessage } from "@xandreed/engine"
 
 /**
  * The new line's conversation store: zero-config SQLite (bun:sqlite). Its own
  * database file — never the frozen line's `efferent.db` (different schema,
  * different lifecycle). Positions are assigned atomically in one INSERT
  * (`COALESCE(MAX(position)+1, 0)`), the durable identity contract.
+ *
+ * Durability posture: `PRAGMA user_version` records how many MIGRATIONS have
+ * run — schema growth is an append to that array, never an edit; reads DECODE
+ * rows (an undecodable row is skipped with a warning — one bad row must not
+ * brick a conversation); fork is one transaction; the file is owner-only
+ * (conversations absorb whatever tool output the model saw).
  */
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS conversations (
-  id TEXT PRIMARY KEY,
-  workspace_dir TEXT,
-  title TEXT,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS messages (
-  conversation_id TEXT NOT NULL,
-  position INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY (conversation_id, position)
-);
-CREATE TABLE IF NOT EXISTS checkpoints (
-  conversation_id TEXT NOT NULL,
-  message_position INTEGER NOT NULL,
-  summary TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-`
+/** Ordered, append-only. Step 1 is idempotent (`IF NOT EXISTS`) because
+ *  pre-versioning databases already carry the v1 schema at user_version 0. */
+const MIGRATIONS: ReadonlyArray<string> = [
+  `
+  CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    workspace_dir TEXT,
+    title TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    conversation_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (conversation_id, position)
+  );
+  CREATE TABLE IF NOT EXISTS checkpoints (
+    conversation_id TEXT NOT NULL,
+    message_position INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS checkpoints_by_conversation
+    ON checkpoints (conversation_id, message_position);
+  CREATE INDEX IF NOT EXISTS conversations_by_workspace
+    ON conversations (workspace_dir);
+  `,
+]
+
+const migrate = (db: Database): void => {
+  const version = (db.query("PRAGMA user_version").get() as { user_version: number })
+    .user_version
+  MIGRATIONS.slice(version).forEach((step) => db.transaction(() => db.exec(step))())
+  db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`)
+}
+
+/** Parse + validate in one step — reads never cast a blob into the entity. */
+const decodeMessage = Schema.decodeUnknownEither(Schema.parseJson(AgentMessage))
 
 const tryDb = <A>(run: () => A): Effect.Effect<A, StoreError> =>
   Effect.try({
     try: run,
     catch: (e) => new StoreError({ message: String(e) }),
   })
+
+/** Schema drift or disk corruption in ONE row degrades to a logged skip —
+ *  the rest of the conversation stays loadable. */
+const salvageRows = (
+  rows: ReadonlyArray<{ content: string }>,
+  where: string,
+): Effect.Effect<ReadonlyArray<AgentMessage>> =>
+  Effect.forEach(rows, (row) =>
+    Either.match(decodeMessage(row.content), {
+      onLeft: (issue) =>
+        Effect.logWarning(`${where}: skipping undecodable message row: ${String(issue)}`).pipe(
+          Effect.as(Option.none<AgentMessage>()),
+        ),
+      onRight: (message) => Effect.succeed(Option.some(message)),
+    }),
+  ).pipe(Effect.map((decoded) => decoded.filter(Option.isSome).map((some) => some.value)))
 
 export const SqliteConversationStoreLive = (dbPath: string) =>
   Layer.scoped(
@@ -53,8 +95,14 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
       const db = yield* tryDb(() => {
         mkdirSync(dirname(dbPath), { recursive: true })
         const database = new Database(dbPath, { create: true })
+        // Owner-only BEFORE the WAL sidecars exist (they inherit this mode):
+        // tool output can carry anything the coder read, including secrets.
+        chmodSync(dbPath, 0o600)
         database.exec("PRAGMA journal_mode = WAL;")
-        database.exec(SCHEMA)
+        // A second process on the same workspace db waits out the lock
+        // instead of dying on an instant SQLITE_BUSY.
+        database.exec("PRAGMA busy_timeout = 5000;")
+        migrate(database)
         return database
       })
       yield* Effect.addFinalizer(() => Effect.sync(() => db.close()))
@@ -99,15 +147,14 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
           ),
 
         list: (id: ConversationId) =>
-          tryDb(() =>
-            (
+          tryDb(
+            () =>
               db
                 .query(
                   `SELECT content FROM messages WHERE conversation_id = ? ORDER BY position ASC`,
                 )
-                .all(id) as ReadonlyArray<{ content: string }>
-            ).map((row) => JSON.parse(row.content) as AgentMessage),
-          ),
+                .all(id) as ReadonlyArray<{ content: string }>,
+          ).pipe(Effect.flatMap((rows) => salvageRows(rows, `list ${id}`))),
 
         listActive: (id: ConversationId) =>
           tryDb(() => {
@@ -116,15 +163,13 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
               onNone: () => -1,
               onSome: (c) => c.message_position,
             })
-            return (
-              db
-                .query(
-                  `SELECT content FROM messages
-                   WHERE conversation_id = ? AND position > ? ORDER BY position ASC`,
-                )
-                .all(id, after) as ReadonlyArray<{ content: string }>
-            ).map((row) => JSON.parse(row.content) as AgentMessage)
-          }),
+            return db
+              .query(
+                `SELECT content FROM messages
+                 WHERE conversation_id = ? AND position > ? ORDER BY position ASC`,
+              )
+              .all(id, after) as ReadonlyArray<{ content: string }>
+          }).pipe(Effect.flatMap((rows) => salvageRows(rows, `listActive ${id}`))),
 
         checkpoint: (id: ConversationId, summary: string) =>
           tryDb(() => {
@@ -163,40 +208,52 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
           }),
 
         fork: (id: ConversationId, upToPosition?: number) =>
-          tryDb(() => {
-            const source = db
-              .query(`SELECT workspace_dir, title FROM conversations WHERE id = ?`)
-              .get(id) as { workspace_dir: string | null; title: string | null } | null
-            if (source === null) {
-              return Effect.runSync(
-                Effect.fail(new StoreError({ message: `conversation ${id} not found` })),
-              )
-            }
-            const forkId = ConversationId.make(crypto.randomUUID())
-            const cap = upToPosition ?? Number.MAX_SAFE_INTEGER
-            db.query(
-              `INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)`,
-            ).run(
-              forkId,
-              source.workspace_dir,
-              source.title === null ? null : `fork: ${source.title}`,
-              Date.now(),
-            )
-            db.query(
-              `INSERT INTO messages (conversation_id, position, content, created_at)
-               SELECT ?2, position, content, created_at FROM messages
-               WHERE conversation_id = ?1 AND position <= ?3`,
-            ).run(id, forkId, cap)
-            // The latest checkpoint WITHIN range rides along, so a forked
-            // long session loads its active window exactly like the source.
-            db.query(
-              `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
-               SELECT ?2, message_position, summary, created_at FROM checkpoints
-               WHERE conversation_id = ?1 AND message_position <= ?3
-               ORDER BY message_position DESC LIMIT 1`,
-            ).run(id, forkId, cap)
-            return forkId
-          }),
+          tryDb(() =>
+            Option.fromNullable(
+              db
+                .query(`SELECT workspace_dir, title FROM conversations WHERE id = ?`)
+                .get(id) as { workspace_dir: string | null; title: string | null } | null,
+            ),
+          ).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(new StoreError({ message: `conversation ${id} not found` })),
+                onSome: (source) =>
+                  tryDb(() => {
+                    const forkId = ConversationId.make(crypto.randomUUID())
+                    const cap = upToPosition ?? Number.MAX_SAFE_INTEGER
+                    // One transaction: a crash mid-fork must not leave a
+                    // conversation row with half a trail and no checkpoint.
+                    db.transaction(() => {
+                      db.query(
+                        `INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)`,
+                      ).run(
+                        forkId,
+                        source.workspace_dir,
+                        source.title === null ? null : `fork: ${source.title}`,
+                        Date.now(),
+                      )
+                      db.query(
+                        `INSERT INTO messages (conversation_id, position, content, created_at)
+                         SELECT ?2, position, content, created_at FROM messages
+                         WHERE conversation_id = ?1 AND position <= ?3`,
+                      ).run(id, forkId, cap)
+                      // The latest checkpoint WITHIN range rides along, so a
+                      // forked long session loads its active window exactly
+                      // like the source.
+                      db.query(
+                        `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
+                         SELECT ?2, message_position, summary, created_at FROM checkpoints
+                         WHERE conversation_id = ?1 AND message_position <= ?3
+                         ORDER BY message_position DESC LIMIT 1`,
+                      ).run(id, forkId, cap)
+                    })()
+                    return forkId
+                  }),
+              }),
+            ),
+          ),
 
         listByWorkspace: (workspaceDir: string) =>
           tryDb(() =>
@@ -218,12 +275,12 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
               }>
             ).map((row) => {
               const first = Option.fromNullable(row.first_content).pipe(
-                Option.flatMap((content) => {
-                  const parsed = JSON.parse(content) as AgentMessage
-                  return parsed.role === "user"
+                Option.flatMap((content) => Either.getRight(decodeMessage(content))),
+                Option.flatMap((parsed) =>
+                  parsed.role === "user"
                     ? Option.some(parsed.content.slice(0, 120))
-                    : Option.none<string>()
-                }),
+                    : Option.none<string>(),
+                ),
               )
               return new ConversationSummary({
                 id: ConversationId.make(row.id),

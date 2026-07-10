@@ -1,26 +1,29 @@
+import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
-import { ConversationStore } from "@xandreed/engine"
+import { ConversationId, ConversationStore, StoreError } from "@xandreed/engine"
 import type { AgentMessage } from "@xandreed/engine"
 import { SqliteConversationStoreLive } from "./sqliteStore.js"
 
-const withStore = <A, E>(
+const freshDbPath = (): string =>
+  join(mkdtempSync(join(tmpdir(), "engine-store-")), "test.db")
+
+const withStoreAt = <A, E>(
+  dbPath: string,
   run: Effect.Effect<A, E, ConversationStore>,
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(
-      run.pipe(
-        Effect.provide(
-          SqliteConversationStoreLive(
-            join(mkdtempSync(join(tmpdir(), "engine-store-")), "test.db"),
-          ),
-        ),
-      ),
+      run.pipe(Effect.provide(SqliteConversationStoreLive(dbPath))),
     ) as Effect.Effect<A, E>,
   )
+
+const withStore = <A, E>(
+  run: Effect.Effect<A, E, ConversationStore>,
+): Promise<A> => withStoreAt(freshDbPath(), run)
 
 const user = (content: string): AgentMessage => ({ role: "user", content })
 
@@ -158,6 +161,89 @@ describe("SqliteConversationStoreLive", () => {
         const early = yield* store.fork(source, 0)
         const earlyRows = yield* store.list(early)
         expect(earlyRows.map((m) => m.content)).toEqual(["one"])
+      }),
+    )
+  })
+
+  test("fork of an unknown conversation is a typed StoreError naming the id", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const ghost = ConversationId.make(crypto.randomUUID())
+        const outcome = yield* Effect.either(store.fork(ghost))
+        expect(outcome._tag).toBe("Left")
+        if (outcome._tag === "Left") {
+          expect(outcome.left).toBeInstanceOf(StoreError)
+          expect(outcome.left.message).toContain("not found")
+          expect(outcome.left.message).toContain(ghost)
+        }
+      }),
+    )
+  })
+
+  test("open stamps user_version, creates the v2 indices, and is owner-only", async () => {
+    const dbPath = freshDbPath()
+    await withStoreAt(
+      dbPath,
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        yield* store.create("/ws")
+      }),
+    )
+    expect(statSync(dbPath).mode & 0o777).toBe(0o600)
+    const raw = new Database(dbPath)
+    const version = (raw.query("PRAGMA user_version").get() as { user_version: number })
+      .user_version
+    expect(version).toBeGreaterThanOrEqual(2)
+    const indices = (
+      raw
+        .query(`SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'`)
+        .all() as ReadonlyArray<{ name: string }>
+    ).map((row) => row.name)
+    expect(indices).toContain("checkpoints_by_conversation")
+    expect(indices).toContain("conversations_by_workspace")
+    raw.close()
+    // Re-opening an already-migrated db is a no-op (idempotent step 1,
+    // slice past the recorded version) — the store still works.
+    await withStoreAt(
+      dbPath,
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        expect(yield* store.listByWorkspace("/ws")).toHaveLength(1)
+      }),
+    )
+  })
+
+  test("one undecodable row degrades to a skip — the rest of the trail loads", async () => {
+    const dbPath = freshDbPath()
+    await withStoreAt(
+      dbPath,
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const id = yield* store.create("/ws")
+        yield* store.append(id, user("good-1"))
+        // Corruption injected OUT OF BAND (disk damage / a future schema's
+        // row) — reads must salvage around it, not brick the conversation.
+        yield* Effect.sync(() => {
+          const raw = new Database(dbPath)
+          raw
+            .query(
+              `INSERT INTO messages (conversation_id, position, content, created_at)
+               VALUES (?, 1, 'NOT VALID JSON {', ?)`,
+            )
+            .run(id, Date.now())
+          raw.close()
+        })
+        yield* store.append(id, user("good-2"))
+        const all = yield* store.list(id)
+        expect(all.map((m) => (m.role === "user" ? m.content : "?"))).toEqual([
+          "good-1",
+          "good-2",
+        ])
+        expect(yield* store.listActive(id)).toHaveLength(2)
+        // The workspace listing survives a corrupt FIRST row too.
+        const listed = yield* store.listByWorkspace("/ws")
+        expect(listed).toHaveLength(1)
       }),
     )
   })
