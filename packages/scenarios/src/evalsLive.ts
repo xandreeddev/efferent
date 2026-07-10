@@ -15,6 +15,8 @@ import { preflightAuth } from "./live/llm.js"
 import { digestPack } from "./packs/digest.js"
 import { judgeCalibrationPack } from "./packs/judgeCalibration.js"
 import { memoryPack } from "./packs/memory.js"
+import { refinerPack } from "./packs/refiner.js"
+import { smithSpecPack } from "./packs/smithSpec.js"
 
 /**
  * `bun run evals:live [battery …] [--samples n] [--json] [--update-baselines] [--no-check]`
@@ -30,12 +32,14 @@ import { memoryPack } from "./packs/memory.js"
  * credential / unknown battery.
  */
 
-/** The refiner + smith-spec live batteries land with E3 — the registry is
- *  the ONE growth point. */
 export const LIVE_PACKS: Record<string, Pack> = {
   "judge-calibration": judgeCalibrationPack,
   digest: digestPack,
   memory: memoryPack,
+  refiner: refinerPack,
+  /** The shared pack — its live-only scenario runs here; the scripted twin
+   *  is CI's (main.ts). */
+  "smith-spec": smithSpecPack,
 }
 
 export const parseLiveArgs = (
