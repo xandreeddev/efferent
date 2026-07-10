@@ -11,7 +11,7 @@ import type { GateCell } from "../presentation/floor.js"
 import { contextGauge, contextTokens } from "../presentation/conversation.js"
 import { flowView } from "../presentation/flow.js"
 import type { FlowStep } from "../presentation/flow.js"
-import { contextWindowOf } from "../presentation/modelCatalog.js"
+import { contextWindowOf, fmtCost } from "../presentation/modelCatalog.js"
 import { OverlayView } from "./Overlay.js"
 import { Workspace } from "./Workspace.js"
 import { computePalette } from "../presentation/palette.js"
@@ -630,8 +630,12 @@ const ComposerFrame = (props: { ctx: SmithTuiContext }) => {
       () => "",
     )
   }
+  const cost = () => {
+    const spend = store.sessionCost()
+    return spend > 0 ? `   ${fmtCost(spend)}` : ""
+  }
   const rolesLine = () =>
-    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}`
+    `● general ${roles().general}   code ${roles().code}   fast ${roles().fast}${gauge()}${cost()}`
   return (
     <box flexDirection="column" flexShrink={0} marginTop={1}>
       <Show when={store.notice().length > 0}>
