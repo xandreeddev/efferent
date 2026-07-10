@@ -314,6 +314,10 @@ export const makeEfferentImplementorLive = (
                 ),
                 toolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
+                // A plan-status update legitimately repeats with a constant
+                // result — it must never read as a degenerate loop (the
+                // smith-spec battery caught the breaker firing on it).
+                pollableTools: ["todo_write"],
                 // Tokens render live on the forge floor; a pre-first-part
                 // stream failure falls back to settled turns for the run.
                 streaming: true,

@@ -461,6 +461,27 @@ const AttemptPanel = (props: { ctx: SmithTuiContext }) => {
           )}
         </For>
       </Show>
+      <Show when={floor().todos.length > 0}>
+        <text fg={tokens.text.dim} marginTop={1}>
+          plan
+        </text>
+        <For each={floor().todos}>
+          {(todo) => (
+            <text
+              fg={
+                todo.status === "done"
+                  ? tokens.state.ok
+                  : todo.status === "in_progress"
+                    ? tokens.text.bright
+                    : tokens.text.dim
+              }
+              wrapMode="none"
+            >
+              {`  ${todo.status === "done" ? "✓" : todo.status === "in_progress" ? "▸" : "·"} ${todo.text}`}
+            </text>
+          )}
+        </For>
+      </Show>
       <Show when={floor().findings.length > 0}>
         <text fg={tokens.text.dim} marginTop={1}>
           findings

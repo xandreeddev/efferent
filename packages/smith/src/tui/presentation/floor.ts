@@ -18,6 +18,12 @@ export interface AttemptRow {
 
 export type FloorPhase = "boot" | "implementing" | "gating" | "done" | "failed"
 
+/** One coder plan item (the todo_write vocabulary). */
+export interface TodoItem {
+  readonly text: string
+  readonly status: "pending" | "in_progress" | "done"
+}
+
 /**
  * The factory floor — ONE immutable view model the whole TUI reads, folded
  * from the smith event stream by {@link reduceFloor} (pure, Match.exhaustive;
@@ -33,6 +39,8 @@ export interface FloorState {
   readonly feed: ReadonlyArray<string>
   /** The latest failed report's finding lines (plain text, no ANSI). */
   readonly findings: ReadonlyArray<string>
+  /** The coder's live plan — the last todo_write call's whole list. */
+  readonly todos: ReadonlyArray<TodoItem>
   readonly outcome: Option.Option<string>
   readonly artifact: Option.Option<string>
   readonly conversationRef: Option.Option<string>
@@ -50,6 +58,7 @@ export const initialFloor = (task: string, maxAttempts: number): FloorState => (
   phase: "boot",
   feed: [],
   findings: [],
+  todos: [],
   outcome: Option.none(),
   artifact: Option.none(),
   conversationRef: Option.none(),
@@ -82,6 +91,20 @@ const findingLine = (finding: {
     onSome: (l) => `${l.file}:${l.line} `,
   })
   return `[${finding.rule}] ${where}${clip(finding.message, 110)}`
+}
+
+const todosFromArgs = (args: unknown): Option.Option<ReadonlyArray<TodoItem>> => {
+  const list = (args as { readonly todos?: unknown } | null)?.todos
+  if (!Array.isArray(list)) return Option.none()
+  return Option.some(
+    list.flatMap((item) => {
+      const t = item as { readonly text?: unknown; readonly status?: unknown }
+      return typeof t.text === "string" &&
+        (t.status === "pending" || t.status === "in_progress" || t.status === "done")
+        ? [{ text: t.text, status: t.status }]
+        : []
+    }),
+  )
 }
 
 /** Fold one smith event into the floor. Pure — unit-tested without Solid.
@@ -183,15 +206,24 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
       phase: "failed" as const,
       error: Option.some(e.message),
     })),
-    Match.when({ type: "agent" }, (e) =>
-      Option.match(agentEventLabel(e), {
-        onNone: () => state,
+    Match.when({ type: "agent" }, (e) => {
+      // The coder's plan: todo_write REPLACES the whole list (tolerant
+      // structural parse — a malformed call simply leaves the plan as-is).
+      const planned =
+        e.event.type === "tool_start" && e.event.toolName === "todo_write"
+          ? Option.match(todosFromArgs(e.event.args), {
+              onNone: () => state,
+              onSome: (todos) => ({ ...state, todos }),
+            })
+          : state
+      return Option.match(agentEventLabel(e), {
+        onNone: () => planned,
         onSome: (label) => ({
-          ...state,
-          feed: [...state.feed, label].slice(-FEED_CAP),
+          ...planned,
+          feed: [...planned.feed, label].slice(-FEED_CAP),
         }),
-      }),
-    ),
+      })
+    }),
     Match.exhaustive,
   )
 
