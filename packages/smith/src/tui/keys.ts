@@ -212,6 +212,11 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
     routeLoginKey(ctx, overlay, key)
     return
   }
+  // ctrl+o: expand/collapse the newest tool block's output in the story.
+  if (key.ctrl === true && key.name === "o") {
+    ctx.store.toggleToolExpand()
+    return
+  }
   // Tab completes a `:` command in the composer (shell-style). No overlay is
   // open here, so the composer owns the key; a non-command line is a no-op.
   if (key.name === "tab") {

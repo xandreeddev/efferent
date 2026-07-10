@@ -251,13 +251,41 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                 : block.status === "fail"
                   ? tokens.state.error
                   : tokens.state.running
+            // The NEWEST finished tool block carries the expand affordance:
+            // a quiet hint normally, the (clipped) result in-pane on ctrl+o.
+            const isNewestWithResult = () => {
+              const blocks = store.conversation().blocks
+              const newest = blocks.reduce<string | undefined>(
+                (found, b) => (b.kind === "tool" && b.result !== undefined ? b.id : found),
+                undefined,
+              )
+              return newest === block.id
+            }
+            const resultLines = () => (block.result ?? "").split("\n").slice(0, 16)
             return (
-              <box flexDirection="row" flexShrink={0} marginTop={block.first ? 1 : 0}>
-                <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
-                <text fg={statusColor} flexShrink={0}>{block.name}</text>
-                <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
-                  {`(${relArg(block.arg)})`}
-                </text>
+              <box flexDirection="column" flexShrink={0} marginTop={block.first ? 1 : 0}>
+                <box flexDirection="row">
+                  <text fg={statusColor} flexShrink={0}>{"  ● "}</text>
+                  <text fg={statusColor} flexShrink={0}>{block.name}</text>
+                  <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
+                    {`(${relArg(block.arg)})`}
+                  </text>
+                  <Show when={isNewestWithResult() && !store.toolExpand()}>
+                    <text fg={tokens.text.dim} flexShrink={0} wrapMode="none">
+                      {"  (ctrl+o to expand)"}
+                    </text>
+                  </Show>
+                </box>
+                <Show when={isNewestWithResult() && store.toolExpand()}>
+                  <For each={resultLines()}>
+                    {(line) => (
+                      <text fg={tokens.text.dim} wrapMode="none">{`      ${line}`}</text>
+                    )}
+                  </For>
+                  <Show when={(block.result ?? "").split("\n").length > 16}>
+                    <text fg={tokens.text.dim} wrapMode="none">{"      …"}</text>
+                  </Show>
+                </Show>
               </box>
             )
           }}

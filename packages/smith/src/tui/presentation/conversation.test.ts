@@ -25,9 +25,49 @@ describe("the conversation fold", () => {
       agent({ type: "tool_end", turnIndex: 0, toolCallId: "t2", toolName: "bash", args: {}, ok: false, result: {} }),
     ].reduce(reduceConversation, initialConversation)
     expect(state.blocks).toEqual([
-      { kind: "tool", id: "t1", name: "read_file", arg: "a.ts", status: "ok", first: true },
-      { kind: "tool", id: "t2", name: "bash", arg: "bun test", status: "fail", first: false },
+      {
+        kind: "tool",
+        id: "t1",
+        name: "read_file",
+        arg: "a.ts",
+        status: "ok",
+        first: true,
+        result: "{}",
+      },
+      {
+        kind: "tool",
+        id: "t2",
+        name: "bash",
+        arg: "bun test",
+        status: "fail",
+        first: false,
+        result: "{}",
+      },
     ])
+  })
+
+  test("tool_end RETAINS the result (clipped) — ctrl+o's expand source", () => {
+    const state = [
+      agent({ type: "tool_start", turnIndex: 0, toolCallId: "t1", toolName: "Bash", args: { command: "bun test" } }),
+      agent({
+        type: "tool_end",
+        turnIndex: 0,
+        toolCallId: "t1",
+        toolName: "Bash",
+        args: {},
+        ok: true,
+        result: { stdout: "12 pass\n0 fail", exitCode: 0 },
+      }),
+    ].reduce(reduceConversation, initialConversation)
+    const block = state.blocks[0]
+    expect(block?.kind === "tool" && block.result).toContain("12 pass")
+    // A huge result clips at the budget.
+    const big = [
+      agent({ type: "tool_start", turnIndex: 0, toolCallId: "t2", toolName: "Bash", args: {} }),
+      agent({ type: "tool_end", turnIndex: 0, toolCallId: "t2", toolName: "Bash", args: {}, ok: true, result: "x".repeat(20_000) }),
+    ].reduce(reduceConversation, initialConversation)
+    const clipped = big.blocks[0]
+    expect(clipped?.kind === "tool" && (clipped.result ?? "").length).toBeLessThanOrEqual(8_000)
   })
 
   test("a capabilities event renders a harness notice at session start", () => {
