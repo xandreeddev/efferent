@@ -1,8 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Layer, Option } from "effect"
-import { EngineSettings, SettingsError, SettingsStore } from "@xandreed/engine"
-import type { ModelRole } from "@xandreed/engine"
+import {
+  EngineSettings,
+  parseModelSelection,
+  SettingsError,
+  SettingsStore,
+} from "@xandreed/engine"
+import type { ModelRole, SettingsKey } from "@xandreed/engine"
 
 /**
  * Settings from the SAME `config.json` files the previous line writes —
@@ -34,6 +39,65 @@ const readConfig = (path: string): Effect.Effect<Record<string, unknown>> =>
 const asString = (value: unknown): Option.Option<string> =>
   typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none()
 
+const asBoolean = (value: unknown): Option.Option<boolean> =>
+  typeof value === "boolean" ? Option.some(value) : Option.none()
+
+const asNumber = (value: unknown): Option.Option<number> =>
+  typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none()
+
+/**
+ * Per-key validation for the keyed setter — the config value is COERCED
+ * from its string form (`:settings` sends text), so an unparseable value is
+ * rejected here rather than written and silently ignored on load.
+ */
+const coerceSettingValue = (
+  key: SettingsKey,
+  raw: string,
+): Effect.Effect<unknown, SettingsError> => {
+  if (key === "fallbackModel") {
+    return Option.match(parseModelSelection(raw), {
+      onNone: () =>
+        Effect.fail(
+          new SettingsError({
+            message: `fallbackModel must be "<provider>:<modelId>" — got "${raw}"`,
+          }),
+        ),
+      onSome: () => Effect.succeed(raw as unknown),
+    })
+  }
+  if (key === "sandbox") {
+    if (raw === "true" || raw === "on") return Effect.succeed(true as unknown)
+    if (raw === "false" || raw === "off") return Effect.succeed(false as unknown)
+    return Effect.fail(
+      new SettingsError({ message: `sandbox must be true/false — got "${raw}"` }),
+    )
+  }
+  // maxAttempts / budgetMillis: positive integers (foundry re-validates the
+  // forge bounds when the Spec is built).
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed >= 1
+    ? Effect.succeed(parsed as unknown)
+    : Effect.fail(
+        new SettingsError({ message: `${key} must be a positive integer — got "${raw}"` }),
+      )
+}
+
+/** Write (or drop) one key in the LOCAL config, every other key preserved. */
+const writeKey = (
+  cwd: string,
+  key: string,
+  value: Option.Option<unknown>,
+): Effect.Effect<void, SettingsError> =>
+  Effect.gen(function* () {
+    const path = join(cwd, ".efferent", "config.json")
+    const current = yield* readConfig(path)
+    const next = Option.match(value, {
+      onNone: () => Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
+      onSome: (v) => ({ ...current, [key]: v }),
+    })
+    yield* writeConfigAtomic(path, next)
+  })
+
 export const LocalSettingsStoreLive = (cwd: string, home: string) =>
   Layer.succeed(SettingsStore, {
     load: Effect.gen(function* () {
@@ -43,21 +107,21 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
         model: asString(merged["model"]),
         codeModel: asString(merged["codeModel"]),
         fastModel: asString(merged["fastModel"]),
+        fallbackModel: asString(merged["fallbackModel"]),
+        sandbox: asBoolean(merged["sandbox"]),
+        maxAttempts: asNumber(merged["maxAttempts"]),
+        budgetMillis: asNumber(merged["budgetMillis"]),
       })
     }),
     setRole: (role: ModelRole, selection: Option.Option<string>) =>
-      Effect.gen(function* () {
-        const path = join(cwd, ".efferent", "config.json")
-        const key = ROLE_KEYS[role]
-        const current = yield* readConfig(path)
-        // Some = write the key; None = drop it (the role falls back to its
-        // default). Every other key in the file is preserved untouched.
-        const next = Option.match(selection, {
-          onNone: () =>
-            Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
-          onSome: (value) => ({ ...current, [key]: value }),
-        })
-        yield* writeConfigAtomic(path, next)
+      writeKey(cwd, ROLE_KEYS[role], selection),
+    set: (key: SettingsKey, value: Option.Option<string>) =>
+      Option.match(value, {
+        onNone: () => writeKey(cwd, key, Option.none()),
+        onSome: (raw) =>
+          coerceSettingValue(key, raw).pipe(
+            Effect.flatMap((coerced) => writeKey(cwd, key, Option.some(coerced))),
+          ),
       }),
   })
 

@@ -162,6 +162,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
         Effect.sync(() => {
           setRoleCalls.push({ role, selection })
         }),
+      set: () => Effect.void,
     }),
     Layer.succeed(AuthStore, {
       all: Effect.succeed(credentials),

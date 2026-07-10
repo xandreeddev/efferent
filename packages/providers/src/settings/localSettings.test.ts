@@ -86,4 +86,75 @@ describe("LocalSettingsStoreLive", () => {
       }).pipe(Effect.provide(LocalSettingsStoreLive(home, home))),
     )
   })
+
+  test("the keyed setter: set/load round-trip with per-key coercion, None clears", async () => {
+    const { layer, cwd } = setup({}, { theme: "efferent" })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        yield* store.set("fallbackModel", Option.some("google:gemini-3.5-flash"))
+        yield* store.set("sandbox", Option.some("off"))
+        yield* store.set("maxAttempts", Option.some("5"))
+        yield* store.set("budgetMillis", Option.some("600000"))
+        const settings = yield* store.load
+        expect(Option.getOrThrow(settings.fallbackModel)).toBe("google:gemini-3.5-flash")
+        expect(Option.getOrThrow(settings.sandbox)).toBe(false)
+        expect(Option.getOrThrow(settings.maxAttempts)).toBe(5)
+        expect(Option.getOrThrow(settings.budgetMillis)).toBe(600000)
+        yield* store.set("sandbox", Option.none())
+        const cleared = yield* store.load
+        expect(Option.isNone(cleared.sandbox)).toBe(true)
+      }).pipe(Effect.provide(layer)),
+    )
+    const written = JSON.parse(
+      readFileSync(join(cwd, ".efferent", "config.json"), "utf-8"),
+    ) as Record<string, unknown>
+    // Coerced to REAL JSON types (not the strings the setter received),
+    // unrelated keys preserved, cleared keys gone.
+    expect(written["maxAttempts"]).toBe(5)
+    expect(written["budgetMillis"]).toBe(600000)
+    expect(written["theme"]).toBe("efferent")
+    expect("sandbox" in written).toBe(false)
+  })
+
+  test("the keyed setter REJECTS values that don't parse", async () => {
+    const { layer } = setup({})
+    const attempts: ReadonlyArray<readonly [string, string]> = [
+      ["fallbackModel", "not-a-selection"],
+      ["sandbox", "maybe"],
+      ["maxAttempts", "zero"],
+      ["maxAttempts", "0"],
+      ["budgetMillis", "-5"],
+    ]
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        yield* Effect.forEach(attempts, ([key, raw]) =>
+          Effect.flip(store.set(key as never, Option.some(raw))).pipe(
+            Effect.tap((error) => Effect.sync(() => expect(error._tag).toBe("SettingsError"))),
+          ),
+        )
+        // Nothing landed in the config.
+        const settings = yield* store.load
+        expect(Option.isNone(settings.fallbackModel)).toBe(true)
+        expect(Option.isNone(settings.maxAttempts)).toBe(true)
+      }).pipe(Effect.provide(layer)),
+    )
+  })
+
+  test("the new keys read local-over-global like the roles", async () => {
+    const { layer } = setup(
+      { sandbox: true, maxAttempts: 3, fallbackModel: "a:b" },
+      { sandbox: false, maxAttempts: 7 },
+    )
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        const settings = yield* store.load
+        expect(Option.getOrThrow(settings.sandbox)).toBe(false)
+        expect(Option.getOrThrow(settings.maxAttempts)).toBe(7)
+        expect(Option.getOrThrow(settings.fallbackModel)).toBe("a:b")
+      }).pipe(Effect.provide(layer)),
+    )
+  })
 })
