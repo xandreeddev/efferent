@@ -1,4 +1,4 @@
-import { Clock, Effect, Schedule } from "effect"
+import { Effect, Schedule } from "effect"
 import { findOpportunitiesAndDraft } from "./opportunityFinder.js"
 
 const TARGET_QUERIES = [
@@ -14,16 +14,10 @@ export const startDaemon = () =>
     yield* Effect.logInfo("Social daemon initialized.")
     yield* Effect.logInfo("Press Ctrl+C to terminate.")
 
-    // Run first scan immediately
+    // Effect.repeat runs the effect ONCE immediately, then on the schedule —
+    // an explicit first run before it double-scanned at startup (audit).
     yield* findOpportunitiesAndDraft(TARGET_QUERIES).pipe(
-      Effect.catchAll((err) => Effect.logError(`Scan failed: ${(err as Error).message}`))
-    )
-
-    // Schedule subsequent scans every 2 hours
-    const cronSchedule = Schedule.fixed("2 hours")
-    
-    yield* findOpportunitiesAndDraft(TARGET_QUERIES).pipe(
-      Effect.catchAll((err) => Effect.logError(`Scan failed: ${(err as Error).message}`)),
-      Effect.repeat(cronSchedule)
+      Effect.catchAllCause((cause) => Effect.logError(`Scan failed: ${cause}`)),
+      Effect.repeat(Schedule.fixed("2 hours")),
     )
   })
