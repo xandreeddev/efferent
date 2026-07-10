@@ -122,6 +122,22 @@ export const LoadSkill = Tool.make("load_skill", {
   failureMode: "return",
 })
 
+export const TodoWrite = Tool.make("todo_write", {
+  description:
+    "Replace your WHOLE task plan for this run (the human watches it live). Send EVERY item each time — this replaces the list, never appends. Statuses: pending | in_progress | done; keep exactly ONE item in_progress. Use it at the start (the plan) and whenever an item's status changes. Returns {count}.",
+  parameters: {
+    todos: Schema.Array(
+      Schema.Struct({
+        text: Schema.String.annotations({ description: "One short imperative item." }),
+        status: Schema.Literal("pending", "in_progress", "done"),
+      }),
+    ),
+  },
+  success: Schema.Struct({ count: Schema.Number }),
+  failure: Failure,
+  failureMode: "return",
+})
+
 /** The full coder kit. */
 export const smithCodingToolkit = Toolkit.make(
   ReadFile,
@@ -132,6 +148,7 @@ export const smithCodingToolkit = Toolkit.make(
   Glob,
   Ls,
   LoadSkill,
+  TodoWrite,
 )
 /** The refiner's read-only exploration subset. */
 export const readOnlyToolkit = Toolkit.make(ReadFile, Grep, Glob, Ls)
@@ -200,6 +217,11 @@ export const makeSmithCodingHandlers = (cwd: string) =>
 
     return smithCodingToolkit.of({
       read_file: readFile,
+
+      // The plan is UI-side state: the TUI derives it from this call's
+      // args (tool_start events); the handler just acknowledges.
+      todo_write: (params: { todos: ReadonlyArray<unknown> }) =>
+        Effect.succeed({ count: params.todos.length }),
 
       write_file: (params: { path: string; content: string }) =>
         Effect.gen(function* () {

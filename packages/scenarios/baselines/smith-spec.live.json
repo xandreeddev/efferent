@@ -5,8 +5,8 @@
     "selftest, scored: real refine → lock → production forge": 1
   },
   "versions": {
-    "coder-prompt": "1.0.0",
+    "coder-prompt": "1.1.0",
     "critic-rubric": "1.0.0"
   },
-  "mintedAt": "2026-07-10T00:17:45.197Z"
+  "mintedAt": "2026-07-10T07:45:59.509Z"
 }
