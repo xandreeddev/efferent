@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
-import { Shell, ShellError, ShellResult } from "@xandreed/engine"
+import { Shell } from "@xandreed/engine"
+import { spawnBounded } from "./spawn.js"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
@@ -50,31 +51,11 @@ export const bwrapArgs = (
   command,
 ]
 
-const run = (
-  argv: ReadonlyArray<string>,
-  cwd: string | undefined,
-  timeoutMs: number,
-): Effect.Effect<ShellResult, ShellError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn([...argv], {
-        ...(cwd !== undefined ? { cwd } : {}),
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: timeoutMs,
-      })
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ])
-      return new ShellResult({ stdout, stderr, exitCode })
-    },
-    catch: (e) => new ShellError({ message: String(e) }),
-  })
-
-/** One probe at layer build — is bwrap present AND able to sandbox here? */
-const probe: Effect.Effect<boolean> = run(
+/** One probe at layer build — is bwrap present AND able to sandbox here?
+ *  Rides the same hardened spawn as the real calls (group kill included:
+ *  `--unshare-pid` makes bwrap the namespace init, so killing its group
+ *  takes the whole sandbox down with it). */
+const probe: Effect.Effect<boolean> = spawnBounded(
   ["bwrap", "--ro-bind", "/", "/", "true"],
   undefined,
   10_000,
@@ -101,7 +82,7 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
           command: string,
           options?: { readonly cwd?: string; readonly timeoutMs?: number },
         ) =>
-          run(
+          spawnBounded(
             sandboxed
               ? bwrapArgs(workspace, options?.cwd ?? workspace, command)
               : ["bash", "-c", command],
