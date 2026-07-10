@@ -1,0 +1,1 @@
+build a complete blog platform: posts, auth, comments, RSS feeds, and an admin dashboard

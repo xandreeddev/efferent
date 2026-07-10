@@ -1,16 +1,35 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { ConversationId, ConversationStore, Shell, specSlug } from "@xandreed/engine"
-import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
+import {
+  LanguageModelLive,
+  LocalAuthStoreLive,
+  LocalFileSystemLive,
+  LocalShellLive,
+  McpClientLive,
+  SqliteConversationStoreLive,
+  UtilityLlmLive,
+} from "@xandreed/providers"
 import { makeScriptedImplementor } from "@xandreed/foundry"
-import { loadForgeLessons, makeRefineSession, runForgeSessionWith, SMITH_LIMIT_DEFAULTS } from "@xandreed/smith"
+import {
+  loadForgeLessons,
+  makeRefineSession,
+  renderTrailForDigest,
+  runForgeSession,
+  runForgeSessionWith,
+  SMITH_CODER_PROMPT_VERSION,
+  SMITH_LIMIT_DEFAULTS,
+  SmithSettingsStoreLive,
+} from "@xandreed/smith"
 import type { RefineAgent, RefineSession, SmithEvent, SmithRunConfig } from "@xandreed/smith"
 import type { Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
-import { eventOrder, eventWhere, fileContains, fileExists } from "../framework/evidence.js"
+import { eventCount, eventOrder, eventWhere, fileContains, fileExists } from "../framework/evidence.js"
+import { CRITIC_RUBRIC_VERSION, makeTrajectoryCritic } from "../judges/trajectoryCritic.js"
+import { codeTierCall } from "../live/llm.js"
 
 /**
  * The smith-spec pack: the refine → lock → forge pipeline as a SCENARIO —
@@ -100,10 +119,160 @@ const bootSmithWorld = Effect.gen(function* () {
 const SLUG = specSlug(GOAL)
 const SPEC_REL = `.efferent/specs/${SLUG}.md`
 
+/* ------------------------------------------------------------------ */
+/* The LIVE scenario — the selftest, SCORED: real refine → lock → the   */
+/* PRODUCTION forge session (judge gate + memory curation ON), with the */
+/* trajectory critic grading the implementor's process.                 */
+/* ------------------------------------------------------------------ */
+
+const LIVE_TASK =
+  "Create src/add.ts exporting a pure function add(a: number, b: number): number returning their sum, and src/add.test.ts covering it with bun:test (describe/test/expect, at least three cases)."
+
+interface SmithLiveWorld {
+  readonly dir: string
+  readonly events: () => ReadonlyArray<SmithEvent>
+  readonly trail: Effect.Effect<string>
+  /** The whole refine→lock→forge pipeline, assembled at boot, run as the
+   *  ONE act (a single scored unit). */
+  readonly act: Effect.Effect<void, unknown>
+}
+
+const liveRunFor = (cwd: string): SmithRunConfig => ({
+  ...runFor(cwd),
+  task: LIVE_TASK,
+  acceptance: [
+    "src/add.ts exports add(a, b) returning the sum",
+    "src/add.test.ts covers it and bun test exits 0",
+  ],
+  noTest: false,
+})
+
+/** The production stack (mirrors smith's `smithAppLive`) over a throwaway
+ *  workspace — settings resolve smith's model DEFAULTS + the global auth,
+ *  exactly like `bun run smith selftest`. */
+const liveServices = (run: SmithRunConfig) =>
+  Layer.mergeAll(
+    SqliteConversationStoreLive(join(run.cwd, ".efferent", "smith.db")),
+    LocalFileSystemLive,
+    LocalShellLive,
+    LanguageModelLive,
+    UtilityLlmLive,
+    McpClientLive(run.cwd, homedir()),
+  ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        LocalAuthStoreLive(run.cwd, homedir()),
+        SmithSettingsStoreLive(run, run.cwd, homedir()),
+      ),
+    ),
+  )
+
+const liveScenario = scenario<SmithLiveWorld>({
+  name: "selftest, scored: real refine → lock → production forge",
+  modes: ["live"],
+  boot: Effect.gen(function* () {
+    const dir = mkdtempSync(join(tmpdir(), "scenario-smith-live-"))
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => rmSync(dir, { recursive: true, force: true })),
+    )
+    yield* Effect.sync(() =>
+      writeFileSync(
+        join(dir, "package.json"),
+        `${JSON.stringify({ name: "smith-live", type: "module", private: true }, null, 2)}\n`,
+      ),
+    )
+    const run = liveRunFor(dir)
+    const eventsRef = yield* Ref.make<ReadonlyArray<SmithEvent>>([])
+    const publish = (event: SmithEvent) => Ref.update(eventsRef, (all) => [...all, event])
+    const services = yield* Layer.build(liveServices(run))
+
+    // The whole pipeline runs in the ACT (one step = one scored unit); boot
+    // only assembles the world.
+    const act = Effect.gen(function* () {
+      const session = yield* makeRefineSession(dir, publish, { unattended: true }).pipe(
+        Effect.provide(services),
+      )
+      yield* session.send(run.task).pipe(Effect.provide(services))
+      const locked = yield* session.lock.pipe(Effect.provide(services))
+      yield* runForgeSession(run, publish, Option.some(locked.doc)).pipe(
+        Effect.provide(services),
+      )
+    })
+    const trail = ConversationStore.pipe(
+      Effect.flatMap((store) =>
+        Effect.gen(function* () {
+          const sessions = yield* store.listByWorkspace(dir)
+          const newest = Option.fromNullable(sessions[0])
+          if (Option.isNone(newest)) return "no conversation persisted"
+          const messages = yield* store.list(newest.value.id)
+          return renderTrailForDigest(messages)
+        }),
+      ),
+      Effect.provide(services),
+      Effect.orElseSucceed(() => "trail unavailable"),
+    )
+    return {
+      dir,
+      events: () => Effect.runSync(Ref.get(eventsRef)),
+      trail,
+      act,
+    } satisfies SmithLiveWorld
+  }),
+  steps: [
+    {
+      name: "refine → lock → forge, end to end on real providers",
+      act: (world) => world.act,
+      checks: [
+        eventOrder(["spec_draft", "spec_locked", "forge_start", "attempt_start", "forge_end"]),
+        eventWhere<SmithEvent>("run ACCEPTED with the artifact on disk", (events) =>
+          events.some(
+            (event) =>
+              event.type === "forge_end" &&
+              event.run.outcome._tag === "accepted" &&
+              existsSync(event.artifact),
+          ),
+        ),
+        eventWhere<SmithEvent>(
+          "the judge gate ran (production gates, not the scripted twin)",
+          (events) =>
+            events.some((event) => event.type === "gate_start" && event.gate === "judge"),
+        ),
+        eventCount("attempt_start", { max: 3 }),
+        // Deliberately NO memory_updated expectation: a trivial selftest task
+        // teaches nothing durable, and the extraction prompt's own discipline
+        // says an empty answer is correct then. The memory battery owns
+        // curation quality.
+      ],
+    },
+  ],
+  judges: [
+    makeTrajectoryCritic<SmithLiveWorld>({
+      transcript: (world) => world.trail,
+      outcome: (world) => {
+        const end = world
+          .events()
+          .flatMap((event) => (event.type === "forge_end" ? [event] : []))
+        const last = end[end.length - 1]
+        return Effect.succeed(
+          last === undefined
+            ? "unknown (no forge_end)"
+            : `${last.run.outcome._tag} after ${last.run.attempts.length} attempt(s)`,
+        )
+      },
+      call: codeTierCall(process.cwd()),
+    }),
+  ],
+})
+
 export const smithSpecPack: Pack = {
   name: "smith-spec",
   threshold: 0.95,
+  meta: {
+    "coder-prompt": SMITH_CODER_PROMPT_VERSION,
+    "critic-rubric": CRITIC_RUBRIC_VERSION,
+  },
   scenarios: [
+    liveScenario,
     scenario<SmithWorld>({
       name: "refine → lock → forge (scripted twin)",
       modes: ["scripted"],

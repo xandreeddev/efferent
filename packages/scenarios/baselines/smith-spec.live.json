@@ -1,0 +1,12 @@
+{
+  "mode": "live",
+  "mean": 1,
+  "scenarios": {
+    "selftest, scored: real refine → lock → production forge": 1
+  },
+  "versions": {
+    "coder-prompt": "1.0.0",
+    "critic-rubric": "1.0.0"
+  },
+  "mintedAt": "2026-07-10T00:17:45.197Z"
+}
