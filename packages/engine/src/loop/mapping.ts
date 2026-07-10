@@ -72,6 +72,19 @@ const withOptions = (blob: unknown): { readonly options?: unknown } =>
 const withProviderOptions = (blob: unknown): { readonly providerOptions?: unknown } =>
   hasKeys(blob) ? { providerOptions: blob } : {}
 
+/** The engine's own usage stamp inside `providerOptions` (see
+ *  {@link withUsageOnAssistant}). */
+const USAGE_KEY = "engine"
+
+/** The provider blob rides out verbatim — EXCEPT the engine's own stamp,
+ *  which is engine-private bookkeeping: replaying it to a provider is at
+ *  best noise, at worst a 400 on a strict gateway. */
+const withoutEngineStamp = (blob: unknown): unknown => {
+  if (!hasKeys(blob)) return blob
+  const { [USAGE_KEY]: _engine, ...rest } = blob
+  return rest
+}
+
 /** `AgentMessage[]` → `@effect/ai` encoded prompt messages (spreadable). */
 export const toPromptMessages = (
   messages: ReadonlyArray<AgentMessage>,
@@ -99,7 +112,7 @@ export const toPromptMessages = (
             ...withOptions(p.providerOptions),
           }
         }),
-        ...withOptions(m.providerOptions),
+        ...withOptions(withoutEngineStamp(m.providerOptions)),
       }
     }
     return {
@@ -319,12 +332,11 @@ export const extractUsage = (
   return { inputTokens, outputTokens, totalTokens, cacheReadTokens }
 }
 
-const USAGE_KEY = "engine"
-
 /**
  * Embed the turn usage into the first assistant message's `providerOptions`
  * so it persists with the conversation and can be recovered on resume. Pure —
  * returns a new array with the first assistant message re-built.
+ * {@link toPromptMessages} strips this stamp before anything goes back out.
  */
 export const withUsageOnAssistant = (
   messages: ReadonlyArray<AgentMessage>,

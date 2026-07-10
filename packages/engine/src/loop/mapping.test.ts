@@ -139,6 +139,40 @@ describe("withUsageOnAssistant / assistantUsage", () => {
     // Pure: the original message is untouched.
     expect((tail[0] as { providerOptions?: unknown }).providerOptions).toBeUndefined()
   })
+
+  test("toPromptMessages STRIPS the engine stamp outbound; provider blobs survive", () => {
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+    const stamped = withUsageOnAssistant(
+      [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+          // A provider-private blob that MUST keep round-tripping.
+          providerOptions: { google: { thought_signature: "sig" } },
+        },
+      ],
+      usage,
+    )
+    // The stamp landed next to the provider blob…
+    expect(
+      (stamped[0]?.providerOptions as { engine?: unknown }).engine,
+    ).toBeDefined()
+    // …but only the provider blob goes back OUT to the wire.
+    const encoded = toPromptMessages(stamped) as ReadonlyArray<{
+      options?: Record<string, unknown>
+    }>
+    expect(encoded[0]?.options?.["google"]).toEqual({ thought_signature: "sig" })
+    expect(encoded[0]?.options?.["engine"]).toBeUndefined()
+    // A stamp-only blob collapses to NO options key at all.
+    const stampOnly = withUsageOnAssistant(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }] }],
+      usage,
+    )
+    const bare = toPromptMessages(stampOnly) as ReadonlyArray<{ options?: unknown }>
+    expect(bare[0]?.options).toBeUndefined()
+    // The persisted message still carries the stamp (recovery on resume).
+    expect(Option.getOrNull(assistantUsage(stampOnly[0] as AgentMessage))).toEqual(usage)
+  })
 })
 
 describe("the model stamp", () => {
