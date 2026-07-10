@@ -183,7 +183,12 @@ const occurrences = (haystack: string, needle: string): number =>
  * Reads may leave the workspace (dependency sources are fair game); WRITES
  * may not — the cwd-prefix guard is the sandbox.
  */
-export const makeSmithCodingHandlers = (cwd: string) =>
+export interface CodingHandlerHooks {
+  /** Best-effort live tap on the coder's Bash output (chunk granularity). */
+  readonly onBashChunk?: (chunk: string) => void
+}
+
+export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const shell = yield* Shell
@@ -294,6 +299,7 @@ export const makeSmithCodingHandlers = (cwd: string) =>
             .exec(params.command, {
               cwd,
               timeoutMs: params.timeout ?? DEFAULT_BASH_TIMEOUT_MS,
+              ...(hooks.onBashChunk !== undefined ? { onChunk: hooks.onBashChunk } : {}),
             })
             .pipe(Effect.mapError((e) => ({ error: "BashFailed", message: e.message })))
           return {

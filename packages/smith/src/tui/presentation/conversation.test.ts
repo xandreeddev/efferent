@@ -390,4 +390,18 @@ describe("streaming deltas", () => {
     const midStream = reduceConversation(withSettled, delta(1, "text", "next…"))
     expect(contextTokens(midStream)).toEqual(Option.some(9000))
   })
+
+  test("bash_progress wears the live line on the newest RUNNING tool block", () => {
+    const state = [
+      agent({ type: "tool_start", turnIndex: 0, toolCallId: "b1", toolName: "Bash", args: { command: "bun run build" } }),
+      { type: "bash_progress" as const, line: "compiling module 3/12…" },
+    ].reduce(reduceConversation, initialConversation)
+    expect(state.blocks[0]).toMatchObject({ kind: "tool", note: "compiling module 3/12…" })
+    // Nothing running → dropped silently.
+    const idle = reduceConversation(initialConversation, {
+      type: "bash_progress",
+      line: "orphan",
+    })
+    expect(idle.blocks).toEqual([])
+  })
 })

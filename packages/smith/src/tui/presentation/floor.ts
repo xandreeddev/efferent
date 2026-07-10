@@ -109,8 +109,11 @@ const todosFromArgs = (args: unknown): Option.Option<ReadonlyArray<TodoItem>> =>
 
 /** Fold one smith event into the floor. Pure — unit-tested without Solid.
  *  Refine-phase events are inert here (the refine reducer owns them). */
-export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
-  Match.value(event).pipe(
+export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState => {
+  // Hoisted: transient/advisory events are inert here, and the Match chain
+  // sits at TS's inference depth (one more arm collapses later narrows).
+  if (event.type === "bash_progress" || event.type === "file_refs") return state
+  return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, () => state),
     Match.when({ type: "spec_draft" }, () => state),
     Match.when({ type: "spec_locked" }, () => state),
@@ -118,7 +121,6 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     // Red-first, compaction, and ship live in the conversation story; the
     // floor is inert to them.
     Match.when({ type: "vacuous_checks" }, () => state),
-    Match.when({ type: "file_refs" }, () => state),
     Match.when({ type: "context_folded" }, () => state),
     Match.when({ type: "ship_step" }, () => state),
     Match.when({ type: "memory_updated" }, () => state),
@@ -227,6 +229,7 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     }),
     Match.exhaustive,
   )
+}
 
 /* ------------------------------------------------------------------ */
 /* The attempt-row VIEW model — bounded by construction                */

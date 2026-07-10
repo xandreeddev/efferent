@@ -270,6 +270,11 @@ const ConversationPane = (props: { ctx: SmithTuiContext; label: string }) => {
                   <text fg={tokens.text.muted} wrapMode="none" flexShrink={1}>
                     {`(${relArg(block.arg)})`}
                   </text>
+                  <Show when={block.status === "running" && block.note !== undefined}>
+                    <text fg={tokens.text.dim} wrapMode="none" flexShrink={1}>
+                      {`  · ${block.note}`}
+                    </text>
+                  </Show>
                   <Show when={isNewestWithResult() && !store.toolExpand()}>
                     <text fg={tokens.text.dim} flexShrink={0} wrapMode="none">
                       {"  (ctrl+o to expand)"}

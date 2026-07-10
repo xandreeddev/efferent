@@ -50,6 +50,8 @@ export type ConversationBlock =
       /** The tool's (clipped) result once it landed — ctrl+o expands the
        *  newest one in-pane. */
       readonly result?: string
+      /** The latest live output line while the command RUNS (bash tap). */
+      readonly note?: string
     }
   /** A turn that DIED — durable in the story, unlike the transient notice. */
   | { readonly kind: "error"; readonly text: string }
@@ -309,6 +311,22 @@ export const reduceConversationIn = (
     Match.when({ type: "refine_error" }, (e) =>
       push(sealStreaming(state), { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
     ),
+    Match.when({ type: "bash_progress" }, (e) => {
+      // The newest RUNNING tool block wears the live line; nothing running
+      // (a race at command end) drops it silently.
+      const at = state.blocks.reduce<number>(
+        (found, block, index) =>
+          block.kind === "tool" && block.status === "running" ? index : found,
+        -1,
+      )
+      return at < 0
+        ? state
+        : {
+            blocks: state.blocks.map((block, index) =>
+              index === at && block.kind === "tool" ? { ...block, note: e.line } : block,
+            ),
+          }
+    }),
     Match.when({ type: "file_refs" }, (e) =>
       push(state, { kind: "notice", text: `file refs: ${e.notes.join(" · ")}` }),
     ),

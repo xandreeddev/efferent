@@ -1,5 +1,5 @@
 import type { LanguageModel } from "@effect/ai"
-import { Effect, Layer, Option, Ref } from "effect"
+import { Effect, Layer, Option, Ref, Runtime } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { WorkspacePath } from "@xandreed/foundry"
 import {
@@ -199,8 +199,22 @@ export const makeEfferentImplementorLive = (
       // byte-stable across turns (prompt-cache friendly).
       const skillMetas = yield* discoverSkills(options.cwd)
       const skills = renderSkillsBlock(skillMetas)
+      // The live Bash tap: chunk → last non-empty line → bash_progress
+      // (sync callback; the queue offer is runSync-safe).
+      const runtime = yield* Effect.runtime<never>()
+      const onBashChunk = (chunk: string): void => {
+        const line = chunk
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0)
+          .pop()
+        if (line === undefined) return
+        Runtime.runSync(runtime)(
+          options.publish({ type: "bash_progress", line: line.slice(0, 160) }),
+        )
+      }
       const handlers = yield* Layer.build(
-        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd)),
+        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd, { onBashChunk })),
       )
       // External MCP tools (user-configured servers) merge into the kit —
       // snapshot once per run; an unreachable server yields the empty bridge.
