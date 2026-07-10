@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { readdir, readFile, rename, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -20,16 +20,26 @@ const PENDING_DIR = DRAFTS_PENDING_DIR
 const POSTED_DIR = DRAFTS_POSTED_DIR
 const DISCARDED_DIR = DRAFTS_DISCARDED_DIR
 
+/** Queue plumbing failures (fs, parse) — typed like every other error in
+ *  the tree; raw `new Error` was the discipline outlier (audit). */
+class ReviewError extends Schema.TaggedError<ReviewError>()("ReviewError", {
+  message: Schema.String,
+}) {}
+
 interface DraftMetadata {
   readonly type: "reply" | "post"
-  readonly targetTweetId: string | null
-  readonly targetAuthor: string | null
-  readonly referenceBlogSlug: string | null
+  readonly targetTweetId: Option.Option<string>
+  readonly targetAuthor: Option.Option<string>
+  readonly referenceBlogSlug: Option.Option<string>
   readonly status: string
   readonly content: string
   readonly filePath: string
   readonly filename: string
 }
+
+/** `Option → { key: value }` for the optional-field spreads below. */
+const optField = <K extends string, A>(key: K, value: Option.Option<A>) =>
+  Option.match(value, { onNone: () => ({}), onSome: (a) => ({ [key]: a }) })
 
 const parseDraftFile = async (filename: string): Promise<DraftMetadata> => {
   const filePath = join(PENDING_DIR, filename)
@@ -40,9 +50,9 @@ const parseDraftFile = async (filename: string): Promise<DraftMetadata> => {
 
   const defaults = {
     type: "post" as "reply" | "post",
-    targetTweetId: null as string | null,
-    targetAuthor: null as string | null,
-    referenceBlogSlug: null as string | null,
+    targetTweetId: Option.none<string>(),
+    targetAuthor: Option.none<string>(),
+    referenceBlogSlug: Option.none<string>(),
     status: "pending",
   }
   const folded = (match?.[1] ?? "").split("\n").reduce<typeof defaults>(
@@ -52,9 +62,9 @@ const parseDraftFile = async (filename: string): Promise<DraftMetadata> => {
       const key = line.slice(0, colonIndex).trim()
       const value = line.slice(colonIndex + 1).trim().replace(/^['"]|['"]$/g, "")
       if (key === "type" && (value === "reply" || value === "post")) return { ...acc, type: value }
-      if (key === "targetTweetId" && value !== "null") return { ...acc, targetTweetId: value }
-      if (key === "targetAuthor" && value !== "null") return { ...acc, targetAuthor: value }
-      if (key === "referenceBlogSlug" && value !== "null") return { ...acc, referenceBlogSlug: value }
+      if (key === "targetTweetId" && value !== "null") return { ...acc, targetTweetId: Option.some(value) }
+      if (key === "targetAuthor" && value !== "null") return { ...acc, targetAuthor: Option.some(value) }
+      if (key === "referenceBlogSlug" && value !== "null") return { ...acc, referenceBlogSlug: Option.some(value) }
       if (key === "status") return { ...acc, status: value }
       return acc
     },
@@ -104,9 +114,9 @@ export const gateBeforePost = (
       {
         kind: draft.type,
         content: draft.content,
-        ...(draft.targetTweetId !== null ? { targetTweetId: draft.targetTweetId } : {}),
-        ...(draft.targetAuthor !== null ? { targetAuthor: draft.targetAuthor } : {}),
-        ...(draft.referenceBlogSlug !== null ? { referenceBlogSlug: draft.referenceBlogSlug } : {}),
+        ...optField("targetTweetId", draft.targetTweetId),
+        ...optField("targetAuthor", draft.targetAuthor),
+        ...optField("referenceBlogSlug", draft.referenceBlogSlug),
       },
       {
         now: args.now ?? new Date(),
@@ -126,9 +136,9 @@ const ledgerRow = (
     at: new Date().toISOString(),
     event,
     kind: draft.type,
-    ...(draft.targetTweetId !== null ? { targetTweetId: draft.targetTweetId } : {}),
-    ...(draft.targetAuthor !== null ? { targetAuthor: draft.targetAuthor } : {}),
-    ...(draft.referenceBlogSlug !== null ? { referenceBlogSlug: draft.referenceBlogSlug } : {}),
+    ...optField("targetTweetId", draft.targetTweetId),
+    ...optField("targetAuthor", draft.targetAuthor),
+    ...optField("referenceBlogSlug", draft.referenceBlogSlug),
     content: draft.content,
     filename: draft.filename,
   })
@@ -149,7 +159,7 @@ export const runReviewQueue = () =>
           (entries) => entries,
           () => [] as string[],
         ),
-      catch: (e) => new Error(`Failed to list pending drafts: ${String(e)}`),
+      catch: (e) => new ReviewError({ message: `Failed to list pending drafts: ${String(e)}` }),
     })
 
     const pendingDrafts = files.filter((f) => f.endsWith(".md"))
@@ -164,23 +174,26 @@ export const runReviewQueue = () =>
     // One draft at a time; each is a small recursive state machine
     // (show → ask → act; [e]dit loops back to a fresh re-parse) and "q" stops
     // the whole queue. Recursion replaces the old mutable while-flags.
-    const reviewOne = (file: string): Effect.Effect<"continue" | "quit", Error, never> =>
+    const reviewOne = (file: string): Effect.Effect<"continue" | "quit", ReviewError, never> =>
       Effect.gen(function* () {
         const draft = yield* Effect.tryPromise({
           try: () => parseDraftFile(file),
-          catch: (e) => new Error(`Failed to parse draft "${file}": ${String(e)}`),
+          catch: (e) => new ReviewError({ message: `Failed to parse draft "${file}": ${String(e)}` }),
         })
 
         console.log("==================================================")
         console.log(`DRAFT: ${draft.filename}`)
         console.log(`Type:  ${draft.type.toUpperCase()}`)
         if (draft.type === "reply") {
-          console.log(`Replying to: ${draft.targetAuthor} (ID: ${draft.targetTweetId})`)
-          console.log(`Target URL:  https://x.com/anyuser/status/${draft.targetTweetId}`)
+          const author = Option.getOrElse(draft.targetAuthor, () => "(unknown)")
+          const target = Option.getOrElse(draft.targetTweetId, () => "(missing id)")
+          console.log(`Replying to: ${author} (ID: ${target})`)
+          console.log(`Target URL:  https://x.com/anyuser/status/${target}`)
         }
-        if (draft.referenceBlogSlug) {
-          console.log(`Ref Blog:    https://xandreed.dev/posts/${draft.referenceBlogSlug}`)
-        }
+        Option.match(draft.referenceBlogSlug, {
+          onNone: () => {},
+          onSome: (slug) => console.log(`Ref Blog:    https://xandreed.dev/posts/${slug}`),
+        })
         console.log("--------------------------------------------------")
         console.log(draft.content)
         console.log("==================================================")
@@ -206,7 +219,7 @@ export const runReviewQueue = () =>
               await mkdir(DISCARDED_DIR, { recursive: true })
               await rename(draft.filePath, join(DISCARDED_DIR, draft.filename))
             },
-            catch: (e) => new Error(`Failed to discard draft: ${String(e)}`),
+            catch: (e) => new ReviewError({ message: `Failed to discard draft: ${String(e)}` }),
           })
           yield* appendLedger(LEDGER_PATH, ledgerRow(draft, "discarded")).pipe(Effect.ignore)
           console.log("Draft moved to discarded.\n")
@@ -231,14 +244,14 @@ export const runReviewQueue = () =>
             return yield* reviewOne(file)
           }
           console.log("Posting to X...")
-          yield* x.postTweet(draft.content, draft.targetTweetId ?? undefined).pipe(
+          yield* x.postTweet(draft.content, Option.getOrUndefined(draft.targetTweetId)).pipe(
             Effect.tap(() =>
               Effect.tryPromise({
                 try: async () => {
                   await mkdir(POSTED_DIR, { recursive: true })
                   await rename(draft.filePath, join(POSTED_DIR, draft.filename))
                 },
-                catch: (e) => new Error(`Failed to archive posted draft: ${String(e)}`),
+                catch: (e) => new ReviewError({ message: `Failed to archive posted draft: ${String(e)}` }),
               })
             ),
             Effect.tap(() => appendLedger(LEDGER_PATH, ledgerRow(draft, "posted")).pipe(Effect.ignore)),
