@@ -1,8 +1,10 @@
+import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { chromium, type BrowserContext, type Page } from "playwright"
 import { XPlatform, type XNotification, type XSearchResult } from "../ports/XPlatform.js"
+import { WORKSPACE_TREE } from "../domain/paths.js"
 
-const PROFILE_DIR = "/home/asiborro/Workspace/xandreed/.playwright-profile"
+const PROFILE_DIR = join(WORKSPACE_TREE, ".playwright-profile")
 
 /**
  * Creates and manages a scoped persistent Playwright browser context.
