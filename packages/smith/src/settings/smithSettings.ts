@@ -16,6 +16,7 @@ export const applySmithSettings = (
   run: SmithRunConfig,
 ): EngineSettings =>
   new EngineSettings({
+    ...merged,
     model: Option.orElse(
       Option.orElse(run.models.general, () => merged.model),
       () => Option.some(SMITH_MODEL_DEFAULTS.general),
@@ -41,6 +42,7 @@ export const smithSettingsStore = (
       return {
         load: Effect.map(inner.load, (settings) => applySmithSettings(settings, run)),
         setRole: inner.setRole,
+        set: inner.set,
       }
     }),
   )
