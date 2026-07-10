@@ -5,6 +5,7 @@ import type { LoopEvent } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import {
   contextGauge,
+  foldedToolLine,
   contextTokens,
   initialConversation,
   reduceConversation,
@@ -403,5 +404,28 @@ describe("streaming deltas", () => {
       line: "orphan",
     })
     expect(idle.blocks).toEqual([])
+  })
+
+  test("foldedToolLine: finished groups collapse to the opener; running/singletons stay", () => {
+    const tool = (id: string, first: boolean, status: "ok" | "running", name = "read_file") =>
+      ({ kind: "tool", id, name, arg: "", status, first }) as const
+    const blocks = [
+      { kind: "user", text: "go" } as const,
+      tool("a", true, "ok"),
+      tool("b", false, "ok", "Bash"),
+      tool("c", false, "ok"),
+      { kind: "assistant", text: "done", tag: "t", leading: true, tokens: { input: 0, output: 0, cached: 0 } } as const,
+      tool("d", true, "running"),
+    ]
+    // The opener carries the fold line (count + distinct names)…
+    expect(Option.getOrThrow(foldedToolLine(blocks, 1))).toBe("3 tool calls · read_file, Bash")
+    // …members render nothing…
+    expect(Option.getOrThrow(foldedToolLine(blocks, 2))).toBe("")
+    // …non-tools and RUNNING groups render normally…
+    expect(Option.isNone(foldedToolLine(blocks, 0))).toBe(true)
+    expect(Option.isNone(foldedToolLine(blocks, 5))).toBe(true)
+    // …and a singleton group never folds.
+    const single = [tool("x", true, "ok")]
+    expect(Option.isNone(foldedToolLine(single, 0))).toBe(true)
   })
 })

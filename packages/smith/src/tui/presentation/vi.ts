@@ -20,8 +20,8 @@ export type ViMode = "insert" | "normal"
 
 export interface ViState {
   readonly mode: ViMode
-  /** A pending operator awaiting its motion ("d" for dd/dw). */
-  readonly pending: Option.Option<"d">
+  /** A pending operator awaiting its motion ("d" for dd/dw, "z" for za). */
+  readonly pending: Option.Option<"d" | "z">
 }
 
 export const initialVi: ViState = { mode: "insert", pending: Option.none() }
@@ -35,6 +35,8 @@ export interface ViEdit {
   readonly cursor?: number
   /** j/k: delegate to the history ring instead of moving. */
   readonly recall?: "up" | "down"
+  /** za: toggle the story's tool-group folds. */
+  readonly toggleFold?: boolean
 }
 
 const isWord = (ch: string): boolean => /\w/.test(ch)
@@ -62,7 +64,7 @@ export const prevWordStart = (text: string, at: number): number => {
 
 const clamp = (at: number, len: number): number => Math.max(0, Math.min(len, at))
 
-const normal = (pending: Option.Option<"d"> = Option.none()): ViState => ({
+const normal = (pending: Option.Option<"d" | "z"> = Option.none()): ViState => ({
   mode: "normal",
   pending,
 })
@@ -79,9 +81,14 @@ export const viNormalStep = (
   cursor: number,
 ): Option.Option<ViEdit> => {
   const at = clamp(cursor, text.length)
-  const withPendingD = Option.isSome(state.pending)
 
-  if (withPendingD) {
+  if (Option.isSome(state.pending)) {
+    const operator = state.pending.value
+    if (operator === "z") {
+      return key === "a"
+        ? Option.some({ state: normal(), toggleFold: true })
+        : Option.some({ state: normal() })
+    }
     if (key === "d") {
       return Option.some({ state: normal(), text: "", cursor: 0 })
     }
@@ -115,6 +122,7 @@ export const viNormalStep = (
         })
   }
   if (key === "d") return Option.some({ state: normal(Option.some("d")) })
+  if (key === "z") return Option.some({ state: normal(Option.some("z")) })
   if (key === "i") return Option.some({ state: insert, cursor: at })
   if (key === "a") return Option.some({ state: insert, cursor: clamp(at + 1, text.length) })
   if (key === "I") return Option.some({ state: insert, cursor: 0 })
