@@ -31,6 +31,9 @@ export type SmithEvent =
   /** `@path` refs in a composer message that did NOT inline (missing,
    *  binary, glob, budget) — advisory notes for the notice line. */
   | { readonly type: "file_refs"; readonly notes: ReadonlyArray<string> }
+  /** A LIVE line from the coder's running Bash command (best-effort tap) —
+   *  long builds stop looking dead. Transient UI state, never persisted. */
+  | { readonly type: "bash_progress"; readonly line: string }
   /** The harness capabilities loaded for this run — workspace skills and the
    *  external MCP tools, surfaced once at session start so what the coder can
    *  reach is VISIBLE (progressive disclosure is otherwise silent). */

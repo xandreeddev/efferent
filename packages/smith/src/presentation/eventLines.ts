@@ -52,8 +52,12 @@ export const agentEventLabel = (event: SmithEvent & { type: "agent" }): Option.O
   )
 
 /** One stdout line (or block) per smith event for the headless printer; `None` = silent. */
-export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
-  Match.value(event).pipe(
+export const renderEventLines = (event: SmithEvent): Option.Option<string> => {
+  // Hoisted out of the matcher: transient UI-only events are silent here,
+  // and the Match chain is at TS's inference depth (one more arm collapses
+  // the later narrows — live-caught as phantom property errors).
+  if (event.type === "bash_progress") return Option.none()
+  return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, (e) =>
       Option.some(
         `─ refine: ${Option.match(e.idea, { onNone: () => "(interactive)", onSome: (idea) => clip(idea, 100) })}`,
@@ -141,3 +145,4 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> =>
     ),
     Match.exhaustive,
   )
+}

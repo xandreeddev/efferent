@@ -33,6 +33,7 @@ interface Captured {
 const readCapped = async (
   stream: ReadableStream<Uint8Array>,
   capBytes: number,
+  onChunk?: (chunk: string) => void,
 ): Promise<Captured> => {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
@@ -53,8 +54,10 @@ const readCapped = async (
     // The chunk that CROSSES the cap is clipped to the allowed prefix — the
     // capture never exceeds the cap by more than a dangling code point.
     const kept = bytes > capBytes ? value.slice(0, capBytes - acc.bytes) : value
+    const text = decoder.decode(kept, { stream: true })
+    if (onChunk !== undefined && text.length > 0) onChunk(text)
     return step({
-      text: acc.text + decoder.decode(kept, { stream: true }),
+      text: acc.text + text,
       bytes,
       truncated: bytes > capBytes,
     })
@@ -80,6 +83,7 @@ export const spawnBounded = (
   argv: ReadonlyArray<string>,
   cwd: string | undefined,
   timeoutMs: number,
+  onChunk?: (chunk: string) => void,
 ): Effect.Effect<ShellResult, ShellError> =>
   Effect.tryPromise({
     try: async () => {
@@ -94,8 +98,8 @@ export const spawnBounded = (
         killGroup(proc.pid)
       }, timeoutMs)
       const [stdout, stderr, exitCode] = await Promise.all([
-        readCapped(proc.stdout, MAX_OUTPUT_BYTES),
-        readCapped(proc.stderr, MAX_OUTPUT_BYTES),
+        readCapped(proc.stdout, MAX_OUTPUT_BYTES, onChunk),
+        readCapped(proc.stderr, MAX_OUTPUT_BYTES, onChunk),
         proc.exited,
       ])
       clearTimeout(timer)
