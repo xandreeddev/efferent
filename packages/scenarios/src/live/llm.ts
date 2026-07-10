@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option } from "effect"
-import { AuthStore, UtilityLlm } from "@xandreed/engine"
+import { AuthStore, SettingsStore, UtilityLlm } from "@xandreed/engine"
 import {
   LanguageModelLive,
   LocalAuthStoreLive,
@@ -39,6 +39,25 @@ export const codeTierCall = (cwd: string) => {
 /** The GENERAL tier LanguageModel layer — the refiner's brain. */
 export const generalTier = (cwd: string): Layer.Layer<LanguageModel.LanguageModel> =>
   LanguageModelLive.pipe(Layer.provide(stores(cwd)))
+
+/** The RESOLVED model ids per role, as provenance meta — merged into every
+ *  live pack's `meta` so a model swap surfaces as version drift against the
+ *  minted baseline exactly like a prompt bump (the models live in gitignored
+ *  config; without this a swap shifts every baseline unattributably). */
+export const modelMeta = (cwd: string): Effect.Effect<Record<string, string>> =>
+  Effect.gen(function* () {
+    const settings = yield* Effect.flatMap(SettingsStore, (store) => store.load)
+    const role = (value: Option.Option<string>, fallback: Option.Option<string>): string =>
+      Option.getOrElse(Option.orElse(value, () => fallback), () => "(unset)")
+    return {
+      "model.general": role(settings.model, Option.none()),
+      "model.code": role(settings.codeModel, settings.model),
+      "model.fast": role(settings.fastModel, settings.model),
+    }
+  }).pipe(
+    Effect.provide(LocalSettingsStoreLive(cwd, homedir())),
+    Effect.orElseSucceed(() => ({})),
+  )
 
 /** Pre-flight: at least one credential on disk, checked ONCE — a keyless run
  *  exits with one clear message, not twenty identical scenario errors. */

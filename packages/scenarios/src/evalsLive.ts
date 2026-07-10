@@ -4,14 +4,14 @@ import { runPack } from "./framework/run.js"
 import {
   compareBaseline,
   DEFAULT_TOLERANCE,
+  orphanedEntries,
   readBaseline,
   versionDrift,
   writeBaseline,
 } from "./framework/baseline.js"
-import type { Baseline } from "./framework/baseline.js"
 import { renderReport } from "./framework/report.js"
 import { BASELINE_DIR } from "./main.js"
-import { preflightAuth } from "./live/llm.js"
+import { modelMeta, preflightAuth } from "./live/llm.js"
 import { digestPack } from "./packs/digest.js"
 import { judgeCalibrationPack } from "./packs/judgeCalibration.js"
 import { memoryPack } from "./packs/memory.js"
@@ -95,22 +95,40 @@ const program = Effect.gen(function* () {
     return 2
   }
 
+  // Resolved model ids ride every pack's meta: a model swap surfaces as
+  // version drift, exactly like a prompt bump.
+  const models = yield* modelMeta(process.cwd())
+
   const outcomes = yield* Effect.forEach(selected, (base) => {
+    const withMeta = { ...base, meta: { ...base.meta, ...models } }
     const pack = Option.match(args.samplesOverride, {
-      onNone: () => base,
-      onSome: (samples) => ({ ...base, samples }),
+      onNone: () => withMeta,
+      onSome: (samples) => ({ ...withMeta, samples }),
     })
     return runPack(pack, "live").pipe(
       Effect.map((report) => {
-        const baseline = args.noCheck
-          ? Option.none<Baseline>()
-          : readBaseline(BASELINE_DIR, report.pack, report.mode)
-        const regression = Option.flatMap(baseline, (b) =>
-          compareBaseline(report, b, pack.tolerance ?? DEFAULT_TOLERANCE, pack.perScenarioRatchet === true),
-        )
-        const drift = Option.flatMap(baseline, (b) => versionDrift(pack, b))
+        // The PRIOR baseline is read BEFORE any update — the printed delta
+        // must be run-vs-committed, not run-vs-itself (Δ+0.00 exactly when
+        // you updated hid the number the ritual exists to review).
+        const prior = readBaseline(BASELINE_DIR, report.pack, report.mode)
+        const regression = args.noCheck
+          ? Option.none<string>()
+          : Option.flatMap(prior, (b) =>
+              compareBaseline(
+                report,
+                b,
+                pack.tolerance ?? DEFAULT_TOLERANCE,
+                pack.perScenarioRatchet === true,
+                pack.perScenarioTolerance ?? pack.tolerance ?? DEFAULT_TOLERANCE,
+              ),
+            )
+        const drift = Option.flatMap(prior, (b) => versionDrift(pack, b))
+        const orphans = Option.match(prior, {
+          onNone: () => [] as ReadonlyArray<string>,
+          onSome: (b) => orphanedEntries(report, b),
+        })
         if (args.update) writeBaseline(BASELINE_DIR, report, pack)
-        return { pack, report, regression, drift }
+        return { pack, report, regression, drift, orphans, prior }
       }),
     )
   })
@@ -128,9 +146,10 @@ const program = Effect.gen(function* () {
           summary: o.pack.summary?.(o.report) ?? [],
         }),
       )
+      o.orphans.forEach((warning) => console.log(`  ⚠ ${warning}`))
     })
     const deltas = outcomes.flatMap((o) =>
-      Option.match(readBaseline(BASELINE_DIR, o.report.pack, "live"), {
+      Option.match(o.prior, {
         onNone: () => [`${o.report.pack} (no baseline — mint with --update-baselines)`],
         onSome: (b) => [`${o.report.pack} Δ${(o.report.mean - b.mean >= 0 ? "+" : "") + (o.report.mean - b.mean).toFixed(2)}`],
       }),

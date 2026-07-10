@@ -5,10 +5,10 @@ import { runPack } from "./framework/run.js"
 import {
   compareBaseline,
   DEFAULT_TOLERANCE,
+  orphanedEntries,
   readBaseline,
   writeBaseline,
 } from "./framework/baseline.js"
-import type { Baseline } from "./framework/baseline.js"
 import { defaultExtras, renderReport } from "./framework/report.js"
 import { mathPack } from "./packs/math.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
@@ -59,14 +59,26 @@ const program = Effect.gen(function* () {
   const outcomes = yield* Effect.forEach(selected, (pack) =>
     runPack(pack, args.mode).pipe(
       Effect.map((report) => {
-        const baseline = args.noCheck
-          ? Option.none<Baseline>()
-          : readBaseline(BASELINE_DIR, report.pack, report.mode)
-        const regression = Option.flatMap(baseline, (b) =>
-          compareBaseline(report, b, pack.tolerance ?? DEFAULT_TOLERANCE, pack.perScenarioRatchet === true),
-        )
+        // Read BEFORE any update — comparisons and warnings are always
+        // run-vs-committed.
+        const prior = readBaseline(BASELINE_DIR, report.pack, report.mode)
+        const regression = args.noCheck
+          ? Option.none<string>()
+          : Option.flatMap(prior, (b) =>
+              compareBaseline(
+                report,
+                b,
+                pack.tolerance ?? DEFAULT_TOLERANCE,
+                pack.perScenarioRatchet === true,
+                pack.perScenarioTolerance ?? pack.tolerance ?? DEFAULT_TOLERANCE,
+              ),
+            )
+        const orphans = Option.match(prior, {
+          onNone: () => [] as ReadonlyArray<string>,
+          onSome: (b) => orphanedEntries(report, b),
+        })
         if (args.update) writeBaseline(BASELINE_DIR, report, pack)
-        return { pack, report, regression }
+        return { pack, report, regression, orphans }
       }),
     ),
   )
@@ -76,6 +88,7 @@ const program = Effect.gen(function* () {
   } else {
     outcomes.forEach((o) => {
       console.log(renderReport(o.report, o.pack, { ...defaultExtras, regression: o.regression }))
+      o.orphans.forEach((warning) => console.log(`  ⚠ ${warning}`))
     })
     if (args.update) console.log(`baselines updated under ${BASELINE_DIR}`)
   }

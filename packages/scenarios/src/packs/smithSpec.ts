@@ -267,6 +267,10 @@ const liveScenario = scenario<SmithLiveWorld>({
 export const smithSpecPack: Pack = {
   name: "smith-spec",
   threshold: 0.95,
+  // The live scenario is ONE full forge run (k=1, priciest battery) with a
+  // 0.3-weighted critic — a single 4/5 rubric axis moves the mean ~0.024,
+  // so the default 0.05 was one opinion away from a false regression.
+  tolerance: 0.1,
   meta: {
     "coder-prompt": SMITH_CODER_PROMPT_VERSION,
     "critic-rubric": CRITIC_RUBRIC_VERSION,

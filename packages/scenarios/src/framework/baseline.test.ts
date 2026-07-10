@@ -7,6 +7,7 @@ import type { Pack, PackReport } from "./model.js"
 import type { Baseline } from "./baseline.js"
 import {
   compareBaseline,
+  orphanedEntries,
   readBaseline,
   toBaseline,
   versionDrift,
@@ -60,16 +61,49 @@ describe("the baseline module", () => {
     expect(Option.isNone(compareBaseline(report({ mean: 0.84 }), base, 0.1))).toBe(true)
   })
 
-  test("versionDrift: fires on changed, added, and removed keys; silent when equal", () => {
+  test("versionDrift: fires on changed and removed MINTED keys; new keys are grandfathered", () => {
     const minted = toBaseline(report(), pack({ meta: { "judge-prompt": "1.0.0" } }))
     expect(Option.isNone(versionDrift(pack({ meta: { "judge-prompt": "1.0.0" } }), minted))).toBe(true)
     const changed = versionDrift(pack({ meta: { "judge-prompt": "1.1.0" } }), minted)
     expect(Option.getOrThrow(changed)).toContain("judge-prompt 1.0.0")
     expect(Option.getOrThrow(changed)).toContain("judge-prompt 1.1.0")
     expect(Option.isSome(versionDrift(pack({ meta: {} }), minted))).toBe(true)
+    // A provenance key added SINCE the mint (e.g. model ids landing after
+    // the first mint) is new information, not drift — it rides in on the
+    // next legitimate re-mint instead of nagging every run.
+    expect(
+      Option.isNone(
+        versionDrift(
+          pack({ meta: { "judge-prompt": "1.0.0", "model.code": "opencode:kimi-k2.7-code" } }),
+          minted,
+        ),
+      ),
+    ).toBe(true)
     // Old baselines without versions never drift against a meta-less pack.
     const bare = toBaseline(report(), pack())
     expect(Option.isNone(versionDrift(pack(), bare))).toBe(true)
+  })
+
+  test("writeBaseline: a no-op re-mint keeps the original mintedAt (no diff churn)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "baseline-"))
+    writeBaseline(dir, report(), pack({ meta: { v: "1" } }))
+    const first = Option.getOrThrow(readBaseline(dir, "toy", "live"))
+    writeBaseline(dir, report(), pack({ meta: { v: "1" } }))
+    expect(Option.getOrThrow(readBaseline(dir, "toy", "live")).mintedAt).toBe(first.mintedAt!)
+    // A REAL change writes through.
+    writeBaseline(dir, report({ mean: 0.95 }), pack({ meta: { v: "1" } }))
+    expect(Option.getOrThrow(readBaseline(dir, "toy", "live")).mean).toBe(0.95)
+  })
+
+  test("orphanedEntries: names a baseline entry no scenario carries anymore; skipped counts as present", () => {
+    const baseline: Baseline = {
+      mode: "live",
+      mean: 0.9,
+      scenarios: { "old-name": 1.0, a: 0.9, skipped: 1.0 },
+    }
+    const warnings = orphanedEntries(report(), baseline)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('"old-name"')
   })
 
   test("perScenario ratchet: a case drop fails even when the mean holds", () => {
@@ -95,6 +129,9 @@ describe("the baseline module", () => {
     const caught = Option.getOrThrow(compareBaseline(report, baseline, 0.05, true))
     expect(caught).toContain("case-a")
     expect(caught).not.toContain("case-b")
+    // A looser PER-SCENARIO tolerance absorbs the case drop (a k-sampled
+    // case moves in 1/k steps) while the mean gate keeps its own.
+    expect(Option.isNone(compareBaseline(report, baseline, 0.05, true, 0.34))).toBe(true)
     // Skipped results and unminted cases never ratchet.
     const withSkip: PackReport = {
       ...report,

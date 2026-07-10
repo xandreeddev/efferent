@@ -8,7 +8,7 @@ import { TsProjectCachedLive } from "./gates/TsProject.js"
  * The foundry CLI driver — argv at the edge, Layers composed here, nothing
  * effectful above this file.
  *
- *   foundry check [--config <f>] [--baseline <f>] [--update-baseline]
+ *   foundry check [--config <f>] [--baseline <f>] [--update-baseline [--allow-grow]]
  *   foundry demo  [--implementor scripted|claude]
  */
 
@@ -19,7 +19,7 @@ const flagValue = (argv: ReadonlyArray<string>, flag: string): Option.Option<str
 
 const USAGE = [
   "usage:",
-  "  foundry check [--config <foundry.config.ts>] [--baseline <f.json>] [--update-baseline]",
+  "  foundry check [--config <foundry.config.ts>] [--baseline <f.json>] [--update-baseline [--allow-grow]]",
   "  foundry demo  [--implementor scripted|claude]",
 ].join("\n")
 
@@ -35,6 +35,7 @@ const program = Effect.gen(function* () {
         ),
         baselinePath: flagValue(argv, "--baseline"),
         updateBaseline: argv.includes("--update-baseline"),
+        allowGrow: argv.includes("--allow-grow"),
       }).pipe(Effect.provide(TsProjectCachedLive)),
     ),
     Match.when("demo", () => {
