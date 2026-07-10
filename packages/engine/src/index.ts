@@ -62,6 +62,8 @@ export {
   runLoop,
 } from "./loop/loop.js"
 export type { CompactionPlan, RunLoopOptions } from "./loop/loop.js"
+export { foldStreamParts } from "./loop/streamFold.js"
+export type { FoldedTurn, StreamDelta } from "./loop/streamFold.js"
 export { runAgent } from "./loop/runAgent.js"
 export type { AgentConfig, CompactionPolicy } from "./loop/runAgent.js"
 export { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "./ports/McpClient.js"

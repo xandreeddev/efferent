@@ -36,6 +36,13 @@ export interface Session<E> {
   }>
   /** Every event with `seq >= since`: the replay prefix, then live. */
   readonly subscribe: (since: number) => Stream.Stream<SeqEvent<E>>
+  /**
+   * The live-only lossy channel: events `isTransient` claimed (token
+   * deltas). Never ledgered, never replayed, sliding — safe to drop because
+   * every transient fact is restated by a ledgered finalizer. Empty forever
+   * when no `isTransient` was given.
+   */
+  readonly transient: Stream.Stream<E>
   /** Interrupt the in-flight turn — the process-exit finalizer. */
   readonly shutdown: Effect.Effect<void>
 }
@@ -50,22 +57,28 @@ export const makeSession = <E, RS = never>(args: {
   ) => Effect.Effect<void, unknown, RS>
   /** Map a turn failure into the product's error event. */
   readonly onError: (message: string) => E
+  /** Route matching events to the lossy `transient` channel INSTEAD of the
+   *  ledger — a delta flood must never grow the replay log. */
+  readonly isTransient?: (event: E) => boolean
 }): Effect.Effect<Session<E>, never, RS> =>
   Effect.gen(function* () {
     const context = yield* Effect.context<RS>()
     const log = yield* Ref.make<ReadonlyArray<SeqEvent<E>>>([])
     const hub = yield* PubSub.sliding<SeqEvent<E>>(512)
+    const transientHub = yield* PubSub.sliding<E>(128)
     const running = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
     const gate = yield* Effect.makeSemaphore(1)
 
     const publish = (event: E): Effect.Effect<void> =>
-      Ref.modify(log, (entries) => {
-        const entry: SeqEvent<E> = { seq: entries.length, event }
-        return [entry, [...entries, entry]] as const
-      }).pipe(
-        Effect.flatMap((entry) => PubSub.publish(hub, entry)),
-        Effect.asVoid,
-      )
+      args.isTransient?.(event) === true
+        ? PubSub.publish(transientHub, event).pipe(Effect.asVoid)
+        : Ref.modify(log, (entries) => {
+            const entry: SeqEvent<E> = { seq: entries.length, event }
+            return [entry, [...entries, entry]] as const
+          }).pipe(
+            Effect.flatMap((entry) => PubSub.publish(hub, entry)),
+            Effect.asVoid,
+          )
 
     const runContained = (text: string): Effect.Effect<void> =>
       args.runTurn(text, publish).pipe(
@@ -117,6 +130,7 @@ export const makeSession = <E, RS = never>(args: {
             return Stream.concat(replay, live)
           }),
         ),
+      transient: Stream.fromPubSub(transientHub),
       shutdown: interrupt,
     } satisfies Session<E>
   })

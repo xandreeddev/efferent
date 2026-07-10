@@ -18,6 +18,20 @@ export interface ToolCallSummary {
 
 export type LoopEvent =
   | { readonly type: "turn_start"; readonly turnIndex: number }
+  /**
+   * One streamed content increment, TRANSIENT by design: it exists only for
+   * live rendering, is never ledgered or replayed, and every fact it carries
+   * is restated by the turn's `assistant_message` (the sole finalizer —
+   * position/usage ride only there). `id` scopes deltas to one content chunk
+   * within the turn (a turn can hold several, e.g. reasoning then text).
+   */
+  | {
+      readonly type: "assistant_delta"
+      readonly turnIndex: number
+      readonly channel: "text" | "reasoning"
+      readonly id: string
+      readonly delta: string
+    }
   | {
       readonly type: "assistant_message"
       readonly turnIndex: number
