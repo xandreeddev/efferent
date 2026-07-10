@@ -9,7 +9,12 @@ import {
 } from "@xandreed/engine"
 import type { ModelSelection } from "@xandreed/engine"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
-import { rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
+import {
+  classifyLlmError,
+  rejectEmptyResponse,
+  retryableLlm,
+  retryableLlmStream,
+} from "./retry.js"
 
 /**
  * The routed `LanguageModel`: every call re-reads the settings selection and
@@ -62,14 +67,16 @@ const shapeOptions = (
   return shouldPrependClaudeCode ? prependClaudeCode(cached) : cached
 }
 
-/** Resolve the general-role selection from settings. */
+/** Resolve the general-role selection from settings, plus the OPTIONAL
+ *  fallback rung (an unparseable fallbackModel is ignored, never fatal —
+ *  the primary path must not die on a typo'd safety net). */
 const currentSelection = Effect.gen(function* () {
   const settings = yield* SettingsStore
   const loaded = yield* settings.load.pipe(
     Effect.mapError((e) => configError(`settings load failed: ${e.message}`)),
   )
   const raw = Option.getOrElse(loaded.model, () => "")
-  return yield* Option.match(parseModelSelection(raw), {
+  const primary = yield* Option.match(parseModelSelection(raw), {
     onNone: () =>
       Effect.fail(
         configError(
@@ -80,12 +87,16 @@ const currentSelection = Effect.gen(function* () {
       ),
     onSome: Effect.succeed,
   })
+  return { primary, fallback: Option.flatMap(loaded.fallbackModel, parseModelSelection) }
 })
 
-/** Build + call one provider generateText for an explicit selection. */
+/** Build + call one provider generateText for an explicit selection.
+ *  `isFallback` only labels telemetry — the fallback rung must be visible
+ *  in Grafana without changing the metric identities. */
 export const generateWith = (
   selection: ModelSelection,
   options: unknown,
+  isFallback = false,
 ): Effect.Effect<
   { readonly content: ReadonlyArray<unknown>; readonly usage: unknown },
   unknown,
@@ -124,6 +135,7 @@ export const generateWith = (
             })
             .join(","),
           "llm.reasoning": (res.reasoningText ?? "").slice(0, 500),
+          "llm.fallback": isFallback,
         }),
       ),
       Effect.tap((res) =>
@@ -137,9 +149,21 @@ export const generateWith = (
       ),
       Effect.tapBoth({
         onFailure: () =>
-          Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "error")),
+          Metric.increment(
+            Metric.tagged(
+              Metric.tagged(byModel(llmRequests, label), "outcome", "error"),
+              "fallback",
+              isFallback ? "true" : "false",
+            ),
+          ),
         onSuccess: () =>
-          Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "ok")),
+          Metric.increment(
+            Metric.tagged(
+              Metric.tagged(byModel(llmRequests, label), "outcome", "ok"),
+              "fallback",
+              isFallback ? "true" : "false",
+            ),
+          ),
       }),
       Metric.trackDuration(byModel(llmDuration, label)),
       Effect.withSpan("providers.generate", {
@@ -147,6 +171,39 @@ export const generateWith = (
       }),
     )
   }).pipe(Effect.scoped)
+
+/**
+ * The fallback rung: run the primary; if it fails TRANSIENT after the fast
+ * retries exhausted and a DIFFERENT fallback selection is configured, run
+ * the call once more there. Permanent errors (bad request, decode) pass
+ * through — a fallback can't fix those; an unset or identical fallback is a
+ * no-op. Exported pure-in-shape so the rung's decision table is testable
+ * without building providers.
+ */
+export const withFallbackRung = <A, R>(
+  primary: ModelSelection,
+  fallback: Option.Option<ModelSelection>,
+  call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, unknown, R>,
+): Effect.Effect<A, unknown, R> =>
+  call(primary, false).pipe(
+    Effect.catchAll((error) =>
+      Option.match(
+        Option.filter(
+          fallback,
+          (fb) =>
+            formatModelSelection(fb) !== formatModelSelection(primary) &&
+            classifyLlmError(error) === "transient",
+        ),
+        {
+          onNone: () => Effect.fail(error),
+          onSome: (fb) =>
+            Effect.logWarning(
+              `${formatModelSelection(primary)} exhausted retries (${String(error).slice(0, 200)}) — falling back to ${formatModelSelection(fb)}`,
+            ).pipe(Effect.zipRight(call(fb, true))),
+        },
+      ),
+    ),
+  )
 
 const stampModel = (part: unknown, label: string): unknown => {
   if (typeof part !== "object" || part === null) return part
@@ -318,7 +375,11 @@ export const LanguageModelLive = Layer.effect(
     const service: LanguageModel.Service = {
       generateText: (options) =>
         currentSelection.pipe(
-          Effect.flatMap((selection) => generateWith(selection, options)),
+          Effect.flatMap(({ fallback, primary }) =>
+            withFallbackRung(primary, fallback, (selection, isFallback) =>
+              generateWith(selection, options, isFallback),
+            ),
+          ),
           Effect.provide(context),
           Effect.provideService(HttpClient.HttpClient, http),
         ) as never,
@@ -326,10 +387,13 @@ export const LanguageModelLive = Layer.effect(
         Effect.fail(
           configError("generateObject is not wired on the new line yet"),
         )) as never,
+      // No stream-level fallback rung: a pre-first-part stream failure
+      // already falls back to generateText in the engine loop, and THAT
+      // call rides this router's fallback — one rung, no double-hop.
       streamText: ((options: unknown) =>
         Stream.unwrap(
           currentSelection.pipe(
-            Effect.map((selection) => streamWith(selection, options)),
+            Effect.map(({ primary }) => streamWith(primary, options)),
           ),
         ).pipe(
           Stream.provideSomeContext(context),
