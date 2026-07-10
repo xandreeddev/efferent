@@ -47,6 +47,9 @@ export type ConversationBlock =
       /** True when this call OPENS its tool group (the previous block is
        *  not a tool) — the renderer puts the breathing line here. */
       readonly first: boolean
+      /** The tool's (clipped) result once it landed — ctrl+o expands the
+       *  newest one in-pane. */
+      readonly result?: string
     }
   /** A turn that DIED — durable in the story, unlike the transient notice. */
   | { readonly kind: "error"; readonly text: string }
@@ -74,6 +77,7 @@ export const initialConversation: ConversationState = { blocks: [] }
 const BLOCKS_CAP = 400
 const ARG_BUDGET = 72
 const REASONING_BUDGET = 500
+const TOOL_RESULT_BUDGET = 8_000
 
 const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max - 1)}…`
@@ -87,6 +91,10 @@ const describeArg = (args: unknown): string => {
   )
   return key === undefined ? "" : clip(String(record[key]), ARG_BUDGET)
 }
+
+/** A tool result, human-readable: strings verbatim, objects one-per-line. */
+const stringifyResult = (result: unknown): string =>
+  typeof result === "string" ? result : JSON.stringify(result ?? null, null, 1)
 
 const push = (
   state: ConversationState,
@@ -248,7 +256,11 @@ export const reduceConversationIn = (
         Match.when({ type: "tool_end" }, (t) => ({
           blocks: state.blocks.map((block) =>
             block.kind === "tool" && block.id === t.toolCallId
-              ? { ...block, status: t.ok ? ("ok" as const) : ("fail" as const) }
+              ? {
+                  ...block,
+                  status: t.ok ? ("ok" as const) : ("fail" as const),
+                  result: clip(stringifyResult(t.result), TOOL_RESULT_BUDGET),
+                }
               : block,
           ),
         })),

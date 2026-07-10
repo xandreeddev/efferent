@@ -103,6 +103,9 @@ export interface SmithStore {
   /** The session's accumulated dollar spend, folded from each turn's usage
    *  at its priced model (unpriced turns add nothing). */
   readonly sessionCost: Accessor<number>
+  /** ctrl+o: expand the newest tool block's result in-pane. */
+  readonly toolExpand: Accessor<boolean>
+  readonly toggleToolExpand: () => void
   /** One-line transient note (command feedback, interrupt notice). */
   readonly notice: Accessor<string>
   readonly setNotice: (text: string) => void
@@ -185,6 +188,7 @@ export const createSmithStore = (
   const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
   const [queued, setQueued] = createSignal<ReadonlyArray<string>>([])
   const [sessionCost, setSessionCost] = createSignal(0)
+  const [toolExpand, setToolExpand] = createSignal(false)
   const apply = (event: SmithEvent): void => {
     setLastEventAt(Date.now())
     // The COST fold: every finished turn's usage priced at its model (the
@@ -247,6 +251,8 @@ export const createSmithStore = (
     spinner,
     tickSpinner: () => setSpinner((n) => n + 1),
     sessionCost,
+    toolExpand,
+    toggleToolExpand: () => setToolExpand((on) => !on),
     notice,
     setNotice,
     exitCode,
