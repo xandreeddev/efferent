@@ -389,6 +389,21 @@ if (isDirectRun) {
         return 2
       }),
     ),
+    // DEFECTS must exit self-describing, never a raw stack dump: the classic
+    // one is launching the TUI outside the repo root, where the lazy .tsx
+    // import dies without the Solid JSX preload (root bunfig.toml).
+    Effect.catchAllDefect((defect) =>
+      Effect.sync(() => {
+        const text = String(defect)
+        console.error(`smith: crashed — ${text.slice(0, 300)}`)
+        if (text.includes(".tsx") || text.includes("jsx") || text.includes("solid")) {
+          console.error(
+            "smith: the TUI needs the Solid JSX preload — launch from the efferent repo root (bun run smith -- --cwd <target>)",
+          )
+        }
+        return 2
+      }),
+    ),
   )
   process.exit(await Effect.runPromise(program))
 }

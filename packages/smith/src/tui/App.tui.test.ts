@@ -225,6 +225,18 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(overlay.kind === "select" && overlay.purpose.tag).toBe("fallback-model")
   })
 
+  test("a fast-input BURST (Enter inside the chunk) submits the head, keeps the tail", async () => {
+    const tui = await boot()
+    // Simulate the burst at the seam the poll watches: the composer buffer
+    // holds "hello\rworld" as one chunk — no return key event ever fired.
+    tui.store.setComposer("hello\rworld")
+    const sent = await waitFrame(tui, (f) => f.includes("> hello") || f.includes("hello"))
+    expect(sent).toContain("hello")
+    // The tail stays in the composer, still being typed.
+    await waitFrame(tui, () => tui.store.composerText() === "world")
+    expect(tui.store.composerText()).toBe("world")
+  })
+
   test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {
     const tui = await boot({ seams: { refineAgent: stalledRefineAgent } })
     await tui.setup.mockInput.typeText("build me something")

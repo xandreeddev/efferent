@@ -1,5 +1,5 @@
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
-import { For, Show } from "solid-js"
+import { createEffect, For, Show } from "solid-js"
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid"
 import { Option } from "effect"
 import { runTuiCommand } from "../commands.js"
@@ -575,12 +575,8 @@ const StatusRows = (props: { ctx: SmithTuiContext }) => {
  *  input is always a command (`:quit · :lock · :forge · :model · :set`). */
 const CommandLine = (props: { ctx: SmithTuiContext }) => {
   const ref: { current: TextareaRenderable | undefined } = { current: undefined }
-  const submit = (): void => {
-    const renderable = ref.current
-    if (renderable === undefined) return
-    const value = renderable.plainText.trim()
+  const submitText = (value: string): void => {
     if (value.length === 0) return
-    renderable.setText("")
     if (value.startsWith(":")) {
       runTuiCommand(props.ctx, value)
       return
@@ -595,6 +591,31 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     }
     props.ctx.store.setNotice("prefix commands with ':' (try :quit)")
   }
+  const submit = (): void => {
+    const renderable = ref.current
+    if (renderable === undefined) return
+    const value = renderable.plainText.trim()
+    if (value.length === 0) return
+    renderable.setText("")
+    submitText(value)
+  }
+  // FAST-INPUT BURST: a terminal delivering "text\r" as ONE stdin chunk
+  // never fires the return keybinding — the newline lands IN the buffer and
+  // the message silently doesn't send. Poll (the palette's spinner-tick
+  // pattern): an embedded newline splits — head submits, tail keeps typing.
+  createEffect(() => {
+    props.ctx.store.spinner()
+    const renderable = ref.current
+    if (renderable === undefined) return
+    const text = renderable.plainText
+    const at = [...text].findIndex((ch) => ch === "\r" || ch === "\n")
+    if (at < 0) return
+    const head = text.slice(0, at).trim()
+    const tail = text.slice(at + 1).replace(/^[\r\n]+/, "")
+    renderable.setText(tail)
+    renderable.cursorOffset = tail.length
+    submitText(head)
+  })
   // NO placeholder — the input is bare (agy). The footer owns the hints.
   return (
     <box flexDirection="row" flexShrink={0}>
