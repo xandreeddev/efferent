@@ -31,3 +31,32 @@ export const asJsonRecord = (value: Option.Option<unknown>): Record<string, unkn
         ? (parsed as Record<string, unknown>)
         : {},
   })
+
+/** SILENT parse-to-Option — for wire noise (a garbage WS frame) where
+ *  dropping without a log is the design; configs use {@link parseJsonWarn}. */
+export const parseJsonOption = (text: string): Option.Option<unknown> =>
+  Either.getRight(Either.try(() => JSON.parse(text) as unknown))
+
+/** Decode append-only JSONL text: one JSON value per line, each decoded by
+ *  `decode`; a corrupt or undecodable LINE is skipped (append-only files
+ *  corrupt at a line boundary — one bad row must not brick the history).
+ *  The shared machinery of the smith memory ledger and the social ledger. */
+export const decodeJsonLines = <A, E>(
+  text: string,
+  decode: (value: unknown) => Either.Either<A, E>,
+): ReadonlyArray<A> =>
+  text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .flatMap((line) =>
+      Either.try(() => JSON.parse(line) as unknown).pipe(
+        Either.match({
+          onLeft: () => [] as ReadonlyArray<A>,
+          onRight: (parsed) =>
+            Either.match(decode(parsed), {
+              onLeft: () => [] as ReadonlyArray<A>,
+              onRight: (decoded) => [decoded],
+            }),
+        }),
+      ),
+    )

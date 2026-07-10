@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Schema } from "effect"
+import { decodeJsonLines } from "@xandreed/engine"
 import { MemoryEvent } from "./domain.js"
 
 /**
@@ -49,20 +50,6 @@ export const readMemoryLedger = (
     try: () => readFile(path, "utf-8"),
     catch: () => "missing" as const,
   }).pipe(
-    Effect.map((text) =>
-      text
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .flatMap((line) => {
-          const parsed = Effect.runSync(
-            Effect.try({ try: () => JSON.parse(line) as unknown, catch: () => undefined }).pipe(
-              Effect.orElseSucceed(() => undefined),
-            ),
-          )
-          if (parsed === undefined) return []
-          const decoded = decodeEvent(parsed)
-          return decoded._tag === "Right" ? [decoded.right] : []
-        }),
-    ),
+    Effect.map((text) => decodeJsonLines(text, decodeEvent)),
     Effect.orElseSucceed(() => []),
   )

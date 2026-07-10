@@ -1,7 +1,8 @@
 import { isAbsolute, join, normalize, relative } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Runtime, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/engine"
+import type { SmithEvent } from "../domain/SmithEvent.js"
 import { discoverSkills, readSkill } from "../skills/skills.js"
 import { nativeGlob, nativeGrep } from "./nativeSearch.js"
 
@@ -187,6 +188,24 @@ export interface CodingHandlerHooks {
   /** Best-effort live tap on the coder's Bash output (chunk granularity). */
   readonly onBashChunk?: (chunk: string) => void
 }
+
+/** The live Bash tap the implementor AND the follow-up turn wire: chunk →
+ *  last non-empty line → a `bash_progress` event (sync callback; the
+ *  publish is runSync-safe — it offers to a queue). */
+export const bashProgressTap =
+  (
+    runtime: Runtime.Runtime<never>,
+    publish: (event: SmithEvent) => Effect.Effect<void>,
+  ) =>
+  (chunk: string): void => {
+    const line = chunk
+      .split("\n")
+      .map((piece) => piece.trim())
+      .filter((piece) => piece.length > 0)
+      .pop()
+    if (line === undefined) return
+    Runtime.runSync(runtime)(publish({ type: "bash_progress", line: line.slice(0, 160) }))
+  }
 
 export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks = {}) =>
   Effect.gen(function* () {

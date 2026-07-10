@@ -1,5 +1,5 @@
 import type { LanguageModel } from "@effect/ai"
-import { Effect, Layer, Option, Ref, Runtime } from "effect"
+import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { WorkspacePath } from "@xandreed/foundry"
 import {
@@ -16,7 +16,7 @@ import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
 import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
-import { makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
+import { bashProgressTap, makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
 import { renderBrief, renderRetryBrief, smithCoderSystemPrompt } from "./prompt.js"
 
 /**
@@ -199,20 +199,8 @@ export const makeEfferentImplementorLive = (
       // byte-stable across turns (prompt-cache friendly).
       const skillMetas = yield* discoverSkills(options.cwd)
       const skills = renderSkillsBlock(skillMetas)
-      // The live Bash tap: chunk → last non-empty line → bash_progress
-      // (sync callback; the queue offer is runSync-safe).
       const runtime = yield* Effect.runtime<never>()
-      const onBashChunk = (chunk: string): void => {
-        const line = chunk
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0)
-          .pop()
-        if (line === undefined) return
-        Runtime.runSync(runtime)(
-          options.publish({ type: "bash_progress", line: line.slice(0, 160) }),
-        )
-      }
+      const onBashChunk = bashProgressTap(runtime, options.publish)
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd, { onBashChunk })),
       )

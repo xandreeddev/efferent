@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Runtime } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { runAgent, UtilityLlm } from "@xandreed/engine"
 import type { AuthStore, ConversationId, SettingsStore } from "@xandreed/engine"
 import {
@@ -14,7 +14,7 @@ import {
   renderTrailForDigest,
 } from "../implementor/efferentImplementor.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
-import { makeSmithCodingHandlers, smithCodingToolkit } from "../implementor/codingToolkit.js"
+import { bashProgressTap, makeSmithCodingHandlers, smithCodingToolkit } from "../implementor/codingToolkit.js"
 import { smithCoderSystemPrompt } from "../implementor/prompt.js"
 import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
 
@@ -63,17 +63,7 @@ export const runFollowUpTurn = (
     const skills = renderSkillsBlock(yield* discoverSkills(run.cwd))
     // The live Bash tap — same wire as the forge floor's.
     const runtime = yield* Effect.runtime<never>()
-    const onBashChunk = (chunk: string): void => {
-      const line = chunk
-        .split("\n")
-        .map((piece) => piece.trim())
-        .filter((piece) => piece.length > 0)
-        .pop()
-      if (line === undefined) return
-      Runtime.runSync(runtime)(
-        publish({ type: "bash_progress", line: line.slice(0, 160) }),
-      )
-    }
+    const onBashChunk = bashProgressTap(runtime, publish)
     // The coder's Bash keeps the run's sandbox policy — follow-up is the
     // same coder, not a privilege escalation.
     const shellLayer = run.sandbox ? SandboxedShellLive(run.cwd) : LocalShellLive
