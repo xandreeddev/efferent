@@ -48,6 +48,52 @@ const CONTEXT_WINDOWS: ReadonlyArray<readonly [RegExp, number]> = [
 export const contextWindowOf = (model: string): Option.Option<number> =>
   Option.fromNullable(CONTEXT_WINDOWS.find(([pattern]) => pattern.test(model))?.[1])
 
+/** Curated $/Mtok (input, output) per model family — the same no-network,
+ *  best-effort-constants stance as the context windows. Unknown → None and
+ *  the cost readout simply stays absent (never a made-up number). */
+const PRICING: ReadonlyArray<readonly [RegExp, { readonly in: number; readonly out: number }]> = [
+  [/kimi-k2/i, { in: 0.6, out: 2.5 }],
+  [/deepseek/i, { in: 0.27, out: 1.1 }],
+  [/qwen3/i, { in: 0.4, out: 1.2 }],
+  [/glm-/i, { in: 0.5, out: 1.8 }],
+  [/grok-code/i, { in: 1.0, out: 4.0 }],
+  [/claude-(fable|opus)/i, { in: 15, out: 75 }],
+  [/claude-sonnet/i, { in: 3, out: 15 }],
+  [/claude-haiku/i, { in: 0.8, out: 4 }],
+  [/gpt-5/i, { in: 1.25, out: 10 }],
+  [/gemini-3\.5-pro/i, { in: 1.25, out: 10 }],
+  [/gemini-3\.5-flash/i, { in: 0.15, out: 0.6 }],
+]
+
+/** Prefix-cache reads bill far below fresh input across vendors — 10% is
+ *  the conservative curve (Anthropic 0.1×; DeepSeek similar). */
+const CACHED_READ_FACTOR = 0.1
+
+/** One turn's dollar cost for a model, when its family is priced. */
+export const costOf = (
+  model: string,
+  usage: {
+    readonly inputTokens: number
+    readonly outputTokens: number
+    readonly cacheReadTokens: number
+  },
+): Option.Option<number> =>
+  Option.map(
+    Option.fromNullable(PRICING.find(([pattern]) => pattern.test(model))?.[1]),
+    (rate) => {
+      const fresh = Math.max(0, usage.inputTokens - usage.cacheReadTokens)
+      return (
+        (rate.in / 1_000_000) * fresh +
+        (rate.in / 1_000_000) * CACHED_READ_FACTOR * usage.cacheReadTokens +
+        (rate.out / 1_000_000) * usage.outputTokens
+      )
+    },
+  )
+
+/** "$1.24" / "$0.041" / "<$0.001" — three digits under a dime, never 0. */
+export const fmtCost = (dollars: number): string =>
+  dollars < 0.001 ? "<$0.001" : dollars < 0.1 ? `$${dollars.toFixed(3)}` : `$${dollars.toFixed(2)}`
+
 const ROLE_TITLE: Record<ModelRole, string> = {
   general: "Select the GENERAL model (refine + the session brain)",
   code: "Select the CODE model (the forge implementor)",

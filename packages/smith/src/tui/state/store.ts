@@ -9,6 +9,7 @@ import type { FloorState } from "../presentation/floor.js"
 import { initialFloor, reduceFloor } from "../presentation/floor.js"
 import type { RefineState } from "../presentation/refine.js"
 import { initialRefine, reduceRefine, withUserLine } from "../presentation/refine.js"
+import { costOf } from "../presentation/modelCatalog.js"
 import type { ConversationState } from "../presentation/conversation.js"
 import {
   initialConversation,
@@ -99,6 +100,9 @@ export interface SmithStore {
   readonly drainQueue: () => ReadonlyArray<string>
   readonly spinner: Accessor<number>
   readonly tickSpinner: () => void
+  /** The session's accumulated dollar spend, folded from each turn's usage
+   *  at its priced model (unpriced turns add nothing). */
+  readonly sessionCost: Accessor<number>
   /** One-line transient note (command feedback, interrupt notice). */
   readonly notice: Accessor<string>
   readonly setNotice: (text: string) => void
@@ -180,8 +184,17 @@ export const createSmithStore = (
   const [lastEventAt, setLastEventAt] = createSignal(0)
   const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
   const [queued, setQueued] = createSignal<ReadonlyArray<string>>([])
+  const [sessionCost, setSessionCost] = createSignal(0)
   const apply = (event: SmithEvent): void => {
     setLastEventAt(Date.now())
+    // The COST fold: every finished turn's usage priced at its model (the
+    // router stamp; the active role when absent — e.g. scripted seams).
+    if (event.type === "agent" && event.event.type === "assistant_message") {
+      const turn = event.event
+      const model =
+        turn.model ?? (modeSig() === "forge" ? rolesSig().code : rolesSig().general)
+      setSessionCost((total) => total + Option.getOrElse(costOf(model, turn.usage), () => 0))
+    }
     // A refine failure must be IMPOSSIBLE to miss — the SpecPanel slot
     // alone hid provider errors from users watching the composer.
     if (event.type === "refine_error") {
@@ -233,6 +246,7 @@ export const createSmithStore = (
     },
     spinner,
     tickSpinner: () => setSpinner((n) => n + 1),
+    sessionCost,
     notice,
     setNotice,
     exitCode,
