@@ -8,13 +8,14 @@ import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Logger, Option } from "effect"
 import { BunContext } from "@effect/platform-bun"
-import { SettingsStore } from "@xandreed/engine"
+import { EngineSettings, SettingsStore } from "@xandreed/engine"
 import {
   FileLoggerLive,
   LanguageModelLive,
   UtilityLlmLive,
   LocalAuthStoreLive,
   LocalFileSystemLive,
+  LocalSettingsStoreLive,
   LocalShellLive,
   McpClientLive,
   SqliteConversationStoreLive,
@@ -70,8 +71,9 @@ interface ParseState {
   readonly task: Option.Option<string>
   readonly cwd: string
   readonly acceptance: ReadonlyArray<string>
-  readonly maxAttempts: number
-  readonly budgetMillis: number
+  /** None = the flag was not given — config, then the default, may fill it. */
+  readonly maxAttempts: Option.Option<number>
+  readonly budgetMillis: Option.Option<number>
   readonly general: Option.Option<string>
   readonly code: Option.Option<string>
   readonly fast: Option.Option<string>
@@ -81,7 +83,7 @@ interface ParseState {
   readonly noTest: boolean
   readonly configPath: Option.Option<string>
   readonly ship: boolean
-  readonly sandbox: boolean
+  readonly sandbox: Option.Option<boolean>
   readonly help: boolean
   readonly pending: Option.Option<string>
   readonly errors: ReadonlyArray<string>
@@ -94,8 +96,8 @@ const initialState: ParseState = {
   task: Option.none(),
   cwd: process.cwd(),
   acceptance: [],
-  maxAttempts: SMITH_LIMIT_DEFAULTS.maxAttempts,
-  budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
+  maxAttempts: Option.none(),
+  budgetMillis: Option.none(),
   general: Option.none(),
   code: Option.none(),
   fast: Option.none(),
@@ -105,7 +107,7 @@ const initialState: ParseState = {
   noTest: false,
   configPath: Option.none(),
   ship: false,
-  sandbox: true,
+  sandbox: Option.none(),
   help: false,
   pending: Option.none(),
   errors: [],
@@ -117,7 +119,7 @@ const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
   "--ship": (s) => ({ ...s, ship: true }),
-  "--no-sandbox": (s) => ({ ...s, sandbox: false }),
+  "--no-sandbox": (s) => ({ ...s, sandbox: Option.some(false) }),
   "--yes": (s) => ({ ...s, yes: true }),
   "--help": (s) => ({ ...s, help: true }),
   "-h": (s) => ({ ...s, help: true }),
@@ -126,8 +128,8 @@ const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
 const VALUE_FLAGS: Record<string, (state: ParseState, value: string) => ParseState> = {
   "--cwd": (s, v) => ({ ...s, cwd: isAbsolute(v) ? v : resolve(process.cwd(), v) }),
   "--accept": (s, v) => ({ ...s, acceptance: [...s.acceptance, v] }),
-  "--max-attempts": (s, v) => ({ ...s, maxAttempts: Number(v) }),
-  "--budget": (s, v) => ({ ...s, budgetMillis: Number(v) * 60_000 }),
+  "--max-attempts": (s, v) => ({ ...s, maxAttempts: Option.some(Number(v)) }),
+  "--budget": (s, v) => ({ ...s, budgetMillis: Option.some(Number(v) * 60_000) }),
   "--model": (s, v) => ({ ...s, general: Option.some(v) }),
   "--code-model": (s, v) => ({ ...s, code: Option.some(v) }),
   "--fast-model": (s, v) => ({ ...s, fast: Option.some(v) }),
@@ -201,12 +203,25 @@ export const toSelftestRun = (base: SmithRunConfig, cwd: string): SmithRunConfig
   maxAttempts: Math.min(base.maxAttempts, 3),
 })
 
-export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => ({
+/** The knob resolution — flags > `.efferent/config.json` > smith defaults.
+ *  `settings` is the RAW merged config (no smith overlay), read once at the
+ *  edge so every downstream consumer sees the effective values. */
+export const toRunConfig = (
+  state: ParseState,
+  task: string,
+  settings: EngineSettings = new EngineSettings({}),
+): SmithRunConfig => ({
   task,
   cwd: state.cwd,
   acceptance: state.acceptance,
-  maxAttempts: state.maxAttempts,
-  budgetMillis: state.budgetMillis,
+  maxAttempts: Option.getOrElse(
+    Option.orElse(state.maxAttempts, () => settings.maxAttempts),
+    () => SMITH_LIMIT_DEFAULTS.maxAttempts,
+  ),
+  budgetMillis: Option.getOrElse(
+    Option.orElse(state.budgetMillis, () => settings.budgetMillis),
+    () => SMITH_LIMIT_DEFAULTS.budgetMillis,
+  ),
   models: { general: state.general, code: state.code, fast: state.fast },
   allowBash: state.allowBash,
   headless: state.headless,
@@ -214,7 +229,10 @@ export const toRunConfig = (state: ParseState, task: string): SmithRunConfig => 
   noTest: state.noTest,
   configPath: state.configPath,
   ship: state.ship,
-  sandbox: state.sandbox,
+  sandbox: Option.getOrElse(
+    Option.orElse(state.sandbox, () => settings.sandbox),
+    () => true,
+  ),
 })
 
 /** The full service stack one smith session runs on — the NEW LINE: engine
@@ -254,7 +272,16 @@ if (isDirectRun) {
     console.error(USAGE)
     process.exit(2)
   }
-  const parsedRun = toRunConfig(state, task ?? "")
+  // The RAW merged config (no smith overlay) fills the knobs the flags left
+  // unspecified — flags > config > defaults, resolved ONCE at the edge so
+  // the TUI, the forge loop, and the artifact all see the same values.
+  const knobSettings = await Effect.runPromise(
+    Effect.flatMap(SettingsStore, (settings) => settings.load).pipe(
+      Effect.provide(LocalSettingsStoreLive(state.cwd, homedir())),
+      Effect.orElseSucceed(() => new EngineSettings({})),
+    ),
+  )
+  const parsedRun = toRunConfig(state, task ?? "", knobSettings)
   const run = state.selftest ? toSelftestRun(parsedRun, seedSelftestWorkspace()) : parsedRun
   if (state.selftest) {
     console.error(

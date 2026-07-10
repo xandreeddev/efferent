@@ -19,11 +19,11 @@ export const roleModelView = (
         inner.load,
         (s) =>
           new EngineSettings({
+            ...s,
             model: Option.orElse(role === "code" ? s.codeModel : s.fastModel, () => s.model),
-            codeModel: s.codeModel,
-            fastModel: s.fastModel,
           }),
       ),
       setRole: inner.setRole,
+      set: inner.set,
     })),
   )

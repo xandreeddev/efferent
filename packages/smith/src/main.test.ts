@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
+import { EngineSettings } from "@xandreed/engine"
 import {
   parseArgs,
   SELFTEST_TASK,
@@ -30,5 +31,39 @@ describe("the argv fold", () => {
     const state = parseArgs(["fix the tests", "selftest"])
     expect(state.selftest).toBe(false)
     expect(state.errors.length).toBeGreaterThan(0)
+  })
+})
+
+describe("knob resolution — flags > config > defaults", () => {
+  const config = new EngineSettings({
+    maxAttempts: Option.some(7),
+    budgetMillis: Option.some(600_000),
+    sandbox: Option.some(false),
+  })
+
+  test("an unspecified flag falls to the config value", () => {
+    const run = toRunConfig(parseArgs(["do it"]), "do it", config)
+    expect(run.maxAttempts).toBe(7)
+    expect(run.budgetMillis).toBe(600_000)
+    expect(run.sandbox).toBe(false)
+  })
+
+  test("an explicit flag beats the config", () => {
+    const run = toRunConfig(
+      parseArgs(["do it", "--max-attempts", "2", "--budget", "5"]),
+      "do it",
+      config,
+    )
+    expect(run.maxAttempts).toBe(2)
+    expect(run.budgetMillis).toBe(5 * 60_000)
+    // --no-sandbox is the only sandbox flag; unspecified still reads config.
+    expect(run.sandbox).toBe(false)
+  })
+
+  test("no flag, no config → the smith defaults (sandbox ON)", () => {
+    const run = toRunConfig(parseArgs(["do it"]), "do it")
+    expect(run.maxAttempts).toBe(3)
+    expect(run.budgetMillis).toBe(15 * 60_000)
+    expect(run.sandbox).toBe(true)
   })
 })

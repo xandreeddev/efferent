@@ -7,6 +7,7 @@ const inner = (settings: EngineSettings) =>
   Layer.succeed(SettingsStore, {
     load: Effect.succeed(settings),
     setRole: () => Effect.void,
+    set: () => Effect.void,
   })
 
 const loadThrough = (role: "code" | "fast", settings: EngineSettings): EngineSettings =>
