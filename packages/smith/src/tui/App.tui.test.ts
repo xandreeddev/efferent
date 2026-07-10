@@ -237,6 +237,69 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(tui.store.composerText()).toBe("world")
   })
 
+  test("after a finished forge, plain text is FOLLOW-UP (the coder keeps its context), not a new spec", async () => {
+    const followUps: Array<{ readonly cid: string; readonly text: string }> = []
+    const tui = await boot({
+      seams: {
+        refineAgent: proposingRefineAgent({
+          goal: "Create out.txt containing done.",
+          acceptance: ["out.txt exists"],
+          checks: [{ name: "out-exists", command: "test -f out.txt" }],
+        }),
+        forgeRunner: (run, publish, doc) =>
+          runForgeSessionWith(
+            run,
+            publish,
+            makeScriptedImplementor(
+              [[{ path: "out.txt", content: "done\n" }]],
+              { ref: "conversation:00000000-0000-4000-8000-00000f0110c9" },
+            ),
+            doc,
+          ),
+        followUp: (_run, cid, text, publish) =>
+          Effect.gen(function* () {
+            followUps.push({ cid: String(cid), text })
+            yield* publish({
+              type: "agent",
+              event: {
+                type: "assistant_message",
+                turnIndex: 0,
+                text: "ran the follow-up",
+                reasoning: "",
+                toolCalls: [],
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 },
+              },
+            })
+          }),
+      },
+    })
+    await tui.setup.mockInput.typeText("make an out file")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("Create out.txt containing done."))
+    await tui.setup.mockInput.typeText(":lock")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("locked by you"))
+    await tui.setup.mockInput.typeText(":forge")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("✓ ACCEPTED"), 200)
+    // Wait for the ARMING notice (the forge fiber's completion taps) — the
+    // window between forge_end rendering and the fiber finishing queues
+    // typed text (drained into the first follow-up either way).
+    await waitFrame(tui, (f) => f.includes("follow up freely"), 200)
+    // HARD check: the arming actually happened (waitFrame resolves on
+    // timeout, so the frame alone proves nothing).
+    expect(tui.store.notice()).toContain("follow up freely")
+    // Plain text now CONTINUES the coder's conversation…
+    await tui.setup.mockInput.typeText("now run the tests again and check negatives")
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("ran the follow-up"), 200)
+    expect(followUps).toHaveLength(1)
+    expect(followUps[0]?.cid).toBe("00000000-0000-4000-8000-00000f0110c9")
+    expect(followUps[0]?.text).toContain("check negatives")
+    // …and did NOT start a new refine (the mode stays on the forge floor).
+    expect(tui.store.mode()).toBe("forge")
+  }, 30_000)
+
   test("typing while the refiner is busy QUEUES the message (shown, not dropped)", async () => {
     const tui = await boot({ seams: { refineAgent: stalledRefineAgent } })
     await tui.setup.mockInput.typeText("build me something")
