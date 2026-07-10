@@ -62,6 +62,9 @@ export interface SmithStore {
   readonly floor: Accessor<FloorState>
   /** Fold one event into BOTH view models (Solid-batched by the pump). */
   readonly reduce: (event: SmithEvent) => void
+  /** Fold a pump flush in ONE Solid batch — one frame per flush, however
+   *  many coalesced deltas it carries. */
+  readonly reduceBatch: (events: ReadonlyArray<SmithEvent>) => void
   readonly mode: Accessor<SmithMode>
   readonly setMode: (mode: SmithMode) => void
   readonly refine: Accessor<RefineState>
@@ -173,24 +176,25 @@ export const createSmithStore = (
   const [lastEventAt, setLastEventAt] = createSignal(0)
   const [ctrlCPendingAt, setCtrlCPendingAt] = createSignal(0)
   const [queued, setQueued] = createSignal<ReadonlyArray<string>>([])
+  const apply = (event: SmithEvent): void => {
+    setLastEventAt(Date.now())
+    // A refine failure must be IMPOSSIBLE to miss — the SpecPanel slot
+    // alone hid provider errors from users watching the composer.
+    if (event.type === "refine_error") {
+      setNotice(`refine error: ${event.message.slice(0, 120)}`)
+    }
+    setFloor((state) => reduceFloor(state, event))
+    setRefine((state) => reduceRefine(state, event))
+    // The fold's mode picks the RIGHT advice on a bounded stop: forge
+    // continues itself (gates → next attempt), refine waits for you.
+    setConversation((state) =>
+      reduceConversationIn(modeSig() === "forge" ? "forge" : "refine")(state, event),
+    )
+  }
   return {
     floor,
-    reduce: (event) =>
-      batch(() => {
-        setLastEventAt(Date.now())
-        // A refine failure must be IMPOSSIBLE to miss — the SpecPanel slot
-        // alone hid provider errors from users watching the composer.
-        if (event.type === "refine_error") {
-          setNotice(`refine error: ${event.message.slice(0, 120)}`)
-        }
-        setFloor((state) => reduceFloor(state, event))
-        setRefine((state) => reduceRefine(state, event))
-        // The fold's mode picks the RIGHT advice on a bounded stop: forge
-        // continues itself (gates → next attempt), refine waits for you.
-        setConversation((state) =>
-          reduceConversationIn(modeSig() === "forge" ? "forge" : "refine")(state, event),
-        )
-      }),
+    reduce: (event) => batch(() => apply(event)),
+    reduceBatch: (events) => batch(() => events.forEach(apply)),
     mode: modeSig,
     setMode: (next) => setModeSig(next),
     refine,

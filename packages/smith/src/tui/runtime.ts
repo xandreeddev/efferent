@@ -98,7 +98,7 @@ const withTuiChassis = (
         (r) => Effect.sync(() => r.destroy()),
       )
 
-      yield* Effect.forkScoped(runEventPump(queue, store.reduce))
+      yield* Effect.forkScoped(runEventPump(queue, store.reduceBatch))
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.sync(() => store.tickSpinner()).pipe(Effect.delay("120 millis")),

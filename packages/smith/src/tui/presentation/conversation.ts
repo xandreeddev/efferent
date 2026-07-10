@@ -20,6 +20,12 @@ export type ConversationBlock =
       readonly text: string
       readonly tag: string
       readonly tokens: { readonly input: number; readonly output: number; readonly cached: number }
+      /** A LIVE block still growing from assistant_delta events — replaced
+       *  wholesale when the turn's assistant_message finalizes (replay ≡
+       *  live: a :resume rebuild produces only settled blocks). */
+      readonly streaming?: boolean
+      /** The delta turn this live block belongs to (upsert key). */
+      readonly turn?: number
     }
   | {
       readonly kind: "assistant"
@@ -29,6 +35,8 @@ export type ConversationBlock =
        *  it then owns the blank line and the "└ tag" meta line. */
       readonly leading: boolean
       readonly tokens: { readonly input: number; readonly output: number; readonly cached: number }
+      readonly streaming?: boolean
+      readonly turn?: number
     }
   | {
       readonly kind: "tool"
@@ -84,6 +92,81 @@ const push = (
   state: ConversationState,
   ...blocks: ReadonlyArray<ConversationBlock>
 ): ConversationState => ({ blocks: [...state.blocks, ...blocks].slice(-BLOCKS_CAP) })
+
+const isStreamingBlock = (
+  block: ConversationBlock,
+): block is Extract<ConversationBlock, { kind: "reasoning" | "assistant" }> =>
+  (block.kind === "reasoning" || block.kind === "assistant") && block.streaming === true
+
+/** Drop the live blocks — the finalizer restates their content settled. */
+const withoutStreaming = (state: ConversationState): ConversationState => ({
+  blocks: state.blocks.filter((block) => !isStreamingBlock(block)),
+})
+
+/** An orphaned live block (its turn never finalized — a mid-stream failure
+ *  or an interrupt) SEALS in place: the partial stays visible as story. */
+const sealStreaming = (state: ConversationState): ConversationState => ({
+  blocks: state.blocks.map((block) =>
+    isStreamingBlock(block) ? { ...block, streaming: false } : block,
+  ),
+})
+
+/** One growing block per (turn, channel): append in place, else open. */
+const upsertDelta = (
+  state: ConversationState,
+  delta: {
+    readonly turnIndex: number
+    readonly channel: "text" | "reasoning"
+    readonly delta: string
+  },
+): ConversationState => {
+  const kind = delta.channel === "reasoning" ? ("reasoning" as const) : ("assistant" as const)
+  const grown = state.blocks.reduce(
+    (acc: { readonly found: boolean; readonly blocks: ReadonlyArray<ConversationBlock> }, block) =>
+      !acc.found && isStreamingBlock(block) && block.kind === kind && block.turn === delta.turnIndex
+        ? {
+            found: true,
+            blocks: [
+              ...acc.blocks,
+              {
+                ...block,
+                text:
+                  kind === "reasoning"
+                    ? clip(block.text + delta.delta, REASONING_BUDGET)
+                    : block.text + delta.delta,
+              },
+            ],
+          }
+        : { found: acc.found, blocks: [...acc.blocks, block] },
+    { found: false, blocks: [] },
+  )
+  if (grown.found) return { blocks: grown.blocks }
+  const zero = { input: 0, output: 0, cached: 0 }
+  const hasReasoning = state.blocks.some(
+    (block) => isStreamingBlock(block) && block.kind === "reasoning" && block.turn === delta.turnIndex,
+  )
+  return push(
+    state,
+    kind === "reasoning"
+      ? {
+          kind: "reasoning",
+          text: clip(delta.delta, REASONING_BUDGET),
+          tag: "thinking…",
+          tokens: zero,
+          streaming: true,
+          turn: delta.turnIndex,
+        }
+      : {
+          kind: "assistant",
+          text: delta.delta,
+          tag: "streaming…",
+          leading: !hasReasoning,
+          tokens: zero,
+          streaming: true,
+          turn: delta.turnIndex,
+        },
+  )
+}
 
 /** The driver adds the human's line directly (it is not an agent event). */
 export const withUserBlock = (state: ConversationState, text: string): ConversationState =>
@@ -148,6 +231,10 @@ export const reduceConversationIn = (
   Match.value(event).pipe(
     Match.when({ type: "agent" }, (e) =>
       Match.value(e.event).pipe(
+        // A new turn seals any orphaned live blocks from the previous one
+        // (a mid-stream malformed keeps its partial as story).
+        Match.when({ type: "turn_start" }, () => sealStreaming(state)),
+        Match.when({ type: "assistant_delta" }, (d) => upsertDelta(state, d)),
         Match.when({ type: "tool_start" }, (t) =>
           push(state, {
             kind: "tool",
@@ -183,11 +270,13 @@ export const reduceConversationIn = (
             } · ${fmtTokens(tokens.output)} out`,
           ].join(" · ")
           const hasReasoning = reasoning.length > 0
+          // The FINALIZER: the live blocks vanish and the settled ones land
+          // through the same shape a :resume replay produces (replay ≡ live).
           // ONE meta line per turn: on the "▸" header when the model thought,
           // on a "└" line otherwise — and every turn lands SOMETHING (a
           // tool-only turn still shows its spend).
           return push(
-            state,
+            withoutStreaming(state),
             ...(hasReasoning
               ? [{ kind: "reasoning", text: clip(reasoning, REASONING_BUDGET), tag, tokens } as const]
               : []),
@@ -198,14 +287,15 @@ export const reduceConversationIn = (
         }),
         Match.when({ type: "agent_end" }, (end) =>
           end.outcome === "ok"
-            ? state
-            : push(state, { kind: "notice", text: partialNotice(mode, end.reason) }),
+            ? sealStreaming(state)
+            : push(sealStreaming(state), { kind: "notice", text: partialNotice(mode, end.reason) }),
         ),
+        Match.when({ type: "error" }, () => sealStreaming(state)),
         Match.orElse(() => state),
       ),
     ),
     Match.when({ type: "refine_error" }, (e) =>
-      push(state, { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
+      push(sealStreaming(state), { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
     ),
     Match.when({ type: "vacuous_checks" }, (e) =>
       push(state, {
@@ -264,12 +354,14 @@ export const fmtTokens = (n: number): string =>
   n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n)
 
 /** The LIVE context cost: the latest turn's input tokens ARE the context —
- *  everything the model was just sent. None until a turn completes. */
+ *  everything the model was just sent. None until a turn completes. A live
+ *  (streaming) block carries no usage yet and must not zero the gauge. */
 export const contextTokens = (state: ConversationState): Option.Option<number> =>
   Option.fromNullable(
     state.blocks.reduce<number | undefined>(
       (latest, block) =>
-        block.kind === "assistant" || block.kind === "reasoning"
+        (block.kind === "assistant" || block.kind === "reasoning") &&
+        block.streaming !== true
           ? block.tokens.input
           : latest,
       undefined,
