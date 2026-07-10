@@ -15,6 +15,7 @@ import {
 } from "./presentation/selectBox.js"
 import { completeCommand } from "./presentation/palette.js"
 import { recallStep } from "./presentation/history.js"
+import { cycleSearch, searchNotice } from "./presentation/search.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
@@ -216,6 +217,19 @@ export const dispatch = (ctx: SmithTuiContext, key: Key): void => {
   // ctrl+o: expand/collapse the newest tool block's output in the story.
   if (key.ctrl === true && key.name === "o") {
     ctx.store.toggleToolExpand()
+    return
+  }
+  // ctrl+n / ctrl+p: cycle the live /search (plain n/N would type into the
+  // focused composer). The view follows store.search's current hit.
+  if (key.ctrl === true && (key.name === "n" || key.name === "p")) {
+    Option.match(ctx.store.search(), {
+      onNone: () => {},
+      onSome: (active) => {
+        const next = cycleSearch(active, key.name === "n" ? 1 : -1)
+        ctx.store.setSearch(Option.some(next))
+        ctx.store.setNotice(searchNotice(next))
+      },
+    })
     return
   }
   // ↑/↓ prompt recall — engages only on an empty composer (or while the
