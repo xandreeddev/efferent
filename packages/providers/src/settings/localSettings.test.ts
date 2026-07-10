@@ -19,6 +19,20 @@ const setup = (global: Record<string, unknown>, local?: Record<string, unknown>)
 }
 
 describe("LocalSettingsStoreLive", () => {
+  test("a CORRUPT config degrades to defaults (with a warning) — never a crash", async () => {
+    const home = mkdtempSync(join(tmpdir(), "engine-cfg-home-"))
+    const cwd = mkdtempSync(join(tmpdir(), "engine-cfg-cwd-"))
+    mkdirSync(join(home, ".efferent"), { recursive: true })
+    writeFileSync(join(home, ".efferent", "config.json"), "{ definitely not json")
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const store = yield* SettingsStore
+        const settings = yield* store.load
+        expect(Option.isNone(settings.model)).toBe(true)
+      }).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home))),
+    )
+  })
+
   test("reads the model roles, local-over-global", async () => {
     const { layer } = setup(
       { model: "opencode:kimi-k2.6", fastModel: "opencode:deepseek-v4-flash" },

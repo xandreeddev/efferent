@@ -158,4 +158,14 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
       handlers: handlers as Context.Context<Tool.Handler<string>>,
       descriptors,
     }
-  }).pipe(Effect.catchAll(() => Effect.succeed(emptyMcpBridge)))
+  }).pipe(
+    // Degrade to NO MCP tools rather than killing the run — but never
+    // silently: a misconfigured server otherwise reads as "my tools
+    // vanished" with zero signal (the sandboxedShell contract: the warning
+    // IS the contract).
+    Effect.catchAllCause((cause) =>
+      Effect.logWarning(`MCP bridge unavailable — continuing without MCP tools: ${cause}`).pipe(
+        Effect.as(emptyMcpBridge),
+      ),
+    ),
+  )
