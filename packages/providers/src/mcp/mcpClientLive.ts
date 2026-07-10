@@ -1,4 +1,4 @@
-import { Effect, HashMap, Layer, Option, Ref, Scope } from "effect"
+import { Effect, HashMap, Layer, Option, Scope, SynchronizedRef } from "effect"
 import { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "@xandreed/engine"
 import { readMcpServers } from "./config.js"
 import { openStdioConnection } from "./stdioConnection.js"
@@ -41,33 +41,44 @@ export const McpClientLive = (cwd: string, home: string): Layer.Layer<McpClient>
     McpClient,
     Effect.gen(function* () {
       const scope = yield* Effect.scope
-      const connectionsRef = yield* Ref.make(HashMap.empty<string, McpConnection>())
+      const connectionsRef = yield* SynchronizedRef.make(HashMap.empty<string, McpConnection>())
 
+      // modifyEffect SERIALIZES connects (the TsProjectCachedLive pattern):
+      // two concurrent tool calls to the same server (tool concurrency is 4)
+      // must never check-miss together and spawn the server process TWICE —
+      // the loser's orphan would run until layer shutdown. Cross-server
+      // connects serialize too; handshakes are fast, correctness first.
       const connect = (name: string): Effect.Effect<McpConnection, McpError> =>
-        Effect.gen(function* () {
-          const existing = HashMap.get(yield* Ref.get(connectionsRef), name)
-          if (Option.isSome(existing)) return existing.value
-          const servers = yield* readMcpServers(cwd, home)
-          const spec = Option.fromNullable(
-            servers.find(([serverName]) => serverName === name)?.[1],
-          )
-          if (Option.isNone(spec)) {
-            return yield* Effect.fail(
-              new McpError({ server: name, message: "no such server in .efferent/config.json" }),
-            )
-          }
-          const connection = yield* openStdioConnection(name, spec.value, cwd).pipe(
-            Scope.extend(scope),
-          )
-          yield* connection.request("initialize", {
-            protocolVersion: PROTOCOL_VERSION,
-            capabilities: {},
-            clientInfo: { name: "efferent", version: "1.0.0" },
-          })
-          yield* connection.notify("notifications/initialized", {})
-          yield* Ref.update(connectionsRef, HashMap.set(name, connection))
-          return connection
-        })
+        SynchronizedRef.modifyEffect(connectionsRef, (connections) =>
+          Option.match(HashMap.get(connections, name), {
+            onSome: (connection) => Effect.succeed([connection, connections] as const),
+            onNone: () =>
+              Effect.gen(function* () {
+                const servers = yield* readMcpServers(cwd, home)
+                const spec = Option.fromNullable(
+                  servers.find(([serverName]) => serverName === name)?.[1],
+                )
+                if (Option.isNone(spec)) {
+                  return yield* Effect.fail(
+                    new McpError({
+                      server: name,
+                      message: "no such server in .efferent/config.json",
+                    }),
+                  )
+                }
+                const connection = yield* openStdioConnection(name, spec.value, cwd).pipe(
+                  Scope.extend(scope),
+                )
+                yield* connection.request("initialize", {
+                  protocolVersion: PROTOCOL_VERSION,
+                  capabilities: {},
+                  clientInfo: { name: "efferent", version: "1.0.0" },
+                })
+                yield* connection.notify("notifications/initialized", {})
+                return [connection, HashMap.set(connections, name, connection)] as const
+              }),
+          }),
+        )
 
       return {
         listTools: Effect.gen(function* () {

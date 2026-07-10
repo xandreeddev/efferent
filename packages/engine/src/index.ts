@@ -42,6 +42,9 @@ export { FileSystem, FsError } from "./ports/FileSystem.js"
 export { Shell, ShellError, ShellResult } from "./ports/Shell.js"
 export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/UtilityLlm.js"
 
+// util
+export { asJsonRecord, parseJsonWarn } from "./util/json.js"
+
 // loop
 export {
   assistantModel,

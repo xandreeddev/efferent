@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Layer, Option, Redacted } from "effect"
-import { AuthError, AuthStore } from "@xandreed/engine"
+import { asJsonRecord, AuthError, AuthStore, parseJsonWarn } from "@xandreed/engine"
 import type { Credential, ProviderId } from "@xandreed/engine"
 import { refreshAnthropicToken } from "./anthropicOAuth.js"
 
@@ -56,16 +56,11 @@ const decodeCredential = (value: unknown): Option.Option<Credential> => {
 
 const readAuthFile = (path: string): Effect.Effect<AuthFile> =>
   Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: () => "missing" as const }).pipe(
-    Effect.map((text) => {
-      const parsed = Effect.runSync(
-        Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => ({}) }).pipe(
-          Effect.orElseSucceed(() => ({})),
-        ),
-      )
-      const record =
-        typeof parsed === "object" && parsed !== null
-          ? (parsed as Record<string, unknown>)
-          : {}
+    // Corrupt ≠ absent: a malformed auth.json presenting as "logged out"
+    // with zero signal is the worst version of this failure — warn.
+    Effect.flatMap((text) => parseJsonWarn(text, path)),
+    Effect.map((parsed) => {
+      const record = asJsonRecord(parsed)
       const entries = new Map(
         Object.entries(record).flatMap(([provider, raw]) =>
           Option.match(decodeCredential(raw), {

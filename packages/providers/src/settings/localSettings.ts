@@ -2,7 +2,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Layer, Option } from "effect"
 import {
+  asJsonRecord,
   EngineSettings,
+  parseJsonWarn,
   parseModelSelection,
   SettingsError,
   SettingsStore,
@@ -23,16 +25,10 @@ const configPaths = (cwd: string, home: string): ReadonlyArray<string> => [
 
 const readConfig = (path: string): Effect.Effect<Record<string, unknown>> =>
   Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: () => "missing" as const }).pipe(
-    Effect.map((text) => {
-      const parsed = Effect.runSync(
-        Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => ({}) }).pipe(
-          Effect.orElseSucceed(() => ({})),
-        ),
-      )
-      return typeof parsed === "object" && parsed !== null
-        ? (parsed as Record<string, unknown>)
-        : {}
-    }),
+    // Corrupt ≠ absent: a malformed config warns (defaults with zero signal
+    // read as "my settings vanished"); a missing file is just empty.
+    Effect.flatMap((text) => parseJsonWarn(text, path)),
+    Effect.map(asJsonRecord),
     Effect.orElseSucceed(() => ({})),
   )
 

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
+import { asJsonRecord, parseJsonWarn } from "@xandreed/engine"
 
 /**
  * `mcpServers` in `.efferent/config.json` — the CONSENT boundary: a server
@@ -26,16 +27,11 @@ const readTier = (
     try: () => readFile(join(dir, ".efferent", "config.json"), "utf-8"),
     catch: () => "missing" as const,
   }).pipe(
-    Effect.map((text) => {
-      const parsed = Effect.runSync(
-        Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => ({}) }).pipe(
-          Effect.orElseSucceed(() => ({})),
-        ),
-      )
-      const servers =
-        typeof parsed === "object" && parsed !== null
-          ? (parsed as { readonly mcpServers?: unknown }).mcpServers
-          : undefined
+    // Corrupt ≠ absent: a malformed config warns instead of silently
+    // presenting as "no servers configured".
+    Effect.flatMap((text) => parseJsonWarn(text, join(dir, ".efferent", "config.json"))),
+    Effect.map((parsed) => {
+      const servers = asJsonRecord(parsed)["mcpServers"]
       if (typeof servers !== "object" || servers === null) return []
       return Object.entries(servers).flatMap(([name, raw]) => {
         const decoded = decodeSpec(raw)
