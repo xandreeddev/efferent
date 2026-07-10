@@ -63,5 +63,13 @@ export class ConversationStore extends Context.Tag("@xandreed/engine/Conversatio
     readonly listByWorkspace: (
       workspaceDir: string,
     ) => Effect.Effect<ReadonlyArray<ConversationSummary>, StoreError>
+    /** BRANCH: copy rows [0..upToPosition] (default: all) into a NEW
+     *  conversation in the same workspace, along with the latest covered
+     *  checkpoint — the original stays untouched; the fork continues
+     *  independently (git-branch semantics over the trail). */
+    readonly fork: (
+      id: ConversationId,
+      upToPosition?: number,
+    ) => Effect.Effect<ConversationId, StoreError>
   }
 >() {}

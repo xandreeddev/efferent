@@ -126,4 +126,39 @@ describe("SqliteConversationStoreLive", () => {
       }),
     )
   })
+
+  test("fork copies the trail (and checkpoint) into an INDEPENDENT conversation", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* ConversationStore
+        const source = yield* store.create("/ws/fork-src")
+        yield* store.append(source, { role: "user", content: "one" })
+        yield* store.append(source, { role: "user", content: "two" })
+        yield* store.checkpoint(source, "THE FOLD")
+        yield* store.append(source, { role: "user", content: "three" })
+        yield* store.setTitle(source, "original")
+
+        const fork = yield* store.fork(source)
+        const forked = yield* store.list(fork)
+        expect(forked.map((m) => m.content)).toEqual(["one", "two", "three"])
+        // The checkpoint rode along: listActive shows only post-fold rows.
+        const active = yield* store.listActive(fork)
+        expect(active.map((m) => m.content)).toEqual(["three"])
+        // Independence: appending to the fork never touches the source.
+        yield* store.append(fork, { role: "user", content: "fork-only" })
+        const sourceRows = yield* store.list(source)
+        expect(sourceRows.map((m) => m.content)).toEqual(["one", "two", "three"])
+        // The fork announces its lineage in the title.
+        const sessions = yield* store.listByWorkspace("/ws/fork-src")
+        const titles = sessions.map((s) => Option.getOrElse(s.title, () => "(untitled)"))
+        expect(titles).toContain("original")
+        expect(titles).toContain("fork: original")
+
+        // upToPosition caps the copy (branch from mid-history).
+        const early = yield* store.fork(source, 0)
+        const earlyRows = yield* store.list(early)
+        expect(earlyRows.map((m) => m.content)).toEqual(["one"])
+      }),
+    )
+  })
 })

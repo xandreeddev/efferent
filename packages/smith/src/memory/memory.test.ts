@@ -155,6 +155,7 @@ const storeWith = (messages: ReadonlyArray<AgentMessage>) =>
     latestCheckpoint: () => Effect.succeed(Option.none()),
     setTitle: () => Effect.void,
     listByWorkspace: () => Effect.succeed([]),
+    fork: (id) => Effect.succeed(id),
   })
 
 const scriptedUtility = (responses: ReadonlyArray<string>) => {

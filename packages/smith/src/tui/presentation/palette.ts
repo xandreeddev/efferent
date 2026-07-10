@@ -22,11 +22,12 @@ export const PALETTE_COMMANDS: ReadonlyArray<PaletteCommand> = [
   { name: "model", usage: ":model [code|fast] [p:m]", desc: "switch a model role (picker or direct)" },
   { name: "settings", usage: ":settings", desc: "the settings menu — roles + session knobs" },
   { name: "resume", usage: ":resume [id]", desc: "load a previous session into this one" },
+  { name: "branch", usage: ":branch", desc: "fork this session — explore without losing it" },
   { name: "login", usage: ":login", desc: "set up providers — API keys / anthropic OAuth" },
   { name: "logout", usage: ":logout [provider]", desc: "remove a provider credential" },
 ]
 
-export const PALETTE_VISIBLE = 10
+export const PALETTE_VISIBLE = 12
 
 /** The rows to show for the current composer text; empty = no palette. */
 export const computePalette = (input: string): ReadonlyArray<PaletteCommand> => {

@@ -54,6 +54,7 @@ const memoryStore = Effect.gen(function* () {
       latestCheckpoint: () => Ref.get(fold),
       setTitle: () => Effect.void,
       listByWorkspace: () => Effect.succeed([]),
+      fork: () => Effect.succeed(cid),
     }),
     rows,
   }
