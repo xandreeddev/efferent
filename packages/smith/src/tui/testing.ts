@@ -198,7 +198,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     const rt = yield* Effect.runtime<TuiServices>()
     const store = createSmithStore(run, { general: "g", code: "c", fast: "f" }, "idle")
     const exitDeferred = yield* Deferred.make<number>()
-    yield* Effect.forkScoped(runEventPump(queue, store.reduce))
+    yield* Effect.forkScoped(runEventPump(queue, store.reduceBatch))
     const ctx = yield* makeWorkspaceBody(run, options.seams ?? {})({
       store,
       publish,

@@ -218,4 +218,7 @@ export const specRefinerAgentConfig = (
   // The cap still bounds one message's spend; the session persists, so a
   // follow-up message continues from the same context.
   maxSteps: 32,
+  // Tokens render as they arrive (assistant_delta events); a provider whose
+  // stream fails pre-first-part falls back to settled turns for the run.
+  streaming: true,
 })

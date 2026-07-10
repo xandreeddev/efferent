@@ -256,3 +256,98 @@ describe("the conversation fold", () => {
     ])
   })
 })
+
+describe("streaming deltas", () => {
+  const delta = (
+    turnIndex: number,
+    channel: "text" | "reasoning",
+    text: string,
+  ): SmithEvent =>
+    agent({ type: "assistant_delta", turnIndex, channel, id: `${channel}-1`, delta: text })
+
+  test("deltas UPSERT one live block per (turn, channel); reasoning leads text", () => {
+    const state = [
+      delta(0, "reasoning", "thin"),
+      delta(0, "reasoning", "king"),
+      delta(0, "text", "hel"),
+      delta(0, "text", "lo"),
+    ].reduce(reduceConversation, initialConversation)
+    expect(state.blocks).toHaveLength(2)
+    expect(state.blocks[0]).toMatchObject({
+      kind: "reasoning",
+      text: "thinking",
+      streaming: true,
+      turn: 0,
+    })
+    expect(state.blocks[1]).toMatchObject({
+      kind: "assistant",
+      text: "hello",
+      streaming: true,
+      leading: false,
+      turn: 0,
+    })
+  })
+
+  test("REPLAY ≡ LIVE: the finalizer replaces the live blocks with exactly what a settled fold produces", () => {
+    const final = agent({
+      type: "assistant_message",
+      turnIndex: 0,
+      text: "hello",
+      reasoning: "thinking",
+      toolCalls: [],
+      usage,
+      model: "opencode:kimi-k2.6",
+    })
+    const streamed = [
+      delta(0, "reasoning", "thinking"),
+      delta(0, "text", "hello"),
+      final,
+    ].reduce(reduceConversation, initialConversation)
+    const settled = reduceConversation(initialConversation, final)
+    expect(streamed).toEqual(settled)
+    expect(streamed.blocks.some((b) => (b as { streaming?: boolean }).streaming === true)).toBe(
+      false,
+    )
+  })
+
+  test("an orphaned live block SEALS on the next turn (the partial stays as story)", () => {
+    const state = [
+      delta(0, "text", "partial…"),
+      agent({ type: "turn_start", turnIndex: 1 }),
+    ].reduce(reduceConversation, initialConversation)
+    expect(state.blocks).toEqual([
+      expect.objectContaining({ kind: "assistant", text: "partial…", streaming: false }),
+    ])
+  })
+
+  test("agent_end and refine_error seal live blocks too", () => {
+    const ended = [
+      delta(0, "text", "x"),
+      agent({ type: "agent_end", outcome: "ok", reason: "completed", finalText: "" }),
+    ].reduce(reduceConversation, initialConversation)
+    expect(ended.blocks[0]).toMatchObject({ streaming: false })
+    const errored = [delta(0, "text", "y")].reduce(reduceConversation, initialConversation)
+    const afterError = reduceConversation(errored, {
+      type: "refine_error",
+      message: "boom",
+    })
+    expect(afterError.blocks[0]).toMatchObject({ kind: "assistant", streaming: false })
+    expect(afterError.blocks[1]).toMatchObject({ kind: "error" })
+  })
+
+  test("a live block never zeroes the ctx gauge", () => {
+    const withSettled = reduceConversation(initialConversation, {
+      type: "agent",
+      event: {
+        type: "assistant_message",
+        turnIndex: 0,
+        text: "done",
+        reasoning: "",
+        toolCalls: [],
+        usage: { inputTokens: 9000, outputTokens: 1, totalTokens: 9001, cacheReadTokens: 0 },
+      },
+    })
+    const midStream = reduceConversation(withSettled, delta(1, "text", "next…"))
+    expect(contextTokens(midStream)).toEqual(Option.some(9000))
+  })
+})

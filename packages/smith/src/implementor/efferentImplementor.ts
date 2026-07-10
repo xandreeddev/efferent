@@ -311,6 +311,9 @@ export const makeEfferentImplementorLive = (
                 ),
                 toolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
+                // Tokens render live on the forge floor; a pre-first-part
+                // stream failure falls back to settled turns for the run.
+                streaming: true,
                 // WITHIN-attempt compaction: same threshold and digest as the
                 // attempt-boundary fold — a single long attempt no longer
                 // outgrows the healthy range before a gate rejection saves it.
