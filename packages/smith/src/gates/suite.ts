@@ -126,7 +126,7 @@ export const discoverGateSuite = (
     const configured = yield* Option.match(configPath, {
       onNone: () => Effect.succeed<ReadonlyArray<Gate<TsProject>>>([]),
       onSome: (path) =>
-        Effect.map(loadConfig(path), ({ config }) => gatesFromConfig(config)),
+        Effect.map(loadConfig(path), ({ config, registry }) => gatesFromConfig(config, registry)),
     })
 
     const typecheck =

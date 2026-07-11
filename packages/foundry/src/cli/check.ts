@@ -12,7 +12,8 @@ import { runPipeline } from "../pipeline/runPipeline.js"
 import { makeBoundariesGate } from "../gates/boundariesGate.js"
 import { makeEvalShapeGate } from "../gates/evalShapeGate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
-import { builtinRules } from "../gates/rules/index.js"
+import type { IdiomRule } from "../gates/idiomGate.js"
+import { decodeRegistry } from "../gates/rules/custom.js"
 import { makeTypecheckGate } from "../gates/typecheckGate.js"
 import type { TsProject } from "../gates/TsProject.js"
 import { renderFindingLine, renderReport, renderReportSummary } from "./report.js"
@@ -27,29 +28,52 @@ export interface CheckArgs {
   readonly allowGrow?: boolean
 }
 
-/** Load + Schema-validate a `GateSuiteConfig` module (default export). */
-export const loadConfig = (
-  configPath: string,
-): Effect.Effect<{ readonly config: GateSuiteConfig; readonly rootDir: string }, ConfigError> =>
+export interface LoadedConfig {
+  readonly config: GateSuiteConfig
+  readonly rootDir: string
+  /** The config module's OWN rules — `rulePacks` ∪ `customRules` named
+   *  exports, decoded and fail-closed-wrapped. `rules` entries resolve
+   *  against THIS, never against an implicit builtin set: the platform
+   *  ships engines, the config brings the opinions. */
+  readonly registry: ReadonlyArray<IdiomRule>
+}
+
+/** Load a config module: Schema-validate the default export (the DATA
+ *  channel) and decode the `rulePacks`/`customRules` named exports (the
+ *  CODE channel) into the registry. */
+export const loadConfig = (configPath: string): Effect.Effect<LoadedConfig, ConfigError> =>
   Effect.tryPromise({
     try: () => import(pathToFileURL(path.resolve(configPath)).href),
     catch: (cause) => new ConfigError({ path: configPath, message: String(cause) }),
   }).pipe(
-    Effect.flatMap((module: { readonly default?: unknown }) =>
-      Schema.decodeUnknown(GateSuiteConfig)(module.default).pipe(
-        Effect.mapError(
-          (parseError) => new ConfigError({ path: configPath, message: parseError.message }),
-        ),
-      ),
+    Effect.flatMap(
+      (module: {
+        readonly default?: unknown
+        readonly rulePacks?: unknown
+        readonly customRules?: unknown
+      }) =>
+        Effect.all({
+          config: Schema.decodeUnknown(GateSuiteConfig)(module.default).pipe(
+            Effect.mapError(
+              (parseError) => new ConfigError({ path: configPath, message: parseError.message }),
+            ),
+          ),
+          registry: decodeRegistry(configPath, module),
+        }),
     ),
-    Effect.map((config) => ({ config, rootDir: path.dirname(path.resolve(configPath)) })),
+    Effect.map(({ config, registry }) => ({
+      config,
+      registry,
+      rootDir: path.dirname(path.resolve(configPath)),
+    })),
   )
 
 /** The full static suite a config describes, in rank order. */
 export const gatesFromConfig = (
   config: GateSuiteConfig,
+  registry: ReadonlyArray<IdiomRule>,
 ): Arr.NonEmptyReadonlyArray<Gate<TsProject>> => [
-  makeIdiomGate(builtinRules, config.rules, config.tsconfig),
+  makeIdiomGate(registry, config.rules, config.tsconfig),
   ...Option.match(config.boundaries, {
     onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
     onSome: (layers) => [makeBoundariesGate(layers, config.tsconfig)],
@@ -125,10 +149,10 @@ export const runCheck = (
   args: CheckArgs,
 ): Effect.Effect<number, ConfigError | WorkspaceError, TsProject> =>
   Effect.gen(function* () {
-    const { config, rootDir } = yield* loadConfig(args.configPath)
+    const { config, rootDir, registry } = yield* loadConfig(args.configPath)
     const workspace: Workspace = { rootDir, files: [] }
     const report = yield* runPipeline(
-      { gates: gatesFromConfig(config), policy: "collect-all" },
+      { gates: gatesFromConfig(config, registry), policy: "collect-all" },
       workspace,
     )
     yield* Effect.sync(() =>

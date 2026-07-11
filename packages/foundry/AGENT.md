@@ -22,6 +22,17 @@ here fails the build.** Runtime deps: `effect` + `typescript` only. Never
 import `@xandreed/sdk-core`/adapters/cli — the runtime consumes foundry,
 never the reverse.
 
+**Rules are PLUG-INS, never builtins**: the idiom-rule registry is what the
+config module itself exports (`rulePacks` — the shipped library packs
+`effect`/`quality` from `gates/rules/packs.js` — and/or `customRules`,
+plain structural objects decoded fail-closed in `gates/rules/custom.js`);
+`gatesFromConfig(config, registry)` resolves `rules` entries against THAT.
+External workspaces get packs VENDORED as plain TS
+(`vendoredPackFiles`, sources under `vendor/<pack>/`) — a golden test in
+`cli/check.test.ts` pins vendored ≡ library findings. The platform ships
+engines, the config brings the opinions; even efferent's own two configs
+import the effect pack explicitly.
+
 ## Layering (enforced by the boundaries gate — see foundry.config.ts)
 
 ```

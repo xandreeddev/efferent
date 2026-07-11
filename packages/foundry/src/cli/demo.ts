@@ -6,7 +6,7 @@ import { ForgeLimits, Spec } from "../domain/Spec.js"
 import { forge } from "../pipeline/forge.js"
 import type { ForgeResult } from "../pipeline/forge.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
-import { builtinRules } from "../gates/rules/index.js"
+import { effectPack } from "../gates/rules/packs.js"
 import { makeTypecheckGate } from "../gates/typecheckGate.js"
 import { TsProjectFreshLive } from "../gates/TsProject.js"
 import { ClaudeCliImplementorLive } from "../adapters/claudeImplementor.js"
@@ -149,7 +149,7 @@ export const runDemo = (implementor: DemoImplementor): Effect.Effect<number, Wor
         spec,
         pipeline: {
           gates: [
-            makeIdiomGate(builtinRules, demoRules, "tsconfig.json"),
+            makeIdiomGate(effectPack.rules, demoRules, "tsconfig.json"),
             makeTypecheckGate("tsconfig.json"),
           ],
           policy: "staged",

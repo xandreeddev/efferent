@@ -52,7 +52,9 @@ const activate = (
           Effect.fail(
             new GateCrash({
               gate: IDIOM_GATE,
-              message: `config names unknown rule "${config.rule}" — known: ${rules.map((r) => r.id).join(", ")}`,
+              message: `config names unknown rule "${config.rule}" — the registry comes from the config module's own rulePacks/customRules exports; known: ${
+                rules.length > 0 ? rules.map((r) => r.id).join(", ") : "(none exported)"
+              }`,
             }),
           ),
         onSome: (rule) =>
