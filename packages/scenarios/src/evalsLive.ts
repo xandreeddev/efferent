@@ -16,6 +16,7 @@ import { digestPack } from "./packs/digest.js"
 import { judgeCalibrationPack } from "./packs/judgeCalibration.js"
 import { memoryPack } from "./packs/memory.js"
 import { profilePack } from "./packs/profile.js"
+import { realRepoPack } from "./packs/realRepo.js"
 import { refinerPack } from "./packs/refiner.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 
@@ -33,11 +34,16 @@ import { smithSpecPack } from "./packs/smithSpec.js"
  * credential / unknown battery.
  */
 
+/** HEAVY batteries — a monorepo clone + install + full test suite PER
+ *  ATTEMPT. Excluded from the default all-packs expansion; run by name. */
+export const HEAVY_PACKS: ReadonlySet<string> = new Set(["real-repo"])
+
 export const LIVE_PACKS: Record<string, Pack> = {
   "judge-calibration": judgeCalibrationPack,
   digest: digestPack,
   memory: memoryPack,
   profile: profilePack,
+  "real-repo": realRepoPack,
   refiner: refinerPack,
   /** The shared pack — its live-only scenario runs here; the scripted twin
    *  is CI's (main.ts). */
@@ -61,7 +67,9 @@ export const parseLiveArgs = (
     Option.map(Math.floor),
   )
   return {
-    names: names.length > 0 ? names : packNames,
+    // HEAVY batteries (a monorepo test run per attempt) never ride the
+    // default all-packs expansion — run them BY NAME.
+    names: names.length > 0 ? names : packNames.filter((name) => !HEAVY_PACKS.has(name)),
     samplesOverride,
     json: argv.includes("--json"),
     update: argv.includes("--update-baselines"),
