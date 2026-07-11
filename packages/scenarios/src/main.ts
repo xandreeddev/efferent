@@ -12,6 +12,7 @@ import {
 import { defaultExtras, renderReport } from "./framework/report.js"
 import { canvasPack } from "./packs/canvas.js"
 import { mathPack } from "./packs/math.js"
+import { profilePack } from "./packs/profile.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 import { tuiPack } from "./packs/tui.js"
 
@@ -28,6 +29,7 @@ import { tuiPack } from "./packs/tui.js"
 const PACKS = {
   canvas: canvasPack,
   math: mathPack,
+  profile: profilePack,
   "smith-spec": smithSpecPack,
   tui: tuiPack,
 } as const

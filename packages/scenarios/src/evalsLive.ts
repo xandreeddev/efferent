@@ -15,6 +15,7 @@ import { modelMeta, preflightAuth } from "./live/llm.js"
 import { digestPack } from "./packs/digest.js"
 import { judgeCalibrationPack } from "./packs/judgeCalibration.js"
 import { memoryPack } from "./packs/memory.js"
+import { profilePack } from "./packs/profile.js"
 import { refinerPack } from "./packs/refiner.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 
@@ -36,6 +37,7 @@ export const LIVE_PACKS: Record<string, Pack> = {
   "judge-calibration": judgeCalibrationPack,
   digest: digestPack,
   memory: memoryPack,
+  profile: profilePack,
   refiner: refinerPack,
   /** The shared pack — its live-only scenario runs here; the scripted twin
    *  is CI's (main.ts). */

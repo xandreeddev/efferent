@@ -46,3 +46,7 @@ prompt.md
 # ad-hoc eval run outputs (committed baselines live in packages/evals/baselines/)
 packages/evals/results/
 .foundry/
+
+# Fixture workspaces COMMIT their .efferent (they are the eval worlds, not live state)
+!packages/*/fixtures/**/.efferent/
+!packages/*/fixtures/**/.efferent/**
