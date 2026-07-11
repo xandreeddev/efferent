@@ -32,6 +32,15 @@ export type SmithEvent =
    *  PATH — exit 127). Advisory: the coder can provision the tool into
    *  `.local/bin`, but the human should know BEFORE attempts are spent. */
   | { readonly type: "missing_tools"; readonly names: ReadonlyArray<string> }
+  /** The workspace's quality-profile status at forge start: armed (a gate
+   *  config with N rules, M findings grandfathered by the baseline) or NONE
+   *  (generic gates only — typecheck + tests). */
+  | {
+      readonly type: "profile_status"
+      readonly armed: boolean
+      readonly rules: number
+      readonly baseline: number
+    }
   /** `@path` refs in a composer message that did NOT inline (missing,
    *  binary, glob, budget) — advisory notes for the notice line. */
   | { readonly type: "file_refs"; readonly notes: ReadonlyArray<string> }

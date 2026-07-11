@@ -136,5 +136,24 @@ describe("renderLessons", () => {
     expect(text).toContain("[test/rule-r] failed 2 attempt(s) across 1 run(s)")
     expect(text).toContain("m2")
     expect(renderLessons(lessons)).toBe(text)
+    // Not an accept check → no promotion hint.
+    expect(text).not.toContain("promoting it to a standing check")
+  })
+
+  test("a spec check recurring across RUNS carries the promotion hint", () => {
+    const failing = [{ rule: "test/accept-lint-clean", message: "eslint exited 1" }]
+    const lessons = deriveLessons([
+      run({ id: uuid(6), endedAt: 100, attempts: [failing, []], accepted: true }),
+      run({ id: uuid(7), endedAt: 200, attempts: [failing, []], accepted: true }),
+    ])
+    const text = renderLessons(lessons)
+    expect(text).toContain("[test/accept-lint-clean]")
+    expect(text).toContain("consider promoting it to a standing check in foundry.config.ts")
+    // Same rule but seen in ONE run only: recurring within a spec, not across
+    // specs — no promotion hint.
+    const oneRun = deriveLessons([
+      run({ id: uuid(8), endedAt: 100, attempts: [failing, failing], accepted: false }),
+    ])
+    expect(renderLessons(oneRun)).not.toContain("promoting it to a standing check")
   })
 })

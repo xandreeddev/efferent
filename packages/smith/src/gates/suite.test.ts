@@ -2,12 +2,16 @@ import { tmpdir } from "node:os"
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import {
+  fingerprint,
   Finding,
   GateCrash,
   GateName,
   RuleId,
+  SourceLocation,
+  TsProjectCachedLive,
   withTempWorkspace,
   WorkspaceError,
+  WorkspacePath,
   writeWorkspaceFile,
 } from "@xandreed/foundry"
 import type { Gate } from "@xandreed/foundry"
@@ -77,6 +81,91 @@ describe("discoverGateSuite", () => {
       ),
     )
     expect(names).toEqual(["typecheck", "bun-test"])
+  })
+
+  test("a profile's committed baseline GRANDFATHERS existing findings — only new code gates", async () => {
+    const TSCONFIG = JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        module: "esnext",
+        target: "esnext",
+        moduleResolution: "bundler",
+      },
+      include: ["src/**/*.ts"],
+    })
+    const CONFIG = [
+      "export const customRules = [",
+      "  {",
+      '    id: "local/no-fixme",',
+      '    defaultSeverity: "error",',
+      '    description: "FIXME markers are banned",',
+      '    fixHint: "fix it",',
+      "    check: (ctx) =>",
+      '      ctx.sourceFile.text.includes("FIXME")',
+      '        ? [{ node: ctx.sourceFile, message: "FIXME marker" }]',
+      "        : [],",
+      "  },",
+      "]",
+      "export default {",
+      '  tsconfig: "tsconfig.json",',
+      '  rules: [{ rule: "local/no-fixme", include: ["src/**"] }],',
+      "  typecheck: false,",
+      "}",
+      "",
+    ].join("\n")
+    const result = await Effect.runPromise(
+      withTempWorkspace(tmpdir(), (dir) =>
+        Effect.gen(function* () {
+          yield* writeWorkspaceFile(dir, "tsconfig.json", TSCONFIG)
+          yield* writeWorkspaceFile(dir, "src/marked.ts", "// FIXME: legacy\nexport const a = 1\n")
+          yield* writeWorkspaceFile(dir, "foundry.config.ts", CONFIG)
+          // The finding the rule will produce, fingerprinted exactly as the
+          // ratchet does (rule + file + normalized line content — the
+          // sourceFile anchor lands on line 2, past the comment trivia).
+          const grandfathered = new Finding({
+            rule: RuleId.make("local/no-fixme"),
+            severity: "error",
+            message: "FIXME marker",
+            location: Option.some(
+              new SourceLocation({
+                file: WorkspacePath.make("src/marked.ts"),
+                line: 2,
+                column: 1,
+              }),
+            ),
+            fixHint: Option.none(),
+          })
+          const fp = fingerprint(grandfathered, Option.some("export const a = 1"))
+          yield* writeWorkspaceFile(
+            dir,
+            ".foundry/baseline.json",
+            JSON.stringify({ version: 1, fingerprints: [fp] }),
+          )
+          const armed = yield* discover(dir)
+          const armedFindings = yield* armed.pipeline.gates[0]!
+            .run({ rootDir: dir, files: [] })
+            .pipe(Effect.provide(TsProjectCachedLive))
+
+          // Same workspace, EMPTY baseline: everything gates again.
+          yield* writeWorkspaceFile(
+            dir,
+            ".foundry/baseline.json",
+            JSON.stringify({ version: 1, fingerprints: [] }),
+          )
+          const bare = yield* discover(dir)
+          const bareFindings = yield* bare.pipeline.gates[0]!
+            .run({ rootDir: dir, files: [] })
+            .pipe(Effect.provide(TsProjectCachedLive))
+          return { profile: armed.profile, armedFindings, bareFindings }
+        }),
+      ),
+    )
+    expect(Option.getOrThrow(result.profile)).toEqual({ rules: 1, baseline: 1 })
+    expect(result.armedFindings).toEqual([])
+    expect(result.bareFindings.length).toBe(1)
+    expect(result.bareFindings[0]!.message).toBe("FIXME marker")
   })
 
   test("--test-cmd overrides the auto bun test; --no-test suppresses it", async () => {

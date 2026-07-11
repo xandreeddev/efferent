@@ -63,6 +63,13 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> => {
       `⚠ environment: ${event.names.join(", ")} cannot run — their tool is MISSING from PATH; the coder must provision it into .local/bin (or install it on the host)`,
     )
   }
+  if (event.type === "profile_status") {
+    return Option.some(
+      event.armed
+        ? `  quality profile: ${event.rules} rule(s) armed · ${event.baseline} grandfathered`
+        : "⚠ quality profile: NONE — generic gates only (typecheck + tests). Run: bun run smith profile",
+    )
+  }
   return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, (e) =>
       Option.some(
