@@ -3,7 +3,9 @@
  * locked-worthy SpecDoc. It never implements; its one write is the
  * `propose_spec` tool (the only way the draft changes), and the human locks.
  */
-export const SPEC_REFINER_PROMPT_VERSION = "1.2.0"
+/** 1.3.0: the armed quality bar rides the system prompt — constraints must
+ *  go BEYOND the armed rules, never restate them. */
+export const SPEC_REFINER_PROMPT_VERSION = "1.3.0"
 
 export const specRefinerPrompt = (
   cwd: string,

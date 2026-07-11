@@ -1,7 +1,7 @@
 import type { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
-import type { WorkspacePath } from "@xandreed/foundry"
+import type { QualityBar, WorkspacePath } from "@xandreed/foundry"
 import {
   buildMcpBridge,
   ConversationStore,
@@ -17,7 +17,12 @@ import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
 import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
 import { bashProgressTap, makeSmithCodingHandlers, smithCodingToolkit } from "./codingToolkit.js"
-import { renderBrief, renderRetryBrief, smithCoderSystemPrompt } from "./prompt.js"
+import {
+  renderBrief,
+  renderPostFoldRetryBrief,
+  renderRetryBrief,
+  smithCoderSystemPrompt,
+} from "./prompt.js"
 
 /**
  * The coder at the forge, RE-FOUNDED on the new line: a capable DIRECT agent
@@ -179,6 +184,10 @@ export interface EfferentImplementorOptions {
   /** The workspace's standing rules file (AGENTS.md convention), pre-rendered —
    *  the human's instructions outrank history in the brief. */
   readonly rules?: Option.Option<string>
+  /** The ARMED quality bar (rendered from the workspace's gate config):
+   *  `full` rides attempt 1 and every post-fold re-injection, `compact`
+   *  rides every retry. */
+  readonly doctrine?: Option.Option<QualityBar>
   /** The curated workspace memory block (memory v2), pre-rendered. */
   readonly memory?: Option.Option<string>
   /** MID-TURN steering (the engine's `pendingInput` seam): a human's note
@@ -281,21 +290,20 @@ export const makeEfferentImplementorLive = (
                 ),
               )
 
-            const brief = Option.match(input.feedback, {
-              onNone: () =>
-                renderBrief(input.spec, options.doc, {
-                  lessons: options.lessons ?? Option.none(),
-                  rules: options.rules ?? Option.none(),
-                  memory: options.memory ?? Option.none(),
-                }),
-              onSome: renderRetryBrief,
-            })
+            const doctrine = options.doctrine ?? Option.none()
+            const extras = {
+              rules: options.rules ?? Option.none(),
+              doctrine: Option.map(doctrine, (bar) => bar.full),
+              lessons: options.lessons ?? Option.none(),
+              memory: options.memory ?? Option.none(),
+            }
 
             // A RETRY over an outgrown trail folds first: the gate rejection
             // is the natural compaction point; the summary + this brief
             // replace the full history the next turn would have resent.
             const grown = yield* Ref.get(contextRef)
-            yield* Option.isSome(input.feedback) && grown > CHECKPOINT_THRESHOLD_TOKENS
+            const willFold = Option.isSome(input.feedback) && grown > CHECKPOINT_THRESHOLD_TOKENS
+            yield* willFold
               ? foldConversation({
                   conversationId: cid,
                   attempt: input.attempt,
@@ -303,6 +311,18 @@ export const makeEfferentImplementorLive = (
                   publish: options.publish,
                 }).pipe(Effect.zipRight(Ref.set(contextRef, 0)), Effect.provide(context))
               : Effect.void
+
+            const brief = Option.match(input.feedback, {
+              onNone: () => renderBrief(input.spec, options.doc, extras),
+              // Post-fold, the digest kept the task but NOT the standing
+              // doctrine — re-attach ALL extras deterministically; a plain
+              // retry carries the compact bar only (context continuity
+              // still holds the rest).
+              onSome: (feedback) =>
+                willFold
+                  ? renderPostFoldRetryBrief(feedback, extras)
+                  : renderRetryBrief(feedback, Option.map(doctrine, (bar) => bar.compact)),
+            })
 
             // The turn's prose is not the deliverable — the workspace state the
             // gates snapshot is; the run is driven for its side effects. Loop

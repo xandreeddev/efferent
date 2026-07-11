@@ -37,6 +37,7 @@ import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { curateWorkspaceMemory } from "../memory/curate.js"
 import { loadWorkspaceMemory } from "../memory/inject.js"
 import { makeSmithJudgeGate } from "../gates/judge.js"
+import { loadQualityBar } from "../gates/profile.js"
 import { discoverGateSuite, probeAccepts } from "../gates/suite.js"
 import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
@@ -217,6 +218,10 @@ export const runForgeSession = (
     const lessons = yield* loadForgeLessons(run.cwd)
     const rules = yield* loadWorkspaceRules(run.cwd)
     const memory = yield* loadWorkspaceMemory(run.cwd)
+    // The ARMED quality bar, once per session: full+compact to the coder's
+    // briefs, the judge form to the judge — every stage works to the same
+    // contract the gates enforce.
+    const doctrine = yield* loadQualityBar(run.cwd, gateRequestFromSpec(run, doc).configPath)
 
     // The JUDGE (default ON; spec opts out): a one-shot strong-tier call,
     // closed over the ambient services HERE so the gate stays R = never and
@@ -234,7 +239,14 @@ export const runForgeSession = (
       )
     const judgeGates = (spec: Spec): ReadonlyArray<Gate<TsProject>> =>
       gateRequestFromSpec(run, doc).judge
-        ? [makeSmithJudgeGate({ spec, doc, call: judgeCall })]
+        ? [
+            makeSmithJudgeGate({
+              spec,
+              doc,
+              call: judgeCall,
+              doctrine: Option.map(doctrine, (bar) => bar.judge),
+            }),
+          ]
         : []
 
     const result = yield* runForgeSessionWith(
@@ -246,6 +258,7 @@ export const runForgeSession = (
         doc,
         lessons,
         rules,
+        doctrine,
         memory,
         ...(pendingInput !== undefined ? { pendingInput } : {}),
       }).pipe(

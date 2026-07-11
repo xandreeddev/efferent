@@ -3,6 +3,7 @@ import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
 import { ConversationStore, runAgent, SpecSlug } from "@xandreed/engine"
 import { loadForgeLessons, loadWorkspaceRules } from "../forge/session.js"
+import { loadQualityBar } from "../gates/profile.js"
 import type { AgentMessage, ConversationId, FileSystem, Shell, SpecDoc } from "@xandreed/engine"
 import { expandFileRefs } from "./fileRefs.js"
 import {
@@ -136,11 +137,13 @@ export const makeRefineSession = (
     const tools: RefineTools = { propose: handlers.propose_spec }
     const lessons = yield* loadForgeLessons(cwd)
     const rules = yield* loadWorkspaceRules(cwd)
+    const doctrine = yield* loadQualityBar(cwd)
     const skillsBlock = renderSkillsBlock(yield* discoverSkills(cwd))
     const config = specRefinerAgentConfig(cwd, {
       unattended: options.unattended,
       lessons,
       rules,
+      doctrine: Option.map(doctrine, (bar) => bar.full),
       skills: skillsBlock.length > 0 ? Option.some(skillsBlock) : Option.none(),
     })
 

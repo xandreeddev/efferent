@@ -197,12 +197,22 @@ export const specRefinerAgentConfig = (
     readonly lessons?: Option.Option<string>
     readonly rules?: Option.Option<string>
     readonly skills?: Option.Option<string>
+    /** The armed quality bar (full form) — the spec must not restate what
+     *  the gates already enforce; constraints go BEYOND it. */
+    readonly doctrine?: Option.Option<string>
   } = { unattended: false },
 ): AgentConfig<(typeof specRefinerToolkit)["tools"]> => ({
   system: [
     specRefinerPrompt(cwd, options),
     ...Option.toArray(options.skills ?? Option.none()),
     ...Option.toArray(options.rules ?? Option.none()),
+    ...Option.toArray(
+      Option.map(
+        options.doctrine ?? Option.none(),
+        (text) =>
+          `${text}\nThese rules are ALREADY enforced by deterministic gates — write constraints that go BEYOND them; never restate them.`,
+      ),
+    ),
     ...Option.toArray(
       Option.map(
         options.lessons ?? Option.none(),
