@@ -1,10 +1,16 @@
 import type { GateSuiteConfig } from "./src/domain/Rules.js"
+import { effectPack } from "./src/gates/rules/packs.js"
 
 /**
  * Foundry's SELF-CHECK — the dogfood: `bun run foundry check` must be clean
  * on foundry's own source, in CI, always. The layering below is the
  * package's architecture, enforced structurally.
+ *
+ * The rule registry is what THIS module exports — the platform ships no
+ * implicit builtins; even foundry names its own pack.
  */
+export const rulePacks = [effectPack]
+
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
   rules: [

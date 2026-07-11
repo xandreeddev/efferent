@@ -1,4 +1,8 @@
 import type { GateSuiteConfig } from "@xandreed/foundry/domain/Rules.js"
+import { effectPack } from "@xandreed/foundry/gates/rules/packs.js"
+
+/** The rule registry is what THIS module exports — no implicit builtins. */
+export const rulePacks = [effectPack]
 
 /**
  * The REPO-level gate suite, run as part of `bun run typecheck` (which is why

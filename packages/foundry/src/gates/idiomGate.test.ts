@@ -5,7 +5,7 @@ import { RuleId } from "../domain/Brands.js"
 import { RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "./idiomGate.js"
-import { builtinRules } from "./rules/index.js"
+import { allBuiltinRules } from "./rules/index.js"
 import { TsProjectCachedLive } from "./TsProject.js"
 
 const rootDir = path.resolve(import.meta.dir, "../../fixtures/idioms")
@@ -18,7 +18,7 @@ const configFor = (rules: ReadonlyArray<string>, include: ReadonlyArray<string>)
 
 const findingsFor = (rules: ReadonlyArray<string>, include: ReadonlyArray<string>) =>
   Effect.runPromise(
-    makeIdiomGate(builtinRules, configFor(rules, include), "tsconfig.json")
+    makeIdiomGate(allBuiltinRules, configFor(rules, include), "tsconfig.json")
       .run(ws)
       .pipe(Effect.provide(TsProjectCachedLive)),
   )
@@ -95,9 +95,25 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("quality/no-skipped-tests flags skip/todo/x-prefixed runners", async () => {
+    const findings = await findingsFor(["quality/no-skipped-tests"], ["skippedTests.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "quality/no-skipped-tests", file: "skippedTests.ts", line: 6 },
+      { rule: "quality/no-skipped-tests", file: "skippedTests.ts", line: 7 },
+      { rule: "quality/no-skipped-tests", file: "skippedTests.ts", line: 8 },
+    ])
+  })
+
+  test("quality/no-empty-catch flags the swallow, not the handled catch", async () => {
+    const findings = await findingsFor(["quality/no-empty-catch"], ["emptyCatch.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "quality/no-empty-catch", file: "emptyCatch.ts", line: 4 },
+    ])
+  })
+
   test("clean.ts passes every rule", async () => {
     const findings = await findingsFor(
-      builtinRules.map((r) => String(r.id)),
+      allBuiltinRules.map((r) => String(r.id)),
       ["clean.ts"],
     )
     expect(findings).toEqual([])
@@ -112,7 +128,7 @@ describe("effect-idioms gate over fixtures", () => {
       }),
     ]
     const findings = await Effect.runPromise(
-      makeIdiomGate(builtinRules, config, "tsconfig.json")
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json")
         .run(ws)
         .pipe(Effect.provide(TsProjectCachedLive)),
     )
@@ -124,7 +140,7 @@ describe("effect-idioms gate over fixtures", () => {
       Schema.decodeUnknownSync(RuleConfig)({ rule: RuleId.make("effect/no-such-rule") }),
     ]
     const exit = await Effect.runPromiseExit(
-      makeIdiomGate(builtinRules, config, "tsconfig.json")
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json")
         .run(ws)
         .pipe(Effect.provide(TsProjectCachedLive)),
     )

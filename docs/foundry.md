@@ -94,14 +94,18 @@ for one-shot `check`; rebuilt per attempt in `forge` — `TsProjectFreshLive`
 would judge attempt N against attempt N-1's source).
 
 1. **`effect-idioms`** (`idiomGate.ts`) — rules as data (`RuleConfig`:
-   per-rule severity + include/exclude globs). Built-ins:
-   `effect/no-try-catch` (banTryCatch generalized), `effect/no-let`,
-   `effect/no-nullable-return` (**type-aware** — the checker reads declared
-   AND inferred return types; this is why the engine is compiler-API, not
-   pattern-matching), `effect/match-over-tag-switch` (switch on `._tag` +
+   per-rule severity + include/exclude globs) over a PLUGGED registry (see
+   "Plugging rules" below — the platform ships no implicit builtins). The
+   shipped library is organized as packs: the `effect` pack
+   (`effect/no-try-catch` — banTryCatch generalized, `effect/no-let`,
+   `effect/no-nullable-return` — **type-aware**: the checker reads declared
+   AND inferred return types, which is why the engine is compiler-API, not
+   pattern-matching — `effect/match-over-tag-switch` (switch on `._tag` +
    else-if ladders; single guards are fine), `effect/no-as-any` (incl.
-   `as unknown as T` laundering), `effect/branded-id-fields` (the branding
-   rubric's first enforced slice).
+   `as unknown as T` laundering), `effect/branded-id-fields`,
+   `effect/no-parallel-interface`) and the paradigm-neutral `quality` pack
+   (`quality/no-skipped-tests` — a skipped test is the coder gaming the
+   test gate; `quality/no-empty-catch`).
 2. **`boundaries`** — each layer declares `canImport` (internal, by name)
    and `externals` (by prefix); everything else is a finding. Foundry's own
    6-layer config is the dogfood; pointing globs at package dirs makes the
@@ -130,6 +134,42 @@ Implementors are adapters behind one port: `makeScriptedImplementor` (tests
 and the key-free CI demo), `ClaudeCliImplementorLive` (`claude -p` in the
 workspace — the runtime's Verifier precedent). The efferent agent itself
 becomes an implementor in the runtime-integration phase.
+
+## Plugging rules (per-project quality bars)
+
+The rule registry is what the CONFIG MODULE provides — `gatesFromConfig`
+never falls back to a builtin set. A `foundry.config.ts` has two channels:
+
+- **Data** (the default export, Schema-decoded): which rules run where —
+  `rules: [{ rule: "<ns>/<name>", include, exclude, severity? }]`,
+  boundaries layers, the tsconfig.
+- **Code** (named exports): `rulePacks` (imported from the shipped library
+  inside this monorepo — `import { effectPack } from
+  "@xandreed/foundry/gates/rules/packs.js"`) and/or `customRules` — plain
+  structural rule objects:
+
+  ```ts
+  export const customRules = [{
+    id: "local/no-default-export",        // "local/" is the convention
+    defaultSeverity: "error",
+    description: "default exports are banned",
+    fixHint: "use a named export",
+    check: ({ sourceFile, checker }) => [ /* {node, message} per violation */ ],
+  }]
+  ```
+
+  The data half is Schema-decoded on OUR side (`RuleId.make` happens in the
+  decoder — external workspaces never import foundry); the `check` function
+  is wrapped FAIL-CLOSED: a crashing rule (or one returning a non-array)
+  reports itself as a finding on the file it was checking, never a silent
+  pass. Duplicate ids across packs+custom are a `ConfigError`.
+
+- **Vendoring** (external workspaces — foundry is private, source-run):
+  `vendoredPackFiles("<pack>")` emits the pack re-authored as plain TS
+  files importing only the workspace's own `typescript`; the profile
+  session writes them under `<ws>/.efferent/gates/` and the config plugs
+  them in via `customRules`. Project-owned, human-editable; a golden test
+  pins vendored ≡ library findings, so drift fails CI.
 
 ## The ratchet (adopting foundry on pre-existing code)
 
