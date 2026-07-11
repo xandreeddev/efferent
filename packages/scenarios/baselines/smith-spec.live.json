@@ -5,11 +5,11 @@
     "selftest, scored: real refine → lock → production forge": 1
   },
   "versions": {
-    "coder-prompt": "1.1.0",
+    "coder-prompt": "1.2.0",
     "critic-rubric": "1.0.0",
     "model.general": "opencode:kimi-k2.6",
     "model.code": "opencode:kimi-k2.7-code",
     "model.fast": "opencode:deepseek-v4-flash"
   },
-  "mintedAt": "2026-07-10T20:13:54.630Z"
+  "mintedAt": "2026-07-11T07:29:31.889Z"
 }
