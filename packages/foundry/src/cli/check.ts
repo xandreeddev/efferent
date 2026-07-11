@@ -68,12 +68,15 @@ export const loadConfig = (configPath: string): Effect.Effect<LoadedConfig, Conf
     })),
   )
 
-/** The full static suite a config describes, in rank order. */
+/** The full static suite a config describes, in rank order. A config that
+ *  arms NO idiom rules omits the idiom gate entirely (a rule-less gate
+ *  would still demand a loadable ts.Program — a checks-only profile on a
+ *  non-TS workspace must not crash on a phantom tsconfig). */
 export const gatesFromConfig = (
   config: GateSuiteConfig,
   registry: ReadonlyArray<IdiomRule>,
-): Arr.NonEmptyReadonlyArray<Gate<TsProject>> => [
-  makeIdiomGate(registry, config.rules, config.tsconfig),
+): ReadonlyArray<Gate<TsProject>> => [
+  ...(config.rules.length > 0 ? [makeIdiomGate(registry, config.rules, config.tsconfig)] : []),
   ...Option.match(config.boundaries, {
     onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
     onSome: (layers) => [makeBoundariesGate(layers, config.tsconfig)],
@@ -85,8 +88,9 @@ export const gatesFromConfig = (
   ...(config.typecheck ? [makeTypecheckGate(config.tsconfig)] : []),
 ]
 
-/** Error findings with fingerprints keyed on their source line's content. */
-const fingerprintFindings = (
+/** Error findings with fingerprints keyed on their source line's content —
+ *  exported for the profile session's baseline mint at `:lock`. */
+export const fingerprintFindings = (
   findings: ReadonlyArray<Finding>,
   rootDir: string,
 ): Effect.Effect<ReadonlyArray<FingerprintedFinding>, WorkspaceError> =>
@@ -151,10 +155,17 @@ export const runCheck = (
   Effect.gen(function* () {
     const { config, rootDir, registry } = yield* loadConfig(args.configPath)
     const workspace: Workspace = { rootDir, files: [] }
-    const report = yield* runPipeline(
-      { gates: gatesFromConfig(config, registry), policy: "collect-all" },
-      workspace,
-    )
+    const gates = gatesFromConfig(config, registry)
+    if (!Arr.isNonEmptyReadonlyArray(gates)) {
+      return yield* Effect.fail(
+        new ConfigError({
+          path: args.configPath,
+          message:
+            "the config describes no runnable static gates (no rules, no boundaries, no evalShape, typecheck off) — nothing to check",
+        }),
+      )
+    }
+    const report = yield* runPipeline({ gates, policy: "collect-all" }, workspace)
     yield* Effect.sync(() =>
       console.log(
         Option.isSome(args.baselinePath) ? renderReportSummary(report) : renderReport(report),

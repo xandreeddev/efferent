@@ -38,6 +38,10 @@ Usage:
   bun run smith forge <slug|spec.md> [flags]  forge a LOCKED spec
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
   bun run smith mcp [--cwd <dir>]             serve the READ-ONLY workspace tools over MCP stdio
+  bun run smith profile [--cwd <dir>] -p      set up the workspace QUALITY PROFILE (rules, gates,
+                                              doctrine) — one unattended proposal with dry-run
+                                              counts; --yes ARMS it (config + vendored rules +
+                                              grandfathering baseline)
   bun run smith selftest                      the factory smoke test: a canned prompt forges
                                               to completion in a THROWAWAY workspace (real
                                               providers, real gates; exit 0 = the stack works)
@@ -66,7 +70,7 @@ there), .efferent/config.json local-over-global; smith defaults sit UNDER your
 config. Exit: 0 accepted/locked · 1 rejected · 2 error.`
 
 interface ParseState {
-  readonly command: Option.Option<"spec" | "forge" | "mcp">
+  readonly command: Option.Option<"spec" | "forge" | "mcp" | "profile">
   readonly selftest: boolean
   readonly yes: boolean
   readonly task: Option.Option<string>
@@ -159,6 +163,7 @@ export const parseArgs = (argv: ReadonlyArray<string>): ParseState => {
       if (token === "forge") return { ...state, command: Option.some("forge" as const) }
       if (token === "selftest" && !state.selftest) return { ...state, selftest: true }
       if (token === "mcp") return { ...state, command: Option.some("mcp" as const) }
+      if (token === "profile") return { ...state, command: Option.some("profile" as const) }
     }
     return Option.isNone(state.task)
       ? { ...state, task: Option.some(token) }
@@ -337,6 +342,20 @@ if (isDirectRun) {
     if (bareInteractive) {
       const { runTuiWorkspace } = yield* Effect.promise(() => import("./tui/runtime.js"))
       return yield* runTuiWorkspace(run)
+    }
+
+    // `smith profile` — the quality-profile setup session. Headless-first:
+    // one unattended proposal (dry-run counts on stdout), --yes arms it.
+    // The interactive TUI mode rides the dashboard integration (follow-up).
+    if (command === "profile") {
+      if (interactive) {
+        console.error(
+          "smith profile: the interactive TUI mode is coming with the dashboard integration — run with -p (add --yes to arm the proposal)",
+        )
+        return 2
+      }
+      const { runHeadlessProfile } = yield* Effect.promise(() => import("./profile/session.js"))
+      return yield* runHeadlessProfile(run.cwd, state.yes)
     }
 
     // `smith spec "<idea>"` — the refine pipeline.

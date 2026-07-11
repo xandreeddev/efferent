@@ -39,6 +39,16 @@ export class EvalShapeConfig extends Schema.Class<EvalShapeConfig>("EvalShapeCon
   suiteGlob: Schema.optionalWith(Schema.NonEmptyString, { default: () => "**/*.eval.ts" }),
 }) {}
 
+/** A STANDING command check — the project's own scripts (lint, format,
+ *  design-token audits) as part of the profile: exit 0 = clean. Armed by
+ *  smith's gate discovery as rank-2 command gates; the `foundry check` CLI
+ *  ignores them (it runs the static suite only). */
+export class CheckConfig extends Schema.Class<CheckConfig>("CheckConfig")({
+  name: Schema.NonEmptyString,
+  /** One line of shell, run through `bash -c` from the workspace root. */
+  command: Schema.NonEmptyString,
+}) {}
+
 /** One gate-suite target: a tsconfig + the rule/boundary/eval policy over it. */
 export class GateSuiteConfig extends Schema.Class<GateSuiteConfig>("GateSuiteConfig")({
   /** Workspace-relative path to the tsconfig the shared `ts.Program` builds from. */
@@ -46,6 +56,7 @@ export class GateSuiteConfig extends Schema.Class<GateSuiteConfig>("GateSuiteCon
   rules: Schema.Array(RuleConfig),
   boundaries: Schema.optionalWith(LayerConfig, { as: "Option" }),
   evalShape: Schema.optionalWith(EvalShapeConfig, { as: "Option" }),
+  checks: Schema.optionalWith(Schema.Array(CheckConfig), { default: () => [] }),
   /** Run the typecheck gate too. Set false when `tsc` already runs beside
    *  this check (e.g. the repo's `bun run typecheck`) — no double program check. */
   typecheck: Schema.optionalWith(Schema.Boolean, { default: () => true }),
