@@ -5,7 +5,9 @@ import { WorkspacePath } from "../domain/Brands.js"
 import { WorkspaceError } from "../domain/Errors.js"
 import type { Workspace, WorkspaceFingerprint } from "../ports/Gate.js"
 
-const SKIPPED_DIRS = new Set(["node_modules", ".git", ".foundry"])
+// __pycache__: cache churn from running a Python suite padded the observed
+// filesTouched diff AND the judge's file-list evidence (zig re-forge).
+const SKIPPED_DIRS = new Set(["node_modules", ".git", ".foundry", "__pycache__"])
 
 const isSkipped = (relPath: string): boolean =>
   relPath.split("/").some((segment) => SKIPPED_DIRS.has(segment))

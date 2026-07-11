@@ -21,6 +21,8 @@ describe("snapshotWorkspace — hostile filesystems", () => {
     const dir = mkdtempSync(join(tmpdir(), "foundry-snap-"))
     mkdirSync(join(dir, "node_modules", "dep"), { recursive: true })
     writeFileSync(join(dir, "node_modules", "dep", "index.js"), "x")
+    mkdirSync(join(dir, "src", "__pycache__"), { recursive: true })
+    writeFileSync(join(dir, "src", "__pycache__", "mod.cpython-314.pyc"), "x")
     writeFileSync(join(dir, "keep.ts"), "export {}")
     const snapshot = await Effect.runPromise(snapshotWorkspace(dir))
     expect(snapshot.files.map(String)).toEqual(["keep.ts"])
