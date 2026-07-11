@@ -29,6 +29,13 @@ export interface Workspace {
   readonly files: ReadonlyArray<WorkspacePath>
 }
 
+/** A per-file stat signature of the workspace — the forge loop's movement
+ *  oracle. Diffing two of these OBSERVES what actually changed on disk, so
+ *  work done through Bash (heredocs, generators, formatters) counts the same
+ *  as tool-call writes (the zig re-forge recorded "0 files touched" across
+ *  three attempts while `main.zig` was being rewritten via `cat >`). */
+export type WorkspaceFingerprint = ReadonlyMap<WorkspacePath, string>
+
 export interface Gate<R = never> {
   readonly name: GateName
   readonly kind: GateKind

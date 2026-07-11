@@ -7,8 +7,14 @@ feedback → retry until sound. See `docs/foundry.md` for the full design.
 onOutcome, observe-only `Effect<void>`) is the driver-UI progress seam, and an
 implementor's `receipt.ref` (opaque provenance, e.g. `conversation:<uuid>`)
 threads into `AttemptRecord.implementorRef` so the persisted artifact links
-back to the implementor's own record. The reference consumer is
-`@xandreed/smith` — the efferent coder standing at this forge.
+back to the implementor's own record. `AttemptRecord.filesTouched` is
+OBSERVED, not claimed: `ForgeOptions.fingerprint` (the movement oracle —
+`fingerprintWorkspace` in production) runs before and after each implement
+call, and the diff ∪ receipt claim is what gets recorded and what the
+stalled breaker keys on (Bash-heredoc writes are invisible to tool-call
+capture — the zig re-forge recorded "0 files" while main.zig was being
+rewritten via `cat >`). The reference consumer is `@xandreed/smith` — the
+efferent coder standing at this forge.
 
 **This package is written in the style its own gates enforce, and CI runs
 `bun run foundry check` on this source (`foundry.config.ts`) — a violation

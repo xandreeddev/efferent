@@ -4,12 +4,16 @@ import { GateName, RuleId, WorkspacePath } from "../domain/Brands.js"
 import { WorkspaceError } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import { ForgeLimits, Spec } from "../domain/Spec.js"
-import type { Gate, Workspace } from "../ports/Gate.js"
+import type { Gate, Workspace, WorkspaceFingerprint } from "../ports/Gate.js"
 import { Implementor } from "../ports/Implementor.js"
 import { RunSink } from "../ports/RunSink.js"
-import { forge } from "./forge.js"
+import { diffFingerprints, forge } from "./forge.js"
 
 const ws: Workspace = { rootDir: "/tmp/x", files: [] }
+
+/** A workspace that never changes — diffs are always empty, so the recorded
+ *  filesTouched reduces to the receipt claim (the pre-observation behavior). */
+const stillWorkspace: Effect.Effect<WorkspaceFingerprint> = Effect.succeed(new Map())
 
 const spec = (maxAttempts: number) =>
   new Spec({
@@ -68,6 +72,7 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
       }).pipe(
         Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(writes))),
       )
@@ -111,6 +116,7 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
       }).pipe(Effect.provide(Layer.mergeAll(recordingImplementor(briefs), flakySink(attempted))))
       return { result, attempted: yield* Ref.get(attempted) }
     })
@@ -129,6 +135,7 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(99, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
       }).pipe(
         Effect.provide(Layer.mergeAll(recordingImplementor(briefs), memorySink(writes))),
       )
@@ -162,6 +169,7 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(99, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
       }).pipe(Effect.provide(Layer.mergeAll(writeOnceImplementor, memorySink(writes))))
     })
     const result = await Effect.runPromise(program)
@@ -185,10 +193,11 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
         hooks: {
           onAttemptStart: (attempt) => note(`start:${attempt}`),
-          onImplemented: (attempt, receipt) =>
-            note(`impl:${attempt}:${receipt.filesTouched.length}`),
+          onImplemented: (attempt, _receipt, files) =>
+            note(`impl:${attempt}:${files.length}`),
           onReport: (attempt, report, feedback) =>
             note(`report:${attempt}:${report.ok ? "ok" : "fail"}:${Option.isSome(feedback) ? "brief" : "none"}`),
           onOutcome: (run) => note(`outcome:${run.outcome._tag}`),
@@ -211,6 +220,98 @@ describe("forge — the factory loop", () => {
     ])
   })
 
+  test("diffFingerprints: adds, edits, and deletes all count; unmoved paths don't", () => {
+    const a = WorkspacePath.make("src/a.ts")
+    const b = WorkspacePath.make("src/b.ts")
+    const c = WorkspacePath.make("src/c.ts")
+    const d = WorkspacePath.make("src/d.ts")
+    const before: WorkspaceFingerprint = new Map([
+      [a, "10:1"],
+      [b, "20:1"],
+      [c, "30:1"],
+    ])
+    const after: WorkspaceFingerprint = new Map([
+      [a, "10:1"],
+      [b, "22:2"],
+      [d, "40:1"],
+    ])
+    expect(diffFingerprints(before, after)).toEqual([b, c, d])
+    expect(diffFingerprints(before, before)).toEqual([])
+  })
+
+  test("heredoc writes are OBSERVED: a claim-less attempt that moves the workspace never stalls", async () => {
+    // The zig re-forge lesson: the coder rewrote main.zig via `cat >` for
+    // three straight attempts while every receipt said 0 files. The
+    // fingerprint diff sees the disk, so those attempts count as movement
+    // and the record tells the truth.
+    const mainZig = WorkspacePath.make("zig/src/main.zig")
+    const claimlessImplementor = Layer.succeed(Implementor, {
+      implement: () => Effect.succeed({ filesTouched: [] }),
+    })
+    const program = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const gateCalls = yield* Ref.make(0)
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
+      // Every observation returns a NEW signature — the workspace moved
+      // during every implement window.
+      const restlessWorkspace = Ref.updateAndGet(calls, (n) => n + 1).pipe(
+        Effect.map((n): WorkspaceFingerprint => new Map([[mainZig, `sig-${n}`]])),
+      )
+      return yield* forge({
+        spec: spec(3),
+        pipeline: { gates: Arr.of(failingUntil(99, gateCalls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+        fingerprint: restlessWorkspace,
+      }).pipe(Effect.provide(Layer.mergeAll(claimlessImplementor, memorySink(writes))))
+    })
+    const result = await Effect.runPromise(program)
+
+    // Identical verdicts all the way down, but the workspace MOVED each
+    // attempt — that is not a stall, it's honest exhaustion.
+    expect(result.run.outcome).toEqual({ _tag: "rejected", reason: "attempts-exhausted" })
+    expect(result.run.attempts.length).toBe(3)
+    expect(result.run.attempts.map((a) => a.filesTouched)).toEqual([
+      [mainZig],
+      [mainZig],
+      [mainZig],
+    ])
+  })
+
+  test("gate-side writes never read as implementor movement: pre/post pairing keeps the stall honest", async () => {
+    // The fingerprint changes BETWEEN attempts (a gate's build artifacts,
+    // test caches) but is still within every implement window — so the
+    // per-attempt diff stays empty and confirmed immobility still fires.
+    const noise = WorkspacePath.make("zig/zig-out/bin/claw-zig")
+    const claimlessImplementor = Layer.succeed(Implementor, {
+      implement: () => Effect.succeed({ filesTouched: [] }),
+    })
+    const program = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const gateCalls = yield* Ref.make(0)
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
+      // Calls pair up as (pre, post) per attempt: 1,2 → attempt 1; 3,4 →
+      // attempt 2 … same signature within a pair, new signature across pairs.
+      const gateNoisyWorkspace = Ref.updateAndGet(calls, (n) => n + 1).pipe(
+        Effect.map(
+          (n): WorkspaceFingerprint => new Map([[noise, `build-${Math.ceil(n / 2)}`]]),
+        ),
+      )
+      return yield* forge({
+        spec: spec(5),
+        pipeline: { gates: Arr.of(failingUntil(99, gateCalls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+        fingerprint: gateNoisyWorkspace,
+      }).pipe(Effect.provide(Layer.mergeAll(claimlessImplementor, memorySink(writes))))
+    })
+    const result = await Effect.runPromise(program)
+
+    expect(result.run.outcome).toEqual({ _tag: "rejected", reason: "stalled" })
+    expect(result.run.attempts.length).toBe(3)
+    expect(result.run.attempts.every((a) => a.filesTouched.length === 0)).toBe(true)
+  })
+
   test("the implementor's ref threads into each attempt record", async () => {
     const refImplementor = Layer.succeed(Implementor, {
       implement: () =>
@@ -227,6 +328,7 @@ describe("forge — the factory loop", () => {
         pipeline: { gates: Arr.of(failingUntil(2, calls)), policy: "staged" },
         workspaceDir: "/tmp/x",
         snapshot: Effect.succeed(ws),
+        fingerprint: stillWorkspace,
       }).pipe(Effect.provide(Layer.mergeAll(refImplementor, memorySink(writes))))
     })
     const result = await Effect.runPromise(program)

@@ -1,5 +1,6 @@
 import { Array as Arr, Clock, Duration, Effect, Match, Option, Schedule, Schema } from "effect"
 import { AttemptNumber, RunId } from "../domain/Brands.js"
+import type { WorkspacePath } from "../domain/Brands.js"
 import type { ImplementorError, WorkspaceError } from "../domain/Errors.js"
 import {
   AcceptedOutcome,
@@ -11,7 +12,7 @@ import {
 import type { RunOutcome } from "../domain/FactoryRun.js"
 import type { Spec } from "../domain/Spec.js"
 import type { GateReport } from "../domain/Verdict.js"
-import type { Workspace } from "../ports/Gate.js"
+import type { Workspace, WorkspaceFingerprint } from "../ports/Gate.js"
 import { Implementor } from "../ports/Implementor.js"
 import type { ImplementReceipt } from "../ports/Implementor.js"
 import { RunSink } from "../ports/RunSink.js"
@@ -31,6 +32,9 @@ export interface ForgeHooks {
   readonly onImplemented?: (
     attempt: AttemptNumber,
     receipt: ImplementReceipt,
+    /** What the attempt OBSERVABLY changed (fingerprint diff ∪ receipt claim)
+     *  — the same set recorded on the `AttemptRecord`. */
+    filesTouched: ReadonlyArray<WorkspacePath>,
   ) => Effect.Effect<void>
   readonly onReport?: (
     attempt: AttemptNumber,
@@ -47,6 +51,13 @@ export interface ForgeOptions<R> {
   readonly workspaceDir: string
   /** Driver-provided snapshot of the workspace the gates judge. */
   readonly snapshot: Effect.Effect<Workspace, WorkspaceError>
+  /**
+   * Driver-provided movement oracle (`fingerprintWorkspace` in production) —
+   * run BEFORE and AFTER each implement call, so the diff is exactly what
+   * the implementor did: gate-side writes (build outputs, test artifacts)
+   * land between attempts and never pollute it.
+   */
+  readonly fingerprint: Effect.Effect<WorkspaceFingerprint, WorkspaceError>
   /** Optional progress observers — see `ForgeHooks`. */
   readonly hooks?: ForgeHooks
 }
@@ -63,6 +74,17 @@ type Phase = "continue" | "accepted" | "attempts-exhausted" | "budget-exhausted"
  *  An attempt that touched NOTHING and reproduced this exact fingerprint
  *  bought no information — retrying again would buy none either (the zig
  *  run burned two attempts this way against an environment-level failure). */
+/** Every path whose presence or signature moved between two observations —
+ *  adds, deletes, and edits alike. Exported for the drivers' own displays. */
+export const diffFingerprints = (
+  before: WorkspaceFingerprint,
+  after: WorkspaceFingerprint,
+): ReadonlyArray<WorkspacePath> =>
+  [
+    ...[...after].filter(([path, signature]) => before.get(path) !== signature).map(([path]) => path),
+    ...[...before.keys()].filter((path) => !after.has(path)),
+  ].sort()
+
 const reportFingerprint = (report: GateReport): string =>
   JSON.stringify(
     report.verdicts
@@ -143,6 +165,7 @@ export const forge = <R>(
         const implementor = yield* Implementor
         const attemptStart = yield* Clock.currentTimeMillis
         yield* hooks.onAttemptStart(state.attempt)
+        const before = yield* options.fingerprint
         const receipt = yield* implementor
           .implement({
             spec: options.spec,
@@ -151,7 +174,16 @@ export const forge = <R>(
             workspaceDir: options.workspaceDir,
           })
           .pipe(Effect.retry(implementorRetry))
-        yield* hooks.onImplemented(state.attempt, receipt)
+        const after = yield* options.fingerprint
+        // OBSERVED work: the workspace's own word, unioned with the receipt's
+        // claim. The diff sees Bash-side writes the tool-call capture cannot
+        // (the zig re-forge said "0 files touched" while `main.zig` was being
+        // rewritten via heredocs); the claim keeps tool writes inside hidden
+        // dirs visible (the fingerprint prunes those).
+        const filesTouched = [
+          ...new Set([...diffFingerprints(before, after), ...receipt.filesTouched]),
+        ].sort()
+        yield* hooks.onImplemented(state.attempt, receipt, filesTouched)
         const workspace = yield* options.snapshot
         const report = yield* runPipeline(options.pipeline, workspace)
         const attemptEnd = yield* Clock.currentTimeMillis
@@ -166,7 +198,7 @@ export const forge = <R>(
         const prePrevious = state.records[state.records.length - 2]
         const stalled =
           !report.ok &&
-          receipt.filesTouched.length === 0 &&
+          filesTouched.length === 0 &&
           previous !== undefined &&
           prePrevious !== undefined &&
           previous.filesTouched.length === 0 &&
@@ -190,7 +222,7 @@ export const forge = <R>(
           attempt: state.attempt,
           report,
           feedback,
-          filesTouched: receipt.filesTouched,
+          filesTouched,
           durationMs: attemptEnd - attemptStart,
           implementorRef: receipt.ref ?? Option.none(),
         })

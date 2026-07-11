@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { WorkspacePath } from "../domain/Brands.js"
 import { WorkspaceError } from "../domain/Errors.js"
-import type { Workspace } from "../ports/Gate.js"
+import type { Workspace, WorkspaceFingerprint } from "../ports/Gate.js"
 
 const SKIPPED_DIRS = new Set(["node_modules", ".git", ".foundry"])
 
@@ -42,6 +42,52 @@ export const snapshotWorkspace = (rootDir: string): Effect.Effect<Workspace, Wor
       rootDir,
       files: [...files].sort().map((rel) => WorkspacePath.make(rel)),
     })),
+  )
+
+/** Like `walk`, but collects a stat signature per file and PRUNES hidden
+ *  directories: they hold infrastructure, not deliverable — toolchains
+ *  (`.local`), build caches (`.zig-cache`), harness state (`.efferent`) —
+ *  and their churn from a coder's Bash-side builds must never read as
+ *  "the implementor changed something". Hidden FILES still count
+ *  (`.gitignore`, `.env` are real edits); tool-call writes into hidden
+ *  dirs stay visible through the receipt union in the forge loop. */
+const walkFingerprint = async (
+  rootDir: string,
+  dir: string,
+): Promise<ReadonlyArray<readonly [string, string]>> => {
+  const entries = await fs
+    .readdir(dir, { withFileTypes: true })
+    .then((found) => found, () => [])
+  const nested = await Promise.all(
+    entries.map(async (entry): Promise<ReadonlyArray<readonly [string, string]>> => {
+      const abs = path.join(dir, entry.name)
+      const rel = path.relative(rootDir, abs).split(path.sep).join("/")
+      if (isSkipped(rel)) return []
+      if (entry.isDirectory()) {
+        return entry.name.startsWith(".") ? [] : walkFingerprint(rootDir, abs)
+      }
+      if (!entry.isFile()) return []
+      // A file deleted mid-walk is simply absent — same tolerance as `walk`.
+      const stat = await fs.stat(abs).then((s) => s, () => null)
+      return stat === null ? [] : [[rel, `${stat.size}:${stat.mtimeMs}`] as const]
+    }),
+  )
+  return nested.flat()
+}
+
+/** The forge loop's movement oracle — taken before and after each implement
+ *  call; `diffFingerprints` of the pair is what the attempt actually did. */
+export const fingerprintWorkspace = (
+  rootDir: string,
+): Effect.Effect<WorkspaceFingerprint, WorkspaceError> =>
+  Effect.tryPromise({
+    try: () => walkFingerprint(rootDir, rootDir),
+    catch: (cause) =>
+      new WorkspaceError({ message: `fingerprint of ${rootDir} failed: ${String(cause)}` }),
+  }).pipe(
+    Effect.map(
+      (entries) => new Map(entries.map(([rel, signature]) => [WorkspacePath.make(rel), signature])),
+    ),
   )
 
 export const writeWorkspaceFile = (
