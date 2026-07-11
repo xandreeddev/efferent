@@ -33,19 +33,34 @@ describe("agent skills — progressive disclosure", () => {
       cwd,
       discoverSkills(cwd).pipe(Effect.provide(LocalFileSystemLive)),
     )
-    expect(skills).toEqual([
-      { name: "effect-idioms", description: "House Effect.ts patterns; load when writing Effect code here." },
-    ])
+    // Workspace skills first; smith's BUNDLED skills (mechanism know-how)
+    // ride beneath them.
+    expect(skills[0]).toEqual({
+      name: "effect-idioms",
+      description: "House Effect.ts patterns; load when writing Effect code here.",
+    })
+    expect(skills.map((s) => s.name)).toContain("gate-rule-authoring")
     const block = renderSkillsBlock(skills)
     expect(block).toContain("Skills available")
     expect(block).toContain("- effect-idioms:")
     expect(renderSkillsBlock([])).toBe("")
 
+    // An absent workspace dir still surfaces the bundled skills — and a
+    // workspace file with a bundled name SHADOWS it.
     const none = await run(
       mkdtempSync(join(tmpdir(), "skills-empty-")),
       discoverSkills(cwd + "-nope").pipe(Effect.provide(LocalFileSystemLive)),
     )
-    expect(none).toEqual([])
+    expect(none.map((s) => s.name)).toEqual(["gate-rule-authoring"])
+    const shadowed = mkdtempSync(join(tmpdir(), "skills-shadow-"))
+    seed(shadowed, "gate-rule-authoring", "---\nname: gate-rule-authoring\ndescription: project-specific override\n---\nbody")
+    const winners = await run(
+      shadowed,
+      discoverSkills(shadowed).pipe(Effect.provide(LocalFileSystemLive)),
+    )
+    expect(winners).toEqual([
+      { name: "gate-rule-authoring", description: "project-specific override" },
+    ])
   })
 
   test("tier 2: readSkill returns the body; path-shaped names are refused", async () => {

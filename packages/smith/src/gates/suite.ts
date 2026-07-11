@@ -152,11 +152,17 @@ export const discoverGateSuite = (
             Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
             Effect.catchAll(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
           )
-          const gates = gatesFromConfig(config, registry).map((gate) =>
+          // Static gates ride the ratchet; the profile's STANDING checks
+          // (the project's own lint/format scripts) are binary — green or
+          // it gates — and never baselined.
+          const staticGates = gatesFromConfig(config, registry).map((gate) =>
             baseline.size > 0 ? withBaselineRatchet(gate, baseline) : gate,
           )
+          const checkGates = config.checks.map((check) =>
+            makeCommandGate({ name: check.name, argv: ["bash", "-c", check.command] }),
+          )
           return Option.some({
-            gates,
+            gates: [...staticGates, ...checkGates],
             rules: config.rules.length,
             baseline: baseline.size,
           })

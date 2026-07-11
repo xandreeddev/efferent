@@ -100,7 +100,7 @@ describe("loadConfig — the plug-in registry", () => {
     )
     const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
     expect(registry.map((r) => String(r.id))).toEqual(["local/no-fixme"])
-    const [idiomGate] = gatesFromConfig(config, registry)
+    const idiomGate = gatesFromConfig(config, registry)[0]!
     const findings = await Effect.runPromise(
       idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
     )
@@ -135,7 +135,7 @@ describe("loadConfig — the plug-in registry", () => {
       ].join("\n"),
     )
     const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
-    const [idiomGate] = gatesFromConfig(config, registry)
+    const idiomGate = gatesFromConfig(config, registry)[0]!
     const findings = await Effect.runPromise(
       idiomGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
     )
@@ -231,7 +231,7 @@ describe("vendored packs — plain twins of the library", () => {
     )
     const { config, registry, rootDir } = await Effect.runPromise(loadConfig(configPath))
     expect(registry.length).toBe(effectPack.rules.length)
-    const [vendoredGate] = gatesFromConfig(config, registry)
+    const vendoredGate = gatesFromConfig(config, registry)[0]!
     const vendoredFindings = await Effect.runPromise(
       vendoredGate.run({ rootDir, files: [] }).pipe(Effect.provide(TsProjectCachedLive)),
     )
