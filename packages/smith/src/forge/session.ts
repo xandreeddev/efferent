@@ -4,6 +4,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConfigError,
   deriveLessons,
+  fingerprintWorkspace,
   forge,
   makeFileRunSink,
   readRuns,
@@ -44,11 +45,13 @@ export const smithForgeHooks = (
   publish: (event: SmithEvent) => Effect.Effect<void>,
 ): ForgeHooks => ({
   onAttemptStart: (attempt) => publish({ type: "attempt_start", attempt }),
-  onImplemented: (attempt, receipt) =>
+  // filesTouched is the loop's OBSERVED set (fingerprint diff ∪ receipt
+  // claim) — heredoc writes show up here even though the receipt misses them.
+  onImplemented: (attempt, receipt, filesTouched) =>
     publish({
       type: "implement_end",
       attempt,
-      filesTouched: receipt.filesTouched.map(String),
+      filesTouched: filesTouched.map(String),
       ref: receipt.ref ?? Option.none(),
     }),
   onReport: (attempt, report, feedback) =>
@@ -123,6 +126,7 @@ export const runForgeSessionWith = <R>(
       pipeline,
       workspaceDir: run.cwd,
       snapshot: snapshotWorkspace(run.cwd),
+      fingerprint: fingerprintWorkspace(run.cwd),
       hooks: smithForgeHooks(publish),
     }).pipe(
       Effect.provide(

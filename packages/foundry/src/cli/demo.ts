@@ -13,6 +13,7 @@ import { ClaudeCliImplementorLive } from "../adapters/claudeImplementor.js"
 import { makeFileRunSink } from "../adapters/fileRunSink.js"
 import { makeScriptedImplementor } from "../adapters/scriptedImplementor.js"
 import {
+  fingerprintWorkspace,
   snapshotWorkspace,
   withTempWorkspace,
   writeWorkspaceFile,
@@ -155,6 +156,7 @@ export const runDemo = (implementor: DemoImplementor): Effect.Effect<number, Wor
         },
         workspaceDir,
         snapshot: snapshotWorkspace(workspaceDir),
+        fingerprint: fingerprintWorkspace(workspaceDir),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
