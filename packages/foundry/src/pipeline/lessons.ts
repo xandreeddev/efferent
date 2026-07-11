@@ -120,6 +120,13 @@ export const renderLessons = (lessons: ReadonlyArray<Lesson>): string =>
             onNone: () => "",
             onSome: (hint) => ` Fix: ${hint}`,
           })
-          return `- [${lesson.rule}] failed ${lesson.failedAttempts} attempt(s) across ${lesson.runs} run(s) — e.g. ${lesson.lastMessage}${fix}`
+          // A spec check that keeps recurring across RUNS is bigger than any
+          // one spec — the deterministic hint that it belongs in the standing
+          // profile (the flywheel's enforcement arrow, human-armed).
+          const promote =
+            lesson.rule.startsWith("test/accept-") && lesson.runs >= 2
+              ? " (recurring spec check — consider promoting it to a standing check in foundry.config.ts)"
+              : ""
+          return `- [${lesson.rule}] failed ${lesson.failedAttempts} attempt(s) across ${lesson.runs} run(s) — e.g. ${lesson.lastMessage}${fix}${promote}`
         }),
       ].join("\n")

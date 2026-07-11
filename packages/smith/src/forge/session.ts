@@ -101,12 +101,19 @@ export const runForgeSessionWith = <R>(
 > =>
   Effect.gen(function* () {
     const spec = yield* buildSpec(run, doc)
-    const { gateNames, pipeline, acceptGates } = yield* discoverGateSuite(
+    const { gateNames, pipeline, acceptGates, profile } = yield* discoverGateSuite(
       gateRequestFromSpec(run, doc),
       publish,
       extraGates(spec),
     )
     yield* publish({ type: "forge_start", spec, gateNames, doc })
+    // The quality-profile status, LOUD either way: an armed bar names its
+    // size; an unarmed workspace is told it runs on generic gates only.
+    yield* publish({
+      type: "profile_status",
+      armed: Option.isSome(profile),
+      ...Option.getOrElse(profile, () => ({ rules: 0, baseline: 0 })),
+    })
 
     // RED-FIRST, before attempt 1 spends anything: an accept check that is
     // already green on the untouched workspace cannot measure the work, and

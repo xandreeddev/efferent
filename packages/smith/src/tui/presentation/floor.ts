@@ -112,7 +112,12 @@ const todosFromArgs = (args: unknown): Option.Option<ReadonlyArray<TodoItem>> =>
 export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState => {
   // Hoisted: transient/advisory events are inert here, and the Match chain
   // sits at TS's inference depth (one more arm collapses later narrows).
-  if (event.type === "bash_progress" || event.type === "file_refs") return state
+  if (
+    event.type === "bash_progress" ||
+    event.type === "file_refs" ||
+    event.type === "profile_status"
+  )
+    return state
   return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, () => state),
     Match.when({ type: "spec_draft" }, () => state),

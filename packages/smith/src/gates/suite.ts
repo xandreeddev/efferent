@@ -1,10 +1,12 @@
-import { join } from "node:path"
-import { Array as Arr, Effect, Option } from "effect"
+import { dirname, join } from "node:path"
+import { Array as Arr, Effect, Option, Schema } from "effect"
 import {
+  BaselineFile,
   ConfigError,
   gatesFromConfig,
   loadConfig,
   makeTypecheckGate,
+  withBaselineRatchet,
 } from "@xandreed/foundry"
 import type { Gate, Pipeline, TsProject, Workspace, WorkspaceError } from "@xandreed/foundry"
 import { FileSystem } from "@xandreed/engine"
@@ -18,6 +20,10 @@ export interface GateSuite {
   /** The spec's own accept gates, UNwrapped — the red-first probe runs these
    *  against the untouched workspace without gate_start noise. */
   readonly acceptGates: ReadonlyArray<Gate<never>>
+  /** The armed quality profile, when a workspace gate config was found:
+   *  how many rules it selects and how many findings its committed
+   *  baseline grandfathers. `None` = generic gates only. */
+  readonly profile: Option.Option<{ readonly rules: number; readonly baseline: number }>
 }
 
 /**
@@ -123,10 +129,42 @@ export const discoverGateSuite = (
         ),
     })
 
-    const configured = yield* Option.match(configPath, {
-      onNone: () => Effect.succeed<ReadonlyArray<Gate<TsProject>>>([]),
+    // The workspace's own profile: its gate config, RATCHETED by the
+    // committed baseline when one exists (`<configDir>/.foundry/baseline.json`
+    // — minted at profile :lock). Grandfathered findings never gate a forge
+    // run; only NEW code must be clean. An unreadable/absent baseline reads
+    // as empty — every finding gates, the pre-profile behavior.
+    const loaded = yield* Option.match(configPath, {
+      onNone: () =>
+        Effect.succeed(
+          Option.none<{
+            readonly gates: ReadonlyArray<Gate<TsProject>>
+            readonly rules: number
+            readonly baseline: number
+          }>(),
+        ),
       onSome: (path) =>
-        Effect.map(loadConfig(path), ({ config, registry }) => gatesFromConfig(config, registry)),
+        Effect.gen(function* () {
+          const { config, registry } = yield* loadConfig(path)
+          const baselinePath = join(dirname(path), ".foundry", "baseline.json")
+          const baseline = yield* fs.read(baselinePath).pipe(
+            Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(BaselineFile))),
+            Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
+            Effect.catchAll(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
+          )
+          const gates = gatesFromConfig(config, registry).map((gate) =>
+            baseline.size > 0 ? withBaselineRatchet(gate, baseline) : gate,
+          )
+          return Option.some({
+            gates,
+            rules: config.rules.length,
+            baseline: baseline.size,
+          })
+        }),
+    })
+    const configured = Option.match(loaded, {
+      onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
+      onSome: (found) => found.gates,
     })
 
     const typecheck =
@@ -177,5 +215,9 @@ export const discoverGateSuite = (
       pipeline: { gates: wrapped, policy: "staged" as const },
       gateNames: gates.map((gate) => String(gate.name)),
       acceptGates,
+      profile: Option.map(loaded, (found) => ({
+        rules: found.rules,
+        baseline: found.baseline,
+      })),
     }
   })

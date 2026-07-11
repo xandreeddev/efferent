@@ -342,6 +342,14 @@ export const reduceConversationIn = (
         text: `environment: ${e.names.join(", ")} cannot run — their tool is MISSING from PATH; the coder must provision it into .local/bin, or Esc and install it on the host`,
       }),
     ),
+    Match.when({ type: "profile_status" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: e.armed
+          ? `quality profile: ${e.rules} rule(s) armed · ${e.baseline} grandfathered`
+          : "quality profile: NONE — generic gates only (typecheck + tests); run `bun run smith profile` to arm one",
+      }),
+    ),
     Match.when({ type: "capabilities" }, (e) =>
       push(state, {
         kind: "notice",

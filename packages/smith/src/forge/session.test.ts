@@ -123,6 +123,7 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
     // The full event fan-in, in loop order.
     expect(events.map((event) => event.type)).toEqual([
       "forge_start",
+      "profile_status",
       "attempt_start",
       "implement_end",
       "gate_start",
