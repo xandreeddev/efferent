@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Array as Arr, Effect, Option } from "effect"
 import { runPipeline } from "@xandreed/foundry"
 import type { Workspace } from "@xandreed/foundry"
@@ -43,6 +46,41 @@ describe("makeCommandGate", () => {
     const findings = await Effect.runPromise(gate.run(ws))
     expect(findings.length).toBe(1)
     expect(findings[0]!.message).toContain("everything is broken")
+  })
+
+  test("a tool provisioned into <ws>/.local/bin COUNTS — the gate sees the coder's toolchain", async () => {
+    // The zig-run lesson: the coder built its own toolchain into
+    // .local/bin, self-verified green, and every gate still 127'd because
+    // the gate env diverged. This pins the parity: same prefix, same PATH.
+    const dir = mkdtempSync(join(tmpdir(), "gate-toolchain-"))
+    mkdirSync(join(dir, ".local", "bin"), { recursive: true })
+    const tool = join(dir, ".local", "bin", "claw-fake-tool")
+    writeFileSync(tool, "#!/usr/bin/env bash\necho provisioned-ok\n")
+    chmodSync(tool, 0o755)
+    const gate = makeCommandGate({
+      name: "provisioned",
+      argv: ["bash", "-c", "claw-fake-tool | grep -q provisioned-ok"],
+    })
+    const findings = await Effect.runPromise(gate.run({ rootDir: dir, files: [] }))
+    expect(findings).toEqual([])
+  })
+
+  test("exit 127 (tool missing) is an ENVIRONMENT finding — env/ rule, honest fixHint", async () => {
+    const gate = makeCommandGate({
+      name: "zig-build",
+      argv: ["bash", "-c", "definitely-not-installed-tool build"],
+    })
+    const findings = await Effect.runPromise(gate.run(ws))
+    expect(findings.length).toBe(1)
+    const finding = findings[0]!
+    expect(String(finding.rule)).toBe("env/zig-build")
+    expect(finding.message).toContain("ENVIRONMENT:")
+    expect(finding.message).toContain("command not found")
+    const hint = Option.getOrThrow(finding.fixHint)
+    // The old hint said "make it pass" — unfixable by editing code; the new
+    // one names the actual fix (the zig-run lesson).
+    expect(hint).toContain(".local/bin")
+    expect(hint).not.toContain("make")
   })
 
   test("an unspawnable command is a GateCrash — folded FAIL-CLOSED by the pipeline", async () => {

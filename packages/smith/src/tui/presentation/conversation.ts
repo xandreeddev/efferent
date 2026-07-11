@@ -336,6 +336,12 @@ export const reduceConversationIn = (
         text: `red-first: ${e.names.join(", ")} already PASS on the untouched workspace — these checks cannot measure this spec's work; tighten the spec or expect a vacuous accept`,
       }),
     ),
+    Match.when({ type: "missing_tools" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `environment: ${e.names.join(", ")} cannot run — their tool is MISSING from PATH; the coder must provision it into .local/bin, or Esc and install it on the host`,
+      }),
+    ),
     Match.when({ type: "capabilities" }, (e) =>
       push(state, {
         kind: "notice",

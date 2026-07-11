@@ -4,7 +4,7 @@ import type { SpecDoc } from "@xandreed/engine"
 
 /** Bump when the coder system prompt or the brief framing changes — the
  *  smith-spec live battery records it. */
-export const SMITH_CODER_PROMPT_VERSION = "1.1.0"
+export const SMITH_CODER_PROMPT_VERSION = "1.2.0"
 
 // NOTE: no todo_write line here BY MEASUREMENT — the smith-spec battery
 // graded prompted planning down on small tasks (critic 0.72-0.76 vs 1.00:
@@ -13,6 +13,7 @@ export const SMITH_CODER_PROMPT_VERSION = "1.1.0"
 const OPERATING_RULES = `## Operating rules
 - Work directly in this workspace and implement the task fully.
 - After you finish, DETERMINISTIC quality gates verify the whole workspace (typecheck, tests, static rules). Leaving it green is part of the task — run what you can locally before declaring done.
+- If the environment lacks a tool the task or its checks need, provision it into \`.local/bin/\` inside the workspace — that directory is first on PATH for you AND for the gates, so a self-provisioned toolchain counts for the verdict.
 - You are unattended: never ask questions. Make reasonable decisions and note them in your summary.
 - Finish with a short summary of what changed and why.`
 

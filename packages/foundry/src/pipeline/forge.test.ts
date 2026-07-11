@@ -142,6 +142,37 @@ describe("forge — the factory loop", () => {
     expect(Option.isNone(result.run.attempts[1]!.feedback)).toBe(true)
   })
 
+  test("stalled: two consecutive no-op attempts on an identical verdict stop the loop early", async () => {
+    // The zig-run failure class: an environment-level red the coder cannot
+    // move. ONE no-op repeat is tolerated (a model can pause an attempt,
+    // and recurrence-lessons need a repeat) — the SECOND identical no-op is
+    // confirmed immobility; the remaining attempts are NOT spent.
+    const writeOnceImplementor = Layer.succeed(Implementor, {
+      implement: (input) =>
+        Effect.succeed({
+          filesTouched:
+            input.attempt === 1 ? [WorkspacePath.make("zig/build.zig")] : [],
+        }),
+    })
+    const program = Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const writes = yield* Ref.make<ReadonlyArray<{ path: string; outcome: string }>>([])
+      return yield* forge({
+        spec: spec(5),
+        pipeline: { gates: Arr.of(failingUntil(99, calls)), policy: "staged" },
+        workspaceDir: "/tmp/x",
+        snapshot: Effect.succeed(ws),
+      }).pipe(Effect.provide(Layer.mergeAll(writeOnceImplementor, memorySink(writes))))
+    })
+    const result = await Effect.runPromise(program)
+
+    expect(result.run.outcome).toEqual({ _tag: "rejected", reason: "stalled" })
+    // Attempts 4 and 5 were never spent — the breaker fired on attempt 3
+    // (attempt 2 = tolerated first repeat; attempt 3 = confirmation).
+    expect(result.run.attempts.length).toBe(3)
+    expect(Option.isNone(result.run.attempts[2]!.feedback)).toBe(true)
+  })
+
   test("hooks fire in loop order at every seam", async () => {
     const program = Effect.gen(function* () {
       const briefs = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])

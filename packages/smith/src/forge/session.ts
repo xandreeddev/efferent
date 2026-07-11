@@ -36,7 +36,7 @@ import type { ImplementorServices } from "../implementor/efferentImplementor.js"
 import { curateWorkspaceMemory } from "../memory/curate.js"
 import { loadWorkspaceMemory } from "../memory/inject.js"
 import { makeSmithJudgeGate } from "../gates/judge.js"
-import { discoverGateSuite, vacuousAccepts } from "../gates/suite.js"
+import { discoverGateSuite, probeAccepts } from "../gates/suite.js"
 import { gateRequestFromSpec, toForgeSpec } from "../spec/toForgeSpec.js"
 
 /** Map foundry's loop hooks onto the smith event stream. */
@@ -105,11 +105,17 @@ export const runForgeSessionWith = <R>(
     yield* publish({ type: "forge_start", spec, gateNames, doc })
 
     // RED-FIRST, before attempt 1 spends anything: an accept check that is
-    // already green on the untouched workspace cannot measure the work.
-    // Warn and proceed — the human watching can Esc and tighten the spec.
-    const vacuous = yield* vacuousAccepts(acceptGates, snapshotWorkspace(run.cwd))
-    yield* vacuous.length > 0
-      ? publish({ type: "vacuous_checks", names: vacuous })
+    // already green on the untouched workspace cannot measure the work, and
+    // one that is red because its TOOL IS MISSING (exit 127) is red for a
+    // reason no code edit moves — the zig run burned 3 attempts before this
+    // probe existed. Warn and proceed — the human can Esc; the coder can
+    // provision the tool into .local/bin (on PATH for it AND the gates).
+    const probe = yield* probeAccepts(acceptGates, snapshotWorkspace(run.cwd))
+    yield* probe.vacuous.length > 0
+      ? publish({ type: "vacuous_checks", names: probe.vacuous })
+      : Effect.void
+    yield* probe.missingTools.length > 0
+      ? publish({ type: "missing_tools", names: probe.missingTools })
       : Effect.void
 
     const result = yield* forge({

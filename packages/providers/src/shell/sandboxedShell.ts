@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { Shell } from "@xandreed/engine"
-import { spawnBounded } from "./spawn.js"
+import { spawnBounded, workspacePath } from "./spawn.js"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
@@ -18,11 +20,15 @@ const DEFAULT_TIMEOUT_MS = 5 * 60_000
  */
 
 /** The bwrap invocation, exported for tests: workspace rw, / ro, fresh /tmp
- *  + scratch HOME, no new privileges. */
+ *  + scratch HOME, no new privileges. `readonlyDirs` re-binds harness state
+ *  (`.efferent`, `.foundry`) read-only ON TOP of the workspace bind — the
+ *  coder's Bash reads specs/memory but cannot destroy the audit trail or
+ *  the run artifacts (a run's smith.db vanished post-run; never again). */
 export const bwrapArgs = (
   workspace: string,
   chdir: string,
   command: string,
+  readonlyDirs: ReadonlyArray<string> = [],
 ): ReadonlyArray<string> => [
   "bwrap",
   "--die-with-parent",
@@ -41,15 +47,31 @@ export const bwrapArgs = (
   "--setenv",
   "HOME",
   "/tmp/home",
+  // The portable toolchain prefix, pinned on EVERY call (each call is a
+  // fresh sandbox — without this the coder re-exports PATH per command,
+  // and worse, a tool it provisioned there is invisible to the gates.
+  // The zig run proved both halves live.)
+  "--setenv",
+  "PATH",
+  workspacePath(workspace),
   "--bind",
   workspace,
   workspace,
+  // Later binds override earlier ones: these subpaths flip back to ro.
+  ...readonlyDirs.flatMap((dir) => ["--ro-bind", dir, dir]),
   "--chdir",
   chdir,
   "bash",
   "-c",
   command,
 ]
+
+/** Harness-state dirs that exist RIGHT NOW (checked per call — `.foundry`
+ *  appears mid-run on the first artifact persist). */
+const protectedDirs = (workspace: string): ReadonlyArray<string> =>
+  [join(workspace, ".efferent"), join(workspace, ".foundry")].filter((dir) =>
+    existsSync(dir),
+  )
 
 /** One probe at layer build — is bwrap present AND able to sandbox here?
  *  Rides the same hardened spawn as the real calls (group kill included:
@@ -88,11 +110,19 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
         ) =>
           spawnBounded(
             sandboxed
-              ? bwrapArgs(workspace, options?.cwd ?? workspace, command)
+              ? bwrapArgs(
+                  workspace,
+                  options?.cwd ?? workspace,
+                  command,
+                  protectedDirs(workspace),
+                )
               : ["bash", "-c", command],
             sandboxed ? undefined : (options?.cwd ?? workspace),
             options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
             options?.onChunk,
+            // Degraded (bwrap absent) keeps the same toolchain prefix —
+            // parity must not depend on the sandbox being available.
+            sandboxed ? undefined : { PATH: workspacePath(workspace) },
           ),
       }
     }),

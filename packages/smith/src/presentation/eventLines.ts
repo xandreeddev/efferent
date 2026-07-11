@@ -55,8 +55,14 @@ export const agentEventLabel = (event: SmithEvent & { type: "agent" }): Option.O
 export const renderEventLines = (event: SmithEvent): Option.Option<string> => {
   // Hoisted out of the matcher: transient UI-only events are silent here,
   // and the Match chain is at TS's inference depth (one more arm collapses
-  // the later narrows — live-caught as phantom property errors).
+  // the later narrows — live-caught as phantom property errors; the pipe
+  // is ALSO at its 20-argument cap, so new events hoist like these two).
   if (event.type === "bash_progress") return Option.none()
+  if (event.type === "missing_tools") {
+    return Option.some(
+      `⚠ environment: ${event.names.join(", ")} cannot run — their tool is MISSING from PATH; the coder must provision it into .local/bin (or install it on the host)`,
+    )
+  }
   return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, (e) =>
       Option.some(

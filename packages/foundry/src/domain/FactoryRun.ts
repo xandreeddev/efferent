@@ -25,7 +25,10 @@ export class AttemptRecord extends Schema.Class<AttemptRecord>("AttemptRecord")(
  */
 export const AcceptedOutcome = Schema.TaggedStruct("accepted", { attempt: AttemptNumber })
 export const RejectedOutcome = Schema.TaggedStruct("rejected", {
-  reason: Schema.Literal("attempts-exhausted", "budget-exhausted"),
+  /** `stalled`: an attempt changed nothing and reproduced the previous
+   *  attempt's exact findings — the loop stops rather than burning the
+   *  remaining attempts on a verdict no retry can move. */
+  reason: Schema.Literal("attempts-exhausted", "budget-exhausted", "stalled"),
 })
 export const InFlightOutcome = Schema.TaggedStruct("in-flight", {})
 export const RunOutcome = Schema.Union(AcceptedOutcome, RejectedOutcome, InFlightOutcome)

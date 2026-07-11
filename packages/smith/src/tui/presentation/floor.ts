@@ -121,6 +121,7 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
     // Red-first, compaction, and ship live in the conversation story; the
     // floor is inert to them.
     Match.when({ type: "vacuous_checks" }, () => state),
+    Match.when({ type: "missing_tools" }, () => state),
     Match.when({ type: "context_folded" }, () => state),
     Match.when({ type: "ship_step" }, () => state),
     Match.when({ type: "memory_updated" }, () => state),

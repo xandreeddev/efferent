@@ -22,7 +22,20 @@ describe("bwrapArgs", () => {
     expect(args.join(" ")).toContain("--chdir /ws/sub")
     // HOME redirected into the throwaway tmpfs.
     expect(args.join(" ")).toContain("--setenv HOME /tmp/home")
+    // The portable toolchain prefix is pinned on every (fresh) sandbox —
+    // and it matches what the gates prepend, so provisioned tools count.
+    expect(args.join(" ")).toContain("--setenv PATH /ws/.local/bin:")
     expect(args.slice(-3)).toEqual(["bash", "-c", "echo hi"])
+  })
+
+  test("harness-state dirs re-bind READ-ONLY on top of the rw workspace bind", () => {
+    const args = bwrapArgs("/ws", "/ws", "rm -rf .efferent", ["/ws/.efferent", "/ws/.foundry"])
+    const joined = args.join(" ")
+    // Order matters: the ro re-binds come AFTER the rw workspace bind.
+    expect(joined.indexOf("--bind /ws /ws")).toBeLessThan(
+      joined.indexOf("--ro-bind /ws/.efferent /ws/.efferent"),
+    )
+    expect(joined).toContain("--ro-bind /ws/.foundry /ws/.foundry")
   })
 })
 
