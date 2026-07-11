@@ -12,11 +12,11 @@
     "unsound:test-weakened": 1
   },
   "versions": {
-    "judge-prompt": "1.0.0",
+    "judge-prompt": "1.1.0",
     "model.general": "opencode:kimi-k2.6",
     "model.code": "opencode:kimi-k2.7-code",
     "model.fast": "opencode:deepseek-v4-flash"
   },
   "samples": 3,
-  "mintedAt": "2026-07-10T19:39:14.785Z"
+  "mintedAt": "2026-07-11T10:37:19.356Z"
 }

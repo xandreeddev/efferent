@@ -17,14 +17,31 @@ import type { SpecDoc } from "@xandreed/engine"
 
 const FILE_BUDGET_CHARS = 50_000
 const PER_FILE_CAP_CHARS = 6_000
-const SOURCE_FILE = /\.(tsx?|jsx?|mjs|cjs|py|rs|go|java|rb|json|toml|ya?ml|md)$/
-const EXCLUDED = /(^|\/)(node_modules|\.git|\.foundry|\.efferent|dist|build)(\/|$)|bun\.lock|package-lock/
+const LIST_CAP = 400
+const SOURCE_FILE =
+  /\.(tsx?|jsx?|mjs|cjs|py|rs|go|java|rb|json|toml|ya?ml|md|zig|zon|c|h|cc|cpp|hpp|cs|kt|swift|sh|sql|html|css|lua|ex|exs)$/
+const EXCLUDED =
+  /(^|\/)(node_modules|\.git|\.foundry|\.efferent|dist|build|__pycache__)(\/|$)|bun\.lock|package-lock/
+
+/** A path inside a hidden DIRECTORY is infrastructure — toolchains
+ *  (`.local`), caches (`.zig-cache`), harness state. The zig run's judge
+ *  evidence was ~15k `.local/zig` stdlib paths sorted ahead of everything;
+ *  the deliverable fell off the bounded list and the judge asserted `zig/`
+ *  did not exist while 13/13 deterministic gates were green. Hidden FILES
+ *  stay visible (`.gitignore` is a real deliverable). */
+const inHiddenDir = (path: string): boolean =>
+  path
+    .split("/")
+    .slice(0, -1)
+    .some((segment) => segment.startsWith("."))
 
 const JUDGE_GATE = GateName.make("judge")
 
-/** Bump when `judgePrompt` changes — the calibration battery records it in
- *  its baseline so a score delta is attributable to the prompt change. */
-export const JUDGE_PROMPT_VERSION = "1.0.0"
+/** Bump when `judgePrompt` OR the evidence shape changes — the calibration
+ *  battery records it in its baseline so a score delta is attributable.
+ *  1.1.0: evidence visibility — hidden-dir pruning, newest-first file list
+ *  with an explicit truncation marker, zig/zon/c/… readable as source. */
+export const JUDGE_PROMPT_VERSION = "1.1.0"
 
 const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n[…clipped…]`
@@ -61,28 +78,34 @@ export const extractVerdictJson = (text: string): Option.Option<string> => {
   return end < 0 ? Option.none() : Option.some(text.slice(start, end))
 }
 
-/** Bounded workspace evidence: source files, newest first, per-file and
- *  total caps; unreadable files skip silently (evidence is best-effort —
- *  the VERDICT is what fails closed). */
+/** Bounded workspace evidence: NEWEST FIRST everywhere — the implementor's
+ *  work is by definition the newest churn, so the deliverable can never fall
+ *  off the bounded list again; a truncation marker says absence from the
+ *  list proves nothing. Unreadable files skip silently (evidence is
+ *  best-effort — the VERDICT is what fails closed). */
 export const gatherEvidence = (
   workspace: Workspace,
 ): Effect.Effect<string> =>
   Effect.gen(function* () {
-    const candidates = workspace.files
+    const visible = workspace.files
       .map(String)
-      .filter((path) => SOURCE_FILE.test(path) && !EXCLUDED.test(path))
-    const withMtime = yield* Effect.forEach(candidates, (path) =>
-      Effect.tryPromise({
-        try: () => stat(join(workspace.rootDir, path)),
-        catch: () => "unreadable" as const,
-      }).pipe(
-        Effect.map((s) => [{ path, mtime: s.mtimeMs }]),
-        Effect.orElseSucceed(() => [] as ReadonlyArray<{ path: string; mtime: number }>),
-      ),
+      .filter((path) => !EXCLUDED.test(path) && !inHiddenDir(path))
+    const withMtime = yield* Effect.forEach(
+      visible,
+      (path) =>
+        Effect.tryPromise({
+          try: () => stat(join(workspace.rootDir, path)),
+          catch: () => "unreadable" as const,
+        }).pipe(
+          Effect.map((s) => [{ path, mtime: s.mtimeMs }]),
+          Effect.orElseSucceed(() => [] as ReadonlyArray<{ path: string; mtime: number }>),
+        ),
+      { concurrency: 16 },
     )
     const newestFirst = withMtime.flat().sort((a, b) => b.mtime - a.mtime)
+    const candidates = newestFirst.filter((file) => SOURCE_FILE.test(file.path))
     const picked = yield* Effect.reduce(
-      newestFirst,
+      candidates,
       { used: 0, blocks: [] as ReadonlyArray<string> },
       (acc, file) =>
         acc.used >= FILE_BUDGET_CHARS
@@ -101,10 +124,14 @@ export const gatherEvidence = (
               Effect.orElseSucceed(() => acc),
             ),
     )
-    return `FILES (${workspace.files.length} total):\n${workspace.files
-      .map(String)
-      .filter((path) => !EXCLUDED.test(path))
-      .slice(0, 400)
+    const listed = newestFirst.slice(0, LIST_CAP)
+    const unlisted = newestFirst.length - listed.length
+    const marker =
+      unlisted > 0
+        ? ` — ${unlisted} more exist but are NOT shown; absence from this list proves nothing`
+        : ""
+    return `FILES (${newestFirst.length} total, newest first${marker}):\n${listed
+      .map((file) => file.path)
       .join("\n")}\n\nCONTENTS (newest first, bounded):\n${picked.blocks.join("\n\n")}`
   })
 

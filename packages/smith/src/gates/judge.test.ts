@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
@@ -56,6 +56,38 @@ describe("gatherEvidence", () => {
     expect(prompt).toContain("port stats.py")
     expect(prompt).toContain("bun test exits 0")
     expect(prompt).toContain('{"sound"')
+  })
+
+  test("hidden-dir infrastructure never floods the evidence; the deliverable is visible AND readable", async () => {
+    // The zig-run failure class: ~15k .local/zig stdlib paths filled the
+    // 400-line list, zig/ fell off, and the judge asserted it didn't exist.
+    const dir = mkdtempSync(join(tmpdir(), "judge-ev-"))
+    mkdirSync(join(dir, "zig", "src"), { recursive: true })
+    writeFileSync(join(dir, "zig", "src", "main.zig"), "pub fn main() !void {}")
+    mkdirSync(join(dir, ".local", "zig", "lib"), { recursive: true })
+    writeFileSync(join(dir, ".local", "zig", "lib", "std.zig"), "// toolchain")
+    writeFileSync(join(dir, ".gitignore"), "zig-out/")
+    const evidence = await Effect.runPromise(
+      gatherEvidence(
+        ws(dir, ["zig/src/main.zig", ".local/zig/lib/std.zig", ".gitignore"]),
+      ),
+    )
+    // The toolchain is invisible; the port is listed and its CONTENT is
+    // readable (zig is a source extension now); hidden FILES stay visible.
+    expect(evidence).not.toContain(".local/")
+    expect(evidence).toContain("zig/src/main.zig")
+    expect(evidence).toContain("pub fn main() !void {}")
+    expect(evidence).toContain(".gitignore")
+  })
+
+  test("a clipped file list SAYS so — absence must not read as nonexistence", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-ev-"))
+    const files = Array.from({ length: 405 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`)
+    files.forEach((name) => writeFileSync(join(dir, name), "x"))
+    const evidence = await Effect.runPromise(gatherEvidence(ws(dir, files)))
+    expect(evidence).toContain("405 total")
+    expect(evidence).toContain("5 more exist but are NOT shown")
+    expect(evidence).toContain("absence from this list proves nothing")
   })
 })
 
