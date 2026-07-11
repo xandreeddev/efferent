@@ -40,8 +40,10 @@ const JUDGE_GATE = GateName.make("judge")
 /** Bump when `judgePrompt` OR the evidence shape changes — the calibration
  *  battery records it in its baseline so a score delta is attributable.
  *  1.1.0: evidence visibility — hidden-dir pruning, newest-first file list
- *  with an explicit truncation marker, zig/zon/c/… readable as source. */
-export const JUDGE_PROMPT_VERSION = "1.1.0"
+ *  with an explicit truncation marker, zig/zon/c/… readable as source.
+ *  1.2.0: the standing quality contract (the armed bar) reaches the judge —
+ *  don't re-litigate style, DO treat evasion as dishonesty. */
+export const JUDGE_PROMPT_VERSION = "1.2.0"
 
 const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n[…clipped…]`
@@ -139,6 +141,7 @@ export const judgePrompt = (
   spec: Spec,
   doc: Option.Option<SpecDoc>,
   evidence: string,
+  doctrine: Option.Option<string> = Option.none(),
 ): string => {
   const extras = Option.match(doc, {
     onNone: () => "",
@@ -146,6 +149,10 @@ export const judgePrompt = (
       `${d.constraints.length > 0 ? `\nConstraints (must hold):\n${d.constraints.map((c) => `- ${c}`).join("\n")}` : ""}${
         d.nonGoals.length > 0 ? `\nNon-goals (must NOT have been done):\n${d.nonGoals.map((n) => `- ${n}`).join("\n")}` : ""
       }`,
+  })
+  const contract = Option.match(doctrine, {
+    onNone: () => "",
+    onSome: (text) => `\n\n${text}`,
   })
   return `You are the FINAL JUDGE gate in a deterministic software factory. Typecheck, tests, and the spec's machine checks have ALL already passed — judge only what they cannot:
 1. INTENT: does the workspace actually fulfill the goal, or just technically satisfy the checks?
@@ -159,7 +166,7 @@ ${spec.goal}
 
 Acceptance criteria:
 ${spec.acceptance.map((a) => `- ${a}`).join("\n")}
-${extras}
+${extras}${contract}
 
 WORKSPACE EVIDENCE:
 ${evidence}
@@ -187,11 +194,18 @@ export const makeSmithJudgeGate = (options: {
   readonly spec: Spec
   readonly doc: Option.Option<SpecDoc>
   readonly call: (prompt: string) => Effect.Effect<string, unknown>
+  /** The armed quality bar's judge form — the standing contract the verdict
+   *  must weigh (evasion is dishonesty); absent when no profile is armed. */
+  readonly doctrine?: Option.Option<string>
 }): Gate<never> =>
   makeJudgeGate("judge", (workspace) =>
     Effect.gen(function* () {
       const evidence = yield* gatherEvidence(workspace)
-      const reply = yield* options.call(judgePrompt(options.spec, options.doc, evidence)).pipe(
+      const reply = yield* options
+        .call(
+          judgePrompt(options.spec, options.doc, evidence, options.doctrine ?? Option.none()),
+        )
+        .pipe(
         Effect.mapError(
           (cause) =>
             new GateCrash({

@@ -91,6 +91,23 @@ describe("gatherEvidence", () => {
   })
 })
 
+describe("judgePrompt — the standing contract", () => {
+  test("doctrine renders between the spec and the evidence; None leaves the prompt unchanged", () => {
+    const doctrine =
+      "## Standing quality contract (deterministic rules armed in this workspace)\n- effect/no-let: `let` and `var` are banned\n\nThese rules are enforced by earlier gates — do NOT re-litigate style."
+    const withBar = judgePrompt(spec, Option.none(), "EVIDENCE", Option.some(doctrine))
+    expect(withBar).toContain("Standing quality contract")
+    expect(withBar.indexOf("port stats.py")).toBeLessThan(
+      withBar.indexOf("Standing quality contract"),
+    )
+    expect(withBar.indexOf("Standing quality contract")).toBeLessThan(
+      withBar.indexOf("WORKSPACE EVIDENCE"),
+    )
+    const without = judgePrompt(spec, Option.none(), "EVIDENCE")
+    expect(without).not.toContain("Standing quality contract")
+  })
+})
+
 describe("makeSmithJudgeGate", () => {
   const workspace = ws(mkdtempSync(join(tmpdir(), "judge-ws-")), [])
 
