@@ -57,7 +57,22 @@ export interface ForgeResult {
   readonly artifact: string
 }
 
-type Phase = "continue" | "accepted" | "attempts-exhausted" | "budget-exhausted"
+type Phase = "continue" | "accepted" | "attempts-exhausted" | "budget-exhausted" | "stalled"
+
+/** A report's identity for the STALL check: the failing findings, sorted.
+ *  An attempt that touched NOTHING and reproduced this exact fingerprint
+ *  bought no information — retrying again would buy none either (the zig
+ *  run burned two attempts this way against an environment-level failure). */
+const reportFingerprint = (report: GateReport): string =>
+  JSON.stringify(
+    report.verdicts
+      .flatMap((verdict) =>
+        verdict._tag === "skip"
+          ? [`skip:${verdict.gate}`]
+          : verdict.findings.map((finding) => `${finding.rule}:${finding.message}`),
+      )
+      .sort(),
+  )
 
 interface LoopState {
   readonly attempt: AttemptNumber
@@ -141,13 +156,31 @@ export const forge = <R>(
         const report = yield* runPipeline(options.pipeline, workspace)
         const attemptEnd = yield* Clock.currentTimeMillis
 
+        // STALLED: CONFIRMED immobility only — the last TWO attempts changed
+        // nothing and the verdict is byte-identical across THREE reports.
+        // One no-op repeat is tolerated (a model can pause an attempt, and
+        // recurrence-derived lessons need a same-finding repeat — the
+        // scripted twin pins that); a second identical no-op buys nothing
+        // and never will, so stop and NAME it instead of burning the rest.
+        const previous = state.records[state.records.length - 1]
+        const prePrevious = state.records[state.records.length - 2]
+        const stalled =
+          !report.ok &&
+          receipt.filesTouched.length === 0 &&
+          previous !== undefined &&
+          prePrevious !== undefined &&
+          previous.filesTouched.length === 0 &&
+          reportFingerprint(report) === reportFingerprint(previous.report) &&
+          reportFingerprint(previous.report) === reportFingerprint(prePrevious.report)
         const phase: Phase = report.ok
           ? "accepted"
-          : state.attempt >= options.spec.limits.maxAttempts
-            ? "attempts-exhausted"
-            : attemptEnd >= deadline
-              ? "budget-exhausted"
-              : "continue"
+          : stalled
+            ? "stalled"
+            : state.attempt >= options.spec.limits.maxAttempts
+              ? "attempts-exhausted"
+              : attemptEnd >= deadline
+                ? "budget-exhausted"
+                : "continue"
         const feedback =
           phase === "continue"
             ? Option.some(renderFeedback(report, state.attempt))
@@ -193,6 +226,9 @@ export const forge = <R>(
       ),
       Match.when("budget-exhausted", () =>
         Effect.succeed(RejectedOutcome.make({ reason: "budget-exhausted" })),
+      ),
+      Match.when("stalled", () =>
+        Effect.succeed(RejectedOutcome.make({ reason: "stalled" })),
       ),
       Match.when("continue", () =>
         Effect.dieMessage("unreachable: the iterate loop exited while phase === continue"),

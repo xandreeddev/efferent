@@ -74,6 +74,14 @@ const killGroup = (pid: number): void => {
   Effect.runSync(attempt)
 }
 
+/** PATH with a workspace's portable toolchain prefix (`<ws>/.local/bin`)
+ *  in front — the ONE prefix the coder's shell AND the gates both see, so a
+ *  self-provisioned tool (the zig run downloaded its own toolchain there)
+ *  counts for the verdict, not just for self-verification. A non-existent
+ *  entry is harmlessly skipped by the shell. */
+export const workspacePath = (workspace: string): string =>
+  `${workspace}/.local/bin:${process.env["PATH"] ?? ""}`
+
 /**
  * Run `argv` in its OWN process group with bounded capture. A non-zero exit
  * — including our timeout kill — is a `ShellResult` the model reads; the
@@ -84,11 +92,13 @@ export const spawnBounded = (
   cwd: string | undefined,
   timeoutMs: number,
   onChunk?: (chunk: string) => void,
+  env?: Record<string, string | undefined>,
 ): Effect.Effect<ShellResult, ShellError> =>
   Effect.tryPromise({
     try: async () => {
       const proc = Bun.spawn(["setsid", ...argv], {
         ...(cwd !== undefined ? { cwd } : {}),
+        ...(env !== undefined ? { env: { ...process.env, ...env } } : {}),
         stdout: "pipe",
         stderr: "pipe",
       })

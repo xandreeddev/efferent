@@ -217,13 +217,31 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
       const rel = relative(cwd, normalize(resolve(path)))
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
     }
+    // Harness state under the workspace — the audit trail (.efferent) and
+    // the run artifacts (.foundry) are written by the smith PROCESS, never
+    // by the coder (a run's smith.db vanished post-run; the trail must not
+    // be the coder's to modify). The bwrap sandbox ro-binds these for Bash.
+    const isHarnessState = (path: string): boolean => {
+      const abs = normalize(resolve(path))
+      return (
+        abs.startsWith(join(cwd, ".efferent") + "/") ||
+        abs === join(cwd, ".efferent") ||
+        abs.startsWith(join(cwd, ".foundry") + "/") ||
+        abs === join(cwd, ".foundry")
+      )
+    }
     const writeGuard = (path: string) =>
-      insideWorkspace(path)
-        ? Effect.void
-        : Effect.fail({
+      !insideWorkspace(path)
+        ? Effect.fail({
             error: "OutsideWorkspace",
             message: `"${path}" is outside the workspace (${cwd}) — writes are confined to it`,
           })
+        : isHarnessState(path)
+          ? Effect.fail({
+              error: "HarnessState",
+              message: `"${path}" is harness state (.efferent/.foundry hold the audit trail and run artifacts) — the coder never writes there`,
+            })
+          : Effect.void
 
     // Credentials never flow into the conversation: a read of auth.json
     // would PERSIST the keys verbatim into the workspace's smith.db (and

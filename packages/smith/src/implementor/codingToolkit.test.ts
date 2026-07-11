@@ -22,6 +22,30 @@ const withHandlers = <A>(
   )
 
 describe("the smith coding handlers — the direct coder's hands", () => {
+  test("write_file/edit_file refuse harness state — the trail is not the coder's to modify", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    await withHandlers(cwd, (h) =>
+      Effect.gen(function* () {
+        const db = yield* h
+          .write_file({ path: ".efferent/smith.db", content: "gone" })
+          .pipe(Effect.either)
+        expect(db._tag).toBe("Left")
+        expect(JSON.stringify(db)).toContain("harness state")
+        const artifact = yield* h
+          .write_file({ path: ".foundry/runs/x.json", content: "{}" })
+          .pipe(Effect.either)
+        expect(artifact._tag).toBe("Left")
+        const edit = yield* h
+          .edit_file({ path: ".efferent/memory/ledger.jsonl", oldText: "a", newText: "b" })
+          .pipe(Effect.either)
+        expect(edit._tag).toBe("Left")
+        // A sibling that merely SHARES the prefix is untouched.
+        const ok = yield* h.write_file({ path: ".efferent-notes.md", content: "fine" })
+        expect(ok.written).toBe(true)
+      }),
+    )
+  })
+
   test("read_file refuses the credentials file — sandbox on or off", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     await withHandlers(cwd, (h) =>

@@ -15,7 +15,7 @@ import { LocalFileSystemLive } from "@xandreed/providers"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import { gateRequestFromSpec } from "../spec/toForgeSpec.js"
-import { discoverGateSuite, vacuousAccepts } from "./suite.js"
+import { discoverGateSuite, probeAccepts, vacuousAccepts } from "./suite.js"
 
 const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig => ({
   task: "t",
@@ -143,5 +143,24 @@ describe("discoverGateSuite", () => {
       ),
     )
     expect(silent).toEqual([])
+
+    // probeAccepts classifies the ENVIRONMENT class: an env/-ruled finding
+    // (the commandGate's exit-127 shape) is a missing tool, not a code-red —
+    // the human hears about it BEFORE attempts are spent (the zig run).
+    const envFinding = new Finding({
+      rule: RuleId.make("env/accept-zig-build"),
+      severity: "error",
+      message: "ENVIRONMENT: `zig build` exited 127 — its tool is missing from PATH",
+      location: Option.none(),
+      fixHint: Option.none(),
+    })
+    const probe = await Effect.runPromise(
+      probeAccepts(
+        [gate("accept-green", []), gate("accept-red", [red]), gate("accept-zig-build", [envFinding])],
+        snapshot,
+      ),
+    )
+    expect(probe.vacuous).toEqual(["accept-green"])
+    expect(probe.missingTools).toEqual(["accept-zig-build"])
   })
 })

@@ -28,28 +28,52 @@ export interface GateSuite {
  * by design: a crash or an unsnapshottable workspace reads as "not vacuous"
  * (the check is red — exactly what red-first wants), never an error.
  */
-export const vacuousAccepts = (
+export interface AcceptProbe {
+  /** Checks already GREEN on the untouched workspace (cannot measure work). */
+  readonly vacuous: ReadonlyArray<string>
+  /** Checks red for an ENVIRONMENT reason (exit 127 — the tool is missing):
+   *  red-first reads them as properly red, but no code change can move them
+   *  (the zig run burned 3 attempts against exactly this). Advisory: with
+   *  the `.local/bin` parity the coder CAN provision the tool. */
+  readonly missingTools: ReadonlyArray<string>
+}
+
+/** One probe run of the accept gates against the untouched workspace,
+ *  classified. Advisory by design: a crash or an unsnapshottable workspace
+ *  reads as "red, runnable" — never an error. */
+export const probeAccepts = (
   gates: ReadonlyArray<Gate<never>>,
   snapshot: Effect.Effect<Workspace, WorkspaceError>,
-): Effect.Effect<ReadonlyArray<string>> =>
+): Effect.Effect<AcceptProbe> =>
   gates.length === 0
-    ? Effect.succeed([])
+    ? Effect.succeed({ vacuous: [], missingTools: [] })
     : snapshot.pipe(
         Effect.flatMap((workspace) =>
           Effect.forEach(gates, (gate) =>
             gate.run(workspace).pipe(
-              Effect.map((findings) =>
-                findings.some((finding) => finding.severity === "error")
-                  ? []
-                  : [String(gate.name)],
-              ),
-              Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+              Effect.map((findings): AcceptProbe => {
+                const errors = findings.filter((finding) => finding.severity === "error")
+                if (errors.length === 0) return { vacuous: [String(gate.name)], missingTools: [] }
+                return errors.some((finding) => String(finding.rule).startsWith("env/"))
+                  ? { vacuous: [], missingTools: [String(gate.name)] }
+                  : { vacuous: [], missingTools: [] }
+              }),
+              Effect.orElseSucceed((): AcceptProbe => ({ vacuous: [], missingTools: [] })),
             ),
           ),
         ),
-        Effect.map((batches) => batches.flat()),
-        Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+        Effect.map((probes) => ({
+          vacuous: probes.flatMap((p) => p.vacuous),
+          missingTools: probes.flatMap((p) => p.missingTools),
+        })),
+        Effect.orElseSucceed((): AcceptProbe => ({ vacuous: [], missingTools: [] })),
       )
+
+export const vacuousAccepts = (
+  gates: ReadonlyArray<Gate<never>>,
+  snapshot: Effect.Effect<Workspace, WorkspaceError>,
+): Effect.Effect<ReadonlyArray<string>> =>
+  Effect.map(probeAccepts(gates, snapshot), (probe) => probe.vacuous)
 
 /** Decorate a gate so its start is visible on the smith event stream. */
 export const withGateEvents = <R>(

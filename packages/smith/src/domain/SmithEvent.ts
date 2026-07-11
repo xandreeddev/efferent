@@ -28,6 +28,10 @@ export type SmithEvent =
   /** RED-FIRST: accept checks that already PASS on the untouched workspace —
    *  vacuous (they cannot measure this spec's work). A warning, not a stop. */
   | { readonly type: "vacuous_checks"; readonly names: ReadonlyArray<string> }
+  /** Accept checks red for an ENVIRONMENT reason (their tool is missing from
+   *  PATH — exit 127). Advisory: the coder can provision the tool into
+   *  `.local/bin`, but the human should know BEFORE attempts are spent. */
+  | { readonly type: "missing_tools"; readonly names: ReadonlyArray<string> }
   /** `@path` refs in a composer message that did NOT inline (missing,
    *  binary, glob, budget) — advisory notes for the notice line. */
   | { readonly type: "file_refs"; readonly notes: ReadonlyArray<string> }
