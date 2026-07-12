@@ -108,7 +108,10 @@ export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
       state,
       id_token_add_organizations: "true",
       codex_cli_simplified_flow: "true",
-      originator: "efferent",
+      // This flow uses Pi's registered OAuth client id, so the authorize
+      // request must identify the same client originator as the token and
+      // subscription transports.
+      originator: "pi",
     }).forEach(([key, value]) => url.searchParams.set(key, value))
     return { verifier: pkce.verifier, state, authorizeUrl: url.toString(), callbackPort: OPENAI_CODEX_CALLBACK_PORT, callbackPath: OPENAI_CODEX_CALLBACK_PATH }
   })

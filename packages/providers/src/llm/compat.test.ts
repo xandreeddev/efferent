@@ -96,6 +96,29 @@ describe("makeCompatLanguageModel", () => {
     expect(rendered).toContain("429")
   })
 
+  test("a gateway ModelError is semantic validation, not fake authentication", async () => {
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const svc = yield* makeCompatLanguageModel({
+          moduleName: "OpenCode",
+          chatUrl: "https://gw.example/chat",
+          apiKey: "k",
+          model: "unsupported-model",
+          fetchImpl: completion({
+            type: "error",
+            error: { type: "ModelError", message: "Model unsupported-model is not supported" },
+          }, 401),
+        })
+        return yield* svc.generateText({ prompt: [{ role: "user", content: "hi" }] } as never)
+      }),
+    )
+    expect(exit._tag).toBe("Failure")
+    const rendered = JSON.stringify(exit)
+    expect(rendered).toContain("MalformedInput")
+    expect(rendered).toContain("not supported")
+    expect(rendered).not.toContain("HttpResponseError")
+  })
+
   test("tool_calls parse into tool-call parts with object params + tool-calls finish", async () => {
     const parts = await Effect.runPromise(
       fromChatCompletion("Test", {

@@ -19,10 +19,13 @@ export const toAgentFailure = (error: unknown, stage: string): AgentFailure => {
   const message = description ?? (error instanceof Error ? error.message : undefined) ?? String(error)
   const unavailable = /model .* is not available to .*subscription/i.test(message)
   const unsupported = /model .* (?:is )?not supported/i.test(message)
+  const terminalQuota = /CreditsError|insufficient (?:balance|credits)|usage limit|quota exhausted/i.test(message)
 
   const category: AgentFailureCategory =
     unavailable || unsupported
       ? "validation"
+      : terminalQuota
+        ? "rate-limit"
       : /timeout/i.test(tag) || /timed? out/i.test(message)
       ? "timeout"
       : /AuthError/i.test(tag) || status === 401
@@ -38,7 +41,7 @@ export const toAgentFailure = (error: unknown, stage: string): AgentFailure => {
                 : "unknown"
 
   const code = unavailable ? "ModelUnavailable" : unsupported ? "ModelUnsupported" : status === undefined ? tag : `${tag}:${status}`
-  const retryable = category === "timeout" || category === "rate-limit" || category === "transport"
+  const retryable = category === "timeout" || (category === "rate-limit" && !terminalQuota) || category === "transport"
   return { code, category, stage, message, retryable }
 }
 
