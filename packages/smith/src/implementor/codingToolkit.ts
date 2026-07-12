@@ -264,13 +264,20 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
     })
 
     const checkedReadPath = (path: string) =>
-      fs.realPath(resolve(path)).pipe(
-        Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })),
-        Effect.filterOrFail(
-          (canonical) => insideWorkspace(canonical) && !isHarnessState(canonical),
-          () => outsideFailure(path, "read"),
-        ),
-      )
+      Effect.gen(function* () {
+        // Lexical boundary first — an outside path is refused uniformly,
+        // whether or not it exists (resolving it first turned a missing
+        // outside file into ReadFailed/ENOENT, leaking existence).
+        const target = normalize(resolve(path))
+        if (!insideWorkspace(target)) return yield* Effect.fail(outsideFailure(path, "read"))
+        return yield* fs.realPath(target).pipe(
+          Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })),
+          Effect.filterOrFail(
+            (canonical) => insideWorkspace(canonical) && !isHarnessState(canonical),
+            () => outsideFailure(path, "read"),
+          ),
+        )
+      })
 
     const writeGuard = (path: string) =>
       Effect.gen(function* () {
