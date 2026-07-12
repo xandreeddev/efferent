@@ -16,7 +16,7 @@ export interface PaletteCommand {
 export const PALETTE_COMMANDS: ReadonlyArray<PaletteCommand> = [
   { name: "quit", usage: ":quit", desc: "leave the session (Ctrl-C works too)" },
   { name: "new", usage: ":new", desc: "drop the current draft — back to the dashboard" },
-  { name: "lock", usage: ":lock", desc: "approve the draft; only a locked spec forges" },
+  { name: "lock", usage: ":lock", desc: "approve the current profile or spec draft" },
   { name: "forge", usage: ":forge [slug]", desc: "build the locked draft (or a named spec)" },
   { name: "ship", usage: ":ship", desc: "branch, commit, push + PR the last ACCEPTED run" },
   { name: "model", usage: ":model [code|fast] [p:m]", desc: "switch a model role (picker or direct)" },

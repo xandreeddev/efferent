@@ -1,0 +1,21 @@
+{
+  "name": "@xandreed/ui-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Structured, token-governed UI agent contracts and runtime.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./profiles/streaming-ui-v1": "./profiles/streaming-ui-v1.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@effect/ai": "^0.35.0",
+    "@xandreed/engine": "workspace:*",
+    "effect": "^3.21.4"
+  }
+}

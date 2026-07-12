@@ -70,6 +70,17 @@ export const renderEventLines = (event: SmithEvent): Option.Option<string> => {
         : "⚠ quality profile: NONE — generic gates only (typecheck + tests). Run: bun run smith profile",
     )
   }
+  if (event.type === "profile_draft") {
+    return Option.some(
+      `profile draft: ${event.rules.length} rule(s) · ${event.boundaryViolations} boundary finding(s) · ${event.checks.length} check(s)`,
+    )
+  }
+  if (event.type === "profile_locked") {
+    return Option.some(
+      `✓ profile locked: ${event.rules} rule(s) · ${event.grandfathered} grandfathered · ${event.checks} check(s) → ${event.configPath}`,
+    )
+  }
+  if (event.type === "profile_error") return Option.some(`✗ profile: ${event.message}`)
   return Match.value(event).pipe(
     Match.when({ type: "refine_start" }, (e) =>
       Option.some(

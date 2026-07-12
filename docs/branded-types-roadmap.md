@@ -59,7 +59,7 @@ back to `string`. Zero new brands, zero runtime change.
   `makeInnerHooks`/`RunSpawnedArgs.parentNodeId` params and the `run_agent`
   tool's `success.nodeId` schema (now a branded UUID; `seedFromNode` input is
   still decoded at its boundary).
-- `ports/ConversationStore.ts` / `ports/ContextTreeStore.ts` — error `.id`
+- `ports/conversation-store.port.ts` / `ports/ContextTreeStore.ts` — error `.id`
   fields → `ConversationId` / `ContextNodeId` (every constructor already passed a
   branded value).
 

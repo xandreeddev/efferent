@@ -159,7 +159,12 @@ export const discoverGateSuite = (
             baseline.size > 0 ? withBaselineRatchet(gate, baseline) : gate,
           )
           const checkGates = config.checks.map((check) =>
-            makeCommandGate({ name: check.name, argv: ["bash", "-c", check.command] }),
+            makeCommandGate({
+              name: check.name,
+              argv: ["bash", "-c", check.command],
+              kind: check.kind,
+              timeoutMs: check.timeoutMs,
+            }),
           )
           return Option.some({
             gates: [...staticGates, ...checkGates],

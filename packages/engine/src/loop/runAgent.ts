@@ -1,10 +1,12 @@
 import type { Tool, Toolkit } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
-import type { LoopEvent } from "../domain/LoopEvent.js"
-import type { AgentMessage, ConversationId } from "../domain/Message.js"
-import type { TokenUsage } from "../domain/TokenUsage.js"
-import { ConversationStore } from "../ports/ConversationStore.js"
+import type { LoopEvent } from "../domain/loop-event.entity.js"
+import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
+import { ConversationStore } from "../ports/conversation-store.port.js"
 import { CurrentPromptCacheKey } from "./cacheKey.js"
+import { CurrentModelCallPolicy } from "./modelPolicy.js"
+import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { handoffToMessage, safeKeepFrom } from "./mapping.js"
 import { runLoop } from "./loop.js"
 import type { CompactionPlan } from "./loop.js"
@@ -42,6 +44,9 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   /** Stream turns (`assistant_delta` events while tokens flow); falls back
    *  to settled turns on a pre-first-part failure. Default false. */
   readonly streaming?: boolean
+  /** Per-agent output/reasoning policy. Dedicated agents pin this instead of
+   * inheriting provider-family defaults. */
+  readonly modelPolicy?: ModelCallPolicy
 }
 
 /** Turns to wait after a fold before folding again — anti-thrash. */
@@ -170,4 +175,5 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
         "agent.prompt_chars": prompt.length,
       },
     }),
+    Effect.locally(CurrentModelCallPolicy, Option.fromNullable(config.modelPolicy)),
   )

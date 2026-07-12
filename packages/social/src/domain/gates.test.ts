@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { LedgerEntry } from "./Ledger.js"
-import { DEFAULT_POLICY, SocialPolicy } from "./policy.js"
+import type { LedgerEntry } from "./ledger.entity.js"
+import { DEFAULT_POLICY } from "./social-policy.entity.js"
+import type { SocialPolicy } from "./social-policy.entity.js"
 import {
   effectiveLength,
   runSocialGates,
@@ -10,8 +11,8 @@ import {
 
 const NOW = new Date("2026-07-07T12:00:00Z")
 
-const row = (over: Partial<Parameters<typeof LedgerEntry.make>[0]>): LedgerEntry =>
-  new LedgerEntry({
+const row = (over: Partial<LedgerEntry>): LedgerEntry =>
+  ({
     at: NOW.toISOString(),
     event: "posted",
     kind: "reply",
@@ -97,7 +98,7 @@ describe("the 11 policy gates", () => {
   })
 
   test("5 author blocklist (handle-normalized)", () => {
-    const policy = new SocialPolicy({ ...DEFAULT_POLICY, blockedAuthors: ["someone"] })
+    const policy: SocialPolicy = { ...DEFAULT_POLICY, blockedAuthors: ["someone"] }
     expect(rules(reply({ targetAuthor: "@Someone" }), ctx({ policy }))).toContain("author-blocklist")
   })
 

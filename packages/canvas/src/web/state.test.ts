@@ -21,7 +21,8 @@ describe("the canvas model fold (replay ≡ live)", () => {
       renderEvent("a", "<p>+more</p>", "append"),
     ])
     expect(model.pages).toHaveLength(1)
-    expect(model.pages[0]?.html).toBe("<p>v2</p><p>+more</p>")
+    expect(model.pages[0]?.kind).toBe("legacy")
+    expect(model.pages[0]?.kind === "legacy" ? model.pages[0].html : "").toBe("<p>v2</p><p>+more</p>")
   })
 
   test("focus: new pages focus by default; active:false builds in background; an update pulls focus only on explicit active:true", () => {

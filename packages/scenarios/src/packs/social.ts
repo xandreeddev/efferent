@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { Effect, Layer, Ref } from "effect"
 import {
   BlogReader,
+  LocalSocialWorkspaceLive,
   makeSocialHandlers,
   readLedger,
   XPlatform,
@@ -23,6 +24,7 @@ const THREAD: ReadonlyArray<XSearchResult> = [
 ]
 
 const edge = Layer.mergeAll(
+  LocalSocialWorkspaceLive,
   Layer.succeed(
     XPlatform,
     XPlatform.of({

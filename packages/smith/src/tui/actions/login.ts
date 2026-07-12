@@ -3,7 +3,9 @@ import { AuthStore, ProviderId, Shell } from "@xandreed/engine"
 import type { Credential } from "@xandreed/engine"
 import {
   beginAnthropicOAuth,
+  beginOpenAiCodexOAuth,
   exchangeAnthropicCode,
+  exchangeOpenAiCodexCode,
   parseAuthorizationInput,
 } from "@xandreed/providers"
 import {
@@ -35,10 +37,16 @@ const readStatuses: Effect.Effect<ReadonlyArray<ProviderStatus>, never, AuthStor
     Effect.map(
       store.all.pipe(Effect.orElseSucceed(() => new Map<string, Credential>())),
       (all) =>
-        SMITH_PROVIDERS.map((provider) => ({
-          provider,
-          configured: Option.map(Option.fromNullable(all.get(provider)), (c) => c.type),
-        })),
+        SMITH_PROVIDERS.map((provider) => {
+          const credential =
+            provider === "openai"
+              ? all.get("openai-codex") ?? all.get("openai")
+              : all.get(provider)
+          return {
+            provider,
+            configured: Option.map(Option.fromNullable(credential), (c) => c.type),
+          }
+        }),
     ),
   )
 
@@ -85,10 +93,15 @@ const finishExchange = (
   code: string,
   verifier: string,
 ): Effect.Effect<void, never, AuthStore> =>
-  exchangeAnthropicCode(code, verifier).pipe(
+  (provider === "anthropic"
+    ? exchangeAnthropicCode(code, verifier)
+    : exchangeOpenAiCodexCode(code, verifier)).pipe(
     Effect.flatMap((tokens) =>
       Effect.flatMap(AuthStore, (store) =>
-        store.set(ProviderId.make(provider), { type: "oauth", ...tokens }),
+        store.set(
+          ProviderId.make(provider === "openai" ? "openai-codex" : provider),
+          { type: "oauth", ...tokens },
+        ),
       ),
     ),
     Effect.matchEffect({
@@ -104,13 +117,16 @@ const finishExchange = (
     }),
   )
 
-/** Start the anthropic OAuth: begin → loopback server → browser → wait. */
+/** Start a subscription OAuth: begin → loopback server → browser → wait. */
 const startOAuth = (ctx: SmithTuiContext, provider: SmithProvider): void => {
   void ctx.run(
     Effect.gen(function* () {
       const statuses = yield* readStatuses
-      const begun = yield* beginAnthropicOAuth
+      const begun = yield* provider === "anthropic"
+        ? beginAnthropicOAuth.pipe(Effect.map((value) => ({ ...value, state: value.verifier })))
+        : beginOpenAiCodexOAuth
       setFlow(ctx, oauthStep(statuses, provider, begun.authorizeUrl))
+      const expectedState = begun.state
 
       const waiter = yield* Effect.forkDaemon(
         Effect.scoped(
@@ -118,7 +134,7 @@ const startOAuth = (ctx: SmithTuiContext, provider: SmithProvider): void => {
             const server = yield* startCallbackServer(begun.callbackPort, begun.callbackPath)
             const landed = yield* server.waitForCode
             // CSRF: the redirect must echo OUR verifier as state.
-            if (landed.state !== begun.verifier) {
+            if (landed.state !== expectedState) {
               yield* Effect.sync(() => {
                 const flow = ctx.store.overlay()
                 if (flow.kind === "login") {
@@ -135,6 +151,7 @@ const startOAuth = (ctx: SmithTuiContext, provider: SmithProvider): void => {
       ctx.store.setOauth(
         Option.some({
           verifier: begun.verifier,
+          state: expectedState,
           stop: () => {
             Effect.runFork(Fiber.interrupt(waiter))
           },
@@ -175,7 +192,7 @@ const manualRedirect = (ctx: SmithTuiContext, provider: SmithProvider, redirect:
         onSome: (code) => {
           const stateOk = Option.match(parsed.state, {
             onNone: () => true, // a bare code has no state to check
-            onSome: (state) => state === session.verifier,
+            onSome: (state) => state === session.state,
           })
           if (!stateOk) {
             ctx.store.setNotice("rejected: state mismatch (CSRF)")
@@ -217,8 +234,16 @@ export const advanceLogin = (ctx: SmithTuiContext, advance: LoginAdvance): void 
 export const logout = (ctx: SmithTuiContext, provider: Option.Option<string>): void => {
   Option.match(provider, {
     onSome: (p) => {
+      const remove = Effect.flatMap(AuthStore, (store) =>
+        p === "openai"
+          ? Effect.all(
+              [store.remove(ProviderId.make("openai")), store.remove(ProviderId.make("openai-codex"))],
+              { discard: true },
+            )
+          : store.remove(ProviderId.make(p)),
+      )
       void ctx
-        .run(Effect.flatMap(AuthStore, (store) => store.remove(ProviderId.make(p))))
+        .run(remove)
         .then(
           () => ctx.store.setNotice(`${p}: credential removed`),
           () => ctx.store.setNotice(`${p}: remove failed`),

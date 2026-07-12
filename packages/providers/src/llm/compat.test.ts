@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "@effect/ai"
 import { Effect, Option, Schema } from "effect"
-import { CurrentPromptCacheKey, Failure } from "@xandreed/engine"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure } from "@xandreed/engine"
 import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
@@ -151,7 +151,27 @@ describe("makeCompatLanguageModel", () => {
     expect(thinkingParams("kimi-k2.6")).toEqual({ thinking: { type: "enabled" } })
     expect(thinkingParams("deepseek-v4-flash")).toEqual({ thinking: { type: "enabled" } })
     expect(thinkingParams("qwen3-coder")).toEqual({ enable_thinking: true })
-    expect(thinkingParams("glm-4.7")).toEqual({})
+    expect(thinkingParams("glm-5.2")).toEqual({})
+  })
+
+  test("a dedicated agent policy overrides family effort and pins its output budget", async () => {
+    const { calls, impl } = capture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* makeCompatLanguageModel({
+          moduleName: "Test",
+          chatUrl: "https://gw.example/chat",
+          apiKey: "k",
+          model: "deepseek-v4-flash",
+          fetchImpl: impl,
+        })
+        return yield* svc.generateText({ prompt: [{ role: "user", content: "plan" }] } as never)
+      }).pipe(
+        Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 1800 })),
+      ),
+    )
+    expect((calls[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("low")
+    expect((calls[0]?.body as { max_tokens?: unknown }).max_tokens).toBe(1800)
   })
 
   test("BOTH reasoning vocabularies parse into a reasoning part", async () => {

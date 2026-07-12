@@ -17,8 +17,14 @@ import { discoverGateSuite } from "../gates/suite.js"
 import { gateRequestFromSpec } from "../spec/toForgeSpec.js"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
-import { lockProfile, makeProfileSession, PROFILE_DRAFT_DIR } from "./session.js"
+import {
+  lockProfile,
+  makeProfileSession,
+  PROFILE_DRAFT_DIR,
+  runHeadlessProfileLock,
+} from "./session.js"
 import type { ProfileAgent } from "./session.js"
+import type { SmithEvent } from "../domain/SmithEvent.js"
 
 const REPO_NODE_MODULES = resolve(import.meta.dir, "../../../../node_modules")
 
@@ -106,13 +112,40 @@ const runFor = (cwd: string): SmithRunConfig => ({
 })
 
 describe("the profile session — propose (dry-run) → lock (arm)", () => {
+  test("headless exact lock consumes the reviewed draft without another model turn", async () => {
+    const dir = seedWorld()
+    const calls = { count: 0 }
+    const countingAgent: ProfileAgent = (cid, prompt, tools) =>
+      Effect.sync(() => {
+        calls.count += 1
+      }).pipe(Effect.zipRight(scriptedAgent(cid, prompt, tools)))
+    const code = await Effect.runPromise(
+      Effect.gen(function* () {
+        const session = yield* makeProfileSession(dir, () => Effect.void, {
+          unattended: true,
+          agent: countingAgent,
+        })
+        yield* session.send("draft it")
+        return yield* runHeadlessProfileLock(dir)
+      }).pipe(Effect.provide(stubServices)),
+    )
+    expect(code).toBe(0)
+    expect(calls.count).toBe(1)
+    expect(existsSync(join(dir, "foundry.config.ts"))).toBe(true)
+  })
+
   test("END-TO-END: scripted proposal dry-runs with real counts; lock arms the whole contract", async () => {
     const dir = seedWorld()
+    const events: Array<SmithEvent> = []
     const program = Effect.gen(function* () {
-      const session = yield* makeProfileSession(dir, () => Effect.void, {
+      const session = yield* makeProfileSession(
+        dir,
+        (event) => Effect.sync(() => events.push(event)),
+        {
         unattended: true,
         agent: scriptedAgent,
-      })
+        },
+      )
       const draft = yield* session.send("set up the profile")
       const summary = Option.getOrThrow(draft)
       // Real per-rule counts from the DRY-RUN against the seeded world.
@@ -145,6 +178,10 @@ describe("the profile session — propose (dry-run) → lock (arm)", () => {
     expect(existsSync(join(dir, ".foundry", "baseline.json"))).toBe(true)
     expect(existsSync(join(dir, ".efferent", "skills", "gate-rule-authoring.md"))).toBe(true)
     expect(existsSync(join(dir, PROFILE_DRAFT_DIR))).toBe(false)
+    expect(events.findIndex((event) => event.type === "profile_draft")).toBeGreaterThanOrEqual(0)
+    expect(events.findIndex((event) => event.type === "profile_draft")).toBeLessThan(
+      events.findIndex((event) => event.type === "profile_locked"),
+    )
 
     // The LOCKED workspace discovered by the forge path: profile armed, the
     // grandfathered findings never gate.

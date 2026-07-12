@@ -1,35 +1,17 @@
 import { Option } from "effect"
-import type { EngineSettings, ModelRole } from "@xandreed/engine"
+import type { EngineSettings, ModelCatalogEntryType, ModelRole } from "@xandreed/engine"
 import { SMITH_MODEL_DEFAULTS } from "../../domain/SmithConfig.js"
 import type { SelectOption } from "./selectBox.js"
 
 /**
- * The `:model` picker's rows — a CURATED static catalogue (user decision: no
- * network fetch, no registry port in v1) seeded from the smith defaults plus
- * known-good ids per wired provider, with two synthetic rows:
+ * The `:model` picker's rows come through the ModelCatalog port, already
+ * scoped to configured provider credentials, with two synthetic rows:
  * - code/fast get a leading `default` row (value None → the key is CLEARED;
  *   under the smith overlay that falls back to the SMITH default, not to
  *   general — the label says so honestly);
  * - a filter containing `:` grows a trailing `use "<typed>"` row, the
  *   free-text escape for any model the list doesn't know.
  */
-
-const CURATED: ReadonlyArray<string> = [
-  SMITH_MODEL_DEFAULTS.general,
-  SMITH_MODEL_DEFAULTS.code,
-  SMITH_MODEL_DEFAULTS.fast,
-  "opencode:qwen3-coder",
-  "opencode:glm-4.7",
-  "opencode:grok-code",
-  "anthropic:claude-fable-5",
-  "anthropic:claude-opus-4-8",
-  "anthropic:claude-sonnet-5",
-  "anthropic:claude-haiku-4-5",
-  "openai:gpt-5.2",
-  "openai:gpt-5.2-codex",
-  "google:gemini-3.5-pro",
-  "google:gemini-3.5-flash",
-]
 
 /** Curated context windows for the ctx gauge — best-effort constants per
  *  model family (the same no-network stance as the picker). Unknown → None
@@ -108,6 +90,7 @@ export const modelPickerTitle = (role: ModelRole): string => ROLE_TITLE[role]
 export const modelPickerOptions = (
   role: ModelRole,
   settings: EngineSettings,
+  catalog: ReadonlyArray<ModelCatalogEntryType> = [],
 ): ReadonlyArray<SelectOption<Option.Option<string>>> => {
   const current = Option.getOrElse(currentFor(role, settings), () => "")
   const defaultRow: ReadonlyArray<SelectOption<Option.Option<string>>> =
@@ -120,13 +103,14 @@ export const modelPickerOptions = (
             desc: "clear the role",
           },
         ]
-  const deduped = [...new Set(CURATED)]
+  const deduped = [...new Map(catalog.map((entry) => [entry.selection, entry])).values()]
   return [
     ...defaultRow,
-    ...deduped.map((selection) => ({
-      value: Option.some(selection),
-      label: selection,
-      active: selection === current,
+    ...deduped.map((entry) => ({
+      value: Option.some(entry.selection),
+      label: entry.label ?? entry.selection,
+      desc: entry.label === undefined ? undefined : entry.selection,
+      active: entry.selection === current,
     })),
   ]
 }

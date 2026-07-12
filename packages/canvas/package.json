@@ -3,19 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The ui-builder agent: a browser-served canvas where the agent builds interactive pages with natural language — render_ui through deterministic UI gates, htmx-over-WebSocket, no client framework.",
+  "description": "The first host for the governed UI agent: typed blocks through trusted token recipes, streamed over HTMX with CSP Alpine.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@alpinejs/csp": "^3.15.12",
     "@effect/ai": "^0.35.0",
     "@xandreed/engine": "workspace:*",
     "@xandreed/providers": "workspace:*",
     "@xandreed/surface": "workspace:*",
+    "@xandreed/ui-agent": "workspace:*",
     "effect": "^3.21.4"
-  },
-  "devDependencies": {
-    "alpinejs": "^3.15.12"
   }
 }

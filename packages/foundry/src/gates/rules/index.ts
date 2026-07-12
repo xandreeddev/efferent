@@ -8,6 +8,14 @@ import { noNullableReturn } from "./noNullableReturn.js"
 import { noParallelInterface } from "./noParallelInterface.js"
 import { noSkippedTests } from "./noSkippedTests.js"
 import { noTryCatch } from "./noTryCatch.js"
+import {
+  contextTagsLiveInPorts,
+  contractsContainNoBehavior,
+  effectArchitectureRules,
+  layersLiveAtEdges,
+  noRawPromiseCore,
+  noRuntimeImportsCore,
+} from "./effectArchitecture.js"
 
 /** The shipped rules are a LIBRARY organized as packs (`packs.js`) — config
  *  resolution never falls back to them implicitly; a config module names
@@ -26,4 +34,10 @@ export {
   noParallelInterface,
   noSkippedTests,
   noTryCatch,
+  contextTagsLiveInPorts,
+  contractsContainNoBehavior,
+  effectArchitectureRules,
+  layersLiveAtEdges,
+  noRawPromiseCore,
+  noRuntimeImportsCore,
 }

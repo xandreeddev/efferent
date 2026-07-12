@@ -14,23 +14,40 @@
     "canvas": "bun packages/canvas/src/main.ts",
     "scenarios": "bun packages/scenarios/src/main.ts",
     "evals:live": "bun packages/scenarios/src/evalsLive.ts",
+    "evals:ui-matrix": "bun packages/scenarios/src/uiMatrix.ts",
+    "test": "bun test",
+    "eval": "bun run scenarios",
+    "check": "bun run typecheck",
+    "verify": "bun run typecheck && bun test && bun run foundry demo && bun run scenarios && bun --cwd packages/website run check",
     "smith:dev": "bun --hot packages/smith/src/main.ts",
     "obs:up": "docker compose -f docker-compose.observability.yml up -d",
     "obs:down": "docker compose -f docker-compose.observability.yml down",
-    "typecheck": "tsc -p tsconfig.json --noEmit && bun packages/foundry/src/main.ts check && bun packages/foundry/src/main.ts check --config foundry.repo.config.ts --baseline packages/foundry/baselines/repo.json",
+    "typecheck": "bun packages/foundry/src/main.ts check --config foundry.config.ts --baseline .foundry/baseline.json",
     "prepare": "bun scripts/installHooks.ts",
     "math": "bun packages/math/src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
     "@types/node": "^24.13.2",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@effect/ai": "0.35.0",
+    "@effect/experimental": "0.60.0",
+    "@effect/platform": "0.96.1",
+    "@effect/rpc": "0.75.1",
     "@opentui/core": "0.3.1",
     "@opentui/solid": "0.3.1",
-    "effect": "^3.21.4",
+    "effect": "3.21.4",
     "solid-js": "1.9.12",
     "web-tree-sitter": "0.25.10"
+  },
+  "overrides": {
+    "@effect/ai": "0.35.0",
+    "@effect/experimental": "0.60.0",
+    "@effect/platform": "0.96.1",
+    "@effect/rpc": "0.75.1",
+    "effect": "3.21.4"
   }
 }

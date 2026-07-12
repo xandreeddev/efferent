@@ -50,7 +50,7 @@ never silently pick your model.
 ```bash
 bun run smith --cwd <dir>          # the coder: dashboard → refine → :lock → :forge
 bun run math --grade 4 --open      # the tutor: server-graded practice in the browser
-bun run canvas --open              # the page builder: natural language → gated pages
+bun run canvas --open              # governed UI agent: natural language → typed, streamed pages
 bun run social test|review         # the drafter: scan (supervised) · human review queue
 bun run scenarios                  # the regression batteries
 bun run foundry check              # the gate suite, standalone

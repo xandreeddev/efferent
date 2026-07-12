@@ -1,23 +1,17 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Ref, Schema } from "effect"
-import { mkdir, writeFile } from "node:fs/promises"
-import { join } from "node:path"
 import { Failure } from "@xandreed/engine"
-import { XPlatform } from "../ports/XPlatform.js"
-import { BlogReader } from "../ports/BlogReader.js"
-import {
-  appendLedger,
-  LedgerEntry,
-  readLedger,
-} from "../domain/Ledger.js"
-import { loadPolicy } from "../domain/policy.js"
+import { XPlatform } from "../ports/x-platform.port.js"
+import { BlogReader } from "../ports/blog-reader.port.js"
+import type { LedgerEntry } from "../domain/ledger.entity.js"
+import { SocialWorkspace } from "../ports/social-workspace.port.js"
 import {
   renderFindings,
   runSocialGates,
   type SocialDraft,
 } from "../domain/gates.js"
 import { DRAFTS_PENDING_DIR, LEDGER_PATH, POLICY_PATH } from "../domain/paths.js"
-import type { XSearchResult } from "../ports/XPlatform.js"
+import type { XSearchResult } from "../ports/x-platform.port.js"
 
 // ---- Tool Definitions ----
 
@@ -184,6 +178,7 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
   Effect.gen(function* () {
     const x = yield* XPlatform
     const blog = yield* BlogReader
+    const workspace = yield* SocialWorkspace
     const pendingDir = options.pendingDir ?? DRAFTS_PENDING_DIR
     const ledgerPath = options.ledgerPath ?? LEDGER_PATH
     const policyPath = options.policyPath ?? POLICY_PATH
@@ -242,8 +237,8 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
             ...(targetAuthor !== undefined ? { targetAuthor } : {}),
             ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
           }
-          const ledger = yield* readLedger(ledgerPath)
-          const policy = yield* loadPolicy(policyPath)
+          const ledger = yield* workspace.readLedger(ledgerPath)
+          const policy = yield* workspace.loadPolicy(policyPath)
           const posts = yield* blog
             .getPosts()
             .pipe(Effect.orElseSucceed(() => []))
@@ -259,18 +254,19 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
             phase: "draft",
           })
           if (findings.length > 0) {
-            yield* appendLedger(
+            const rejected: LedgerEntry = {
+              at: now().toISOString(),
+              event: "gate_rejected",
+              kind: type,
+              ...(targetTweetId !== undefined ? { targetTweetId } : {}),
+              ...(targetAuthor !== undefined ? { targetAuthor } : {}),
+              ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
+              content: draft.content,
+              findings: findings.map((finding) => `[${finding.rule}] ${finding.detail}`),
+            }
+            yield* workspace.appendLedger(
               ledgerPath,
-              new LedgerEntry({
-                at: now().toISOString(),
-                event: "gate_rejected",
-                kind: type,
-                ...(targetTweetId !== undefined ? { targetTweetId } : {}),
-                ...(targetAuthor !== undefined ? { targetAuthor } : {}),
-                ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
-                content: draft.content,
-                findings: findings.map((f) => `[${f.rule}] ${f.detail}`),
-              }),
+              rejected,
             ).pipe(Effect.ignore)
             return yield* Effect.fail({
               error: "GateRejected",
@@ -280,7 +276,7 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
 
           const id = targetTweetId ?? `new_${now().getTime()}`
           const filename = `${type}_${id}.md`
-          const filePath = join(pendingDir, filename)
+          const filePath = `${pendingDir}/${filename}`
           const fmParts = [
             `type: "${type}"`,
             `targetTweetId: ${targetTweetId ? `"${targetTweetId}"` : "null"}`,
@@ -290,25 +286,20 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
             `created_at: "${now().toISOString()}"`,
           ]
           const rawContent = `---\n${fmParts.join("\n")}\n---\n\n${draft.content}\n`
-          yield* Effect.tryPromise({
-            try: async () => {
-              await mkdir(pendingDir, { recursive: true })
-              await writeFile(filePath, rawContent, "utf-8")
-            },
-            catch: (e) => toFailure(e),
-          })
-          yield* appendLedger(
+          yield* workspace.writeDraft(filePath, rawContent).pipe(Effect.mapError(toFailure))
+          const drafted: LedgerEntry = {
+            at: now().toISOString(),
+            event: "drafted",
+            kind: type,
+            ...(targetTweetId !== undefined ? { targetTweetId } : {}),
+            ...(targetAuthor !== undefined ? { targetAuthor } : {}),
+            ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
+            content: draft.content,
+            filename,
+          }
+          yield* workspace.appendLedger(
             ledgerPath,
-            new LedgerEntry({
-              at: now().toISOString(),
-              event: "drafted",
-              kind: type,
-              ...(targetTweetId !== undefined ? { targetTweetId } : {}),
-              ...(targetAuthor !== undefined ? { targetAuthor } : {}),
-              ...(referenceBlogSlug !== undefined ? { referenceBlogSlug } : {}),
-              content: draft.content,
-              filename,
-            }),
+            drafted,
           ).pipe(Effect.ignore)
           return { path: filePath, filename }
         }),

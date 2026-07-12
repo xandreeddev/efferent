@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
-import { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "../ports/McpClient.js"
+import { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "../ports/mcp-client.port.js"
 import { buildMcpBridge, McpCall } from "./bridge.js"
 
 const descriptor = new McpToolDescriptor({

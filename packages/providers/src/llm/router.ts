@@ -1,13 +1,15 @@
 import { AiError, LanguageModel } from "@effect/ai"
 import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { Clock, Duration, Effect, FiberRef, Layer, Metric, Option, Ref, Stream } from "effect"
 import {
   AuthStore,
+  CurrentModelCallPolicy,
   formatModelSelection,
   parseModelSelection,
   SettingsStore,
 } from "@xandreed/engine"
 import type { ModelSelection } from "@xandreed/engine"
+import type { EngineSettings } from "@xandreed/engine"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
 import {
   classifyLlmError,
@@ -90,8 +92,31 @@ const currentSelection = Effect.gen(function* () {
       ),
     onSome: Effect.succeed,
   })
-  return { primary, fallback: Option.flatMap(loaded.fallbackModel, parseModelSelection) }
+  return {
+    primary,
+    fallback: Option.flatMap(loaded.fallbackModel, parseModelSelection),
+    effort: loaded.reasoningEffort,
+  }
 })
+
+/** Apply the persisted model effort only when a dedicated agent has not
+ * already pinned a complete call policy in its own execution profile. */
+const withConfiguredEffort = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  effort: EngineSettings["reasoningEffort"],
+): Effect.Effect<A, E, R> =>
+  FiberRef.get(CurrentModelCallPolicy).pipe(
+    Effect.flatMap((current) =>
+      Option.isSome(current) || Option.isNone(effort)
+        ? effect
+        : effect.pipe(
+            Effect.locally(
+              CurrentModelCallPolicy,
+              Option.some({ effort: effort.value }),
+            ),
+          ),
+    ),
+  )
 
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
@@ -378,9 +403,12 @@ export const LanguageModelLive = Layer.effect(
     const service: LanguageModel.Service = {
       generateText: (options) =>
         currentSelection.pipe(
-          Effect.flatMap(({ fallback, primary }) =>
-            withFallbackRung(primary, fallback, (selection, isFallback) =>
-              generateWith(selection, options, isFallback),
+          Effect.flatMap(({ effort, fallback, primary }) =>
+            withConfiguredEffort(
+              withFallbackRung(primary, fallback, (selection, isFallback) =>
+                generateWith(selection, options, isFallback),
+              ),
+              effort,
             ),
           ),
           Effect.provide(context),
@@ -394,9 +422,21 @@ export const LanguageModelLive = Layer.effect(
       // already falls back to generateText in the engine loop, and THAT
       // call rides this router's fallback — one rung, no double-hop.
       streamText: ((options: unknown) =>
-        Stream.unwrap(
+        Stream.unwrapScoped(
           currentSelection.pipe(
-            Effect.map(({ primary }) => streamWith(primary, options)),
+            Effect.flatMap(({ effort, primary }) =>
+              FiberRef.get(CurrentModelCallPolicy).pipe(
+                Effect.flatMap((current) => {
+                  const stream = streamWith(primary, options)
+                  return Option.isSome(current) || Option.isNone(effort)
+                    ? Effect.succeed(stream)
+                    : Effect.locallyScoped(
+                        CurrentModelCallPolicy,
+                        Option.some({ effort: effort.value }),
+                      ).pipe(Effect.as(stream))
+                }),
+              ),
+            ),
           ),
         ).pipe(
           Stream.provideSomeContext(context),
@@ -404,5 +444,30 @@ export const LanguageModelLive = Layer.effect(
         )) as never,
     }
     return service
+  }),
+).pipe(Layer.provide(FetchHttpClient.layer))
+
+/** A profile-pinned routed model. Unlike LanguageModelLive it never consults
+ * SettingsStore; dedicated agents use this so global role edits cannot
+ * silently change an evalled execution profile. */
+export const LanguageModelSelectionLive = (
+  primary: ModelSelection,
+  fallback: Option.Option<ModelSelection>,
+) => Layer.effect(
+  LanguageModel.LanguageModel,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<AuthStore>()
+    const http = yield* HttpClient.HttpClient
+    return {
+      generateText: (options) => withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)).pipe(
+        Effect.provide(context),
+        Effect.provideService(HttpClient.HttpClient, http),
+      ) as never,
+      generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
+      streamText: ((options: unknown) => streamWith(primary, options).pipe(
+        Stream.provideSomeContext(context),
+        Stream.provideService(HttpClient.HttpClient, http),
+      )) as never,
+    } satisfies LanguageModel.Service
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

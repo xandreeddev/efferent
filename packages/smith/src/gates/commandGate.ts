@@ -1,6 +1,6 @@
 import { Array as Arr, Effect, Option } from "effect"
 import { Finding, GateCrash, GateName, RuleId, SourceLocation, WorkspacePath } from "@xandreed/foundry"
-import type { Gate, Workspace } from "@xandreed/foundry"
+import type { Gate, GateKind, Workspace } from "@xandreed/foundry"
 import { workspacePath } from "@xandreed/providers"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
@@ -110,13 +110,15 @@ export const makeCommandGate = (options: {
   readonly name: string
   readonly argv: Arr.NonEmptyReadonlyArray<string>
   readonly timeoutMs?: number
+  readonly kind?: Extract<GateKind, "test" | "eval">
 }): Gate<never> => {
   const gateName = GateName.make(options.name)
-  const rule = RuleId.make(`test/${options.name}`)
+  const kind = options.kind ?? "test"
+  const rule = RuleId.make(`${kind}/${options.name}`)
   const command = options.argv.join(" ")
   return {
     name: gateName,
-    kind: "test",
+    kind,
     deterministic: true,
     run: (workspace: Workspace) =>
       Effect.gen(function* () {

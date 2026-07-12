@@ -18,7 +18,8 @@ it.
 src/
 ├── domain/    Message (AgentMessage/ConversationId/Checkpoint/AgentResult),
 │              Failure (the failureMode:"return" shape), TokenUsage,
-│              ModelSelection ("<provider>:<modelId>"), LoopEvent (the ONE
+│              ModelSelection ("<provider>:<modelId>"), ModelCallPolicy
+│              (agent-pinned effort/output budget), LoopEvent (the ONE
 │              event union drivers render — no callback records)
 ├── ports/     Context.Tag services + their Schema.TaggedErrors:
 │              ConversationStore · SettingsStore · AuthStore · FileSystem ·
@@ -29,7 +30,8 @@ src/
 │              responses — hallucinated names, wrong-shaped params — recover
 │              via bounded corrective feedback; the degenerate-loop breaker) ·
 │              runAgent (store-integrated turn: active window + fold summary,
-│              incremental tail persistence)
+│              incremental tail persistence; scopes CurrentModelCallPolicy so
+│              dedicated profiles reach the provider wire)
 └── session/   chassis (makeSession — ONE persisted conversation + an
 │              append-only seq'd event ledger; serialized send; interrupt;
 │              replay-then-live subscribe). Every driver uses this; no

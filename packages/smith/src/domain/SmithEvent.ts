@@ -14,6 +14,24 @@ import type { LoopEvent, SpecDoc } from "@xandreed/engine"
  *   text, sub-agent lifecycle, llm retries.
  */
 export type SmithEvent =
+  | {
+      readonly type: "profile_draft"
+      readonly draftDir: string
+      readonly rules: ReadonlyArray<{ readonly rule: string; readonly findings: number }>
+      readonly boundaryViolations: number
+      readonly checks: ReadonlyArray<{
+        readonly name: string
+        readonly status: "green" | "red"
+      }>
+    }
+  | {
+      readonly type: "profile_locked"
+      readonly configPath: string
+      readonly rules: number
+      readonly grandfathered: number
+      readonly checks: number
+    }
+  | { readonly type: "profile_error"; readonly message: string }
   | { readonly type: "refine_start"; readonly idea: Option.Option<string> }
   | { readonly type: "spec_draft"; readonly doc: SpecDoc; readonly path: string }
   | { readonly type: "spec_locked"; readonly doc: SpecDoc; readonly path: string }

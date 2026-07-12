@@ -1,7 +1,7 @@
 import { AiError, LanguageModel, Tool } from "@effect/ai"
 import type { Prompt } from "@effect/ai"
 import { Effect, FiberRef, Option, Stream } from "effect"
-import { CurrentPromptCacheKey } from "@xandreed/engine"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/engine"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage } from "./sse.js"
 
@@ -233,8 +233,8 @@ const chatRequestBody = (
   options: { readonly prompt: Prompt.Prompt; readonly tools: ReadonlyArray<Tool.Any>; readonly toolChoice?: unknown },
   streaming: boolean,
 ): Effect.Effect<Json> =>
-  FiberRef.get(CurrentPromptCacheKey).pipe(
-    Effect.map((cacheKey) => {
+  Effect.all({ cacheKey: FiberRef.get(CurrentPromptCacheKey), policy: FiberRef.get(CurrentModelCallPolicy) }).pipe(
+    Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
       return {
         model: config.model,
@@ -246,6 +246,13 @@ const chatRequestBody = (
           onSome: (key) => ({ prompt_cache_key: key }),
         }),
         ...thinkingParams(config.model),
+        ...Option.match(policy, {
+          onNone: () => ({}),
+          onSome: (value) => ({
+            ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
+            reasoning_effort: value.effort,
+          }),
+        }),
         ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
       }
     }),

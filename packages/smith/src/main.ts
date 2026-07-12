@@ -12,6 +12,7 @@ import { EngineSettings, SettingsStore } from "@xandreed/engine"
 import {
   FileLoggerLive,
   FileLoggerAddLive,
+  ConfiguredModelCatalogLive,
   LanguageModelLive,
   UtilityLlmLive,
   LocalAuthStoreLive,
@@ -40,9 +41,8 @@ Usage:
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
   bun run smith mcp [--cwd <dir>]             serve the READ-ONLY workspace tools over MCP stdio
   bun run smith profile [--cwd <dir>] -p      set up the workspace QUALITY PROFILE (rules, gates,
-                                              doctrine) — one unattended proposal with dry-run
-                                              counts; --yes ARMS it (config + vendored rules +
-                                              grandfathering baseline)
+                                              doctrine); TUI supports revise + :lock
+  bun run smith profile lock --cwd <dir> -p   lock the exact reviewed headless draft
   bun run smith selftest                      the factory smoke test: a canned prompt forges
                                               to completion in a THROWAWAY workspace (real
                                               providers, real gates; exit 0 = the stack works)
@@ -242,8 +242,9 @@ export const toRunConfig = (
  *  ports, providers at the edge. Conversations persist to the workspace's own
  *  `.efferent/smith.db`; the coder is the engine's direct loop (no fleet, no
  *  approval judge — the forge loop + gates bound the work). */
-export const smithAppLive = (run: SmithRunConfig) =>
-  Layer.mergeAll(
+export const smithAppLive = (run: SmithRunConfig) => {
+  const auth = LocalAuthStoreLive(run.cwd, homedir())
+  return Layer.mergeAll(
     SqliteConversationStoreLive(join(run.cwd, ".efferent", "smith.db")),
     LocalFileSystemLive,
     LocalShellLive,
@@ -253,11 +254,13 @@ export const smithAppLive = (run: SmithRunConfig) =>
   ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        LocalAuthStoreLive(run.cwd, homedir()),
+        auth,
         SmithSettingsStoreLive(run, run.cwd, homedir()),
+        ConfiguredModelCatalogLive.pipe(Layer.provide(auth)),
       ),
     ),
   )
+}
 
 const isDirectRun = process.argv[1]?.endsWith("main.ts") === true
 if (isDirectRun) {
@@ -344,11 +347,17 @@ if (isDirectRun) {
     // one unattended proposal (dry-run counts on stdout), --yes arms it.
     // The interactive TUI mode rides the dashboard integration (follow-up).
     if (command === "profile") {
+      if (task === "lock") {
+        if (interactive) {
+          console.error("smith profile lock: use -p to lock the reviewed on-disk draft")
+          return 2
+        }
+        const { runHeadlessProfileLock } = yield* Effect.promise(() => import("./profile/session.js"))
+        return yield* runHeadlessProfileLock(run.cwd)
+      }
       if (interactive) {
-        console.error(
-          "smith profile: the interactive TUI mode is coming with the dashboard integration — run with -p (add --yes to arm the proposal)",
-        )
-        return 2
+        const { runTuiProfile } = yield* Effect.promise(() => import("./tui/runtime.js"))
+        return yield* runTuiProfile(run)
       }
       const { runHeadlessProfile } = yield* Effect.promise(() => import("./profile/session.js"))
       return yield* runHeadlessProfile(run.cwd, state.yes)

@@ -35,7 +35,7 @@ export const runTuiCommand = (ctx: SmithTuiContext, raw: string): void => {
     }),
     Match.when("lock", () => {
       if (ctx.lock === undefined) {
-        ctx.store.setNotice(":lock needs a refine session")
+        ctx.store.setNotice(":lock needs a profile or refine session")
         return
       }
       ctx.lock()

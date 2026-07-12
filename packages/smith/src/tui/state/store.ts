@@ -2,13 +2,15 @@ import { batch, createSignal } from "solid-js"
 import type { Accessor } from "solid-js"
 import { Option } from "effect"
 import type { Effect } from "effect"
-import type { AuthStore, FileSystem, ModelRole, SettingsStore, Shell, SpecDoc } from "@xandreed/engine"
+import type { AuthStore, FileSystem, ModelCatalog, ModelRole, SettingsStore, Shell, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../../domain/SmithConfig.js"
 import type { FloorState } from "../presentation/floor.js"
 import { initialFloor, reduceFloor } from "../presentation/floor.js"
 import type { RefineState } from "../presentation/refine.js"
 import { initialRefine, reduceRefine, withUserLine } from "../presentation/refine.js"
+import type { ProfileState } from "../presentation/profile.js"
+import { initialProfile, reduceProfile } from "../presentation/profile.js"
 import { costOf } from "../presentation/modelCatalog.js"
 import { initialHistory, pushHistory } from "../presentation/history.js"
 import type { HistoryState } from "../presentation/history.js"
@@ -33,11 +35,12 @@ export interface RolesReadout {
 }
 
 /** idle = the persistent workspace dashboard (`bare smith`). */
-export type SmithMode = "idle" | "refine" | "forge"
+export type SmithMode = "idle" | "profile" | "refine" | "forge"
 
 /** What a picker Enter means (routes `submitSelect` in the key handler). */
 export type SelectPurpose =
   | { readonly tag: "model"; readonly role: ModelRole }
+  | { readonly tag: "model-effort"; readonly role: ModelRole; readonly selection: string }
   | { readonly tag: "logout" }
   | { readonly tag: "resume" }
   /** The settings MENU (agy shape): rows are settings, Enter edits one. */
@@ -61,12 +64,13 @@ export type Overlay =
 /** An in-flight OAuth authorization the driver races (callback vs paste). */
 export interface OAuthSession {
   readonly verifier: string
+  readonly state: string
   /** Interrupt the waiter fiber + close the loopback server. */
   readonly stop: () => void
 }
 
 /** Everything a TUI action may reach through `ctx.run`. */
-export type SmithUiServices = SettingsStore | AuthStore | FileSystem | Shell
+export type SmithUiServices = SettingsStore | AuthStore | ModelCatalog | FileSystem | Shell
 
 export interface SmithStore {
   readonly floor: Accessor<FloorState>
@@ -78,6 +82,7 @@ export interface SmithStore {
   readonly mode: Accessor<SmithMode>
   readonly setMode: (mode: SmithMode) => void
   readonly refine: Accessor<RefineState>
+  readonly profile: Accessor<ProfileState>
   /** The conversation pane's blocks — user/reasoning/assistant/tool. */
   readonly conversation: Accessor<ConversationState>
   readonly resetConversation: () => void
@@ -166,6 +171,7 @@ export interface SmithStore {
   readonly resetFloor: (task: string, maxAttempts: number) => void
   /** Fresh refine state for the NEXT idea. */
   readonly resetRefine: () => void
+  readonly resetProfile: () => void
 }
 
 export interface SmithTuiContext {
@@ -179,6 +185,8 @@ export interface SmithTuiContext {
   readonly exit: (code: number) => void
   /** Refine mode: one composer submission = one refiner turn. */
   readonly sendRefine?: (text: string) => void
+  /** Profile mode: one composer submission = one profile-architect turn. */
+  readonly sendProfile?: (text: string) => void
   /** Refine mode: `:lock` — the human's approval. */
   readonly lock?: () => void
   /** `:forge [slug]` — forge the locked draft, or a named locked spec. */
@@ -204,6 +212,7 @@ export const createSmithStore = (
     initialFloor(run.task, run.maxAttempts),
   )
   const [refine, setRefine] = createSignal<RefineState>(initialRefine)
+  const [profile, setProfile] = createSignal<ProfileState>(initialProfile)
   const [conversation, setConversation] = createSignal<ConversationState>(initialConversation)
   const [modeSig, setModeSig] = createSignal<SmithMode>(mode)
   const [busy, setBusySig] = createSignal(false)
@@ -247,12 +256,19 @@ export const createSmithStore = (
     if (event.type === "refine_error") {
       setNotice(`refine error: ${event.message.slice(0, 120)}`)
     }
+    if (event.type === "profile_error") {
+      setNotice(`profile error: ${event.message.slice(0, 120)}`)
+    }
     setFloor((state) => reduceFloor(state, event))
     setRefine((state) => reduceRefine(state, event))
+    setProfile((state) => reduceProfile(state, event))
     // The fold's mode picks the RIGHT advice on a bounded stop: forge
     // continues itself (gates → next attempt), refine waits for you.
     setConversation((state) =>
-      reduceConversationIn(modeSig() === "forge" ? "forge" : "refine")(state, event),
+      reduceConversationIn(modeSig() === "forge" ? "forge" : modeSig() === "profile" ? "profile" : "refine")(
+        state,
+        event,
+      ),
     )
   }
   return {
@@ -262,6 +278,7 @@ export const createSmithStore = (
     mode: modeSig,
     setMode: (next) => setModeSig(next),
     refine,
+    profile,
     conversation,
     resetConversation: () => {
       setConversation(initialConversation)
@@ -351,6 +368,7 @@ export const createSmithStore = (
     setWorkspace: (view) => setWorkspaceSig(view),
     resetFloor: (task, maxAttempts) => setFloor(initialFloor(task, maxAttempts)),
     resetRefine: () => setRefine(initialRefine),
+    resetProfile: () => setProfile(initialProfile),
   }
 }
 

@@ -19,7 +19,9 @@ packages/
 │                 validateUi — the security and feedback boundaries.
 ├── smith/        the coder        → engine + providers + foundry
 ├── math/         the tutor        → engine + providers + surface
-├── canvas/       the page builder → engine + providers + surface
+├── ui-agent/     typed page agent → engine
+├── surface/      trusted token/recipe compiler → ui-agent contracts
+├── canvas/       first UI-agent host → ui-agent + surface + providers
 ├── social/       the drafter      → engine + providers
 └── scenarios/    evals — the TOP of the graph; may import agents;
                   nothing imports scenarios.

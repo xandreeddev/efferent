@@ -21,6 +21,10 @@ export const roleModelView = (
           new EngineSettings({
             ...s,
             model: Option.orElse(role === "code" ? s.codeModel : s.fastModel, () => s.model),
+            reasoningEffort: Option.orElse(
+              role === "code" ? s.codeReasoningEffort : s.fastReasoningEffort,
+              () => s.reasoningEffort,
+            ),
           }),
       ),
       setRole: inner.setRole,

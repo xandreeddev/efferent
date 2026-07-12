@@ -18,6 +18,7 @@ import { profilePack } from "./packs/profile.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
 import { socialPack } from "./packs/social.js"
 import { tuiPack } from "./packs/tui.js"
+import { issueTrackerPack } from "./packs/issueTracker.js"
 
 /**
  * `bun run scenarios [pack …] [--mode scripted|live] [--json] [--update-baselines] [--no-check]`
@@ -31,6 +32,7 @@ import { tuiPack } from "./packs/tui.js"
 
 const PACKS = {
   canvas: canvasPack,
+  "issue-tracker": issueTrackerPack,
   math: mathPack,
   profile: profilePack,
   "smith-spec": smithSpecPack,

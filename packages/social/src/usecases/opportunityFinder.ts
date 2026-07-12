@@ -1,9 +1,10 @@
 import { Effect } from "effect"
 import { runLoop, type AgentMessage } from "@xandreed/engine"
-import { engagedTweetIds, readLedger } from "../domain/Ledger.js"
+import { engagedTweetIds } from "../domain/ledger.entity.functions.js"
 import { LEDGER_PATH } from "../domain/paths.js"
-import { BlogReader } from "../ports/BlogReader.js"
-import { XPlatform, type XSearchResult } from "../ports/XPlatform.js"
+import { SocialWorkspace } from "../ports/social-workspace.port.js"
+import { BlogReader } from "../ports/blog-reader.port.js"
+import { XPlatform, type XSearchResult } from "../ports/x-platform.port.js"
 import { socialToolkit, SocialToolkitLive } from "./socialToolkit.js"
 
 const SYSTEM_PROMPT = `You are the automated social research agent for Xand Reed (@xandreeddev).
@@ -22,8 +23,11 @@ IMPORTANT STRATEGY:
 
 /** Targets we've ALREADY engaged — the durable ledger is the truth (dedup
  *  used to consult directory names, which forgot discarded/posted work). */
-const getAlreadyEngagedTweetIds = (): Effect.Effect<ReadonlySet<string>> =>
-  readLedger(LEDGER_PATH).pipe(Effect.map(engagedTweetIds))
+const getAlreadyEngagedTweetIds = (): Effect.Effect<ReadonlySet<string>, never, SocialWorkspace> =>
+  SocialWorkspace.pipe(
+    Effect.flatMap((workspace) => workspace.readLedger(LEDGER_PATH)),
+    Effect.map(engagedTweetIds),
+  )
 
 export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
   Effect.gen(function* () {

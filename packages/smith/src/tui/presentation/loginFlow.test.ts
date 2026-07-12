@@ -30,15 +30,15 @@ describe("loginFlow — the pure provider manager", () => {
     expect(rows[1]?.tag).toBeUndefined()
   })
 
-  test("anthropic goes to the METHOD step; others go straight to apiKey", () => {
+  test("Anthropic and OpenAI go to a method step; API-only providers go straight to apiKey", () => {
     const home = openLogin(statuses)
     const anth = loginAdvance(home)
     expect(anth.kind === "flow" && anth.flow.step === "method").toBe(true)
 
     const onOpenai = loginMove(home, "down")
     const adv = loginAdvance(onOpenai)
-    expect(adv.kind === "flow" && adv.flow.step === "apiKey").toBe(true)
-    if (adv.kind !== "flow" || adv.flow.step !== "apiKey") return
+    expect(adv.kind === "flow" && adv.flow.step === "method").toBe(true)
+    if (adv.kind !== "flow" || adv.flow.step !== "method") return
     expect(adv.flow.provider).toBe("openai")
   })
 
@@ -54,7 +54,10 @@ describe("loginFlow — the pure provider manager", () => {
 
   test("a typed key advances as apiKey; empty input is none", () => {
     const home = openLogin(statuses)
-    const toKey = loginAdvance(loginMove(home, "down"))
+    const openAiMethod = loginAdvance(loginMove(home, "down"))
+    expect(openAiMethod.kind).toBe("flow")
+    if (openAiMethod.kind !== "flow") return
+    const toKey = loginAdvance(loginMove(openAiMethod.flow, "down"))
     expect(toKey.kind).toBe("flow")
     if (toKey.kind !== "flow") return
     expect(loginAdvance(toKey.flow)).toEqual({ kind: "none" })
@@ -63,7 +66,10 @@ describe("loginFlow — the pure provider manager", () => {
   })
 
   test("the masked prompt never exposes the key in its display state", () => {
-    const toKey = loginAdvance(loginMove(openLogin(statuses), "down"))
+    const openAiMethod = loginAdvance(loginMove(openLogin(statuses), "down"))
+    expect(openAiMethod.kind).toBe("flow")
+    if (openAiMethod.kind !== "flow") return
+    const toKey = loginAdvance(loginMove(openAiMethod.flow, "down"))
     expect(toKey.kind === "flow" && toKey.flow.step === "apiKey").toBe(true)
     if (toKey.kind !== "flow" || toKey.flow.step !== "apiKey") return
     expect(toKey.flow.prompt.mask).toBe(true)

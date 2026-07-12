@@ -1,5 +1,5 @@
 import { Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
-import type { ConversationId } from "../domain/Message.js"
+import type { ConversationId } from "../domain/message.entity.js"
 
 /**
  * The session chassis — the one runtime shape every agent driver needs, over

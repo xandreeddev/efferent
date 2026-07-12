@@ -4,7 +4,7 @@
  * never arms anything; its one write is `propose_profile` (the draft), and
  * only the human locks.
  */
-export const PROFILE_SESSION_PROMPT_VERSION = "1.0.0"
+export const PROFILE_SESSION_PROMPT_VERSION = "1.1.0"
 
 export const profileSessionPrompt = (
   cwd: string,
@@ -17,7 +17,7 @@ Working directory: ${cwd}
 
 # What a profile is
 - RULES: deterministic static checks over the code (a shipped pack and/or
-  custom rules written for this project's paradigm — functional, OOP,
+   custom rules written for this project's paradigm — functional, OOP,
   whatever the project actually is).
 - BOUNDARIES: the dependency direction between the project's layers.
 - CHECKS: the project's OWN authoritative scripts (lint, format, tests,
@@ -41,7 +41,9 @@ are grandfathered by a baseline so only NEW code must be clean.
    per-rule finding counts, boundary violations, and check statuses.
    Existing findings are EXPECTED on legacy code (they will be
    grandfathered at lock) — report them, don't fear them.
-4. Rule selection: the "effect" pack for Effect.ts codebases; the "quality"
+4. Rule selection: the "effect" pack for Effect.ts codebases; the
+   "effect-architecture" pack when the workspace uses Effect-native entities,
+   use cases, Context.Tag ports, and Layer adapters; the "quality"
    pack (paradigm-neutral anti-gate-gaming: no skipped tests, no empty
    catch) for any TypeScript project. For project-specific rules, load the
    gate-rule-authoring skill BEFORE writing one, and keep each rule small

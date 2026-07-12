@@ -4,17 +4,21 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import {
-  appendLedger,
-  engagedTweetIds,
   LedgerEntry,
+} from "./ledger.entity.js"
+import {
+  engagedTweetIds,
   postedInWindow,
+} from "./ledger.entity.functions.js"
+import {
+  appendLedger,
   readLedger,
-} from "./Ledger.js"
+} from "../adapters/local-social-workspace.adapter.js"
 
 const NOW = new Date("2026-07-07T12:00:00Z")
 
-const entry = (over: Partial<Parameters<typeof LedgerEntry.make>[0]>): LedgerEntry =>
-  new LedgerEntry({ at: NOW.toISOString(), event: "drafted", kind: "reply", ...over })
+const entry = (over: Partial<LedgerEntry>): LedgerEntry =>
+  ({ at: NOW.toISOString(), event: "drafted", kind: "reply", ...over })
 
 describe("engagement ledger", () => {
   test("append/read round-trips; a missing file is an empty ledger", async () => {

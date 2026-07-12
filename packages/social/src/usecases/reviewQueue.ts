@@ -3,10 +3,10 @@ import { readdir, readFile, rename, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
 import * as readline from "node:readline"
-import { XPlatform } from "../ports/XPlatform.js"
-import { BlogReader } from "../ports/BlogReader.js"
-import { appendLedger, LedgerEntry, readLedger } from "../domain/Ledger.js"
-import { loadPolicy } from "../domain/policy.js"
+import { XPlatform } from "../ports/x-platform.port.js"
+import { BlogReader } from "../ports/blog-reader.port.js"
+import type { LedgerEntry } from "../domain/ledger.entity.js"
+import { SocialWorkspace } from "../ports/social-workspace.port.js"
 import { renderFindings, runSocialGates, type SocialFinding } from "../domain/gates.js"
 import {
   DRAFTS_DISCARDED_DIR,
@@ -106,10 +106,11 @@ export const gateBeforePost = (
     readonly knownSlugs: ReadonlySet<string>
     readonly now?: Date
   },
-): Effect.Effect<ReadonlyArray<SocialFinding>> =>
+): Effect.Effect<ReadonlyArray<SocialFinding>, never, SocialWorkspace> =>
   Effect.gen(function* () {
-    const ledger = yield* readLedger(args.ledgerPath ?? LEDGER_PATH)
-    const policy = yield* loadPolicy(args.policyPath ?? POLICY_PATH)
+    const workspace = yield* SocialWorkspace
+    const ledger = yield* workspace.readLedger(args.ledgerPath ?? LEDGER_PATH)
+    const policy = yield* workspace.loadPolicy(args.policyPath ?? POLICY_PATH)
     return runSocialGates(
       {
         kind: draft.type,
@@ -132,7 +133,7 @@ const ledgerRow = (
   draft: DraftMetadata,
   event: "posted" | "discarded" | "skipped",
 ): LedgerEntry =>
-  new LedgerEntry({
+  ({
     at: new Date().toISOString(),
     event,
     kind: draft.type,
@@ -147,6 +148,7 @@ export const runReviewQueue = () =>
   Effect.gen(function* () {
     const x = yield* XPlatform
     const blog = yield* BlogReader
+    const workspace = yield* SocialWorkspace
     const knownSlugs = new Set(
       (yield* blog.getPosts().pipe(Effect.orElseSucceed(() => []))).map((p) => p.slug),
     )
@@ -208,7 +210,7 @@ export const runReviewQueue = () =>
         }
 
         if (choice === "s") {
-          yield* appendLedger(LEDGER_PATH, ledgerRow(draft, "skipped")).pipe(Effect.ignore)
+          yield* workspace.appendLedger(LEDGER_PATH, ledgerRow(draft, "skipped")).pipe(Effect.ignore)
           console.log("Skipping draft.\n")
           return "continue" as const
         }
@@ -221,7 +223,7 @@ export const runReviewQueue = () =>
             },
             catch: (e) => new ReviewError({ message: `Failed to discard draft: ${String(e)}` }),
           })
-          yield* appendLedger(LEDGER_PATH, ledgerRow(draft, "discarded")).pipe(Effect.ignore)
+          yield* workspace.appendLedger(LEDGER_PATH, ledgerRow(draft, "discarded")).pipe(Effect.ignore)
           console.log("Draft moved to discarded.\n")
           return "continue" as const
         }
@@ -236,7 +238,9 @@ export const runReviewQueue = () =>
         if (choice === "a") {
           // ---- Gate B: nothing leaves for X unvalidated (the [e]dit path
           // used to post >280 raw; caps/dedup are re-checked AT SEND). ----
-          const findings = yield* gateBeforePost(draft, { knownSlugs })
+          const findings = yield* gateBeforePost(draft, { knownSlugs }).pipe(
+            Effect.provideService(SocialWorkspace, workspace),
+          )
           if (findings.length > 0) {
             console.log("⛔ Gate B blocked this draft:")
             console.log(renderFindings(findings))
@@ -254,7 +258,7 @@ export const runReviewQueue = () =>
                 catch: (e) => new ReviewError({ message: `Failed to archive posted draft: ${String(e)}` }),
               })
             ),
-            Effect.tap(() => appendLedger(LEDGER_PATH, ledgerRow(draft, "posted")).pipe(Effect.ignore)),
+            Effect.tap(() => workspace.appendLedger(LEDGER_PATH, ledgerRow(draft, "posted")).pipe(Effect.ignore)),
             Effect.tap(() => Effect.sync(() => console.log("✅ Successfully posted to X!\n"))),
             Effect.catchAll((err) =>
               Effect.sync(() => console.error(`❌ Posting failed: ${err.message}\n`))

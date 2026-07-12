@@ -18,6 +18,17 @@ describe("makeCommandGate", () => {
     expect(gate.deterministic).toBe(true)
   })
 
+  test("an eval command keeps its cost rank and finding namespace", async () => {
+    const gate = makeCommandGate({
+      name: "scenarios",
+      kind: "eval",
+      argv: ["bun", "-e", "process.exit(1)"],
+    })
+    const findings = await Effect.runPromise(gate.run(ws))
+    expect(gate.kind).toBe("eval")
+    expect(String(findings[0]!.rule)).toBe("eval/scenarios")
+  })
+
   test("non-zero exit → located finding from file:line output + clipped summary", async () => {
     const gate = makeCommandGate({
       name: "fails",

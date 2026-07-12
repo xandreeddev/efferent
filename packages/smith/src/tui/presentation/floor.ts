@@ -115,7 +115,10 @@ export const reduceFloor = (state: FloorState, event: SmithEvent): FloorState =>
   if (
     event.type === "bash_progress" ||
     event.type === "file_refs" ||
-    event.type === "profile_status"
+    event.type === "profile_status" ||
+    event.type === "profile_draft" ||
+    event.type === "profile_locked" ||
+    event.type === "profile_error"
   )
     return state
   return Match.value(event).pipe(
@@ -293,4 +296,3 @@ export const attemptRowView = (row: AttemptRow): AttemptRowView => {
     active: Option.map(active, (cell) => ({ ...cell, name: clipName(cell.name) })),
   }
 }
-

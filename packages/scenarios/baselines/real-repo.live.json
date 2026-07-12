@@ -7,7 +7,7 @@
   "versions": {
     "coder-prompt": "1.3.0",
     "critic-rubric": "1.0.0",
-    "repo-oracle": "foundry.repo.config.ts",
+    "repo-oracle": "foundry.config.ts",
     "model.general": "opencode:kimi-k2.6",
     "model.code": "opencode:kimi-k2.7-code",
     "model.fast": "opencode:deepseek-v4-flash"

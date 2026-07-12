@@ -13,8 +13,8 @@ import type { PromptState } from "./promptBox.js"
 /**
  * The in-app `:login` flow as a PURE state machine, shaped as a provider
  * manager: the home screen lists every provider with its configured status;
- * pick one → choose a method (anthropic only — the one provider with a
- * wired subscription flow) → paste a key or run the OAuth flow → land back
+ * pick one → choose a method for subscription-capable providers → paste a
+ * key or run the OAuth flow → land back
  * on home with the new status tag. Transitions are pure; the driver
  * (`actions/login.ts`) performs the effects on the `LoginAdvance` outcome.
  */
@@ -87,8 +87,7 @@ const HOME_PROVIDERS: ReadonlyArray<SmithProvider> = [
   "opencode",
 ]
 
-/** Only anthropic has a wired subscription (OAuth) flow on the new line. */
-const SUBSCRIPTION_PROVIDERS: ReadonlyArray<SmithProvider> = ["anthropic"]
+const SUBSCRIPTION_PROVIDERS: ReadonlyArray<SmithProvider> = ["anthropic", "openai"]
 
 const statusWord = (s: ProviderStatus["configured"]): Option.Option<string> =>
   Option.map(s, (kind) =>
@@ -124,7 +123,7 @@ const methodStep = (
   statuses,
   provider,
   sel: openSelect(`Log in to ${PROVIDER_LABEL[provider]}`, [
-    { value: "subscription", label: "Use a subscription (OAuth — Claude Pro/Max)" },
+    { value: "subscription", label: provider === "anthropic" ? "Use a subscription (OAuth — Claude Pro/Max)" : "Use a subscription (OAuth — ChatGPT Plus/Pro)" },
     { value: "api_key", label: "Use an API key" },
   ]),
 })

@@ -15,8 +15,9 @@ Every agent in this repo is built to four sentences:
 happily announce success. Nothing in this codebase takes its word: smith's
 forge run is accepted only when the gate pipeline (typecheck, tests, the
 spec's own named checks) exits green; math grades every answer server-side
-with exact rational arithmetic; canvas rejects any page that fails the UI
-gates and hands the findings back as data; social's drafts cannot reach X
+with exact rational arithmetic; the UI agent rejects undeclared recipes,
+blocks, capabilities, assets, graph endpoints, or incomplete page contracts
+and hands the findings back as data; social's drafts cannot reach X
 without a human keypress.
 
 **Enforced, not advisory.** Prompting a model to "make sure the tests pass"
@@ -31,7 +32,7 @@ the more autonomy the agent earns:
 | --- | --- | --- |
 | smith | typecheck + tests + spec checks (strong) | full forge autonomy, bounded attempts |
 | math | exact grading against the item's own key (strong) | instant server grading, no model round-trip |
-| canvas | deterministic UI gates (medium) | one output channel, every render gated |
+| UI agent / canvas | typed schemas + recipe completeness + host capability registry (strong) | no raw markup channel; model planner + replaceable model composer/repair; structured streaming |
 | social | none worth trusting (weak) | draft-only tools, human approval, policy gates at two chokepoints |
 
 **Failures are data.** A malformed tool call, a rejected render, a gate

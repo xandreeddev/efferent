@@ -20,6 +20,8 @@ import { profilePack } from "./packs/profile.js"
 import { realRepoPack } from "./packs/realRepo.js"
 import { refinerPack } from "./packs/refiner.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
+import { issueTrackerPack } from "./packs/issueTracker.js"
+import { canvasPack } from "./packs/canvas.js"
 
 /**
  * `bun run evals:live [battery …] [--samples n] [--json] [--update-baselines] [--no-check]`
@@ -37,9 +39,10 @@ import { smithSpecPack } from "./packs/smithSpec.js"
 
 /** HEAVY batteries — a monorepo clone + install + full test suite PER
  *  ATTEMPT. Excluded from the default all-packs expansion; run by name. */
-export const HEAVY_PACKS: ReadonlySet<string> = new Set(["real-repo"])
+export const HEAVY_PACKS: ReadonlySet<string> = new Set(["real-repo", "canvas"])
 
 export const LIVE_PACKS: Record<string, Pack> = {
+  canvas: canvasPack,
   "judge-calibration": judgeCalibrationPack,
   digest: digestPack,
   memory: memoryPack,
@@ -49,6 +52,7 @@ export const LIVE_PACKS: Record<string, Pack> = {
   /** The shared pack — its live-only scenario runs here; the scripted twin
    *  is CI's (main.ts). */
   "smith-spec": smithSpecPack,
+  "issue-tracker": issueTrackerPack,
 }
 
 export const parseLiveArgs = (

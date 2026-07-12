@@ -1,14 +1,14 @@
 import { Option } from "effect"
-import type { ToolCallSummary } from "../domain/LoopEvent.js"
-import { ToolCallId } from "../domain/Message.js"
+import type { ToolCallSummary } from "../domain/loop-event.entity.js"
+import { ToolCallId } from "../domain/message.entity.js"
 import type {
   AgentMessage,
   ReasoningPart,
   TextPart,
   ToolCallPart,
   ToolResultPart,
-} from "../domain/Message.js"
-import type { TokenUsage } from "../domain/TokenUsage.js"
+} from "../domain/message.entity.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 
 /**
  * Bridges the persisted `AgentMessage` with `@effect/ai`'s `Prompt`/`Response`

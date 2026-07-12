@@ -33,6 +33,10 @@ pg-data/
 !assets/avatar.png
 # Skills are local to each workspace; agents read them, repos don't carry them.
 .efferent/
+!.efferent/
+.efferent/*
+!.efferent/gates/
+!.efferent/gates/**
 # local test scratch db
 test.db
 test.db-shm
@@ -46,6 +50,9 @@ prompt.md
 # ad-hoc eval run outputs (committed baselines live in packages/evals/baselines/)
 packages/evals/results/
 .foundry/
+!.foundry/
+.foundry/*
+!.foundry/baseline.json
 
 # Fixture workspaces COMMIT their .efferent (they are the eval worlds, not live state)
 !packages/*/fixtures/**/.efferent/
