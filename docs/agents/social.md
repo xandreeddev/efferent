@@ -83,7 +83,7 @@ radius largest.
 ## PR phasing
 
 S1 ledger + policy file + 11 pure gates + repo-gate governance (social enters
-`foundry.repo.config.ts`: CHECKED + boundaries layer canImport
+`foundry.config.ts`: CHECKED + boundaries layer canImport
 core+adapters+foundry; existing code baselined, new code clean) →
 S2 chokepoints (Gate A in `write_draft`, `XPlatform.readThread` + tool,
 Gate B post-edit, maxSteps 5→8) → S3 the `social` eval suite (evals v2) →

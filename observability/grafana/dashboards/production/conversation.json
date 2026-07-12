@@ -41,7 +41,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && span.agent.kind = \"run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.prompt_chars)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -61,13 +61,13 @@
             "indexByName": {
               "agent.prompt": 0,
               "time": 1,
-              "agent.model": 2,
+              "agent.prompt_chars": 2,
               "spanID": 3
             },
             "renameByName": {
               "agent.prompt": "user message",
               "time": "when",
-              "agent.model": "model",
+              "agent.prompt_chars": "prompt chars",
               "spanID": "span"
             }
           }
@@ -98,7 +98,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && span.agent.conversation_id = \"$conversation\" && span.agent.kind = \"tool\" } | select(span.agent.tool.name, span.agent.tool.ok, span.agent.tool.args_summary)",
+          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } >> { name = \"engine.run\" } | select(span.engine.tool_calls, span.engine.tool_calls.failed, span.engine.corrections)",
           "tableType": "spans",
           "limit": 200,
           "spss": 5
@@ -117,7 +117,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && span.agent.conversation_id = \"$conversation\" && span.agent.kind = \"turn\" } | quantile_over_time(duration, .95)",
+          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } >> { name = \"engine.turn\" } | quantile_over_time(duration, .95)",
           "tableType": "spans",
           "limit": 200
         }

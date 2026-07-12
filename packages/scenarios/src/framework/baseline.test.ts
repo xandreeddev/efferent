@@ -10,6 +10,7 @@ import {
   orphanedEntries,
   readBaseline,
   toBaseline,
+  unbaselinedEntries,
   versionDrift,
   writeBaseline,
 } from "./baseline.js"
@@ -18,8 +19,8 @@ const report = (over: Partial<PackReport> = {}): PackReport => ({
   pack: "toy",
   mode: "live",
   scenarios: [
-    { name: "a", status: "ran", checks: [], judges: [], score: 1, combined: 0.9 },
-    { name: "skipped", status: "skipped", checks: [], judges: [], score: 0, combined: 0 },
+    { name: "a", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 0.9 },
+    { name: "skipped", status: "skipped", hardPassed: false, checks: [], judges: [], score: 0, combined: 0 },
   ],
   mean: 0.9,
   threshold: 0.8,
@@ -106,6 +107,21 @@ describe("the baseline module", () => {
     expect(warnings[0]).toContain('"old-name"')
   })
 
+  test("unbaselinedEntries rejects a newly added ran scenario", () => {
+    const baseline: Baseline = { mode: "live", mean: 0.9, scenarios: { a: 0.9 } }
+    const additions = unbaselinedEntries(
+      report({
+        scenarios: [
+          { name: "a", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 1 },
+          { name: "new", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 1 },
+        ],
+      }),
+      baseline,
+    )
+    expect(additions).toHaveLength(1)
+    expect(additions[0]).toContain('"new"')
+  })
+
   test("perScenario ratchet: a case drop fails even when the mean holds", () => {
     const baseline: Baseline = {
       mode: "live",
@@ -119,8 +135,8 @@ describe("the baseline module", () => {
       threshold: 0.5,
       passed: true,
       scenarios: [
-        { name: "case-a", status: "ran", checks: [], judges: [], score: 0.7, combined: 0.7 },
-        { name: "case-b", status: "ran", checks: [], judges: [], score: 1.1, combined: 1.1 },
+        { name: "case-a", status: "ran", hardPassed: true, checks: [], judges: [], score: 0.7, combined: 0.7 },
+        { name: "case-b", status: "ran", hardPassed: true, checks: [], judges: [], score: 1.1, combined: 1.1 },
       ],
     }
     // Mean-only: fine (0.9 ≥ 0.9 − 0.05).
@@ -136,8 +152,8 @@ describe("the baseline module", () => {
     const withSkip: PackReport = {
       ...report,
       scenarios: [
-        { name: "case-a", status: "skipped", checks: [], judges: [], score: 0, combined: 0 },
-        { name: "brand-new", status: "ran", checks: [], judges: [], score: 0.1, combined: 0.1 },
+        { name: "case-a", status: "skipped", hardPassed: false, checks: [], judges: [], score: 0, combined: 0 },
+        { name: "brand-new", status: "ran", hardPassed: true, checks: [], judges: [], score: 0.1, combined: 0.1 },
       ],
     }
     expect(Option.isNone(compareBaseline(withSkip, baseline, 0.05, true))).toBe(true)

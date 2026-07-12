@@ -7,5 +7,63 @@
   "versions": {
     "math-prompt": "2.0.0"
   },
-  "mintedAt": "2026-07-10T20:00:25.603Z"
+  "evidence": {
+    "admission + session dedupe (scripted twin)": {
+      "status": "ran",
+      "hardPassed": true,
+      "score": 1,
+      "combined": 1,
+      "checks": [
+        {
+          "step": "the start action serves a batch; the malformed item bounces as data",
+          "check": "only the valid exercises render (ex-1, ex-2)",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the start action serves a batch; the malformed item bounces as data",
+          "check": "the malformed key bounced with its exact reason",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "a later batch re-serving an id hits the session-scope dedupe",
+          "check": "the second batch admits only the NEW exercise",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "a later batch re-serving an id hits the session-scope dedupe",
+          "check": "the re-served id bounced with the dedupe reason",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the persisted conversation is the audit trail",
+          "check": "turn-alternation-valid",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the persisted conversation is the audit trail",
+          "check": "tool-sequence:render_math→render_math",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the persisted conversation is the audit trail",
+          "check": "brief-contains:[action] start",
+          "severity": "hard",
+          "pass": true
+        }
+      ],
+      "judges": []
+    }
+  },
+  "provenance": {
+    "gitSha": "cfa0653fcfb7916e55c6cf8911dfdc3a91c66474",
+    "lockSha256": "be62db4a5f529f51ef253ec91d48261f985e77d850d0577264cbd4a624f610d6",
+    "bunVersion": "1.3.0"
+  },
+  "mintedAt": "2026-07-12T08:47:22.426Z"
 }

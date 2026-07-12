@@ -36,16 +36,23 @@ export const TracingLive = (serviceName: string): Layer.Layer<never> =>
     }),
   })) as Layer.Layer<never>
 
+const fileLogger = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    yield* fs
+      .makeDirectory(dirname(path), { recursive: true })
+      .pipe(Effect.orElseSucceed(() => undefined))
+    return yield* PlatformLogger.toFile(Logger.logfmtLogger, path, { flag: "a" })
+    // An unopenable log file must never fail the boot — fall back to silent
+    // (the pre-file behavior), the session is more important than its log.
+  }).pipe(Effect.orElseSucceed(() => Logger.none))
+
 export const FileLoggerLive = (path: string): Layer.Layer<never> =>
-  Logger.replaceScoped(
-    Logger.defaultLogger,
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      yield* fs
-        .makeDirectory(dirname(path), { recursive: true })
-        .pipe(Effect.orElseSucceed(() => undefined))
-      return yield* PlatformLogger.toFile(Logger.logfmtLogger, path, { flag: "a" })
-      // An unopenable log file must never fail the boot — fall back to silent
-      // (the pre-file behavior), the session is more important than its log.
-    }).pipe(Effect.orElseSucceed(() => Logger.none)),
-  ).pipe(Layer.provide(BunFileSystem.layer))
+  Logger.replaceScoped(Logger.defaultLogger, fileLogger(path)).pipe(
+    Layer.provide(BunFileSystem.layer),
+  )
+
+/** Add the file sink while retaining the driver's console logger (headless
+ *  mode needs both a live stderr narrative and crash-forensics on disk). */
+export const FileLoggerAddLive = (path: string): Layer.Layer<never> =>
+  Logger.addScoped(fileLogger(path)).pipe(Layer.provide(BunFileSystem.layer))

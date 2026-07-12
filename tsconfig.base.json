@@ -39,7 +39,10 @@
       "@xandreed/math": ["packages/math/src/index.ts"],
       "@xandreed/math/*": ["packages/math/src/*"],
       "@xandreed/social": ["packages/social/src/index.ts"],
-      "@xandreed/social/*": ["packages/social/src/*"]
+      "@xandreed/social/*": ["packages/social/src/*"],
+      "@xandreed/ui-agent": ["packages/ui-agent/src/index.ts"],
+      "@xandreed/ui-agent/profiles/streaming-ui-v1": ["packages/ui-agent/profiles/streaming-ui-v1.json"],
+      "@xandreed/ui-agent/*": ["packages/ui-agent/src/*"]
     }
   }
 }

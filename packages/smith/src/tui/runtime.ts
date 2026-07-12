@@ -3,7 +3,7 @@ import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
 import { Deferred, Effect, Fiber, Option, Queue, Ref, Runtime, Schema, Scope } from "effect"
 import { SettingsStore } from "@xandreed/engine"
-import type { AuthStore } from "@xandreed/engine"
+import type { AuthStore, ModelCatalog } from "@xandreed/engine"
 import type { FileSystem, SpecDoc } from "@xandreed/engine"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
@@ -14,6 +14,7 @@ import { followUpTarget, runFollowUpTurn } from "../forge/followUp.js"
 import type { ShipPlan } from "../forge/ship.js"
 import { makeRefineSession } from "../refine/session.js"
 import type { RefineAgent, RefineSession } from "../refine/session.js"
+import { makeProfileSession } from "../profile/session.js"
 import { listSpecs, loadSpecDoc } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
 import type { ProviderStatus, SmithProvider } from "./presentation/loginFlow.js"
@@ -31,6 +32,7 @@ export type TuiServices =
   | FileSystem
   | SettingsStore
   | AuthStore
+  | ModelCatalog
   | UtilityLlm
 
 /** The persisted content-part vocabulary `:resume` replays (see the engine's
@@ -69,7 +71,7 @@ const steerFromQueue = (store: SmithStore) => (): Effect.Effect<Option.Option<st
  *  spinner, exit Deferred. `body` wires the mode's fibers + context extras. */
 const withTuiChassis = (
   run: SmithRunConfig,
-  mode: "idle" | "refine" | "forge",
+  mode: "idle" | "profile" | "refine" | "forge",
   body: (chassis: {
     readonly store: SmithStore
     readonly publish: (event: SmithEvent) => Effect.Effect<void>
@@ -182,6 +184,61 @@ export const runTui = (
         },
         exit: (code) => {
           Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+        },
+      }
+    }),
+  )
+
+/** Interactive quality-profile authoring over the SAME ProfileSession used
+ * by headless mode: converse, inspect the dry-run panel, then :lock the
+ * exact draft that was reviewed. */
+export const runTuiProfile = (
+  run: SmithRunConfig,
+): Effect.Effect<number, never, TuiServices> =>
+  withTuiChassis(run, "profile", ({ exitDeferred, publish, rt, store }) =>
+    Effect.gen(function* () {
+      const session = yield* makeProfileSession(run.cwd, publish, { unattended: false })
+
+      const turn = (text: string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            store.addUserLine(text)
+            store.setBusy(true)
+          })
+          yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
+          const queued = yield* Effect.sync(() => store.drainQueue())
+          yield* queued.length > 0 ? turn(queued.join("\n\n")) : Effect.void
+        }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
+
+      yield* Effect.forkScoped(
+        turn(
+          "Analyze this workspace and propose its quality profile. Inspect its real scripts and architecture first; ask only questions that materially change the contract.",
+        ),
+      )
+
+      return {
+        store,
+        runConfig: run,
+        run: (effect) => Runtime.runPromise(rt)(effect),
+        interrupt: () => store.setNotice("profile has no forge run to interrupt — :quit to leave"),
+        exit: (code) => {
+          Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+        },
+        sendProfile: (text) => {
+          if (store.busy()) {
+            store.enqueue(text)
+            store.setNotice("queued — steered in at the next step")
+            return
+          }
+          Runtime.runFork(rt)(turn(text))
+        },
+        lock: () => {
+          Runtime.runFork(rt)(
+            session.lock.pipe(
+              Effect.tap(() => Effect.sync(() => store.setNotice("profile locked"))),
+              Effect.catchAll((error) => Effect.sync(() => store.setNotice(error.message))),
+            ),
+          )
         },
       }
     }),
@@ -377,7 +434,14 @@ export const makeWorkspaceBody = (
         )
         const statuses: ReadonlyArray<ProviderStatus> = SMITH_PROVIDERS.map((provider) => ({
           provider,
-          configured: Option.map(Option.fromNullable(credentials.get(provider)), (c) => c.type),
+          configured: Option.map(
+            Option.fromNullable(
+              provider === "openai"
+                ? credentials.get("openai-codex") ?? credentials.get("openai")
+                : credentials.get(provider),
+            ),
+            (c) => c.type,
+          ),
         }))
         const conv = yield* ConversationStore
         const sessions = yield* conv
@@ -911,4 +975,3 @@ export const runTuiWorkspace = (
   run: SmithRunConfig,
 ): Effect.Effect<number, never, TuiServices> =>
   withTuiChassis(run, "idle", makeWorkspaceBody(run))
-

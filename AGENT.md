@@ -38,7 +38,18 @@ packages/
 │                 anthropic subscription auth + cache breakpoints; transient
 │                 retries, 300s timeout, empty-response rejection) · SQLite
 │                 conversation store · local auth/settings · fs/shell
-├── surface/      the UI substrate (pure): the html tagged template · the
+├── ui-agent/     the reusable governed UI AGENT (ui-agent → engine): typed
+│                 PageManifest/UiBlock/ArchitectureGraph entities · internal
+│                 start_ui + patch_ui output channels · versioned execution
+│                 profile + pinned model planner/composer/repair services ·
+│                 host capability and durable page-event ports. It emits data,
+│                 never HTML/CSS/classes/HTMX/Alpine/SVG/URLs.
+├── surface/      the trusted UI compiler (surface → ui-agent): html template ·
+│                 token validation/CSS compilation · versioned landing/app/doc
+│                 recipes · typed blocks → escaped semantic HTML · typed graphs
+│                 → accessible server-side SVG (Dagre) · legacy allowlist
+│                 sanitizer and validateUi gates for read-only old Canvas pages
+│                 and other existing consumers
 │                 allowlist sanitizer (the security boundary; attack tests are
 │                 the spec; opt-in alpine mode admits x-*/@*/:* directives,
 │                 never x-html/x-teleport/URL binds) · sanitizeMathml ·
@@ -60,14 +71,15 @@ packages/
 │                 toolkit, HUMAN review queue, 11 deterministic policy gates
 │                 at write_draft AND pre-post, append-only JSONL ledger as the
 │                 dedup memory. Replies NEVER graduate to auto-post.
-├── canvas/       the ui-builder (canvas → engine+providers+surface): builds
-│                 interactive PAGES from natural language; render_ui is the
-│                 ONE output channel (an HTML-in-chat reply is bounced) and
-│                 every call runs surface's UI gates — a violation bounces
-│                 with the findings; no fs/shell/code tools at all. Pages =
-│                 the cv-* design system + htmx-over-WS for agent actions +
-│                 vendored Alpine.js for page-LOCAL state (timers/toggles),
-│                 CSP-pinned. No React ever.
+├── canvas/       the first UI-agent HOST (canvas → ui-agent+surface+providers):
+│                 HTMX-over-WS shell, SQLite structured page-event adapter,
+│                 registered assets/actions, JSON semantic tokens, CSRF/origin
+│                 enforcement, CSP Alpine behaviors, and legacy raw-page replay.
+│                 No Tailwind/Mermaid runtime and no raw authoring fallback.
+├── issue-tracker-example/ the reference Effect architecture and safe Smith
+│                 eval world: Schema entities + paired behavior, use-case
+│                 contracts + paired programs, Context.Tag ports, Layer
+│                 adapters, and a composition-only main.
 └── scenarios/    evals v3 (top of the graph — imports agents): scenario packs
                   over agent worlds — ordered steps, deterministic evidence
                   checks (event trail / persisted conversation / workspace),
@@ -76,13 +88,14 @@ packages/
 ```
 
 **Dependency direction is enforced by the boundaries gate**
-(`foundry.repo.config.ts`): engine/surface/foundry import nothing internal;
-providers → engine; each agent → its substrate; scenarios may import agents;
+(`foundry.config.ts`): engine/foundry import nothing internal; ui-agent →
+engine; surface → ui-agent; providers → engine; hosts → agent+renderer;
+scenarios may import agents;
 nothing imports scenarios.
 
 ## Conventions (gate-enforced, ZERO baseline)
 
-`bun run typecheck` = tsc + foundry's self-check + the repo gate suite, and
+`bun run typecheck` = the canonical repo profile (static architecture + tsc), and
 the committed baseline is EMPTY — every rule violation anywhere fails:
 
 - **Errors are values**: no `try`/`catch`/`throw`/`.catch()` — typed errors
@@ -98,6 +111,13 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
 - Ports are `Context.Tag` services in the engine; adapters are one
   `<Thing>Live` Layer each in providers; composition happens at each agent's
   `main.ts` edge and nowhere else.
+- New domain/application features use qualified pairs: `thing.entity.ts` +
+  `thing.entity.functions.ts`, and `do-thing.usecase.ts` +
+  `do-thing.usecase.functions.ts`. Entity/use-case contracts contain Schema
+  definitions and derived types; behavior lives in the paired functions file.
+  Ports end in `.port.ts`; adapters end in `.adapter.ts` and may bridge foreign
+  promises only through `Effect.tryPromise`. Raw Promise orchestration,
+  runtime imports, `Effect.run*`, and Layer construction never enter the core.
 - **After any task, run `bun run typecheck`** — a banned construct or a fresh
   finding fails the command and the change is rejected. CI additionally runs
   `bun test`, `bun run foundry demo` (the forge-loop E2E), and
@@ -106,10 +126,16 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
 ## Running the agents
 
 Credentials come from `~/.efferent/auth.json` (per-provider `api_key`/`oauth`
-entries); model selection from `.efferent/config.json`
+entries); general agent model selection comes from `.efferent/config.json`
 (`"model": "<provider>:<modelId>"`, plus `codeModel`/`fastModel` roles;
 local-over-global merge). `EFFERENT_MODEL` is deliberately ignored — the
 launch dir's `.env` must never silently pick the model.
+
+The UI agent is the exception: its model planner/composer/repair selections and
+effort/token/timeout/fallback policy are pinned and versioned in
+`packages/ui-agent/profiles/streaming-ui-v1.json`. Startup rejects profile drift; do
+not replace it with the global roles. Profile or prompt changes require the
+model × effort matrix, Canvas latency/quality battery, and a reviewed baseline update.
 
 ```bash
 bun run smith "<task>" --cwd <dir> [-p]        # shorthand: trivial locked spec + forge
@@ -119,6 +145,7 @@ bun run math [--grade <n> --theme "<t>"] [--open]   # the practice product (loop
 bun run canvas [--port <n>] [--open]           # the page builder (loopback)
 bun run social test|review|daemon              # scan (supervised) · human queue · scheduler
 bun run scenarios [pack…] [--mode scripted|live]    # the regression batteries
+bun run evals:ui-matrix [--samples <n>]             # model × effort UI selection evidence
 bun run foundry check|demo                     # the gate suite / the forge E2E
 ```
 

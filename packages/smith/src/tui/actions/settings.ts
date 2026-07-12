@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { SettingsStore } from "@xandreed/engine"
+import { ModelCatalog, SettingsStore } from "@xandreed/engine"
 import type { SettingsKey } from "@xandreed/engine"
 import { modelPickerOptions } from "../presentation/modelCatalog.js"
 import { openSelect } from "../presentation/selectBox.js"
@@ -188,14 +188,14 @@ export const openNumberPicker = (ctx: SmithTuiContext, key: NumberSettingKey): v
  *  row (there is no smith default to fall back to — unset = no rung). */
 export const openFallbackPicker = (ctx: SmithTuiContext): void => {
   void ctx.run(
-    Effect.flatMap(SettingsStore, (store) =>
-      Effect.map(store.load, (settings) => {
+    Effect.all({ settings: Effect.flatMap(SettingsStore, (store) => store.load), catalog: Effect.flatMap(ModelCatalog, (catalog) => catalog.list) }).pipe(
+      Effect.map(({ settings, catalog }) => {
         ctx.store.setOverlay({
           kind: "select",
           purpose: { tag: "fallback-model" },
           sel: openSelect("Select the FALLBACK model", [
             { value: Option.none<string>(), label: "none", desc: "clear the fallback rung" },
-            ...modelPickerOptions("general", settings),
+            ...modelPickerOptions("general", settings, catalog),
           ]),
         })
       }),

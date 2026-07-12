@@ -7,6 +7,8 @@ import {
   DEFAULT_TOLERANCE,
   orphanedEntries,
   readBaseline,
+  unbaselinedEntries,
+  versionDrift,
   writeBaseline,
 } from "./framework/baseline.js"
 import { defaultExtras, renderReport } from "./framework/report.js"
@@ -14,7 +16,9 @@ import { canvasPack } from "./packs/canvas.js"
 import { mathPack } from "./packs/math.js"
 import { profilePack } from "./packs/profile.js"
 import { smithSpecPack } from "./packs/smithSpec.js"
+import { socialPack } from "./packs/social.js"
 import { tuiPack } from "./packs/tui.js"
+import { issueTrackerPack } from "./packs/issueTracker.js"
 
 /**
  * `bun run scenarios [pack …] [--mode scripted|live] [--json] [--update-baselines] [--no-check]`
@@ -28,9 +32,11 @@ import { tuiPack } from "./packs/tui.js"
 
 const PACKS = {
   canvas: canvasPack,
+  "issue-tracker": issueTrackerPack,
   math: mathPack,
   profile: profilePack,
   "smith-spec": smithSpecPack,
+  social: socialPack,
   tui: tuiPack,
 } as const
 
@@ -81,12 +87,19 @@ const program = Effect.gen(function* () {
                 pack.perScenarioTolerance ?? pack.tolerance ?? DEFAULT_TOLERANCE,
               ),
             )
-        const orphans = Option.match(prior, {
+        const orphans = args.noCheck ? [] : Option.match(prior, {
           onNone: () => [] as ReadonlyArray<string>,
           onSome: (b) => orphanedEntries(report, b),
         })
+        const unbaselined = args.noCheck ? [] : Option.match(prior, {
+          onNone: () => [`missing committed baseline for ${report.pack}.${report.mode}`],
+          onSome: (b) => unbaselinedEntries(report, b),
+        })
+        const drift = args.noCheck
+          ? Option.none<string>()
+          : Option.flatMap(prior, (b) => versionDrift(pack, b))
         if (args.update) writeBaseline(BASELINE_DIR, report, pack)
-        return { pack, report, regression, orphans }
+        return { pack, report, regression, orphans, unbaselined, drift }
       }),
     ),
   )
@@ -95,12 +108,20 @@ const program = Effect.gen(function* () {
     console.log(JSON.stringify(outcomes.map((o) => o.report), null, 2))
   } else {
     outcomes.forEach((o) => {
-      console.log(renderReport(o.report, o.pack, { ...defaultExtras, regression: o.regression }))
+      console.log(renderReport(o.report, o.pack, { ...defaultExtras, regression: o.regression, drift: o.drift }))
       o.orphans.forEach((warning) => console.log(`  ⚠ ${warning}`))
+      o.unbaselined.forEach((warning) => console.log(`  ⚠ ${warning}`))
     })
     if (args.update) console.log(`baselines updated under ${BASELINE_DIR}`)
   }
-  const failed = outcomes.some((o) => !o.report.passed || Option.isSome(o.regression))
+  const failed = outcomes.some(
+    (o) =>
+      !o.report.passed ||
+      Option.isSome(o.regression) ||
+      Option.isSome(o.drift) ||
+      o.orphans.length > 0 ||
+      o.unbaselined.length > 0,
+  )
   return failed ? 1 : 0
 })
 

@@ -178,7 +178,8 @@ const dryRun = (
       makeCommandGate({
         name: check.name,
         argv: ["bash", "-c", check.command],
-        timeoutMs: CHECK_TIMEOUT_MS,
+        kind: check.kind,
+        timeoutMs: Math.min(check.timeoutMs, CHECK_TIMEOUT_MS),
       })
         .run({ rootDir: cwd, files: [] })
         .pipe(
@@ -259,6 +260,13 @@ export const makeProfileSession = (
         yield* writeDraftFiles(draftDir, proposal)
         const result = yield* dryRun(cwd, draftDir, proposal)
         yield* Ref.set(draftRef, Option.some(result))
+        yield* publish({
+          type: "profile_draft",
+          draftDir: result.draftDir,
+          rules: result.rules,
+          boundaryViolations: result.boundaryViolations,
+          checks: result.checks,
+        })
         return result
       })
 
@@ -295,8 +303,27 @@ export const makeProfileSession = (
     return {
       conversationId,
       send: (text) =>
-        agent(conversationId, text, { propose }).pipe(Effect.flatMap(() => Ref.get(draftRef))),
-      lock: lockProfile(cwd).pipe(Effect.provide(context)),
+        agent(conversationId, text, { propose }).pipe(
+          Effect.flatMap(() => Ref.get(draftRef)),
+          Effect.tapError((error) =>
+            publish({ type: "profile_error", message: String(error) }),
+          ),
+        ),
+      lock: lockProfile(cwd).pipe(
+        Effect.provide(context),
+        Effect.tap((report) =>
+          publish({
+            type: "profile_locked",
+            configPath: report.configPath,
+            rules: report.rules,
+            grandfathered: report.grandfathered,
+            checks: report.checks,
+          }),
+        ),
+        Effect.tapError((failure) =>
+          publish({ type: "profile_error", message: failure.message }),
+        ),
+      ),
     }
   })
 
@@ -435,7 +462,7 @@ export const runHeadlessProfile = (
     })
     console.log(`  ${summary.note}`)
     if (!lockAfter) {
-      console.log(`draft: ${summary.draftDir} — lock with: bun run smith profile -p --yes`)
+      console.log(`draft: ${summary.draftDir} — review it, then lock the SAME draft with: bun run smith profile lock -p`)
       return 0
     }
     const outcome = yield* Effect.either(session.lock)
@@ -452,3 +479,25 @@ export const runHeadlessProfile = (
       },
     })
   })
+
+/** Lock the exact on-disk draft produced by an earlier reviewed headless
+ * profile run. No model call and no re-proposal occur here. */
+export const runHeadlessProfileLock = (
+  cwd: string,
+): Effect.Effect<number, never, FileSystem> =>
+  Effect.either(lockProfile(cwd)).pipe(
+    Effect.map(
+      Either.match({
+        onLeft: (failure) => {
+          console.error(`lock failed: ${failure.message}`)
+          return 2
+        },
+        onRight: (report) => {
+          console.log(
+            `✓ profile ARMED from reviewed draft: ${report.rules} rule(s) · ${report.grandfathered} grandfathered · ${report.checks} check(s) → ${report.configPath}`,
+          )
+          return 0
+        },
+      }),
+    ),
+  )

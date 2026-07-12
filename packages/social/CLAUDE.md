@@ -21,12 +21,13 @@ trust through THREE structural guarantees:
    (the edit path used to post >280 raw) with post-time dedup/caps.
 
 **The ledger is the memory** (`posts/ledger.jsonl`, append-only JSONL,
-`src/domain/Ledger.ts`): one row per lifecycle event (drafted / gate_rejected /
+`src/domain/ledger.entity.ts` + `ledger.entity.functions.ts`): one row per
+lifecycle event (drafted / gate_rejected /
 posted / discarded / skipped) with content + findings. Dedup consults the
 LEDGER forever — a discarded draft's target never re-engages; directory names
 carry no state. **Policy is data** (`posts/policy.json` overlays the
-conservative `DEFAULT_POLICY` in `src/domain/policy.ts`) — loosening a cap is
-a reviewed edit, never a prompt change.
+conservative `DEFAULT_POLICY` in `src/domain/social-policy.entity.ts`) —
+loosening a cap is a reviewed edit, never a prompt change.
 
 ```bash
 bun packages/social/src/main.ts test     # supervised scan: search X → evaluate → gated drafts
@@ -39,7 +40,7 @@ bun packages/social/src/main.ts daemon   # scheduled scans (see roadmap: cron + 
 ```
 src/
 ├── main.ts        composition root (@effect/cli): daemon | review | test
-├── domain/        paths · Ledger (append-only JSONL + pure views) · policy
+├── domain/        paths · ledger entity + functions · social-policy entity
 │                  (Schema.Class + json overlay, fail-closed to defaults) ·
 │                  gates (the 11 pure gates + runSocialGates + renderFindings)
 ├── ports/         XPlatform (search · notifications · readThread · postTweet)

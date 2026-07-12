@@ -20,7 +20,16 @@ export const ProfileProposal = Schema.Struct({
     }),
   ),
   checks: Schema.optionalWith(
-    Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, command: Schema.NonEmptyString })),
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.NonEmptyString,
+        command: Schema.NonEmptyString,
+        kind: Schema.optionalWith(Schema.Literal("test", "eval"), { default: () => "test" }),
+        timeoutMs: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
+          default: () => 300_000,
+        }),
+      }),
+    ),
     { default: () => [] },
   ),
   boundaries: Schema.optionalWith(
@@ -52,11 +61,11 @@ export interface ProfileDryRun {
  *  propose time). */
 export const ProposeProfile = Tool.make("propose_profile", {
   description:
-    "Propose the workspace quality profile — every call REPLACES the whole draft. packs: shipped rule packs to vendor into the project ('effect' for Effect.ts house style, 'quality' for paradigm-neutral anti-gate-gaming). customRules: additional rule modules as {filename, source} — plain TS exporting `rules` (load the gate-rule-authoring skill first). rules: which rule ids to ARM and where (ids must come from the chosen packs/custom modules). checks: the project's own authoritative scripts as {name, command} (bash -c, exit 0 = clean). boundaries: dependency-direction layers. doctrine: the prose rules file body (markdown, no heading needed). The proposal is DRY-RUN against the workspace: the result carries per-rule finding counts (grandfathered at lock), boundary violations, and check statuses. Only the human locks.",
+    "Propose the workspace quality profile — every call REPLACES the whole draft. packs: shipped rule packs to vendor into the project ('effect' for Effect.ts idioms, 'effect-architecture' for Schema entities/use cases + Context.Tag ports + Layer adapters, 'quality' for paradigm-neutral anti-gate-gaming). customRules: additional rule modules as {filename, source} — plain TS exporting `rules` (load the gate-rule-authoring skill first). rules: which rule ids to ARM and where (ids must come from the chosen packs/custom modules). checks: the project's own authoritative scripts as {name, command, kind?, timeoutMs?} (bash -c, exit 0 = clean; kind 'eval' runs after tests). boundaries: dependency-direction layers. doctrine: the prose rules file body (markdown, no heading needed). The proposal is DRY-RUN against the workspace: the result carries per-rule finding counts (grandfathered at lock), boundary violations, and check statuses. Only the human locks.",
   parameters: {
     packs: Schema.optional(
       Schema.Array(Schema.String).annotations({
-        description: 'Shipped packs to vendor: "effect" and/or "quality".',
+        description: 'Shipped packs to vendor: "effect", "quality", and/or "effect-architecture".',
       }),
     ),
     customRules: Schema.optional(
@@ -79,7 +88,14 @@ export const ProposeProfile = Tool.make("propose_profile", {
       }),
     ),
     checks: Schema.optional(
-      Schema.Array(Schema.Struct({ name: Schema.String, command: Schema.String })),
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          command: Schema.String,
+          kind: Schema.optional(Schema.Literal("test", "eval")),
+          timeoutMs: Schema.optional(Schema.Number),
+        }),
+      ),
     ),
     boundaries: Schema.optional(
       Schema.Array(

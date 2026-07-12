@@ -1,7 +1,7 @@
 import { AiError, LanguageModel, Tool } from "@effect/ai"
 import type { Prompt } from "@effect/ai"
-import { Effect, FiberRef, Option, Stream } from "effect"
-import { CurrentPromptCacheKey } from "@xandreed/engine"
+import { Effect, Either, FiberRef, Option, Stream } from "effect"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/engine"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage } from "./sse.js"
 
@@ -18,6 +18,41 @@ import type { CompletionUsage } from "./sse.js"
  */
 
 type Json = Record<string, unknown>
+
+const record = (value: unknown): Json =>
+  typeof value === "object" && value !== null ? value as Json : {}
+
+/** Gateways sometimes encode a semantic model/billing rejection behind an
+ * HTTP status normally associated with auth. Preserve the provider meaning
+ * so agents and evals do not diagnose "bad key" for an unsupported model. */
+const semanticGatewayError = (
+  moduleName: string,
+  method: string,
+  body: string,
+): Option.Option<AiError.AiError> =>
+  Option.flatMap(
+    Option.fromNullable(Either.getOrUndefined(Either.try(() => JSON.parse(body) as unknown))),
+    (decoded) => {
+      const error = record(record(decoded)["error"])
+      const type = typeof error["type"] === "string" ? error["type"] : ""
+      const message = typeof error["message"] === "string" ? error["message"] : ""
+      if (type === "ModelError" || /model .*not supported/i.test(message)) {
+        return Option.some(new AiError.MalformedInput({
+          module: moduleName,
+          method,
+          description: message.length > 0 ? message : "the selected model is not supported",
+        }))
+      }
+      if (type === "CreditsError" || /insufficient (?:balance|credits)|usage limit|quota/i.test(message)) {
+        return Option.some(new AiError.UnknownError({
+          module: moduleName,
+          method,
+          description: `CreditsError: ${message || "provider quota exhausted"}`,
+        }))
+      }
+      return Option.none()
+    },
+  )
 
 export interface CompatConfig {
   /** Module name for `AiError` provenance (e.g. "OpenCode"). */
@@ -233,8 +268,8 @@ const chatRequestBody = (
   options: { readonly prompt: Prompt.Prompt; readonly tools: ReadonlyArray<Tool.Any>; readonly toolChoice?: unknown },
   streaming: boolean,
 ): Effect.Effect<Json> =>
-  FiberRef.get(CurrentPromptCacheKey).pipe(
-    Effect.map((cacheKey) => {
+  Effect.all({ cacheKey: FiberRef.get(CurrentPromptCacheKey), policy: FiberRef.get(CurrentModelCallPolicy) }).pipe(
+    Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
       return {
         model: config.model,
@@ -246,6 +281,13 @@ const chatRequestBody = (
           onSome: (key) => ({ prompt_cache_key: key }),
         }),
         ...thinkingParams(config.model),
+        ...Option.match(policy, {
+          onNone: () => ({}),
+          onSome: (value) => ({
+            ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
+            reasoning_effort: value.effort,
+          }),
+        }),
         ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
       }
     }),
@@ -281,6 +323,8 @@ const failStatus = (
       try: () => res.text(),
       catch: (e) => aiUnknown(config.moduleName, method, e),
     })
+    const semantic = semanticGatewayError(config.moduleName, method, text)
+    if (Option.isSome(semantic)) return yield* Effect.fail(semantic.value)
     // (forEach, not Object.fromEntries — this lib config's Headers type has
     // no entries(); the mutation is contained to this literal.)
     const headers: Record<string, string> = {}

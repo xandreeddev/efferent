@@ -40,7 +40,15 @@ describe("the trajectory critic judge", () => {
           name: "with-critic",
           modes: ["live"],
           boot: Effect.succeed(world),
-          steps: [{ name: "s1", act: () => Effect.void, checks: [] }],
+          steps: [
+            {
+              name: "s1",
+              act: () => Effect.void,
+              checks: [
+                { name: "ran", severity: "hard", run: () => Effect.succeed({ pass: true }) },
+              ],
+            },
+          ],
           judges: [critic("no json here at all")],
         },
         "live",

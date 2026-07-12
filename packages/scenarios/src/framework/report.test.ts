@@ -10,13 +10,23 @@ const report: PackReport = {
     {
       name: "sound:case",
       status: "ran",
+      hardPassed: false,
       checks: [
         { step: "s1", check: "verdict", severity: "hard", pass: false, detail: "judged unsound" },
       ],
       judges: [{ judge: "spec-quality", score: 0.75, reason: "acceptance #3 vague" }],
       score: 0.5,
       combined: 0.6,
-      samples: { count: 3, scores: [1, 0, 0.8], passRate: 2 / 3 },
+      samples: {
+        count: 3,
+        scores: [1, 0, 0.8],
+        passRate: 2 / 3,
+        passRate95: { low: 0.2077, high: 0.9385 },
+        passAtK: 26 / 27,
+        passAllK: 8 / 27,
+        infraFailures: 0,
+        outcomes: [],
+      },
     },
   ],
   mean: 0.6,
@@ -42,6 +52,7 @@ describe("renderReport", () => {
           {
             name: first.name,
             status: first.status,
+            hardPassed: first.hardPassed,
             checks: first.checks,
             judges: [],
             score: first.score,
@@ -64,7 +75,7 @@ describe("renderReport", () => {
       summary: ["false-block 0.06 · false-pass 0.17"],
     })
     expect(out).toContain("[judge-prompt 1.0.0 · k=3]")
-    expect(out).toContain("(1/3 · hard-pass 67%)")
+    expect(out).toContain("(p 67% [21–94] · pass@3 96% · pass^3 30%)")
     expect(out).toContain("⚖ spec-quality 0.75 — acceptance #3 vague")
     expect(out).toContain("false-block 0.06")
     expect(out).toContain("⚠ REGRESSION")

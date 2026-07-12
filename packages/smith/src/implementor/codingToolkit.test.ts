@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
@@ -46,7 +46,7 @@ describe("the smith coding handlers — the direct coder's hands", () => {
     )
   })
 
-  test("read_file refuses the credentials file — sandbox on or off", async () => {
+  test("read_file refuses every path outside the workspace", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     await withHandlers(cwd, (h) =>
       Effect.gen(function* () {
@@ -54,7 +54,7 @@ describe("the smith coding handlers — the direct coder's hands", () => {
           .read_file({ path: `${process.env.HOME}/.efferent/auth.json` })
           .pipe(Effect.either)
         expect(denied._tag).toBe("Left")
-        expect(JSON.stringify(denied)).toContain("credentials")
+        expect(JSON.stringify(denied)).toContain("OutsideWorkspace")
         // A relative dodge resolves to the same file and is equally refused.
         const dodged = yield* h
           .read_file({ path: "../../../../../../../..//" + `${process.env.HOME}/.efferent/auth.json`.slice(1) })
@@ -95,7 +95,7 @@ describe("the smith coding handlers — the direct coder's hands", () => {
     )
   })
 
-  test("writes outside the workspace are refused; reads are allowed", async () => {
+  test("reads and writes outside the workspace are refused", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     const outside = mkdtempSync(join(tmpdir(), "smith-outside-"))
     writeFileSync(join(outside, "secret.txt"), "readable")
@@ -107,8 +107,28 @@ describe("the smith coding handlers — the direct coder's hands", () => {
         expect(refused._tag).toBe("Left")
         expect(JSON.stringify(refused)).toContain("OutsideWorkspace")
 
-        const read = yield* h.read_file({ path: join(outside, "secret.txt") })
-        expect(read.content).toBe("readable")
+        const read = yield* h.read_file({ path: join(outside, "secret.txt") }).pipe(Effect.either)
+        expect(read._tag).toBe("Left")
+        expect(JSON.stringify(read)).toContain("OutsideWorkspace")
+      }),
+    )
+  })
+
+  test("canonical guards reject symlinks that escape the workspace", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    const outside = mkdtempSync(join(tmpdir(), "smith-outside-"))
+    writeFileSync(join(outside, "secret.txt"), "do not expose")
+    symlinkSync(outside, join(cwd, "escape"), "dir")
+    await withHandlers(cwd, (h) =>
+      Effect.gen(function* () {
+        const read = yield* h.read_file({ path: "escape/secret.txt" }).pipe(Effect.either)
+        expect(read._tag).toBe("Left")
+
+        const write = yield* h
+          .write_file({ path: "escape/overwrite.txt", content: "escaped" })
+          .pipe(Effect.either)
+        expect(write._tag).toBe("Left")
+        expect(JSON.stringify(write)).toContain("OutsideWorkspace")
       }),
     )
   })

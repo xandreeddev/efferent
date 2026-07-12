@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Stream } from "effect"
-import { ConversationId } from "../domain/Message.js"
+import { ConversationId } from "../domain/message.entity.js"
 import { makeSession } from "./chassis.js"
 
 type Ev =

@@ -5,10 +5,12 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "@effect/platform"
 import { Effect, FiberRef, Option, Redacted } from "effect"
 import type { Scope } from "effect"
-import { AuthError, CurrentPromptCacheKey } from "@xandreed/engine"
+import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/engine"
 import type { Credential, ModelSelection } from "@xandreed/engine"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
+import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
+import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 
 /**
  * Per-provider `LanguageModel.Service` construction. Built PER REQUEST from a
@@ -21,6 +23,11 @@ import { makeCompatLanguageModel } from "./compat.js"
  */
 
 export const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
+/** OpenCode serves GPT models through the OpenAI Responses protocol. */
+export const OPENCODE_RESPONSES_API_URL = "https://opencode.ai/zen/v1"
+
+/** Pure protocol routing decision; provider details stay inside this adapter. */
+export const usesOpenCodeResponses = (modelId: string): boolean => /^gpt-/i.test(modelId)
 
 export interface BuiltProvider {
   readonly svc: LanguageModel.Service
@@ -109,14 +116,50 @@ export const buildProvider = (
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => {
   const oauth = credential?.type === "oauth"
   if (selection.provider === "opencode") {
-    return key === undefined
-      ? Effect.fail(missingKey(selection))
-      : makeCompatLanguageModel({
-          moduleName: "OpenCode",
-          chatUrl: OPENCODE_CHAT_URL,
-          apiKey: Redacted.value(key),
-          model: selection.modelId,
-        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+    if (key === undefined) return Effect.fail(missingKey(selection))
+    if (usesOpenCodeResponses(selection.modelId)) {
+      return Effect.all({
+        cacheKey: FiberRef.get(CurrentPromptCacheKey),
+        policy: FiberRef.get(CurrentModelCallPolicy),
+      }).pipe(
+        Effect.flatMap(({ cacheKey, policy }) =>
+          OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL }).pipe(
+            Effect.flatMap((client) =>
+              OpenAiLanguageModel.make({
+                model: selection.modelId,
+                config: {
+                  // UI tools contain genuinely optional fields. OpenAI strict
+                  // schemas require every property, so use normal function
+                  // calling and let Effect decode the domain schema.
+                  strict: false,
+                  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+                  ...Option.match(policy, {
+                    onNone: () => ({}),
+                    onSome: (value) => ({
+                      ...(value.maxOutputTokens === undefined
+                        ? {}
+                        : { max_output_tokens: value.maxOutputTokens }),
+                      reasoning: {
+                        effort: value.effort === "xhigh" || value.effort === "max"
+                          ? "high"
+                          : value.effort,
+                      },
+                    }),
+                  }),
+                },
+              }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
+            ),
+            Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+          ),
+        ),
+      )
+    }
+    return makeCompatLanguageModel({
+      moduleName: "OpenCode",
+      chatUrl: OPENCODE_CHAT_URL,
+      apiKey: Redacted.value(key),
+      model: selection.modelId,
+    }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "google") {
     return key === undefined
@@ -149,6 +192,16 @@ export const buildProvider = (
       Effect.map((svc) => ({ svc, prependClaudeCode: oauth })),
     )
   }
+  if (selection.provider === "openai-codex") {
+    if (key === undefined || credential?.type !== "oauth") return Effect.fail(missingKey(selection))
+    const accountId = Option.orElse(Option.fromNullable(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
+    if (Option.isNone(accountId)) {
+      return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in again with Smith :login" }))
+    }
+    return makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value }).pipe(
+      Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+    )
+  }
   if (selection.provider === "openai") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
@@ -173,7 +226,7 @@ export const buildProvider = (
   return Effect.fail(
     new AuthError({
       provider: selection.provider,
-      message: `provider "${selection.provider}" is not wired on the new line (v1: opencode, google, anthropic, openai)`,
+      message: `provider "${selection.provider}" is not wired on the new line (v1: opencode, google, anthropic, openai, openai-codex)`,
     }),
   )
 }

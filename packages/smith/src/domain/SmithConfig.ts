@@ -44,8 +44,6 @@ export interface SmithRunConfig {
   readonly maxAttempts: number
   readonly budgetMillis: number
   readonly models: SmithModelFlags
-  /** Let the implementor run Bash (headless allow-all approval) — off by default. */
-  readonly allowBash: boolean
   /** `-p`/`--headless`: print mode, no TUI. */
   readonly headless: boolean
   /** `--test-cmd "<cmd>"` — overrides the auto-detected `bun test` gate. */

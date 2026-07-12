@@ -1,14 +1,20 @@
 ---
 title: Surface — the UI substrate
-description: The html template, the allowlist sanitizer as a security boundary, and validateUi as a feedback boundary.
+description: The trusted token-and-recipe compiler, escaped HTML substrate, legacy sanitizer, and deterministic UI feedback boundaries.
 ---
 
-`@xandreed/surface` is the pure UI substrate the browser-facing agents build
-on — server-rendered strings, htmx for agent actions, no framework runtime.
+`@xandreed/surface` is the trusted compiler used by browser-facing hosts. For
+the UI agent it converts typed blocks into escaped semantic HTML, registered
+HTMX actions, fixed CSP-Alpine behaviors, precompiled recipe CSS, and
+accessible server-rendered diagrams. The model never authors markup.
+
+Validated JSON tokens can change semantic colors, registered font stacks,
+density, radii, shadows, and motion. Layout remains inside the versioned
+landing, application, and architecture-document recipes.
 
 ## The sanitizer is the security boundary
 
-Model-authored HTML crosses into markup at exactly one seam: `sanitizeHtml`,
+Legacy model-authored HTML crosses into markup at exactly one seam: `sanitizeHtml`,
 a strict **allowlist** (elements, attributes, URL schemes) whose attack tests
 are the spec. Chrome ids and classes live on prefixes the sanitizer forbids
 in agent content, so a page can never spoof its own shell. An opt-in
@@ -30,7 +36,8 @@ same run.
 
 ## Who builds on it
 
-[canvas](/docs/agents/canvas) renders every page through both boundaries;
+[canvas](/docs/agents/canvas) uses the structured compiler for every new page
+and the sanitizer only for read-only legacy history;
 [math](/docs/agents/math) uses the html template and `sanitizeMathml` for
-its exercise cards. Both own their views end to end — surface stays pure and
-imports nothing internal.
+its exercise cards. Surface imports only the UI-agent's data contracts; the
+agent cannot import the renderer back.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import type { AgentMessage } from "../domain/Message.js"
+import type { AgentMessage } from "../domain/message.entity.js"
 import {
   assistantUsage,
   extractUsage,
@@ -201,4 +201,3 @@ describe("the model stamp", () => {
     expect(Option.isNone(extractModel([{ type: "finish", reason: "stop" }]))).toBe(true)
   })
 })
-

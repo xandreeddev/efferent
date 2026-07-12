@@ -8,13 +8,13 @@ import type { Pack, PackReport, ScenarioResult } from "./model.js"
  */
 
 const statusGlyph = (s: ScenarioResult): string =>
-  s.status !== "ran" ? "·" : s.combined >= 1 ? "✓" : s.combined > 0 ? "◐" : "✗"
+  s.status !== "ran" ? "·" : !s.hardPassed ? "✗" : s.combined >= 1 ? "✓" : s.combined > 0 ? "◐" : "✗"
 
 const samplesTag = (s: ScenarioResult): string =>
   s.samples === undefined
     ? ""
-    : ` (${s.samples.scores.filter((x) => x >= 1).length}/${s.samples.count}${
-        s.samples.passRate < 1 ? ` · hard-pass ${(s.samples.passRate * 100).toFixed(0)}%` : ""
+    : ` (p ${(s.samples.passRate * 100).toFixed(0)}% [${(s.samples.passRate95.low * 100).toFixed(0)}–${(s.samples.passRate95.high * 100).toFixed(0)}] · pass@${s.samples.count} ${(s.samples.passAtK * 100).toFixed(0)}% · pass^${s.samples.count} ${(s.samples.passAllK * 100).toFixed(0)}%${
+        s.samples.infraFailures > 0 ? ` · infra ${s.samples.infraFailures}` : ""
       })`
 
 const scenarioLines = (s: ScenarioResult, showJudges: boolean): ReadonlyArray<string> => {

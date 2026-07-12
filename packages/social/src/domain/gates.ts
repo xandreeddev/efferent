@@ -1,11 +1,11 @@
-import type { XSearchResult } from "../ports/XPlatform.js"
+import type { XSearchResult } from "../ports/x-platform.port.js"
 import {
   engagedTweetIds,
   postedInWindow,
   postedToAuthor,
-  type LedgerEntry,
-} from "./Ledger.js"
-import type { SocialPolicy } from "./policy.js"
+} from "./ledger.entity.functions.js"
+import type { LedgerEntry } from "./ledger.entity.js"
+import type { SocialPolicy } from "./social-policy.entity.js"
 
 /**
  * The 11 deterministic policy gates — the social agent's enforcement layer

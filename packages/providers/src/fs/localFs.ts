@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { Effect, Layer } from "effect"
 import { FileSystem, FsError } from "@xandreed/engine"
 
@@ -24,6 +24,7 @@ export const LocalFileSystemLive = Layer.succeed(FileSystem, {
     tryFs(dir, async () => {
       await mkdir(dir, { recursive: true })
     }),
+  realPath: (path: string) => tryFs(path, () => realpath(path)),
   remove: (path: string) =>
     // `force` makes a missing path a no-op — the port's idempotent contract.
     tryFs(path, async () => {

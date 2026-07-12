@@ -10,8 +10,9 @@ import {
   TracingLive,
 } from "@xandreed/providers"
 
-import { PlaywrightXPlatformLive } from "./adapters/PlaywrightXPlatform.js"
-import { AstroBlogReaderLive } from "./adapters/AstroBlogReader.js"
+import { PlaywrightXPlatformLive } from "./adapters/playwright-x-platform.adapter.js"
+import { AstroBlogReaderLive } from "./adapters/astro-blog-reader.adapter.js"
+import { LocalSocialWorkspaceLive } from "./adapters/local-social-workspace.adapter.js"
 import { startDaemon } from "./usecases/scheduler.js"
 import { runReviewQueue } from "./usecases/reviewQueue.js"
 import { findOpportunitiesAndDraft } from "./usecases/opportunityFinder.js"
@@ -29,6 +30,7 @@ const SocialAppLive = Layer.mergeAll(
   LanguageModelLive,
   PlaywrightXPlatformLive,
   AstroBlogReaderLive,
+  LocalSocialWorkspaceLive,
 ).pipe(
   Layer.provideMerge(CredentialsLive)
 )

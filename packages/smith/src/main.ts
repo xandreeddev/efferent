@@ -11,6 +11,8 @@ import { BunContext } from "@effect/platform-bun"
 import { EngineSettings, SettingsStore } from "@xandreed/engine"
 import {
   FileLoggerLive,
+  FileLoggerAddLive,
+  ConfiguredModelCatalogLive,
   LanguageModelLive,
   UtilityLlmLive,
   LocalAuthStoreLive,
@@ -39,9 +41,8 @@ Usage:
   bun run smith "<task>" [flags]              shorthand: trivial locked spec + forge
   bun run smith mcp [--cwd <dir>]             serve the READ-ONLY workspace tools over MCP stdio
   bun run smith profile [--cwd <dir>] -p      set up the workspace QUALITY PROFILE (rules, gates,
-                                              doctrine) — one unattended proposal with dry-run
-                                              counts; --yes ARMS it (config + vendored rules +
-                                              grandfathering baseline)
+                                              doctrine); TUI supports revise + :lock
+  bun run smith profile lock --cwd <dir> -p   lock the exact reviewed headless draft
   bun run smith selftest                      the factory smoke test: a canned prompt forges
                                               to completion in a THROWAWAY workspace (real
                                               providers, real gates; exit 0 = the stack works)
@@ -54,7 +55,6 @@ Flags:
   --model <p:m>          general role override (default opencode:kimi-k2.6, thinking high)
   --code-model <p:m>     code role override    (default opencode:kimi-k2.7-code)
   --fast-model <p:m>     fast role override    (default opencode:deepseek-v4-flash)
-  --allow-bash           let the implementor run Bash (headless allow-all)
   --config <f>           explicit foundry GateSuiteConfig module for the gate suite
   --test-cmd "<cmd>"     test gate command (bash -c; default: bun test when package.json exists)
   --no-test              suppress the test gate
@@ -82,7 +82,6 @@ interface ParseState {
   readonly general: Option.Option<string>
   readonly code: Option.Option<string>
   readonly fast: Option.Option<string>
-  readonly allowBash: boolean
   readonly headless: boolean
   readonly testCommand: Option.Option<string>
   readonly noTest: boolean
@@ -106,7 +105,6 @@ const initialState: ParseState = {
   general: Option.none(),
   code: Option.none(),
   fast: Option.none(),
-  allowBash: false,
   headless: false,
   testCommand: Option.none(),
   noTest: false,
@@ -119,7 +117,6 @@ const initialState: ParseState = {
 }
 
 const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
-  "--allow-bash": (s) => ({ ...s, allowBash: true }),
   "--headless": (s) => ({ ...s, headless: true }),
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
@@ -230,7 +227,6 @@ export const toRunConfig = (
     () => SMITH_LIMIT_DEFAULTS.budgetMillis,
   ),
   models: { general: state.general, code: state.code, fast: state.fast },
-  allowBash: state.allowBash,
   headless: state.headless,
   testCommand: state.testCommand,
   noTest: state.noTest,
@@ -246,8 +242,9 @@ export const toRunConfig = (
  *  ports, providers at the edge. Conversations persist to the workspace's own
  *  `.efferent/smith.db`; the coder is the engine's direct loop (no fleet, no
  *  approval judge — the forge loop + gates bound the work). */
-export const smithAppLive = (run: SmithRunConfig) =>
-  Layer.mergeAll(
+export const smithAppLive = (run: SmithRunConfig) => {
+  const auth = LocalAuthStoreLive(run.cwd, homedir())
+  return Layer.mergeAll(
     SqliteConversationStoreLive(join(run.cwd, ".efferent", "smith.db")),
     LocalFileSystemLive,
     LocalShellLive,
@@ -257,11 +254,13 @@ export const smithAppLive = (run: SmithRunConfig) =>
   ).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        LocalAuthStoreLive(run.cwd, homedir()),
+        auth,
         SmithSettingsStoreLive(run, run.cwd, homedir()),
+        ConfiguredModelCatalogLive.pipe(Layer.provide(auth)),
       ),
     ),
   )
+}
 
 const isDirectRun = process.argv[1]?.endsWith("main.ts") === true
 if (isDirectRun) {
@@ -348,11 +347,17 @@ if (isDirectRun) {
     // one unattended proposal (dry-run counts on stdout), --yes arms it.
     // The interactive TUI mode rides the dashboard integration (follow-up).
     if (command === "profile") {
+      if (task === "lock") {
+        if (interactive) {
+          console.error("smith profile lock: use -p to lock the reviewed on-disk draft")
+          return 2
+        }
+        const { runHeadlessProfileLock } = yield* Effect.promise(() => import("./profile/session.js"))
+        return yield* runHeadlessProfileLock(run.cwd)
+      }
       if (interactive) {
-        console.error(
-          "smith profile: the interactive TUI mode is coming with the dashboard integration — run with -p (add --yes to arm the proposal)",
-        )
-        return 2
+        const { runTuiProfile } = yield* Effect.promise(() => import("./tui/runtime.js"))
+        return yield* runTuiProfile(run)
       }
       const { runHeadlessProfile } = yield* Effect.promise(() => import("./profile/session.js"))
       return yield* runHeadlessProfile(run.cwd, state.yes)
@@ -418,7 +423,10 @@ if (isDirectRun) {
     Effect.provide(
       interactive
         ? FileLoggerLive(join(run.cwd, ".efferent", "logs", "smith.log"))
-        : Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
+        : Layer.mergeAll(
+            Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
+            FileLoggerAddLive(join(run.cwd, ".efferent", "logs", "smith.log")),
+          ),
     ),
     // A layer-build failure (store selection, migration) is an infra error.
     Effect.catchAll((cause) =>

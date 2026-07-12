@@ -56,6 +56,40 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(frame).toContain("describe what to build")
   })
 
+  test("profile mode renders the reviewed rule/check dry-run and locked artifact", async () => {
+    const tui = await boot()
+    tui.store.setMode("profile")
+    tui.store.reduce({
+      type: "profile_draft",
+      draftDir: ".efferent/profile-draft",
+      rules: [
+        { rule: "effect/no-let", findings: 0 },
+        { rule: "architecture/no-raw-promise-core", findings: 2 },
+      ],
+      boundaryViolations: 1,
+      checks: [
+        { name: "typecheck", status: "green" },
+        { name: "scenarios", status: "red" },
+      ],
+    })
+    const draft = await waitFrame(tui, (frame) => frame.includes("quality profile"))
+    expect(draft).toContain("effect/no-let")
+    expect(draft).toContain("architecture/no-raw-promise-core")
+    expect(draft).toContain("draft — revise or :lock")
+    expect(draft).toContain("standing checks")
+
+    tui.store.reduce({
+      type: "profile_locked",
+      configPath: "foundry.config.ts",
+      rules: 2,
+      grandfathered: 0,
+      checks: 2,
+    })
+    const locked = await waitFrame(tui, (frame) => frame.includes("profile locked"))
+    expect(locked).toContain("foundry.config.ts")
+    expect(locked).toContain("locked")
+  })
+
   test("':' opens the live palette; ':mo' narrows it", async () => {
     const tui = await boot()
     await tui.setup.mockInput.typeText(":")
@@ -114,11 +148,16 @@ describe("the smith TUI — frame-level regressions", () => {
     expect(home).toContain("OpenCode")
     expect(home).toContain("api key")
     // The home list pre-highlights the CONFIGURED provider (OpenCode here);
-    // two Ups reach OpenAI (no method step → straight to the key prompt).
+    // two Ups reach OpenAI, then its second-level method selector chooses
+    // the API-key route (subscription and API remain distinct credentials).
     // Keys are PACED — the raw-byte parser disambiguates ESC by timing.
     tui.setup.mockInput.pressArrow("up")
     await settle()
     tui.setup.mockInput.pressArrow("up")
+    await settle()
+    tui.setup.mockInput.pressEnter()
+    await waitFrame(tui, (f) => f.includes("Use a subscription (OAuth — ChatGPT Plus/Pro)"))
+    tui.setup.mockInput.pressArrow("down")
     await settle()
     tui.setup.mockInput.pressEnter()
     const prompt = await waitFrame(tui, (f) => f.includes("Paste your API key"))
@@ -127,7 +166,10 @@ describe("the smith TUI — frame-level regressions", () => {
     const masked = await waitFrame(tui, (f) => f.includes("•".repeat("sk-test-123456".length)))
     expect(masked).toContain("•".repeat("sk-test-123456".length))
     expect(masked).not.toContain("sk-test-123456")
-    // Esc chain: prompt → home → closed (composer back).
+    // Esc chain: prompt → method → home → closed (composer back).
+    await settle()
+    tui.setup.mockInput.pressEscape()
+    await waitFrame(tui, (f) => f.includes("Use a subscription (OAuth — ChatGPT Plus/Pro)"))
     await settle()
     tui.setup.mockInput.pressEscape()
     await waitFrame(tui, (f) => f.includes("Sign in to your providers"))

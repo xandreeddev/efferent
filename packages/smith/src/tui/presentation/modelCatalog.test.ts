@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { EngineSettings } from "@xandreed/engine"
+import type { ModelCatalogEntryType } from "@xandreed/engine"
 import { SMITH_MODEL_DEFAULTS } from "../../domain/SmithConfig.js"
 import { costOf, customRow, fmtCost, modelPickerOptions } from "./modelCatalog.js"
 
@@ -9,20 +10,25 @@ const settings = new EngineSettings({
   codeModel: Option.some(SMITH_MODEL_DEFAULTS.code),
   fastModel: Option.none(),
 })
+const catalog: ReadonlyArray<ModelCatalogEntryType> = [
+  { selection: SMITH_MODEL_DEFAULTS.general, provider: "opencode", credential: "api_key" },
+  { selection: SMITH_MODEL_DEFAULTS.code, provider: "opencode", credential: "api_key" },
+  { selection: SMITH_MODEL_DEFAULTS.fast, provider: "opencode", credential: "api_key" },
+]
 
 describe("modelCatalog — the curated picker rows", () => {
   test("the current selection is pre-highlighted", () => {
-    const rows = modelPickerOptions("general", settings)
+    const rows = modelPickerOptions("general", settings, catalog)
     const active = rows.filter((r) => r.active === true)
     expect(active).toHaveLength(1)
     expect(active[0]?.label).toBe(SMITH_MODEL_DEFAULTS.general)
   })
 
   test("code/fast get a default row (value None); general does not", () => {
-    const code = modelPickerOptions("code", settings)
+    const code = modelPickerOptions("code", settings, catalog)
     expect(code[0]?.label).toContain("default (smith default:")
     expect(Option.isNone(code[0]!.value)).toBe(true)
-    const general = modelPickerOptions("general", settings)
+    const general = modelPickerOptions("general", settings, catalog)
     expect(general[0]?.label).not.toContain("default")
   })
 

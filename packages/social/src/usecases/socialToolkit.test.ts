@@ -3,9 +3,9 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { XPlatform, type XSearchResult } from "../ports/XPlatform.js"
-import { BlogReader } from "../ports/BlogReader.js"
-import { readLedger } from "../domain/Ledger.js"
+import { XPlatform, type XSearchResult } from "../ports/x-platform.port.js"
+import { BlogReader } from "../ports/blog-reader.port.js"
+import { LocalSocialWorkspaceLive, readLedger } from "../adapters/local-social-workspace.adapter.js"
 import { makeSocialHandlers } from "./socialToolkit.js"
 
 const NOW = new Date("2026-07-07T12:00:00Z")
@@ -51,7 +51,7 @@ const withHandlers = <A>(
       now: () => NOW,
     }).pipe(
       Effect.flatMap((handlers) => f(handlers, dirs)),
-      Effect.provide(Layer.mergeAll(stubX, stubBlog)),
+      Effect.provide(Layer.mergeAll(stubX, stubBlog, LocalSocialWorkspaceLive)),
     ) as Effect.Effect<A, unknown, never>,
   )
 }

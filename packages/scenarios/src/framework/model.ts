@@ -55,9 +55,8 @@ export interface Pack {
   readonly threshold: number
   /** Judge weight when judges run (live mode); deterministic weight is the rest. */
   readonly judgeWeight?: number
-  /** Samples per scenario (pass@k for stochastic prompts) — each scenario
-   *  runs k times, its recorded score is the MEAN. Default 1 (today's
-   *  behavior, byte-identical). */
+  /** Independent attempts per scenario. Quality is averaged; success rate,
+   *  Wilson uncertainty, pass@k, and pass^k are reported separately. */
   readonly samples?: number
   /** Baseline regression tolerance for THIS pack (live batteries are
    *  noisier). Default 0.05. */
@@ -110,10 +109,12 @@ export interface JudgeOutcome {
   readonly reason: string
 }
 
-export interface ScenarioResult {
+export interface ScenarioSampleResult {
   readonly name: string
   /** skipped = mode mismatch; error = boot/act infra failure. */
   readonly status: "ran" | "skipped" | "error"
+  /** Mandatory outcome: every hard check passed and the step fold completed. */
+  readonly hardPassed: boolean
   readonly checks: ReadonlyArray<CheckOutcome>
   readonly judges: ReadonlyArray<JudgeOutcome>
   /** Deterministic score: checks passed / checks evaluated (a hard fail marks
@@ -122,15 +123,24 @@ export interface ScenarioResult {
   /** score folded with judge mean at the pack's judgeWeight (live mode).
    *  Under k>1 samples this is the MEAN of the per-sample combined scores. */
   readonly combined: number
-  /** Present only when the scenario ran with k>1 samples: the per-sample
-   *  combined scores and the fraction whose hard checks were ALL green.
-   *  checks/judges above are the LAST sample's (for display). */
+  readonly detail?: string
+}
+
+export interface ScenarioResult extends ScenarioSampleResult {
+  /** Present only when the scenario ran with k>1 samples. Raw sample
+   *  outcomes are retained so a mean never erases the failed trajectory. */
   readonly samples?: {
     readonly count: number
     readonly scores: ReadonlyArray<number>
     readonly passRate: number
+    readonly passRate95: { readonly low: number; readonly high: number }
+    /** Estimated probability at least one of k attempts succeeds. */
+    readonly passAtK: number
+    /** Estimated probability all k attempts succeed. */
+    readonly passAllK: number
+    readonly infraFailures: number
+    readonly outcomes: ReadonlyArray<ScenarioSampleResult>
   }
-  readonly detail?: string
 }
 
 export interface PackReport {

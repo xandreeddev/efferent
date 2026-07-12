@@ -47,6 +47,12 @@ export class CheckConfig extends Schema.Class<CheckConfig>("CheckConfig")({
   name: Schema.NonEmptyString,
   /** One line of shell, run through `bash -c` from the workspace root. */
   command: Schema.NonEmptyString,
+  /** Cost rank for a standing command. Existing profiles decode as `test`. */
+  kind: Schema.optionalWith(Schema.Literal("test", "eval"), { default: () => "test" }),
+  /** Per-command wall-clock bound. */
+  timeoutMs: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
+    default: () => 300_000,
+  }),
 }) {}
 
 /** One gate-suite target: a tsconfig + the rule/boundary/eval policy over it. */

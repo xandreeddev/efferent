@@ -71,13 +71,11 @@ const runFor = (cwd: string): SmithRunConfig => ({
   maxAttempts: 3,
   budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
   models: { general: Option.none(), code: Option.none(), fast: Option.none() },
-  allowBash: false,
   headless: true,
   testCommand: Option.none(),
   noTest: false,
-  // The repo's own suite IS the oracle (root config is not the conventional
-  // filename here).
-  configPath: Option.some("foundry.repo.config.ts"),
+  // The repo's own canonical profile is the oracle.
+  configPath: Option.some("foundry.config.ts"),
   ship: false,
   sandbox: false,
 })
@@ -115,7 +113,7 @@ const liveScenario = scenario<RealRepoWorld>({
     const publish = (event: SmithEvent) => Ref.update(eventsRef, (all) => [...all, event])
     const run: SmithRunConfig = {
       ...runFor(dir),
-      configPath: Option.some(join(dir, "foundry.repo.config.ts")),
+      configPath: Option.some(join(dir, "foundry.config.ts")),
     }
     const services = liveServices(run)
     const act = runForgeSession(run, publish, Option.some(liveDoc)).pipe(
@@ -236,7 +234,7 @@ export const realRepoPack: Pack = {
   meta: {
     "coder-prompt": SMITH_CODER_PROMPT_VERSION,
     "critic-rubric": CRITIC_RUBRIC_VERSION,
-    "repo-oracle": "foundry.repo.config.ts",
+    "repo-oracle": "foundry.config.ts",
   },
   scenarios: [liveScenario],
 }

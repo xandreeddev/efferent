@@ -65,6 +65,15 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   // places read as noise; live complaint).
   const heartbeat = () => {
     if (store.mode() === "idle") return ""
+    if (store.mode() === "profile") {
+      return store.busy()
+        ? `${spin()} profiling… ${elapsed()}s${stalled() ? " — the model is SLOW to respond; Esc cancels" : ""}`
+        : store.profile().locked
+          ? "locked"
+          : Option.isSome(store.profile().draftDir)
+            ? "draft ready"
+            : "exploring"
+    }
     if (store.mode() === "refine") {
       return store.busy()
         ? `${spin()} refining… ${elapsed()}s${stalled() ? " — the model is SLOW to respond; Esc cancels" : ""}`
@@ -82,6 +91,8 @@ const Header = (props: { ctx: SmithTuiContext }) => {
   const title = () =>
     store.mode() === "idle"
       ? props.ctx.runConfig.cwd
+      : store.mode() === "profile"
+        ? props.ctx.runConfig.cwd
       : store.mode() === "refine"
         ? Option.getOrElse(
             Option.map(store.refine().draft, (d) => String(d.slug)),
@@ -92,7 +103,7 @@ const Header = (props: { ctx: SmithTuiContext }) => {
     <box flexDirection="row" flexShrink={0}>
       <text fg={tokens.accent.brand} flexShrink={0}>{glyph.brand}</text>
       <text fg={tokens.text.bright} flexShrink={0}>
-        {store.mode() === "idle" ? "smith · " : store.mode() === "refine" ? "smith spec " : "smith "}
+        {store.mode() === "idle" ? "smith · " : store.mode() === "profile" ? "smith profile " : store.mode() === "refine" ? "smith spec " : "smith "}
       </text>
       <text fg={tokens.text.dim} flexGrow={1} wrapMode="none">
         {title()}
@@ -428,7 +439,10 @@ const SpecPanel = (props: { ctx: SmithTuiContext }) => {
  *  do next (the "hard to understand which phase we're in" complaint). */
 const FlowPanel = (props: { ctx: SmithTuiContext }) => {
   const { store } = props.ctx
-  const steps = () => flowView(store.mode(), store.refine(), store.floor())
+  const steps = () => {
+    const mode = store.mode()
+    return flowView(mode === "profile" ? "refine" : mode, store.refine(), store.floor())
+  }
   const stepGlyph = (state: FlowStep["state"]): string =>
     state === "done" ? glyph.pass : state === "current" ? glyph.dot : glyph.circle
   const stepColor = (state: FlowStep["state"]): string =>
@@ -460,22 +474,79 @@ const FlowPanel = (props: { ctx: SmithTuiContext }) => {
   )
 }
 
+const ProfilePanel = (props: { ctx: SmithTuiContext }) => {
+  const profile = props.ctx.store.profile
+  return (
+    <box flexDirection="column" marginTop={1}>
+      <text fg={tokens.text.dim}>quality profile</text>
+      <Show
+        when={Option.isSome(profile().draftDir)}
+        fallback={<text fg={tokens.state.pending}>  exploring scripts, architecture, and rules…</text>}
+      >
+        <text fg={profile().locked ? tokens.state.ok : tokens.state.running} wrapMode="none">
+          {`  ${profile().locked ? glyph.pass : glyph.dot} ${profile().locked ? "locked" : "draft — revise or :lock"}`}
+        </text>
+        <text fg={tokens.text.dim} marginTop={1}>  rules</text>
+        <For each={profile().rules}>
+          {(rule) => (
+            <text fg={rule.findings === 0 ? tokens.state.ok : tokens.state.warn} wrapMode="none">
+              {`    ${rule.findings === 0 ? glyph.pass : glyph.warn} ${rule.rule} · ${rule.findings} existing`}
+            </text>
+          )}
+        </For>
+        <Show when={profile().boundaryViolations > 0}>
+          <text fg={tokens.state.warn} wrapMode="none">
+            {`    ${glyph.warn} boundaries · ${profile().boundaryViolations} existing`}
+          </text>
+        </Show>
+        <text fg={tokens.text.dim} marginTop={1}>  standing checks</text>
+        <For each={profile().checks}>
+          {(check) => (
+            <text fg={check.status === "green" ? tokens.state.ok : tokens.state.error} wrapMode="none">
+              {`    ${check.status === "green" ? glyph.pass : glyph.fail} ${check.name}`}
+            </text>
+          )}
+        </For>
+        <Show when={Option.isSome(profile().configPath)}>
+          <text fg={tokens.text.dim} wrapMode="none" marginTop={1}>
+            {`  ${Option.getOrElse(profile().configPath, () => "")}`}
+          </text>
+        </Show>
+      </Show>
+      <Show when={Option.isSome(profile().error)}>
+        <text fg={tokens.state.error} wrapMode="word" marginTop={1}>
+          {`  ${Option.getOrElse(profile().error, () => "")}`}
+        </text>
+      </Show>
+    </box>
+  )
+}
+
 /** The side column: the flow stepper pinned on top, the artifact (spec or
  *  attempts) SCROLLABLE below — 40% of the terminal, never a fixed 52. */
-const SidePanel = (props: { ctx: SmithTuiContext; artifact: "spec" | "attempts" }) => {
+const SidePanel = (props: { ctx: SmithTuiContext; artifact: "profile" | "spec" | "attempts" }) => {
   const dimensions = useTerminalDimensions()
   const width = () => Math.max(44, Math.floor(dimensions().width * 0.4))
   return (
     <box flexDirection="column" width={width()} flexShrink={0} marginLeft={2}>
-      <FlowPanel ctx={props.ctx} />
+      <Show when={props.artifact !== "profile"}>
+        <FlowPanel ctx={props.ctx} />
+      </Show>
       <scrollbox
         flexGrow={1}
         scrollY={true}
         scrollX={false}
         contentOptions={{ flexDirection: "column" }}
       >
-        <Show when={props.artifact === "spec"} fallback={<AttemptPanel ctx={props.ctx} />}>
-          <SpecPanel ctx={props.ctx} />
+        <Show
+          when={props.artifact === "profile"}
+          fallback={
+            <Show when={props.artifact === "spec"} fallback={<AttemptPanel ctx={props.ctx} />}>
+              <SpecPanel ctx={props.ctx} />
+            </Show>
+          }
+        >
+          <ProfilePanel ctx={props.ctx} />
         </Show>
       </scrollbox>
     </box>
@@ -650,6 +721,10 @@ const CommandLine = (props: { ctx: SmithTuiContext }) => {
     }
     if (props.ctx.store.mode() === "refine" && props.ctx.sendRefine !== undefined) {
       props.ctx.sendRefine(value)
+      return
+    }
+    if (props.ctx.store.mode() === "profile" && props.ctx.sendProfile !== undefined) {
+      props.ctx.sendProfile(value)
       return
     }
     props.ctx.store.setNotice("prefix commands with ':' (try :quit)")
@@ -835,6 +910,12 @@ export const App = (props: { ctx: SmithTuiContext }) => {
       <Header ctx={props.ctx} />
       <Show when={mode() === "idle"}>
         <Workspace ctx={props.ctx} />
+      </Show>
+      <Show when={mode() === "profile"}>
+        <box flexDirection="row" flexGrow={1}>
+          <ConversationPane ctx={props.ctx} label="conversation — the profile architect" />
+          <SidePanel ctx={props.ctx} artifact="profile" />
+        </box>
       </Show>
       <Show when={mode() === "refine"}>
         <box flexDirection="row" flexGrow={1}>

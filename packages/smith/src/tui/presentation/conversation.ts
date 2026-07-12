@@ -186,7 +186,7 @@ export const withUserBlock = (state: ConversationState, text: string): Conversat
  *  continues the session; in forge the LOOP continues itself (snapshot →
  *  gates → feedback → next attempt) — advising "send a message" there
  *  misled a live run into looking stuck. */
-const partialNotice = (mode: "refine" | "forge", reason: string): string =>
+const partialNotice = (mode: "profile" | "refine" | "forge", reason: string): string =>
   mode === "forge"
     ? reason === "step-cap"
       ? "the attempt hit its step ceiling — the snapshot goes to the gates; their findings brief the next attempt automatically"
@@ -233,7 +233,7 @@ const resultBlock = (run: FactoryRun, artifact: string): ConversationBlock =>
  *  binding — safe as a bare Array.reduce callback, where a positional mode
  *  parameter would collide with reduce's index argument. */
 export const reduceConversationIn = (
-  mode: "refine" | "forge",
+  mode: "profile" | "refine" | "forge",
 ) => (
   state: ConversationState,
   event: SmithEvent,
@@ -310,6 +310,23 @@ export const reduceConversationIn = (
     ),
     Match.when({ type: "refine_error" }, (e) =>
       push(sealStreaming(state), { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
+    ),
+    Match.when({ type: "profile_error" }, (e) =>
+      push(sealStreaming(state), { kind: "error", text: clip(e.message, REASONING_BUDGET) }),
+    ),
+    Match.when({ type: "profile_draft" }, (e) =>
+      push(state, {
+        kind: "notice",
+        text: `profile draft: ${e.rules.length} rules · ${e.boundaryViolations} boundary findings · ${e.checks.length} checks — review, revise, then :lock`,
+      }),
+    ),
+    Match.when({ type: "profile_locked" }, (e) =>
+      push(state, {
+        kind: "result",
+        ok: true,
+        text: `profile locked: ${e.rules} rules · ${e.grandfathered} grandfathered · ${e.checks} checks → ${e.configPath}`,
+        artifact: e.configPath,
+      }),
     ),
     Match.when({ type: "bash_progress" }, (e) => {
       // The newest RUNNING tool block wears the live line; nothing running

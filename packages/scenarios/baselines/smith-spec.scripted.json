@@ -8,5 +8,103 @@
     "coder-prompt": "1.3.0",
     "critic-rubric": "1.0.0"
   },
-  "mintedAt": "2026-07-11T15:29:21.574Z"
+  "evidence": {
+    "selftest, scored: real refine → lock → production forge": {
+      "status": "skipped",
+      "hardPassed": false,
+      "score": 0,
+      "combined": 0,
+      "checks": [],
+      "judges": [],
+      "detail": "not supported in scripted mode"
+    },
+    "refine → lock → forge (scripted twin)": {
+      "status": "ran",
+      "hardPassed": true,
+      "score": 1,
+      "combined": 1,
+      "checks": [
+        {
+          "step": "refine one turn proposes the draft",
+          "check": "file-exists:.efferent/specs/create-out-txt-containing-done-in-the-wo.md",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "refine one turn proposes the draft",
+          "check": "file-contains:.efferent/specs/create-out-txt-containing-done-in-the-wo.md",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "refine one turn proposes the draft",
+          "check": "file-contains:.efferent/specs/create-out-txt-containing-done-in-the-wo.md",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "refine one turn proposes the draft",
+          "check": "event-order:spec_draft",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the human lock flips the file to locked",
+          "check": "file-contains:.efferent/specs/create-out-txt-containing-done-in-the-wo.md",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the human lock flips the file to locked",
+          "check": "event-order:spec_draft→spec_locked",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "forge runs the spec's checks as accept gates (fail → fix → accepted)",
+          "check": "event-order:spec_locked→forge_start→attempt_start→gate_report→forge_end",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "forge runs the spec's checks as accept gates (fail → fix → accepted)",
+          "check": "spec checks became accept gates",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "forge runs the spec's checks as accept gates (fail → fix → accepted)",
+          "check": "rejected then accepted (the feedback loop ran)",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "forge runs the spec's checks as accept gates (fail → fix → accepted)",
+          "check": "file-exists:out.txt",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "forge runs the spec's checks as accept gates (fail → fix → accepted)",
+          "check": "file-contains:out.txt",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the forge history becomes deterministic memory for the NEXT run",
+          "check": "lessons derived from the rejected attempt",
+          "severity": "hard",
+          "pass": true,
+          "detail": "lessons text: ## Lessons from past forge runs in this workspace\nThe deterministic gates have REPEATEDLY rejected work here for these reasons — get them right the FIRST time:\n"
+        }
+      ],
+      "judges": []
+    }
+  },
+  "provenance": {
+    "gitSha": "cfa0653fcfb7916e55c6cf8911dfdc3a91c66474",
+    "lockSha256": "be62db4a5f529f51ef253ec91d48261f985e77d850d0577264cbd4a624f610d6",
+    "bunVersion": "1.3.0"
+  },
+  "mintedAt": "2026-07-12T08:47:25.273Z"
 }

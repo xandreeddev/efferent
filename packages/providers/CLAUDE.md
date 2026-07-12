@@ -26,7 +26,9 @@ src/
 │              vocabularies — `reasoning` and `reasoning_content`) · retry
 │              (transient-only retries, 300s timeout — thinking models run
 │              minutes non-streaming, empty-response rejection) · router
-│              (LanguageModelLive — re-resolves selection + key per call) ·
+│              (LanguageModelLive — re-resolves selection + key per call;
+│              LanguageModelSelectionLive — an explicit pinned selection for
+│              versioned agent profiles, never SettingsStore) ·
 │              utilityLlm (fast tier: fastModel ?? model, one-shot)
 ├── telemetry/ TracingLive(serviceName) — OTLP HTTP exporter for the kernel's
 │              spans (engine.run/turn, providers.generate with llm.model/
@@ -51,6 +53,9 @@ src/
 - ZERO-entry ratchet baseline (no let/loops/nullable-returns/try-catch/…).
 - Keys are never captured at layer build — resolved from `AuthStore` per
   call, so a login or model switch applies on the next request.
+- Compat requests read engine's scoped ModelCallPolicy and send its pinned
+  `reasoning_effort` + `max_tokens`; a dedicated agent profile overrides
+  family defaults without mutating global settings.
 - Every layer is `<Thing>Live`; constructor-parameterized ones take `(cwd,
   home)` or a path — no env reading inside adapters.
 - v1 simplifications (add when an agent needs them): no streaming, no

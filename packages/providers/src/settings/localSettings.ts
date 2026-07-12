@@ -10,6 +10,7 @@ import {
   SettingsStore,
 } from "@xandreed/engine"
 import type { ModelRole, SettingsKey } from "@xandreed/engine"
+import type { ReasoningEffortType } from "@xandreed/engine"
 
 /**
  * Settings from the SAME `config.json` files the previous line writes —
@@ -41,6 +42,11 @@ const asBoolean = (value: unknown): Option.Option<boolean> =>
 const asNumber = (value: unknown): Option.Option<number> =>
   typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none()
 
+const asReasoningEffort = (value: unknown): Option.Option<ReasoningEffortType> =>
+  value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max"
+    ? Option.some(value)
+    : Option.none()
+
 /**
  * Per-key validation for the keyed setter — the config value is COERCED
  * from its string form (`:settings` sends text), so an unparseable value is
@@ -67,6 +73,12 @@ const coerceSettingValue = (
     return Effect.fail(
       new SettingsError({ message: `${key} must be true/false — got "${raw}"` }),
     )
+  }
+  if (key === "reasoningEffort" || key === "codeReasoningEffort" || key === "fastReasoningEffort") {
+    return Option.match(asReasoningEffort(raw), {
+      onNone: () => Effect.fail(new SettingsError({ message: `reasoningEffort is not supported: "${raw}"` })),
+      onSome: Effect.succeed,
+    })
   }
   // maxAttempts / budgetMillis: positive integers (foundry re-validates the
   // forge bounds when the Spec is built).
@@ -108,6 +120,13 @@ export const LocalSettingsStoreLive = (cwd: string, home: string) =>
         viMode: asBoolean(merged["viMode"]),
         maxAttempts: asNumber(merged["maxAttempts"]),
         budgetMillis: asNumber(merged["budgetMillis"]),
+        // Backward-compatible read of the pre-picker experimental key.
+        reasoningEffort: Option.orElse(
+          asReasoningEffort(merged["reasoningEffort"]),
+          () => asReasoningEffort(merged["openAiReasoningEffort"]),
+        ),
+        codeReasoningEffort: asReasoningEffort(merged["codeReasoningEffort"]),
+        fastReasoningEffort: asReasoningEffort(merged["fastReasoningEffort"]),
       })
     }),
     setRole: (role: ModelRole, selection: Option.Option<string>) =>

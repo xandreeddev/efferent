@@ -1,0 +1,11 @@
+{
+  "profile": "streaming-ui-v1",
+  "version": "4.0.0",
+  "schemaVersion": "1.0.0",
+  "recipeSetVersion": "1.0.0",
+  "prompts": { "planner": "4.0.0", "composer": "5.0.0", "repair": "2.0.0" },
+  "planner": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 15000, "maxOutputTokens": 2400, "maxSteps": 2 },
+  "composer": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 20000, "maxOutputTokens": 5000, "maxSteps": 2 },
+  "repair": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 8000, "maxOutputTokens": 1800, "maxSteps": 2, "maxAttempts": 1 },
+  "fallback": { "policy": "none" }
+}

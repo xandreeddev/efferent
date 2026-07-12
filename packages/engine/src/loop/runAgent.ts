@@ -1,10 +1,12 @@
 import type { Tool, Toolkit } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
-import type { LoopEvent } from "../domain/LoopEvent.js"
-import type { AgentMessage, ConversationId } from "../domain/Message.js"
-import type { TokenUsage } from "../domain/TokenUsage.js"
-import { ConversationStore } from "../ports/ConversationStore.js"
+import type { LoopEvent } from "../domain/loop-event.entity.js"
+import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
+import { ConversationStore } from "../ports/conversation-store.port.js"
 import { CurrentPromptCacheKey } from "./cacheKey.js"
+import { CurrentModelCallPolicy } from "./modelPolicy.js"
+import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { handoffToMessage, safeKeepFrom } from "./mapping.js"
 import { runLoop } from "./loop.js"
 import type { CompactionPlan } from "./loop.js"
@@ -34,11 +36,17 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   readonly system: string
   readonly toolkit: Toolkit.Toolkit<Tools>
   readonly maxSteps?: number
+  /** Handler concurrency within one model turn. Agents with mutating tools
+   *  should set this to 1 unless their toolkit provides stronger scheduling. */
+  readonly toolConcurrency?: number
   readonly pollableTools?: ReadonlyArray<string>
   readonly compaction?: CompactionPolicy
   /** Stream turns (`assistant_delta` events while tokens flow); falls back
    *  to settled turns on a pre-first-part failure. Default false. */
   readonly streaming?: boolean
+  /** Per-agent output/reasoning policy. Dedicated agents pin this instead of
+   * inheriting provider-family defaults. */
+  readonly modelPolicy?: ModelCallPolicy
 }
 
 /** Turns to wait after a fold before folding again — anti-thrash. */
@@ -65,6 +73,9 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
     readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, never, R>
     /** The mid-turn steering seam — see `RunLoopOptions.pendingInput`. */
     readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
+    /** Prompt content is redacted from traces by default. Trusted local
+     *  drivers may opt in explicitly for debugging. */
+    readonly traceContent?: boolean
   },
 ) =>
   Effect.gen(function* () {
@@ -143,6 +154,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       messages,
       toolkit: config.toolkit,
       ...(config.maxSteps !== undefined ? { maxSteps: config.maxSteps } : {}),
+      ...(config.toolConcurrency !== undefined ? { toolConcurrency: config.toolConcurrency } : {}),
       ...(config.pollableTools !== undefined ? { pollableTools: config.pollableTools } : {}),
       ...(options?.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
       ...(options?.pendingInput !== undefined ? { pendingInput: options.pendingInput } : {}),
@@ -154,4 +166,14 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       // a prompt cache key read this for every call in the run.
       Effect.locally(CurrentPromptCacheKey, Option.some(String(conversationId))),
     )
-  })
+  }).pipe(
+    Effect.withSpan("agent.run", {
+      attributes: {
+        "agent.kind": "run",
+        "agent.conversation_id": String(conversationId),
+        "agent.prompt": options?.traceContent === true ? prompt.slice(0, 500) : "[redacted]",
+        "agent.prompt_chars": prompt.length,
+      },
+    }),
+    Effect.locally(CurrentModelCallPolicy, Option.fromNullable(config.modelPolicy)),
+  )

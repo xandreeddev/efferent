@@ -4,6 +4,7 @@ import { Effect, Layer, Option, Redacted } from "effect"
 import { asJsonRecord, AuthError, AuthStore, parseJsonWarn } from "@xandreed/engine"
 import type { Credential, ProviderId } from "@xandreed/engine"
 import { refreshAnthropicToken } from "./anthropicOAuth.js"
+import { refreshOpenAiCodexToken } from "./openAiCodexOAuth.js"
 
 /**
  * The on-disk credential store — the SAME `auth.json` vocabulary the previous
@@ -127,12 +128,12 @@ export const LocalAuthStoreLive = (cwd: string, home: string) =>
         if (cred.type === "api_key") return Option.some(Redacted.make(cred.key))
         if (cred.type === "local") return Option.none<Redacted.Redacted<string>>()
         // OAuth: refresh when near expiry, persisting back to the file that
-        // held the credential. Only Anthropic's refresh protocol is wired on
-        // the new line; other OAuth providers surface a clear error.
+        // held the credential. Each subscription protocol stays in its auth
+        // adapter; the store only dispatches by provider id.
         if (cred.expires > Date.now() + REFRESH_SKEW_MS) {
           return Option.some(Redacted.make(cred.access))
         }
-        if (provider !== "anthropic") {
+        if (provider !== "anthropic" && provider !== "openai-codex") {
           return yield* Effect.fail(
             new AuthError({
               provider,
@@ -140,7 +141,9 @@ export const LocalAuthStoreLive = (cwd: string, home: string) =>
             }),
           )
         }
-        const fresh = yield* refreshAnthropicToken(cred.refresh)
+        const fresh = yield* provider === "anthropic"
+          ? refreshAnthropicToken(cred.refresh)
+          : refreshOpenAiCodexToken(cred.refresh)
         const updated: Credential = { ...cred, ...fresh }
         const target = holder ?? { path: authPaths(cwd, home)[0] ?? "", entries: new Map() }
         yield* writeAuthFile(

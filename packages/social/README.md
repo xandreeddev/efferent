@@ -11,7 +11,7 @@ A driver-level package on the same stack as the rest of efferent (`@xandreed/sdk
 ## What's inside
 
 - **`socialToolkit.ts`** — the `@effect/ai` `Toolkit` the agent drives (read the blog, find opportunities, queue a post for review).
-- **`ports/` + `adapters/`** — the platform seams: `XPlatform` / `PlaywrightXPlatform.ts` (X via a persisted browser session), `BlogReader` / `AstroBlogReader.ts` (the Astro blog as a source).
+- **`ports/` + `adapters/`** — qualified seams: `x-platform.port.ts` / `playwright-x-platform.adapter.ts` (X via a persisted browser session), `blog-reader.port.ts` / `astro-blog-reader.adapter.ts` (the Astro blog as a source), and `social-workspace.port.ts` / `local-social-workspace.adapter.ts` for local persistence.
 - **`opportunityFinder.ts`** — surfaces threads/posts worth a substantive reply.
 - **`reviewQueue.ts`** — nothing posts unattended; drafts land in a queue for human review.
 - **`scheduler.ts`** — paces the cadence.

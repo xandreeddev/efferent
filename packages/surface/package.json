@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The new line's UI substrate: the html tagged template, the allowlist sanitizer (the security boundary for agent-authored HTML), the validateUi hard gates, and the htmx protocol contract.",
+  "description": "Trusted UI compiler: typed blocks and semantic tokens to recipe-owned HTML/HTMX/Alpine/SVG, plus legacy sanitizers and UI gates.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@xandreed/ui-agent": "workspace:*",
     "effect": "^3.21.4"
   }
 }

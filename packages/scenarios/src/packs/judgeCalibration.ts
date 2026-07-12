@@ -6,8 +6,9 @@ import { SpecDoc } from "@xandreed/engine"
 import { JUDGE_PROMPT_VERSION, makeSmithJudgeGate } from "@xandreed/smith"
 import type { Pack, PackReport } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
+import { wilsonInterval } from "../framework/stats.js"
 import { listCases, seedWorkspace } from "../live/fixtures.js"
-import { codeTierCall } from "../live/llm.js"
+import { generalTierCall } from "../live/llm.js"
 
 /**
  * The judge-gate CALIBRATION battery — the gate ran default-ON without ever
@@ -102,7 +103,7 @@ const judgeScenario = (name: string) =>
             // model config) — the temp dir is only the judged workspace,
             // exactly like production closes judgeCall over the smith
             // process's own settings, not the target workspace's.
-            const gate = makeSmithJudgeGate({ spec, doc, call: codeTierCall(process.cwd()) })
+            const gate = makeSmithJudgeGate({ spec, doc, call: generalTierCall(process.cwd()) })
             const workspace = yield* snapshotWorkspace(world.dir)
             // Findings = the unsound reasons; empty = sound. A GateCrash
             // fails the act — fail-closed counts against agreement, which is
@@ -126,7 +127,9 @@ const judgeScenario = (name: string) =>
             // ruling must also carry an actionable reason — an unreasoned
             // block can't brief the retry, so it counts as disagreement.
             name: "verdict matches the label (an unsound ruling names a reason)",
-            severity: "hard",
+            // Calibration disagreement is a measured quality outcome, not
+            // harness infrastructure. The pack threshold/ratchet owns it.
+            severity: "soft",
             run: (world) =>
               Ref.get(world.verdict).pipe(
                 Effect.map(
@@ -150,16 +153,31 @@ const judgeScenario = (name: string) =>
 
 /** false-block / false-pass from the name-prefix stratification. */
 export const calibrationSummary = (report: PackReport): ReadonlyArray<string> => {
-  const rate = (prefix: string): Option.Option<number> => {
+  const rate = (prefix: string): Option.Option<{ readonly rate: number; readonly upper95: number }> => {
     const group = report.scenarios.filter(
       (s) => s.status === "ran" && s.name.startsWith(prefix),
     )
-    return group.length === 0
-      ? Option.none()
-      : Option.some(1 - group.reduce((a, s) => a + s.combined, 0) / group.length)
+    if (group.length === 0) return Option.none()
+    const trials = group.reduce((sum, scenario) => sum + (scenario.samples?.count ?? 1), 0)
+    const successes = group.reduce(
+      (sum, scenario) =>
+        sum +
+        (scenario.samples === undefined
+          ? scenario.combined
+          : scenario.samples.scores.reduce((a, score) => a + score, 0)),
+      0,
+    )
+    const interval = wilsonInterval(successes, trials)
+    return Option.some({ rate: 1 - successes / trials, upper95: 1 - interval.low })
   }
+  const render = (value: Option.Option<{ readonly rate: number; readonly upper95: number }>) =>
+    Option.match(value, {
+      onNone: () => "n/a",
+      onSome: (estimate) =>
+        `${estimate.rate.toFixed(2)} (95% upper ${estimate.upper95.toFixed(2)})`,
+    })
   return [
-    `summary: false-block ${Option.match(rate("sound:"), { onNone: () => "n/a", onSome: (r) => r.toFixed(2) })} · false-pass ${Option.match(rate("unsound:"), { onNone: () => "n/a", onSome: (r) => r.toFixed(2) })}`,
+    `summary: false-block ${render(rate("sound:"))} · false-pass ${render(rate("unsound:"))}`,
   ]
 }
 

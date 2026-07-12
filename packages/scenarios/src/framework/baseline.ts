@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Option } from "effect"
@@ -21,6 +22,28 @@ export interface Baseline {
   readonly versions?: Record<string, string>
   readonly samples?: number
   readonly mintedAt?: string
+  /** Exact per-sample evidence behind the aggregate. Optional for backwards
+   *  compatibility with pre-evidence baselines. */
+  readonly evidence?: Record<string, unknown>
+  readonly provenance?: {
+    readonly gitSha: string
+    readonly lockSha256: string
+    readonly bunVersion: string
+  }
+}
+
+const sha256File = (path: string): string =>
+  existsSync(path)
+    ? createHash("sha256").update(readFileSync(path)).digest("hex")
+    : "missing"
+
+const provenance = (): NonNullable<Baseline["provenance"]> => {
+  const git = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: process.cwd() })
+  return {
+    gitSha: git.exitCode === 0 ? git.stdout.toString().trim() : "unknown",
+    lockSha256: sha256File(join(process.cwd(), "bun.lock")),
+    bunVersion: Bun.version,
+  }
 }
 
 export const baselinePath = (dir: string, pack: string, mode: ScenarioMode): string =>
@@ -46,6 +69,22 @@ export const toBaseline = (report: PackReport, pack: Pack): Baseline => ({
   ),
   ...(pack.meta !== undefined ? { versions: pack.meta } : {}),
   ...(pack.samples !== undefined ? { samples: pack.samples } : {}),
+  evidence: Object.fromEntries(
+    report.scenarios.map((scenario) => [
+      scenario.name,
+      {
+        status: scenario.status,
+        hardPassed: scenario.hardPassed,
+        score: scenario.score,
+        combined: scenario.combined,
+        checks: scenario.checks,
+        judges: scenario.judges,
+        ...(scenario.samples !== undefined ? { samples: scenario.samples } : {}),
+        ...(scenario.detail !== undefined ? { detail: scenario.detail } : {}),
+      },
+    ]),
+  ),
+  provenance: provenance(),
   mintedAt: new Date().toISOString(),
 })
 
@@ -123,6 +162,19 @@ export const orphanedEntries = (
         `baseline entry "${name}" matches no scenario in this run — renamed? its ratchet was shed; review and --update-baselines`,
     )
 }
+
+/** Ran scenarios missing from the committed baseline. Without this check a
+ *  renamed/new case silently starts without a regression ratchet. */
+export const unbaselinedEntries = (
+  report: PackReport,
+  baseline: Baseline,
+): ReadonlyArray<string> =>
+  report.scenarios
+    .filter((scenario) => scenario.status === "ran" && baseline.scenarios[scenario.name] === undefined)
+    .map(
+      (scenario) =>
+        `scenario "${scenario.name}" has no committed baseline — review and --update-baselines`,
+    )
 
 /** `Some(warning)` when the pack's current prompt versions differ from the
  *  ones the baseline was minted for — not a failure (the score gate is the

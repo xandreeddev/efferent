@@ -2,10 +2,10 @@ import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
 import { Effect, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "./streamFold.js"
-import type { LoopEvent } from "../domain/LoopEvent.js"
-import type { AgentMessage, AgentResult } from "../domain/Message.js"
-import { addUsage, zeroUsage } from "../domain/TokenUsage.js"
-import type { TokenUsage } from "../domain/TokenUsage.js"
+import type { LoopEvent } from "../domain/loop-event.entity.js"
+import type { AgentMessage, AgentResult } from "../domain/message.entity.js"
+import { addUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 import {
   extractModel,
   extractUsage,

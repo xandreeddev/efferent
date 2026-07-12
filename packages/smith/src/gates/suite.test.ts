@@ -28,7 +28,6 @@ const runFor = (cwd: string, over: Partial<SmithRunConfig> = {}): SmithRunConfig
   maxAttempts: SMITH_LIMIT_DEFAULTS.maxAttempts,
   budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
   models: { general: Option.none(), code: Option.none(), fast: Option.none() },
-  allowBash: false,
   headless: true,
   testCommand: Option.none(),
   noTest: false,

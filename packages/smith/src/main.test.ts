@@ -9,6 +9,14 @@ import {
 } from "./main.js"
 
 describe("the argv fold", () => {
+  test("profile lock names the exact-draft subcommand", () => {
+    const state = parseArgs(["profile", "lock", "-p"])
+    expect(Option.getOrThrow(state.command)).toBe("profile")
+    expect(Option.getOrThrow(state.task)).toBe("lock")
+    expect(state.headless).toBe(true)
+    expect(state.errors).toEqual([])
+  })
+
   test("selftest is a reserved first token — no command, no task, flag set", () => {
     const state = parseArgs(["selftest"])
     expect(state.selftest).toBe(true)

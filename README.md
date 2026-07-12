@@ -20,16 +20,18 @@ packages/
 │                 the MCP bridge, the session chassis, the SpecDoc
 ├── providers/    the EDGE: routed LanguageModel (per-call re-resolution), SQLite
 │                 store, auth/settings, MCP stdio client, sandboxed shell (bwrap)
-├── surface/      the UI substrate: html template, allowlist sanitizer, UI gates
+├── ui-agent/     reusable typed UI agent: page/block contracts, governed tools,
+│                 pinned model planner/composer/repair profile
+├── surface/      trusted UI compiler: tokens + recipes → HTML/HTMX/Alpine/SVG
 ├── smith/        the CODER at the forge — refine a spec WITH the human, :lock it,
 │                 forge under gates; skills, workspace memory, judge gate, :ship
 ├── math/         the tutor — authors exercises, the SERVER grades them
-├── canvas/       the page builder — gated HTML is the only output channel
+├── canvas/       the first UI-agent host — structured streaming pages, never raw HTML
 ├── social/       the drafter — a human approves everything outbound
 └── scenarios/    evals v3 — scenario packs over agent worlds, committed baselines
 ```
 
-Dependency direction is **a build-failing gate**, not a convention: engine/surface/foundry import nothing internal; providers → engine; each agent → its substrate; nothing imports scenarios.
+Dependency direction is **a build-failing gate**, not a convention: UI-agent domain → engine; trusted Surface compiler → UI-agent contracts; Canvas → UI-agent + Surface + providers; nothing imports scenarios.
 
 ## The doctrine
 
@@ -37,10 +39,14 @@ Dependency direction is **a build-failing gate**, not a convention: engine/surfa
 - **Fail-closed everywhere.** A gate that cannot run is a failure, never a silent pass.
 - **Errors are values, state is a fold.** No `try`/`catch`, no `let`, no loops, `Option` for absence, `Match` for unions — enforced by the repo's own gates at a **zero baseline**: one new violation anywhere fails `bun run typecheck`.
 - **The harness compounds.** Workspace rules files reach every brief; gate history distills into lessons; an LLM-curated memory ledger survives across runs; repeatedly-confirmed memories graduate into skills the agent loads on demand.
+- **The architecture is executable.** The root profile enforces Effect-native
+  entity/use-case cores, Context.Tag ports, Layer adapters, package boundaries,
+  and the repository's own typecheck/test/eval scripts. The
+  `issue-tracker-example` workspace is the canonical code and eval target.
 
 ## Run the agents
 
-Credentials live in `~/.efferent/auth.json` (write them with smith's `:login`); model selection in `.efferent/config.json` (`"model": "<provider>:<modelId>"` + `codeModel`/`fastModel` roles). Requires [Bun](https://bun.sh) ≥ 1.2 — no build step, Bun runs the TypeScript directly.
+Credentials live in `~/.efferent/auth.json` (write them with smith's `:login`). Smith and general agents use the model roles in `.efferent/config.json`; the UI agent deliberately does not. Its model planner must create the manifest, information architecture, and first blocks before anything renders; the composer completes model-generated content through the trusted compiler. Models, effort, budgets, timeouts, prompt versions, schema, recipe set, and fallback are pinned in `packages/ui-agent/profiles/streaming-ui-v1.json`. Select that profile with the live model × effort matrix rather than intuition. Requires [Bun](https://bun.sh) ≥ 1.2.
 
 ```bash
 git clone https://github.com/xandreeddev/efferent && cd efferent && bun install
@@ -50,6 +56,7 @@ bun run math --open             # the practice product (loopback + token)
 bun run canvas --open           # the page builder (loopback)
 bun run social review           # the human review queue
 bun run scenarios               # the regression batteries (key-free, scripted twins)
+bun run evals:ui-matrix         # live UI model × effort screening + persisted evidence
 bun run foundry demo            # the forge-loop E2E, no keys needed
 ```
 
@@ -89,7 +96,7 @@ CI runs all three plus the forge-loop E2E. The repo's own gates run on the repo'
 
 ## Tech
 
-`effect` · `@effect/ai` · Bun (runtime + test runner + SQLite) · `@opentui/core` + `@opentui/solid` + `solid-js` (the TUI — no React, no Ink) · htmx + Alpine.js behind a sanitizer (the web surfaces) · bubblewrap (the coder's sandbox) · OTLP + Grafana (observability).
+`effect` · `@effect/ai` · Bun (runtime + test runner + SQLite) · `@opentui/core` + `@opentui/solid` + `solid-js` (the TUI — no React, no Ink) · htmx + CSP Alpine.js over trusted server recipes · Dagre server-side diagrams · bubblewrap · OTLP + Grafana.
 
 ## License
 

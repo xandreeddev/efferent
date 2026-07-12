@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
-import { Failure } from "../domain/Failure.js"
-import type { LoopEvent } from "../domain/LoopEvent.js"
+import { Failure } from "../domain/failure.entity.js"
+import type { LoopEvent } from "../domain/loop-event.entity.js"
 import { DEGENERATE_REPEAT_NUDGE, runLoop } from "./loop.js"
 
 /** A scripted provider: call N returns `script(N)`'s encoded parts. */

@@ -17,7 +17,7 @@ const MARKER = "efferent core-purity hook"
 const HOOK = `#!/bin/sh
 # ${MARKER} — the foundry repo gates: core purity, Effect idioms (ratcheted),
 # dependency direction. Bypass (discouraged): git commit --no-verify
-exec bun packages/foundry/src/main.ts check --config foundry.repo.config.ts --baseline packages/foundry/baselines/repo.json
+exec bun packages/foundry/src/main.ts check --config foundry.config.ts --baseline .foundry/baseline.json
 `
 
 const ROOT = join(import.meta.dir, "..")

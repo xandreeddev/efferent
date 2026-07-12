@@ -1,8 +1,8 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Context, Effect, Option, Schema } from "effect"
-import { Failure } from "../domain/Failure.js"
-import { McpClient } from "../ports/McpClient.js"
-import type { McpToolDescriptor } from "../ports/McpClient.js"
+import { Failure } from "../domain/failure.entity.js"
+import { McpClient } from "../ports/mcp-client.port.js"
+import type { McpToolDescriptor } from "../ports/mcp-client.port.js"
 
 /**
  * MCP servers → the agent's toolkit by PROGRESSIVE DISCLOSURE, the same

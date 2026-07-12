@@ -21,7 +21,7 @@ import type { ViEdit } from "./presentation/vi.js"
 import { customRow } from "./presentation/modelCatalog.js"
 import { openSelect } from "./presentation/selectBox.js"
 import { advanceLogin, stopOAuthSession } from "./actions/login.js"
-import { openModelPicker, submitModel } from "./actions/model.js"
+import { openModelPicker, submitModel, submitModelEffort } from "./actions/model.js"
 import {
   openFallbackPicker,
   openNumberPicker,
@@ -95,6 +95,15 @@ const routeSelectKey = (ctx: SmithTuiContext, overlay: Overlay & { kind: "select
         onSome: (value) => {
           if (overlay.purpose.tag === "model") {
             submitModel(ctx, overlay.purpose.role, value)
+            return
+          }
+          if (overlay.purpose.tag === "model-effort") {
+            submitModelEffort(
+              ctx,
+              overlay.purpose.role,
+              overlay.purpose.selection,
+              value,
+            )
             return
           }
           if (overlay.purpose.tag === "resume") {
@@ -349,4 +358,3 @@ export const dispatchPaste = (ctx: SmithTuiContext, text: string): void => {
     ctx.store.setOverlay({ ...overlay, flow: loginAppend(overlay.flow, clean) })
   }
 }
-

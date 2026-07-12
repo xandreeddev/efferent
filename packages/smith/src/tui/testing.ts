@@ -11,6 +11,7 @@ import {
   EngineSettings,
   McpClient,
   McpError,
+  ModelCatalog,
   Shell,
   ShellResult,
   SettingsStore,
@@ -21,6 +22,7 @@ import type { SpecDoc } from "@xandreed/engine"
 import type { Credential, ModelRole } from "@xandreed/engine"
 import { FactoryRun } from "@xandreed/foundry"
 import {
+  configuredModelCatalog,
   LocalFileSystemLive,
   SqliteConversationStoreLive,
 } from "@xandreed/providers"
@@ -85,7 +87,6 @@ export const testRunConfig = (cwd: string): SmithRunConfig => ({
   maxAttempts: SMITH_LIMIT_DEFAULTS.maxAttempts,
   budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
   models: { general: Option.none(), code: Option.none(), fast: Option.none() },
-  allowBash: false,
   headless: false,
   testCommand: Option.none(),
   noTest: true,
@@ -127,6 +128,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     LocalFileSystemLive,
     SqliteConversationStoreLive(join(cwd, ".efferent", "smith.db")),
     Layer.succeed(LanguageModel.LanguageModel, {} as never),
+    Layer.succeed(ModelCatalog, { list: Effect.succeed(configuredModelCatalog(credentials)) }),
     Layer.succeed(McpClient, {
       listTools: Effect.succeed([]),
       callTool: () =>

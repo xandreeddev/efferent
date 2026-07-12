@@ -1,13 +1,9 @@
-export { canvasAgentPrompt } from "./prompt.js"
-export {
-  canvasToolkit,
-  HTML_MAX_BYTES,
-  makeCanvasHandlers,
-  RenderUi,
-} from "./toolkit.js"
-export type { CanvasEntry, CanvasToolkit } from "./toolkit.js"
+export { CANVAS_COMPOSER_PROMPT_VERSION, CANVAS_PLANNER_PROMPT_VERSION, CANVAS_PROMPT_VERSION, CANVAS_REPAIR_PROMPT_VERSION, canvasEnrichmentPrompt, canvasFastPrompt, canvasRepairPrompt } from "./prompt.js"
 export { makeCanvasSession } from "./session.js"
-export type { CanvasEvent, CanvasRunServices, CanvasSession } from "./session.js"
-export { emptyModel, reduceEvent } from "./web/state.js"
+export type { CanvasEvent, CanvasRunServices, CanvasSession, LegacyCanvasEntry } from "./session.js"
+export { emptyModel, pageId, pageTitle, reduceEvent } from "./web/state.js"
 export type { CanvasModel, Page } from "./web/state.js"
-export { foldLedger, serveCanvas } from "./web/server.js"
+export { activePageId, foldLedger, serveCanvas } from "./web/server.js"
+export { DefaultUiHostLive } from "./adapters/default-ui-host.adapter.js"
+export { SqliteUiPageStoreLive } from "./adapters/sqlite-ui-page-store.adapter.js"
+export { UiAgentExecutionProfileLive, UiAgentRuntimeLive } from "./adapters/ui-agent-runtime.adapter.js"

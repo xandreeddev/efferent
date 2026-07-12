@@ -13,6 +13,7 @@ import { noNullableReturn } from "./noNullableReturn.js"
 import { noParallelInterface } from "./noParallelInterface.js"
 import { noSkippedTests } from "./noSkippedTests.js"
 import { noTryCatch } from "./noTryCatch.js"
+import { effectArchitectureRules } from "./effectArchitecture.js"
 
 /**
  * Packs are a LIBRARY, not builtins: the platform ships engines, never
@@ -48,7 +49,13 @@ export const qualityPack: RulePack = {
   rules: [noSkippedTests, noEmptyCatch],
 }
 
-export const builtinPacks: ReadonlyArray<RulePack> = [effectPack, qualityPack]
+/** Ports-and-adapters file roles for an Effect-native inner core. */
+export const effectArchitecturePack: RulePack = {
+  name: "effect-architecture",
+  rules: effectArchitectureRules,
+}
+
+export const builtinPacks: ReadonlyArray<RulePack> = [effectPack, qualityPack, effectArchitecturePack]
 
 /** The full shipped library — for in-monorepo consumers and tests. Config
  *  resolution NEVER falls back to this implicitly. */

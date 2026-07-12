@@ -30,6 +30,7 @@ const memoryFs = () => {
           .map((path) => path.slice(dir.length + 1)),
       ),
     mkdir: () => Effect.void,
+    realPath: (path: string) => Effect.succeed(path),
     remove: (path: string) =>
       Effect.sync(() => {
         files.delete(path)
