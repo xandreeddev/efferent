@@ -31,7 +31,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && span.agent.kind = \"run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.model)",
+          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" } | select(span.agent.conversation_id, span.agent.prompt, span.agent.prompt_chars)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -51,14 +51,14 @@
             "indexByName": {
               "agent.prompt": 0,
               "time": 1,
-              "agent.model": 2,
+              "agent.prompt_chars": 2,
               "agent.conversation_id": 3,
               "spanID": 4
             },
             "renameByName": {
               "agent.prompt": "user message",
               "time": "when",
-              "agent.model": "model",
+              "agent.prompt_chars": "prompt chars",
               "agent.conversation_id": "conversation",
               "spanID": "span"
             }

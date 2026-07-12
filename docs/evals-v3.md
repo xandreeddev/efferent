@@ -33,12 +33,13 @@ queues. Evals v2 cannot express that:
 4. **Suites are per-feature, not per-agent.** Each agent needs a scenario pack
    that IS its regression battery, extended as the agent grows.
 
-What v2 got right is kept verbatim: samples → mean±stdev, pass@k/pass^k with the
-objective-scorer gate, stratification tags, the trace-first report (spans are
-the data), config-matrix A/Bs with `FixedSettingsStore`, cost budget, sharding,
-judge agreement/calibration (κ, MAE, length-bias), and the reproducibility
-manifest (image digest, lock hash, models, git sha). The revamp changes the
-UNIT (scenario, not case) and the DEFAULTS (baselines standing, not flagged).
+The current runner keeps ordered scenarios and evidence as the unit. Samples
+retain raw outcomes and report empirical success with a Wilson interval plus
+pass@k/pass^k estimates. Hard checks and infrastructure are mandatory outside
+the quality mean. Committed baselines carry per-sample evidence and
+git/lock/runtime provenance; missing, renamed, or unbaselined cases fail.
+Config-matrix A/Bs, sharding, cost budgets, and bootstrap change tests remain
+future work rather than implied shipped behavior.
 
 ## The model
 

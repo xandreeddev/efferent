@@ -4,5 +4,45 @@
   "scenarios": {
     "render_ui gate bounce → corrective re-render (scripted twin)": 1
   },
-  "mintedAt": "2026-07-10T20:00:25.585Z"
+  "evidence": {
+    "render_ui gate bounce → corrective re-render (scripted twin)": {
+      "status": "ran",
+      "hardPassed": true,
+      "score": 1,
+      "combined": 1,
+      "checks": [
+        {
+          "step": "one ask: the violating render bounces, the fixed one lands",
+          "check": "exactly ONE ui_render reached the canvas — the corrected page",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "one ask: the violating render bounces, the fixed one lands",
+          "check": "the bounce named BOTH violations (colour utility + self-firing trigger)",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the persisted conversation is the audit trail",
+          "check": "turn-alternation-valid",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "the persisted conversation is the audit trail",
+          "check": "tool-sequence:render_ui→render_ui",
+          "severity": "hard",
+          "pass": true
+        }
+      ],
+      "judges": []
+    }
+  },
+  "provenance": {
+    "gitSha": "cfa0653fcfb7916e55c6cf8911dfdc3a91c66474",
+    "lockSha256": "be62db4a5f529f51ef253ec91d48261f985e77d850d0577264cbd4a624f610d6",
+    "bunVersion": "1.3.0"
+  },
+  "mintedAt": "2026-07-12T08:47:22.401Z"
 }

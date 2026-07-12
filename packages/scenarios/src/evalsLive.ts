@@ -6,6 +6,7 @@ import {
   DEFAULT_TOLERANCE,
   orphanedEntries,
   readBaseline,
+  unbaselinedEntries,
   versionDrift,
   writeBaseline,
 } from "./framework/baseline.js"
@@ -132,13 +133,19 @@ const program = Effect.gen(function* () {
                 pack.perScenarioTolerance ?? pack.tolerance ?? DEFAULT_TOLERANCE,
               ),
             )
-        const drift = Option.flatMap(prior, (b) => versionDrift(pack, b))
-        const orphans = Option.match(prior, {
+        const drift = args.noCheck
+          ? Option.none<string>()
+          : Option.flatMap(prior, (b) => versionDrift(pack, b))
+        const orphans = args.noCheck ? [] : Option.match(prior, {
           onNone: () => [] as ReadonlyArray<string>,
           onSome: (b) => orphanedEntries(report, b),
         })
+        const unbaselined = args.noCheck ? [] : Option.match(prior, {
+          onNone: () => [`missing committed baseline for ${report.pack}.${report.mode}`],
+          onSome: (b) => unbaselinedEntries(report, b),
+        })
         if (args.update) writeBaseline(BASELINE_DIR, report, pack)
-        return { pack, report, regression, drift, orphans, prior }
+        return { pack, report, regression, drift, orphans, unbaselined, prior }
       }),
     )
   })
@@ -157,6 +164,7 @@ const program = Effect.gen(function* () {
         }),
       )
       o.orphans.forEach((warning) => console.log(`  ⚠ ${warning}`))
+      o.unbaselined.forEach((warning) => console.log(`  ⚠ ${warning}`))
     })
     const deltas = outcomes.flatMap((o) =>
       Option.match(o.prior, {
@@ -167,7 +175,14 @@ const program = Effect.gen(function* () {
     console.log(`baselines: ${deltas.join(" · ")}`)
     if (args.update) console.log(`baselines updated under ${BASELINE_DIR}`)
   }
-  const failed = outcomes.some((o) => !o.report.passed || Option.isSome(o.regression))
+  const failed = outcomes.some(
+    (o) =>
+      !o.report.passed ||
+      Option.isSome(o.regression) ||
+      Option.isSome(o.drift) ||
+      o.orphans.length > 0 ||
+      o.unbaselined.length > 0,
+  )
   return failed ? 1 : 0
 })
 

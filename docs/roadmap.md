@@ -91,9 +91,9 @@ on anything beyond intent/honesty.
 - Promote smith's command/test gate into foundry's built-ins.
 
 ### Scenarios v3 remainder
-Trajectory-typed scorers (`ScorerArgsV2.trajectory`), samples/pass@k, the
-first live pack that uses judges, wiring the trajectory critic into a
-scheduled (non-CI) run.
+Config-matrix A/Bs, sharding, cost budgets, bootstrap change tests, and a
+scheduled live trajectory-critic run. Sampling, pass@k/pass^k estimates,
+Wilson intervals, judge-backed live packs, and raw-evidence baselines ship.
 
 ### Provider-level cache tightening
 Per-conversation OpenAI `prompt_cache_key`; explicit Gemini `cachedContent`

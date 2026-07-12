@@ -16,14 +16,12 @@ import {
 import type { Judge, Pack } from "../framework/model.js"
 import { scenario } from "../framework/run.js"
 import { listCases } from "../live/fixtures.js"
-import { utilityTier } from "../live/llm.js"
+import { generalTierCall, utilityTier } from "../live/llm.js"
 
 /**
  * The MEMORY battery — the goldenEval absorbed: extraction cases score
- * precision/recall via the LLM-equivalence judge (today's targets P≥0.8 /
- * R≥0.6 map to score 1.0 exactly, so the bar is preserved and improvements
- * ratchet), and NEW consolidate cases pin the create/corroborate/update
- * verbs deterministically.
+ * precision/recall via an independent LLM-equivalence judge and one-to-one
+ * matching; consolidate cases pin the create/corroborate/update verbs.
  */
 
 const EXTRACT_FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "memory-golden")
@@ -57,11 +55,31 @@ interface ExtractWorld {
   readonly transcript: string
   readonly expected: MemoryExpected
   readonly extracted: Ref.Ref<Option.Option<Candidates>>
-  readonly complete: (prompt: string) => Effect.Effect<string, unknown>
+  readonly generate: (prompt: string) => Effect.Effect<string, unknown>
+  readonly judge: (prompt: string) => Effect.Effect<string, unknown>
 }
 
-/** Precision/recall via the equivalence probe; hitting today's targets
- *  (P 0.8 / R 0.6) scores exactly 1.0. */
+/** Maximum one-to-one matches in a boolean equivalence matrix. Exhaustive
+ *  recursion is appropriate here: golden memory sets are deliberately tiny. */
+export const maximumOneToOneMatches = (
+  matrix: ReadonlyArray<ReadonlyArray<boolean>>,
+): number => {
+  const visit = (row: number, used: ReadonlySet<number>): number =>
+    row >= matrix.length
+      ? 0
+      : Math.max(
+          visit(row + 1, used),
+          ...(matrix[row] ?? []).flatMap((matches, column) =>
+            matches && !used.has(column)
+              ? [1 + visit(row + 1, new Set([...used, column]))]
+              : [],
+          ),
+        )
+  return visit(0, new Set())
+}
+
+/** Precision/recall via independent equivalence probes and a one-to-one
+ *  alignment. The harmonic mean stays sensitive above historical cutoffs. */
 export const extractionFidelityJudge: Judge<ExtractWorld> = {
   name: "extraction-fidelity",
   run: (world) =>
@@ -70,31 +88,29 @@ export const extractionFidelityJudge: Judge<ExtractWorld> = {
       const golden = world.expected.expected
       const equivalent = (a: string, b: string) =>
         world
-          .complete(
+          .judge(
             `Do these two statements express the SAME workspace fact? Reply with exactly "yes" or "no".\nA: ${a}\nB: ${b}`,
           )
           .pipe(Effect.map((reply) => reply.trim().toLowerCase().startsWith("yes")))
-      const matchedPerExtracted = yield* Effect.forEach(extracted, (fact) =>
-        Effect.reduce(golden, false, (hit, expected) =>
-          hit ? Effect.succeed(true) : equivalent(fact.statement, expected.statement),
+      const matrix = yield* Effect.forEach(extracted, (fact) =>
+        Effect.forEach(golden, (expected) =>
+          equivalent(fact.statement, expected.statement),
         ),
       )
-      const matchedPerExpected = yield* Effect.forEach(golden, (expected) =>
-        Effect.reduce(extracted, false, (hit, fact) =>
-          hit ? Effect.succeed(true) : equivalent(fact.statement, expected.statement),
-        ),
-      )
+      const matches = maximumOneToOneMatches(matrix)
       const precision =
-        extracted.length === 0 ? 1 : matchedPerExtracted.filter(Boolean).length / extracted.length
+        extracted.length === 0 ? (golden.length === 0 ? 1 : 0) : matches / extracted.length
       const recall =
         golden.length === 0
           ? extracted.length === 0
             ? 1
             : 0
-          : matchedPerExpected.filter(Boolean).length / golden.length
+          : matches / golden.length
+      const score =
+        precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall)
       return {
-        score: 0.5 * Math.min(1, precision / 0.8) + 0.5 * Math.min(1, recall / 0.6),
-        reason: `precision ${precision.toFixed(2)} · recall ${recall.toFixed(2)} · extracted ${extracted.length}/${golden.length}`,
+        score,
+        reason: `precision ${precision.toFixed(2)} · recall ${recall.toFixed(2)} · matched ${matches} · extracted ${extracted.length}/${golden.length}`,
       }
     }),
 }
@@ -107,20 +123,21 @@ const extractScenario = (name: string) =>
       const fixture = yield* readExtractCase(EXTRACT_FIXTURES, name).pipe(Effect.orDie)
       const extracted = yield* Ref.make(Option.none<Candidates>())
       const utility = yield* Layer.build(utilityTier(process.cwd()))
-      const complete = (prompt: string) =>
+      const generate = (prompt: string) =>
         UtilityLlm.pipe(
           Effect.flatMap((service) => service.complete(prompt)),
           Effect.map((response) => response.text),
           Effect.provide(utility),
         )
-      return { transcript: fixture.transcript, expected: fixture.expected, extracted, complete }
+      const judge = generalTierCall(process.cwd())
+      return { transcript: fixture.transcript, expected: fixture.expected, extracted, generate, judge }
     }),
     steps: [
       {
         name: "extract candidates",
         act: (world) =>
           Effect.gen(function* () {
-            const reply = yield* world.complete(extractPrompt(world.transcript))
+            const reply = yield* world.generate(extractPrompt(world.transcript))
             const decoded = yield* Schema.decodeUnknown(ExtractOutput)(stripFences(reply)).pipe(
               Effect.option,
             )

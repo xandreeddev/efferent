@@ -13,6 +13,7 @@ import {
 import { digestPack, factCoverageJudge, readDigestCase } from "./digest.js"
 import {
   extractionFidelityJudge,
+  maximumOneToOneMatches,
   memoryPack,
   opMatches,
   readConsolidateCase,
@@ -114,10 +115,10 @@ describe("scoring folds (canned completions — no keys)", () => {
       pack: "judge-calibration",
       mode: "live",
       scenarios: [
-        { name: "sound:a", status: "ran", checks: [], judges: [], score: 1, combined: 1 },
-        { name: "sound:b", status: "ran", checks: [], judges: [], score: 1, combined: 0.5 },
-        { name: "unsound:c", status: "ran", checks: [], judges: [], score: 1, combined: 0 },
-        { name: "skipped", status: "skipped", checks: [], judges: [], score: 0, combined: 0 },
+        { name: "sound:a", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 1 },
+        { name: "sound:b", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 0.5 },
+        { name: "unsound:c", status: "ran", hardPassed: true, checks: [], judges: [], score: 1, combined: 0 },
+        { name: "skipped", status: "skipped", hardPassed: false, checks: [], judges: [], score: 0, combined: 0 },
       ],
       mean: 0.5,
       threshold: 0.8,
@@ -157,7 +158,7 @@ describe("scoring folds (canned completions — no keys)", () => {
     expect(verdict.reason).toContain("[verification]")
   })
 
-  test("extractionFidelityJudge: P/R targets map to score 1.0 exactly", async () => {
+  test("extractionFidelityJudge: independent one-to-one perfect matches score 1", async () => {
     const facts: ReadonlyArray<typeof CandidateFact.Type> = [
       { topic: "build-quirk", statement: "needs --preload" },
       { topic: "convention", statement: "kebab-case files" },
@@ -176,12 +177,18 @@ describe("scoring folds (canned completions — no keys)", () => {
           },
           extracted,
           // Everything matches (perfect P=1, R=1 → score 1).
-          complete: () => Effect.succeed("yes"),
+          generate: () => Effect.succeed("unused"),
+          judge: () => Effect.succeed("yes"),
         }
       }),
     )
     const verdict = await Effect.runPromise(extractionFidelityJudge.run(world))
     expect(verdict.score).toBe(1)
+  })
+
+  test("memory equivalence matching cannot reuse one golden fact", () => {
+    expect(maximumOneToOneMatches([[true], [true]])).toBe(1)
+    expect(maximumOneToOneMatches([[true, false], [false, true]])).toBe(2)
   })
 
   test("opMatches: create by candidate index, corroborate/update by memory target", () => {

@@ -336,6 +336,10 @@ export const makeEfferentImplementorLive = (
                 ),
                 toolkit,
                 maxSteps: MAX_ATTEMPT_STEPS,
+                // The coder can mutate the workspace through write/edit/Bash
+                // and configured MCP tools. Serial execution makes a model
+                // turn deterministic and prevents concurrent file races.
+                toolConcurrency: 1,
                 // A plan-status update legitimately repeats with a constant
                 // result — it must never read as a degenerate loop (the
                 // smith-spec battery caught the breaker firing on it).

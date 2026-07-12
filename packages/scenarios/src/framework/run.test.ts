@@ -62,6 +62,7 @@ describe("runScenario", () => {
       ),
     )
     expect(result.status).toBe("ran")
+    expect(result.hardPassed).toBe(false)
     expect(result.score).toBe(0)
     expect(result.checks).toHaveLength(2)
     expect(result.checks[1]?.detail).toContain("skipped")
@@ -112,7 +113,7 @@ describe("runScenario", () => {
         0.3,
       ),
     )
-    expect(crashed.status).toBe("ran")
+    expect(crashed.status).toBe("error")
     expect(crashed.score).toBe(0)
     expect(crashed.checks[0]?.detail).toContain("act failed")
   })
@@ -167,5 +168,52 @@ describe("runPack", () => {
     expect(report.mean).toBe(1)
     expect(report.passed).toBe(true)
     expect(report.scenarios.map((s) => s.status)).toEqual(["ran", "skipped"])
+  })
+
+  test("one late hard failure cannot pass by averaging with easy checks", async () => {
+    const easy = Array.from({ length: 19 }, (_, index): Check<ToyWorld> => ({
+      name: `easy-${index}`,
+      severity: "soft",
+      run: () => Effect.succeed({ pass: true }),
+    }))
+    const report = await Effect.runPromise(
+      runPack(
+        {
+          name: "hard-means-hard",
+          threshold: 0.95,
+          scenarios: [
+            scenario(
+              toy({
+                steps: [
+                  {
+                    name: "score",
+                    act: () => Effect.void,
+                    checks: [
+                      ...easy,
+                      { name: "mandatory", severity: "hard", run: () => Effect.succeed({ pass: false }) },
+                    ],
+                  },
+                ],
+              }),
+            ),
+          ],
+        },
+        "scripted",
+      ),
+    )
+    expect(report.mean).toBe(0.95)
+    expect(report.passed).toBe(false)
+  })
+
+  test("empty and all-skipped packs fail because they exercised nothing", async () => {
+    const empty = await Effect.runPromise(runPack({ name: "empty", threshold: 0, scenarios: [] }, "scripted"))
+    const skipped = await Effect.runPromise(
+      runPack(
+        { name: "skipped", threshold: 0, scenarios: [scenario(toy({ modes: ["live"] }))] },
+        "scripted",
+      ),
+    )
+    expect(empty.passed).toBe(false)
+    expect(skipped.passed).toBe(false)
   })
 })

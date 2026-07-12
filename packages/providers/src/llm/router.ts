@@ -57,6 +57,9 @@ const byModel = <Type, In, Out>(
   label: string,
 ): Metric.Metric<Type, In, Out> => Metric.tagged(metric, "llm.model", label)
 
+const tracedContent = (content: string): string =>
+  process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"
+
 const shapeOptions = (
   selection: ModelSelection,
   shouldPrependClaudeCode: boolean,
@@ -134,7 +137,7 @@ export const generateWith = (
               return p.type === "tool-call" ? [p.name ?? ""] : []
             })
             .join(","),
-          "llm.reasoning": (res.reasoningText ?? "").slice(0, 500),
+          "llm.reasoning": tracedContent(res.reasoningText ?? ""),
           "llm.fallback": isFallback,
         }),
       ),
@@ -299,7 +302,7 @@ export const tapStreamTelemetry =
                   "llm.usage.output_tokens": p.usage?.outputTokens ?? 0,
                   "llm.response_chars": s.textChars,
                   "llm.tool_calls": s.toolNames.join(","),
-                  "llm.reasoning": s.reasoning.slice(0, 500),
+                  "llm.reasoning": tracedContent(s.reasoning),
                 }),
               ),
               Effect.zipRight(

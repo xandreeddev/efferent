@@ -24,7 +24,8 @@ pack's `meta` and the minted baseline; drift prints a warning so every
 score delta is attributable. **The ritual: change a prompt → bump its
 version constant → `bun run evals:live <battery>` → review the delta →
 `--update-baselines` in the same PR.** Framework extras: `Pack.samples`
-(pass@k for stochastic prompts — a scenario's recorded score is the mean),
+(raw independent outcomes, empirical success + Wilson 95% interval, and
+pass@k/pass^k estimates; the quality score is the mean),
 `Pack.tolerance` (per-pack regression wobble), `Pack.summary` (derived
 lines, e.g. calibration false-block/false-pass). Cost of a FULL run ≈ 1M
 tokens (dominated by the live forge); the per-change ritual runs ONE
@@ -43,13 +44,15 @@ a reusable `Judge<W>`; `src/critic.ts` stays its manual CLI.
   becoming accept gates, the reject→fix→accepted loop. Live scenarios ride
   the same checks with the real model (key-gated).
 - **baselines/** — committed `<pack>.<mode>.json` ratchet files, compared BY
-  DEFAULT when present (a mean drop beyond 0.05 exits non-zero);
+  DEFAULT. Missing/new/orphaned cases and prompt-version drift fail; each mint
+  carries raw check/judge/sample evidence plus git/lock/runtime provenance;
   `--update-baselines` is the explicit, PR-reviewed update.
 
-Each agent PR ships its pack additions + baseline updates — the
-full-scenario battery is part of the agent's definition of done. v1
-simplifications: no bootstrap-CI stats (tolerance gate instead), no samples/
-pass@k yet, judges wired but no pack uses them — add with the first live pack.
+Hard checks are mandatory independently of score, infrastructure-failed
+samples remain errors, and empty/all-skipped packs fail. Each agent PR ships
+its pack additions + baseline updates — the full-scenario battery is part of
+the agent's definition of done. Remaining simplifications: no bootstrap
+change test, config matrix, cost budget, or sharding yet.
 
 `bun test packages/scenarios` — framework semantics (hard-fail stops, soft
 continues, mode skip, captured act failures, evidence combinators, pack

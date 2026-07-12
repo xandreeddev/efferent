@@ -230,7 +230,9 @@ export const runForgeSession = (
     // contract the gates enforce.
     const doctrine = yield* loadQualityBar(run.cwd, gateRequestFromSpec(run, doc).configPath)
 
-    // The JUDGE (default ON; spec opts out): a one-shot strong-tier call,
+    // The JUDGE (default ON; spec opts out): a one-shot GENERAL-tier call,
+    // deliberately distinct from the CODE-role implementor so the model
+    // does not grade its own work,
     // closed over the ambient services HERE so the gate stays R = never and
     // the scripted seam stays LLM-free.
     const services = yield* Effect.context<SettingsStore | AuthStore>()
@@ -238,10 +240,7 @@ export const runForgeSession = (
       LanguageModel.generateText({ prompt }).pipe(
         Effect.map((response) => response.text),
         Effect.provide(
-          LanguageModelLive.pipe(
-            Layer.provide(roleModelView("code")),
-            Layer.provide(Layer.succeedContext(services)),
-          ),
+          LanguageModelLive.pipe(Layer.provide(Layer.succeedContext(services))),
         ),
       )
     const judgeGates = (spec: Spec): ReadonlyArray<Gate<TsProject>> =>

@@ -32,7 +32,7 @@ const flaky = (script: ReadonlyArray<boolean>, counter: Ref.Ref<number>): Scenar
   ],
 })
 
-describe("sampled scenarios (pass@k)", () => {
+describe("sampled scenarios (rate, pass@k, pass^k)", () => {
   test("k=3 over pass/fail/pass → mean 2/3, passRate 2/3, last sample's checks shown", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -45,6 +45,11 @@ describe("sampled scenarios (pass@k)", () => {
     expect(result.samples?.count).toBe(3)
     expect(result.samples?.scores).toEqual([1, 0, 1])
     expect(result.samples?.passRate).toBeCloseTo(2 / 3, 5)
+    expect(result.samples?.passAtK).toBeCloseTo(26 / 27, 5)
+    expect(result.samples?.passAllK).toBeCloseTo(8 / 27, 5)
+    expect(result.samples?.passRate95.low).toBeLessThan(2 / 3)
+    expect(result.samples?.passRate95.high).toBeGreaterThan(2 / 3)
+    expect(result.hardPassed).toBe(false)
     // checks shown are the LAST sample's (a passing one).
     expect(result.checks.every((c) => c.pass)).toBe(true)
   })
@@ -90,5 +95,19 @@ describe("sampled scenarios (pass@k)", () => {
     )
     expect(report.scenarios[0]?.samples?.count).toBe(2)
     expect(report.mean).toBeCloseTo(0.5, 5)
+    expect(report.passed).toBe(false)
+  })
+
+  test("one infrastructure-failed sample remains an error", async () => {
+    const counter = await Effect.runPromise(Ref.make(0))
+    const unstable: Scenario<{ readonly pass: boolean }> = {
+      ...flaky([true], counter),
+      boot: Ref.getAndUpdate(counter, (n) => n + 1).pipe(
+        Effect.flatMap((n) => n === 1 ? Effect.fail("provider unavailable") : Effect.succeed({ pass: true })),
+      ),
+    }
+    const result = await Effect.runPromise(scenario(unstable).run("live", 0.3, 3))
+    expect(result.status).toBe("error")
+    expect(result.samples?.infraFailures).toBe(1)
   })
 })

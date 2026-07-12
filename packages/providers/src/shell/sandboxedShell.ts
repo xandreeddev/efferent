@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { Shell } from "@xandreed/engine"
+import { Shell, ShellError } from "@xandreed/engine"
 import { spawnBounded, workspacePath } from "./spawn.js"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
@@ -11,8 +11,8 @@ const DEFAULT_TIMEOUT_MS = 5 * 60_000
  * read-write, everything else read-only, /tmp a fresh tmpfs, HOME redirected
  * into it, `--die-with-parent` so nothing outlives the run. Network stays ON
  * (installs and test runs need it). Zero-daemon by design — and when `bwrap`
- * is absent, the layer degrades to the plain shell with ONE loud stderr
- * warning (never silently sandboxless: the warning is the contract).
+ * is absent, execution fails closed. Running without isolation requires the
+ * caller to explicitly select `LocalShellLive` (`--no-sandbox`).
  *
  * Scope: this layer is provided to the CODER's toolkit only. The gates run
  * the human's own check commands unsandboxed, and `:ship` needs the real
@@ -93,11 +93,9 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
       const sandboxed = yield* probe
       yield* sandboxed
         ? Effect.void
-        : Effect.sync(() => {
-            console.error(
-              "smith: bwrap is not available — the coder's Bash runs UNSANDBOXED (install bubblewrap to isolate it)",
-            )
-          })
+        : Effect.logError(
+            "smith: bwrap is unavailable — sandboxed Bash will fail closed; install bubblewrap or explicitly use --no-sandbox",
+          )
       yield* Effect.annotateCurrentSpan({ sandbox: sandboxed ? "bwrap" : "off" })
       return {
         exec: (
@@ -108,22 +106,24 @@ export const SandboxedShellLive = (workspace: string): Layer.Layer<Shell> =>
             readonly onChunk?: (chunk: string) => void
           },
         ) =>
-          spawnBounded(
-            sandboxed
-              ? bwrapArgs(
+          sandboxed
+            ? spawnBounded(
+                bwrapArgs(
                   workspace,
                   options?.cwd ?? workspace,
                   command,
                   protectedDirs(workspace),
-                )
-              : ["bash", "-c", command],
-            sandboxed ? undefined : (options?.cwd ?? workspace),
-            options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-            options?.onChunk,
-            // Degraded (bwrap absent) keeps the same toolchain prefix —
-            // parity must not depend on the sandbox being available.
-            sandboxed ? undefined : { PATH: workspacePath(workspace) },
-          ),
+                ),
+                undefined,
+                options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                options?.onChunk,
+              )
+            : Effect.fail(
+                new ShellError({
+                  message:
+                    "sandbox requested but bubblewrap is unavailable; install bwrap or rerun with --no-sandbox",
+                }),
+              ),
       }
     }),
   )

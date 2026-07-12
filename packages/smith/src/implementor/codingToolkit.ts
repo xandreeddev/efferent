@@ -1,4 +1,4 @@
-import { isAbsolute, join, normalize, relative } from "node:path"
+import { dirname, isAbsolute, join, normalize, relative } from "node:path"
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Option, Runtime, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/engine"
@@ -21,7 +21,7 @@ const DEFAULT_BASH_TIMEOUT_MS = 5 * 60_000
 
 export const ReadFile = Tool.make("read_file", {
   description:
-    "Read one file. Returns {content, truncated} — content over 48k chars is clipped with a marker; page big files with offset/limit. Reads may leave the workspace (dependency sources are fair game).",
+    "Read one file inside the workspace. Returns {content, truncated} — content over 48k chars is clipped with a marker; page big files with offset/limit. Symlinks that resolve outside the workspace are refused.",
   parameters: {
     path: Schema.String.annotations({ description: "Workspace-relative or absolute path." }),
     offset: Schema.optional(Schema.Number.annotations({ description: "1-based first line (default 1)." })),
@@ -181,8 +181,9 @@ const occurrences = (haystack: string, needle: string): number =>
 
 /**
  * Handlers over the engine's FileSystem + Shell, bound to one workspace.
- * Reads may leave the workspace (dependency sources are fair game); WRITES
- * may not — the cwd-prefix guard is the sandbox.
+ * Reads and writes are confined to the REAL workspace tree. Canonical-path
+ * checks reject symlinks that escape the workspace or point into harness
+ * state; the Bash sandbox is a second, independent boundary.
  */
 export interface CodingHandlerHooks {
   /** Best-effort live tap on the coder's Bash output (chunk granularity). */
@@ -211,10 +212,11 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const shell = yield* Shell
+    const workspaceRoot = yield* fs.realPath(cwd).pipe(Effect.orDie)
 
     const resolve = (path: string): string => (isAbsolute(path) ? path : join(cwd, path))
     const insideWorkspace = (path: string): boolean => {
-      const rel = relative(cwd, normalize(resolve(path)))
+      const rel = relative(workspaceRoot, normalize(path))
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
     }
     // Harness state under the workspace — the audit trail (.efferent) and
@@ -222,45 +224,79 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
     // by the coder (a run's smith.db vanished post-run; the trail must not
     // be the coder's to modify). The bwrap sandbox ro-binds these for Bash.
     const isHarnessState = (path: string): boolean => {
-      const abs = normalize(resolve(path))
+      const abs = normalize(path)
       return (
-        abs.startsWith(join(cwd, ".efferent") + "/") ||
-        abs === join(cwd, ".efferent") ||
-        abs.startsWith(join(cwd, ".foundry") + "/") ||
-        abs === join(cwd, ".foundry")
+        abs.startsWith(join(workspaceRoot, ".efferent") + "/") ||
+        abs === join(workspaceRoot, ".efferent") ||
+        abs.startsWith(join(workspaceRoot, ".foundry") + "/") ||
+        abs === join(workspaceRoot, ".foundry")
       )
     }
-    const writeGuard = (path: string) =>
-      !insideWorkspace(path)
-        ? Effect.fail({
-            error: "OutsideWorkspace",
-            message: `"${path}" is outside the workspace (${cwd}) — writes are confined to it`,
-          })
-        : isHarnessState(path)
-          ? Effect.fail({
-              error: "HarnessState",
-              message: `"${path}" is harness state (.efferent/.foundry hold the audit trail and run artifacts) — the coder never writes there`,
-            })
-          : Effect.void
 
-    // Credentials never flow into the conversation: a read of auth.json
-    // would PERSIST the keys verbatim into the workspace's smith.db (and
-    // stream them to every subscribed UI). Bash under the default sandbox
-    // has no real HOME; this guard closes the read_file path, sandbox on
-    // or off.
-    const isCredentialFile = (path: string): boolean =>
-      normalize(resolve(path)).endsWith("/.efferent/auth.json")
+    const ancestors = (path: string): ReadonlyArray<string> => {
+      const parent = dirname(path)
+      return parent === path ? [path] : [path, ...ancestors(parent)]
+    }
+
+    /** Nearest existing lexical ancestor paired with its canonical path. */
+    const nearestExisting = (path: string) =>
+      Effect.reduce(
+        ancestors(path),
+        Option.none<{ readonly lexical: string; readonly canonical: string }>(),
+        (found, candidate) =>
+          Option.isSome(found)
+            ? Effect.succeed(found)
+            : fs.exists(candidate).pipe(
+                Effect.flatMap((exists) =>
+                  exists
+                    ? fs.realPath(candidate).pipe(
+                        Effect.map((canonical) => Option.some({ lexical: candidate, canonical })),
+                      )
+                    : Effect.succeed(Option.none()),
+                ),
+                Effect.catchAll(() => Effect.succeed(Option.none())),
+              ),
+      )
+
+    const outsideFailure = (path: string, operation: "read" | "write") => ({
+      error: "OutsideWorkspace",
+      message: `refusing to ${operation} "${path}" — resolved paths are confined to ${workspaceRoot}`,
+    })
+
+    const checkedReadPath = (path: string) =>
+      fs.realPath(resolve(path)).pipe(
+        Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })),
+        Effect.filterOrFail(
+          (canonical) => insideWorkspace(canonical) && !isHarnessState(canonical),
+          () => outsideFailure(path, "read"),
+        ),
+      )
+
+    const writeGuard = (path: string) =>
+      Effect.gen(function* () {
+        const target = normalize(resolve(path))
+        if (!insideWorkspace(target)) return yield* Effect.fail(outsideFailure(path, "write"))
+        const found = yield* nearestExisting(target)
+        if (Option.isNone(found)) return yield* Effect.fail(outsideFailure(path, "write"))
+        const canonicalTarget = normalize(
+          join(found.value.canonical, relative(found.value.lexical, target)),
+        )
+        if (!insideWorkspace(canonicalTarget)) {
+          return yield* Effect.fail(outsideFailure(path, "write"))
+        }
+        if (isHarnessState(canonicalTarget)) {
+          return yield* Effect.fail({
+            error: "HarnessState",
+            message: `"${path}" resolves into harness state (.efferent/.foundry) — the coder never writes there`,
+          })
+        }
+      })
 
     const readFile = (params: { path: string; offset?: number | undefined; limit?: number | undefined }) =>
       Effect.gen(function* () {
-        if (isCredentialFile(params.path)) {
-          return yield* Effect.fail({
-            error: "CredentialFile",
-            message: `"${params.path}" holds provider credentials — it is never readable through the coder's tools`,
-          })
-        }
+        const target = yield* checkedReadPath(params.path)
         const content = yield* fs
-          .read(resolve(params.path))
+          .read(target)
           .pipe(Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })))
         const lines = content.split("\n")
         const from = Math.max(0, (params.offset ?? 1) - 1)

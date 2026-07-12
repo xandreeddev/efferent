@@ -11,6 +11,7 @@ import { BunContext } from "@effect/platform-bun"
 import { EngineSettings, SettingsStore } from "@xandreed/engine"
 import {
   FileLoggerLive,
+  FileLoggerAddLive,
   LanguageModelLive,
   UtilityLlmLive,
   LocalAuthStoreLive,
@@ -54,7 +55,6 @@ Flags:
   --model <p:m>          general role override (default opencode:kimi-k2.6, thinking high)
   --code-model <p:m>     code role override    (default opencode:kimi-k2.7-code)
   --fast-model <p:m>     fast role override    (default opencode:deepseek-v4-flash)
-  --allow-bash           let the implementor run Bash (headless allow-all)
   --config <f>           explicit foundry GateSuiteConfig module for the gate suite
   --test-cmd "<cmd>"     test gate command (bash -c; default: bun test when package.json exists)
   --no-test              suppress the test gate
@@ -82,7 +82,6 @@ interface ParseState {
   readonly general: Option.Option<string>
   readonly code: Option.Option<string>
   readonly fast: Option.Option<string>
-  readonly allowBash: boolean
   readonly headless: boolean
   readonly testCommand: Option.Option<string>
   readonly noTest: boolean
@@ -106,7 +105,6 @@ const initialState: ParseState = {
   general: Option.none(),
   code: Option.none(),
   fast: Option.none(),
-  allowBash: false,
   headless: false,
   testCommand: Option.none(),
   noTest: false,
@@ -119,7 +117,6 @@ const initialState: ParseState = {
 }
 
 const BOOLEAN_FLAGS: Record<string, (state: ParseState) => ParseState> = {
-  "--allow-bash": (s) => ({ ...s, allowBash: true }),
   "--headless": (s) => ({ ...s, headless: true }),
   "-p": (s) => ({ ...s, headless: true }),
   "--no-test": (s) => ({ ...s, noTest: true }),
@@ -230,7 +227,6 @@ export const toRunConfig = (
     () => SMITH_LIMIT_DEFAULTS.budgetMillis,
   ),
   models: { general: state.general, code: state.code, fast: state.fast },
-  allowBash: state.allowBash,
   headless: state.headless,
   testCommand: state.testCommand,
   noTest: state.noTest,
@@ -418,7 +414,10 @@ if (isDirectRun) {
     Effect.provide(
       interactive
         ? FileLoggerLive(join(run.cwd, ".efferent", "logs", "smith.log"))
-        : Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
+        : Layer.mergeAll(
+            Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
+            FileLoggerAddLive(join(run.cwd, ".efferent", "logs", "smith.log")),
+          ),
     ),
     // A layer-build failure (store selection, migration) is an infra error.
     Effect.catchAll((cause) =>

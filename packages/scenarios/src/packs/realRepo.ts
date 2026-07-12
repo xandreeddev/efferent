@@ -71,7 +71,6 @@ const runFor = (cwd: string): SmithRunConfig => ({
   maxAttempts: 3,
   budgetMillis: SMITH_LIMIT_DEFAULTS.budgetMillis,
   models: { general: Option.none(), code: Option.none(), fast: Option.none() },
-  allowBash: false,
   headless: true,
   testCommand: Option.none(),
   noTest: false,

@@ -11,6 +11,7 @@ import type {
   ScenarioResult,
   Step,
 } from "./model.js"
+import { wilsonInterval } from "./stats.js"
 
 /**
  * The scenario runner: boot the world (scoped), fold the steps in order —
@@ -24,6 +25,7 @@ import type {
 interface StepFold {
   readonly outcomes: ReadonlyArray<CheckOutcome>
   readonly stopped: boolean
+  readonly crashed: boolean
   readonly detail: Option.Option<string>
 }
 
@@ -55,7 +57,7 @@ const failedOutcomes = <W>(step: Step<W>, detail: string): ReadonlyArray<CheckOu
 const runSteps = <W>(world: W, steps: ReadonlyArray<Step<W>>): Effect.Effect<StepFold> =>
   Effect.reduce(
     steps,
-    { outcomes: [], stopped: false, detail: Option.none() } as StepFold,
+    { outcomes: [], stopped: false, crashed: false, detail: Option.none() } as StepFold,
     (state, step) => {
       if (state.stopped) {
         return Effect.succeed({
@@ -72,6 +74,7 @@ const runSteps = <W>(world: W, steps: ReadonlyArray<Step<W>>): Effect.Effect<Ste
                 ...failedOutcomes(step, `act failed: ${String(cause).slice(0, 300)}`),
               ],
               stopped: true,
+              crashed: true,
               detail: Option.some(`step "${step.name}" act failed`),
             }),
           onSuccess: () =>
@@ -81,6 +84,7 @@ const runSteps = <W>(world: W, steps: ReadonlyArray<Step<W>>): Effect.Effect<Ste
                 return {
                   outcomes: [...state.outcomes, ...outcomes],
                   stopped: hardFail,
+                  crashed: false,
                   detail: hardFail
                     ? Option.some(`hard check failed in step "${step.name}"`)
                     : state.detail,
@@ -118,11 +122,27 @@ export const runScenario = <W>(
     return Effect.succeed({
       name: raw.name,
       status: "skipped",
+      hardPassed: false,
       checks: [],
       judges: [],
       score: 0,
       combined: 0,
       detail: `not supported in ${mode} mode`,
+    })
+  }
+  if (raw.steps.length === 0 || raw.steps.some((step) => step.checks.length === 0)) {
+    return Effect.succeed({
+      name: raw.name,
+      status: "error",
+      hardPassed: false,
+      checks: [],
+      judges: [],
+      score: 0,
+      combined: 0,
+      detail:
+        raw.steps.length === 0
+          ? "invalid scenario: no steps"
+          : "invalid scenario: every step must declare at least one check",
     })
   }
   return Effect.scoped(
@@ -146,7 +166,9 @@ export const runScenario = <W>(
       })
       return {
         name: raw.name,
-        status: "ran" as const,
+        status: fold.crashed ? ("error" as const) : ("ran" as const),
+        hardPassed:
+          !fold.stopped && fold.outcomes.every((o) => o.severity !== "hard" || o.pass),
         checks: fold.outcomes,
         judges,
         score,
@@ -162,6 +184,7 @@ export const runScenario = <W>(
       Effect.succeed({
         name: raw.name,
         status: "error" as const,
+        hardPassed: false,
         checks: [],
         judges: [],
         score: 0,
@@ -174,8 +197,7 @@ export const runScenario = <W>(
 
 /** All-hard-checks-green — the pass@k pass criterion for one sample. */
 const hardGreen = (result: ScenarioResult): boolean =>
-  result.status === "ran" &&
-  result.checks.every((check) => check.severity !== "hard" || check.pass)
+  result.status === "ran" && result.hardPassed
 
 /**
  * Run a scenario k times SEQUENTIALLY (each sample boots its own world) and
@@ -200,6 +222,7 @@ const runSampled = <W>(
         return first ?? {
           name: raw.name,
           status: "error" as const,
+          hardPassed: false,
           checks: [],
           judges: [],
           score: 0,
@@ -208,19 +231,31 @@ const runSampled = <W>(
         }
       }
       const ran = results.filter((r) => r.status === "ran")
+      const infraFailures = results.filter((r) => r.status === "error").length
       const last = ran[ran.length - 1] ?? first
       const scores = results.map((r) => r.combined)
       const mean = (xs: ReadonlyArray<number>) =>
         xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length
+      const passRate = results.filter(hardGreen).length / results.length
+      const passRate95 = wilsonInterval(results.filter(hardGreen).length, results.length)
       return {
         ...last,
-        status: ran.length > 0 ? ("ran" as const) : ("error" as const),
+        status: infraFailures > 0 || ran.length === 0 ? ("error" as const) : ("ran" as const),
+        hardPassed: infraFailures === 0 && results.every(hardGreen),
         score: mean(results.map((r) => r.score)),
         combined: mean(scores),
+        ...(infraFailures > 0
+          ? { detail: `${infraFailures}/${results.length} samples failed infrastructure` }
+          : {}),
         samples: {
           count: results.length,
           scores: scores.map((s) => Number(s.toFixed(4))),
-          passRate: results.filter(hardGreen).length / results.length,
+          passRate,
+          passRate95,
+          passAtK: 1 - Math.pow(1 - passRate, results.length),
+          passAllK: Math.pow(passRate, results.length),
+          infraFailures,
+          outcomes: results.map(({ samples: _samples, ...result }) => result),
         },
       }
     }),
@@ -232,7 +267,18 @@ export const scenario = <W>(s: Scenario<W>): BoundScenario => ({
   name: s.name,
   modes: s.modes,
   run: (mode, judgeWeight, samples = 1) =>
-    samples <= 1 ? runScenario(s, mode, judgeWeight) : runSampled(s, mode, judgeWeight, samples),
+    (samples <= 1 ? runScenario(s, mode, judgeWeight) : runSampled(s, mode, judgeWeight, samples)).pipe(
+      Effect.tap((result) =>
+        Effect.annotateCurrentSpan({
+          "eval.case.status": result.status,
+          "eval.case.hard_passed": result.hardPassed,
+          "eval.case.score": result.combined,
+        }),
+      ),
+      Effect.withSpan("eval.case", {
+        attributes: { "eval.case.name": s.name, "eval.mode": mode, "eval.samples": samples },
+      }),
+    ),
 })
 
 export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackReport> =>
@@ -243,6 +289,7 @@ export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackRepor
     )
     const ran = scenarios.filter((s) => s.status === "ran")
     const errored = scenarios.some((s) => s.status === "error")
+    const hardFailed = ran.some((s) => !s.hardPassed)
     const mean =
       ran.length === 0 ? 0 : ran.reduce((a, s) => a + s.combined, 0) / ran.length
     return {
@@ -251,8 +298,24 @@ export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackRepor
       scenarios,
       mean,
       threshold: pack.threshold,
-      // An infra error is a failure (fail-closed); an all-skipped pack passes
-      // vacuously (e.g. live-only pack under scripted mode).
-      passed: !errored && (ran.length === 0 || mean >= pack.threshold),
+      // Infrastructure and hard checks are mandatory. An empty/all-skipped
+      // pack is invalid: a battery that exercised nothing proves nothing.
+      passed:
+        pack.scenarios.length > 0 &&
+        !errored &&
+        !hardFailed &&
+        ran.length > 0 &&
+        mean >= pack.threshold,
     }
-  })
+  }).pipe(
+    Effect.tap((report) =>
+      Effect.annotateCurrentSpan({
+        "eval.mean": report.mean,
+        "eval.threshold": report.threshold,
+        "eval.passed": report.passed,
+      }),
+    ),
+    Effect.withSpan("eval.run", {
+      attributes: { "eval.pack": pack.name, "eval.mode": mode },
+    }),
+  )

@@ -34,7 +34,7 @@ export {
 export type { ErrorClass } from "./llm/retry.js"
 export { generateWith, LanguageModelLive } from "./llm/router.js"
 export { UtilityLlmLive } from "./llm/utilityLlm.js"
-export { FileLoggerLive, TracingLive } from "./telemetry/telemetry.js"
+export { FileLoggerAddLive, FileLoggerLive, TracingLive } from "./telemetry/telemetry.js"
 export { SqliteConversationStoreLive } from "./store/sqliteStore.js"
 export { LocalFileSystemLive } from "./fs/localFs.js"
 export { LocalShellLive } from "./shell/localShell.js"

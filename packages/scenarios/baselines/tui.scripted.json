@@ -3,5 +3,82 @@
   "mean": 1,
   "scenarios": {
     "workspace session: idea → draft → :lock → :forge → dashboard (frame twin)": 1
-  }
+  },
+  "evidence": {
+    "workspace session: idea → draft → :lock → :forge → dashboard (frame twin)": {
+      "status": "ran",
+      "hardPassed": true,
+      "score": 1,
+      "combined": 1,
+      "checks": [
+        {
+          "step": "boot shows the dashboard",
+          "check": "frame-shows:dashboard",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "boot shows the dashboard",
+          "check": "frame-shows:composer",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": "an idea becomes a draft in the SpecPanel",
+          "check": "frame-shows:draft",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":lock flips the badge",
+          "check": "frame-shows:locked",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":forge runs the gates to acceptance on the floor",
+          "check": "frame-shows:accept-gate",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":forge runs the gates to acceptance on the floor",
+          "check": "frame-shows:outcome",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":forge runs the gates to acceptance on the floor",
+          "check": "file-exists:out.txt",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":forge runs the gates to acceptance on the floor",
+          "check": "file-contains:out.txt",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":new returns to a dashboard that grew",
+          "check": "frame-shows:run-line",
+          "severity": "hard",
+          "pass": true
+        },
+        {
+          "step": ":new returns to a dashboard that grew",
+          "check": "frame-shows:spec-line",
+          "severity": "hard",
+          "pass": true
+        }
+      ],
+      "judges": []
+    }
+  },
+  "provenance": {
+    "gitSha": "cfa0653fcfb7916e55c6cf8911dfdc3a91c66474",
+    "lockSha256": "be62db4a5f529f51ef253ec91d48261f985e77d850d0577264cbd4a624f610d6",
+    "bunVersion": "1.3.0"
+  },
+  "mintedAt": "2026-07-12T08:47:25.583Z"
 }
