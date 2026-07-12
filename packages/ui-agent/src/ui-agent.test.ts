@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { ConversationId } from "@xandreed/engine"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import { validatePageCompleteness, validateUiAgentProfile } from "./index.js"
+import { normalizeInitialUiAdmission, uiPlannerPrompt, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
 import { makeUiAgentHandlers, StartUi, uiAgentToolkit } from "./toolkit.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
@@ -41,6 +41,39 @@ describe("the structured UI-agent contract", () => {
     })
   })
 
+  test("host-owned admission data cannot cause the all-zero matrix failure", () => {
+    const hero = landingReference.blocks[0]!
+    expect(hero.kind).toBe("hero")
+    if (hero.kind !== "hero") return
+    const admitted = normalizeInitialUiAdmission(
+      {
+        ...landingReference.page,
+        designSystem: { id: "hallucinated-system", version: "9" },
+        slots: landingReference.page.slots.filter((slot) => slot.id !== hero.id),
+      },
+      [{ ...hero, assetId: "hallucinated-asset" }],
+      {
+        designSystem: { id: host.tokens.id, version: host.tokens.version },
+        assetIds: new Set(host.assets.keys()),
+      },
+    )
+    expect(admitted.manifest.designSystem).toEqual({ id: "efferent-canvas", version: "1.0.0" })
+    expect(admitted.manifest.slots).toContainEqual({ id: hero.id, blockKind: "hero", importance: "critical" })
+    expect(admitted.blocks[0]).not.toHaveProperty("assetId")
+  })
+
+  test("planner receives the exact dynamic host contract", () => {
+    const prompt = uiPlannerPrompt({
+      designSystem: { id: host.tokens.id, version: host.tokens.version },
+      recipes: [...host.recipes],
+      assets: [...host.assets.keys()],
+      capabilities: [...host.actions.keys()],
+    })
+    expect(prompt).toContain('{"id":"efferent-canvas","version":"1.0.0"}')
+    expect(prompt).toContain("registered assets: none — omit every assetId")
+    expect(prompt).toContain("identical id and blockKind")
+  })
+
   test("accepted events persist before publication and replay deterministically", async () => {
     const events: Array<UiPageEvent> = []
     const order: Array<string> = []
@@ -54,9 +87,18 @@ describe("the structured UI-agent contract", () => {
       host,
       (event) => Effect.sync(() => { order.push(`sink:${event.type}`) }),
     )
+    const hero = landingReference.blocks.find((block) => block.kind === "hero")!
+    const malformedPage = {
+      ...landingReference.page,
+      designSystem: { id: "hallucinated-system", version: "9" },
+      slots: landingReference.page.slots.filter((slot) => slot.id !== hero.id),
+    }
     const outcome = await Effect.runPromise(Effect.gen(function* () {
       const toolkit = yield* uiAgentToolkit
-      yield* toolkit.handle("start_ui", { page: landingReference.page, criticalBlocks: [landingReference.blocks[0]!] })
+      yield* toolkit.handle("start_ui", {
+        page: malformedPage,
+        criticalBlocks: [{ ...hero, assetId: "hallucinated-asset" }],
+      })
       return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: landingReference.blocks.slice(1), complete: true })
     }).pipe(Effect.provide(layer)))
     expect(outcome.isFailure).toBe(false)
@@ -66,6 +108,8 @@ describe("the structured UI-agent contract", () => {
       "store:page_completed", "sink:page_completed",
     ])
     const replayed = foldPageEvents(events)
+    expect(replayed[0]?.manifest.designSystem).toEqual({ id: "efferent-canvas", version: "1.0.0" })
+    expect(replayed[0]?.blocks[0]).not.toHaveProperty("assetId")
     expect(replayed[0]?.blocks).toHaveLength(5)
     expect(replayed[0]?.complete).toBe(true)
   })
@@ -97,12 +141,12 @@ describe("the structured UI-agent contract", () => {
 
   test("profile validation pins models, budgets, prompt versions, schema, and recipes", () => {
     expect(validateUiAgentProfile({
-      profile: "streaming-ui-v1", version: "4.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
-      prompts: { planner: "4.0.0", composer: "5.0.0", repair: "2.0.0" },
+      profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
+      prompts: { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" },
       planner: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 15000, maxOutputTokens: 2400, maxSteps: 2 },
       composer: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 20000, maxOutputTokens: 5000, maxSteps: 2 },
       repair: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 8000, maxOutputTokens: 1800, maxSteps: 2, maxAttempts: 1 },
       fallback: { policy: "none" },
-    }, { planner: "4.0.0", composer: "5.0.0", repair: "2.0.0" })).toEqual([])
+    }, { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" })).toEqual([])
   })
 })

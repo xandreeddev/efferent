@@ -49,8 +49,8 @@ const SCRIPTED_HOST = {
   ]), queries: new Map(),
 }
 const SCRIPTED_PROFILE = {
-  profile: "streaming-ui-v1", version: "4.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
-  prompts: { planner: "4.0.0", composer: "5.0.0", repair: "2.0.0" },
+  profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
+  prompts: { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" },
   planner: { model: "test:planner", effort: "low" as const, timeoutMs: 15000, maxOutputTokens: 2400, maxSteps: 3 },
   composer: { model: "test:composer", effort: "low" as const, timeoutMs: 20000, maxOutputTokens: 5000, maxSteps: 3 },
   repair: { model: "test:repair", effort: "low" as const, timeoutMs: 8000, maxOutputTokens: 1800, maxSteps: 2, maxAttempts: 1 },
@@ -279,7 +279,7 @@ export const canvasPack: Pack = {
   // live page-quality judge to score at least .85.
   threshold: 0.9475,
   judgeWeight: 0.35,
-  meta: { "ui-agent-profile": "streaming-ui-v1@4.0.0", "ui-schema": "1.0.0", "recipe-set": "1.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
+  meta: { "ui-agent-profile": "streaming-ui-v1@5.0.0", "ui-schema": "1.0.0", "recipe-set": "1.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
   scenarios: [
     scenario<CanvasWorld>({
       name: "model-generated plan → rejected content bounce → durable completion",

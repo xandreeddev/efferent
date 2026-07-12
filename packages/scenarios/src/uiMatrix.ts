@@ -264,11 +264,15 @@ const program = Effect.gen(function* () {
   if (!keyed) return yield* Effect.fail("no model credential; run Smith :login first")
   const efforts = csv("--efforts", DEFAULT_EFFORTS).filter((value): value is Effort => value === "low" || value === "medium" || value === "high")
   const candidates = csv("--models", DEFAULT_MODELS).flatMap((model) => efforts.map((effort) => ({ model, effort })))
+  const taskIds = csv("--tasks", TASKS.map((task) => task.id))
+  const unknownTasks = taskIds.filter((id) => !TASKS.some((task) => task.id === id))
+  if (unknownTasks.length > 0) return yield* Effect.fail(`unknown UI matrix task(s): ${unknownTasks.join(", ")}`)
+  const tasks = TASKS.filter((task) => taskIds.includes(task.id))
   const samples = positiveInt("--samples", 1)
   const top = positiveInt("--top", 3)
   const concurrency = positiveInt("--concurrency", 3)
-  const combinations = candidates.flatMap((candidate) => TASKS.flatMap((task) => Array.from({ length: samples }, (_, sample) => ({ candidate, task, sample: sample + 1 }))))
-  console.log(`ui-matrix: ${candidates.length} candidates × ${TASKS.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency}`)
+  const combinations = candidates.flatMap((candidate) => tasks.flatMap((task) => Array.from({ length: samples }, (_, sample) => ({ candidate, task, sample: sample + 1 }))))
+  console.log(`ui-matrix: ${candidates.length} candidates × ${tasks.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency}`)
   const trials = yield* Effect.forEach(combinations, ({ candidate, task, sample }) =>
     Effect.logInfo(`ui-matrix ${candidate.model} effort=${candidate.effort} task=${task.id} sample=${sample}`).pipe(
       Effect.zipRight(runTrial(candidate, task, sample)),
@@ -294,7 +298,7 @@ const program = Effect.gen(function* () {
   const judged = ranked.map((candidate) => judgedByCandidate.get(`${candidate.candidate.model}:${candidate.candidate.effort}`) ?? candidate)
   const final = judged.sort((a, b) => b.selectionScore - a.selectionScore)
   const output = Option.getOrElse(argValue("--output"), () => join(process.cwd(), ".efferent", "evals", `ui-agent-matrix-${new Date().toISOString().replace(/[:.]/g, "-")}.json`))
-  const report = { version: "ui-agent-matrix-v3", generatedAt: new Date().toISOString(), judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "deterministic = .25*Wilson90(valid refinement) + .20*Wilson90(first patch <=10s) + .15*design-system compliance + .15*information architecture + .10*request relevance + .10*exp(-p50 first-patch/10s) + .05*repeat consistency; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks: TASKS, candidates: final }
+  const report = { version: "ui-agent-matrix-v3", generatedAt: new Date().toISOString(), judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "deterministic = .25*Wilson90(valid refinement) + .20*Wilson90(first patch <=10s) + .15*design-system compliance + .15*information architecture + .10*request relevance + .10*exp(-p50 first-patch/10s) + .05*repeat consistency; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
   yield* persist(output, report)
   console.log("\nrank  model                            effort  success  <=10s  p50     p95     DS    IA    rel   cons  judge  score")
   final.forEach((entry, index) => console.log(`${String(index + 1).padStart(4)}  ${entry.candidate.model.padEnd(32)} ${entry.candidate.effort.padEnd(6)}  ${String(entry.refinementSuccesses).padStart(2)}/${String(entry.trials.length).padEnd(2)}    ${String(entry.withinTenSeconds).padStart(2)}/${String(entry.trials.length).padEnd(2)}  ${String(entry.p50EnrichmentMs).padStart(6)}  ${String(entry.p95EnrichmentMs).padStart(6)}  ${entry.meanDesignSystemScore.toFixed(2)}  ${entry.meanInformationArchitectureScore.toFixed(2)}  ${entry.meanRelevance.toFixed(2)}  ${entry.repeatConsistency.toFixed(2)}  ${(entry.judgeScore?.toFixed(2) ?? "-").padStart(5)}  ${entry.selectionScore.toFixed(3)}`))

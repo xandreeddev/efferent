@@ -20,7 +20,12 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
     const host = yield* UiHost
     const models = yield* UiAgentModels
     const profile = yield* UiAgentExecutionProfile
-    const capabilities = [...host.actions.keys(), ...host.queries.keys()]
+    const promptContract = {
+      designSystem: { id: host.tokens.id, version: host.tokens.version },
+      recipes: [...host.recipes],
+      assets: [...host.assets.keys()],
+      capabilities: [...host.actions.keys(), ...host.queries.keys()],
+    }
     const activeAttempt = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
     const interruptAttempt = Ref.get(activeAttempt).pipe(
       Effect.flatMap(Option.match({
@@ -52,7 +57,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           const initialEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           if (foldPageEvents(initialEvents).length === 0) {
             yield* runAgent(
-              { system: uiPlannerPrompt(capabilities), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
+              { system: uiPlannerPrompt(promptContract), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
               attemptConversationId,
               text,
               { onEvent: stagePublish },
@@ -77,7 +82,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
 
           const beforeComposition = plannedEvents.length
           yield* runAgent(
-            { system: uiComposerPrompt(capabilities), toolkit: uiAgentToolkit, maxSteps: profile.composer.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.composer.effort, maxOutputTokens: profile.composer.maxOutputTokens } },
+            { system: uiComposerPrompt(promptContract), toolkit: uiAgentToolkit, maxSteps: profile.composer.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.composer.effort, maxOutputTokens: profile.composer.maxOutputTokens } },
             attemptConversationId,
             `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nComplete the LLM-generated page with specific, useful content in one patch_ui call.`,
             { onEvent: stagePublish },
