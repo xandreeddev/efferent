@@ -1,11 +1,11 @@
 {
   "profile": "streaming-ui-v1",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "schemaVersion": "1.0.0",
   "recipeSetVersion": "1.0.0",
-  "prompts": { "planner": "5.0.0", "composer": "6.0.0", "repair": "3.0.0" },
-  "planner": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 15000, "maxOutputTokens": 2400, "maxSteps": 2 },
-  "composer": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 20000, "maxOutputTokens": 5000, "maxSteps": 2 },
-  "repair": { "model": "opencode:deepseek-v4-flash", "effort": "low", "timeoutMs": 8000, "maxOutputTokens": 1800, "maxSteps": 2, "maxAttempts": 1 },
-  "fallback": { "policy": "none" }
+  "prompts": { "planner": "5.3.0", "composer": "6.3.0", "repair": "3.3.0" },
+  "planner": { "model": "openai-codex:gpt-5.6-luna", "effort": "low", "timeoutMs": 15000, "maxOutputTokens": 2400, "maxSteps": 2 },
+  "composer": { "model": "openai-codex:gpt-5.6-luna", "effort": "low", "timeoutMs": 20000, "maxOutputTokens": 5000, "maxSteps": 5 },
+  "repair": { "model": "openai-codex:gpt-5.6-luna", "effort": "low", "timeoutMs": 8000, "maxOutputTokens": 1800, "maxSteps": 2, "maxAttempts": 1 },
+  "fallback": { "policy": "profile", "model": "opencode:glm-5.2" }
 }

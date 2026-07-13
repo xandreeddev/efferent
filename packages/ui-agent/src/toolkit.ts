@@ -5,7 +5,7 @@ import { Failure } from "@xandreed/engine"
 import { PageManifest, UiBlock } from "./domain/ui-page.entity.js"
 import type { UiPageEvent } from "./domain/ui-page.entity.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import { normalizeInitialUiAdmission } from "./domain/ui-page.entity.functions.js"
+import { canonicalizeUiBlocks, normalizeInitialUiAdmission } from "./domain/ui-page.entity.functions.js"
 import { renderUiAdmissionFindings, validateBlocks, validateManifest, validatePageCompleteness } from "./domain/ui-quality.functions.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
@@ -77,9 +77,13 @@ export const makeUiAgentHandlers = (
         const events = yield* store.list(conversationId).pipe(Effect.mapError((message) => ({ error: "PageStoreError", message })))
         const page = foldPageEvents(events).find((candidate) => candidate.manifest.id === pageId)
         if (page === undefined) return yield* Effect.fail({ error: "PageNotFound", message: `open ${pageId} with start_ui before patching it` })
-        const findings = validateBlocks(page.manifest, blocks, host)
+        const admitted = canonicalizeUiBlocks(blocks, {
+          designSystem: { id: host.tokens.id, version: host.tokens.version },
+          assetIds: new Set(host.assets.keys()),
+        })
+        const findings = validateBlocks(page.manifest, admitted, host)
         if (findings.length > 0) return yield* Effect.fail({ error: "UiRejected", message: renderUiAdmissionFindings(findings) })
-        const event: UiPageEvent = { type: "blocks_upserted", pageId, blocks, at: Date.now() }
+        const event: UiPageEvent = { type: "blocks_upserted", pageId, blocks: admitted, at: Date.now() }
         yield* store.append(conversationId, event).pipe(Effect.mapError((message) => ({ error: "PageStoreError", message })))
         yield* sink(event)
         if (complete === true) {

@@ -27,6 +27,26 @@ const withoutOptionalAsset = (block: UiBlock, assetIds: ReadonlySet<string>): Ui
   return block
 }
 
+const withCanonicalNavTargets = (block: UiBlock): UiBlock =>
+  block.kind === "navigation"
+    ? {
+        ...block,
+        links: block.links.map((link) =>
+          link.target.startsWith("#") ? { ...link, target: link.target.slice(1) } : link,
+        ),
+      }
+    : block
+
+/** Block-level canonicalization of host-owned addressing, shared by the
+ * start_ui AND patch_ui admission paths: unknown optional imagery falls back
+ * to renderer artwork, and anchor-style navigation targets ("#features")
+ * normalize to the verbatim block id the compiler links by. */
+export const canonicalizeUiBlocks = (
+  blocks: ReadonlyArray<UiBlock>,
+  contract: UiAdmissionContract,
+): ReadonlyArray<UiBlock> =>
+  blocks.map((block) => withCanonicalNavTargets(withoutOptionalAsset(block, contract.assetIds)))
+
 /** Canonicalize host-owned admission data while preserving every model-owned
  * layout and content decision. The design-system reference is configuration,
  * optional unknown imagery falls back to renderer artwork, and critical
@@ -36,7 +56,7 @@ export const normalizeInitialUiAdmission = (
   blocks: ReadonlyArray<UiBlock>,
   contract: UiAdmissionContract,
 ): { readonly manifest: PageManifest; readonly blocks: ReadonlyArray<UiBlock> } => {
-  const normalizedBlocks = blocks.map((block) => withoutOptionalAsset(block, contract.assetIds))
+  const normalizedBlocks = canonicalizeUiBlocks(blocks, contract)
   const slots = new Map(manifest.slots.map((slot) => [slot.id, slot]))
   const missing = normalizedBlocks.flatMap((block) =>
     slots.has(block.id)

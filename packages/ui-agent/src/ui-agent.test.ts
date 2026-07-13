@@ -62,6 +62,26 @@ describe("the structured UI-agent contract", () => {
     expect(admitted.blocks[0]).not.toHaveProperty("assetId")
   })
 
+  test("anchor-style navigation targets canonicalize to verbatim block ids", () => {
+    const nav = {
+      kind: "navigation" as const,
+      id: "main-nav",
+      brand: "Efferent",
+      links: [
+        { label: "Features", target: "#features" },
+        { label: "Pricing", target: "pricing" },
+      ],
+    }
+    const admitted = normalizeInitialUiAdmission(landingReference.page, [nav], {
+      designSystem: { id: host.tokens.id, version: host.tokens.version },
+      assetIds: new Set(host.assets.keys()),
+    })
+    const admittedNav = admitted.blocks[0]
+    expect(admittedNav).toBeDefined()
+    if (admittedNav === undefined || admittedNav.kind !== "navigation") return
+    expect(admittedNav.links.map((link) => link.target)).toEqual(["features", "pricing"])
+  })
+
   test("planner receives the exact dynamic host contract", () => {
     const prompt = uiPlannerPrompt({
       designSystem: { id: host.tokens.id, version: host.tokens.version },
