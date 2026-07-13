@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { architectureReference, applicationReference, landingReference } from "@xandreed/ui-agent"
-import { compileDesignTokenCss } from "./designTokens.js"
+import { CORE_UI_COMPONENTS, architectureReference, applicationReference, landingReference, normalizeComponentDefinition } from "@xandreed/ui-agent"
+import { compileDesignTokenCss, compileThemeCss } from "./designTokens.js"
 import { renderUiPage } from "./uiCompiler.js"
 import { Either } from "effect"
 
@@ -40,5 +40,29 @@ describe("the trusted structured UI compiler", () => {
       typography: { display: "geometric", body: "system", mono: "mono", scale: "standard" }, density: "standard", radius: "soft", shadow: "subtle", motion: "standard",
     })
     expect(Either.isLeft(invalid)).toBe(true)
+  })
+
+  test("renders a progressive component graph and scoped semantic theme", () => {
+    const components = new Map(CORE_UI_COMPONENTS.map(normalizeComponentDefinition).map((definition) => [definition.id, definition]))
+    const rendered = renderUiPage({
+      manifest: {
+        id: "component-page", title: "Component page", archetype: "landing",
+        recipe: { id: "landing.hero-grid", version: "2.0.0" }, designSystem: { id: "test", version: "2.0.0" },
+        slots: [{ id: "hero", blockKind: "component", component: "marketing.hero", importance: "critical" }],
+      },
+      blocks: [{ kind: "component", id: "hero", component: "marketing.hero", variant: "split", props: { title: "A real generated page", lede: "Specific content arrives before supporting sections." }, children: ["proof"] }],
+      complete: false,
+    }, { ...context, components, theme: { id: "theme-1234", href: "/theme/theme-1234.css" } })
+    expect(rendered).toContain('data-component="marketing.hero"')
+    expect(rendered).toContain('data-pending-node="proof"')
+    expect(rendered).toContain('data-ui-theme="theme-1234"')
+    expect(rendered).not.toContain("bg-red")
+
+    const theme = compileThemeCss({
+      mode: "light", accent: "#356dd0", neutral: "#667085", positive: "#228b55", warning: "#b7791f", danger: "#c53030",
+      contrast: "high", surface: "flat", border: "strong", radius: "sharp", shadow: "none", typography: "editorial", typeScale: "spacious", density: "comfortable", motion: "reduced",
+    }, '[data-ui-theme="theme-1234"]')
+    expect(Either.isRight(theme)).toBe(true)
+    expect(Either.getOrElse(theme, () => "")).toContain("--ui-border-width:2px")
   })
 })

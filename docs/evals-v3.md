@@ -10,6 +10,19 @@ carry). Breaking: the v2 `EvalSpec` (`data → task → scorers`) API is removed
 > system. The keyed batteries run through `bun run evals:live` (see
 > `packages/scenarios/CLAUDE.md`).
 
+> **UI matrix (2026-07-13):** `bun run evals:ui-matrix` is a separate, keyed
+> model × effort × incremental-protocol campaign. Its default path boots the
+> actual Canvas server, submits through a headless Chromium form, measures the
+> first content delta and meaningful DOM paint, captures desktop/mobile
+> screenshots and overflow, and audits the SQLite page/failure trail. It never
+> substitutes scripted page content. Provider/schema/tool failures AND runtime
+> defects are contained per trial as failed rows — one dead candidate never
+> aborts the concurrent work. Every settled trial is persisted immediately to
+> `<evidence>/trials/<candidate-task-sample>.json` before aggregation, so a
+> killed campaign keeps its completed evidence; the aggregate report is still
+> written at the end. `--strict` opts into a non-zero exit when every candidate
+> fails. `--session-only` is a diagnostic path, not quality evidence.
+
 ## Why a revamp
 
 The agent line (`docs/agents/`) ships four agents whose definition-of-done is a

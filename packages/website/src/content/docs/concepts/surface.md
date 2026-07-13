@@ -4,13 +4,21 @@ description: The trusted token-and-recipe compiler, escaped HTML substrate, lega
 ---
 
 `@xandreed/surface` is the trusted compiler used by browser-facing hosts. For
-the UI agent it converts typed blocks into escaped semantic HTML, registered
-HTMX actions, fixed CSP-Alpine behaviors, precompiled recipe CSS, and
-accessible server-rendered diagrams. The model never authors markup.
+the UI agent it converts a catalog-backed component graph into escaped semantic
+HTML, registered HTMX actions, fixed CSP-Alpine behaviors, scoped token CSS,
+and accessible server-rendered diagrams. The model never authors markup.
 
-Validated JSON tokens can change semantic colors, registered font stacks,
-density, radii, shadows, and motion. Layout remains inside the versioned
-landing, application, and architecture-document recipes.
+Validated DesignTokensV2 can change semantic colors and derived shades,
+registered font stacks, type scale, spacing, border weight, density, radii,
+elevation, contrast, and motion. Themes are scoped by fingerprint so multiple
+surfaces can coexist without global CSS mutation.
+
+Core layout, navigation, primitive, form, application, marketing, document,
+and feedback components map to trusted renderer categories. Workspace
+components use a bounded flat template AST containing only safe semantic tags,
+roles, literal/prop text bindings, and child references. Surface—not the
+model—chooses classes and behavior. Cycles, missing nodes, and invalid
+definitions become visible governed findings.
 
 ## The sanitizer is the security boundary
 

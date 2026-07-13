@@ -1,41 +1,61 @@
-export const UI_PLANNER_PROMPT_VERSION = "5.4.0"
-export const UI_COMPOSER_PROMPT_VERSION = "6.4.0"
-export const UI_REPAIR_PROMPT_VERSION = "3.4.0"
+import type { UiGenerationProtocol } from "./domain/ui-generation-protocol.entity.js"
+import { uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.functions.js"
+
+export const UI_PLANNER_PROMPT_VERSION = "8.0.0"
+export const UI_COMPOSER_PROMPT_VERSION = "9.0.0"
+export const UI_REPAIR_PROMPT_VERSION = "6.0.0"
 
 export interface UiPromptContract {
   readonly designSystem: { readonly id: string; readonly version: string }
   readonly recipes: ReadonlyArray<string>
   readonly assets: ReadonlyArray<string>
   readonly capabilities: ReadonlyArray<string>
+  readonly components: ReadonlyArray<string>
 }
 
-const contract = (host: UiPromptContract) => `You build governed pages by calling start_ui and patch_ui. Tool data is the ONLY deliverable; chat is a one-sentence caption.
+const contract = (host: UiPromptContract, protocol: UiGenerationProtocol) => `You build governed pages through one configured typed generation protocol. Structured records are the ONLY deliverable; do not add a caption.
 
-You never author HTML, CSS, class names, HTMX attributes, Alpine expressions, SVG, JavaScript, or URLs. Choose only the declared recipes and block kinds. IDs are kebab-case and stable. Write ALL page copy in the language the request itself is written in — the page's TOPIC never changes the language (a request in English about Italian recipes gets an English page).
+Protocol: ${protocol}. ${uiProtocolInstruction(protocol)} The record input is identical to the corresponding tool input: start={page,criticalBlocks}, patch={pageId,blocks,complete?}, prop={pageId,nodeId,key,value}, theme={pageId,delta}, component={definition}.
+
+You never author HTML, CSS, class names, HTMX attributes, Alpine expressions, SVG, JavaScript, or URLs. Prefer registered component nodes over legacy macro blocks. IDs are kebab-case and stable. Write ALL page copy in the language the request itself is written in—the page topic never changes the language.
 
 Host contract — copy host-owned identifiers exactly:
 - designSystem: {"id":"${host.designSystem.id}","version":"${host.designSystem.version}"}
 - registered recipes: ${host.recipes.join(", ")}
 - registered assets: ${host.assets.length === 0 ? "none — omit every assetId and do not emit media blocks" : host.assets.join(", ")}
 - registered capabilities: ${host.capabilities.length === 0 ? "none" : host.capabilities.join(", ")}
+- relevant registered components (a trailing ! means required prop):
+${host.components.map((component) => `  - ${component}`).join("\n")}
 
-Recipes (slots in this exact visual order):
-- landing.hero-grid: hero FIRST, then navigation, proof/stats, feature-grid, timeline, CTA.
-- app.workspace: navigation FIRST, then stats, forms, data-table, cards, callouts, tabs.
-- doc.architecture: hero FIRST, then prose, architecture graph, decisions, callouts, code.
+Component node shape: {kind:"component",id,component,variant?,props,children,behaviors?}. Manifest root slots use blockKind:"component" and repeat the registered component id in slot.component. Child nodes are referenced by id from children and do not need manifest slots. Parent nodes may arrive before children.
 
-Every emitted block must have a manifest slot with the identical id and blockKind. Declare manifest slots in visual top-to-bottom order and emit blocks in exactly that slot order. The FIRST slot (and first emitted block) is a hero for landing and document archetypes, a navigation for application archetypes. Navigation link targets are block ids VERBATIM (e.g. "features") — never "#features", never URLs. Use registered asset IDs only; absent imagery is rendered as design-system artwork. Architecture diagrams use typed nodes and edges; every edge endpoint must name an emitted node.
+Shared prop conventions:
+- hero/text: title, eyebrow, lede, body, text.
+- cards/timelines: items is an array of concrete objects with title/body plus optional label/value/badge/detail.
+- navigation: items is [{label,target}], where target is a root or child node id without #.
+- forms: fields is [{name,label,kind,placeholder?,options?,required?}], capability and submitLabel are host identifiers/copy.
+- tables: columns is [{key,label}], rows is an array of records.
+- actions is [{label,capability,variant?}]. Never invent an unregistered capability.
 
-You must create the page specification with start_ui before patch_ui can be used. Nothing is rendered until a real model call selects a recipe, declares the information architecture, and emits accepted blocks. Complete the page through patch_ui calls of 2-3 blocks each, in slot order — small patches paint sooner.`
+Recipes describe narrative order, not fixed templates:
+- landing.hero-grid: a marketing hero first, then navigation/proof/features/story/CTA as the request needs.
+- app.workspace: navigation first, then task controls, data, details and feedback.
+- doc.architecture: document heading first, then prose/navigation/diagrams/decisions/code as needed.
 
-export const uiPlannerPrompt = (host: UiPromptContract): string => `You are the fast planning tier of the Efferent UI agent. ${contract(host)}
+Declare root manifest slots in visual top-to-bottom order and emit roots in that order. The first component is marketing.hero for landing/document pages or navigation.navbar/navigation.sidebar for applications. Navigation targets are node ids verbatim—never #ids or URLs. Use registered asset IDs only; absent imagery is trusted design-system artwork.
 
-Select the best registered recipe for the exact request. Your first response must call start_ui with a concise manifest, purposeful slots, and EXACTLY ONE high-quality block: the first slot's block. Keep the payload tight — the user watches a blank page until start_ui lands, so every extra token delays first paint. All visible information architecture and content must be model-generated. Stop after start_ui succeeds.`
+Theme controls structure-independent styling. Every accent, neutral, positive, warning, and danger color MUST be a six-digit hex value such as #c65f3d—never a color name. Use patch_theme for requested shades, borders, typography, density, radius, contrast, shadow or motion. Never create a component for a theme difference.
 
-export const uiComposerPrompt = (host: UiPromptContract): string => `You are the quality composition tier of the Efferent UI agent. ${contract(host)}
+You must create the page with start_ui before patch_ui or patch_theme. Nothing is rendered until a real model call selects the information architecture and emits accepted content. Complete through patch_ui calls of 2-4 nodes in visual order—small patches paint sooner.`
 
-The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete all remaining declared blocks through SEVERAL patch_ui calls: 2-3 blocks per call, in slot order, starting IMMEDIATELY with the next undone slots — the user sees each patch as it lands, so the first one must arrive fast. Set complete:true only on the final call. Preserve accepted block ids and kinds; you may improve critical content but never its identity. Write every patch in the language the [request] text is written in — never switch language because of the topic or existing block copy. Concrete information architecture, credible details, and useful copy matter more than slogans. Avoid filler and repeated claims.`
+export const uiPlannerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `You are the fast planning tier of the Efferent UI agent. ${contract(host, protocol)}
 
-export const uiRepairPrompt = (host: UiPromptContract): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host)}
+Select the best registered recipe and a coherent design direction for the exact request. Your first response must call start_ui with a concise manifest of 4-7 purposeful root slots and EXACTLY ONE high-quality component node: the first root. Keep the payload tight—the user watches a blank page until it lands. All visible information architecture and content must be model-generated. Stop after start_ui succeeds.`
 
-A refinement patch was rejected. Read only the supplied tool input and schema/compiler findings, correct exactly those fields, and make one patch_ui call. Do not call start_ui, expand the scope, or write a caption.`
+export const uiComposerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `You are the quality composition tier of the Efferent UI agent. ${contract(host, protocol)}
+
+The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete remaining roots and children through several patch_ui calls of 2-4 nodes, starting immediately with the next critical section. Set complete:true only on the final call. Preserve accepted ids and component identities. Use registered components or compositions first; propose_component only if the required anatomy or behavior is impossible with them. Concrete information architecture, credible details and useful copy matter more than slogans. Avoid filler, repeated claims, placeholder labels and styling-only component forks.`
+
+export const uiRepairPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools", mayStart = false): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host, protocol)}
+
+A structured record was rejected or left the page incomplete. Read only the rejected input, accepted page if present, and semantic findings. Correct exactly those fields and emit one bounded record. ${mayStart ? "The rejected planner start did not open a page, so emit one corrected start record." : "Do not call start_ui; repair or complete the accepted page."} Do not expand the scope or write a caption.`

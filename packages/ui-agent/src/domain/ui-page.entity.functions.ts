@@ -61,7 +61,7 @@ export const normalizeInitialUiAdmission = (
   const missing = normalizedBlocks.flatMap((block) =>
     slots.has(block.id)
       ? []
-      : [{ id: block.id, blockKind: block.kind, importance: "critical" as const }],
+      : [{ id: block.id, blockKind: block.kind, component: block.kind === "component" ? block.component : undefined, importance: "critical" as const }],
   )
   return {
     manifest: {
@@ -88,6 +88,7 @@ export const reducePageEvent = (page: Option.Option<UiPage>, event: UiPageEvent)
   }
   if (Option.isNone(page) || page.value.manifest.id !== event.pageId) return page
   if (event.type === "blocks_upserted") return Option.some({ ...page.value, blocks: upsertBlocks(page.value.blocks, event.blocks) })
+  if (event.type === "theme_patched") return Option.some({ ...page.value, manifest: { ...page.value.manifest, theme: event.theme } })
   return Option.some({ ...page.value, complete: true })
 }
 

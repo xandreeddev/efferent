@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { DesignTokensV1, RegisteredAsset } from "../domain/design-system.entity.js"
+import type { DesignTokens, RegisteredAsset } from "../domain/design-system.entity.js"
 import type { UiBlock } from "../domain/ui-page.entity.js"
 
 export interface UiRequestContext {
@@ -20,7 +20,7 @@ export interface UiCapability {
 }
 
 export interface UiHostService {
-  readonly tokens: DesignTokensV1
+  readonly tokens: DesignTokens
   readonly recipes: ReadonlySet<string>
   readonly assets: ReadonlyMap<string, RegisteredAsset>
   readonly actions: ReadonlyMap<string, UiCapability>

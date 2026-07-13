@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect"
-import { DesignTokensV1, UiHost } from "@xandreed/ui-agent"
+import { DesignTokens, UiHost } from "@xandreed/ui-agent"
 import type { UiActionResult, UiCapability, UiRequestContext } from "@xandreed/ui-agent"
 import tokensJson from "../../design-system.json"
 
@@ -15,7 +15,7 @@ const capability = (
 
 export const DefaultUiHostLive = Layer.effect(
   UiHost,
-  Schema.decodeUnknown(DesignTokensV1)(tokensJson).pipe(
+  Schema.decodeUnknown(DesignTokens)(tokensJson).pipe(
     Effect.mapError((issue) => new Error(`invalid Canvas design tokens: ${String(issue)}`)),
     Effect.map((tokens) => ({
       tokens,

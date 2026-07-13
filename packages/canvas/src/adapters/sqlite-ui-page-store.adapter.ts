@@ -15,7 +15,7 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
         mkdirSync(dirname(dbPath), { recursive: true })
         const database = new Database(dbPath, { create: true })
         chmodSync(dbPath, 0o600)
-        database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
+        database.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;")
         database.exec(`CREATE TABLE IF NOT EXISTS ui_page_events (
           conversation_id TEXT NOT NULL,
           position INTEGER NOT NULL,
@@ -28,7 +28,12 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
       },
       catch: (error) => String(error),
     })
-    yield* Effect.addFinalizer(() => Effect.sync(() => db.close()))
+    yield* Effect.addFinalizer(() => Effect.try({
+      try: () => db.close(),
+      catch: (error) => error,
+    }).pipe(
+      Effect.catchAll((error) => Effect.logWarning(`UI page database cleanup failed: ${String(error)}`)),
+    ))
     return {
       append: (conversationId: ConversationId, event: typeof UiPageEvent.Type) => Effect.try({
         try: () => {

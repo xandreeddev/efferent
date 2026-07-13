@@ -20,9 +20,9 @@ packages/
 │                 the MCP bridge, the session chassis, the SpecDoc
 ├── providers/    the EDGE: routed LanguageModel (per-call re-resolution), SQLite
 │                 store, auth/settings, MCP stdio client, sandboxed shell (bwrap)
-├── ui-agent/     reusable typed UI agent: page/block contracts, governed tools,
-│                 pinned model planner/composer/repair profile
-├── surface/      trusted UI compiler: tokens + recipes → HTML/HTMX/Alpine/SVG
+├── ui-agent/     reusable typed UI agent: governed component/theme graph,
+│                 evolving catalog, incremental protocols, pinned model profile
+├── surface/      trusted UI compiler: semantic themes + components → HTML/HTMX/Alpine/SVG
 ├── smith/        the CODER at the forge — refine a spec WITH the human, :lock it,
 │                 forge under gates; skills, workspace memory, judge gate, :ship
 ├── math/         the tutor — authors exercises, the SERVER grades them
@@ -46,7 +46,7 @@ Dependency direction is **a build-failing gate**, not a convention: UI-agent dom
 
 ## Run the agents
 
-Credentials live in `~/.efferent/auth.json` (write them with smith's `:login`). Smith and general agents use the model roles in `.efferent/config.json`; the UI agent deliberately does not. Its model planner must create the manifest, information architecture, and first blocks before anything renders; the composer completes model-generated content through the trusted compiler. Models, effort, budgets, timeouts, prompt versions, schema, recipe set, and fallback are pinned in `packages/ui-agent/profiles/streaming-ui-v1.json`. Select that profile with the live model × effort matrix rather than intuition. Requires [Bun](https://bun.sh) ≥ 1.2.
+Credentials live in `~/.efferent/auth.json` (write them with smith's `:login`). Smith and general agents use the model roles in `.efferent/config.json`; the UI agent deliberately does not. Its model planner must create the manifest, information architecture, and first component nodes before anything renders; the composer completes model-generated content through the same governed handlers. Models, effort, budgets, timeouts, prompt/schema/recipe versions, incremental protocol, and fallback are pinned in `packages/ui-agent/profiles/streaming-ui-v1.json`. Select that profile with the live model × effort × protocol browser matrix rather than intuition. Requires [Bun](https://bun.sh) ≥ 1.2.
 
 ```bash
 git clone https://github.com/xandreeddev/efferent && cd efferent && bun install
@@ -56,7 +56,7 @@ bun run math --open             # the practice product (loopback + token)
 bun run canvas --open           # the page builder (loopback)
 bun run social review           # the human review queue
 bun run scenarios               # the regression batteries (key-free, scripted twins)
-bun run evals:ui-matrix         # live UI model × effort screening + persisted evidence
+bun run evals:ui-matrix         # live UI model × effort × protocol browser evidence
 bun run foundry demo            # the forge-loop E2E, no keys needed
 ```
 

@@ -6,6 +6,6 @@ export type { MathmlResult, SanitizeOptions, SanitizeResult } from "./sanitize.j
 export { renderUiFindings, validateUi } from "./validate.js"
 export type { UiFinding, ValidateUiOptions } from "./validate.js"
 export { renderArchitectureDiagram } from "./architectureDiagram.js"
-export { compileDesignTokenCss, validateDesignTokens } from "./designTokens.js"
+export { compileDesignTokenCss, compileThemeCss, validateDesignTokens, validateThemeIntent } from "./designTokens.js"
 export { renderUiBlock, renderUiPage } from "./uiCompiler.js"
 export type { UiCompileContext } from "./uiCompiler.js"
