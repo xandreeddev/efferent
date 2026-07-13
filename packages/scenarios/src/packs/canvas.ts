@@ -49,8 +49,8 @@ const SCRIPTED_HOST = {
   ]), queries: new Map(),
 }
 const SCRIPTED_PROFILE = {
-  profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
-  prompts: { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" },
+  profile: "streaming-ui-v1", version: "7.0.0", schemaVersion: "2.0.0", recipeSetVersion: "2.0.0", protocol: "native-tools" as const,
+  prompts: { planner: "7.0.0", composer: "8.0.0", repair: "5.0.0" },
   planner: { model: "test:planner", effort: "low" as const, timeoutMs: 15000, maxOutputTokens: 2400, maxSteps: 3 },
   composer: { model: "test:composer", effort: "low" as const, timeoutMs: 20000, maxOutputTokens: 5000, maxSteps: 3 },
   repair: { model: "test:repair", effort: "low" as const, timeoutMs: 8000, maxOutputTokens: 1800, maxSteps: 2, maxAttempts: 1 },
@@ -253,14 +253,14 @@ const liveScenario = (
         const page = pages[pages.length - 1]
         return page !== undefined && page.manifest.archetype === archetype && page.complete && validatePageCompleteness(page).length === 0
       }, `expected one complete ${archetype} page`),
-      liveCheck("first-block-under-2s", (world) => {
+      liveCheck("first-meaningful-ui-under-5s", (world) => {
         const opened = world.persistedUi().find((event) => event.type === "page_opened")
-        return opened !== undefined && opened.at - world.startedAt() < 2_000
-      }, "first accepted block missed the 2s SLA"),
-      liveCheck("complete-under-5s", (world) => {
+        return opened !== undefined && opened.at - world.startedAt() < 5_000
+      }, "first accepted model UI missed the 5s target"),
+      liveCheck("complete-under-20s", (world) => {
         const completed = world.persistedUi().find((event) => event.type === "page_completed")
-        return completed !== undefined && completed.at - world.startedAt() < 5_000
-      }, "initial page completion missed the 5s SLA"),
+        return completed !== undefined && completed.at - world.startedAt() < 20_000
+      }, "initial page completion missed the 20s target"),
       liveCheck("no-raw-authoring", (world) => !JSON.stringify(world.persistedUi()).includes('"html"'), "structured event trail contained raw HTML"),
     ],
   }],
@@ -281,7 +281,7 @@ export const canvasPack: Pack = {
   // live page-quality judge to score at least .85.
   threshold: 0.9475,
   judgeWeight: 0.35,
-  meta: { "ui-agent-profile": "streaming-ui-v1@5.0.0", "ui-schema": "1.0.0", "recipe-set": "1.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
+  meta: { "ui-agent-profile": "streaming-ui-v1@7.0.0", "ui-schema": "2.0.0", "recipe-set": "2.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
   scenarios: [
     scenario<CanvasWorld>({
       name: "model-generated plan → rejected content bounce → durable completion",

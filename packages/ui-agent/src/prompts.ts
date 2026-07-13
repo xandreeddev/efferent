@@ -3,7 +3,7 @@ import { uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.fu
 
 export const UI_PLANNER_PROMPT_VERSION = "7.0.0"
 export const UI_COMPOSER_PROMPT_VERSION = "8.0.0"
-export const UI_REPAIR_PROMPT_VERSION = "4.0.0"
+export const UI_REPAIR_PROMPT_VERSION = "5.0.0"
 
 export interface UiPromptContract {
   readonly designSystem: { readonly id: string; readonly version: string }
@@ -56,6 +56,6 @@ export const uiComposerPrompt = (host: UiPromptContract, protocol: UiGenerationP
 
 The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete remaining roots and children through several patch_ui calls of 2-4 nodes, starting immediately with the next critical section. Set complete:true only on the final call. Preserve accepted ids and component identities. Use registered components or compositions first; propose_component only if the required anatomy or behavior is impossible with them. Concrete information architecture, credible details and useful copy matter more than slogans. Avoid filler, repeated claims, placeholder labels and styling-only component forks.`
 
-export const uiRepairPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host, protocol)}
+export const uiRepairPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools", mayStart = false): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host, protocol)}
 
-A patch, theme, or component proposal was rejected. Read only the rejected input and semantic compiler findings, correct exactly those fields, and make one bounded tool call. Do not call start_ui, expand the scope, or write a caption.`
+A structured record was rejected or left the page incomplete. Read only the rejected input, accepted page if present, and semantic findings. Correct exactly those fields and emit one bounded record. ${mayStart ? "The rejected planner start did not open a page, so emit one corrected start record." : "Do not call start_ui; repair or complete the accepted page."} Do not expand the scope or write a caption.`

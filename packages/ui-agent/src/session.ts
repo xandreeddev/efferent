@@ -11,7 +11,7 @@ import { UiThemeStore } from "./ports/ui-theme-store.port.js"
 import type { UiComponentCatalogService } from "./ports/ui-component-catalog.port.js"
 import type { UiThemeStoreService } from "./ports/ui-theme-store.port.js"
 import { makeUiAgentHandlers, uiAgentToolkit } from "./toolkit.js"
-import { uiComposerPrompt, uiPlannerPrompt } from "./prompts.js"
+import { uiComposerPrompt, uiPlannerPrompt, uiRepairPrompt } from "./prompts.js"
 import { admitComponent, retrieveComponents, componentPromptLine } from "./domain/ui-component.entity.functions.js"
 import { CORE_UI_COMPONENTS } from "./domain/core-components.functions.js"
 import { decodeUiProtocolChunk, emptyUiProtocolDecoderState } from "./domain/ui-generation-protocol.entity.functions.js"
@@ -68,6 +68,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         }
         const protocol = profile.protocol ?? "native-tools"
         const decoder = yield* Ref.make(emptyUiProtocolDecoderState())
+        const rejectedRecords = yield* Ref.make<ReadonlyArray<{ readonly record: UiProtocolRecord; readonly finding: string }>>([])
         const handlers = makeUiAgentHandlers(args.conversationId, pageStore, host, publish, catalog, themes)
         const applyRecord = (record: UiProtocolRecord): Effect.Effect<void> => Effect.gen(function* () {
           const toolkit = yield* uiAgentToolkit
@@ -82,6 +83,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
                   : { name: "patch_theme" as const, outcome: yield* toolkit.handle("patch_theme", record.input) }
           if (!named.outcome.isFailure) return
           const failure = toolResultFailure(named.outcome.result, named.name)
+          yield* Ref.update(rejectedRecords, (current) => [...current, { record, finding: `[${failure.code}] ${failure.message}` }])
           yield* publish({ type: "error", message: `${named.name} record rejected: ${failure.message}`, failure })
         }).pipe(
           Effect.provide(handlers),
@@ -109,15 +111,35 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         // The profile timeout is a SOFT budget (pacing target); the hard
         // deadline is 3x it, capped at 55s — late content beats a flat
         // failure, and accepted patches stay rendered either way.
-        const stageDeadline = (stage: "planner" | "composer"): Duration.Duration =>
+        const stageDeadline = (stage: "planner" | "composer" | "repair"): Duration.Duration =>
           Duration.millis(Math.min(profile[stage].timeoutMs * 3, 55_000))
-        const publishFailure = (stage: "planner" | "composer", error: unknown) => {
+        const publishFailure = (stage: "planner" | "composer" | "repair", error: unknown) => {
           const failure = toAgentFailure(error, stage)
           return Effect.logWarning(`UI ${stage} gave up after ${Duration.toMillis(stageDeadline(stage))}ms (3x the ${profile[stage].timeoutMs}ms budget): [${failure.code}] ${failure.message}`).pipe(
             Effect.zipRight(publish({ type: "error", message: `UI ${stage} failed after an extended wait: ${failure.message} — any blocks already accepted remain on the page`, failure })),
           )
         }
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
+
+        const repair = (stage: "planner" | "composer", request: string, acceptedPage: unknown) => Effect.gen(function* () {
+          if (profile.repair.maxAttempts < 1) return
+          const rejected = yield* Ref.get(rejectedRecords)
+          yield* Ref.set(rejectedRecords, [])
+          const findings = rejected.length === 0
+            ? [stage === "planner" ? "start did not produce an accepted page" : "the accepted page is not complete"]
+            : rejected.map((entry) => entry.finding)
+          yield* runAgent(
+            { system: uiRepairPrompt(promptContract, protocol, stage === "planner"), toolkit: uiAgentToolkit, maxSteps: profile.repair.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.repair.effort, maxOutputTokens: profile.repair.maxOutputTokens } },
+            attemptConversationId,
+            `[repair-stage]\n${stage}\n\n[request]\n${request}\n\n[accepted-page]\n${acceptedPage === undefined ? "none" : JSON.stringify(acceptedPage)}\n\n[rejected-records]\n${JSON.stringify(rejected.map((entry) => entry.record))}\n\n[semantic-findings]\n${findings.join("\n")}`,
+            { onEvent: stagePublish },
+          ).pipe(
+            Effect.provideService(LanguageModel.LanguageModel, models.repair),
+            Effect.timeout(stageDeadline("repair")),
+            Effect.catchAll((error) => publishFailure("repair", error)),
+            Effect.provide(handlers),
+          )
+        })
 
         const attempt = Effect.gen(function* () {
           // EVERY request plans a NEW page (a fresh canvas in the strip) —
@@ -144,7 +166,13 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           )
 
           const plannedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
-          const page = plannedEvents.length > initialCount ? foldPageEvents(plannedEvents).at(-1) : undefined
+          const plannedPage = plannedEvents.length > initialCount ? foldPageEvents(plannedEvents).at(-1) : undefined
+          const page = plannedPage === undefined
+            ? yield* repair("planner", text, undefined).pipe(
+              Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
+              Effect.map((repairedEvents) => repairedEvents.length > initialCount ? foldPageEvents(repairedEvents).at(-1) : undefined),
+            )
+            : plannedPage
           if (page === undefined) {
             yield* publish({
               type: "error",
@@ -154,6 +182,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             return false
           }
 
+          yield* Ref.set(rejectedRecords, [])
           const beforeComposition = plannedEvents.length
           yield* Ref.update(decoder, (state) => ({ ...state, sawDelta: false }))
           yield* runAgent(
@@ -169,7 +198,13 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           )
           const composedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           const composedPage = foldPageEvents(composedEvents).at(-1)
-          const accepted = composedEvents.length > beforeComposition && composedPage?.complete === true
+          const acceptedBeforeRepair = composedEvents.length > beforeComposition && composedPage?.complete === true
+          const accepted = acceptedBeforeRepair
+            ? true
+            : yield* repair("composer", text, composedPage).pipe(
+              Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
+              Effect.map((repairedEvents) => repairedEvents.length > beforeComposition && foldPageEvents(repairedEvents).at(-1)?.complete === true),
+            )
           if (!accepted) {
             yield* publish({
               type: "error",

@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { ConversationId } from "@xandreed/engine"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import { normalizeInitialUiAdmission, uiPlannerPrompt, validateBlocks, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
+import { normalizeInitialUiAdmission, uiPlannerPrompt, uiRepairPrompt, validateBlocks, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
 import { makeUiAgentHandlers, StartUi, uiAgentToolkit } from "./toolkit.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
@@ -93,6 +93,15 @@ describe("the structured UI-agent contract", () => {
     expect(prompt).toContain('{"id":"efferent-canvas","version":"1.0.0"}')
     expect(prompt).toContain("registered assets: none — omit every assetId")
     expect(prompt).toContain('blockKind:"component"')
+  })
+
+  test("repair context distinguishes a rejected start from an incomplete accepted page", () => {
+    const contract = {
+      designSystem: { id: host.tokens.id, version: host.tokens.version },
+      recipes: [...host.recipes], assets: [], capabilities: [], components: [],
+    }
+    expect(uiRepairPrompt(contract, "compact-lines", true)).toContain("one corrected start record")
+    expect(uiRepairPrompt(contract, "compact-lines", false)).toContain("Do not call start_ui")
   })
 
   test("accepted events persist before publication and replay deterministically", async () => {
