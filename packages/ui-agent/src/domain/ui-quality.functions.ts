@@ -2,6 +2,7 @@ import type { UiHostService } from "../ports/ui-host.port.js"
 import type { PageManifest, UiBlock, UiPage } from "./ui-page.entity.js"
 import type { UiComponentDefinition } from "./ui-component.entity.js"
 import { validateComponentProps } from "./ui-component.entity.functions.js"
+import { validateThemeIntent } from "./design-system.entity.functions.js"
 
 const SAFE_ID = /^[a-z][a-z0-9-]{0,63}$/
 
@@ -56,6 +57,7 @@ export const validateManifest = (manifest: PageManifest, host: UiHostService): R
   ...(manifest.recipe.id === expectedRecipe(manifest.archetype) ? [] : [`${manifest.archetype} pages must use ${expectedRecipe(manifest.archetype)}`]),
   ...(host.recipes.has(manifest.recipe.id) ? [] : [`recipe ${manifest.recipe.id} is not registered by this host`]),
   ...(manifest.designSystem.id === host.tokens.id && manifest.designSystem.version === host.tokens.version ? [] : ["page design-system reference does not match the host"]),
+  ...(manifest.theme === undefined ? [] : validateThemeIntent(manifest.theme)),
   ...(new Set(manifest.slots.map((slot) => slot.id)).size === manifest.slots.length ? [] : ["slot ids must be unique"]),
 ]
 

@@ -1,9 +1,9 @@
 import type { UiGenerationProtocol } from "./domain/ui-generation-protocol.entity.js"
 import { uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.functions.js"
 
-export const UI_PLANNER_PROMPT_VERSION = "7.0.0"
-export const UI_COMPOSER_PROMPT_VERSION = "8.0.0"
-export const UI_REPAIR_PROMPT_VERSION = "5.0.0"
+export const UI_PLANNER_PROMPT_VERSION = "8.0.0"
+export const UI_COMPOSER_PROMPT_VERSION = "9.0.0"
+export const UI_REPAIR_PROMPT_VERSION = "6.0.0"
 
 export interface UiPromptContract {
   readonly designSystem: { readonly id: string; readonly version: string }
@@ -44,7 +44,7 @@ Recipes describe narrative order, not fixed templates:
 
 Declare root manifest slots in visual top-to-bottom order and emit roots in that order. The first component is marketing.hero for landing/document pages or navigation.navbar/navigation.sidebar for applications. Navigation targets are node ids verbatim—never #ids or URLs. Use registered asset IDs only; absent imagery is trusted design-system artwork.
 
-Theme controls structure-independent styling. Use patch_theme for requested shades, borders, typography, density, radius, contrast, shadow or motion. Never create a component for a theme difference.
+Theme controls structure-independent styling. Every accent, neutral, positive, warning, and danger color MUST be a six-digit hex value such as #c65f3d—never a color name. Use patch_theme for requested shades, borders, typography, density, radius, contrast, shadow or motion. Never create a component for a theme difference.
 
 You must create the page with start_ui before patch_ui or patch_theme. Nothing is rendered until a real model call selects the information architecture and emits accepted content. Complete through patch_ui calls of 2-4 nodes in visual order—small patches paint sooner.`
 

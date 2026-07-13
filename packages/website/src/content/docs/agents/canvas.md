@@ -78,10 +78,13 @@ but they are read-only. New turns have no raw fallback.
 bun run evals:ui-matrix --samples 1 --top 3
 ```
 
-The matrix covers recipe app, product landing, and architecture-document
-requests over model × effort × protocol candidates. Each trial submits through
-the actual Canvas browser form, observes DOM paint, captures desktop/mobile
-screenshots and overflow, then reads the SQLite page and failure trail. Ranking
+The default matrix screens recipe application, product landing, and
+architecture-document requests over model × effort × protocol candidates.
+Pass `--task-set reference` to run the twelve-product corpus spanning catalogs,
+workspaces, editorial marketing, runbooks, integrations, and architecture
+decisions. Each trial submits through the actual Canvas browser form, observes
+DOM paint, captures desktop/mobile screenshots and overflow, then reads the
+SQLite page and failure trail. Ranking
 uses Wilson lower confidence bounds, design-system compliance, information
 architecture, request relevance, latency decay, and repeated-sample
 consistency; only finalists receive the hierarchy/composition/interaction

@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { ConversationId } from "@xandreed/engine"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import { normalizeInitialUiAdmission, uiPlannerPrompt, uiRepairPrompt, validateBlocks, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
+import { isUiProtocolPayload, normalizeInitialUiAdmission, uiPlannerPrompt, uiRepairPrompt, validateBlocks, validateManifest, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
 import { makeUiAgentHandlers, StartUi, uiAgentToolkit } from "./toolkit.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
@@ -93,6 +93,17 @@ describe("the structured UI-agent contract", () => {
     expect(prompt).toContain('{"id":"efferent-canvas","version":"1.0.0"}')
     expect(prompt).toContain("registered assets: none — omit every assetId")
     expect(prompt).toContain('blockKind:"component"')
+    expect(prompt).toContain("six-digit hex value")
+  })
+
+  test("internal incremental records are identifiable and named theme colors are rejected", () => {
+    expect(isUiProtocolPayload('@ui patch {"pageId":"page","blocks":[]}')).toBe(true)
+    expect(isUiProtocolPayload('{"ui":{"op":"patch","input":{}}}')).toBe(true)
+    expect(isUiProtocolPayload("The page is ready.")).toBe(false)
+    expect(validateManifest({ ...landingReference.page, theme: {
+      mode: "light", accent: "terracotta", neutral: "warm-gray", positive: "olive", warning: "amber", danger: "crimson",
+      contrast: "standard", surface: "layered", border: "subtle", radius: "soft", shadow: "subtle", typography: "system", typeScale: "standard", density: "comfortable", motion: "reduced",
+    } }, host)).toContain("theme.accent must be a six-digit hex color")
   })
 
   test("repair context distinguishes a rejected start from an incomplete accepted page", () => {

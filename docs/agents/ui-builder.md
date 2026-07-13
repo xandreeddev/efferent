@@ -55,11 +55,13 @@ line and A2UI-style JSONL protocols exist to avoid provider tool-argument
 buffering; they are decoded incrementally and routed through the exact same
 admission and persistence handlers as native tool calls.
 
-Before pinning a profile, run `bun run evals:ui-matrix`. It screens configured
-models across effort, protocol, and all three archetypes through the real
-Canvas browser. It persists raw trials, desktop/mobile screenshots, DOM
-latency/overflow, structured pages, and semantic failures under
-`.efferent/evals`, then ranks candidates with:
+Before pinning a profile, run `bun run evals:ui-matrix`. Its screening set
+covers one landing, application, and document request across model, effort,
+and protocol. `--task-set reference` expands to twelve application, landing,
+and document products—including catalogs, workspaces, editorial sites,
+runbooks, integration guides, and architecture decisions. Every trial uses the
+real Canvas browser and persists raw timings, desktop/mobile screenshots, DOM
+overflow, structured pages, and semantic failures under `.efferent/evals`.
 
 ```text
 .25 Wilson90(valid complete refinement)

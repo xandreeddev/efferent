@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel, Toolkit } from "@effect/ai"
 import { Duration, Effect, Fiber, Option, Ref } from "effect"
 import { ConversationStore, makeSession, runAgent, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/engine"
@@ -121,6 +121,29 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         }
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
 
+        const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string) => {
+          const stageProfile = profile[stage]
+          const configured = protocol === "native-tools"
+            ? runAgent(
+              { system, toolkit: uiAgentToolkit, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens } },
+              attemptConversationId,
+              userPrompt,
+              { onEvent: stagePublish },
+            )
+            : runAgent(
+              { system, toolkit: Toolkit.empty, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens } },
+              attemptConversationId,
+              userPrompt,
+              { onEvent: stagePublish },
+            )
+          return configured.pipe(
+            Effect.provideService(LanguageModel.LanguageModel, models[stage]),
+            Effect.timeout(stageDeadline(stage)),
+            Effect.catchAll((error) => publishFailure(stage, error)),
+            Effect.provide(handlers),
+          )
+        }
+
         const repair = (stage: "planner" | "composer", request: string, acceptedPage: unknown) => Effect.gen(function* () {
           if (profile.repair.maxAttempts < 1) return
           const rejected = yield* Ref.get(rejectedRecords)
@@ -128,16 +151,10 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           const findings = rejected.length === 0
             ? [stage === "planner" ? "start did not produce an accepted page" : "the accepted page is not complete"]
             : rejected.map((entry) => entry.finding)
-          yield* runAgent(
-            { system: uiRepairPrompt(promptContract, protocol, stage === "planner"), toolkit: uiAgentToolkit, maxSteps: profile.repair.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.repair.effort, maxOutputTokens: profile.repair.maxOutputTokens } },
-            attemptConversationId,
+          yield* runStage(
+            "repair",
+            uiRepairPrompt(promptContract, protocol, stage === "planner"),
             `[repair-stage]\n${stage}\n\n[request]\n${request}\n\n[accepted-page]\n${acceptedPage === undefined ? "none" : JSON.stringify(acceptedPage)}\n\n[rejected-records]\n${JSON.stringify(rejected.map((entry) => entry.record))}\n\n[semantic-findings]\n${findings.join("\n")}`,
-            { onEvent: stagePublish },
-          ).pipe(
-            Effect.provideService(LanguageModel.LanguageModel, models.repair),
-            Effect.timeout(stageDeadline("repair")),
-            Effect.catchAll((error) => publishFailure("repair", error)),
-            Effect.provide(handlers),
           )
         })
 
@@ -151,18 +168,12 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           // progress" forever (live-caught via the scripted twin).
           const initialCount = initialEvents.length
           const priorPages = foldPageEvents(initialEvents).length
-          yield* runAgent(
-            { system: uiPlannerPrompt(promptContract, protocol), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
-            attemptConversationId,
+          yield* runStage(
+            "planner",
+            uiPlannerPrompt(promptContract, protocol),
             priorPages === 0
               ? text
               : `${text}\n\n(Open a NEW page for this request with start_ui — a fresh kebab-case page id, never one already in use.)`,
-            { onEvent: stagePublish },
-          ).pipe(
-            Effect.provideService(LanguageModel.LanguageModel, models.planner),
-            Effect.timeout(stageDeadline("planner")),
-            Effect.catchAll((error) => publishFailure("planner", error)),
-            Effect.provide(handlers),
           )
 
           const plannedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
@@ -185,16 +196,10 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           yield* Ref.set(rejectedRecords, [])
           const beforeComposition = plannedEvents.length
           yield* Ref.update(decoder, (state) => ({ ...state, sawDelta: false }))
-          yield* runAgent(
-            { system: uiComposerPrompt(promptContract, protocol), toolkit: uiAgentToolkit, maxSteps: profile.composer.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.composer.effort, maxOutputTokens: profile.composer.maxOutputTokens } },
-            attemptConversationId,
+          yield* runStage(
+            "composer",
+            uiComposerPrompt(promptContract, protocol),
             `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nComplete the LLM-generated page with specific, useful content in one patch_ui call.`,
-            { onEvent: stagePublish },
-          ).pipe(
-            Effect.provideService(LanguageModel.LanguageModel, models.composer),
-            Effect.timeout(stageDeadline("composer")),
-            Effect.catchAll((error) => publishFailure("composer", error)),
-            Effect.provide(handlers),
           )
           const composedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           const composedPage = foldPageEvents(composedEvents).at(-1)

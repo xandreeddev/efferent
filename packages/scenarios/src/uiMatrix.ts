@@ -26,7 +26,9 @@ interface Candidate {
 interface MatrixTask {
   readonly id: string
   readonly prompt: string
-  readonly terms: ReadonlyArray<string>
+  readonly archetype: UiPage["manifest"]["archetype"]
+  readonly concepts: ReadonlyArray<ReadonlyArray<string>>
+  readonly screening: boolean
 }
 
 interface MatrixBudgets {
@@ -93,9 +95,18 @@ const DEFAULT_MODELS = [
 const DEFAULT_EFFORTS: ReadonlyArray<Effort> = ["low", "medium", "high"]
 const DEFAULT_PROTOCOLS: ReadonlyArray<UiGenerationProtocolType> = ["compact-lines", "a2ui-jsonl", "native-tools"]
 const TASKS: ReadonlyArray<MatrixTask> = [
-  { id: "recipe-app", prompt: "Build an Italian recipe application with regional discovery, saved recipes, and ingredient search.", terms: ["italian", "recipe", "regional", "ingredient", "saved"] },
-  { id: "observability-landing", prompt: "Build a high-quality landing page for an observability product helping small teams understand production incidents.", terms: ["observability", "small", "teams", "production", "incidents"] },
-  { id: "architecture-doc", prompt: "Build an architecture document for an Effect-native ports-and-adapters service with a dependency diagram and decisions.", terms: ["effect", "ports", "adapters", "dependency", "decisions"] },
+  { id: "recipe-app", archetype: "application", screening: true, prompt: "Build an Italian recipe application with regional discovery, saved recipes, and ingredient search.", concepts: [["italian", "italia"], ["recipe", "ricett"], ["regional", "region"], ["ingredient"], ["saved", "salvat", "preferit"]] },
+  { id: "observability-landing", archetype: "landing", screening: true, prompt: "Build a high-quality landing page for an observability product helping small teams understand production incidents.", concepts: [["observability", "telemetry"], ["small team"], ["production"], ["incident"], ["trace", "metric", "log"]] },
+  { id: "architecture-doc", archetype: "document", screening: true, prompt: "Build an architecture document for an Effect-native ports-and-adapters service with a dependency diagram and decisions.", concepts: [["effect"], ["port"], ["adapter"], ["depend"], ["decision"]] },
+  { id: "mini-pc-catalog", archetype: "application", screening: false, prompt: "Build a mini PC shopping application with workload filters, comparable specifications, prices, and a useful shortlist.", concepts: [["mini pc"], ["workload", "filter"], ["specification", "memory", "processor"], ["price"], ["shortlist", "saved"]] },
+  { id: "issue-tracker", archetype: "application", screening: false, prompt: "Build an issue-tracker workspace with backlog health, filters, an issue table, assignees, priorities, and a create-issue form.", concepts: [["issue"], ["backlog"], ["assignee"], ["priorit"], ["create"]] },
+  { id: "travel-planner", archetype: "application", screening: false, prompt: "Build a collaborative city-trip planner with a day-by-day itinerary, saved places, a budget summary, and scheduling conflicts.", concepts: [["itinerary", "day"], ["place"], ["budget"], ["schedule"], ["conflict"]] },
+  { id: "developer-api-landing", archetype: "landing", screening: false, prompt: "Build a landing page for a developer API that turns documents into structured data, with concrete examples, reliability proof, pricing, and a strong first-call CTA.", concepts: [["api"], ["document"], ["structured data"], ["reliab"], ["pricing"]] },
+  { id: "architecture-studio", archetype: "landing", screening: false, prompt: "Build an editorial landing page for a sustainable architecture studio, featuring selected projects, materials philosophy, measurable outcomes, and a consultation CTA.", concepts: [["architecture"], ["sustainab"], ["project"], ["material"], ["consult"]] },
+  { id: "product-conference", archetype: "landing", screening: false, prompt: "Build a conference landing page with a clear theme, speaker proof, schedule highlights, venue information, ticket tiers, and registration CTA.", concepts: [["conference"], ["speaker"], ["schedule"], ["venue"], ["ticket"]] },
+  { id: "incident-runbook", archetype: "document", screening: false, prompt: "Build an operational incident runbook for elevated API latency, including detection, triage flow, ownership, rollback criteria, commands, and post-incident decisions.", concepts: [["latency"], ["triage"], ["owner"], ["rollback"], ["post-incident", "decision"]] },
+  { id: "integration-guide", archetype: "document", screening: false, prompt: "Build an API integration guide covering authentication, the first request, typed responses, error handling, rate limits, and production readiness.", concepts: [["authentication", "auth"], ["request"], ["response"], ["error"], ["rate limit"]] },
+  { id: "migration-adr", archetype: "document", screening: false, prompt: "Build an architecture decision document for migrating a promise-based service to Effect with ports and adapters, Layers, concurrency, rollout stages, and trade-offs.", concepts: [["effect"], ["port"], ["layer"], ["concurr"], ["rollout", "trade-off"]] },
 ]
 
 const argValue = (name: string): Option.Option<string> => {
@@ -129,12 +140,14 @@ const standardDeviation = (values: ReadonlyArray<number>): number => {
   return values.length < 2 ? 0 : Math.sqrt(mean(values.map((value) => (value - average) ** 2)))
 }
 
-const relevance = (page: UiPage, terms: ReadonlyArray<string>): number => {
-  const content = JSON.stringify(page.blocks).toLowerCase()
-  return terms.filter((term) => content.includes(term)).length / terms.length
+const normalizedText = (value: string): string => value.normalize("NFKD").replaceAll(/[\u0300-\u036f]/g, "").toLowerCase()
+
+export const scoreRequestRelevance = (page: UiPage, concepts: ReadonlyArray<ReadonlyArray<string>>): number => {
+  const content = normalizedText(JSON.stringify(page))
+  return concepts.filter((aliases) => aliases.some((alias) => content.includes(normalizedText(alias)))).length / concepts.length
 }
 
-const informationArchitecture = (page: UiPage): number => {
+export const scoreInformationArchitecture = (page: UiPage, expectedArchetype: UiPage["manifest"]["archetype"]): number => {
   const ids = new Set(page.blocks.map((block) => block.id))
   const slotOrder = new Map(page.manifest.slots.map((slot, index) => [slot.id, index]))
   const roots = page.blocks.filter((block) => slotOrder.has(block.id))
@@ -149,7 +162,7 @@ const informationArchitecture = (page: UiPage): number => {
   const expectedFirst = page.manifest.archetype === "application" ? "navigation" : "hero"
   const first = roots[0]
   const firstMatches = first?.kind === expectedFirst || (first?.kind === "component" && (page.manifest.archetype === "application" ? first.component.startsWith("navigation.") : first.component === "marketing.hero" || first.component === "primitive.heading"))
-  const checks = [ordered, targetsResolve, firstMatches, validatePageCompleteness(page).length === 0]
+  const checks = [page.manifest.archetype === expectedArchetype, ordered, targetsResolve, firstMatches, validatePageCompleteness(page).length === 0]
   return checks.filter(Boolean).length / checks.length
 }
 
@@ -382,8 +395,8 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
       failures,
       complete: page !== undefined && page.complete && validatePageCompleteness(page).length === 0,
       designSystemScore: designFindings.length === 0 ? 1 : 0,
-      informationArchitectureScore: page === undefined ? 0 : informationArchitecture(page),
-      relevance: page === undefined ? 0 : relevance(page, task.terms),
+      informationArchitectureScore: page === undefined ? 0 : scoreInformationArchitecture(page, task.archetype),
+      relevance: page === undefined ? 0 : scoreRequestRelevance(page, task.concepts),
       page: page ?? null,
     }
   }))
@@ -470,7 +483,10 @@ const program = Effect.gen(function* () {
   const efforts = csv("--efforts", DEFAULT_EFFORTS).filter((value): value is Effort => value === "low" || value === "medium" || value === "high")
   const protocols = csv("--protocols", DEFAULT_PROTOCOLS).filter((value): value is UiGenerationProtocolType => value === "native-tools" || value === "a2ui-jsonl" || value === "compact-lines")
   const candidates = csv("--models", DEFAULT_MODELS).flatMap((model) => efforts.flatMap((effort) => protocols.map((protocol) => ({ model, effort, protocol }))))
-  const taskIds = csv("--tasks", TASKS.map((task) => task.id))
+  const taskSet = Option.getOrElse(argValue("--task-set"), () => "screening")
+  if (taskSet !== "screening" && taskSet !== "reference") return yield* Effect.fail(`unknown UI matrix task set: ${taskSet}`)
+  const defaultTaskIds = TASKS.filter((task) => taskSet === "reference" || task.screening).map((task) => task.id)
+  const taskIds = csv("--tasks", defaultTaskIds)
   const unknownTasks = taskIds.filter((id) => !TASKS.some((task) => task.id === id))
   if (unknownTasks.length > 0) return yield* Effect.fail(`unknown UI matrix task(s): ${unknownTasks.join(", ")}`)
   const tasks = TASKS.filter((task) => taskIds.includes(task.id))

@@ -69,3 +69,10 @@ without substituting scripted page content. Provider timeouts and schema/tool
 failures become failed trial rows and the JSON report is still written; pass
 `--strict` when an all-failed campaign should return a non-zero exit. Use
 `--session-only` only to diagnose the runtime without browser rendering.
+
+The default `screening` task set spans landing/application/document. Pass
+`--task-set reference` for the frozen twelve-product corpus. Relevance is
+concept-group coverage with localized/inflected aliases, not English exact
+substring matching; IA also requires the requested archetype. Non-native
+protocols send no native tool schemas to the provider—the decoded records still
+use the same local toolkit handlers.

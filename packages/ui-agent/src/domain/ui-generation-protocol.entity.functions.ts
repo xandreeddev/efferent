@@ -7,6 +7,13 @@ const decodeEnvelope = Schema.decodeUnknownEither(UiProtocolEnvelope)
 
 export const emptyUiProtocolDecoderState = (): UiProtocolDecoderState => ({ buffer: "", seen: new Set(), sawDelta: false })
 
+/** Protocol records are an internal model-to-harness channel. Hosts use this
+ * predicate to keep a settled record from appearing as assistant copy. */
+export const isUiProtocolPayload = (text: string): boolean => {
+  const first = text.trim().split("\n").find((line) => line.trim().length > 0 && !line.trim().startsWith("```"))?.trim() ?? ""
+  return first.startsWith("@ui ") || /^\{\s*"ui"\s*:/.test(first)
+}
+
 const json = (source: string): Either.Either<unknown, string> => Either.try({ try: () => JSON.parse(source) as unknown, catch: () => "record is not valid JSON" })
 
 const parseCompact = (line: string): Either.Either<typeof UiProtocolRecord.Type, string> => {

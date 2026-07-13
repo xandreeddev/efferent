@@ -7,7 +7,7 @@ export { admitComponent, componentFingerprint, componentPromptLine, componentSim
 export { CORE_UI_COMPONENTS } from "./domain/core-components.functions.js"
 export { UiGenerationProtocol, UiProtocolEnvelope, UiProtocolRecord } from "./domain/ui-generation-protocol.entity.js"
 export type { UiGenerationProtocol as UiGenerationProtocolType, UiProtocolDecodeResult, UiProtocolDecoderState, UiProtocolEnvelope as UiProtocolEnvelopeType, UiProtocolRecord as UiProtocolRecordType } from "./domain/ui-generation-protocol.entity.js"
-export { decodeUiProtocolChunk, emptyUiProtocolDecoderState, uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.functions.js"
+export { decodeUiProtocolChunk, emptyUiProtocolDecoderState, isUiProtocolPayload, uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.functions.js"
 export { ArchitectureEdge, ArchitectureGraph, ArchitectureNode, PageManifest, PageSlot, UiBlock, UiPageEvent } from "./domain/ui-page.entity.js"
 export type { ArchitectureEdge as ArchitectureEdgeType, ArchitectureGraph as ArchitectureGraphType, ArchitectureNode as ArchitectureNodeType, PageManifest as PageManifestType, PageSlot as PageSlotType, UiBlock as UiBlockType, UiPage, UiPageEvent as UiPageEventType } from "./domain/ui-page.entity.js"
 export { emptyPage, foldPageEvents, normalizeInitialUiAdmission, reducePageEvent } from "./domain/ui-page.entity.functions.js"

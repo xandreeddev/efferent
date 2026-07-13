@@ -14,6 +14,10 @@ const renderEvent = (
 })
 
 describe("the canvas model fold (replay ≡ live)", () => {
+  test("internal UI protocol records never become user-facing assistant copy", () => {
+    const internal = foldLedger([{ type: "assistant_message", turnIndex: 0, text: '@ui patch {"pageId":"page","blocks":[]}', reasoning: "", toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 } }])
+    expect(Option.isNone(internal.reply)).toBe(true)
+  })
   test("replace swaps a page in place; append accumulates", () => {
     const model = foldLedger([
       renderEvent("a", "<p>v1</p>"),

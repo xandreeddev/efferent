@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import { reducePageEvent } from "@xandreed/ui-agent"
+import { isUiProtocolPayload, reducePageEvent } from "@xandreed/ui-agent"
 import type { UiPage, UiPageEvent } from "@xandreed/ui-agent"
 import type { CanvasEvent, LegacyCanvasEntry } from "../session.js"
 
@@ -61,7 +61,7 @@ export const reduceEvent = (model: CanvasModel, event: CanvasEvent): CanvasModel
   if (event.type === "ui_render") return mergeLegacy(model, event.entry)
   if (event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "theme_patched" || event.type === "page_completed") return mergeStructured(model, event)
   if (event.type === "turn_start") return { ...model, busy: true, requestStartedAt: Option.some(Date.now()), firstBlockAt: Option.none(), completedAt: Option.none() }
-  if (event.type === "assistant_message") return event.text.length > 0 ? { ...model, reply: Option.some(event.text) } : model
+  if (event.type === "assistant_message") return event.text.length > 0 && !isUiProtocolPayload(event.text) ? { ...model, reply: Option.some(event.text) } : model
   if (event.type === "agent_end") return { ...model, busy: false }
   if (event.type === "error") return { ...model, busy: false, reply: Option.some(`⚠ ${event.message}`) }
   return model
