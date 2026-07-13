@@ -19,4 +19,11 @@ export const renderTabs = (model: CanvasModel, oob: boolean): Html => html`<nav 
 export const renderStatus = (model: CanvasModel, oob: boolean): Html => html`<div id="ef-status" class="ef-status-strip" ${oob ? raw(`hx-swap-oob="true"`) : raw("")}>${model.busy ? html`<span class="ef-spin">building…</span>` : raw("")}${Option.match(model.reply, { onNone: () => raw(""), onSome: (text) => html`<span class="ef-reply-line">${text.slice(0, 240)}</span>` })}${Option.match(model.firstBlockAt, { onNone: () => raw(""), onSome: (at) => Option.match(model.requestStartedAt, { onNone: () => raw(""), onSome: (start) => html`<span class="ef-latency">first block ${at - start}ms</span>` }) })}</div>`
 
 export const renderNewPage = (model: CanvasModel, page: Page, context: UiCompileContext): Html => html`<div hx-swap-oob="beforeend:#ef-pages">${renderPage(model, page, false, context)}</div>`
+
+/** The host-owned loading skeleton: visible from the instant a request is
+ *  sent until the first real page block lands — perceived latency belongs
+ *  to the host, not the model. Chrome only, never model content. */
+export const renderSkeleton = (visible: boolean): Html =>
+  html`<div id="ef-skeleton" class="ef-skeleton" hx-swap-oob="outerHTML:#ef-skeleton" ${visible ? raw("") : raw("hidden")}><div class="ef-skeleton-bar ef-skeleton-wide"></div><div class="ef-skeleton-bar"></div><div class="ef-skeleton-bar ef-skeleton-short"></div></div>`
+
 export const wsMessage = (parts: ReadonlyArray<Html>): string => render(join(parts))

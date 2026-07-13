@@ -1,7 +1,77 @@
 import type { PageManifest, UiBlock, UiPage, UiPageEvent } from "./ui-page.entity.js"
 import { Option } from "effect"
+import type { DesignSystemRef } from "./design-system.entity.js"
 
 export const emptyPage = (manifest: PageManifest): UiPage => ({ manifest, blocks: [], complete: false })
+
+export interface UiAdmissionContract {
+  readonly designSystem: DesignSystemRef
+  readonly assetIds: ReadonlySet<string>
+}
+
+const withoutOptionalAsset = (block: UiBlock, assetIds: ReadonlySet<string>): UiBlock => {
+  if (block.kind === "hero" && block.assetId !== undefined && !assetIds.has(block.assetId)) {
+    const { assetId: _assetId, ...rest } = block
+    return rest
+  }
+  if (block.kind === "cards" || block.kind === "feature-grid") {
+    return {
+      ...block,
+      items: block.items.map((item) => {
+        if (item.assetId === undefined || assetIds.has(item.assetId)) return item
+        const { assetId: _assetId, ...rest } = item
+        return rest
+      }),
+    }
+  }
+  return block
+}
+
+const withCanonicalNavTargets = (block: UiBlock): UiBlock =>
+  block.kind === "navigation"
+    ? {
+        ...block,
+        links: block.links.map((link) =>
+          link.target.startsWith("#") ? { ...link, target: link.target.slice(1) } : link,
+        ),
+      }
+    : block
+
+/** Block-level canonicalization of host-owned addressing, shared by the
+ * start_ui AND patch_ui admission paths: unknown optional imagery falls back
+ * to renderer artwork, and anchor-style navigation targets ("#features")
+ * normalize to the verbatim block id the compiler links by. */
+export const canonicalizeUiBlocks = (
+  blocks: ReadonlyArray<UiBlock>,
+  contract: UiAdmissionContract,
+): ReadonlyArray<UiBlock> =>
+  blocks.map((block) => withCanonicalNavTargets(withoutOptionalAsset(block, contract.assetIds)))
+
+/** Canonicalize host-owned admission data while preserving every model-owned
+ * layout and content decision. The design-system reference is configuration,
+ * optional unknown imagery falls back to renderer artwork, and critical
+ * blocks omitted from the redundant slot declaration are declared verbatim. */
+export const normalizeInitialUiAdmission = (
+  manifest: PageManifest,
+  blocks: ReadonlyArray<UiBlock>,
+  contract: UiAdmissionContract,
+): { readonly manifest: PageManifest; readonly blocks: ReadonlyArray<UiBlock> } => {
+  const normalizedBlocks = canonicalizeUiBlocks(blocks, contract)
+  const slots = new Map(manifest.slots.map((slot) => [slot.id, slot]))
+  const missing = normalizedBlocks.flatMap((block) =>
+    slots.has(block.id)
+      ? []
+      : [{ id: block.id, blockKind: block.kind, importance: "critical" as const }],
+  )
+  return {
+    manifest: {
+      ...manifest,
+      designSystem: contract.designSystem,
+      slots: [...manifest.slots, ...missing],
+    },
+    blocks: normalizedBlocks,
+  }
+}
 
 const upsertBlocks = (current: ReadonlyArray<UiBlock>, incoming: ReadonlyArray<UiBlock>): ReadonlyArray<UiBlock> =>
   incoming.reduce(

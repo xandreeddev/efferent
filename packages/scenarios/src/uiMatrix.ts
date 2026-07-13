@@ -26,6 +26,12 @@ interface MatrixTask {
   readonly terms: ReadonlyArray<string>
 }
 
+interface MatrixBudgets {
+  readonly plannerTimeoutMs: number
+  readonly composerTimeoutMs: number
+  readonly trialTimeoutMs: number
+}
+
 interface Trial {
   readonly candidate: Candidate
   readonly task: string
@@ -137,11 +143,11 @@ const repeatConsistency = (trials: ReadonlyArray<Trial>): number => {
   }))
 }
 
-const profileFor = (candidate: Candidate): UiAgentProfileType => ({
+const profileFor = (candidate: Candidate, budgets: MatrixBudgets): UiAgentProfileType => ({
   profile: "streaming-ui-v1", version: "matrix-v1", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
   prompts: { planner: UI_PLANNER_PROMPT_VERSION, composer: UI_COMPOSER_PROMPT_VERSION, repair: UI_REPAIR_PROMPT_VERSION },
-  planner: { model: candidate.model, effort: candidate.effort, timeoutMs: 12_000, maxOutputTokens: 1800, maxSteps: 2 },
-  composer: { model: candidate.model, effort: candidate.effort, timeoutMs: 30_000, maxOutputTokens: 6000, maxSteps: 3 },
+  planner: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.plannerTimeoutMs, maxOutputTokens: 1800, maxSteps: 2 },
+  composer: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.composerTimeoutMs, maxOutputTokens: 6000, maxSteps: 5 },
   repair: { model: candidate.model, effort: candidate.effort, timeoutMs: 8_000, maxOutputTokens: 1800, maxSteps: 2, maxAttempts: 1 },
   fallback: { policy: "none" },
 })
@@ -154,7 +160,7 @@ const selectedModel = (candidate: Candidate) => Effect.gen(function* () {
   )
 })
 
-const runTrial = (candidate: Candidate, task: MatrixTask, sample: number): Effect.Effect<Trial, unknown> =>
+const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budgets: MatrixBudgets): Effect.Effect<Trial, unknown> =>
   Effect.scoped(Effect.gen(function* () {
     const dir = mkdtempSync(join(tmpdir(), "efferent-ui-matrix-"))
     yield* Effect.addFinalizer(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true })))
@@ -165,7 +171,7 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number): Effec
       SqliteUiPageStoreLive(db),
       DefaultUiHostLive,
       LocalAuthStoreLive(process.cwd(), homedir()),
-      Layer.succeed(UiAgentExecutionProfile, profileFor(candidate)),
+      Layer.succeed(UiAgentExecutionProfile, profileFor(candidate, budgets)),
       Layer.succeed(UiAgentModels, { planner: model, composer: model, repair: model }),
     )
     const services = yield* Layer.build(base)
@@ -179,7 +185,7 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number): Effec
     yield* session.subscribe(0).pipe(
       Stream.filter((entry) => entry.event.type === "agent_end"),
       Stream.runHead,
-      Effect.timeout(Duration.seconds(45)),
+      Effect.timeout(Duration.millis(budgets.trialTimeoutMs)),
     )
     const finishedAt = Date.now()
     const sessionState = yield* session.state
@@ -264,14 +270,22 @@ const program = Effect.gen(function* () {
   if (!keyed) return yield* Effect.fail("no model credential; run Smith :login first")
   const efforts = csv("--efforts", DEFAULT_EFFORTS).filter((value): value is Effort => value === "low" || value === "medium" || value === "high")
   const candidates = csv("--models", DEFAULT_MODELS).flatMap((model) => efforts.map((effort) => ({ model, effort })))
+  const taskIds = csv("--tasks", TASKS.map((task) => task.id))
+  const unknownTasks = taskIds.filter((id) => !TASKS.some((task) => task.id === id))
+  if (unknownTasks.length > 0) return yield* Effect.fail(`unknown UI matrix task(s): ${unknownTasks.join(", ")}`)
+  const tasks = TASKS.filter((task) => taskIds.includes(task.id))
   const samples = positiveInt("--samples", 1)
   const top = positiveInt("--top", 3)
   const concurrency = positiveInt("--concurrency", 3)
-  const combinations = candidates.flatMap((candidate) => TASKS.flatMap((task) => Array.from({ length: samples }, (_, sample) => ({ candidate, task, sample: sample + 1 }))))
-  console.log(`ui-matrix: ${candidates.length} candidates × ${TASKS.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency}`)
+  const plannerTimeoutMs = positiveInt("--planner-timeout-ms", 120_000)
+  const composerTimeoutMs = positiveInt("--composer-timeout-ms", 180_000)
+  const trialTimeoutMs = positiveInt("--trial-timeout-ms", plannerTimeoutMs + composerTimeoutMs + 15_000)
+  const budgets = { plannerTimeoutMs, composerTimeoutMs, trialTimeoutMs }
+  const combinations = candidates.flatMap((candidate) => tasks.flatMap((task) => Array.from({ length: samples }, (_, sample) => ({ candidate, task, sample: sample + 1 }))))
+  console.log(`ui-matrix: ${candidates.length} candidates × ${tasks.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency} · profiling budgets=${plannerTimeoutMs}/${composerTimeoutMs}/${trialTimeoutMs}ms`)
   const trials = yield* Effect.forEach(combinations, ({ candidate, task, sample }) =>
     Effect.logInfo(`ui-matrix ${candidate.model} effort=${candidate.effort} task=${task.id} sample=${sample}`).pipe(
-      Effect.zipRight(runTrial(candidate, task, sample)),
+      Effect.zipRight(runTrial(candidate, task, sample, budgets)),
       Effect.tap((trial) => Effect.sync(() => console.log(`  ${candidate.model} ${candidate.effort} ${task.id}: visible=${trial.firstVisibleMs}ms complete=${trial.initialCompleteMs}ms first-patch=${trial.firstRefinementMs ?? "none"} enrich=${trial.enrichmentMs}ms patches=${trial.acceptedRefinements} ds=${trial.designSystemScore.toFixed(2)} ia=${trial.informationArchitectureScore.toFixed(2)} relevance=${trial.relevance.toFixed(2)}`))),
     ),
   { concurrency })
@@ -294,7 +308,7 @@ const program = Effect.gen(function* () {
   const judged = ranked.map((candidate) => judgedByCandidate.get(`${candidate.candidate.model}:${candidate.candidate.effort}`) ?? candidate)
   const final = judged.sort((a, b) => b.selectionScore - a.selectionScore)
   const output = Option.getOrElse(argValue("--output"), () => join(process.cwd(), ".efferent", "evals", `ui-agent-matrix-${new Date().toISOString().replace(/[:.]/g, "-")}.json`))
-  const report = { version: "ui-agent-matrix-v3", generatedAt: new Date().toISOString(), judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "deterministic = .25*Wilson90(valid refinement) + .20*Wilson90(first patch <=10s) + .15*design-system compliance + .15*information architecture + .10*request relevance + .10*exp(-p50 first-patch/10s) + .05*repeat consistency; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks: TASKS, candidates: final }
+  const report = { version: "ui-agent-matrix-v3", generatedAt: new Date().toISOString(), judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "deterministic = .25*Wilson90(valid refinement) + .20*Wilson90(first patch <=10s) + .15*design-system compliance + .15*information architecture + .10*request relevance + .10*exp(-p50 first-patch/10s) + .05*repeat consistency; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
   yield* persist(output, report)
   console.log("\nrank  model                            effort  success  <=10s  p50     p95     DS    IA    rel   cons  judge  score")
   final.forEach((entry, index) => console.log(`${String(index + 1).padStart(4)}  ${entry.candidate.model.padEnd(32)} ${entry.candidate.effort.padEnd(6)}  ${String(entry.refinementSuccesses).padStart(2)}/${String(entry.trials.length).padEnd(2)}    ${String(entry.withinTenSeconds).padStart(2)}/${String(entry.trials.length).padEnd(2)}  ${String(entry.p50EnrichmentMs).padStart(6)}  ${String(entry.p95EnrichmentMs).padStart(6)}  ${entry.meanDesignSystemScore.toFixed(2)}  ${entry.meanInformationArchitectureScore.toFixed(2)}  ${entry.meanRelevance.toFixed(2)}  ${entry.repeatConsistency.toFixed(2)}  ${(entry.judgeScore?.toFixed(2) ?? "-").padStart(5)}  ${entry.selectionScore.toFixed(3)}`))

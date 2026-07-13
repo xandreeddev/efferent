@@ -6,7 +6,7 @@ import type { UiPageEvent, UiRequestContext } from "@xandreed/ui-agent"
 import type { CanvasEvent, CanvasSession } from "../session.js"
 import { emptyModel, pageId, reduceEvent } from "./state.js"
 import type { CanvasModel } from "./state.js"
-import { renderNewPage, renderPage, renderStatus, renderTabs, wsMessage } from "./render.js"
+import { renderNewPage, renderPage, renderSkeleton, renderStatus, renderTabs, wsMessage } from "./render.js"
 import { renderShell } from "./shell.js"
 
 const ASSET_DIR = joinPath(import.meta.dir, "..", "..", "assets")
@@ -72,11 +72,25 @@ export const serveCanvas = (args: {
         const page = next.pages.find((candidate) => pageId(candidate) === id)
         if (page === undefined) return ""
         const isNew = !previous.pages.some((candidate) => pageId(candidate) === id)
+        // A NEW page steals focus: every EXISTING section re-renders so the
+        // previously-visible one picks up `hidden` — without this the view
+        // stays glued to the old canvas and the new page builds invisibly.
+        const others = isNew
+          ? next.pages.filter((candidate) => pageId(candidate) !== id).map((candidate) => renderPage(next, candidate, true, compileContext))
+          : []
         return wsMessage([
           isNew ? renderNewPage(next, page, compileContext) : renderPage(next, page, true, compileContext),
+          ...others,
+          renderSkeleton(false),
           renderTabs(next, true),
           renderStatus(next, true),
         ])
+      }
+      if (event.type === "turn_start") {
+        return wsMessage([renderSkeleton(true), renderStatus(next, true)])
+      }
+      if (event.type === "agent_end" || event.type === "error") {
+        return wsMessage([renderSkeleton(false), renderStatus(next, true)])
       }
       return wsMessage([renderStatus(next, true)])
     }
