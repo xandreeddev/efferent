@@ -179,3 +179,13 @@ body { margin: 0; background: var(--cv-bg-page); color: var(--cv-text); font: 15
 @media (prefers-reduced-motion: reduce) {
   .ui-page *, .ui-page *::before, .ui-page *::after { scroll-behavior: auto !important; transition-duration: 1ms !important; animation-duration: 1ms !important; }
 }
+
+/* The host-owned loading skeleton — visible from send until the first real
+   block lands. Chrome, token-only, honest about progress without inventing
+   content. */
+.ef-skeleton { display: grid; gap: 14px; padding: 48px 20px; max-width: 720px; }
+.ef-skeleton[hidden] { display: none; }
+.ef-skeleton-bar { height: 22px; border-radius: 6px; background: linear-gradient(90deg, var(--cv-bg-raised) 25%, var(--cv-line) 50%, var(--cv-bg-raised) 75%); background-size: 200% 100%; animation: ef-skeleton-pulse 1.2s ease-in-out infinite; }
+.ef-skeleton-wide { height: 44px; width: 82%; }
+.ef-skeleton-short { width: 55%; }
+@keyframes ef-skeleton-pulse { from { background-position: 200% 0; } to { background-position: -200% 0; } }

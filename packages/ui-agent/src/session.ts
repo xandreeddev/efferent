@@ -59,23 +59,27 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
 
         const attempt = Effect.gen(function* () {
+          // EVERY request plans a NEW page (a fresh canvas in the strip) —
+          // earlier pages stay switchable. In-place refinement was the old
+          // semantics and read as "nothing happened" on follow-ups.
           const initialEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
-          if (foldPageEvents(initialEvents).length === 0) {
-            yield* runAgent(
-              { system: uiPlannerPrompt(promptContract), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
-              attemptConversationId,
-              text,
-              { onEvent: stagePublish },
-            ).pipe(
-              Effect.provideService(LanguageModel.LanguageModel, models.planner),
-              Effect.timeout(stageDeadline("planner")),
-              Effect.catchAll((error) => publishFailure("planner", error)),
-              Effect.provide(handlers),
-            )
-          }
+          const priorPages = foldPageEvents(initialEvents).length
+          yield* runAgent(
+            { system: uiPlannerPrompt(promptContract), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
+            attemptConversationId,
+            priorPages === 0
+              ? text
+              : `${text}\n\n(Open a NEW page for this request with start_ui — a fresh kebab-case page id, never one already in use.)`,
+            { onEvent: stagePublish },
+          ).pipe(
+            Effect.provideService(LanguageModel.LanguageModel, models.planner),
+            Effect.timeout(stageDeadline("planner")),
+            Effect.catchAll((error) => publishFailure("planner", error)),
+            Effect.provide(handlers),
+          )
 
           const plannedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
-          const page = foldPageEvents(plannedEvents).at(-1)
+          const page = plannedEvents.length > initialEvents.length ? foldPageEvents(plannedEvents).at(-1) : undefined
           if (page === undefined) {
             yield* publish({
               type: "error",

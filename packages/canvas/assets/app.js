@@ -21,14 +21,18 @@ document.addEventListener("click", function (e) {
 
 /* After any WS swap: keep the pinned tab authoritative; adopt the server's
    active tab only when the user has none pinned. */
+var knownPages = [];
+
+/* an unseen page steals focus; the pin only guards mid-read patches */
 document.body.addEventListener("htmx:oobAfterSwap", function () {
+  var pages = Array.from(document.querySelectorAll(".ef-page-host"));
+  var ids = pages.map(function (p) { return p.dataset.page; });
+  var fresh = ids.filter(function (id) { return knownPages.indexOf(id) < 0; });
+  knownPages = ids;
+  if (fresh.length > 0) { activate(fresh[fresh.length - 1]); return; }
   var pinned = document.getElementById("ef-viewing");
   var current = pinned && pinned.value;
-  var pages = Array.from(document.querySelectorAll(".ef-page-host"));
-  if (current && pages.some(function (p) { return p.dataset.page === current; })) {
-    activate(current);
-    return;
-  }
+  if (current && ids.indexOf(current) >= 0) { activate(current); return; }
   var serverActive = pages.find(function (p) { return !p.hidden; }) || pages[pages.length - 1];
   if (serverActive) activate(serverActive.dataset.page);
 });
