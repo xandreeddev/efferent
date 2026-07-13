@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { landingReference } from "@xandreed/ui-agent"
-import { containTrialFailure, scoreInformationArchitecture, scoreRequestRelevance } from "./uiMatrix.js"
+import { cappedTrial, containTrialFailure, scoreInformationArchitecture, scoreRequestRelevance } from "./uiMatrix.js"
 
 describe("the UI matrix deterministic scorers", () => {
   test("localized and inflected copy satisfies semantic concept aliases", () => {
@@ -31,5 +31,19 @@ describe("the UI matrix deterministic scorers", () => {
     expect(trials.every((trial) => !trial.complete && trial.failures.length === 1)).toBe(true)
     expect(trials.flatMap((trial) => trial.errors).join("\n")).toContain("provider rejected the request")
     expect(trials.flatMap((trial) => trial.errors).join("\n")).toContain("SQLite disk I/O error")
+  })
+
+  test("a trial wedged inside an unbounded finalizer is abandoned at the hard cap instead of stalling the wave", async () => {
+    const candidate = { model: "opencode:test", effort: "low" as const, protocol: "compact-lines" as const }
+    const task = { id: "test", prompt: "Build a test page.", archetype: "landing" as const, concepts: [["test"]], screening: true }
+    // A never-completing trial holding a never-completing finalizer: a plain
+    // timeout hangs here because interruption waits for the finalizer.
+    const wedged = Effect.never.pipe(Effect.ensuring(Effect.never)) as Effect.Effect<never, unknown>
+    const startedAt = Date.now()
+    const trial = await Effect.runPromise(containTrialFailure(candidate, task, 1, cappedTrial(150, wedged)))
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000)
+    expect(trial.complete).toBe(false)
+    expect(trial.errors.join("\n")).toContain("hard wall-clock cap")
   })
 })

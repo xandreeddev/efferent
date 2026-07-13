@@ -248,7 +248,12 @@ const driveBrowser = (
 ): Effect.Effect<DriveEvidence, unknown> => Effect.scoped(Effect.gen(function* () {
   const browser = yield* Effect.acquireRelease(
     Effect.tryPromise({ try: () => chromium.launch({ headless: true }), catch: (error) => error }),
-    (active) => Effect.tryPromise({ try: () => active.close(), catch: () => undefined }).pipe(Effect.ignore),
+    // Closing a crashed Chromium can hang forever; an unbounded release
+    // freezes interruption (and with it every stage/trial timeout above it).
+    (active) => Effect.tryPromise({ try: () => active.close(), catch: () => undefined }).pipe(
+      Effect.timeout(Duration.seconds(10)),
+      Effect.ignore,
+    ),
   )
   const page = yield* Effect.tryPromise({
     try: async () => {
@@ -366,6 +371,7 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
       : Effect.gen(function* () {
         const server = yield* serveCanvas({ session, port: 0, initialEvents: [] }).pipe(Effect.provide(services))
         yield* Effect.addFinalizer(() => server.close.pipe(
+          Effect.timeout(Duration.seconds(10)),
           Effect.catchAllCause((cause) => Effect.logWarning(`ui-matrix server cleanup failed: ${Cause.pretty(cause)}`)),
         ))
         return yield* driveBrowser(session, server.url, task.prompt, budgets.trialTimeoutMs, evidenceDir, evidenceName(candidate, task, sample))
@@ -444,6 +450,18 @@ const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, err
     page: null,
   }
 }
+
+/** Disconnect + hard wall-clock cap: a trial whose cleanup wedges (dead
+ * Chromium, stuck server drain) is abandoned in the BACKGROUND and the wave
+ * moves on — interruption blocked inside finalizers cannot stall the
+ * campaign. The 2026-07-13 v8 run froze for hours on exactly this. */
+export const cappedTrial = (capMs: number, trial: Effect.Effect<Trial, unknown>): Effect.Effect<Trial, unknown> => trial.pipe(
+  Effect.disconnect,
+  Effect.timeoutFail({
+    duration: Duration.millis(capMs),
+    onTimeout: () => `trial exceeded the ${capMs}ms hard wall-clock cap; its runtime was abandoned in the background`,
+  }),
+)
 
 export const containTrialFailure = (
   candidate: Candidate,
@@ -535,7 +553,7 @@ const program = Effect.gen(function* () {
   console.log(`ui-matrix: ${candidates.length} candidates × ${tasks.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency} · profiling budgets=${plannerTimeoutMs}/${composerTimeoutMs}/${trialTimeoutMs}ms`)
   const trials = yield* Effect.forEach(combinations, ({ candidate, task, sample }) =>
     Effect.logInfo(`ui-matrix ${candidate.model} effort=${candidate.effort} protocol=${candidate.protocol} task=${task.id} sample=${sample}`).pipe(
-      Effect.zipRight(containTrialFailure(candidate, task, sample, runTrial(candidate, task, sample, budgets, evidenceDir))),
+      Effect.zipRight(containTrialFailure(candidate, task, sample, cappedTrial(budgets.trialTimeoutMs + 60_000, runTrial(candidate, task, sample, budgets, evidenceDir)))),
       Effect.tap((trial) => persistTrial(evidenceDir, candidate, task, sample, trial)),
       Effect.tap((trial) => Effect.sync(() => console.log(`  ${candidate.model} ${candidate.effort} ${candidate.protocol} ${task.id}: delta=${trial.firstContentDeltaMs}ms browser=${trial.browserFirstVisibleMs}ms accepted=${trial.firstVisibleMs}ms complete=${trial.initialCompleteMs}ms first-patch=${trial.firstRefinementMs ?? "none"} components=${trial.componentCount} overflow=${trial.desktopOverflow}/${trial.mobileOverflow} ds=${trial.designSystemScore.toFixed(2)} ia=${trial.informationArchitectureScore.toFixed(2)} relevance=${trial.relevance.toFixed(2)}`))),
     ),
