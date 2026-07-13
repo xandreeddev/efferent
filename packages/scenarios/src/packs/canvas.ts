@@ -281,7 +281,7 @@ export const canvasPack: Pack = {
   // live page-quality judge to score at least .85.
   threshold: 0.9475,
   judgeWeight: 0.35,
-  meta: { "ui-agent-profile": "streaming-ui-v1@8.0.0", "ui-schema": "2.0.0", "recipe-set": "2.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
+  meta: { "ui-agent-profile": "streaming-ui-v1@8.1.0", "ui-schema": "2.0.0", "recipe-set": "2.0.0", "ui-quality-rubric": UI_PAGE_QUALITY_RUBRIC_VERSION },
   scenarios: [
     scenario<CanvasWorld>({
       name: "model-generated plan → rejected content bounce → durable completion",
