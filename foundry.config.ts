@@ -203,7 +203,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         name: "scenarios",
         path: "packages/scenarios/src/**",
         canImport: ["engine", "providers", "surface", "ui-agent", "foundry", "smith", "math", "social", "canvas"],
-        externals: ["effect", "@effect/", "@xandreed/", "node:", "bun", "bun:"],
+        externals: ["effect", "@effect/", "@xandreed/", "playwright", "node:", "bun", "bun:"],
       },
     ],
   },

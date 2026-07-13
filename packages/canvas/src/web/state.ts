@@ -59,7 +59,7 @@ const mergeStructured = (model: CanvasModel, event: UiPageEvent): CanvasModel =>
 
 export const reduceEvent = (model: CanvasModel, event: CanvasEvent): CanvasModel => {
   if (event.type === "ui_render") return mergeLegacy(model, event.entry)
-  if (event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "page_completed") return mergeStructured(model, event)
+  if (event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "theme_patched" || event.type === "page_completed") return mergeStructured(model, event)
   if (event.type === "turn_start") return { ...model, busy: true, requestStartedAt: Option.some(Date.now()), firstBlockAt: Option.none(), completedAt: Option.none() }
   if (event.type === "assistant_message") return event.text.length > 0 ? { ...model, reply: Option.some(event.text) } : model
   if (event.type === "agent_end") return { ...model, busy: false }

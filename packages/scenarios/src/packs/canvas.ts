@@ -3,7 +3,7 @@ import { Context, Duration, Effect, Layer, Ref, Stream } from "effect"
 import { ConversationStore } from "@xandreed/engine"
 import type { AgentMessage } from "@xandreed/engine"
 import { LocalAuthStoreLive, SqliteConversationStoreLive } from "@xandreed/providers"
-import { DefaultUiHostLive, SqliteUiPageStoreLive, UiAgentRuntimeLive, makeCanvasSession } from "@xandreed/canvas"
+import { DefaultUiHostLive, SqliteUiComponentCatalogLive, SqliteUiPageStoreLive, SqliteUiThemeStoreLive, UiAgentRuntimeLive, makeCanvasSession } from "@xandreed/canvas"
 import type { CanvasEvent, CanvasSession } from "@xandreed/canvas"
 import {
   UiAgentExecutionProfile,
@@ -195,6 +195,8 @@ const liveWorld = (prompt: string) => Effect.gen(function* () {
   const base = Layer.mergeAll(
     SqliteConversationStoreLive(dbPath),
     SqliteUiPageStoreLive(dbPath),
+    SqliteUiComponentCatalogLive(dbPath),
+    SqliteUiThemeStoreLive(dbPath),
     DefaultUiHostLive,
     LocalAuthStoreLive(process.cwd(), homedir()),
   )

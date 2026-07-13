@@ -1,27 +1,29 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "efferent-canvas",
-  "version": "1.0.0",
-  "colors": {
-    "page": "#0d0f14",
-    "surface": "#151821",
-    "raised": "#1d2230",
-    "line": "#303747",
-    "text": "#f2f0eb",
-    "muted": "#a9adba",
+  "version": "2.0.0",
+  "theme": {
+    "mode": "dark",
     "accent": "#e57b45",
-    "success": "#73b88a",
+    "neutral": "#59647a",
+    "positive": "#73b88a",
     "warning": "#e4b95f",
-    "danger": "#dd6b72"
+    "danger": "#dd6b72",
+    "contrast": "standard",
+    "surface": "layered",
+    "border": "subtle",
+    "radius": "soft",
+    "shadow": "layered",
+    "typography": "geometric",
+    "typeScale": "standard",
+    "density": "standard",
+    "motion": "standard"
   },
   "typography": {
-    "display": "geometric",
-    "body": "system",
-    "mono": "mono",
-    "scale": "standard"
+    "mono": "mono"
   },
-  "density": "standard",
-  "radius": "soft",
-  "shadow": "layered",
-  "motion": "standard"
+  "layout": {
+    "contentWidth": "standard",
+    "grid": "standard"
+  }
 }

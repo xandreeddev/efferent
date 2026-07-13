@@ -39,14 +39,15 @@ packages/
 │                 retries, 300s timeout, empty-response rejection) · SQLite
 │                 conversation store · local auth/settings · fs/shell
 ├── ui-agent/     the reusable governed UI AGENT (ui-agent → engine): typed
-│                 PageManifest/UiBlock/ArchitectureGraph entities · internal
-│                 start_ui + patch_ui output channels · versioned execution
-│                 profile + pinned model planner/composer/repair services ·
-│                 host capability and durable page-event ports. It emits data,
-│                 never HTML/CSS/classes/HTMX/Alpine/SVG/URLs.
+│                 page/component/theme/protocol entities · a 60+ component core
+│                 catalog + evolutionary admission/deduplication · incremental
+│                 start/patch/prop/component/theme channels · versioned pinned
+│                 planner/composer/repair profile · host, page-store, catalog,
+│                 and theme-store ports. It emits data, never source markup.
 ├── surface/      the trusted UI compiler (surface → ui-agent): html template ·
-│                 token validation/CSS compilation · versioned landing/app/doc
-│                 recipes · typed blocks → escaped semantic HTML · typed graphs
+│                 semantic DesignTokensV2/theme CSS compilation · governed
+│                 component graph + constrained template AST → escaped HTML ·
+│                 typed blocks/graphs + versioned landing/app/doc recipes
 │                 → accessible server-side SVG (Dagre) · legacy allowlist
 │                 sanitizer and validateUi gates for read-only old Canvas pages
 │                 and other existing consumers
@@ -72,10 +73,10 @@ packages/
 │                 at write_draft AND pre-post, append-only JSONL ledger as the
 │                 dedup memory. Replies NEVER graduate to auto-post.
 ├── canvas/       the first UI-agent HOST (canvas → ui-agent+surface+providers):
-│                 HTMX-over-WS shell, SQLite structured page-event adapter,
-│                 registered assets/actions, JSON semantic tokens, CSRF/origin
-│                 enforcement, CSP Alpine behaviors, and legacy raw-page replay.
-│                 No Tailwind/Mermaid runtime and no raw authoring fallback.
+│                 HTMX-over-WS shell, SQLite page/catalog/theme adapters,
+│                 component gallery + theme lab, registered assets/actions,
+│                 CSRF/origin enforcement, CSP Alpine behaviors, and legacy
+│                 raw-page replay. No raw authoring fallback.
 ├── issue-tracker-example/ the reference Effect architecture and safe Smith
 │                 eval world: Schema entities + paired behavior, use-case
 │                 contracts + paired programs, Context.Tag ports, Layer
@@ -131,11 +132,12 @@ entries); general agent model selection comes from `.efferent/config.json`
 local-over-global merge). `EFFERENT_MODEL` is deliberately ignored — the
 launch dir's `.env` must never silently pick the model.
 
-The UI agent is the exception: its model planner/composer/repair selections and
-effort/token/timeout/fallback policy are pinned and versioned in
+The UI agent is the exception: its model planner/composer/repair selections,
+incremental wire protocol, and effort/token/timeout/fallback policy are pinned in
 `packages/ui-agent/profiles/streaming-ui-v1.json`. Startup rejects profile drift; do
 not replace it with the global roles. Profile or prompt changes require the
-model × effort matrix, Canvas latency/quality battery, and a reviewed baseline update.
+model × effort × protocol matrix through the real Canvas browser path, review of
+desktop/mobile screenshots and persisted failures, and a baseline update.
 
 ```bash
 bun run smith "<task>" --cwd <dir> [-p]        # shorthand: trivial locked spec + forge
@@ -145,7 +147,7 @@ bun run math [--grade <n> --theme "<t>"] [--open]   # the practice product (loop
 bun run canvas [--port <n>] [--open]           # the page builder (loopback)
 bun run social test|review|daemon              # scan (supervised) · human queue · scheduler
 bun run scenarios [pack…] [--mode scripted|live]    # the regression batteries
-bun run evals:ui-matrix [--samples <n>]             # model × effort UI selection evidence
+bun run evals:ui-matrix [--samples <n>]             # model × effort × protocol browser evidence
 bun run foundry check|demo                     # the gate suite / the forge E2E
 ```
 

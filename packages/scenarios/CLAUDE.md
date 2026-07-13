@@ -12,6 +12,7 @@ bun run scenarios -- --update-baselines     # rewrite the committed ratchet file
 bun run scenarios -- --no-check             # skip the baseline comparison
 
 bun run evals:live [battery …] [--samples n] [--update-baselines]   # the KEYED batteries
+bun run evals:ui-matrix [--models …] [--efforts …] [--protocols …] # real Canvas browser matrix
 ```
 
 ## evals:live — the pre-merge ritual for prompt changes
@@ -57,3 +58,14 @@ change test, config matrix, cost budget, or sharding yet.
 `bun test packages/scenarios` — framework semantics (hard-fail stops, soft
 continues, mode skip, captured act failures, evidence combinators, pack
 means). ZERO-entry ratchet baseline like every new-line package.
+
+## UI matrix evidence
+
+`src/uiMatrix.ts` is model-backed by definition. Its default path boots a real
+Canvas server, submits the request through the browser form, observes the first
+meaningful DOM mutation, captures desktop/mobile screenshots and overflow, and
+then reads the SQLite event/failure trail. It compares model × effort × protocol
+without substituting scripted page content. Provider timeouts and schema/tool
+failures become failed trial rows and the JSON report is still written; pass
+`--strict` when an all-failed campaign should return a non-zero exit. Use
+`--session-only` only to diagnose the runtime without browser rendering.

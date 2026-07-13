@@ -1,7 +1,6 @@
-/* canvas client glue — tabs + viewing context + htmx hardening. No framework. */
-htmx.config.allowEval = false;
-htmx.config.allowScriptTags = false;
-htmx.config.selfRequestsOnly = true;
+htmx.config.allowEval=false;
+htmx.config.allowScriptTags=false;
+htmx.config.selfRequestsOnly=true;
 
 function activate(id) {
   document.querySelectorAll(".ef-page-host").forEach(function (el) {
@@ -19,11 +18,8 @@ document.addEventListener("click", function (e) {
   if (tab) activate(tab.dataset.tab);
 });
 
-/* After any WS swap: keep the pinned tab authoritative; adopt the server's
-   active tab only when the user has none pinned. */
-var knownPages = [];
+var knownPages=[];
 
-/* an unseen page steals focus; the pin only guards mid-read patches */
 document.body.addEventListener("htmx:oobAfterSwap", function () {
   var pages = Array.from(document.querySelectorAll(".ef-page-host"));
   var ids = pages.map(function (p) { return p.dataset.page; });
@@ -37,7 +33,6 @@ document.body.addEventListener("htmx:oobAfterSwap", function () {
   if (serverActive) activate(serverActive.dataset.page);
 });
 
-/* Clear the composer after a send. */
 document.body.addEventListener("htmx:afterRequest", function (e) {
   if (e.detail.elt && e.detail.elt.classList.contains("ef-ask")) {
     e.detail.elt.querySelector(".ef-ask-input").value = "";

@@ -1,5 +1,6 @@
 import { Schema } from "effect"
-import { DesignSystemRef, RecipeRef } from "./design-system.entity.js"
+import { DesignSystemRef, RecipeRef, ThemeIntent } from "./design-system.entity.js"
+import { UiComponentNode } from "./ui-component.entity.js"
 
 const ActionRef = Schema.Struct({
   capability: Schema.String,
@@ -70,12 +71,14 @@ export const UiBlock = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("timeline"), id: Schema.String, title: Schema.String, items: Schema.Array(Schema.Struct({ title: Schema.String, body: Schema.String })) }),
   Schema.Struct({ kind: Schema.Literal("decisions"), id: Schema.String, title: Schema.String, items: Schema.Array(Schema.Struct({ decision: Schema.String, rationale: Schema.String, status: Schema.Literal("proposed", "accepted", "deprecated") })) }),
   Schema.Struct({ kind: Schema.Literal("architecture"), id: Schema.String, graph: ArchitectureGraph }),
+  UiComponentNode,
 )
 export type UiBlock = typeof UiBlock.Type
 
 export const PageSlot = Schema.Struct({
   id: Schema.String,
   blockKind: Schema.String,
+  component: Schema.optional(Schema.String),
   importance: Schema.Literal("critical", "standard", "supporting"),
 })
 export type PageSlot = typeof PageSlot.Type
@@ -86,6 +89,7 @@ export const PageManifest = Schema.Struct({
   archetype: Schema.Literal("landing", "application", "document"),
   recipe: RecipeRef,
   designSystem: DesignSystemRef,
+  theme: Schema.optional(ThemeIntent),
   slots: Schema.Array(PageSlot),
 })
 export type PageManifest = typeof PageManifest.Type
@@ -93,6 +97,7 @@ export type PageManifest = typeof PageManifest.Type
 export const UiPageEvent = Schema.Union(
   Schema.Struct({ type: Schema.Literal("page_opened"), page: PageManifest, blocks: Schema.Array(UiBlock), at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("blocks_upserted"), pageId: Schema.String, blocks: Schema.Array(UiBlock), at: Schema.Number }),
+  Schema.Struct({ type: Schema.Literal("theme_patched"), pageId: Schema.String, theme: ThemeIntent, at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("page_completed"), pageId: Schema.String, at: Schema.Number }),
 )
 export type UiPageEvent = typeof UiPageEvent.Type

@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { ConversationId } from "@xandreed/engine"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import { normalizeInitialUiAdmission, uiPlannerPrompt, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
+import { normalizeInitialUiAdmission, uiPlannerPrompt, validateBlocks, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
 import { makeUiAgentHandlers, StartUi, uiAgentToolkit } from "./toolkit.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
@@ -88,10 +88,11 @@ describe("the structured UI-agent contract", () => {
       recipes: [...host.recipes],
       assets: [...host.assets.keys()],
       capabilities: [...host.actions.keys()],
+      components: [],
     })
     expect(prompt).toContain('{"id":"efferent-canvas","version":"1.0.0"}')
     expect(prompt).toContain("registered assets: none — omit every assetId")
-    expect(prompt).toContain("identical id and blockKind")
+    expect(prompt).toContain('blockKind:"component"')
   })
 
   test("accepted events persist before publication and replay deterministically", async () => {
@@ -159,9 +160,55 @@ describe("the structured UI-agent contract", () => {
     expect(JSON.stringify(rejected.result)).toContain("is not declared")
   })
 
+  test("accepted component props can stream independently without bypassing the catalog", async () => {
+    const events: Array<UiPageEvent> = []
+    const store: UiPageStoreService = {
+      append: (_conversationId, event) => Effect.sync(() => { events.push(event) }),
+      list: () => Effect.succeed(events),
+    }
+    const layer = makeUiAgentHandlers(
+      ConversationId.make("00000000-0000-4000-8000-000000000113"), store, host, () => Effect.void,
+    )
+    const page = {
+      ...landingReference.page,
+      slots: [{ id: "headline", blockKind: "component" as const, component: "primitive.heading", importance: "critical" as const }],
+    }
+    const outcome = await Effect.runPromise(Effect.gen(function* () {
+      const toolkit = yield* uiAgentToolkit
+      yield* toolkit.handle("start_ui", {
+        page,
+        criticalBlocks: [{ kind: "component", id: "headline", component: "primitive.heading", variant: "display", props: { text: "Initial heading" }, children: [] }],
+      })
+      return yield* toolkit.handle("patch_ui_prop", { pageId: page.id, nodeId: "headline", key: "text", value: "A better heading" })
+    }).pipe(Effect.provide(layer)))
+    expect(outcome.isFailure).toBe(false)
+    const accepted = foldPageEvents(events)[0]?.blocks[0]
+    expect(accepted?.kind).toBe("component")
+    if (accepted?.kind !== "component") return
+    expect(accepted.props.text).toBe("A better heading")
+    expect(events.map((event) => event.type)).toEqual(["page_opened", "blocks_upserted"])
+  })
+
+  test("component prop capabilities and assets remain host-governed", () => {
+    const page = {
+      ...landingReference.page,
+      slots: [{ id: "actions", blockKind: "component" as const, component: "action.button-group", importance: "critical" as const }],
+    }
+    const findings = validateBlocks(page, [{
+      kind: "component",
+      id: "actions",
+      component: "action.button-group",
+      props: { items: [{ label: "Escape", capability: "unregistered.action", assetId: "unregistered-asset" }] },
+      children: [],
+    }], host, new Map())
+    expect(findings).toContain("component action.button-group is not registered")
+    expect(findings).toContain("capability unregistered.action is not registered")
+    expect(findings).toContain("asset unregistered-asset is not registered")
+  })
+
   test("profile validation pins models, budgets, prompt versions, schema, and recipes", () => {
     expect(validateUiAgentProfile({
-      profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "1.0.0", recipeSetVersion: "1.0.0",
+      profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "2.0.0", recipeSetVersion: "2.0.0",
       prompts: { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" },
       planner: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 15000, maxOutputTokens: 2400, maxSteps: 2 },
       composer: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 20000, maxOutputTokens: 5000, maxSteps: 2 },

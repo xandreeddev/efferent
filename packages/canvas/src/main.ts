@@ -13,6 +13,8 @@ import { makeCanvasSession } from "./session.js"
 import { serveCanvas } from "./web/server.js"
 import { DefaultUiHostLive } from "./adapters/default-ui-host.adapter.js"
 import { SqliteUiPageStoreLive } from "./adapters/sqlite-ui-page-store.adapter.js"
+import { SqliteUiComponentCatalogLive } from "./adapters/sqlite-ui-component-catalog.adapter.js"
+import { SqliteUiThemeStoreLive } from "./adapters/sqlite-ui-theme-store.adapter.js"
 import { UiAgentRuntimeLive } from "./adapters/ui-agent-runtime.adapter.js"
 
 /**
@@ -40,6 +42,8 @@ const port = Option.match(argValue("--port"), {
 const layers = Layer.mergeAll(
   SqliteConversationStoreLive(join(cwd, ".efferent", "canvas.db")),
   SqliteUiPageStoreLive(join(cwd, ".efferent", "canvas.db")),
+  SqliteUiComponentCatalogLive(join(cwd, ".efferent", "canvas.db")),
+  SqliteUiThemeStoreLive(join(cwd, ".efferent", "canvas.db")),
   DefaultUiHostLive,
   LocalAuthStoreLive(cwd, homedir()),
   LocalSettingsStoreLive(cwd, homedir()),

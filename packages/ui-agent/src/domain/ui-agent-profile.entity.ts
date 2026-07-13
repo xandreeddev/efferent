@@ -1,7 +1,8 @@
 import { Schema } from "effect"
+import { UiGenerationProtocol } from "./ui-generation-protocol.entity.js"
 
-export const UI_AGENT_SCHEMA_VERSION = "1.0.0"
-export const UI_AGENT_RECIPE_SET_VERSION = "1.0.0"
+export const UI_AGENT_SCHEMA_VERSION = "2.0.0"
+export const UI_AGENT_RECIPE_SET_VERSION = "2.0.0"
 
 export const UiModelStage = Schema.Struct({
   model: Schema.String,
@@ -17,6 +18,7 @@ export const UiAgentProfile = Schema.Struct({
   version: Schema.String,
   schemaVersion: Schema.String,
   recipeSetVersion: Schema.String,
+  protocol: Schema.optional(UiGenerationProtocol),
   prompts: Schema.Struct({ planner: Schema.String, composer: Schema.String, repair: Schema.String }),
   planner: UiModelStage,
   composer: UiModelStage,

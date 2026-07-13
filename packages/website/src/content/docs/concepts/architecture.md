@@ -15,13 +15,13 @@ packages/
 │                 ports, the loop, prompt mapping, the session chassis.
 ├── providers/    the EDGE: routed LanguageModel, SQLite conversation store,
 │                 auth/settings, fs/shell, telemetry. providers → engine.
-├── surface/      the UI substrate (pure): html template, allowlist sanitizer,
-│                 validateUi — the security and feedback boundaries.
+├── surface/      the UI substrate (pure): scoped themes, catalog component
+│                 compiler, html template, sanitizer, validation boundaries.
 ├── smith/        the coder        → engine + providers + foundry
 ├── math/         the tutor        → engine + providers + surface
-├── ui-agent/     typed page agent → engine
-├── surface/      trusted token/recipe compiler → ui-agent contracts
-├── canvas/       first UI-agent host → ui-agent + surface + providers
+├── ui-agent/     typed page/component/theme agent + catalog ports → engine
+├── surface/      trusted token/component compiler → ui-agent contracts
+├── canvas/       host + SQLite page/catalog/theme adapters → agent + surface + providers
 ├── social/       the drafter      → engine + providers
 └── scenarios/    evals — the TOP of the graph; may import agents;
                   nothing imports scenarios.
