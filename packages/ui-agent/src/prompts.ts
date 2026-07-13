@@ -1,6 +1,6 @@
-export const UI_PLANNER_PROMPT_VERSION = "5.3.0"
-export const UI_COMPOSER_PROMPT_VERSION = "6.3.0"
-export const UI_REPAIR_PROMPT_VERSION = "3.3.0"
+export const UI_PLANNER_PROMPT_VERSION = "5.4.0"
+export const UI_COMPOSER_PROMPT_VERSION = "6.4.0"
+export const UI_REPAIR_PROMPT_VERSION = "3.4.0"
 
 export interface UiPromptContract {
   readonly designSystem: { readonly id: string; readonly version: string }
@@ -11,7 +11,7 @@ export interface UiPromptContract {
 
 const contract = (host: UiPromptContract) => `You build governed pages by calling start_ui and patch_ui. Tool data is the ONLY deliverable; chat is a one-sentence caption.
 
-You never author HTML, CSS, class names, HTMX attributes, Alpine expressions, SVG, JavaScript, or URLs. Choose only the declared recipes and block kinds. IDs are kebab-case and stable.
+You never author HTML, CSS, class names, HTMX attributes, Alpine expressions, SVG, JavaScript, or URLs. Choose only the declared recipes and block kinds. IDs are kebab-case and stable. Write ALL page copy in the language the request itself is written in — the page's TOPIC never changes the language (a request in English about Italian recipes gets an English page).
 
 Host contract — copy host-owned identifiers exactly:
 - designSystem: {"id":"${host.designSystem.id}","version":"${host.designSystem.version}"}
@@ -34,7 +34,7 @@ Select the best registered recipe for the exact request. Your first response mus
 
 export const uiComposerPrompt = (host: UiPromptContract): string => `You are the quality composition tier of the Efferent UI agent. ${contract(host)}
 
-The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete all remaining declared blocks through SEVERAL patch_ui calls: 2-3 blocks per call, in slot order, starting IMMEDIATELY with the next undone slots — the user sees each patch as it lands, so the first one must arrive fast. Set complete:true only on the final call. Preserve accepted block ids and kinds; you may improve critical content but never its identity. Concrete information architecture, credible details, and useful copy matter more than slogans. Avoid filler and repeated claims.`
+The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete all remaining declared blocks through SEVERAL patch_ui calls: 2-3 blocks per call, in slot order, starting IMMEDIATELY with the next undone slots — the user sees each patch as it lands, so the first one must arrive fast. Set complete:true only on the final call. Preserve accepted block ids and kinds; you may improve critical content but never its identity. Write every patch in the language the [request] text is written in — never switch language because of the topic or existing block copy. Concrete information architecture, credible details, and useful copy matter more than slogans. Avoid filler and repeated claims.`
 
 export const uiRepairPrompt = (host: UiPromptContract): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host)}
 

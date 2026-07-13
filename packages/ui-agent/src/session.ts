@@ -45,10 +45,15 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const handlers = makeUiAgentHandlers(args.conversationId, pageStore, host, publish)
         const stagePublish = (event: LoopEvent): Effect.Effect<void> =>
           event.type === "turn_start" || event.type === "agent_end" ? Effect.void : publish(event)
+        // The profile timeout is a SOFT budget (pacing target); the hard
+        // deadline is 3x it, capped at 55s — late content beats a flat
+        // failure, and accepted patches stay rendered either way.
+        const stageDeadline = (stage: "planner" | "composer"): Duration.Duration =>
+          Duration.millis(Math.min(profile[stage].timeoutMs * 3, 55_000))
         const publishFailure = (stage: "planner" | "composer", error: unknown) => {
           const failure = toAgentFailure(error, stage)
-          return Effect.logWarning(`UI ${stage} failed within its ${profile[stage].timeoutMs}ms budget: [${failure.code}] ${failure.message}`).pipe(
-            Effect.zipRight(publish({ type: "error", message: `UI ${stage} failed: ${failure.message}`, failure })),
+          return Effect.logWarning(`UI ${stage} gave up after ${Duration.toMillis(stageDeadline(stage))}ms (3x the ${profile[stage].timeoutMs}ms budget): [${failure.code}] ${failure.message}`).pipe(
+            Effect.zipRight(publish({ type: "error", message: `UI ${stage} failed after an extended wait: ${failure.message} — any blocks already accepted remain on the page`, failure })),
           )
         }
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
@@ -63,7 +68,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
               { onEvent: stagePublish },
             ).pipe(
               Effect.provideService(LanguageModel.LanguageModel, models.planner),
-              Effect.timeout(Duration.millis(profile.planner.timeoutMs)),
+              Effect.timeout(stageDeadline("planner")),
               Effect.catchAll((error) => publishFailure("planner", error)),
               Effect.provide(handlers),
             )
@@ -88,7 +93,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             { onEvent: stagePublish },
           ).pipe(
             Effect.provideService(LanguageModel.LanguageModel, models.composer),
-            Effect.timeout(Duration.millis(profile.composer.timeoutMs)),
+            Effect.timeout(stageDeadline("composer")),
             Effect.catchAll((error) => publishFailure("composer", error)),
             Effect.provide(handlers),
           )
