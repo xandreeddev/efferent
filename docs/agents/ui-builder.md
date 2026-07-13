@@ -62,6 +62,10 @@ and document products—including catalogs, workspaces, editorial sites,
 runbooks, integration guides, and architecture decisions. Every trial uses the
 real Canvas browser and persists raw timings, desktop/mobile screenshots, DOM
 overflow, structured pages, and semantic failures under `.efferent/evals`.
+Each trial is written durably to the report's `trials/` directory the moment it
+settles, and defects (a crashed store, a broken finalizer) become failed trial
+rows exactly like provider errors — the campaign always runs to the end of the
+matrix and the evidence survives a dead process.
 
 ```text
 .25 Wilson90(valid complete refinement)

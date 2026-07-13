@@ -65,10 +65,15 @@ means). ZERO-entry ratchet baseline like every new-line package.
 Canvas server, submits the request through the browser form, observes the first
 meaningful DOM mutation, captures desktop/mobile screenshots and overflow, and
 then reads the SQLite event/failure trail. It compares model × effort × protocol
-without substituting scripted page content. Provider timeouts and schema/tool
-failures become failed trial rows and the JSON report is still written; pass
-`--strict` when an all-failed campaign should return a non-zero exit. Use
-`--session-only` only to diagnose the runtime without browser rendering.
+without substituting scripted page content. Provider timeouts, schema/tool
+failures, and runtime defects (including store/finalizer crashes) become failed
+trial rows via cause-level containment — one broken trial never aborts the
+matrix. Each settled trial persists immediately to the report's `trials/`
+directory before aggregation (durable across a killed run), each trial
+workspace is bracketed acquire/use/release with best-effort logged cleanup, and
+the JSON report is still written; pass `--strict` when an all-failed campaign
+should return a non-zero exit. Use `--session-only` only to diagnose the
+runtime without browser rendering.
 
 The default `screening` task set spans landing/application/document. Pass
 `--task-set reference` for the frozen twelve-product corpus. Relevance is

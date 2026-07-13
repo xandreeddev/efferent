@@ -1,5 +1,5 @@
 import { LanguageModel } from "@effect/ai"
-import { Context, Duration, Effect, Layer, Option, Ref, Stream } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Option, Ref, Stream } from "effect"
 import { ConversationStore, parseModelSelection, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { AgentFailureType } from "@xandreed/engine"
 import { DefaultUiHostLive, SqliteUiComponentCatalogLive, SqliteUiPageStoreLive, SqliteUiThemeStoreLive, makeCanvasSession, serveCanvas } from "@xandreed/canvas"
@@ -328,10 +328,20 @@ const selectedModel = (candidate: Candidate) => Effect.gen(function* () {
   )
 })
 
+const cleanupTrialWorkspace = (dir: string): Effect.Effect<void> => Effect.try({
+  try: () => rmSync(dir, { recursive: true, force: true }),
+  catch: (error) => error,
+}).pipe(
+  Effect.catchAll((error) => Effect.logWarning(`ui-matrix could not remove ${dir}: ${String(error)}`)),
+)
+
 const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budgets: MatrixBudgets, evidenceDir: string): Effect.Effect<Trial, unknown> =>
-  Effect.scoped(Effect.gen(function* () {
-    const dir = mkdtempSync(join(tmpdir(), "efferent-ui-matrix-"))
-    yield* Effect.addFinalizer(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true })))
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => mkdtempSync(join(tmpdir(), "efferent-ui-matrix-")),
+      catch: (error) => error,
+    }),
+    (dir) => Effect.scoped(Effect.gen(function* () {
     const db = join(dir, "canvas.db")
     const model = yield* selectedModel(candidate)
     const base = Layer.mergeAll(
@@ -355,7 +365,9 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
       ? driveSession(session, task.prompt, budgets.trialTimeoutMs)
       : Effect.gen(function* () {
         const server = yield* serveCanvas({ session, port: 0, initialEvents: [] }).pipe(Effect.provide(services))
-        yield* Effect.addFinalizer(() => server.close)
+        yield* Effect.addFinalizer(() => server.close.pipe(
+          Effect.catchAllCause((cause) => Effect.logWarning(`ui-matrix server cleanup failed: ${Cause.pretty(cause)}`)),
+        ))
         return yield* driveBrowser(session, server.url, task.prompt, budgets.trialTimeoutMs, evidenceDir, evidenceName(candidate, task, sample))
       }))
     const sessionState = yield* session.state
@@ -399,7 +411,9 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
       relevance: page === undefined ? 0 : scoreRequestRelevance(page, task.concepts),
       page: page ?? null,
     }
-  }))
+    })),
+    cleanupTrialWorkspace,
+  )
 
 const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, error: unknown): Trial => {
   const failure = toAgentFailure(error, "ui-matrix")
@@ -430,6 +444,15 @@ const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, err
     page: null,
   }
 }
+
+export const containTrialFailure = (
+  candidate: Candidate,
+  task: MatrixTask,
+  sample: number,
+  trial: Effect.Effect<Trial, unknown>,
+): Effect.Effect<Trial> => trial.pipe(
+  Effect.catchAllCause((cause) => Effect.succeed(failedTrial(candidate, task, sample, Cause.pretty(cause)))),
+)
 
 const rank = (candidate: Candidate, trials: ReadonlyArray<Trial>): RankedCandidate => {
   const refinementSuccesses = trials.filter((trial) => trial.acceptedRefinements > 0 && trial.complete && trial.designSystemScore === 1 && trial.informationArchitectureScore === 1 && trial.relevance >= 0.6).length
@@ -477,6 +500,15 @@ const persist = (path: string, value: unknown): Effect.Effect<void, Error> => Ef
   catch: (cause) => new Error(`failed to persist UI matrix: ${String(cause)}`),
 })
 
+const persistTrial = (evidenceDir: string, candidate: Candidate, task: MatrixTask, sample: number, trial: Trial): Effect.Effect<void> =>
+  persist(join(evidenceDir, "trials", `${evidenceName(candidate, task, sample)}.json`), {
+    version: "ui-agent-trial-v1",
+    recordedAt: new Date().toISOString(),
+    trial,
+  }).pipe(
+    Effect.catchAll((error) => Effect.logWarning(String(error))),
+  )
+
 const program = Effect.gen(function* () {
   const keyed = yield* preflightAuth(process.cwd())
   if (!keyed) return yield* Effect.fail("no model credential; run Smith :login first")
@@ -503,7 +535,8 @@ const program = Effect.gen(function* () {
   console.log(`ui-matrix: ${candidates.length} candidates × ${tasks.length} tasks × ${samples} sample(s) = ${combinations.length} trials · concurrency=${concurrency} · profiling budgets=${plannerTimeoutMs}/${composerTimeoutMs}/${trialTimeoutMs}ms`)
   const trials = yield* Effect.forEach(combinations, ({ candidate, task, sample }) =>
     Effect.logInfo(`ui-matrix ${candidate.model} effort=${candidate.effort} protocol=${candidate.protocol} task=${task.id} sample=${sample}`).pipe(
-      Effect.zipRight(runTrial(candidate, task, sample, budgets, evidenceDir).pipe(Effect.catchAll((error) => Effect.succeed(failedTrial(candidate, task, sample, error))))),
+      Effect.zipRight(containTrialFailure(candidate, task, sample, runTrial(candidate, task, sample, budgets, evidenceDir))),
+      Effect.tap((trial) => persistTrial(evidenceDir, candidate, task, sample, trial)),
       Effect.tap((trial) => Effect.sync(() => console.log(`  ${candidate.model} ${candidate.effort} ${candidate.protocol} ${task.id}: delta=${trial.firstContentDeltaMs}ms browser=${trial.browserFirstVisibleMs}ms accepted=${trial.firstVisibleMs}ms complete=${trial.initialCompleteMs}ms first-patch=${trial.firstRefinementMs ?? "none"} components=${trial.componentCount} overflow=${trial.desktopOverflow}/${trial.mobileOverflow} ds=${trial.designSystemScore.toFixed(2)} ia=${trial.informationArchitectureScore.toFixed(2)} relevance=${trial.relevance.toFixed(2)}`))),
     ),
   { concurrency })
@@ -525,7 +558,7 @@ const program = Effect.gen(function* () {
   const judgedByCandidate = new Map(judgedFinalists.map((candidate) => [`${candidate.candidate.model}:${candidate.candidate.effort}:${candidate.candidate.protocol}`, candidate]))
   const judged = ranked.map((candidate) => judgedByCandidate.get(`${candidate.candidate.model}:${candidate.candidate.effort}:${candidate.candidate.protocol}`) ?? candidate)
   const final = judged.sort((a, b) => b.selectionScore - a.selectionScore)
-  const report = { version: "ui-agent-matrix-v4", generatedAt: new Date().toISOString(), executionPath: process.argv.includes("--session-only") ? "internal-session" : "canvas-browser", evidenceDir, targets: { firstContentP50Ms: 750, firstContentP95Ms: 1500, meaningfulUiP50Ms: 3000, meaningfulUiP95Ms: 5000, completeP50Ms: 12000, completeP95Ms: 20000 }, judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "eligibility uses accepted complete output, design-system compliance, information architecture and relevance; latency confidence is browser first meaningful UI <=5s; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
+  const report = { version: "ui-agent-matrix-v5", generatedAt: new Date().toISOString(), executionPath: process.argv.includes("--session-only") ? "internal-session" : "canvas-browser", evidenceDir, trialEvidenceDir: join(evidenceDir, "trials"), targets: { firstContentP50Ms: 750, firstContentP95Ms: 1500, meaningfulUiP50Ms: 3000, meaningfulUiP95Ms: 5000, completeP50Ms: 12000, completeP95Ms: 20000 }, judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "eligibility uses accepted complete output, design-system compliance, information architecture and relevance; latency confidence is browser first meaningful UI <=5s; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
   yield* persist(output, report)
   console.log("\nrank  model/protocol                                   effort  success  <=5s   first-p50 first-p95 done-p95 DS    IA    rel   cons  judge  score")
   final.forEach((entry, index) => console.log(`${String(index + 1).padStart(4)}  ${`${entry.candidate.model}/${entry.candidate.protocol}`.padEnd(48)} ${entry.candidate.effort.padEnd(6)}  ${String(entry.refinementSuccesses).padStart(2)}/${String(entry.trials.length).padEnd(2)}    ${String(entry.withinFiveSeconds).padStart(2)}/${String(entry.trials.length).padEnd(2)}  ${String(entry.p50FirstVisibleMs).padStart(9)} ${String(entry.p95FirstVisibleMs).padStart(9)} ${String(entry.p95EnrichmentMs).padStart(8)} ${entry.meanDesignSystemScore.toFixed(2)}  ${entry.meanInformationArchitectureScore.toFixed(2)}  ${entry.meanRelevance.toFixed(2)}  ${entry.repeatConsistency.toFixed(2)}  ${(entry.judgeScore?.toFixed(2) ?? "-").padStart(5)}  ${entry.selectionScore.toFixed(3)}`))

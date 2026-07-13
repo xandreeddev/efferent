@@ -137,7 +137,10 @@ incremental wire protocol, and effort/token/timeout/fallback policy are pinned i
 `packages/ui-agent/profiles/streaming-ui-v1.json`. Startup rejects profile drift; do
 not replace it with the global roles. Profile or prompt changes require the
 model × effort × protocol matrix through the real Canvas browser path, review of
-desktop/mobile screenshots and persisted failures, and a baseline update.
+desktop/mobile screenshots and persisted failures, and a baseline update. The
+matrix persists every settled trial immediately (the report's `trials/` dir)
+and contains provider errors AND runtime defects as failed rows — evidence
+survives a dead campaign and one broken candidate never aborts the rest.
 
 ```bash
 bun run smith "<task>" --cwd <dir> [-p]        # shorthand: trivial locked spec + forge

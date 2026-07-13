@@ -90,9 +90,11 @@ architecture, request relevance, latency decay, and repeated-sample
 consistency; only finalists receive the hierarchy/composition/interaction
 quality judge.
 
-Failed providers remain in the report. Use `--strict` only when an all-failed
-matrix should return non-zero, and increase samples before treating close
-scores as a winner. The larger pinned-profile battery remains explicit:
+Failed providers and runtime defects remain in the report as failed trial rows,
+and every settled trial is saved to the evidence `trials/` directory as soon as
+it finishes — a crashed campaign keeps its completed trials. Use `--strict`
+only when an all-failed matrix should return non-zero, and increase samples
+before treating close scores as a winner. The larger pinned-profile battery remains explicit:
 
 ```bash
 bun run evals:live canvas --samples 20 --no-check

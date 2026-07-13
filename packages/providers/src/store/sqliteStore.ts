@@ -98,14 +98,16 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
         // Owner-only BEFORE the WAL sidecars exist (they inherit this mode):
         // tool output can carry anything the coder read, including secrets.
         chmodSync(dbPath, 0o600)
-        database.exec("PRAGMA journal_mode = WAL;")
         // A second process on the same workspace db waits out the lock
         // instead of dying on an instant SQLITE_BUSY.
         database.exec("PRAGMA busy_timeout = 5000;")
+        database.exec("PRAGMA journal_mode = WAL;")
         migrate(database)
         return database
       })
-      yield* Effect.addFinalizer(() => Effect.sync(() => db.close()))
+      yield* Effect.addFinalizer(() => tryDb(() => db.close()).pipe(
+        Effect.catchAll((error) => Effect.logWarning(`conversation database cleanup failed: ${error.message}`)),
+      ))
 
       const latestCheckpointRow = (
         id: ConversationId,

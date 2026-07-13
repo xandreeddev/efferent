@@ -15,10 +15,13 @@ carry). Breaking: the v2 `EvalSpec` (`data → task → scorers`) API is removed
 > actual Canvas server, submits through a headless Chromium form, measures the
 > first content delta and meaningful DOM paint, captures desktop/mobile
 > screenshots and overflow, and audits the SQLite page/failure trail. It never
-> substitutes scripted page content. Provider/schema/tool failures remain
-> first-class trial evidence and the report is still written; `--strict` opts
-> into a non-zero exit when every candidate fails. `--session-only` is a
-> diagnostic path, not quality evidence.
+> substitutes scripted page content. Provider/schema/tool failures AND runtime
+> defects are contained per trial as failed rows — one dead candidate never
+> aborts the concurrent work. Every settled trial is persisted immediately to
+> `<evidence>/trials/<candidate-task-sample>.json` before aggregation, so a
+> killed campaign keeps its completed evidence; the aggregate report is still
+> written at the end. `--strict` opts into a non-zero exit when every candidate
+> fails. `--session-only` is a diagnostic path, not quality evidence.
 
 ## Why a revamp
 
