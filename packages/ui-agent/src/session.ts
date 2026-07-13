@@ -63,6 +63,10 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           // earlier pages stay switchable. In-place refinement was the old
           // semantics and read as "nothing happened" on follow-ups.
           const initialEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
+          // Snapshot the COUNT now: a store may return a live array reference,
+          // and comparing it to itself after the planner ran reads as "no
+          // progress" forever (live-caught via the scripted twin).
+          const initialCount = initialEvents.length
           const priorPages = foldPageEvents(initialEvents).length
           yield* runAgent(
             { system: uiPlannerPrompt(promptContract), toolkit: uiAgentToolkit, maxSteps: profile.planner.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: profile.planner.effort, maxOutputTokens: profile.planner.maxOutputTokens } },
@@ -79,7 +83,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           )
 
           const plannedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
-          const page = plannedEvents.length > initialEvents.length ? foldPageEvents(plannedEvents).at(-1) : undefined
+          const page = plannedEvents.length > initialCount ? foldPageEvents(plannedEvents).at(-1) : undefined
           if (page === undefined) {
             yield* publish({
               type: "error",
