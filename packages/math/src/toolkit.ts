@@ -82,10 +82,10 @@ export const mathAgentBundle = (
     system: mathAgentPrompt().text,
     toolkit: mathToolkit,
     maxSteps: 12,
-    // Streaming keeps the loop on the hardened first-token path (it falls
-    // back to generateText when no part arrives) — the student's first batch
-    // should never ride the slow non-streaming lane.
-    streaming: true,
+    // Deliberately NON-streaming: the codex subscription streaming transport
+    // refuses its websocket upgrade (Expected 101, matrix smoke 2026-07-14),
+    // and its retry ladder can park a turn past any deadline. generateText is
+    // the proven path — the v9 ui campaign effectively ran on it throughout.
   },
   handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink, served)),
 })

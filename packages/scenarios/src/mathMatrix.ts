@@ -113,6 +113,26 @@ const waitForAgentEnds = (session: MathSession, count: number, timeoutMs: number
   Effect.timeout(Duration.millis(timeoutMs)),
 )
 
+/** One bounded turn. `session.send` may run the turn INLINE (serialized
+ * send), so the deadline must wrap the send itself — a provider retry ladder
+ * parked inside the turn otherwise runs to the trial's hard cap (observed in
+ * the 2026-07-14 smoke). A timed-out turn degrades to partial evidence: the
+ * trial goes on and scores whatever the session actually produced. */
+const boundedTurn = (
+  session: MathSession,
+  message: string,
+  agentEnds: number,
+  timeoutMs: number,
+  policy: Option.Option<{ readonly effort: Effort; readonly maxOutputTokens: number }>,
+): Effect.Effect<void> =>
+  session.send(message).pipe(
+    Effect.locally(CurrentModelCallPolicy, policy),
+    Effect.zipRight(waitForAgentEnds(session, agentEnds, timeoutMs)),
+    Effect.timeout(Duration.millis(timeoutMs + 5_000)),
+    Effect.asVoid,
+    Effect.catchAll((error) => Effect.logWarning(`math-matrix turn gave up after ${timeoutMs}ms: ${String(error)}`)),
+  )
+
 const exercisesOf = (events: ReadonlyArray<MathSessionEvent>): ReadonlyArray<MathExercise> =>
   events.flatMap((event) => event.type === "math_render"
     ? event.items.flatMap((item) => item.kind === "exercise" ? [item] : [])
@@ -185,19 +205,13 @@ const runTrial = (
         Effect.zipRight(Ref.update(firstBatch, (current) => current ?? Date.now() - startedAt)),
       ))
 
-      yield* session.send(composeAgentMessage([], { kind: "start", grade: task.grade, theme: task.theme })).pipe(
-        Effect.locally(CurrentModelCallPolicy, policy),
-      )
-      yield* waitForAgentEnds(session, 1, budgets.turnTimeoutMs)
+      yield* boundedTurn(session, composeAgentMessage([], { kind: "start", grade: task.grade, theme: task.theme }), 1, budgets.turnTimeoutMs, policy)
       const turn1Ms = Date.now() - startedAt
       // Snapshot the COUNT before turn 2: the log may be a live reference.
       const turn1Count = (yield* session.state).log.length
 
       const moreAt = Date.now()
-      yield* session.send(composeAgentMessage([], { kind: "more" })).pipe(
-        Effect.locally(CurrentModelCallPolicy, policy),
-      )
-      yield* waitForAgentEnds(session, 2, budgets.turnTimeoutMs)
+      yield* boundedTurn(session, composeAgentMessage([], { kind: "more" }), 2, budgets.turnTimeoutMs, policy)
       const turn2Ms = Date.now() - moreAt
 
       const log = (yield* session.state).log.map((entry) => entry.event)
