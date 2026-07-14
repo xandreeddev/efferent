@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Duration, Effect, Schedule } from "effect"
 import { MAX_OUTPUT_BYTES, spawnBounded } from "./spawn.js"
 
 const exec = (command: string, timeoutMs = 10_000) =>
@@ -25,12 +25,19 @@ describe("spawnBounded", () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toContain("timed out")
     const sleeperPid = Number(readFileSync(pidFile, "utf-8").trim())
-    const alive = Effect.runSync(
-      Effect.try(() => {
-        process.kill(sleeperPid, 0)
-        return true
-      }).pipe(Effect.orElseSucceed(() => false)),
+    // SIGKILL delivery and zombie reaping are asynchronous — an instant
+    // liveness probe flakes on loaded CI runners. Poll until the pid is gone.
+    const probe = Effect.try(() => {
+      process.kill(sleeperPid, 0)
+      return true
+    }).pipe(
+      Effect.orElseSucceed(() => false),
+      Effect.flatMap((alive) => alive ? Effect.fail("sleeper still alive") : Effect.succeed(false)),
     )
+    const alive = await Effect.runPromise(probe.pipe(
+      Effect.retry(Schedule.spaced(Duration.millis(50)).pipe(Schedule.upTo(Duration.seconds(5)))),
+      Effect.orElseSucceed(() => true),
+    ))
     expect(alive).toBe(false)
   })
 
