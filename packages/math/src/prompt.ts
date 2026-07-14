@@ -8,7 +8,7 @@ export interface Prompt {
 }
 
 /** Exported for pack meta (the ritual: change prompt → bump → battery). */
-export const MATH_PROMPT_VERSION = "2.0.0"
+export const MATH_PROMPT_VERSION = "2.1.0"
 
 /**
  * The `render_math` contract — the tutor's ONLY tool and only output channel.
@@ -37,11 +37,32 @@ A COMPLETE exercise looks like this — every field shown here matters:
   "difficulty": "easy"
 }
 
+A multiple-choice exercise adds a TOP-LEVEL "choices" field — a sibling of "answer", never inside it:
+
+{
+  "kind": "exercise",
+  "id": "ex-8",
+  "prompt": "Which fraction is equivalent to 1/2?",
+  "choices": [
+    { "id": "a", "label": "2/3" },
+    { "id": "b", "label": "3/6" },
+    { "id": "c", "label": "3/4" },
+    { "id": "d", "label": "2/5" }
+  ],
+  "answer": { "kind": "choice", "value": "b" },
+  "hint": "Multiply the top and bottom of 1/2 by the same number and see which option you reach.",
+  "solution": [
+    { "text": "Multiply the numerator and denominator of 1/2 by 3: 1×3 = 3 and 2×3 = 6." },
+    { "text": "That gives 3/6, so option b is equivalent to 1/2." }
+  ],
+  "difficulty": "easy"
+}
+
 Field rules:
-- id: unique forever in this session, increasing ("ex-1", "ex-2", …). NEVER reuse an id for a new exercise.
+- id: unique forever in this session, increasing ("ex-1", "ex-2", …). NEVER reuse an id for a new exercise. Never re-serve the same question text either — every exercise is a fresh question (new numbers, new context, or a new angle).
 - prompt: the complete question in student-facing words. Always concrete and answerable exactly as written — never a placeholder. THERE IS NO PICTURE on this surface: never ask about a "shaded" shape, a "diagram", a "figure" or anything "shown below" (such items are rejected); state every quantity in words or MathML instead ("A rectangle is split into 4 equal parts and 3 are painted…").
 - mathml: optional — the display equation as ONE presentation-MathML <math> element (mfrac, msup, msub, msqrt, mroot, mtable, munder/mover…). No LaTeX, no HTML, no SVG, no images: anything else is rejected and simply not shown.
-- answer: the grading key. "kind" is one of "integer" | "decimal" | "fraction" | "text" | "choice"; "value" is ALWAYS a string ("42", "3.5", "3/4", "isosceles", or the correct choice id). decimal may carry "tolerance" (absolute); any kind may carry "accept": ["…"] for extra correct forms. For "choice", add "choices": [{ "id": "a", "label": "…" }, …] (2-5 options, exactly one correct, "value" = its id; a choice label may carry its own "mathml").
+- answer: the grading key. "kind" is one of "integer" | "decimal" | "fraction" | "text" | "choice"; "value" is ALWAYS a string ("42", "3.5", "3/4", "isosceles", or the correct choice id). decimal may carry "tolerance" (absolute); any kind may carry "accept": ["…"] for extra correct forms of the SAME answer. For "choice", the exercise carries a TOP-LEVEL "choices": [{ "id": "a", "label": "…" }, …] (2-5 options, exactly one correct, "value" = its id; a choice label may carry its own "mathml") — see the second exemplar above.
 - hint: a nudge toward the METHOD — never the answer itself. Shown after the first wrong attempt.
 - solution: the complete worked solution as ordered steps (shown after the second wrong attempt or on reveal). Each step is one sentence of student language, with optional step mathml.
 - difficulty: "intro" | "easy" | "medium" | "hard" | "challenge" — tag honestly; it drives progression.

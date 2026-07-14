@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { FastCheck } from "effect"
-import { gradeAnswer, parseMathItems } from "./MathContent.js"
+import { gradeAnswer, parseMathItems, servedPromptKey } from "./MathContent.js"
 import type { MathAnswer, MathExercise } from "./MathContent.js"
 
 const exercise = (over: Partial<MathExercise> & { answer?: Partial<MathAnswer> } = {}): unknown => ({
@@ -18,7 +18,7 @@ describe("parseMathItems", () => {
     const out = parseMathItems([
       exercise(),
       { kind: "note", text: "Nice streak — these get a little harder." },
-      exercise({ id: "ex-2", answer: { kind: "integer", value: "28" } }),
+      exercise({ id: "ex-2", prompt: "What is 14 + 14?", answer: { kind: "integer", value: "28" } }),
     ])
     expect(out.rejected).toEqual([])
     expect(out.accepted.map((i) => (i.kind === "exercise" ? i.id : "note"))).toEqual([
@@ -32,7 +32,7 @@ describe("parseMathItems", () => {
     const out = parseMathItems([
       exercise(),
       { kind: "exercise", id: "ex-2" }, // structurally broken
-      exercise({ id: "ex-3" }),
+      exercise({ id: "ex-3", prompt: "What is 2/5 + 1/5?", answer: { kind: "fraction", value: "3/5" } }),
     ])
     expect(out.accepted).toHaveLength(2)
     expect(out.rejected).toHaveLength(1)
@@ -177,6 +177,110 @@ describe("parseMathItems — session dedupe", () => {
     const out = parseMathItems([exercise({ id: "ex-2" }), exercise({ id: "ex-2" })], new Set())
     expect(out.accepted).toHaveLength(1)
     expect(out.rejected[0]?.reason).toContain("in this call")
+  })
+})
+
+describe("parseMathItems — the choice placement trap (live-caught 2026-07-07)", () => {
+  const options = [
+    { id: "a", label: "2/4" },
+    { id: "b", label: "1/2" },
+    { id: "c", label: "3/4" },
+    { id: "d", label: "2/5" },
+  ]
+
+  test("choices nested inside answer are HOISTED and admitted, not bounced", () => {
+    const out = parseMathItems([
+      exercise({
+        id: "ex-2",
+        prompt: "Which fraction is equivalent to 2/4?",
+        answer: { kind: "choice", value: "b", choices: options } as never,
+      }),
+    ])
+    expect(out.rejected).toEqual([])
+    const admitted = out.accepted[0]
+    expect(admitted?.kind).toBe("exercise")
+    if (admitted?.kind !== "exercise") return
+    expect(admitted.choices?.map((c) => c.id)).toEqual(["a", "b", "c", "d"])
+    expect(gradeAnswer(admitted.answer, "b").correct).toBe(true)
+  })
+
+  test("a choice exercise with no options anywhere gets the PRECISE fix-it reason", () => {
+    const out = parseMathItems([exercise({ answer: { kind: "choice", value: "a" } })])
+    expect(out.rejected[0]?.reason).toContain("exercise TOP LEVEL")
+    expect(out.rejected[0]?.reason).toContain("sibling of 'answer'")
+  })
+
+  test("more than 5 options bounces", () => {
+    const many = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, label: id }))
+    const out = parseMathItems([
+      exercise({ choices: many, answer: { kind: "choice", value: "a" } }),
+    ])
+    expect(out.rejected[0]?.reason).toContain("at most 5")
+  })
+
+  test("a choice accept entry that is not an option id bounces", () => {
+    const out = parseMathItems([
+      exercise({ choices: options, answer: { kind: "choice", value: "b", accept: ["3/6"] } }),
+    ])
+    expect(out.rejected[0]?.reason).toContain("exactly one correct option")
+  })
+})
+
+describe("parseMathItems — accept-list consistency (dead or contradictory accepts bounce)", () => {
+  test("equivalent numeric forms are consistent and admitted", () => {
+    const out = parseMathItems([
+      exercise({ answer: { kind: "fraction", value: "3/4", accept: ["0.75", "6/8"] } }),
+    ])
+    expect(out.rejected).toEqual([])
+  })
+
+  test("an accept that grades different from the key bounces", () => {
+    const out = parseMathItems([
+      exercise({ answer: { kind: "fraction", value: "3/4", accept: ["0.8"] } }),
+    ])
+    expect(out.rejected[0]?.reason).toContain("does not grade equal to answer.value")
+  })
+
+  test("a dead (unparseable) numeric accept bounces", () => {
+    const out = parseMathItems([
+      exercise({ id: "ex-5", prompt: "Half of 10?", answer: { kind: "integer", value: "5", accept: ["five"] } }),
+    ])
+    expect(out.rejected[0]?.reason).toContain("does not grade equal to answer.value")
+  })
+
+  test("text accepts stay free — synonyms are legitimate alternates", () => {
+    const out = parseMathItems([
+      exercise({ answer: { kind: "text", value: "isosceles", accept: ["equal legs"] } }),
+    ])
+    expect(out.rejected).toEqual([])
+  })
+})
+
+describe("parseMathItems — question-text dedup (G6)", () => {
+  test("the same question re-worded only by case/spacing bounces in one call", () => {
+    const out = parseMathItems([
+      exercise(),
+      exercise({ id: "ex-2", prompt: "  what is 1/4  + 2/4 ?" }),
+    ])
+    expect(out.accepted).toHaveLength(1)
+    expect(out.rejected[0]?.reason).toContain("asks the same question")
+  })
+
+  test("a question already served this session bounces even under a fresh id", () => {
+    const out = parseMathItems(
+      [exercise({ id: "ex-99" })],
+      new Set([servedPromptKey("What is 1/4 + 2/4?")]),
+    )
+    expect(out.accepted).toEqual([])
+    expect(out.rejected[0]?.reason).toContain("already served this session")
+  })
+
+  test("new numbers ARE a new exercise — dedup never collapses them", () => {
+    const out = parseMathItems([
+      exercise(),
+      exercise({ id: "ex-2", prompt: "What is 1/8 + 2/8?", answer: { kind: "fraction", value: "3/8" } }),
+    ])
+    expect(out.rejected).toEqual([])
   })
 })
 

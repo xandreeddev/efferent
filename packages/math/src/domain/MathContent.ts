@@ -126,6 +126,33 @@ const firstLine = (s: string): string => {
   return line.trim().slice(0, 200)
 }
 
+type UnknownRecord = Readonly<Record<string, unknown>>
+
+const recordOf = (value: unknown): UnknownRecord | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? value as UnknownRecord : undefined
+
+/** The live-caught authoring trap (grade-4 fractions, 2026-07-07): models nest
+ * the option list INSIDE the key (`answer.choices`), where schema decode
+ * silently strips it and the exercise bounces with a misleading "needs at
+ * least 2 choices". The options are unambiguous wherever they sit — hoist
+ * them to the exercise's `choices` field instead of rejecting. */
+const hoistAnswerChoices = (raw: unknown): unknown => {
+  const record = recordOf(raw)
+  if (record === undefined || record.choices !== undefined) return raw
+  const answer = recordOf(record.answer)
+  if (answer === undefined || !Array.isArray(answer.choices)) return raw
+  const { choices, ...rest } = answer
+  return { ...record, answer: rest, choices }
+}
+
+/** The dedup identity of a question: what it ASKS, not how it's spelled.
+ * Numbers stay significant (new numbers = a genuinely new exercise). */
+export const normalizeMathPrompt = (prompt: string): string =>
+  prompt.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.!?\s]+$/, "")
+
+/** The session-dedup key for a served exercise's question text. */
+export const servedPromptKey = (prompt: string): string => `prompt:${normalizeMathPrompt(prompt)}`
+
 /**
  * Validate a `render_math` payload item by item: structural decode plus the
  * semantic invariants Schema can't express (a choice key must reference an
@@ -141,9 +168,10 @@ export const parseMathItems = (
   const accepted: Array<MathItem> = []
   const rejected: Array<RejectedMathItem> = []
   const seenIds = new Set<string>()
+  const seenPrompts = new Set<string>()
   const noteSeen = (): boolean => accepted.some((a) => a.kind === "note")
   items.forEach((raw, index) => {
-    const decoded = decodeItem(raw)
+    const decoded = decodeItem(hoistAnswerChoices(raw))
     if (Either.isLeft(decoded)) {
       const id =
         typeof raw === "object" && raw !== null && typeof (raw as { id?: unknown }).id === "string"
@@ -165,12 +193,13 @@ export const parseMathItems = (
       accepted.push(item)
       return
     }
-    const reason = validateExercise(item, seenIds, sessionSeen)
+    const reason = validateExercise(item, seenIds, seenPrompts, sessionSeen)
     if (reason !== undefined) {
       rejected.push({ index, id: item.id, reason })
       return
     }
     seenIds.add(item.id)
+    seenPrompts.add(normalizeMathPrompt(item.prompt))
     accepted.push(item)
   })
   return { accepted, rejected }
@@ -185,12 +214,19 @@ const mathmlProblem = (mathml: string | undefined, where: string): string | unde
 const validateExercise = (
   ex: MathExercise,
   seenIds: ReadonlySet<string>,
+  seenPrompts: ReadonlySet<string>,
   sessionSeen: ReadonlySet<string>,
 ): string | undefined => {
   if (ex.id.trim().length === 0) return "exercise id is empty"
   if (seenIds.has(ex.id)) return `duplicate exercise id '${ex.id}' in this call`
   if (sessionSeen.has(ex.id)) {
     return `exercise id '${ex.id}' was already served this session — write a NEW exercise with a new id`
+  }
+  if (seenPrompts.has(normalizeMathPrompt(ex.prompt))) {
+    return `another exercise in this call asks the same question — vary the numbers, the context, or the angle`
+  }
+  if (sessionSeen.has(servedPromptKey(ex.prompt))) {
+    return "this exact question was already served this session — write a fresh one (vary the numbers, the context, or the angle)"
   }
   const mathml =
     mathmlProblem(ex.mathml, "the exercise") ??
@@ -215,11 +251,19 @@ const validateExercise = (
   switch (ex.answer.kind) {
     case "choice": {
       const choices = ex.choices ?? []
+      if (choices.length === 0) {
+        return "answer.kind 'choice' needs a 'choices' array of 2-5 options at the exercise TOP LEVEL (a sibling of 'answer', not inside it)"
+      }
       if (choices.length < 2) return "answer.kind 'choice' needs at least 2 choices"
+      if (choices.length > 5) return "answer.kind 'choice' allows at most 5 choices"
       const ids = choices.map((c) => c.id.trim())
       if (new Set(ids).size !== ids.length) return "choice ids are not unique"
       if (!ids.includes(ex.answer.value.trim())) {
         return `answer.value '${ex.answer.value}' is not one of the choice ids (${ids.join(", ")})`
+      }
+      const strayAccept = (ex.answer.accept ?? []).find((alt) => !ids.includes(alt.trim()))
+      if (strayAccept !== undefined) {
+        return `answer.accept '${strayAccept}' is not one of the choice ids (${ids.join(", ")}) — a choice exercise has exactly one correct option`
       }
       return undefined
     }
@@ -228,23 +272,34 @@ const validateExercise = (
       if (n === undefined || !isIntegral(n)) {
         return `answer.value '${ex.answer.value}' is not an integer`
       }
-      return undefined
+      return acceptConsistencyProblem(ex.answer)
     }
     case "decimal": {
       if (parseNumeric(ex.answer.value) === undefined) {
         return `answer.value '${ex.answer.value}' is not a number`
       }
-      return undefined
+      return acceptConsistencyProblem(ex.answer)
     }
     case "fraction": {
       if (parseRational(ex.answer.value) === undefined) {
         return `answer.value '${ex.answer.value}' is not a fraction or number`
       }
-      return undefined
+      return acceptConsistencyProblem(ex.answer)
     }
     case "text":
       return undefined
   }
+}
+
+/** Numeric `accept` entries are alternate FORMS of the same answer — an entry
+ * that doesn't grade equal to the primary key is either dead (unparseable, can
+ * never match a student) or a second, contradictory answer. Both are authoring
+ * mistakes worth bouncing while the model can still fix them. */
+const acceptConsistencyProblem = (answer: MathAnswer): string | undefined => {
+  const inconsistent = (answer.accept ?? []).find((alt) => !matchesKey(answer, answer.value, alt))
+  return inconsistent === undefined
+    ? undefined
+    : `answer.accept '${inconsistent}' does not grade equal to answer.value '${answer.value}' — accept entries are alternate forms of the SAME answer (equivalent fractions and decimals are accepted automatically; drop the entry or fix the key)`
 }
 
 // ---------------------------------------------------------------------------

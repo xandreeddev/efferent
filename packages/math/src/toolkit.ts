@@ -1,7 +1,7 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Ref, Schema } from "effect"
 import type { AgentConfig } from "@xandreed/engine"
-import { parseMathItems, type MathItem } from "./domain/MathContent.js"
+import { parseMathItems, servedPromptKey, type MathItem } from "./domain/MathContent.js"
 import { mathAgentPrompt } from "./prompt.js"
 
 /**
@@ -44,9 +44,13 @@ export const makeMathHandlers = (sink: MathRenderSink, served: Ref.Ref<ReadonlyS
     Effect.gen(function* () {
       const seen = yield* Ref.get(served)
       const parsed = parseMathItems(params.items, seen)
-      const servedIds = parsed.accepted.flatMap((i) => (i.kind === "note" ? [] : [i.id]))
-      if (servedIds.length > 0) {
-        yield* Ref.update(served, (s) => new Set([...s, ...servedIds]))
+      // Both dedup identities persist for the session: the id AND the
+      // normalized question text — a re-worded id is not a new exercise.
+      const servedKeys = parsed.accepted.flatMap((i) =>
+        i.kind === "note" ? [] : [i.id, servedPromptKey(i.prompt)],
+      )
+      if (servedKeys.length > 0) {
+        yield* Ref.update(served, (s) => new Set([...s, ...servedKeys]))
       }
       if (parsed.accepted.length > 0) {
         yield* sink(parsed.accepted)
@@ -78,6 +82,10 @@ export const mathAgentBundle = (
     system: mathAgentPrompt().text,
     toolkit: mathToolkit,
     maxSteps: 12,
+    // Streaming keeps the loop on the hardened first-token path (it falls
+    // back to generateText when no part arrives) — the student's first batch
+    // should never ride the slow non-streaming lane.
+    streaming: true,
   },
   handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink, served)),
 })
