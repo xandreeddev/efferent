@@ -58,6 +58,7 @@ interface Trial {
   readonly dedupBounces: number
   readonly solverChecked: number
   readonly solverAgreed: number
+  readonly solverVerdicts: ReadonlyArray<SolverVerdict>
   readonly exercises: ReadonlyArray<MathExercise>
   readonly errors: ReadonlyArray<string>
 }
@@ -151,25 +152,35 @@ const rejectionsOf = (events: ReadonlyArray<MathSessionEvent>): ReadonlyArray<st
  * exercise WITHOUT seeing the key; the deterministic oracle then grades its
  * answer against the authored key. Disagreement means either a wrong key (the
  * product's worst failure) or an ambiguous prompt — both authoring defects. */
+interface SolverVerdict {
+  readonly id: string
+  readonly reply: string
+  readonly agreed: boolean
+}
+
 const solverAgreement = (
   exercises: ReadonlyArray<MathExercise>,
   call: (prompt: string) => Effect.Effect<string, unknown>,
-): Effect.Effect<{ readonly checked: number; readonly agreed: number }> =>
+): Effect.Effect<{ readonly checked: number; readonly agreed: number; readonly verdicts: ReadonlyArray<SolverVerdict> }> =>
   Effect.forEach(exercises.slice(0, 6), (exercise) => {
     const options = (exercise.choices ?? []).map((choice) => `${choice.id}) ${choice.label}`).join("  ")
-    const ask = `Solve this exercise. Reply with ONLY the final answer — a number, a fraction like 3/4, or the correct option id — nothing else.\n\n${exercise.prompt}${options === "" ? "" : `\n\nOptions: ${options}`}`
+    const ask = `Solve this exercise. Reply with ONLY the final answer — a number, a fraction like 3/4, or the correct option id LETTER — nothing else.\n\n${exercise.prompt}${options === "" ? "" : `\n\nOptions: ${options}`}`
     return call(ask).pipe(
       Effect.timeout(Duration.seconds(60)),
       Effect.map((reply) => {
-        const lastLine = reply.trim().split("\n").at(-1) ?? ""
-        return Option.some(gradeAnswer(exercise.answer, lastLine.trim()).correct)
+        const lastLine = (reply.trim().split("\n").at(-1) ?? "").trim()
+        return Option.some<SolverVerdict>({
+          id: exercise.id,
+          reply: lastLine.slice(0, 120),
+          agreed: gradeAnswer(exercise.answer, lastLine).correct,
+        })
       }),
-      Effect.catchAll(() => Effect.succeed(Option.none<boolean>())),
+      Effect.catchAll(() => Effect.succeed(Option.none<SolverVerdict>())),
     )
   }, { concurrency: 2 }).pipe(
-    Effect.map((verdicts) => {
-      const settled = verdicts.flatMap((verdict) => Option.isSome(verdict) ? [verdict.value] : [])
-      return { checked: settled.length, agreed: settled.filter(Boolean).length }
+    Effect.map((outcomes) => {
+      const verdicts = outcomes.flatMap((outcome) => Option.isSome(outcome) ? [outcome.value] : [])
+      return { checked: verdicts.length, agreed: verdicts.filter((verdict) => verdict.agreed).length, verdicts }
     }),
   )
 
@@ -244,6 +255,7 @@ const runTrial = (
         dedupBounces: rejectionReasons.filter((reason) => reason.includes("already served this session") || reason.includes("asks the same question")).length,
         solverChecked: solved.checked,
         solverAgreed: solved.agreed,
+        solverVerdicts: solved.verdicts,
         exercises,
         errors: log.flatMap((event) => event.type === "error" ? [event.message] : []),
       }
@@ -261,7 +273,7 @@ const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, err
     firstBatchMs: Number.POSITIVE_INFINITY, turn1Ms: Number.POSITIVE_INFINITY, turn2Ms: Number.POSITIVE_INFINITY,
     accepted1: 0, accepted2: 0, rejectedCount: 0, rejectionReasons: [],
     admissionPassRate: 0, batchConformant: false, answerKinds: [], difficulties: [],
-    dedupBounces: 0, solverChecked: 0, solverAgreed: 0, exercises: [],
+    dedupBounces: 0, solverChecked: 0, solverAgreed: 0, solverVerdicts: [], exercises: [],
     errors: [`[${failure.code}] ${failure.message}`],
   }
 }
