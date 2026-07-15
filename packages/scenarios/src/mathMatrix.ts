@@ -168,7 +168,9 @@ const solverAgreement = (
     return call(ask).pipe(
       Effect.timeout(Duration.seconds(60)),
       Effect.map((reply) => {
-        const lastLine = (reply.trim().split("\n").at(-1) ?? "").trim()
+        // Currency/unit prefixes are solver formatting, not disagreement
+        // ("$51" for key "51" was the campaign's only luna-medium miss).
+        const lastLine = (reply.trim().split("\n").at(-1) ?? "").trim().replace(/^[$€£]\s*/, "")
         return Option.some<SolverVerdict>({
           id: exercise.id,
           reply: lastLine.slice(0, 120),

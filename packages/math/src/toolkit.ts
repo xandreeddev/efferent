@@ -82,10 +82,16 @@ export const mathAgentBundle = (
     system: mathAgentPrompt().text,
     toolkit: mathToolkit,
     maxSteps: 12,
+    // The 2026-07-14 authoring matrix's pin (docs/evals/math-matrix-campaign-
+    // 2026-07-14.md): effort MEDIUM — 8/8 success, admission 1.00, and 100%
+    // independent-solver key agreement (vs 0.89 at low; a wrong key silently
+    // grades correct students wrong, the product's worst failure). The model
+    // itself follows the general role; re-run `bun run evals:math-matrix`
+    // before trusting a role change.
+    modelPolicy: { effort: "medium", maxOutputTokens: 6000 },
     // Deliberately NON-streaming: the codex subscription streaming transport
     // refuses its websocket upgrade (Expected 101, matrix smoke 2026-07-14),
-    // and its retry ladder can park a turn past any deadline. generateText is
-    // the proven path — the v9 ui campaign effectively ran on it throughout.
+    // and generateText is the proven path.
   },
   handlerLayer: mathToolkit.toLayer(makeMathHandlers(sink, served)),
 })
