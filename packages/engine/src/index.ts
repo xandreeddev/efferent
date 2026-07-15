@@ -30,7 +30,7 @@ export type { ReasoningEffort as ReasoningEffortType } from "./domain/model-call
 export { ModelCatalogEntry } from "./domain/model-catalog.entity.js"
 export type { ModelCatalogEntry as ModelCatalogEntryType } from "./domain/model-catalog.entity.js"
 export type { ModelCallPolicy as ModelCallPolicyType } from "./domain/model-call-policy.entity.js"
-export { CurrentModelCallPolicy } from "./loop/modelPolicy.js"
+export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/modelPolicy.js"
 export { formatModelSelection, parseModelSelection } from "./domain/model-selection.entity.functions.js"
 export type { LoopEvent, ToolCallSummary } from "./domain/loop-event.entity.js"
 

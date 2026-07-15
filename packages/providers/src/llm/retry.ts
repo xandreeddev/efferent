@@ -1,5 +1,6 @@
 import { AiError } from "@effect/ai"
-import { Duration, Effect, Ref, Schedule, Stream } from "effect"
+import { Duration, Effect, FiberRef, Ref, Schedule, Stream } from "effect"
+import { CurrentEmptyResponseTolerance } from "@xandreed/engine"
 
 /**
  * Transient-failure resilience for every routed LLM call — the survival
@@ -102,16 +103,25 @@ const isContentPart = (part: unknown): boolean => {
 }
 
 /** Reject an HTTP-200-but-empty response so it retries instead of
- *  fake-completing the turn. */
+ *  fake-completing the turn — UNLESS the loop has declared tolerance
+ *  ({@link CurrentEmptyResponseTolerance}): once a run has executed tool
+ *  calls, a following empty response is the model finishing, and rejecting
+ *  it would park the turn in the patient outage ladder. */
 export const rejectEmptyResponse =
   (label: string) =>
   <A extends { readonly content: ReadonlyArray<unknown> }, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | AiError.UnknownError, R> =>
-    effect.pipe(
-      Effect.filterOrFail(
-        (res) => res.content.some(isContentPart),
-        () => emptyError(label, "generateText"),
+    FiberRef.get(CurrentEmptyResponseTolerance).pipe(
+      Effect.flatMap((tolerant) =>
+        tolerant
+          ? effect
+          : effect.pipe(
+            Effect.filterOrFail(
+              (res) => res.content.some(isContentPart),
+              () => emptyError(label, "generateText"),
+            ),
+          ),
       ),
     )
 

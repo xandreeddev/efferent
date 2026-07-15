@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Chunk, Effect, Stream } from "effect"
+import { CurrentEmptyResponseTolerance } from "@xandreed/engine"
 import { classifyLlmError, rejectEmptyResponse, retryableLlmStream } from "./retry.js"
 
 describe("classifyLlmError", () => {
@@ -55,6 +56,18 @@ describe("rejectEmptyResponse", () => {
       ),
     )
     expect(full.usage.totalTokens).toBe(1)
+  })
+
+  test("with the loop's tolerance set, a post-tool empty response passes — the model is DONE, not down", async () => {
+    // Without tolerance the empty rides the retry ladder and parks the turn
+    // (live-caught: math turns burning full 120s budgets after render_math
+    // succeeded, ui composers riding 55s deadlines after their last patch).
+    const passed = await Effect.runPromise(
+      rejectEmptyResponse("test")(Effect.succeed({ content: [{ type: "finish" }] })).pipe(
+        Effect.locally(CurrentEmptyResponseTolerance, true),
+      ),
+    )
+    expect(passed.content).toEqual([{ type: "finish" }])
   })
 })
 

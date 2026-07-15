@@ -2,6 +2,7 @@ import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
 import { Effect, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "./streamFold.js"
+import { CurrentEmptyResponseTolerance } from "./modelPolicy.js"
 import type { LoopEvent } from "../domain/loop-event.entity.js"
 import type { AgentMessage, AgentResult } from "../domain/message.entity.js"
 import { addUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
@@ -287,6 +288,11 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
               ? Effect.succeed({ _tag: "malformed" as const, err })
               : Effect.fail(err),
           ),
+          // Once the run has tool calls, a following empty response is the
+          // model saying "done" — adapters must return it (the fold below
+          // ends the turn) instead of rejecting it into the patient outage
+          // ladder, which parks the turn until a deadline kills it.
+          Effect.locally(CurrentEmptyResponseTolerance, state.toolCalls > 0),
           Effect.withSpan("engine.turn", {
             attributes: { "engine.turn": state.turnIndex },
           }),
