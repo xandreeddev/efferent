@@ -14,7 +14,8 @@ export {
   readLedger,
 } from "./adapters/local-social-workspace.adapter.js"
 /** Scenario/test seams: deterministic handlers over injectable edge ports. */
-export { makeSocialHandlers } from "./usecases/socialToolkit.js"
+export { makeSocialHandlers, socialToolkit } from "./usecases/socialToolkit.js"
+export { SOCIAL_PROMPT_VERSION, socialAgentSystemPrompt, socialTweetMessage } from "./prompt.js"
 export { BlogReader } from "./ports/blog-reader.port.js"
 export { XPlatform } from "./ports/x-platform.port.js"
 export { SocialWorkspace } from "./ports/social-workspace.port.js"

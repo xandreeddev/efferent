@@ -16,8 +16,10 @@ export const startDaemon = () =>
 
     // Effect.repeat runs the effect ONCE immediately, then on the schedule —
     // an explicit first run before it double-scanned at startup (audit).
+    // Jittered (±~20%): a metronome cadence reads as a bot — the OPSEC
+    // roadmap (docs/agents/social.md) mandates jitter on every scan cycle.
     yield* findOpportunitiesAndDraft(TARGET_QUERIES).pipe(
       Effect.catchAllCause((cause) => Effect.logError(`Scan failed: ${cause}`)),
-      Effect.repeat(Schedule.fixed("2 hours")),
+      Effect.repeat(Schedule.fixed("2 hours").pipe(Schedule.jittered)),
     )
   })

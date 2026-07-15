@@ -16,6 +16,7 @@
     "evals:live": "bun packages/scenarios/src/evalsLive.ts",
     "evals:ui-matrix": "bun packages/scenarios/src/uiMatrix.ts",
     "evals:math-matrix": "bun packages/scenarios/src/mathMatrix.ts",
+    "evals:social-matrix": "bun packages/scenarios/src/socialMatrix.ts",
     "test": "bun test",
     "eval": "bun run scenarios",
     "check": "bun run typecheck",

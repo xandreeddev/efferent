@@ -7,6 +7,7 @@ import {
   LocalSocialWorkspaceLive,
   makeSocialHandlers,
   readLedger,
+  SOCIAL_PROMPT_VERSION,
   XPlatform,
 } from "@xandreed/social"
 import type { XSearchResult } from "@xandreed/social"
@@ -123,6 +124,7 @@ const bootSocial = Effect.gen(function* () {
 export const socialPack: Pack = {
   name: "social",
   threshold: 1,
+  meta: { "social-prompt": SOCIAL_PROMPT_VERSION },
   scenarios: [
     scenario<SocialWorld>({
       name: "blind reply bounces → contextual draft queues → duplicate bounces",

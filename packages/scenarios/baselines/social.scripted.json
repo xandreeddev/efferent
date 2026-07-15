@@ -4,6 +4,9 @@
   "scenarios": {
     "blind reply bounces → contextual draft queues → duplicate bounces": 1
   },
+  "versions": {
+    "social-prompt": "2.0.0"
+  },
   "evidence": {
     "blind reply bounces → contextual draft queues → duplicate bounces": {
       "status": "ran",
@@ -46,9 +49,9 @@
     }
   },
   "provenance": {
-    "gitSha": "cfa0653fcfb7916e55c6cf8911dfdc3a91c66474",
-    "lockSha256": "be62db4a5f529f51ef253ec91d48261f985e77d850d0577264cbd4a624f610d6",
+    "gitSha": "846a7e9a15193c3fc135487c4a8570e1fd7ab923",
+    "lockSha256": "ad7d51fe62d177d770d0782cec9c355438844abc90fa6cd7f21caa01d9b1cb6d",
     "bunVersion": "1.3.0"
   },
-  "mintedAt": "2026-07-12T08:47:25.288Z"
+  "mintedAt": "2026-07-15T13:10:34.980Z"
 }
