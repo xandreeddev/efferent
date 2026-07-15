@@ -1,5 +1,5 @@
-import { Effect } from "effect"
-import { runLoop, type AgentMessage } from "@xandreed/engine"
+import { Effect, Option } from "effect"
+import { CurrentModelCallPolicy, runLoop, type AgentMessage } from "@xandreed/engine"
 import { engagedTweetIds } from "../domain/ledger.entity.functions.js"
 import { LEDGER_PATH } from "../domain/paths.js"
 import { SocialWorkspace } from "../ports/social-workspace.port.js"
@@ -58,6 +58,12 @@ export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
                 maxSteps: 8,
               }).pipe(
                 Effect.provide(SocialToolkitLive),
+                // The 2026-07-15 drafting matrix's pin (docs/evals/social-
+                // matrix-campaign-2026-07-15.md): effort MEDIUM — perfect
+                // draft/abstain discipline, judge 0.93, earned-only links.
+                // The model follows the general role; re-run
+                // `bun run evals:social-matrix` before trusting a role change.
+                Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2000 })),
                 Effect.tap((result) =>
                   Effect.logInfo(`Evaluation complete for ${tweet.id}. Final text: ${result.finalText.slice(0, 100)}...`),
                 ),
