@@ -66,7 +66,19 @@ answered the first-token question, and the fan-out is Phase 2's mechanism).
    pins stay medium until the Phase 1 matrix (k≥3, `--efforts
    none,low,medium`, admission-rejection-controlled) decides.
 
-### Phase 1 — shrink the required `start_ui` (the only lever that alone gets the floor under 5s)
+### Phase 1 — shrink the required `start_ui` (SHIPPED 2026-07-16 — campaign log: docs/evals/ui-phase1-campaign-2026-07-16.md)
+Landed as the minimal WIRE manifest (`PageManifestInput`: id/title/archetype/
+compact string slots/optional theme; host derives recipe + design-system ref
++ slot metadata; the stored `PageManifest` never loosened), prompts
+v9/v10/v7, profile 9.0.0, and — discovered by the campaign itself —
+deterministic STAGE GOALS (planner settles on page-open, composer/repair on
+page-complete, model calls raced/deadlined as DISCONNECTED losers; the
+post-goal continuation turn otherwise parks or hangs). Measured on
+successful trials: planner output ~990 → ~150–340 tokens; paint 11.6s →
+5.8–20s at medium and **4.1–9.6s at effort none**; complete p95 130s →
+p50 ~24–42s. Pin UNCHANGED (medium) — the effort-none re-pin and the
+text-protocol live re-screen are blocked on campaign-infra reliability
+(task #118). The original plan text follows.
 Extend `normalizeInitialUiAdmission` (the existing canonicalization seam):
 synthesize ALL slots from recipe order + emitted blocks; default theme to host
 tokens (deviations via `patch_theme`); derive id/title from the request; stop

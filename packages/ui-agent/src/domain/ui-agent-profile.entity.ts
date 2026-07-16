@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { UiGenerationProtocol } from "./ui-generation-protocol.entity.js"
 
-export const UI_AGENT_SCHEMA_VERSION = "2.0.0"
+export const UI_AGENT_SCHEMA_VERSION = "2.1.0"
 export const UI_AGENT_RECIPE_SET_VERSION = "2.0.0"
 
 export const UiModelStage = Schema.Struct({

@@ -1,6 +1,8 @@
-import type { PageManifest, UiBlock, UiPage, UiPageEvent } from "./ui-page.entity.js"
+import type { PageManifest, PageManifestInput, PageSlot, PageSlotInput, UiBlock, UiPage, UiPageEvent } from "./ui-page.entity.js"
 import { Option } from "effect"
 import type { DesignSystemRef } from "./design-system.entity.js"
+import { UI_AGENT_RECIPE_SET_VERSION } from "./ui-agent-profile.entity.js"
+import { expectedRecipe } from "./ui-quality.functions.js"
 
 export const emptyPage = (manifest: PageManifest): UiPage => ({ manifest, blocks: [], complete: false })
 
@@ -47,17 +49,45 @@ export const canonicalizeUiBlocks = (
 ): ReadonlyArray<UiBlock> =>
   blocks.map((block) => withCanonicalNavTargets(withoutOptionalAsset(block, contract.assetIds)))
 
+/** Expand one wire slot: a bare id becomes a compact component-mode slot,
+ * and omitted metadata defaults — `critical` importance keeps the
+ * completeness gate at full strength for every declared root. */
+const expandSlotInput = (slot: PageSlotInput): PageSlot =>
+  typeof slot === "string"
+    ? { id: slot, blockKind: "component", importance: "critical" }
+    : {
+        id: slot.id,
+        blockKind: slot.blockKind ?? "component",
+        ...(slot.component === undefined ? {} : { component: slot.component }),
+        importance: slot.importance ?? "critical",
+      }
+
 /** Canonicalize host-owned admission data while preserving every model-owned
- * layout and content decision. The design-system reference is configuration,
- * optional unknown imagery falls back to renderer artwork, and critical
- * blocks omitted from the redundant slot declaration are declared verbatim. */
+ * layout and content decision (the ui-latency plan's Phase 1: the model
+ * emits only what it genuinely owns — id, title, archetype, the compact
+ * slot plan, and an optional theme):
+ * - the recipe follows from the archetype when omitted;
+ * - the design-system reference is configuration (always host-owned);
+ * - compact slots expand with defaulted metadata, and a declared slot whose
+ *   kind was defaulted takes the concrete kind of an arriving initial block;
+ * - optional unknown imagery falls back to renderer artwork;
+ * - blocks omitted from the slot plan are declared verbatim as critical. */
 export const normalizeInitialUiAdmission = (
-  manifest: PageManifest,
+  manifest: PageManifestInput,
   blocks: ReadonlyArray<UiBlock>,
   contract: UiAdmissionContract,
 ): { readonly manifest: PageManifest; readonly blocks: ReadonlyArray<UiBlock> } => {
   const normalizedBlocks = canonicalizeUiBlocks(blocks, contract)
-  const slots = new Map(manifest.slots.map((slot) => [slot.id, slot]))
+  const byId = new Map(normalizedBlocks.map((block) => [block.id, block]))
+  const declared = (manifest.slots ?? []).map((slot) => {
+    const expanded = expandSlotInput(slot)
+    const block = byId.get(expanded.id)
+    if (block === undefined || (expanded.blockKind === "component" && expanded.component !== undefined)) return expanded
+    return block.kind === "component"
+      ? { ...expanded, blockKind: "component", component: block.component }
+      : { ...expanded, blockKind: block.kind }
+  })
+  const slots = new Map(declared.map((slot) => [slot.id, slot]))
   const missing = normalizedBlocks.flatMap((block) =>
     slots.has(block.id)
       ? []
@@ -65,9 +95,13 @@ export const normalizeInitialUiAdmission = (
   )
   return {
     manifest: {
-      ...manifest,
+      id: manifest.id,
+      title: manifest.title,
+      archetype: manifest.archetype,
+      recipe: manifest.recipe ?? { id: expectedRecipe(manifest.archetype), version: UI_AGENT_RECIPE_SET_VERSION },
       designSystem: contract.designSystem,
-      slots: [...manifest.slots, ...missing],
+      ...(manifest.theme === undefined ? {} : { theme: manifest.theme }),
+      slots: [...declared, ...missing],
     },
     blocks: normalizedBlocks,
   }

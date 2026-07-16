@@ -1,11 +1,11 @@
 import { LanguageModel } from "@effect/ai"
-import { Cause, Context, Duration, Effect, Layer, Option, Ref, Stream } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Option, Ref, Schedule, Stream } from "effect"
 import { ConversationStore, parseModelSelection, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { AgentFailureType } from "@xandreed/engine"
 import { DefaultUiHostLive, SqliteUiComponentCatalogLive, SqliteUiPageStoreLive, SqliteUiThemeStoreLive, makeCanvasSession, serveCanvas } from "@xandreed/canvas"
 import type { CanvasSession } from "@xandreed/canvas"
 import { LanguageModelSelectionLive, LocalAuthStoreLive, SqliteConversationStoreLive } from "@xandreed/providers"
-import { UI_COMPOSER_PROMPT_VERSION, UI_PLANNER_PROMPT_VERSION, UI_REPAIR_PROMPT_VERSION, UiAgentExecutionProfile, UiAgentModels, UiComponentCatalog, UiHost, UiPageStore, foldPageEvents, validateBlocks, validateManifest, validatePageCompleteness } from "@xandreed/ui-agent"
+import { UI_AGENT_RECIPE_SET_VERSION, UI_AGENT_SCHEMA_VERSION, UI_COMPOSER_PROMPT_VERSION, UI_PLANNER_PROMPT_VERSION, UI_REPAIR_PROMPT_VERSION, UiAgentExecutionProfile, UiAgentModels, UiComponentCatalog, UiHost, UiPageStore, foldPageEvents, validateBlocks, validateManifest, validatePageCompleteness } from "@xandreed/ui-agent"
 import type { UiAgentEvent, UiAgentProfileType, UiGenerationProtocolType, UiPage } from "@xandreed/ui-agent"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -211,7 +211,7 @@ const repeatConsistency = (trials: ReadonlyArray<Trial>): number => {
 }
 
 const profileFor = (candidate: Candidate, budgets: MatrixBudgets): UiAgentProfileType => ({
-  profile: "streaming-ui-v1", version: "matrix-v2", schemaVersion: "2.0.0", recipeSetVersion: "2.0.0",
+  profile: "streaming-ui-v1", version: "matrix-v2", schemaVersion: UI_AGENT_SCHEMA_VERSION, recipeSetVersion: UI_AGENT_RECIPE_SET_VERSION,
   protocol: candidate.protocol,
   prompts: { planner: UI_PLANNER_PROMPT_VERSION, composer: UI_COMPOSER_PROMPT_VERSION, repair: UI_REPAIR_PROMPT_VERSION },
   planner: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.plannerTimeoutMs, maxOutputTokens: 1800, maxSteps: 2 },
@@ -483,8 +483,17 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
         return yield* driveBrowser(session, server.url, task.prompt, budgets.trialTimeoutMs, evidenceDir, evidenceName(candidate, task, sample))
       }))
     const sessionState = yield* session.state
-    const events = yield* pages.list(conversationId).pipe(Effect.orDie)
-    const definitions = yield* componentCatalog.list.pipe(Effect.orDie)
+    // Labeled + one retry: the post-drive evidence reads must not void a
+    // trial whose page already painted over one transient store error
+    // (2026-07-16: painted trials died here with an unattributed
+    // "disk I/O error" — task #118).
+    const evidenceRead = <A>(label: string, read: Effect.Effect<A, unknown>): Effect.Effect<A> => read.pipe(
+      Effect.retry({ times: 1, schedule: Schedule.spaced("500 millis") }),
+      Effect.mapError((error) => new Error(`${label}: ${String(error)}`)),
+      Effect.orDie,
+    )
+    const events = yield* evidenceRead("trial pages.list", pages.list(conversationId))
+    const definitions = yield* evidenceRead("trial catalog.list", componentCatalog.list)
     const page = foldPageEvents(events).at(-1)
     const opened = events.find((event) => event.type === "page_opened")
     const completed = events.find((event) => event.type === "page_completed")

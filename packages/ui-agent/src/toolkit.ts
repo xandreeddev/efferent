@@ -2,7 +2,7 @@ import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Schema } from "effect"
 import type { ConversationId } from "@xandreed/engine"
 import { Failure } from "@xandreed/engine"
-import { PageManifest, UiBlock } from "./domain/ui-page.entity.js"
+import { PageManifestInput, UiBlock } from "./domain/ui-page.entity.js"
 import type { UiPageEvent } from "./domain/ui-page.entity.js"
 import { ThemeDelta } from "./domain/design-system.entity.js"
 import { applyThemeDelta, themeFingerprint, themeIntentFromTokens, validateThemeIntent } from "./domain/design-system.entity.functions.js"
@@ -21,8 +21,8 @@ export const UI_BATCH_MAX_BYTES = 32_768
 export const UI_BATCH_MAX_BLOCKS = 8
 
 export const StartUi = Tool.make("start_ui", {
-  description: "Open a governed page from a versioned recipe and publish its first meaningful blocks. Emit structured data only; HTML, CSS, classes, HTMX, Alpine expressions, SVG, and URLs are not accepted.",
-  parameters: { page: PageManifest, criticalBlocks: Schema.Array(UiBlock) },
+  description: "Open a governed page and publish its first meaningful blocks. The manifest is minimal: id, title, archetype, an ordered compact slot plan, and an optional theme — the host derives the recipe, design-system reference, and slot metadata. Emit structured data only; HTML, CSS, classes, HTMX, Alpine expressions, SVG, and URLs are not accepted.",
+  parameters: { page: PageManifestInput, criticalBlocks: Schema.Array(UiBlock) },
   success: Schema.Struct({ opened: Schema.Boolean, pageId: Schema.String, accepted: Schema.Number }),
   failure: Failure,
   failureMode: "return",

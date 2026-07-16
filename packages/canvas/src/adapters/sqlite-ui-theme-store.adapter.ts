@@ -26,7 +26,7 @@ export const SqliteUiThemeStoreLive = (dbPath: string) => Layer.scoped(
         ); CREATE INDEX IF NOT EXISTS ui_themes_by_fingerprint ON ui_themes(fingerprint);`)
         return database
       },
-      catch: (error) => String(error),
+      catch: (error) => `ui-theme-store: ${String(error)}`,
     })
     yield* Effect.addFinalizer(() => Effect.try({
       try: () => db.close(),
@@ -37,11 +37,11 @@ export const SqliteUiThemeStoreLive = (dbPath: string) => Layer.scoped(
     return {
       list: Effect.try({
         try: () => (db.query("SELECT definition FROM ui_themes WHERE status != 'deprecated' ORDER BY id").all() as ReadonlyArray<{ readonly definition: string }>).flatMap((row) => Either.match(decodeTheme(row.definition), { onLeft: () => [], onRight: (theme) => [theme] })),
-        catch: (error) => String(error),
+        catch: (error) => `ui-theme-store: ${String(error)}`,
       }),
       put: (theme: ThemeDefinitionType) => Effect.try({
         try: () => void db.query("INSERT OR REPLACE INTO ui_themes(id, version, fingerprint, status, definition, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)").run(theme.id, theme.version, theme.fingerprint, theme.status, JSON.stringify(theme), theme.createdAt),
-        catch: (error) => String(error),
+        catch: (error) => `ui-theme-store: ${String(error)}`,
       }),
     }
   }),

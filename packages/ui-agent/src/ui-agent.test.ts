@@ -90,9 +90,12 @@ describe("the structured UI-agent contract", () => {
       capabilities: [...host.actions.keys()],
       components: [],
     })
-    expect(prompt).toContain('{"id":"efferent-canvas","version":"1.0.0"}')
+    // The design-system echo is host-derived — the model must never be asked
+    // to restate it (the ui-latency plan's Phase 1 payload cut).
+    expect(prompt).not.toContain('{"id":"efferent-canvas","version":"1.0.0"}')
     expect(prompt).toContain("registered assets: none — omit every assetId")
-    expect(prompt).toContain('blockKind:"component"')
+    expect(prompt).toContain("The manifest is minimal")
+    expect(prompt).toContain('ordered array of 4-7 kebab-case root ids')
     expect(prompt).toContain("six-digit hex value")
   })
 
@@ -177,7 +180,7 @@ describe("the structured UI-agent contract", () => {
       return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: [{ kind: "prose", id: "hero", paragraphs: ["wrong kind"] }] })
     }).pipe(Effect.provide(layer)))
     expect(rejected.isFailure).toBe(true)
-    expect(JSON.stringify(rejected.result)).toContain("is not declared")
+    expect(JSON.stringify(rejected.result)).toContain("conflicts with its declared hero slot")
   })
 
   test("accepted component props can stream independently without bypassing the catalog", async () => {
@@ -226,9 +229,51 @@ describe("the structured UI-agent contract", () => {
     expect(findings).toContain("asset unregistered-asset is not registered")
   })
 
+  test("the minimal wire manifest expands to the strict stored shape", () => {
+    const admitted = normalizeInitialUiAdmission(
+      {
+        id: "incident-landing",
+        title: "Incident clarity",
+        archetype: "landing",
+        slots: ["hero", "features", { id: "proof", importance: "standard" }, "cta"],
+      },
+      [{ kind: "hero", id: "hero", title: "See incidents clearly.", lede: "For small teams." }],
+      { designSystem: { id: host.tokens.id, version: host.tokens.version }, assetIds: new Set() },
+    )
+    expect(admitted.manifest.recipe).toEqual({ id: "landing.hero-grid", version: "2.0.0" })
+    expect(admitted.manifest.designSystem).toEqual({ id: "efferent-canvas", version: "1.0.0" })
+    // The declared "hero" slot was compact; the arriving legacy block resolves its kind.
+    expect(admitted.manifest.slots[0]).toEqual({ id: "hero", blockKind: "hero", importance: "critical" })
+    // Untouched compact slots default to component/critical — the completeness
+    // gate binds every declared root.
+    expect(admitted.manifest.slots[1]).toEqual({ id: "features", blockKind: "component", importance: "critical" })
+    expect(admitted.manifest.slots[2]).toEqual({ id: "proof", blockKind: "component", importance: "standard" })
+    expect(admitted.manifest.slots.map((slot) => slot.id)).toEqual(["hero", "features", "proof", "cta"])
+  })
+
+  test("a compact slot admits the kind that arrives later; an explicit kind still binds", () => {
+    const admitted = normalizeInitialUiAdmission(
+      { id: "doc-page", title: "Doc", archetype: "document", slots: ["intro", { id: "map", blockKind: "architecture" }] },
+      [],
+      { designSystem: { id: host.tokens.id, version: host.tokens.version }, assetIds: new Set() },
+    )
+    // A composer-time legacy block on the compact "intro" slot is admitted.
+    expect(validateBlocks(admitted.manifest, [
+      { kind: "prose", id: "intro", paragraphs: ["Policy inward, effects at the edge."] },
+    ], host)).toEqual([])
+    // The explicitly declared architecture slot rejects a different kind.
+    expect(validateBlocks(admitted.manifest, [
+      { kind: "prose", id: "map", paragraphs: ["not a diagram"] },
+    ], host)).toContain("block map (prose) conflicts with its declared architecture slot")
+    // An undeclared root is still bounced.
+    expect(validateBlocks(admitted.manifest, [
+      { kind: "prose", id: "drive-by", paragraphs: ["x"] },
+    ], host)).toContain("block drive-by (prose) is not declared by the page manifest")
+  })
+
   test("profile validation pins models, budgets, prompt versions, schema, and recipes", () => {
     expect(validateUiAgentProfile({
-      profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "2.0.0", recipeSetVersion: "2.0.0",
+      profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "2.1.0", recipeSetVersion: "2.0.0",
       prompts: { planner: "5.0.0", composer: "6.0.0", repair: "3.0.0" },
       planner: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 15000, maxOutputTokens: 2400, maxSteps: 2 },
       composer: { model: "opencode:deepseek-v4-flash", effort: "low", timeoutMs: 20000, maxOutputTokens: 5000, maxSteps: 2 },
