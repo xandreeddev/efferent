@@ -30,7 +30,7 @@ export {
 } from "./llm/compat.js"
 export type { CompatConfig } from "./llm/compat.js"
 export { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./llm/openAiCodex.js"
-export { normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7 } from "./llm/openAiCodexWebSocket.js"
+export { normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
 export {
   buildProvider,
   OPENCODE_CHAT_URL,

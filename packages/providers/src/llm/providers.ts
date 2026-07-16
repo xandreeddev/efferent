@@ -140,9 +140,14 @@ export const buildProvider = (
                         ? {}
                         : { max_output_tokens: value.maxOutputTokens }),
                       reasoning: {
+                        // The public-API SDK union has no none/xhigh/max —
+                        // clamp to the nearest supported value (only the
+                        // codex dialect is probe-verified for `none`).
                         effort: value.effort === "xhigh" || value.effort === "max"
                           ? "high"
-                          : value.effort,
+                          : value.effort === "none"
+                            ? "low"
+                            : value.effort,
                       },
                     }),
                   }),

@@ -1,6 +1,11 @@
 # UI-agent latency plan — from 11.6s to a sub-4s first paint
 
-Status: PLAN (research only, nothing implemented). Sources: the v9 screening
+Status: Phase 0 + both probes SHIPPED 2026-07-16 (stage-boundary events,
+per-stage usage/wall-clock in matrix trials, `evals:ui-latency-probe`);
+probe results in `docs/evals/ui-latency-probes-2026-07-16.md` — argument
+deltas STREAM on the codex route (Phase 2 greenlit on native-tools) and
+effort `none` is accepted (`minimal` rejected; vocabulary widened). Phases
+1–4 remain to build, each gated by the matrix. Sources: the v9 screening
 evidence (`docs/evals/ui-agent-screening-v9-2026-07-13.md`, trial JSONs), a
 static decomposition of the current prompts/schemas/adapters, and a 2025–26
 state-of-the-art sweep of the latency levers available on our provider routes.
@@ -37,30 +42,29 @@ archetype + the first node (~650 chars total).
 
 ## The plan (ordered; every prompt/profile change pays the matrix ritual)
 
-### Phase 0 — instrument before optimizing (small, no behavior change)
-Add: stage-boundary events (`planner_started/completed`, `composer_started`,
-`repair_started`) with wall-clock; a first `tool-params-start` stamp per stage
-(native-tools first-token — blind today); wall-clock on `tool_start/tool_end`;
-per-stage token usage persisted into trial JSONs (usage is folded in
-`streamFold.ts` but never surfaced); a server-receive stamp at `session.send`.
-Without this, every later claim is unfalsifiable and the composer's 110s hole
-stays opaque.
+### Phase 0 — instrument before optimizing (SHIPPED 2026-07-16)
+Landed as: `ui_stage` stage-boundary events (turn receive + started/settled
+per stage, wall-clock, ledgered) published by the ui-agent session; the
+matrix's arrival-stamped per-trial `timeline` with derived `stageMetrics`
+(wall + tokens + turns per stage, `deriveStageMetrics`) and
+`serverReceiveMs`; per-candidate stage p50s in the report. The
+tool-params-start stamp was deferred INTO Phase 2 (the probe below already
+answered the first-token question, and the fan-out is Phase 2's mechanism).
 
-### Probes (cheap, decide the architecture — run before building)
-1. **Argument-delta probe**: does the codex backend emit
-   `response.function_call_arguments.delta`, and does `@effect/ai` surface it?
-   The part vocabulary EXISTS (`tool-params-start/delta/end` in
-   `@effect/ai/Response.ts`); our `streamFold.ts` currently drops them as
-   opaque parts. Extend `latency-probe.ts` to log part types during a tool
-   call on openai-codex. The codex endpoint is undocumented — its SSE contract
-   "may differ"; this probe decides Phase 2 vs the text-protocol fallback.
-2. **Effort probe**: GPT-5.6 exposes `none`/`minimal` below our `low`.
-   Published data: effort barely moves TTFT (~300ms flat) but moves effective
-   throughput 43 tok/s (minimal) vs 8.6 (high) — our 62-vs-224 gap suggests
-   2–3× decode headroom. Probe whether the subscription route accepts
-   `minimal`/`none`, and re-test low-vs-medium at samples≥3 controlling for
-   admission rejections (v9's "low is slower" p50 was partly inflated by a
-   rejected `start_ui` forcing a pre-paint repair — not pure decode).
+### Probes (SETTLED 2026-07-16 — `evals:ui-latency-probe`, results in `docs/evals/ui-latency-probes-2026-07-16.md`)
+1. **Argument-delta probe: PASS.** The codex route emits
+   `tool-params-start/delta/end` through `streamText` (301/323 deltas per
+   start_ui call), streaming over the final 2.5–10.0s the settled path
+   spends waiting. Phase 2 proceeds on native-tools; the text-protocol
+   fallback is unnecessary for streaming admission. Also measured: NO
+   text-delta parts exist under native-tools, and reasoning arrives as one
+   summary blob — text-channel first-delta metrics are structurally blind
+   here.
+2. **Effort probe: `none` accepted (reasoning_tokens 0), `minimal`
+   REJECTED** by the subscription dialect. The vocabulary gained `none`
+   end-to-end (engine policy, ui profile schema, catalog, matrix grid);
+   pins stay medium until the Phase 1 matrix (k≥3, `--efforts
+   none,low,medium`, admission-rejection-controlled) decides.
 
 ### Phase 1 — shrink the required `start_ui` (the only lever that alone gets the floor under 5s)
 Extend `normalizeInitialUiAdmission` (the existing canonicalization seam):

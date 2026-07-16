@@ -43,7 +43,7 @@ const asNumber = (value: unknown): Option.Option<number> =>
   typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none()
 
 const asReasoningEffort = (value: unknown): Option.Option<ReasoningEffortType> =>
-  value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max"
+  value === "none" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max"
     ? Option.some(value)
     : Option.none()
 

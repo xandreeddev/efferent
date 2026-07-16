@@ -98,6 +98,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@effect/ai": "^0.35.0",
+        "@effect/platform": "^0.96.1",
         "@opentui/core": "0.3.1",
         "@xandreed/canvas": "workspace:*",
         "@xandreed/engine": "workspace:*",

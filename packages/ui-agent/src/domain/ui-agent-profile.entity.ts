@@ -6,7 +6,7 @@ export const UI_AGENT_RECIPE_SET_VERSION = "2.0.0"
 
 export const UiModelStage = Schema.Struct({
   model: Schema.String,
-  effort: Schema.Literal("low", "medium", "high"),
+  effort: Schema.Literal("none", "low", "medium", "high"),
   timeoutMs: Schema.Number,
   maxOutputTokens: Schema.Number,
   maxSteps: Schema.Number,
@@ -24,7 +24,7 @@ export const UiAgentProfile = Schema.Struct({
   composer: UiModelStage,
   repair: Schema.Struct({
     model: Schema.String,
-    effort: Schema.Literal("low", "medium", "high"),
+    effort: Schema.Literal("none", "low", "medium", "high"),
     timeoutMs: Schema.Number,
     maxOutputTokens: Schema.Number,
     maxSteps: Schema.Number,

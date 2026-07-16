@@ -17,7 +17,21 @@ import { CORE_UI_COMPONENTS } from "./domain/core-components.functions.js"
 import { decodeUiProtocolChunk, emptyUiProtocolDecoderState } from "./domain/ui-generation-protocol.entity.functions.js"
 import type { UiProtocolRecord } from "./domain/ui-generation-protocol.entity.js"
 
-export type UiAgentEvent = LoopEvent | import("./domain/ui-page.entity.js").UiPageEvent
+/**
+ * Stage-boundary telemetry: wall-clock stamps for the turn's server receive
+ * and each model stage's start/settle. Ledgered like every non-delta event,
+ * so evidence readers (the matrix, scenario packs) can attribute the paint
+ * budget per stage — without them the composer/repair interval is opaque.
+ * `settled` always fires, timeout and failure paths included.
+ */
+export interface UiStageEvent {
+  readonly type: "ui_stage"
+  readonly stage: "turn" | "planner" | "composer" | "repair"
+  readonly phase: "started" | "settled"
+  readonly at: number
+}
+
+export type UiAgentEvent = LoopEvent | import("./domain/ui-page.entity.js").UiPageEvent | UiStageEvent
 export type UiAgentSession = Session<UiAgentEvent>
 export type UiAgentRunServices = ConversationStore | UiPageStore | UiHost | UiAgentModels | UiAgentExecutionProfile
 
@@ -55,6 +69,11 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
       onError: (message) => ({ type: "error", message }),
       isTransient: (event) => event.type === "assistant_delta",
       runTurn: (text, publish) => Effect.gen(function* () {
+        // Suspended so `at` is stamped when the effect RUNS (a settled stamp
+        // built eagerly would carry the stage's start time).
+        const stamp = (stage: UiStageEvent["stage"], phase: UiStageEvent["phase"]) =>
+          Effect.suspend(() => publish({ type: "ui_stage", stage, phase, at: Date.now() }))
+        yield* stamp("turn", "started")
         yield* interruptAttempt
         yield* publish({ type: "turn_start", turnIndex: 0 })
         const definitions = yield* catalog.list.pipe(Effect.catchAll((message) => Effect.logWarning(`component catalog unavailable: ${message}`).pipe(Effect.as([]))))
@@ -136,11 +155,14 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
               userPrompt,
               { onEvent: stagePublish },
             )
-          return configured.pipe(
-            Effect.provideService(LanguageModel.LanguageModel, models[stage]),
-            Effect.timeout(stageDeadline(stage)),
-            Effect.catchAll((error) => publishFailure(stage, error)),
-            Effect.provide(handlers),
+          return stamp(stage, "started").pipe(
+            Effect.zipRight(configured.pipe(
+              Effect.provideService(LanguageModel.LanguageModel, models[stage]),
+              Effect.timeout(stageDeadline(stage)),
+              Effect.catchAll((error) => publishFailure(stage, error)),
+              Effect.provide(handlers),
+            )),
+            Effect.ensuring(stamp(stage, "settled")),
           )
         }
 

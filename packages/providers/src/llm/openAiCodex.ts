@@ -27,7 +27,7 @@ const instructionText = (message: unknown): ReadonlyArray<string> => {
 /** Translate the standard Responses request into the Codex subscription dialect. */
 export const toOpenAiCodexRequestBody = (
   body: unknown,
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max",
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max",
 ): Json => {
   const value = record(body)
   const input = Array.isArray(value["input"]) ? value["input"] : []
@@ -60,7 +60,7 @@ export const toOpenAiCodexRequestBody = (
 
 const transformRequest = (
   accountId: string,
-  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max",
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max",
 ) => (request: HttpClientRequest.HttpClientRequest): HttpClientRequest.HttpClientRequest => {
   const withHeaders = request.pipe(
     HttpClientRequest.setHeaders({
@@ -154,9 +154,13 @@ export const makeOpenAiCodexLanguageModel = (args: {
                     ? {}
                     : { max_output_tokens: value.maxOutputTokens }),
                   reasoning: {
-                    // @effect/ai-openai's generated union predates xhigh/max;
+                    // @effect/ai-openai's generated union predates none/xhigh/max;
                     // transformRequest restores the exact effort on the wire.
-                    effort: value.effort === "xhigh" || value.effort === "max" ? "high" : value.effort,
+                    effort: value.effort === "xhigh" || value.effort === "max"
+                      ? "high"
+                      : value.effort === "none"
+                        ? "low"
+                        : value.effort,
                     summary: "auto" as const,
                   },
                 }),
