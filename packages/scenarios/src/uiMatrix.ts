@@ -6,7 +6,7 @@ import { DefaultUiHostLive, SqliteUiComponentCatalogLive, SqliteUiPageStoreLive,
 import type { CanvasSession } from "@xandreed/canvas"
 import { LanguageModelSelectionLive, LocalAuthStoreLive, SqliteConversationStoreLive } from "@xandreed/providers"
 import { UI_COMPOSER_PROMPT_VERSION, UI_PLANNER_PROMPT_VERSION, UI_REPAIR_PROMPT_VERSION, UiAgentExecutionProfile, UiAgentModels, UiComponentCatalog, UiHost, UiPageStore, foldPageEvents, validateBlocks, validateManifest, validatePageCompleteness } from "@xandreed/ui-agent"
-import type { UiAgentProfileType, UiGenerationProtocolType, UiPage } from "@xandreed/ui-agent"
+import type { UiAgentEvent, UiAgentProfileType, UiGenerationProtocolType, UiPage } from "@xandreed/ui-agent"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -15,7 +15,7 @@ import { wilsonInterval } from "./framework/stats.js"
 import { makeUiPageQualityJudge } from "./judges/uiPageQuality.js"
 import { generalTierCall, preflightAuth } from "./live/llm.js"
 
-type Effort = "low" | "medium" | "high"
+type Effort = "none" | "low" | "medium" | "high"
 
 interface Candidate {
   readonly model: string
@@ -37,11 +37,42 @@ interface MatrixBudgets {
   readonly trialTimeoutMs: number
 }
 
+/** One arrival-stamped session event — the trial's attribution spine. The
+ * stamp is the event's own wall-clock (`at`) when it carries one (ui_stage,
+ * page events), else the in-process arrival time; both share the harness
+ * clock, so stage intervals and paint stamps subtract cleanly. */
+interface TimelineEvent {
+  readonly tMs: number
+  readonly type: string
+  readonly stage?: string
+  readonly phase?: string
+  readonly toolName?: string
+  readonly ok?: boolean
+  readonly model?: string
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+}
+
+/** Per-stage wall-clock + token attribution, folded from the timeline.
+ * Repair may open several intervals (planner-repair, composer-repair) —
+ * they accumulate into the one `repair` row; order in the timeline keeps
+ * them distinguishable. */
+export interface StageMetric {
+  readonly stage: string
+  readonly wallMs: number
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly turns: number
+}
+
 interface Trial {
   readonly candidate: Candidate
   readonly task: string
   readonly request: string
   readonly sample: number
+  readonly serverReceiveMs: number | null
+  readonly stageMetrics: ReadonlyArray<StageMetric>
+  readonly timeline: ReadonlyArray<TimelineEvent>
   readonly firstVisibleMs: number
   readonly browserFirstVisibleMs: number
   readonly firstContentDeltaMs: number
@@ -79,6 +110,8 @@ interface RankedCandidate {
   readonly meanInformationArchitectureScore: number
   readonly meanRelevance: number
   readonly repeatConsistency: number
+  readonly stageP50WallMs: Record<string, number>
+  readonly stageMeanOutputTokens: Record<string, number>
   readonly deterministicScore: number
   readonly judgeScore?: number
   readonly selectionScore: number
@@ -190,6 +223,7 @@ const profileFor = (candidate: Candidate, budgets: MatrixBudgets): UiAgentProfil
 interface DriveEvidence {
   readonly startedAt: number
   readonly finishedAt: number
+  readonly timeline: ReadonlyArray<TimelineEvent>
   readonly browserFirstVisibleMs: number
   readonly firstContentDeltaMs: number
   readonly componentCount: number
@@ -211,6 +245,72 @@ const recordFirstDelta = (session: CanvasSession, startedAt: number, target: Ref
   Stream.runForEach(() => Ref.update(target, (current) => current ?? Date.now() - startedAt)),
 )
 
+const timelineRow = (event: UiAgentEvent, arrivalMs: number, startedAt: number): ReadonlyArray<TimelineEvent> => {
+  const stamped = (at: number): number => at - startedAt
+  if (event.type === "ui_stage") return [{ tMs: stamped(event.at), type: event.type, stage: event.stage, phase: event.phase }]
+  if (event.type === "tool_start") return [{ tMs: arrivalMs, type: event.type, toolName: event.toolName }]
+  if (event.type === "tool_end") return [{ tMs: arrivalMs, type: event.type, toolName: event.toolName, ok: event.ok }]
+  if (event.type === "assistant_message") {
+    return [{
+      tMs: arrivalMs,
+      type: event.type,
+      ...(event.model === undefined ? {} : { model: event.model }),
+      inputTokens: event.usage.inputTokens,
+      outputTokens: event.usage.outputTokens,
+    }]
+  }
+  if (event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "theme_patched" || event.type === "page_completed") return [{ tMs: stamped(event.at), type: event.type }]
+  if (event.type === "error" || event.type === "agent_end") return [{ tMs: arrivalMs, type: event.type }]
+  return []
+}
+
+const recordTimeline = (session: CanvasSession, startedAt: number, target: Ref.Ref<ReadonlyArray<TimelineEvent>>) => session.subscribe(0).pipe(
+  Stream.runForEach((entry) => Effect.suspend(() => {
+    const rows = timelineRow(entry.event, Date.now() - startedAt, startedAt)
+    return rows.length === 0 ? Effect.void : Ref.update(target, (current) => [...current, ...rows])
+  })),
+)
+
+export const deriveStageMetrics = (timeline: ReadonlyArray<TimelineEvent>): ReadonlyArray<StageMetric> => {
+  const emptyMetric = (stage: string): StageMetric => ({ stage, wallMs: 0, inputTokens: 0, outputTokens: 0, turns: 0 })
+  const folded = timeline.reduce<{
+    readonly open: { readonly stage: string; readonly sinceMs: number } | null
+    readonly rows: ReadonlyMap<string, StageMetric>
+  }>(
+    (state, event) => {
+      if (event.type === "ui_stage" && event.stage !== undefined && event.stage !== "turn") {
+        if (event.phase === "started") return { ...state, open: { stage: event.stage, sinceMs: event.tMs } }
+        if (event.phase === "settled" && state.open !== null && state.open.stage === event.stage) {
+          const current = state.rows.get(event.stage) ?? emptyMetric(event.stage)
+          return {
+            open: null,
+            rows: new Map(state.rows).set(event.stage, { ...current, wallMs: current.wallMs + Math.max(0, event.tMs - state.open.sinceMs) }),
+          }
+        }
+        return state
+      }
+      if (event.type === "assistant_message" && state.open !== null) {
+        const current = state.rows.get(state.open.stage) ?? emptyMetric(state.open.stage)
+        return {
+          ...state,
+          rows: new Map(state.rows).set(state.open.stage, {
+            ...current,
+            inputTokens: current.inputTokens + (event.inputTokens ?? 0),
+            outputTokens: current.outputTokens + (event.outputTokens ?? 0),
+            turns: current.turns + 1,
+          }),
+        }
+      }
+      return state
+    },
+    { open: null, rows: new Map<string, StageMetric>() },
+  )
+  return [...folded.rows.values()]
+}
+
+export const serverReceiveMs = (timeline: ReadonlyArray<TimelineEvent>): Option.Option<number> =>
+  Option.fromNullable(timeline.find((event) => event.type === "ui_stage" && event.stage === "turn" && event.phase === "started")?.tMs)
+
 const evidenceName = (candidate: Candidate, task: MatrixTask, sample: number): string => `${candidate.model}-${candidate.effort}-${candidate.protocol}-${task.id}-${sample}`.replaceAll(/[^a-z0-9.-]+/gi, "-").toLowerCase()
 
 const driveSession = (
@@ -219,14 +319,17 @@ const driveSession = (
   timeoutMs: number,
 ): Effect.Effect<DriveEvidence, unknown> => Effect.scoped(Effect.gen(function* () {
   const firstDelta = yield* Ref.make<number | null>(null)
+  const timeline = yield* Ref.make<ReadonlyArray<TimelineEvent>>([])
   const startedAt = Date.now()
   yield* Effect.forkScoped(recordFirstDelta(session, startedAt, firstDelta))
+  yield* Effect.forkScoped(recordTimeline(session, startedAt, timeline))
   yield* session.send(request)
   yield* waitForAgentEnd(session, timeoutMs)
   const firstContentDeltaMs = yield* Ref.get(firstDelta)
   return {
     startedAt,
     finishedAt: Date.now(),
+    timeline: yield* Ref.get(timeline),
     browserFirstVisibleMs: Number.POSITIVE_INFINITY,
     firstContentDeltaMs: firstContentDeltaMs ?? Number.POSITIVE_INFINITY,
     componentCount: 0,
@@ -273,8 +376,10 @@ const driveBrowser = (
     catch: (error) => error,
   })
   const firstDelta = yield* Ref.make<number | null>(null)
+  const timeline = yield* Ref.make<ReadonlyArray<TimelineEvent>>([])
   const startedAt = Date.now()
   yield* Effect.forkScoped(recordFirstDelta(session, startedAt, firstDelta))
+  yield* Effect.forkScoped(recordTimeline(session, startedAt, timeline))
   yield* Effect.tryPromise({
     try: async () => {
       await page.locator(".ef-ask-input").fill(request)
@@ -314,6 +419,7 @@ const driveBrowser = (
   return {
     startedAt,
     finishedAt,
+    timeline: yield* Ref.get(timeline),
     browserFirstVisibleMs: desktop.firstVisibleAt === 0 ? Number.POSITIVE_INFINITY : desktop.firstVisibleAt - startedAt,
     firstContentDeltaMs: firstContentDeltaMs ?? Number.POSITIVE_INFINITY,
     componentCount: desktop.componentCount,
@@ -396,6 +502,9 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
     })
     return {
       candidate, task: task.id, request: task.prompt, sample,
+      serverReceiveMs: Option.getOrNull(serverReceiveMs(drive.timeline)),
+      stageMetrics: deriveStageMetrics(drive.timeline),
+      timeline: drive.timeline,
       firstVisibleMs: opened === undefined ? Number.POSITIVE_INFINITY : opened.at - drive.startedAt,
       browserFirstVisibleMs: drive.browserFirstVisibleMs,
       firstContentDeltaMs: drive.firstContentDeltaMs,
@@ -428,6 +537,9 @@ const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, err
     task: task.id,
     request: task.prompt,
     sample,
+    serverReceiveMs: null,
+    stageMetrics: [],
+    timeline: [],
     firstVisibleMs: Number.POSITIVE_INFINITY,
     browserFirstVisibleMs: Number.POSITIVE_INFINITY,
     firstContentDeltaMs: Number.POSITIVE_INFINITY,
@@ -488,8 +600,11 @@ const rank = (candidate: Candidate, trials: ReadonlyArray<Trial>): RankedCandida
   const consistency = repeatConsistency(trials)
   const latencyUtility = refinementSuccesses === 0 ? 0 : Math.exp(-p50FirstVisibleMs / 3_000)
   const eligibleConsistency = refinementSuccesses === 0 ? 0 : consistency
+  const stageRows = (stage: string) => trials.flatMap((trial) => trial.stageMetrics.filter((metric) => metric.stage === stage))
+  const stageP50WallMs = Object.fromEntries(["planner", "composer", "repair"].map((stage) => [stage, percentile(stageRows(stage).map((metric) => metric.wallMs), 0.5)]))
+  const stageMeanOutputTokens = Object.fromEntries(["planner", "composer", "repair"].map((stage) => [stage, Math.round(mean(stageRows(stage).map((metric) => metric.outputTokens)))]))
   const deterministicScore = refinementSuccesses === 0 ? 0 : 0.25 * reliabilityLcb90 + 0.20 * latencyLcb90 + 0.15 * meanDesignSystemScore + 0.15 * meanInformationArchitectureScore + 0.10 * meanRelevance + 0.10 * latencyUtility + 0.05 * eligibleConsistency
-  return { candidate, trials, refinementSuccesses, withinFiveSeconds, reliabilityLcb90, latencyLcb90, p50EnrichmentMs, p95EnrichmentMs, p50FirstVisibleMs, p95FirstVisibleMs, meanDesignSystemScore, meanInformationArchitectureScore, meanRelevance, repeatConsistency: eligibleConsistency, deterministicScore, selectionScore: deterministicScore }
+  return { candidate, trials, refinementSuccesses, withinFiveSeconds, reliabilityLcb90, latencyLcb90, p50EnrichmentMs, p95EnrichmentMs, p50FirstVisibleMs, p95FirstVisibleMs, meanDesignSystemScore, meanInformationArchitectureScore, meanRelevance, repeatConsistency: eligibleConsistency, stageP50WallMs, stageMeanOutputTokens, deterministicScore, selectionScore: deterministicScore }
 }
 
 const judgeCandidate = (
@@ -520,7 +635,7 @@ const persist = (path: string, value: unknown): Effect.Effect<void, Error> => Ef
 
 const persistTrial = (evidenceDir: string, candidate: Candidate, task: MatrixTask, sample: number, trial: Trial): Effect.Effect<void> =>
   persist(join(evidenceDir, "trials", `${evidenceName(candidate, task, sample)}.json`), {
-    version: "ui-agent-trial-v1",
+    version: "ui-agent-trial-v2",
     recordedAt: new Date().toISOString(),
     trial,
   }).pipe(
@@ -530,7 +645,7 @@ const persistTrial = (evidenceDir: string, candidate: Candidate, task: MatrixTas
 const program = Effect.gen(function* () {
   const keyed = yield* preflightAuth(process.cwd())
   if (!keyed) return yield* Effect.fail("no model credential; run Smith :login first")
-  const efforts = csv("--efforts", DEFAULT_EFFORTS).filter((value): value is Effort => value === "low" || value === "medium" || value === "high")
+  const efforts = csv("--efforts", DEFAULT_EFFORTS).filter((value): value is Effort => value === "none" || value === "low" || value === "medium" || value === "high")
   const protocols = csv("--protocols", DEFAULT_PROTOCOLS).filter((value): value is UiGenerationProtocolType => value === "native-tools" || value === "a2ui-jsonl" || value === "compact-lines")
   const candidates = csv("--models", DEFAULT_MODELS).flatMap((model) => efforts.flatMap((effort) => protocols.map((protocol) => ({ model, effort, protocol }))))
   const taskSet = Option.getOrElse(argValue("--task-set"), () => "screening")
@@ -555,7 +670,7 @@ const program = Effect.gen(function* () {
     Effect.logInfo(`ui-matrix ${candidate.model} effort=${candidate.effort} protocol=${candidate.protocol} task=${task.id} sample=${sample}`).pipe(
       Effect.zipRight(containTrialFailure(candidate, task, sample, cappedTrial(budgets.trialTimeoutMs + 60_000, runTrial(candidate, task, sample, budgets, evidenceDir)))),
       Effect.tap((trial) => persistTrial(evidenceDir, candidate, task, sample, trial)),
-      Effect.tap((trial) => Effect.sync(() => console.log(`  ${candidate.model} ${candidate.effort} ${candidate.protocol} ${task.id}: delta=${trial.firstContentDeltaMs}ms browser=${trial.browserFirstVisibleMs}ms accepted=${trial.firstVisibleMs}ms complete=${trial.initialCompleteMs}ms first-patch=${trial.firstRefinementMs ?? "none"} components=${trial.componentCount} overflow=${trial.desktopOverflow}/${trial.mobileOverflow} ds=${trial.designSystemScore.toFixed(2)} ia=${trial.informationArchitectureScore.toFixed(2)} relevance=${trial.relevance.toFixed(2)}`))),
+      Effect.tap((trial) => Effect.sync(() => console.log(`  ${candidate.model} ${candidate.effort} ${candidate.protocol} ${task.id}: delta=${trial.firstContentDeltaMs}ms browser=${trial.browserFirstVisibleMs}ms accepted=${trial.firstVisibleMs}ms complete=${trial.initialCompleteMs}ms first-patch=${trial.firstRefinementMs ?? "none"} components=${trial.componentCount} overflow=${trial.desktopOverflow}/${trial.mobileOverflow} ds=${trial.designSystemScore.toFixed(2)} ia=${trial.informationArchitectureScore.toFixed(2)} relevance=${trial.relevance.toFixed(2)} stages=${trial.stageMetrics.map((metric) => `${metric.stage}:${metric.wallMs}ms/${metric.outputTokens}tok`).join(" ") || "none"}`))),
     ),
   { concurrency })
   const ranked = candidates.map((candidate) => rank(candidate, trials.filter((trial) => trial.candidate.model === candidate.model && trial.candidate.effort === candidate.effort && trial.candidate.protocol === candidate.protocol))).sort((a, b) => b.deterministicScore - a.deterministicScore)
@@ -576,7 +691,7 @@ const program = Effect.gen(function* () {
   const judgedByCandidate = new Map(judgedFinalists.map((candidate) => [`${candidate.candidate.model}:${candidate.candidate.effort}:${candidate.candidate.protocol}`, candidate]))
   const judged = ranked.map((candidate) => judgedByCandidate.get(`${candidate.candidate.model}:${candidate.candidate.effort}:${candidate.candidate.protocol}`) ?? candidate)
   const final = judged.sort((a, b) => b.selectionScore - a.selectionScore)
-  const report = { version: "ui-agent-matrix-v5", generatedAt: new Date().toISOString(), executionPath: process.argv.includes("--session-only") ? "internal-session" : "canvas-browser", evidenceDir, trialEvidenceDir: join(evidenceDir, "trials"), targets: { firstContentP50Ms: 750, firstContentP95Ms: 1500, meaningfulUiP50Ms: 3000, meaningfulUiP95Ms: 5000, completeP50Ms: 12000, completeP95Ms: 20000 }, judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "eligibility uses accepted complete output, design-system compliance, information architecture and relevance; latency confidence is browser first meaningful UI <=5s; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
+  const report = { version: "ui-agent-matrix-v6", generatedAt: new Date().toISOString(), executionPath: process.argv.includes("--session-only") ? "internal-session" : "canvas-browser", evidenceDir, trialEvidenceDir: join(evidenceDir, "trials"), targets: { firstContentP50Ms: 750, firstContentP95Ms: 1500, meaningfulUiP50Ms: 3000, meaningfulUiP95Ms: 5000, completeP50Ms: 12000, completeP95Ms: 20000 }, judgeModel: Option.getOrElse(judgeModel, () => "configured-general"), formula: "eligibility uses accepted complete output, design-system compliance, information architecture and relevance; latency confidence is browser first meaningful UI <=5s; finalist selection = .70*deterministic + .30*fixed-judge quality", tasks, candidates: final }
   yield* persist(output, report)
   console.log("\nrank  model/protocol                                   effort  success  <=5s   first-p50 first-p95 done-p95 DS    IA    rel   cons  judge  score")
   final.forEach((entry, index) => console.log(`${String(index + 1).padStart(4)}  ${`${entry.candidate.model}/${entry.candidate.protocol}`.padEnd(48)} ${entry.candidate.effort.padEnd(6)}  ${String(entry.refinementSuccesses).padStart(2)}/${String(entry.trials.length).padEnd(2)}    ${String(entry.withinFiveSeconds).padStart(2)}/${String(entry.trials.length).padEnd(2)}  ${String(entry.p50FirstVisibleMs).padStart(9)} ${String(entry.p95FirstVisibleMs).padStart(9)} ${String(entry.p95EnrichmentMs).padStart(8)} ${entry.meanDesignSystemScore.toFixed(2)}  ${entry.meanInformationArchitectureScore.toFixed(2)}  ${entry.meanRelevance.toFixed(2)}  ${entry.repeatConsistency.toFixed(2)}  ${(entry.judgeScore?.toFixed(2) ?? "-").padStart(5)}  ${entry.selectionScore.toFixed(3)}`))

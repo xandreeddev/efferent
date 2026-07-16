@@ -31,7 +31,7 @@ describe("configured model catalog", () => {
       .toBe("OpenAI subscription · gpt-5.6-luna")
     expect(reasoningEffortsFor("openai:gpt-5.6-luna")).toEqual(["low", "medium", "high"])
     expect(reasoningEffortsFor("openai-codex:gpt-5.6-luna")).toEqual([
-      "low", "medium", "high", "xhigh", "max",
+      "none", "low", "medium", "high", "xhigh", "max",
     ])
     expect(reasoningEffortsFor("opencode:glm-5.2")).toEqual([])
   })

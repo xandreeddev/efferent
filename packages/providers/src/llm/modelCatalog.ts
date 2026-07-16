@@ -55,12 +55,14 @@ export const configuredModelCatalog = (
     })),
   )
 
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max"
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max"
 
-/** The reasoning controls accepted by each routed model. */
+/** The reasoning controls accepted by each routed model. `none` on the
+ * gpt-5.6 subscription dialect is live-probed (2026-07-16: accepted,
+ * reasoning_tokens 0; `minimal` rejected). */
 export const reasoningEffortsFor = (selection: string): ReadonlyArray<ReasoningEffort> => {
   if (/^openai-codex:gpt-5\.6-(luna|sol|terra)$/.test(selection)) {
-    return ["low", "medium", "high", "xhigh", "max"]
+    return ["none", "low", "medium", "high", "xhigh", "max"]
   }
   if (/^openai-codex:gpt-5/.test(selection)) {
     return ["low", "medium", "high", "xhigh"]
