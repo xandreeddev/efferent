@@ -271,6 +271,24 @@ describe("the structured UI-agent contract", () => {
     ], host)).toContain("block drive-by (prose) is not declared by the page manifest")
   })
 
+  test("re-opening a page merges: manifest replaced, accepted blocks upserted, never wiped", () => {
+    const manifest = { ...landingReference.page, id: "merge-page" }
+    const hero = { kind: "hero" as const, id: "hero", title: "Early", lede: "First paint" }
+    const heroFull = { kind: "hero" as const, id: "hero", title: "Settled", lede: "Authoritative" }
+    const proof = { kind: "stats" as const, id: "proof", items: [{ label: "signals", value: "18k" }] }
+    const pages = foldPageEvents([
+      // Early streaming admission opens with ONE block…
+      { type: "page_opened", page: manifest, blocks: [hero], at: 1 },
+      // …the composer adds progress…
+      { type: "blocks_upserted", pageId: "merge-page", blocks: [proof], at: 2 },
+      // …and the settled (or late abandoned) start re-opens: hero updated,
+      // composer's proof block SURVIVES.
+      { type: "page_opened", page: manifest, blocks: [heroFull], at: 3 },
+    ])
+    expect(pages).toHaveLength(1)
+    expect(pages[0]?.blocks).toEqual([heroFull, proof])
+  })
+
   test("profile validation pins models, budgets, prompt versions, schema, and recipes", () => {
     expect(validateUiAgentProfile({
       profile: "streaming-ui-v1", version: "5.0.0", schemaVersion: "2.1.0", recipeSetVersion: "2.0.0",

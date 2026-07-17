@@ -18,9 +18,11 @@ import { Effect, Option, Stream } from "effect"
  */
 
 export interface StreamDelta {
-  readonly channel: "text" | "reasoning"
+  readonly channel: "text" | "reasoning" | "tool-params"
   readonly id: string
   readonly delta: string
+  /** The tool being called — set on `tool-params` deltas only. */
+  readonly toolName?: string
 }
 
 /** Structurally what the loop reads off a `GenerateTextResponse`. */
@@ -95,11 +97,31 @@ export const foldStreamParts = <E, R, R2 = never>(
       const p = part as {
         readonly type?: string
         readonly id?: string
+        readonly name?: string
         readonly delta?: string
         readonly reason?: string
         readonly usage?: unknown
       }
       const type = p.type ?? ""
+      // Tool argument streaming: fan the deltas for incremental admission
+      // AND keep the parts passing through as settled entries (the settled
+      // content is byte-identical to the non-streamed path). The start part
+      // carries the tool name; deltas share the call id.
+      if (type === "tool-params-start" || type === "tool-params-delta") {
+        const id = p.id ?? "tool-params-1"
+        const fan = onDelta({
+          channel: "tool-params",
+          id,
+          delta: type === "tool-params-delta" ? p.delta ?? "" : "",
+          ...(type === "tool-params-start" && p.name !== undefined ? { toolName: p.name } : {}),
+        })
+        return fan.pipe(
+          Effect.as({
+            ...state,
+            entries: [...state.entries, { kind: "part", part } as Entry],
+          }),
+        )
+      }
       const channel = CHANNEL_BY_TYPE[type]
       if (channel !== undefined) {
         const id = p.id ?? `${channel}-1`

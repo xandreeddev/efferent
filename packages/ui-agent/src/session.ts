@@ -3,6 +3,7 @@ import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
 import { ConversationStore, makeSession, runAgent, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/engine"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
+import type { UiBlock } from "./domain/ui-page.entity.js"
 import { UiAgentExecutionProfile, UiAgentModels } from "./ports/ui-agent-runtime.port.js"
 import { UiHost } from "./ports/ui-host.port.js"
 import { UiPageStore } from "./ports/ui-page-store.port.js"
@@ -16,6 +17,8 @@ import { admitComponent, retrieveComponents, componentPromptLine } from "./domai
 import { CORE_UI_COMPONENTS } from "./domain/core-components.functions.js"
 import { decodeUiProtocolChunk, emptyUiProtocolDecoderState } from "./domain/ui-generation-protocol.entity.functions.js"
 import type { UiProtocolRecord } from "./domain/ui-generation-protocol.entity.js"
+import { extractEarlyPatch, extractEarlyStart } from "./domain/ui-early-admission.functions.js"
+import type { EarlyStart } from "./domain/ui-early-admission.functions.js"
 
 /**
  * Stage-boundary telemetry: wall-clock stamps for the turn's server receive
@@ -87,6 +90,14 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         }
         const protocol = profile.protocol ?? "native-tools"
         const decoder = yield* Ref.make(emptyUiProtocolDecoderState())
+        // Streaming admission (native-tools): per tool-call argument buffers.
+        // start_ui opens the page from its argument prefix AT MOST once
+        // (`started`); patch_ui upserts each block the moment its own JSON
+        // completes (`admittedBlocks` counts how many already painted). The
+        // settled call remains the authority: its re-open MERGES via the
+        // page fold, its full patch is an idempotent upsert, and ONLY it may
+        // declare complete.
+        const toolParams = yield* Ref.make<ReadonlyMap<string, { readonly toolName: string; readonly buffer: string; readonly started: boolean; readonly admittedBlocks: number }>>(new Map())
         const rejectedRecords = yield* Ref.make<ReadonlyArray<{ readonly record: UiProtocolRecord; readonly finding: string }>>([])
         const handlers = makeUiAgentHandlers(args.conversationId, pageStore, host, publish, catalog, themes)
         const applyRecord = (record: UiProtocolRecord): Effect.Effect<void> => Effect.gen(function* () {
@@ -118,8 +129,61 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           Effect.flatMap((decoded) => Effect.forEach(decoded.findings, (finding) => Effect.logWarning(`UI ${protocol} record rejected: ${finding}`), { discard: true }).pipe(Effect.as(decoded.records))),
           Effect.flatMap((records) => Effect.forEach(records, applyRecord, { concurrency: 1, discard: true })),
         )
+        // Early admissions are failure-SILENT: the settled call owns
+        // rejections (recording an early rejection would hand repair
+        // duplicate findings).
+        const earlyOpen = (early: EarlyStart): Effect.Effect<void> => Effect.gen(function* () {
+          const toolkit = yield* uiAgentToolkit
+          yield* toolkit.handle("start_ui", { page: early.page, criticalBlocks: [early.firstBlock] })
+        }).pipe(
+          Effect.provide(handlers),
+          Effect.asVoid,
+          Effect.catchAll(() => Effect.void),
+        )
+        const earlyUpsert = (pageId: string, blocks: ReadonlyArray<UiBlock>): Effect.Effect<void> => Effect.gen(function* () {
+          const toolkit = yield* uiAgentToolkit
+          yield* toolkit.handle("patch_ui", { pageId, blocks })
+        }).pipe(
+          Effect.provide(handlers),
+          Effect.asVoid,
+          Effect.catchAll(() => Effect.void),
+        )
+        const trackToolParams = (event: { readonly id: string; readonly delta: string; readonly toolName?: string }): Effect.Effect<void> =>
+          protocol !== "native-tools" ? Effect.void : Ref.modify(toolParams, (map) => {
+            const existing = map.get(event.id) ?? { toolName: event.toolName ?? "", buffer: "", started: false, admittedBlocks: 0 }
+            const entry = {
+              toolName: existing.toolName === "" ? event.toolName ?? "" : existing.toolName,
+              buffer: existing.buffer + event.delta,
+              started: existing.started,
+              admittedBlocks: existing.admittedBlocks,
+            }
+            return [entry, new Map(map).set(event.id, entry)] as const
+          }).pipe(
+            Effect.flatMap((entry) => {
+              if (entry.toolName === "start_ui" && !entry.started && entry.buffer.includes('"criticalBlocks"')) {
+                return Option.match(extractEarlyStart(entry.buffer), {
+                  onNone: () => Effect.void,
+                  onSome: (early) => Ref.update(toolParams, (map) => new Map(map).set(event.id, { ...entry, started: true })).pipe(
+                    Effect.zipRight(earlyOpen(early)),
+                  ),
+                })
+              }
+              if (entry.toolName === "patch_ui" && entry.buffer.includes('"blocks"')) {
+                return Option.match(extractEarlyPatch(entry.buffer), {
+                  onNone: () => Effect.void,
+                  onSome: (patch) => patch.blocks.length <= entry.admittedBlocks
+                    ? Effect.void
+                    : Ref.update(toolParams, (map) => new Map(map).set(event.id, { ...entry, admittedBlocks: patch.blocks.length })).pipe(
+                      Effect.zipRight(earlyUpsert(patch.pageId, patch.blocks.slice(entry.admittedBlocks))),
+                    ),
+                })
+              }
+              return Effect.void
+            }),
+          )
         const stagePublish = (event: LoopEvent): Effect.Effect<void> => {
           if (event.type === "turn_start" || event.type === "agent_end") return Effect.void
+          if (event.type === "assistant_delta" && event.channel === "tool-params") return trackToolParams(event).pipe(Effect.zipRight(publish(event)))
           if (event.type === "assistant_delta" && event.channel === "text") return ingestProtocol(event.delta, true).pipe(Effect.zipRight(publish(event)))
           if (event.type === "assistant_message" && protocol !== "native-tools") return Ref.get(decoder).pipe(
             Effect.flatMap((state) => ingestProtocol(state.sawDelta ? "\n" : `${event.text}\n`, false)),

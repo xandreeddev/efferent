@@ -76,6 +76,7 @@ interface Trial {
   readonly firstVisibleMs: number
   readonly browserFirstVisibleMs: number
   readonly firstContentDeltaMs: number
+  readonly firstToolParamsMs: number | null
   readonly initialCompleteMs: number
   readonly firstRefinementMs: number | null
   readonly enrichmentMs: number
@@ -226,6 +227,7 @@ interface DriveEvidence {
   readonly timeline: ReadonlyArray<TimelineEvent>
   readonly browserFirstVisibleMs: number
   readonly firstContentDeltaMs: number
+  readonly firstToolParamsMs: number | null
   readonly componentCount: number
   readonly pendingComponents: number
   readonly desktopOverflow: number
@@ -242,6 +244,11 @@ const waitForAgentEnd = (session: CanvasSession, timeoutMs: number) => session.s
 
 const recordFirstDelta = (session: CanvasSession, startedAt: number, target: Ref.Ref<number | null>) => session.transient.pipe(
   Stream.filter((event) => event.type === "assistant_delta" && event.channel === "text" && event.delta.length > 0),
+  Stream.runForEach(() => Ref.update(target, (current) => current ?? Date.now() - startedAt)),
+)
+
+const recordFirstToolParams = (session: CanvasSession, startedAt: number, target: Ref.Ref<number | null>) => session.transient.pipe(
+  Stream.filter((event) => event.type === "assistant_delta" && event.channel === "tool-params"),
   Stream.runForEach(() => Ref.update(target, (current) => current ?? Date.now() - startedAt)),
 )
 
@@ -319,9 +326,11 @@ const driveSession = (
   timeoutMs: number,
 ): Effect.Effect<DriveEvidence, unknown> => Effect.scoped(Effect.gen(function* () {
   const firstDelta = yield* Ref.make<number | null>(null)
+  const firstToolParams = yield* Ref.make<number | null>(null)
   const timeline = yield* Ref.make<ReadonlyArray<TimelineEvent>>([])
   const startedAt = Date.now()
   yield* Effect.forkScoped(recordFirstDelta(session, startedAt, firstDelta))
+  yield* Effect.forkScoped(recordFirstToolParams(session, startedAt, firstToolParams))
   yield* Effect.forkScoped(recordTimeline(session, startedAt, timeline))
   yield* session.send(request)
   yield* waitForAgentEnd(session, timeoutMs)
@@ -330,6 +339,7 @@ const driveSession = (
     startedAt,
     finishedAt: Date.now(),
     timeline: yield* Ref.get(timeline),
+    firstToolParamsMs: yield* Ref.get(firstToolParams),
     browserFirstVisibleMs: Number.POSITIVE_INFINITY,
     firstContentDeltaMs: firstContentDeltaMs ?? Number.POSITIVE_INFINITY,
     componentCount: 0,
@@ -376,9 +386,11 @@ const driveBrowser = (
     catch: (error) => error,
   })
   const firstDelta = yield* Ref.make<number | null>(null)
+  const firstToolParams = yield* Ref.make<number | null>(null)
   const timeline = yield* Ref.make<ReadonlyArray<TimelineEvent>>([])
   const startedAt = Date.now()
   yield* Effect.forkScoped(recordFirstDelta(session, startedAt, firstDelta))
+  yield* Effect.forkScoped(recordFirstToolParams(session, startedAt, firstToolParams))
   yield* Effect.forkScoped(recordTimeline(session, startedAt, timeline))
   yield* Effect.tryPromise({
     try: async () => {
@@ -420,6 +432,7 @@ const driveBrowser = (
     startedAt,
     finishedAt,
     timeline: yield* Ref.get(timeline),
+    firstToolParamsMs: yield* Ref.get(firstToolParams),
     browserFirstVisibleMs: desktop.firstVisibleAt === 0 ? Number.POSITIVE_INFINITY : desktop.firstVisibleAt - startedAt,
     firstContentDeltaMs: firstContentDeltaMs ?? Number.POSITIVE_INFINITY,
     componentCount: desktop.componentCount,
@@ -483,17 +496,35 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
         return yield* driveBrowser(session, server.url, task.prompt, budgets.trialTimeoutMs, evidenceDir, evidenceName(candidate, task, sample))
       }))
     const sessionState = yield* session.state
-    // Labeled + one retry: the post-drive evidence reads must not void a
-    // trial whose page already painted over one transient store error
-    // (2026-07-16: painted trials died here with an unattributed
-    // "disk I/O error" — task #118).
-    const evidenceRead = <A>(label: string, read: Effect.Effect<A, unknown>): Effect.Effect<A> => read.pipe(
+    // Labeled + one retry + a FRESH-HANDLE fallback: the post-drive evidence
+    // reads must not void a trial whose page already painted (2026-07-16/17:
+    // painted trials died here on a persistent "disk I/O error" from the
+    // catalog handle — task #118). The fallback rebuilds the adapter on the
+    // same file; whether it succeeds tells us handle-state vs file-state
+    // corruption.
+    const evidenceRead = <A>(label: string, read: Effect.Effect<A, unknown>, fresh: Effect.Effect<A, unknown>): Effect.Effect<A> => read.pipe(
       Effect.retry({ times: 1, schedule: Schedule.spaced("500 millis") }),
-      Effect.mapError((error) => new Error(`${label}: ${String(error)}`)),
+      Effect.orElse(() => Effect.logWarning(`${label}: handle read failed twice — retrying on a FRESH handle (#118 diagnostic)`).pipe(
+        Effect.zipRight(fresh),
+        Effect.tap(() => Effect.logWarning(`${label}: fresh-handle recovery SUCCEEDED (handle-state corruption)`)),
+      )),
+      Effect.mapError((error) => new Error(`${label} (fresh handle too — file-state corruption): ${String(error)}`)),
       Effect.orDie,
     )
-    const events = yield* evidenceRead("trial pages.list", pages.list(conversationId))
-    const definitions = yield* evidenceRead("trial catalog.list", componentCatalog.list)
+    const events = yield* evidenceRead(
+      "trial pages.list",
+      pages.list(conversationId),
+      Effect.scoped(Layer.build(SqliteUiPageStoreLive(db)).pipe(
+        Effect.flatMap((fresh) => Context.get(fresh, UiPageStore).list(conversationId)),
+      )),
+    )
+    const definitions = yield* evidenceRead(
+      "trial catalog.list",
+      componentCatalog.list,
+      Effect.scoped(Layer.build(SqliteUiComponentCatalogLive(db)).pipe(
+        Effect.flatMap((fresh) => Context.get(fresh, UiComponentCatalog).list),
+      )),
+    )
     const page = foldPageEvents(events).at(-1)
     const opened = events.find((event) => event.type === "page_opened")
     const completed = events.find((event) => event.type === "page_completed")
@@ -517,6 +548,7 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
       firstVisibleMs: opened === undefined ? Number.POSITIVE_INFINITY : opened.at - drive.startedAt,
       browserFirstVisibleMs: drive.browserFirstVisibleMs,
       firstContentDeltaMs: drive.firstContentDeltaMs,
+      firstToolParamsMs: drive.firstToolParamsMs,
       initialCompleteMs: completed === undefined ? Number.POSITIVE_INFINITY : completed.at - drive.startedAt,
       firstRefinementMs: refinements[0] === undefined ? null : refinements[0].at - drive.startedAt,
       enrichmentMs: drive.finishedAt - drive.startedAt,
@@ -552,6 +584,7 @@ const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, err
     firstVisibleMs: Number.POSITIVE_INFINITY,
     browserFirstVisibleMs: Number.POSITIVE_INFINITY,
     firstContentDeltaMs: Number.POSITIVE_INFINITY,
+    firstToolParamsMs: null,
     initialCompleteMs: Number.POSITIVE_INFINITY,
     firstRefinementMs: null,
     enrichmentMs: Number.POSITIVE_INFINITY,

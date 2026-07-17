@@ -91,7 +91,16 @@ exactly these host-derivable fields), so it revives them for the fallback
 fleet for free. Quality risk: models may rely on writing slots to plan IA —
 gate on the matrix at k≥3.
 
-### Phase 2 — streaming admission for native-tools (perceived paint ≈ first-token + first node)
+### Phase 2 — streaming admission for native-tools (SHIPPED 2026-07-17 — docs/evals/ui-phase2-campaign-2026-07-17.md)
+Landed as the `tool-params` delta channel (streamFold fan-out, settled turn
+byte-identical), the session's incremental admitter (start_ui opens on
+page+first-node prefix; patch_ui paints each block as its JSON completes;
+complete never inferred), and the merge-on-reopen page fold. Measured at
+the pinned config: paint p50 7.1s, first content patch p50 ~18-20s (from
+30-51s), complete p50 31.2s, quality 1.00 on successes. NOTE the phase
+interaction: Phase 1's one-node planner made the start_ui early-open gain
+small (~100-150ms) — the real streaming win moved to the composer's
+patches, delivered here. The original plan text follows.
 If the argument-delta probe passes: fan `tool-params-*` in `streamFold.ts`
 (new delta channel), tolerant partial-JSON decode in the session, and an
 incremental admitter that opens the page from a manifest skeleton + first

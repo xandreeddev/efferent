@@ -29,9 +29,15 @@ export type LoopEvent =
   | {
       readonly type: "assistant_delta"
       readonly turnIndex: number
-      readonly channel: "text" | "reasoning"
+      /** `tool-params` deltas carry the tool call's streamed ARGUMENT text —
+       *  they exist for incremental admission (a session may act on a
+       *  complete argument prefix before the call settles) and are noise to
+       *  plain text renderers, which should drop the channel. */
+      readonly channel: "text" | "reasoning" | "tool-params"
       readonly id: string
       readonly delta: string
+      /** The tool being called — present on `tool-params` deltas only. */
+      readonly toolName?: string
     }
   | {
       readonly type: "assistant_message"

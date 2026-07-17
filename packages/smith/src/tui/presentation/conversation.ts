@@ -244,7 +244,10 @@ export const reduceConversationIn = (
         // A new turn seals any orphaned live blocks from the previous one
         // (a mid-stream malformed keeps its partial as story).
         Match.when({ type: "turn_start" }, () => sealStreaming(state)),
-        Match.when({ type: "assistant_delta" }, (d) => upsertDelta(state, d)),
+        // tool-params deltas are streamed tool ARGUMENTS (incremental
+        // admission plumbing) — raw JSON, never conversation copy.
+        Match.when({ type: "assistant_delta" }, (d) =>
+          d.channel === "tool-params" ? state : upsertDelta(state, { ...d, channel: d.channel })),
         Match.when({ type: "tool_start" }, (t) =>
           push(state, {
             kind: "tool",
