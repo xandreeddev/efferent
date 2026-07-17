@@ -6,7 +6,9 @@ import { validateThemeIntent } from "./design-system.entity.functions.js"
 
 const SAFE_ID = /^[a-z][a-z0-9-]{0,63}$/
 
-const expectedRecipe = (archetype: PageManifest["archetype"]): PageManifest["recipe"]["id"] =>
+/** Total: every archetype has exactly one registered recipe, which is why
+ * the wire manifest may omit it — admission derives it from here. */
+export const expectedRecipe = (archetype: PageManifest["archetype"]): PageManifest["recipe"]["id"] =>
   archetype === "landing" ? "landing.hero-grid" : archetype === "application" ? "app.workspace" : "doc.architecture"
 
 const recordArray = (value: unknown): ReadonlyArray<Readonly<Record<string, unknown>>> => Array.isArray(value)
@@ -67,7 +69,6 @@ export const validateBlocks = (
   host: UiHostService,
   components: ReadonlyMap<string, UiComponentDefinition> = new Map(),
 ): ReadonlyArray<string> => {
-  const slots = new Map(manifest.slots.map((slot) => [slot.id, slot.blockKind]))
   return [
     ...(new Set(blocks.map((block) => block.id)).size === blocks.length ? [] : ["block ids must be unique within a patch"]),
     ...blocks.flatMap((block) => [
@@ -79,7 +80,17 @@ export const validateBlocks = (
             ? []
             : [`component ${block.id} (${block.component}) conflicts with its manifest slot`]
         })()
-        : slots.get(block.id) === block.kind ? [] : [`block ${block.id} (${block.kind}) is not declared by the page manifest`]),
+        : (() => {
+          // A compact slot declaration (defaulted blockKind "component", no
+          // pinned component id) binds only the ROOT ID — the concrete kind
+          // resolves when the block arrives. An explicitly declared kind or
+          // pinned component still binds.
+          const slot = manifest.slots.find((candidate) => candidate.id === block.id)
+          if (slot === undefined) return [`block ${block.id} (${block.kind}) is not declared by the page manifest`]
+          return slot.blockKind === block.kind || (slot.blockKind === "component" && slot.component === undefined)
+            ? []
+            : [`block ${block.id} (${block.kind}) conflicts with its declared ${slot.blockKind} slot`]
+        })()),
       ...(block.kind !== "component" ? [] : (() => {
         const definition = components.get(block.component)
         if (definition === undefined) return [`component ${block.component} is not registered`]

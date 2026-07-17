@@ -1,5 +1,5 @@
 import { LanguageModel, Toolkit } from "@effect/ai"
-import { Duration, Effect, Fiber, Option, Ref } from "effect"
+import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
 import { ConversationStore, makeSession, runAgent, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/engine"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
@@ -140,7 +140,20 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         }
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
 
-        const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string) => {
+        // THE STAGE GOAL declares victory deterministically: a stage settles
+        // the moment its observable outcome exists in the page store, instead
+        // of waiting for the model to say "done" — the post-goal continuation
+        // turn otherwise parks on provider empties until the stage deadline
+        // (measured 40-50s per stage in the 2026-07-16 campaign). The grace
+        // lets the in-flight turn settle and persist before the interrupt.
+        const goalReached = (reached: () => Effect.Effect<boolean>): Effect.Effect<void> =>
+          Effect.suspend(reached).pipe(
+            Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("250 millis") }),
+            Effect.zipRight(Effect.sleep("2 seconds")),
+            Effect.asVoid,
+          )
+
+        const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string, goal?: Effect.Effect<void>) => {
           const stageProfile = profile[stage]
           const configured = protocol === "native-tools"
             ? runAgent(
@@ -155,18 +168,32 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
               userPrompt,
               { onEvent: stagePublish },
             )
+          // Disconnect UNDER the deadline: `Effect.timeout` declares victory
+          // by interrupting the model call, and a provider continuation that
+          // hangs with zero events resists interruption — a plain timeout
+          // then waits on the wedge instead of ending the stage (the
+          // cappedTrial physics, one level down). The abandoned call leaks
+          // in the background; every stage boundary stays punctual.
+          const bounded = configured.pipe(
+            Effect.provideService(LanguageModel.LanguageModel, models[stage]),
+            Effect.provide(handlers),
+            Effect.disconnect,
+            Effect.timeout(stageDeadline(stage)),
+            Effect.catchAll((error) => publishFailure(stage, error)),
+          )
+          // The loser is DISCONNECTED: a goal victory must never wait on the
+          // model call's interruption — a hung provider continuation resists
+          // it (the 2026-07-16 campaigns: pages COMPLETED, then the turn
+          // wedged to the trial cap). The abandoned call self-terminates on
+          // its own deadline in the background; late events it publishes
+          // after the goal are inert.
           return stamp(stage, "started").pipe(
-            Effect.zipRight(configured.pipe(
-              Effect.provideService(LanguageModel.LanguageModel, models[stage]),
-              Effect.timeout(stageDeadline(stage)),
-              Effect.catchAll((error) => publishFailure(stage, error)),
-              Effect.provide(handlers),
-            )),
+            Effect.zipRight(goal === undefined ? bounded : Effect.race(Effect.disconnect(bounded), goal)),
             Effect.ensuring(stamp(stage, "settled")),
           )
         }
 
-        const repair = (stage: "planner" | "composer", request: string, acceptedPage: unknown) => Effect.gen(function* () {
+        const repair = (stage: "planner" | "composer", request: string, acceptedPage: unknown, goal: Effect.Effect<void>) => Effect.gen(function* () {
           if (profile.repair.maxAttempts < 1) return
           const rejected = yield* Ref.get(rejectedRecords)
           yield* Ref.set(rejectedRecords, [])
@@ -177,6 +204,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             "repair",
             uiRepairPrompt(promptContract, protocol, stage === "planner"),
             `[repair-stage]\n${stage}\n\n[request]\n${request}\n\n[accepted-page]\n${acceptedPage === undefined ? "none" : JSON.stringify(acceptedPage)}\n\n[rejected-records]\n${JSON.stringify(rejected.map((entry) => entry.record))}\n\n[semantic-findings]\n${findings.join("\n")}`,
+            goal,
           )
         })
 
@@ -190,18 +218,23 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           // progress" forever (live-caught via the scripted twin).
           const initialCount = initialEvents.length
           const priorPages = foldPageEvents(initialEvents).length
+          const pageOpenedGoal = goalReached(() =>
+            pageStore.list(args.conversationId).pipe(Effect.orDie, Effect.map((events) => events.length > initialCount)))
+          const pageCompleteGoal = goalReached(() =>
+            pageStore.list(args.conversationId).pipe(Effect.orDie, Effect.map((events) => foldPageEvents(events).at(-1)?.complete === true)))
           yield* runStage(
             "planner",
             uiPlannerPrompt(promptContract, protocol),
             priorPages === 0
               ? text
               : `${text}\n\n(Open a NEW page for this request with start_ui — a fresh kebab-case page id, never one already in use.)`,
+            pageOpenedGoal,
           )
 
           const plannedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           const plannedPage = plannedEvents.length > initialCount ? foldPageEvents(plannedEvents).at(-1) : undefined
           const page = plannedPage === undefined
-            ? yield* repair("planner", text, undefined).pipe(
+            ? yield* repair("planner", text, undefined, pageOpenedGoal).pipe(
               Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
               Effect.map((repairedEvents) => repairedEvents.length > initialCount ? foldPageEvents(repairedEvents).at(-1) : undefined),
             )
@@ -222,13 +255,14 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             "composer",
             uiComposerPrompt(promptContract, protocol),
             `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nComplete the LLM-generated page with specific, useful content in one patch_ui call.`,
+            pageCompleteGoal,
           )
           const composedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           const composedPage = foldPageEvents(composedEvents).at(-1)
           const acceptedBeforeRepair = composedEvents.length > beforeComposition && composedPage?.complete === true
           const accepted = acceptedBeforeRepair
             ? true
-            : yield* repair("composer", text, composedPage).pipe(
+            : yield* repair("composer", text, composedPage, pageCompleteGoal).pipe(
               Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
               Effect.map((repairedEvents) => repairedEvents.length > beforeComposition && foldPageEvents(repairedEvents).at(-1)?.complete === true),
             )

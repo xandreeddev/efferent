@@ -46,7 +46,7 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
         ); CREATE INDEX IF NOT EXISTS ui_component_usage_by_component ON ui_component_usage(component_id, rendered_at);`)
         return database
       },
-      catch: (error) => String(error),
+      catch: (error) => `ui-component-catalog: ${String(error)}`,
     })
     yield* Effect.addFinalizer(() => Effect.try({
       try: () => db.close(),
@@ -57,7 +57,7 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
 
     const workspace = Effect.try({
       try: () => decodeRows(db.query("SELECT definition FROM ui_components WHERE status != 'deprecated' ORDER BY id").all() as ReadonlyArray<{ readonly definition: string }>),
-      catch: (error) => String(error),
+      catch: (error) => `ui-component-catalog: ${String(error)}`,
     })
     const list = workspace.pipe(Effect.map((definitions) => [...CORE_UI_COMPONENTS.map(normalizeComponentDefinition), ...definitions]))
 
@@ -78,17 +78,17 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
             JSON.stringify(admission.definition),
             admission.definition.createdAt,
           ),
-          catch: (error) => String(error),
+          catch: (error) => `ui-component-catalog: ${String(error)}`,
         })
         return admission
       }),
       recordUsage: (usage: UiComponentUsageType) => Effect.try({
         try: () => void db.query("INSERT INTO ui_component_usage(component_id, page_id, intent, rendered_at) VALUES (?1, ?2, ?3, ?4)").run(usage.componentId, usage.pageId, usage.intent, usage.renderedAt),
-        catch: (error) => String(error),
+        catch: (error) => `ui-component-catalog: ${String(error)}`,
       }),
       usages: (componentId: string) => Effect.try({
         try: () => db.query("SELECT component_id AS componentId, page_id AS pageId, intent, rendered_at AS renderedAt FROM ui_component_usage WHERE component_id = ? ORDER BY rendered_at").all(componentId) as ReadonlyArray<UiComponentUsageType>,
-        catch: (error) => String(error),
+        catch: (error) => `ui-component-catalog: ${String(error)}`,
       }),
     }
   }),

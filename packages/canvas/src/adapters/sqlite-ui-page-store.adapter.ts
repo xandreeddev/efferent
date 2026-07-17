@@ -26,7 +26,7 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
         ); CREATE INDEX IF NOT EXISTS ui_page_events_by_page ON ui_page_events(conversation_id, page_id, position);`)
         return database
       },
-      catch: (error) => String(error),
+      catch: (error) => `ui-page-store: ${String(error)}`,
     })
     yield* Effect.addFinalizer(() => Effect.try({
       try: () => db.close(),
@@ -46,11 +46,11 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
             event.at,
           )
         },
-        catch: (error) => String(error),
+        catch: (error) => `ui-page-store: ${String(error)}`,
       }),
       list: (conversationId: ConversationId) => Effect.try({
         try: () => db.query("SELECT event FROM ui_page_events WHERE conversation_id = ? ORDER BY position").all(conversationId) as ReadonlyArray<{ readonly event: string }>,
-        catch: (error) => String(error),
+        catch: (error) => `ui-page-store: ${String(error)}`,
       }).pipe(
         Effect.flatMap((rows) => Effect.forEach(rows, (row) => Either.match(decodeEvent(row.event), {
           onLeft: (issue) => Effect.logWarning(`skipping invalid UI event: ${String(issue)}`).pipe(Effect.as([])),
