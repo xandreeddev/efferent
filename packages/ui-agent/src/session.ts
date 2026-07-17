@@ -3,7 +3,7 @@ import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
 import { ConversationStore, makeSession, runAgent, toAgentFailure, toolResultFailure } from "@xandreed/engine"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/engine"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
-import type { UiBlock } from "./domain/ui-page.entity.js"
+import type { UiBlock, UiPage } from "./domain/ui-page.entity.js"
 import { UiAgentExecutionProfile, UiAgentModels } from "./ports/ui-agent-runtime.port.js"
 import { UiHost } from "./ports/ui-host.port.js"
 import { UiPageStore } from "./ports/ui-page-store.port.js"
@@ -14,6 +14,7 @@ import type { UiThemeStoreService } from "./ports/ui-theme-store.port.js"
 import { makeUiAgentHandlers, uiAgentToolkit } from "./toolkit.js"
 import { uiComposerPrompt, uiPlannerPrompt, uiRepairPrompt } from "./prompts.js"
 import { admitComponent, retrieveComponents, componentPromptLine } from "./domain/ui-component.entity.functions.js"
+import { validatePageCompleteness } from "./domain/ui-quality.functions.js"
 import { CORE_UI_COMPONENTS } from "./domain/core-components.functions.js"
 import { decodeUiProtocolChunk, emptyUiProtocolDecoderState } from "./domain/ui-generation-protocol.entity.functions.js"
 import type { UiProtocolRecord } from "./domain/ui-generation-protocol.entity.js"
@@ -46,6 +47,12 @@ const defaultCatalog: UiComponentCatalogService = {
 }
 
 const defaultThemes: UiThemeStoreService = { list: Effect.succeed([]), put: () => Effect.void }
+
+/** FNV-1a over the shared prompt contract: one server-side prefill-cache
+ * lane per host contract, shared by every stage, conversation, and worker
+ * (probe-verified safe under concurrency on the codex route). */
+const contractCacheKey = (contract: string): string =>
+  `ui-contract-${[...contract].reduce((hash, ch) => Math.imul(hash ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261 >>> 0).toString(16)}`
 
 export const makeUiAgentSession = (args: { readonly conversationId: ConversationId }): Effect.Effect<UiAgentSession, never, UiAgentRunServices> =>
   Effect.gen(function* () {
@@ -217,40 +224,49 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             Effect.asVoid,
           )
 
-        const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string, goal?: Effect.Effect<void>) => {
+        // One shared prefill-cache lane for every stage and worker of this
+        // host contract (the role sentence sits at the END of each prompt,
+        // so the contract is a byte-identical prefix across all of them).
+        const promptCacheKey = contractCacheKey(uiPlannerPrompt(promptContract, protocol))
+        // One bounded model call, stamp-free — the building block for the
+        // stamped single-stage wrapper AND the composer fleet. Disconnect
+        // UNDER the deadline: `Effect.timeout` declares victory by
+        // interrupting the model call, and a provider continuation that
+        // hangs with zero events resists interruption — a plain timeout
+        // then waits on the wedge instead of ending the stage (the
+        // cappedTrial physics, one level down). The abandoned call leaks in
+        // the background; every stage boundary stays punctual.
+        const stageCall = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string, conversation: ConversationId) => {
           const stageProfile = profile[stage]
           const configured = protocol === "native-tools"
             ? runAgent(
-              { system, toolkit: uiAgentToolkit, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens } },
-              attemptConversationId,
+              { system, toolkit: uiAgentToolkit, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens }, promptCacheKey },
+              conversation,
               userPrompt,
               { onEvent: stagePublish },
             )
             : runAgent(
-              { system, toolkit: Toolkit.empty, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens } },
-              attemptConversationId,
+              { system, toolkit: Toolkit.empty, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens }, promptCacheKey },
+              conversation,
               userPrompt,
               { onEvent: stagePublish },
             )
-          // Disconnect UNDER the deadline: `Effect.timeout` declares victory
-          // by interrupting the model call, and a provider continuation that
-          // hangs with zero events resists interruption — a plain timeout
-          // then waits on the wedge instead of ending the stage (the
-          // cappedTrial physics, one level down). The abandoned call leaks
-          // in the background; every stage boundary stays punctual.
-          const bounded = configured.pipe(
+          return configured.pipe(
             Effect.provideService(LanguageModel.LanguageModel, models[stage]),
             Effect.provide(handlers),
             Effect.disconnect,
             Effect.timeout(stageDeadline(stage)),
             Effect.catchAll((error) => publishFailure(stage, error)),
           )
-          // The loser is DISCONNECTED: a goal victory must never wait on the
-          // model call's interruption — a hung provider continuation resists
-          // it (the 2026-07-16 campaigns: pages COMPLETED, then the turn
-          // wedged to the trial cap). The abandoned call self-terminates on
-          // its own deadline in the background; late events it publishes
-          // after the goal are inert.
+        }
+        // The loser is DISCONNECTED: a goal victory must never wait on the
+        // model call's interruption — a hung provider continuation resists
+        // it (the 2026-07-16 campaigns: pages COMPLETED, then the turn
+        // wedged to the trial cap). The abandoned call self-terminates on
+        // its own deadline in the background; late events it publishes
+        // after the goal are inert.
+        const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string, goal?: Effect.Effect<void>) => {
+          const bounded = stageCall(stage, system, userPrompt, attemptConversationId)
           return stamp(stage, "started").pipe(
             Effect.zipRight(goal === undefined ? bounded : Effect.race(Effect.disconnect(bounded), goal)),
             Effect.ensuring(stamp(stage, "settled")),
@@ -270,6 +286,61 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             `[repair-stage]\n${stage}\n\n[request]\n${request}\n\n[accepted-page]\n${acceptedPage === undefined ? "none" : JSON.stringify(acceptedPage)}\n\n[rejected-records]\n${JSON.stringify(rejected.map((entry) => entry.record))}\n\n[semantic-findings]\n${findings.join("\n")}`,
             goal,
           )
+        })
+
+        // The barrier gate: fleet workers never declare complete — once every
+        // required slot has content, the HARNESS declares it, and the handler
+        // still validates completeness for real. Failure-silent: an
+        // incomplete page falls through to the normal repair path.
+        const declareComplete = (pageId: string): Effect.Effect<void> => Effect.gen(function* () {
+          const toolkit = yield* uiAgentToolkit
+          yield* toolkit.handle("patch_ui", { pageId, blocks: [], complete: true })
+        }).pipe(Effect.provide(handlers), Effect.asVoid, Effect.catchAll(() => Effect.void))
+
+        /** Phase 3: the composer fans out over DISJOINT slot ranges, one
+         * child conversation per worker (interleaved appends on a shared
+         * conversation would corrupt alternation). Block upsert-by-id is
+         * idempotent and the ranges are disjoint, so worker writes compose;
+         * ONE composer stage interval brackets the whole fleet. */
+        const runComposerFleet = (page: UiPage, workers: number, remaining: ReadonlyArray<string>, goal: Effect.Effect<void>) => Effect.gen(function* () {
+          const ranges = remaining.reduce<ReadonlyArray<ReadonlyArray<string>>>(
+            (acc, id, index) => acc.map((range, worker) => worker === index % workers ? [...range, id] : range),
+            Array.from({ length: workers }, () => []),
+          )
+          // Each worker's OWN victory condition: all of its assigned slots
+          // have accepted blocks. Without it a finished worker's
+          // continuation turn parks to the stage deadline (the page-complete
+          // goal can never fire for a worker — workers never complete).
+          const workerGoal = (ids: ReadonlyArray<string>) => goalReached(() =>
+            pageStore.list(args.conversationId).pipe(
+              Effect.orDie,
+              Effect.map((events) => {
+                const folded = foldPageEvents(events).find((candidate) => candidate.manifest.id === page.manifest.id)
+                return folded !== undefined && ids.every((id) => folded.blocks.some((block) => block.id === id))
+              }),
+            ))
+          const workerCall = (ids: ReadonlyArray<string>, index: number) => Effect.gen(function* () {
+            const conversation = yield* conversationStore.create(`ui-composer-worker-${index}:${args.conversationId}`).pipe(Effect.orDie)
+            yield* Effect.race(
+              Effect.disconnect(stageCall(
+                "composer",
+                uiComposerPrompt(promptContract, protocol),
+                `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nFill ONLY these slots with specific, useful content: ${ids.join(", ")}. Another worker owns every other slot — do not touch them and do NOT set complete.`,
+                conversation,
+              )),
+              workerGoal(ids),
+            )
+          })
+          const fleet = Effect.all(ranges.filter((range) => range.length > 0).map((ids, index) => workerCall(ids, index)), { concurrency: workers }).pipe(Effect.asVoid)
+          yield* stamp("composer", "started").pipe(
+            Effect.zipRight(Effect.race(Effect.disconnect(fleet), goal)),
+            Effect.ensuring(stamp("composer", "settled")),
+          )
+          const events = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
+          const folded = foldPageEvents(events).find((candidate) => candidate.manifest.id === page.manifest.id)
+          yield* folded !== undefined && !folded.complete && validatePageCompleteness(folded).length === 0
+            ? declareComplete(page.manifest.id)
+            : Effect.void
         })
 
         const attempt = Effect.gen(function* () {
@@ -315,12 +386,16 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           yield* Ref.set(rejectedRecords, [])
           const beforeComposition = plannedEvents.length
           yield* Ref.update(decoder, (state) => ({ ...state, sawDelta: false }))
-          yield* runStage(
-            "composer",
-            uiComposerPrompt(promptContract, protocol),
-            `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nComplete the LLM-generated page with specific, useful content in one patch_ui call.`,
-            pageCompleteGoal,
-          )
+          const composerWorkers = Math.max(1, profile.composer.workers ?? 1)
+          const remaining = page.manifest.slots.filter((slot) => !page.blocks.some((block) => block.id === slot.id)).map((slot) => slot.id)
+          yield* composerWorkers > 1 && remaining.length >= 2
+            ? runComposerFleet(page, Math.min(composerWorkers, remaining.length), remaining, pageCompleteGoal)
+            : runStage(
+              "composer",
+              uiComposerPrompt(promptContract, protocol),
+              `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nComplete the LLM-generated page with specific, useful content in one patch_ui call.`,
+              pageCompleteGoal,
+            )
           const composedEvents = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
           const composedPage = foldPageEvents(composedEvents).at(-1)
           const acceptedBeforeRepair = composedEvents.length > beforeComposition && composedPage?.complete === true

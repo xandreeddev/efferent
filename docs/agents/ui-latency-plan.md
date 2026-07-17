@@ -111,7 +111,13 @@ paint ≈ 1.5s first-token + ~1.8s first node ≈ **~3.3s**, independent of tota
 decode. If the probe fails: fall back to the (Phase-1-fixed) compact-lines
 text protocol, which already has a working per-line decoder.
 
-### Phase 3 — parallel composer fan-out (completion 130s p95 → ~45–60s)
+### Phase 3 — parallel composer fan-out (SHIPPED 2026-07-17 — docs/evals/ui-phase34-campaign-2026-07-17.md)
+Landed as `composer.workers` (pinned 2 in 10.1.0): disjoint slot ranges,
+one child conversation per worker, PER-WORKER deterministic goals (all
+assigned slots filled), harness-declared complete at the barrier, and the
+CANONICAL block-order fold (roots sort into slot order — workers finish out
+of order by design). Measured: complete p50 48.5s → 35.4s, judge 0.46 →
+0.60, quality 1.00 on clean trials. The original plan text follows.
 Blockers mapped: one shared attempt conversation (interleaved appends corrupt
 alternation), page-global `complete:true` (validates the whole fold), and a
 read-modify-write race on the event fold. Enabler: block upsert-by-id is
@@ -120,7 +126,12 @@ disjoint slot ranges, same pageId, single barrier-gated `complete:true`. Cuts
 the serial 2.7k-char-patch chain that currently rides the 55s deadline into
 repair on most trials.
 
-### Phase 4 — prefix caching + grammar pre-warm (shaves prefill, not decode)
+### Phase 4 — prefix caching + grammar pre-warm (SHIPPED 2026-07-17, pre-warm dropped)
+Landed as the suffix-role prompts (v10/v11/v8 — the contract is a
+byte-identical prefix across all stages) and the host-contract-hash
+`promptCacheKey` (engine seam; probe-verified safe under concurrency on the
+shared codex session-id). Grammar pre-warm DROPPED: the pinned route runs
+strict:false — no grammar compiles. The original plan text follows.
 Move the per-stage role sentence to the END of the prompt so the 5,312-char
 shared `contract()` becomes a common cacheable prefix across planner/composer/
 repair (today the differing first sentence kills the prefix at ~40 chars).

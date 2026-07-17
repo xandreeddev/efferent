@@ -10,6 +10,9 @@ export const UiModelStage = Schema.Struct({
   timeoutMs: Schema.Number,
   maxOutputTokens: Schema.Number,
   maxSteps: Schema.Number,
+  /** Parallel workers over disjoint slot ranges (composer only; other
+   * stages ignore it). Absent = 1 = the serial path. */
+  workers: Schema.optional(Schema.Number),
 })
 export type UiModelStage = typeof UiModelStage.Type
 
