@@ -44,6 +44,32 @@ describe("foldStreamParts", () => {
     ])
   })
 
+  test("tool-params parts fan deltas AND pass through settled (streaming admission)", async () => {
+    const { turn, deltas } = await fold([
+      { type: "tool-params-start", id: "c1", name: "start_ui" },
+      { type: "tool-params-delta", id: "c1", delta: '{"page":' },
+      { type: "tool-params-delta", id: "c1", delta: '{"id":"x"}}' },
+      { type: "tool-params-end", id: "c1" },
+      { type: "tool-call", id: "c1", name: "start_ui", params: { page: { id: "x" } } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: 4, outputTokens: 2 } },
+    ])
+    // The settled content is byte-identical to the non-streamed path: the
+    // params parts stay in place, no synthetic chunk appears.
+    expect(turn.content).toEqual([
+      { type: "tool-params-start", id: "c1", name: "start_ui" },
+      { type: "tool-params-delta", id: "c1", delta: '{"page":' },
+      { type: "tool-params-delta", id: "c1", delta: '{"id":"x"}}' },
+      { type: "tool-params-end", id: "c1" },
+      { type: "tool-call", id: "c1", name: "start_ui", params: { page: { id: "x" } } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: 4, outputTokens: 2 } },
+    ])
+    expect(deltas).toEqual([
+      { channel: "tool-params", id: "c1", delta: "", toolName: "start_ui" },
+      { channel: "tool-params", id: "c1", delta: '{"page":' },
+      { channel: "tool-params", id: "c1", delta: '{"id":"x"}}' },
+    ])
+  })
+
   test("a chunk that accumulated nothing is dropped (content-part identity)", async () => {
     const { turn, deltas } = await fold([
       { type: "text-start", id: "t1" },

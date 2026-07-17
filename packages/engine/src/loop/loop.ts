@@ -246,6 +246,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
                 channel: delta.channel,
                 id: delta.id,
                 delta: delta.delta,
+                ...(delta.toolName === undefined ? {} : { toolName: delta.toolName }),
               }),
           ).pipe(
             Effect.map((turn) =>

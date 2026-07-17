@@ -118,7 +118,20 @@ const upsertBlocks = (current: ReadonlyArray<UiBlock>, incoming: ReadonlyArray<U
 
 export const reducePageEvent = (page: Option.Option<UiPage>, event: UiPageEvent): Option.Option<UiPage> => {
   if (event.type === "page_opened") {
-    return Option.some({ manifest: event.page, blocks: event.blocks, complete: false })
+    // Re-opening an EXISTING page MERGES: the manifest is replaced (the later
+    // start is the authoritative full version) but accepted blocks are
+    // upserted, never wiped. Streaming admission opens the page from the
+    // argument prefix before the settled call fires its own page_opened —
+    // and a disconnected stage's late settled call must not erase composer
+    // progress either.
+    return Option.match(page, {
+      onNone: () => Option.some({ manifest: event.page, blocks: event.blocks, complete: false }),
+      onSome: (existing) => Option.some({
+        manifest: event.page,
+        blocks: upsertBlocks(existing.blocks, event.blocks),
+        complete: existing.complete,
+      }),
+    })
   }
   if (Option.isNone(page) || page.value.manifest.id !== event.pageId) return page
   if (event.type === "blocks_upserted") return Option.some({ ...page.value, blocks: upsertBlocks(page.value.blocks, event.blocks) })
