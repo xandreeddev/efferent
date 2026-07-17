@@ -22,4 +22,5 @@ export const validateUiAgentProfile = (
   ]),
   ...(profile.fallback.policy === "profile" && Option.isNone(parseModelSelection(profile.fallback.model)) ? [`invalid fallback model ${profile.fallback.model}`] : []),
   ...(profile.repair.maxAttempts === 1 ? [] : ["repair must be exactly one bounded attempt"]),
+  ...((profile.composer.workers ?? 1) >= 1 && (profile.composer.workers ?? 1) <= 4 ? [] : ["composer workers must be within 1..4"]),
 ]

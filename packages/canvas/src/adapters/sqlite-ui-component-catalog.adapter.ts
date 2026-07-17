@@ -58,7 +58,13 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
     const workspace = Effect.try({
       try: () => decodeRows(db.query("SELECT definition FROM ui_components WHERE status != 'deprecated' ORDER BY id").all() as ReadonlyArray<{ readonly definition: string }>),
       catch: (error) => `ui-component-catalog: ${String(error)}`,
-    })
+    }).pipe(
+      // A broken workspace read must not zero out the WHOLE vocabulary: with
+      // list on the admission path, one bad handle turned every component
+      // block into "not registered" and voided entire sessions (#118). The
+      // core catalog is static — serve it and keep the corruption observable.
+      Effect.catchAll((message) => Effect.logWarning(`${message} — serving CORE components only`).pipe(Effect.as([] as ReadonlyArray<UiComponentDefinitionType>))),
+    )
     const list = workspace.pipe(Effect.map((definitions) => [...CORE_UI_COMPONENTS.map(normalizeComponentDefinition), ...definitions]))
 
     return {

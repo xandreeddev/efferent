@@ -1,9 +1,9 @@
 import type { UiGenerationProtocol } from "./domain/ui-generation-protocol.entity.js"
 import { uiProtocolInstruction } from "./domain/ui-generation-protocol.entity.functions.js"
 
-export const UI_PLANNER_PROMPT_VERSION = "9.0.0"
-export const UI_COMPOSER_PROMPT_VERSION = "10.0.0"
-export const UI_REPAIR_PROMPT_VERSION = "7.0.0"
+export const UI_PLANNER_PROMPT_VERSION = "10.0.0"
+export const UI_COMPOSER_PROMPT_VERSION = "11.0.0"
+export const UI_REPAIR_PROMPT_VERSION = "8.0.0"
 
 export interface UiPromptContract {
   readonly designSystem: { readonly id: string; readonly version: string }
@@ -48,14 +48,19 @@ Theme controls structure-independent styling. Every accent, neutral, positive, w
 
 You must create the page with start_ui before patch_ui or patch_theme. Nothing is rendered until a real model call selects the information architecture and emits accepted content. Complete through patch_ui calls of 2-4 nodes in visual order—small patches paint sooner.`
 
-export const uiPlannerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `You are the fast planning tier of the Efferent UI agent. ${contract(host, protocol)}
+/** The role sentence sits at the END of every stage prompt: the shared
+ * contract is then a byte-identical PREFIX across planner/composer/repair,
+ * so provider-side prefill caching fires across stages and pages (the
+ * ui-latency plan's Phase 4 — the differing first sentence used to kill the
+ * prefix at ~40 chars). */
+export const uiPlannerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `${contract(host, protocol)}
 
-Choose the archetype and a coherent design direction for the exact request. Your first response must call start_ui with the minimal manifest—id, title, archetype, 4-7 purposeful slot ids—and EXACTLY ONE high-quality component node: the first root. Keep the payload tight—the user watches a blank page until it lands; every restated host default delays the paint. All visible information architecture and content must be model-generated. Stop after start_ui succeeds.`
+[role] You are the fast planning tier of the Efferent UI agent. Choose the archetype and a coherent design direction for the exact request. Your first response must call start_ui with the minimal manifest—id, title, archetype, 4-7 purposeful slot ids—and EXACTLY ONE high-quality component node: the first root. Keep the payload tight—the user watches a blank page until it lands; every restated host default delays the paint. All visible information architecture and content must be model-generated. Stop after start_ui succeeds.`
 
-export const uiComposerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `You are the quality composition tier of the Efferent UI agent. ${contract(host, protocol)}
+export const uiComposerPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools"): string => `${contract(host, protocol)}
 
-The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete remaining roots and children through several patch_ui calls of 2-4 nodes, starting immediately with the next critical section. Set complete:true only on the final call. Preserve accepted ids and component identities. Use registered components or compositions first; propose_component only if the required anatomy or behavior is impossible with them. Concrete information architecture, credible details and useful copy matter more than slogans. Avoid filler, repeated claims, placeholder labels and styling-only component forks.`
+[role] You are the quality composition tier of the Efferent UI agent. The planning model opened an incomplete LLM-generated page. Do not call start_ui again. Complete remaining roots and children through several patch_ui calls of 2-4 nodes, starting immediately with the next critical section. Set complete:true only on the final call. Preserve accepted ids and component identities. Use registered components or compositions first; propose_component only if the required anatomy or behavior is impossible with them. Concrete information architecture, credible details and useful copy matter more than slogans. Avoid filler, repeated claims, placeholder labels and styling-only component forks.`
 
-export const uiRepairPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools", mayStart = false): string => `You are the bounded repair tier of the Efferent UI agent. ${contract(host, protocol)}
+export const uiRepairPrompt = (host: UiPromptContract, protocol: UiGenerationProtocol = "native-tools", mayStart = false): string => `${contract(host, protocol)}
 
-A structured record was rejected or left the page incomplete. Read only the rejected input, accepted page if present, and semantic findings. Correct exactly those fields and emit one bounded record. ${mayStart ? "The rejected planner start did not open a page, so emit one corrected start record." : "Do not call start_ui; repair or complete the accepted page."} Do not expand the scope or write a caption.`
+[role] You are the bounded repair tier of the Efferent UI agent. A structured record was rejected or left the page incomplete. Read only the rejected input, accepted page if present, and semantic findings. Correct exactly those fields and emit one bounded record. ${mayStart ? "The rejected planner start did not open a page, so emit one corrected start record." : "Do not call start_ui; repair or complete the accepted page."} Do not expand the scope or write a caption.`

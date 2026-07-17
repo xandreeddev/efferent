@@ -47,6 +47,12 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
   /** Per-agent output/reasoning policy. Dedicated agents pin this instead of
    * inheriting provider-family defaults. */
   readonly modelPolicy?: ModelCallPolicy
+  /** Server-side prompt-cache lane override. Defaults to the conversation id
+   * (one lane per conversation); an agent whose system prompt is a shared
+   * cacheable prefix may key by ITS hash instead so prefill cache hits fire
+   * across conversations (probe-verified safe under concurrency on the
+   * codex route, 2026-07-17). */
+  readonly promptCacheKey?: string
 }
 
 /** Turns to wait after a fold before folding again — anti-thrash. */
@@ -162,9 +168,10 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       ...(config.streaming !== undefined ? { streaming: config.streaming } : {}),
       onTail,
     }).pipe(
-      // One conversation, one server-side cache lane: adapters that support
-      // a prompt cache key read this for every call in the run.
-      Effect.locally(CurrentPromptCacheKey, Option.some(String(conversationId))),
+      // One cache lane per conversation by default; agents with a shared
+      // cacheable prompt prefix override the lane so cross-conversation
+      // prefill hits fire.
+      Effect.locally(CurrentPromptCacheKey, Option.some(config.promptCacheKey ?? String(conversationId))),
     )
   }).pipe(
     Effect.withSpan("agent.run", {

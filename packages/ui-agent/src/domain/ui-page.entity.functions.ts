@@ -116,6 +116,20 @@ const upsertBlocks = (current: ReadonlyArray<UiBlock>, incoming: ReadonlyArray<U
     current,
   )
 
+/** Storage order is CANONICAL, not arrival order: root blocks sort into
+ * manifest slot order (children keep arrival order after them, stably).
+ * Parallel composer workers finish out of order by design — the fold, not
+ * the emitter, owns visual order, so every consumer reads the page the way
+ * the renderer lays it out. */
+const canonicalBlockOrder = (manifest: PageManifest, blocks: ReadonlyArray<UiBlock>): ReadonlyArray<UiBlock> => {
+  const slotIndex = new Map(manifest.slots.map((slot, index) => [slot.id, index]))
+  return blocks.map((block, arrival) => ({ block, arrival })).toSorted((a, b) => {
+    const rankA = slotIndex.get(a.block.id) ?? Number.MAX_SAFE_INTEGER
+    const rankB = slotIndex.get(b.block.id) ?? Number.MAX_SAFE_INTEGER
+    return rankA === rankB ? a.arrival - b.arrival : rankA - rankB
+  }).map((entry) => entry.block)
+}
+
 export const reducePageEvent = (page: Option.Option<UiPage>, event: UiPageEvent): Option.Option<UiPage> => {
   if (event.type === "page_opened") {
     // Re-opening an EXISTING page MERGES: the manifest is replaced (the later
@@ -125,16 +139,16 @@ export const reducePageEvent = (page: Option.Option<UiPage>, event: UiPageEvent)
     // and a disconnected stage's late settled call must not erase composer
     // progress either.
     return Option.match(page, {
-      onNone: () => Option.some({ manifest: event.page, blocks: event.blocks, complete: false }),
+      onNone: () => Option.some({ manifest: event.page, blocks: canonicalBlockOrder(event.page, event.blocks), complete: false }),
       onSome: (existing) => Option.some({
         manifest: event.page,
-        blocks: upsertBlocks(existing.blocks, event.blocks),
+        blocks: canonicalBlockOrder(event.page, upsertBlocks(existing.blocks, event.blocks)),
         complete: existing.complete,
       }),
     })
   }
   if (Option.isNone(page) || page.value.manifest.id !== event.pageId) return page
-  if (event.type === "blocks_upserted") return Option.some({ ...page.value, blocks: upsertBlocks(page.value.blocks, event.blocks) })
+  if (event.type === "blocks_upserted") return Option.some({ ...page.value, blocks: canonicalBlockOrder(page.value.manifest, upsertBlocks(page.value.blocks, event.blocks)) })
   if (event.type === "theme_patched") return Option.some({ ...page.value, manifest: { ...page.value.manifest, theme: event.theme } })
   return Option.some({ ...page.value, complete: true })
 }

@@ -35,6 +35,8 @@ interface MatrixBudgets {
   readonly plannerTimeoutMs: number
   readonly composerTimeoutMs: number
   readonly trialTimeoutMs: number
+  /** `--composer-workers`: >1 arms the phase-3 composer fleet in the trial profile. */
+  readonly composerWorkers: number
 }
 
 /** One arrival-stamped session event — the trial's attribution spine. The
@@ -216,7 +218,7 @@ const profileFor = (candidate: Candidate, budgets: MatrixBudgets): UiAgentProfil
   protocol: candidate.protocol,
   prompts: { planner: UI_PLANNER_PROMPT_VERSION, composer: UI_COMPOSER_PROMPT_VERSION, repair: UI_REPAIR_PROMPT_VERSION },
   planner: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.plannerTimeoutMs, maxOutputTokens: 1800, maxSteps: 2 },
-  composer: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.composerTimeoutMs, maxOutputTokens: 6000, maxSteps: 5 },
+  composer: { model: candidate.model, effort: candidate.effort, timeoutMs: budgets.composerTimeoutMs, maxOutputTokens: 6000, maxSteps: 5, ...(budgets.composerWorkers > 1 ? { workers: budgets.composerWorkers } : {}) },
   repair: { model: candidate.model, effort: candidate.effort, timeoutMs: 8_000, maxOutputTokens: 1800, maxSteps: 2, maxAttempts: 1 },
   fallback: { policy: "none" },
 })
@@ -703,7 +705,8 @@ const program = Effect.gen(function* () {
   const plannerTimeoutMs = positiveInt("--planner-timeout-ms", 120_000)
   const composerTimeoutMs = positiveInt("--composer-timeout-ms", 180_000)
   const trialTimeoutMs = positiveInt("--trial-timeout-ms", plannerTimeoutMs + composerTimeoutMs + 15_000)
-  const budgets = { plannerTimeoutMs, composerTimeoutMs, trialTimeoutMs }
+  const composerWorkers = positiveInt("--composer-workers", 1)
+  const budgets = { plannerTimeoutMs, composerTimeoutMs, trialTimeoutMs, composerWorkers }
   const output = Option.getOrElse(argValue("--output"), () => join(process.cwd(), ".efferent", "evals", `ui-agent-matrix-${new Date().toISOString().replace(/[:.]/g, "-")}.json`))
   const evidenceDir = output.replace(/\.json$/i, "-screenshots")
   const combinations = candidates.flatMap((candidate) => tasks.flatMap((task) => Array.from({ length: samples }, (_, sample) => ({ candidate, task, sample: sample + 1 }))))
