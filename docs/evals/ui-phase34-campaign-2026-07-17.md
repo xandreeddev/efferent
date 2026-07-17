@@ -77,3 +77,27 @@ medium). Baselines re-minted.
 
 Remaining above the line: the effort-`none` re-pin (paint 4–9s measured,
 blocked on #118's full resolution) and Phase 2's text-protocol re-screen.
+
+## Final verdicts (the two questions left open above, settled same day)
+
+Two 18-trial arms on the shipped 10.1.0 runtime (loaded process, all
+diagnostics armed):
+
+**Effort re-pin: CLOSED — medium retains, on merit.** Head-to-head at k=9
+per effort: medium 7/9 success, judge 0.68, paint p50 8.4s, complete p50
+33.2s; `none` 5/9 (+2 painted partials), judge 0.59, paint p50 **8.5s** —
+the paint advantage that `none` held pre-phases (4.8–9.6s vs 5.8–20s) is
+GONE: streaming admission + the payload cut made paint planner-token-bound
+at every effort, and medium wins success and judge outright. Not a punt —
+an evidence-based retention.
+
+**Text protocols: CLOSED — confirmed dead on luna.** 0/18 (compact-lines
+0/9, a2ui-jsonl 0/9), all `planner/UiPageNotProduced`: no accepted start
+record is ever produced, so the failure sits UPSTREAM of the schema the
+Phase 1 loosening fixed. The revival hypothesis is falsified for this
+model; never re-enable without a different model family and a fresh screen.
+
+**#118 containment: verified under load.** Zero disk-I/O trial voids across
+both arms (the catalog core-fallback held; two obs-landing trials survived
+as painted partials). Residual failure class: 4 hard caps + 2 partials in
+36 trials (~11%) — a provider-hang tail, tracked in #118.

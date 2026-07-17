@@ -1,11 +1,19 @@
 # UI-agent latency plan — from 11.6s to a sub-4s first paint
 
-Status: Phase 0 + both probes SHIPPED 2026-07-16 (stage-boundary events,
-per-stage usage/wall-clock in matrix trials, `evals:ui-latency-probe`);
-probe results in `docs/evals/ui-latency-probes-2026-07-16.md` — argument
-deltas STREAM on the codex route (Phase 2 greenlit on native-tools) and
-effort `none` is accepted (`minimal` rejected; vocabulary widened). Phases
-1–4 remain to build, each gated by the matrix. Sources: the v9 screening
+Status: **FULLY EXECUTED** — every phase shipped and campaign-gated (PRs
+#240–#243, 2026-07-16/17): Phase 0 + probes, Phase 1 minimal wire manifest
++ stage goals, Phase 2 streaming admission, Phase 3 composer fleet, Phase 4
+prefix caching (pre-warm dropped: strict:false compiles no grammar). Pin:
+streaming-ui-v1@10.1.0 — luna/native-tools/medium, composer workers 2.
+Measured: paint p50 11.6s → ~8s (planner-token-bound), first content
+progressive from ~15s, complete p95 130s → p50 ~30s, quality 1.00 on clean
+trials. The two follow-on questions are also SETTLED (final 18-trial arms,
+logged in `docs/evals/ui-phase34-campaign-2026-07-17.md`): effort `none`
+is NOT pinned (its paint edge vanished under streaming admission — 8.5s vs
+medium's 8.4s — while medium wins success 7/9-vs-5/9 and judge 0.68-vs-0.59)
+and the text protocols are CONFIRMED DEAD on luna (0/18, no accepted start
+record — upstream of the Phase 1 schema loosening). Residual: a ~11%
+provider-hang trial-cap tail, tracked in task #118. Sources: the v9 screening
 evidence (`docs/evals/ui-agent-screening-v9-2026-07-13.md`, trial JSONs), a
 static decomposition of the current prompts/schemas/adapters, and a 2025–26
 state-of-the-art sweep of the latency levers available on our provider routes.
