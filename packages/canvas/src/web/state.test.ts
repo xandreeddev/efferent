@@ -54,4 +54,36 @@ describe("the canvas model fold (replay ≡ live)", () => {
     expect(done.busy).toBe(false)
     expect(Option.getOrThrow(done.reply)).toContain("provider down")
   })
+
+  test("a partial agent_end raises the visible failure state; ok clears it; the next send resets", () => {
+    const failed = foldLedger([
+      { type: "turn_start", turnIndex: 0 },
+      { type: "error", message: "UI composer failed after an extended wait", failure: { code: "UiPatchNotCompleted", category: "validation", stage: "composer", message: "patch_ui did not produce an accepted complete page", retryable: false } },
+      { type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" },
+    ])
+    expect(Option.getOrThrow(failed.failed)).toContain("composer/UiPatchNotCompleted")
+
+    const recovered = foldLedger([
+      { type: "turn_start", turnIndex: 0 },
+      { type: "agent_end", outcome: "ok", reason: "completed", finalText: "" },
+    ])
+    expect(Option.isNone(recovered.failed)).toBe(true)
+
+    const reset = foldLedger([
+      { type: "turn_start", turnIndex: 0 },
+      { type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" },
+      { type: "turn_start", turnIndex: 1 },
+    ])
+    expect(Option.isNone(reset.failed)).toBe(true)
+    expect(reset.busy).toBe(true)
+  })
+
+  test("a mid-run admission bounce alone never raises the failure state", () => {
+    const bounced = foldLedger([
+      { type: "turn_start", turnIndex: 0 },
+      { type: "error", message: "patch_ui record rejected: bad prop", failure: { code: "UiRejected", category: "tool", stage: "patch_ui", message: "bad prop", retryable: true } },
+      { type: "agent_end", outcome: "ok", reason: "completed", finalText: "" },
+    ])
+    expect(Option.isNone(bounced.failed)).toBe(true)
+  })
 })

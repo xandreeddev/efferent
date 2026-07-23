@@ -34,6 +34,7 @@ body { margin: 0; background: var(--cv-bg-page); color: var(--cv-text); font: 15
 .ef-status-strip { min-height: 18px; font-size: 13px; color: var(--cv-text-dim); padding-bottom: 4px; display: flex; gap: 12px; }
 .ef-spin::before { content: "\28fb "; color: var(--cv-accent); }
 .ef-reply-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-failed { color: var(--cv-danger, #dd3344); border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ef-ask { display: flex; gap: 8px; }
 .ef-ask-input { flex: 1; background: var(--cv-bg-page); color: inherit; border: 1px solid var(--cv-line); border-radius: 8px; padding: 8px 12px; font: inherit; }
 .ef-ask-input:focus { outline: none; border-color: var(--cv-accent); }

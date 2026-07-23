@@ -203,6 +203,11 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         // failure, and accepted patches stay rendered either way.
         const stageDeadline = (stage: "planner" | "composer" | "repair"): Duration.Duration =>
           Duration.millis(Math.min(profile[stage].timeoutMs * 3, 55_000))
+        /** Worst honest attempt: planner + composer + both repair windows. */
+        const stageDeadlineTotalMs =
+          Duration.toMillis(stageDeadline("planner")) +
+          Duration.toMillis(stageDeadline("composer")) +
+          2 * Duration.toMillis(stageDeadline("repair"))
         const publishFailure = (stage: "planner" | "composer" | "repair", error: unknown) => {
           const failure = toAgentFailure(error, stage)
           return Effect.logWarning(`UI ${stage} gave up after ${Duration.toMillis(stageDeadline(stage))}ms (3x the ${profile[stage].timeoutMs}ms budget): [${failure.code}] ${failure.message}`).pipe(
@@ -421,7 +426,26 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           Effect.onInterrupt(() => publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
           Effect.ensuring(Ref.set(activeAttempt, Option.none())),
         )
-        const fiber = yield* Effect.forkDaemon(attempt)
+        // THE ATTEMPT HARD CAP (#118): every stage is individually bounded,
+        // yet ~11% of campaign trials still capped with NO agent_end — the
+        // wedge sits between/above stages where no deadline reaches. The cap
+        // is the sum of every stage deadline plus margin; on cap the session
+        // publishes an honest failure + agent_end and ABANDONS the attempt
+        // (disconnected — a wedged runtime must never hold the cap hostage).
+        const attemptCapMs = stageDeadlineTotalMs + 12_000
+        const capped = Effect.race(
+          Effect.disconnect(attempt),
+          Effect.sleep(Duration.millis(attemptCapMs)).pipe(
+            Effect.zipRight(publish({
+              type: "error",
+              message: `The UI attempt exceeded its ${attemptCapMs}ms hard cap and was abandoned — blocks already accepted remain on the page.`,
+              failure: { code: "UiAttemptCapExceeded", category: "timeout", stage: "attempt", message: `no agent_end within ${attemptCapMs}ms`, retryable: true },
+            })),
+            Effect.zipRight(publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
+            Effect.zipRight(Ref.set(activeAttempt, Option.none())),
+          ),
+        )
+        const fiber = yield* Effect.forkDaemon(capped)
         yield* Ref.set(activeAttempt, Option.some(fiber))
       }),
     })
