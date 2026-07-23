@@ -12,6 +12,12 @@ export interface CanvasModel {
   readonly activeId: Option.Option<string>
   readonly busy: boolean
   readonly reply: Option.Option<string>
+  /** The VISIBLE failure state (#114): set when an attempt ends partial,
+   * carrying the last structural failure's message; cleared by the next
+   * send. Mid-run admission bounces are model-correction chatter and never
+   * set this — only a terminal `agent_end` verdict does. */
+  readonly failed: Option.Option<string>
+  readonly lastFailure: Option.Option<string>
   readonly requestStartedAt: Option.Option<number>
   readonly firstBlockAt: Option.Option<number>
   readonly completedAt: Option.Option<number>
@@ -22,6 +28,8 @@ export const emptyModel: CanvasModel = {
   activeId: Option.none(),
   busy: false,
   reply: Option.none(),
+  failed: Option.none(),
+  lastFailure: Option.none(),
   requestStartedAt: Option.none(),
   firstBlockAt: Option.none(),
   completedAt: Option.none(),
@@ -60,9 +68,24 @@ const mergeStructured = (model: CanvasModel, event: UiPageEvent): CanvasModel =>
 export const reduceEvent = (model: CanvasModel, event: CanvasEvent): CanvasModel => {
   if (event.type === "ui_render") return mergeLegacy(model, event.entry)
   if (event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "theme_patched" || event.type === "page_completed") return mergeStructured(model, event)
-  if (event.type === "turn_start") return { ...model, busy: true, requestStartedAt: Option.some(Date.now()), firstBlockAt: Option.none(), completedAt: Option.none() }
+  if (event.type === "turn_start") return { ...model, busy: true, failed: Option.none(), lastFailure: Option.none(), requestStartedAt: Option.some(Date.now()), firstBlockAt: Option.none(), completedAt: Option.none() }
   if (event.type === "assistant_message") return event.text.length > 0 && !isUiProtocolPayload(event.text) ? { ...model, reply: Option.some(event.text) } : model
-  if (event.type === "agent_end") return { ...model, busy: false }
-  if (event.type === "error") return { ...model, busy: false, reply: Option.some(`⚠ ${event.message}`) }
+  if (event.type === "agent_end") {
+    return {
+      ...model,
+      busy: false,
+      failed: event.outcome === "partial"
+        ? Option.some(Option.getOrElse(model.lastFailure, () => "the attempt ended without an accepted complete page"))
+        : Option.none(),
+    }
+  }
+  if (event.type === "error") {
+    return {
+      ...model,
+      busy: false,
+      reply: Option.some(`⚠ ${event.message}`),
+      lastFailure: event.failure === undefined ? model.lastFailure : Option.some(`[${event.failure.stage}/${event.failure.code}] ${event.failure.message}`),
+    }
+  }
   return model
 }
