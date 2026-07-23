@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
-import { Effect, Metric, Option, Schema } from "effect"
+import { Effect, Fiber, Metric, Option, Schema, TestClock, TestContext } from "effect"
 import { Spec, WorkspacePath } from "@xandreed/foundry"
 import type { Workspace } from "@xandreed/foundry"
 import { extractVerdictJson, gatherEvidence, judgePrompt, makeSmithJudgeGate } from "./judge.js"
@@ -133,6 +133,17 @@ describe("makeSmithJudgeGate", () => {
     expect(findings[0]?.severity).toBe("error")
   })
 
+  // The judge RETRIES crashes on a spaced schedule (task #110) — crash-path
+  // tests drive the TestClock past the retry windows instead of sleeping.
+  const crashExit = (gate: { readonly run: (ws: Workspace) => Effect.Effect<unknown, unknown> }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.fork(Effect.exit(gate.run(workspace)))
+        yield* TestClock.adjust("60 seconds")
+        return yield* Fiber.join(fiber)
+      }).pipe(Effect.provide(TestContext.TestContext)),
+    )
+
   test("FAIL-CLOSED: no verdict / undecodable / model failure are all GateCrash", async () => {
     const cases = [
       makeSmithJudgeGate({ spec, doc: Option.none(), call: () => Effect.succeed("no json here") }),
@@ -143,11 +154,10 @@ describe("makeSmithJudgeGate", () => {
       }),
       makeSmithJudgeGate({ spec, doc: Option.none(), call: () => Effect.fail("provider down") }),
     ]
-    const exits = await Promise.all(
-      cases.map((gate) => Effect.runPromiseExit(gate.run(workspace))),
-    )
+    const exits = await Promise.all(cases.map(crashExit))
     exits.forEach((exit) => {
-      expect(exit._tag).toBe("Failure")
+      const tagged = exit as { readonly _tag: string }
+      expect(tagged._tag).toBe("Failure")
       expect(String(exit)).toContain("GateCrash")
     })
   })
@@ -177,12 +187,14 @@ describe("makeSmithJudgeGate", () => {
     expect(findings).toHaveLength(1)
     expect((await counter("unsound")) - before).toBe(1)
     // A crash counts too — a frequently-crashing fail-closed judge is signal.
+    // (Three retried calls = three crash increments; the retry itself is the
+    // #110 behavior under test elsewhere.)
     const crashing = makeSmithJudgeGate({
       spec,
       doc: Option.none(),
       call: () => Effect.fail("provider down"),
     })
-    await Effect.runPromiseExit(crashing.run(workspace))
-    expect((await counter("crash")) - beforeCrash).toBe(1)
+    await crashExit(crashing)
+    expect((await counter("crash")) - beforeCrash).toBe(3)
   })
 })

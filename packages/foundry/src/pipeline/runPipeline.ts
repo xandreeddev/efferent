@@ -22,22 +22,41 @@ export interface Pipeline<R> {
 }
 
 const GATE_CRASHED = RuleId.make("foundry/gate-crashed")
+const VERIFIER_UNAVAILABLE = RuleId.make("foundry/verifier-unavailable")
 
 /** A gate that could not RUN folds to a `fail` verdict — fail-closed, never
  *  a silent pass (the Verifier's discipline). This is why `runPipeline`'s
- *  error channel is `never`. */
-const crashVerdict = (gate: Gate<never>["name"], message: string): GateVerdict =>
+ *  error channel is `never`.
+ *
+ *  A JUDGE crash is INFRASTRUCTURE, and its finding says so in terms a
+ *  coder can act on (by NOT acting): the 2026-07-12 dogfood run burned an
+ *  attempt spelunking the harness because a provider-timeout stack was
+ *  rendered as gate feedback (task #110). The upstream detail is clipped —
+ *  it is telemetry, not a work item. */
+const crashVerdict = (
+  name: Gate<never>["name"],
+  kind: Gate<never>["kind"],
+  message: string,
+): GateVerdict =>
   FailVerdict.make({
-    gate,
+    gate: name,
     durationMs: 0,
     findings: [
-      new Finding({
-        rule: GATE_CRASHED,
-        severity: "error",
-        message: `gate "${gate}" crashed: ${message}`,
-        location: Option.none(),
-        fixHint: Option.some("this is a foundry/gate problem, not a workspace problem — fix the gate"),
-      }),
+      kind === "judge"
+        ? new Finding({
+            rule: VERIFIER_UNAVAILABLE,
+            severity: "error",
+            message: `the independent verifier "${name}" was UNAVAILABLE (infrastructure failure, retries exhausted): ${message.slice(0, 200)}`,
+            location: Option.none(),
+            fixHint: Option.some("take NO code action for this finding — nothing in the workspace caused it; the verifier re-runs automatically on the next attempt"),
+          })
+        : new Finding({
+            rule: GATE_CRASHED,
+            severity: "error",
+            message: `gate "${name}" crashed: ${message}`,
+            location: Option.none(),
+            fixHint: Option.some("this is a foundry/gate problem, not a workspace problem — fix the gate"),
+          }),
     ],
   })
 
@@ -47,8 +66,8 @@ const runGate = <R>(gate: Gate<R>, workspace: Workspace): Effect.Effect<GateVerd
     Effect.map(([elapsed, findings]) =>
       toVerdict(gate.name, Duration.toMillis(elapsed), findings),
     ),
-    Effect.catchAll((crash) => Effect.succeed(crashVerdict(gate.name, crash.message))),
-    Effect.catchAllDefect((defect) => Effect.succeed(crashVerdict(gate.name, String(defect)))),
+    Effect.catchAll((crash) => Effect.succeed(crashVerdict(gate.name, gate.kind, crash.message))),
+    Effect.catchAllDefect((defect) => Effect.succeed(crashVerdict(gate.name, gate.kind, String(defect)))),
     Effect.withSpan("foundry.gate", {
       attributes: { "gate.name": gate.name, "gate.kind": gate.kind },
     }),
