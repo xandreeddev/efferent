@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect"
+import { Effect, Option, Schedule } from "effect"
 import { GateName, RuleId } from "../domain/Brands.js"
 import type { GateCrash } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
@@ -23,6 +23,12 @@ const JUDGE_REJECTED = RuleId.make("judge/needs-work")
  * Fail-closed by construction: an unavailable judge is a `GateCrash`, which
  * the pipeline folds into a `fail` verdict — never a silent pass (mirroring
  * `gateLoop.ts`'s "unavailable is surfaced loudly").
+ *
+ * The judge call RETRIES before crashing (idempotent read; two spaced
+ * re-runs): a transient upstream failure must not spend a whole forge
+ * attempt — the 2026-07-12 dogfood run burned attempt 2 on a coder
+ * spelunking the harness because one judge call hit a provider timeout
+ * (task #110).
  */
 export const makeJudgeGate = <R>(
   name: string,
@@ -33,6 +39,7 @@ export const makeJudgeGate = <R>(
   deterministic: false,
   run: (workspace: Workspace) =>
     judge(workspace).pipe(
+      Effect.retry({ times: 2, schedule: Schedule.spaced("8 seconds") }),
       Effect.map((verdict) => {
         if (verdict.sound) return []
         // A rejection with no reasons must still FAIL (toVerdict passes on

@@ -108,6 +108,19 @@ describe("runPipeline — staged policy", () => {
     ).toBe("foundry/gate-crashed")
   })
 
+  test("a crashing JUDGE folds to verifier-unavailable with a take-no-action hint, not coder feedback", async () => {
+    const report = await Effect.runPromise(
+      runPipeline(pipelineOf([crashingGate("verifier", "judge")]), ws),
+    )
+    expect(report.ok).toBe(false)
+    const verdict = report.verdicts[0]
+    expect(verdict._tag).toBe("fail")
+    if (verdict._tag !== "fail") return
+    expect(String(verdict.findings[0].rule)).toBe("foundry/verifier-unavailable")
+    expect(verdict.findings[0].message).toContain("UNAVAILABLE (infrastructure failure")
+    expect(Option.getOrThrow(verdict.findings[0].fixHint)).toContain("take NO code action")
+  })
+
   test("a defect (thrown from inside a gate) also folds fail-closed", async () => {
     const dying: Gate<never> = {
       name: GateName.make("idioms"),
