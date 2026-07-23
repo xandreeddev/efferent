@@ -188,6 +188,9 @@ const occurrences = (haystack: string, needle: string): number =>
 export interface CodingHandlerHooks {
   /** Best-effort live tap on the coder's Bash output (chunk granularity). */
   readonly onBashChunk?: (chunk: string) => void
+  /** Extra write/delete-protected files beyond the conventional
+   *  `foundry.config.ts` — the run's explicit `--config` profile (#111). */
+  readonly protectedPaths?: ReadonlyArray<string>
 }
 
 /** The live Bash tap the implementor AND the follow-up turn wire: chunk →
@@ -232,6 +235,16 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
         abs === join(workspaceRoot, ".foundry")
       )
     }
+    // The ARMED gate profile is the oracle judging this run — the judged
+    // never edits (or deletes) the judge. READABLE on purpose: the coder
+    // should understand the contract; it must not weaken it (#111 — a
+    // dogfood coder deleted foundry.config.ts and reconstructed it with
+    // typecheck silently flipped off).
+    const armedProfileFiles: ReadonlyArray<string> = [
+      join(workspaceRoot, "foundry.config.ts"),
+      ...(hooks.protectedPaths ?? []).map((path) => normalize(resolve(path))),
+    ]
+    const isArmedProfile = (path: string): boolean => armedProfileFiles.includes(normalize(path))
 
     const ancestors = (path: string): ReadonlyArray<string> => {
       const parent = dirname(path)
@@ -295,6 +308,12 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
           return yield* Effect.fail({
             error: "HarnessState",
             message: `"${path}" resolves into harness state (.efferent/.foundry) — the coder never writes there`,
+          })
+        }
+        if (isArmedProfile(canonicalTarget)) {
+          return yield* Effect.fail({
+            error: "ArmedProfile",
+            message: `"${path}" is the ARMED gate profile judging this run — never edit or delete it; if the contract itself is wrong, say so in your reply and the human will change it`,
           })
         }
       })

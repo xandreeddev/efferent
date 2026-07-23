@@ -266,6 +266,7 @@ export const runForgeSession = (
         rules,
         doctrine,
         memory,
+        armedConfigPath: gateRequestFromSpec(run, doc).configPath,
         ...(pendingInput !== undefined ? { pendingInput } : {}),
       }).pipe(
         Layer.provide(LanguageModelLive.pipe(Layer.provide(roleModelView("code")))),

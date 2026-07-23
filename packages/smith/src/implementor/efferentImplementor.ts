@@ -1,5 +1,6 @@
+import { join } from "node:path"
 import type { LanguageModel } from "@effect/ai"
-import { Effect, Layer, Option, Ref } from "effect"
+import { Effect, Equal, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { QualityBar, WorkspacePath } from "@xandreed/foundry"
 import {
@@ -114,6 +115,15 @@ export const renderTrailForDigest = (messages: ReadonlyArray<AgentMessage>): str
 /** Bump when `digestPrompt` changes — the digest battery records it. */
 export const DIGEST_PROMPT_VERSION = "1.0.0"
 
+/** Which armed-profile files drifted between two content snapshots (`None`
+ * = absent): an edit, a deletion, and a creation all count — the judged
+ * must not edit the judge in ANY direction (#111). */
+export const profileDrift = (
+  paths: ReadonlyArray<string>,
+  before: ReadonlyArray<Option.Option<string>>,
+  after: ReadonlyArray<Option.Option<string>>,
+): ReadonlyArray<string> => paths.filter((_, index) => !Equal.equals(before[index], after[index]))
+
 /** The handoff instruction — the digest is the ONLY memory the next attempt
  *  keeps, so it must restate the task, the workspace state, and the dead ends. */
 export const digestPrompt = (
@@ -193,6 +203,9 @@ export interface EfferentImplementorOptions {
   /** MID-TURN steering (the engine's `pendingInput` seam): a human's note
    *  typed while an attempt runs lands at the coder's next step. */
   readonly pendingInput?: () => Effect.Effect<Option.Option<string>>
+  /** The run's explicit `--config` gate-profile path, when one was named —
+   *  write/delete-protected alongside `<cwd>/foundry.config.ts` (#111). */
+  readonly armedConfigPath?: Option.Option<string>
 }
 
 export const makeEfferentImplementorLive = (
@@ -210,9 +223,22 @@ export const makeEfferentImplementorLive = (
       const skills = renderSkillsBlock(skillMetas)
       const runtime = yield* Effect.runtime<never>()
       const onBashChunk = bashProgressTap(runtime, options.publish)
+      const protectedPaths = Option.toArray(options.armedConfigPath ?? Option.none())
       const handlers = yield* Layer.build(
-        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd, { onBashChunk })),
+        smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd, { onBashChunk, protectedPaths })),
       )
+      // THE ARMED-PROFILE TRIPWIRE (#111): the write guard stops the coder's
+      // file tools, but the 2026-07-12 incident was a Bash cleanup command —
+      // so the profile is ALSO fingerprinted at forge start and checked
+      // after every implement turn. Any drift (edit OR deletion) aborts the
+      // run loudly: the judged must not edit the judge.
+      const fs = yield* FileSystem
+      const profilePaths: ReadonlyArray<string> = [
+        join(options.cwd, "foundry.config.ts"),
+        ...protectedPaths,
+      ]
+      const profileSnapshot = Effect.forEach(profilePaths, (path) => fs.read(path).pipe(Effect.option))
+      const armedSnapshot = yield* profileSnapshot
       // External MCP tools (user-configured servers) merge into the kit —
       // snapshot once per run; an unreachable server yields the empty bridge.
       const mcp = yield* buildMcpBridge
@@ -387,6 +413,17 @@ export const makeEfferentImplementorLive = (
                 ),
               ),
             )
+
+            const profileNow = yield* profileSnapshot.pipe(Effect.orDie)
+            const drifted = profileDrift(profilePaths, armedSnapshot, profileNow)
+            yield* drifted.length === 0
+              ? Effect.void
+              : Effect.fail(
+                  new ImplementorError({
+                    attempt: input.attempt,
+                    message: `the coder MODIFIED the armed gate profile (${drifted.join(", ")}) — the judged must not edit the judge; restore the profile before re-forging`,
+                  }),
+                )
 
             return {
               filesTouched: [...(yield* Ref.get(filesRef))].sort(),
