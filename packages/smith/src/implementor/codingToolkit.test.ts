@@ -46,6 +46,41 @@ describe("the smith coding handlers — the direct coder's hands", () => {
     )
   })
 
+  test("the ARMED gate profile is readable but never writable or editable (#111)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
+    writeFileSync(join(cwd, "foundry.config.ts"), "export default { typecheck: true }")
+    writeFileSync(join(cwd, "custom-gates.ts"), "export default { tests: true }")
+    await Effect.runPromise(
+      makeSmithCodingHandlers(cwd, { protectedPaths: ["custom-gates.ts"] }).pipe(
+        Effect.flatMap((h) =>
+          Effect.gen(function* () {
+            // Reading the contract is encouraged.
+            const read = yield* h.read_file({ path: "foundry.config.ts" })
+            expect(read.content).toContain("typecheck: true")
+            // Weakening or deleting it is refused, by convention path…
+            const write = yield* h
+              .write_file({ path: "foundry.config.ts", content: "export default { typecheck: false }" })
+              .pipe(Effect.either)
+            expect(write._tag).toBe("Left")
+            expect(JSON.stringify(write)).toContain("ARMED gate profile")
+            const edit = yield* h
+              .edit_file({ path: "foundry.config.ts", oldText: "true", newText: "false" })
+              .pipe(Effect.either)
+            expect(edit._tag).toBe("Left")
+            // …and by the run's explicit --config path.
+            const custom = yield* h
+              .write_file({ path: "custom-gates.ts", content: "export default {}" })
+              .pipe(Effect.either)
+            expect(custom._tag).toBe("Left")
+            expect(JSON.stringify(custom)).toContain("ARMED gate profile")
+          }),
+        ),
+        Effect.provide(LocalFileSystemLive),
+        Effect.provide(LocalShellLive),
+      ) as Effect.Effect<void>,
+    )
+  })
+
   test("read_file refuses every path outside the workspace", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "smith-kit-"))
     await withHandlers(cwd, (h) =>

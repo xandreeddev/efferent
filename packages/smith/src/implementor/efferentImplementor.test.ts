@@ -7,7 +7,7 @@ import { ConversationStore, UtilityCompletion, UtilityError, UtilityLlm } from "
 import type { AgentMessage } from "@xandreed/engine"
 import { SqliteConversationStoreLive } from "@xandreed/providers"
 import type { SmithEvent } from "../domain/SmithEvent.js"
-import { digestPrompt, foldConversation, renderTrailForDigest } from "./efferentImplementor.js"
+import { digestPrompt, foldConversation, profileDrift, renderTrailForDigest } from "./efferentImplementor.js"
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 }
 
@@ -37,6 +37,17 @@ const trail: ReadonlyArray<AgentMessage> = [
     ],
   },
 ]
+
+describe("the armed-profile tripwire (#111)", () => {
+  test("edit, deletion, and creation each count as drift; unchanged never does", () => {
+    const paths = ["a/foundry.config.ts", "a/custom.ts"]
+    const armed = [Option.some("typecheck: true"), Option.none<string>()]
+    expect(profileDrift(paths, armed, [Option.some("typecheck: true"), Option.none()])).toEqual([])
+    expect(profileDrift(paths, armed, [Option.some("typecheck: false"), Option.none()])).toEqual(["a/foundry.config.ts"])
+    expect(profileDrift(paths, armed, [Option.none(), Option.none()])).toEqual(["a/foundry.config.ts"])
+    expect(profileDrift(paths, armed, [Option.some("typecheck: true"), Option.some("new")])).toEqual(["a/custom.ts"])
+  })
+})
 
 describe("attempt-boundary compaction", () => {
   test("renderTrailForDigest: one dense line per part; head + tail survive a clip", () => {
