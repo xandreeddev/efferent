@@ -1,8 +1,9 @@
 import { LanguageModel } from "@effect/ai"
 import { Cause, Duration, Effect, Layer, Option } from "effect"
-import { CurrentModelCallPolicy, parseModelSelection, runLoop, toAgentFailure } from "@xandreed/engine"
-import type { LoopEvent } from "@xandreed/engine"
-import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/providers"
+import { CurrentModelCallPolicy, parseModelSelection, toAgentFailure } from "@xandreed/core"
+import { runLoop } from "@xandreed/plugin-agent-loop"
+import type { LoopEvent } from "@xandreed/core"
+import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
 import {
   BlogReader,
   LocalSocialWorkspaceLive,
@@ -18,8 +19,8 @@ import type { BlogPost, XSearchResult } from "@xandreed/social"
 import { mkdtempSync, rmSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { argValue, csv, fileStamp, grid, hasFlag, persistJson, positiveInt, runCampaign, runMatrixMain, trialFileName } from "./framework/campaign.js"
-import { mean, percentile, wilsonInterval } from "./framework/stats.js"
+import { argValue, csv, fileStamp, grid, hasFlag, persistJson, positiveInt, runCampaign, runMatrixMain, trialFileName } from "@xandreed/evals/campaign"
+import { mean, percentile, wilsonInterval } from "@xandreed/evals/stats"
 import { generalTierCall, preflightAuth } from "./live/llm.js"
 
 /**

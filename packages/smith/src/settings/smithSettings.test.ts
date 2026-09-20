@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { EngineSettings } from "@xandreed/engine"
+import { EngineSettings } from "@xandreed/core"
 import { SMITH_MODEL_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import { applySmithSettings } from "./smithSettings.js"

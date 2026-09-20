@@ -31,3 +31,12 @@ bun run math --resume <conversationId>
 
 Model-authored MathML renders only through surface's strict `sanitizeMathml`;
 the views are pure server-rendered strings with htmx for the controls.
+
+## Composable SDK preset
+
+The application entry now loads `efferent.config.json` or `efferent.config.ts`
+and activates its own SDK preset. Model, loop, persistence and domain host
+services can be replaced through plugins and explicit service bindings. New
+SDK sessions live under `.efferent/runtime`; historical databases are retained.
+
+See [SDK and sessions](/docs/concepts/harness) for configuration and lifecycle.

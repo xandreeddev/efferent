@@ -1,5 +1,5 @@
 import { Effect, Fiber, Option, Queue } from "effect"
-import { encodeSpecDocText } from "@xandreed/engine"
+import { encodeSpecDocText } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { renderEventLines } from "../presentation/eventLines.js"
 import { makeRefineSession } from "./session.js"

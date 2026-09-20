@@ -2,8 +2,8 @@
 
 ## Dev setup
 
-Requires [Bun](https://bun.sh) ≥ 1.2. No build step — Bun runs the TypeScript
-source directly.
+Requires [Bun](https://bun.sh) ≥ 1.3 on Linux. Development runs TypeScript directly; distribution builds
+emit JavaScript and declarations.
 
 ```bash
 git clone https://github.com/xandreeddev/efferent && cd efferent
@@ -22,7 +22,7 @@ bun test              # colocated unit tests — key-free by design
 bun run scenarios     # scenario packs vs committed baselines (scripted twins)
 ```
 
-House rules the gates enforce (see the root `CLAUDE.md` for the full list):
+House rules the gates enforce (see the root `AGENT.md` for the full list):
 errors are `Schema.TaggedError` values (no `try`/`catch`/`throw`), state is a
 fold (no `let`, no loop statements), absence is `Option`, union branching is
 `Match`, dependency direction between packages is a build-failing gate.
@@ -43,3 +43,10 @@ The previously published npm packages (`efferent`, `@xandreed/cli`, and the
 further releases, and the release automation has been removed from this repo.
 The current line is source-run only. Any future publishing will be set up
 deliberately, not resurrected from the old pipeline.
+
+## Distribution and terminal changes
+
+Run `bun run build:packages` and `bun run verify:packages` for package changes.
+Run `python scripts/verify-tui.py` and the TUI frame tests for terminal changes.
+The external-consumer test installs local tarballs; it never publishes them.
+Run `bun run --cwd packages/website check` for documentation changes.

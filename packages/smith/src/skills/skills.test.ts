@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
 import { makeSmithCodingHandlers } from "../implementor/codingToolkit.js"
 import { discoverSkills, readSkill, renderSkillsBlock, SKILLS_DIR } from "./skills.js"
 

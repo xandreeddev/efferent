@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { ToolCallId } from "@xandreed/engine"
-import type { AgentMessage } from "@xandreed/engine"
+import { ToolCallId } from "@xandreed/core"
+import type { AgentMessage } from "@xandreed/core"
 import type { MathItem } from "../domain/MathContent.js"
 import { advance, applyGrade, emptyMathModel, putItems, type MathModel } from "./model.js"
 import { composeAgentMessage } from "../protocol.js"

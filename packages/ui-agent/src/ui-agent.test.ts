@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "@effect/ai"
 import { Effect } from "effect"
-import { ConversationId } from "@xandreed/engine"
+import { ConversationId } from "@xandreed/core"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
 import { isUiProtocolPayload, normalizeInitialUiAdmission, uiPlannerPrompt, uiRepairPrompt, validateBlocks, validateManifest, validatePageCompleteness, validateUiAgentProfile } from "./index.js"

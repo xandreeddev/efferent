@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
-import { ModelCatalog, SettingsStore } from "@xandreed/engine"
-import type { SettingsKey } from "@xandreed/engine"
+import { ModelCatalog, SettingsStore } from "@xandreed/core"
+import type { SettingsKey } from "@xandreed/core"
 import { modelPickerOptions } from "../presentation/modelCatalog.js"
 import { openSelect } from "../presentation/selectBox.js"
 import type { SmithTuiContext } from "../state/store.js"

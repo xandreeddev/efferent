@@ -33,7 +33,7 @@ export interface MathPump {
 export const makeMathPump = (
   session: MathSession,
   meta: MathMeta,
-  history: ReadonlyArray<import("@xandreed/engine").AgentMessage>,
+  history: ReadonlyArray<import("@xandreed/core").AgentMessage>,
   seed?: { grade?: number; theme?: string },
 ) =>
   Effect.gen(function* () {

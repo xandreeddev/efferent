@@ -1,6 +1,6 @@
 import { Match, Option } from "effect"
 import type { Fiber } from "effect"
-import type { ConversationId, SpecDoc } from "@xandreed/engine"
+import type { ConversationId, SpecDoc } from "@xandreed/core"
 import type { ShipPlan } from "../../forge/ship.js"
 import type { RefineSession } from "../../refine/session.js"
 import type { SmithMode } from "../state/store.js"

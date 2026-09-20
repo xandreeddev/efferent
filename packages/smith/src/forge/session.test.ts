@@ -11,8 +11,8 @@ import {
   writeWorkspaceFile,
 } from "@xandreed/foundry"
 import type { Gate, TsProject } from "@xandreed/foundry"
-import { SpecDoc } from "@xandreed/engine"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { SpecDoc } from "@xandreed/core"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"

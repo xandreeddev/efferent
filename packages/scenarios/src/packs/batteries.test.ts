@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
 import { Effect, Option, Ref } from "effect"
 import { CandidateFact } from "@xandreed/smith"
-import type { PackReport } from "../framework/model.js"
+import type { PackReport } from "@xandreed/evals/model"
 import { listCases } from "../live/fixtures.js"
 import {
   calibrationSummary,

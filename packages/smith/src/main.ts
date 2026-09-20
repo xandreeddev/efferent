@@ -8,21 +8,12 @@ import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Logger, Option } from "effect"
 import { BunContext } from "@effect/platform-bun"
-import { EngineSettings, SettingsStore } from "@xandreed/engine"
-import {
-  FileLoggerLive,
-  FileLoggerAddLive,
-  ConfiguredModelCatalogLive,
-  LanguageModelLive,
-  UtilityLlmLive,
-  LocalAuthStoreLive,
-  LocalFileSystemLive,
-  LocalSettingsStoreLive,
-  LocalShellLive,
-  McpClientLive,
-  SqliteConversationStoreLive,
-  TracingLive,
-} from "@xandreed/providers"
+import { EngineSettings, SettingsStore } from "@xandreed/core"
+import { FileLoggerLive, FileLoggerAddLive, TracingLive } from "@xandreed/plugin-telemetry"
+import { ConfiguredModelCatalogLive, LanguageModelLive, UtilityLlmLive, LocalAuthStoreLive, LocalSettingsStoreLive } from "@xandreed/plugin-models"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
+import { McpClientLive } from "@xandreed/plugin-mcp"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { ConfigError } from "@xandreed/foundry"
 import { SMITH_LIMIT_DEFAULTS } from "./domain/SmithConfig.js"
 import type { SmithRunConfig } from "./domain/SmithConfig.js"

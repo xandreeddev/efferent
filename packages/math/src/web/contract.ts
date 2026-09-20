@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import { parseJsonOption } from "@xandreed/engine"
+import { parseJsonOption } from "@xandreed/core"
 
 /**
  * The math shell's browser ↔ server protocol — path constants (shared by the

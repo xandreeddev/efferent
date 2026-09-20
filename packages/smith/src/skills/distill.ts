@@ -1,6 +1,6 @@
 import { join } from "node:path"
 import { Effect } from "effect"
-import { FileSystem } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
 import { MemoryTopic } from "../memory/domain.js"
 import type { MemoryRecord } from "../memory/domain.js"
 import { SKILLS_DIR } from "./skills.js"

@@ -3,8 +3,13 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext", "DOM"],
-    "types": ["bun"],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
+    "types": [
+      "bun"
+    ],
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid",
     "strict": true,
@@ -22,27 +27,126 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@xandreed/engine": ["packages/engine/src/index.ts"],
-      "@xandreed/engine/*": ["packages/engine/src/*"],
-      "@xandreed/providers": ["packages/providers/src/index.ts"],
-      "@xandreed/providers/*": ["packages/providers/src/*"],
-      "@xandreed/surface": ["packages/surface/src/index.ts"],
-      "@xandreed/surface/*": ["packages/surface/src/*"],
-      "@xandreed/canvas": ["packages/canvas/src/index.ts"],
-      "@xandreed/canvas/*": ["packages/canvas/src/*"],
-      "@xandreed/scenarios": ["packages/scenarios/src/index.ts"],
-      "@xandreed/scenarios/*": ["packages/scenarios/src/*"],
-      "@xandreed/foundry": ["packages/foundry/src/index.ts"],
-      "@xandreed/foundry/*": ["packages/foundry/src/*"],
-      "@xandreed/smith": ["packages/smith/src/index.ts"],
-      "@xandreed/smith/*": ["packages/smith/src/*"],
-      "@xandreed/math": ["packages/math/src/index.ts"],
-      "@xandreed/math/*": ["packages/math/src/*"],
-      "@xandreed/social": ["packages/social/src/index.ts"],
-      "@xandreed/social/*": ["packages/social/src/*"],
-      "@xandreed/ui-agent": ["packages/ui-agent/src/index.ts"],
-      "@xandreed/ui-agent/profiles/streaming-ui-v1": ["packages/ui-agent/profiles/streaming-ui-v1.json"],
-      "@xandreed/ui-agent/*": ["packages/ui-agent/src/*"]
+      "@xandreed/core": [
+        "packages/core/src/index.ts"
+      ],
+      "@xandreed/core/*": [
+        "packages/core/src/*"
+      ],
+      "@xandreed/surface": [
+        "packages/surface/src/index.ts"
+      ],
+      "@xandreed/surface/*": [
+        "packages/surface/src/*"
+      ],
+      "@xandreed/canvas": [
+        "packages/canvas/src/index.ts"
+      ],
+      "@xandreed/canvas/*": [
+        "packages/canvas/src/*"
+      ],
+      "@xandreed/scenarios": [
+        "packages/scenarios/src/index.ts"
+      ],
+      "@xandreed/scenarios/*": [
+        "packages/scenarios/src/*"
+      ],
+      "@xandreed/foundry": [
+        "packages/foundry/src/index.ts"
+      ],
+      "@xandreed/foundry/*": [
+        "packages/foundry/src/*"
+      ],
+      "@xandreed/smith": [
+        "packages/smith/src/index.ts"
+      ],
+      "@xandreed/smith/*": [
+        "packages/smith/src/*"
+      ],
+      "@xandreed/math": [
+        "packages/math/src/index.ts"
+      ],
+      "@xandreed/math/*": [
+        "packages/math/src/*"
+      ],
+      "@xandreed/social": [
+        "packages/social/src/index.ts"
+      ],
+      "@xandreed/social/*": [
+        "packages/social/src/*"
+      ],
+      "@xandreed/ui-agent": [
+        "packages/ui-agent/src/index.ts"
+      ],
+      "@xandreed/ui-agent/profiles/streaming-ui-v1": [
+        "packages/ui-agent/profiles/streaming-ui-v1.json"
+      ],
+      "@xandreed/ui-agent/*": [
+        "packages/ui-agent/src/*"
+      ],
+      "@xandreed/plugin-agent-loop": [
+        "packages/plugin-agent-loop/src/index.ts"
+      ],
+      "@xandreed/plugin-mcp": [
+        "packages/plugin-mcp/src/index.ts"
+      ],
+      "@xandreed/runtime": [
+        "packages/runtime/src/index.ts"
+      ],
+      "@xandreed/plugin-policy-workspace": [
+        "packages/plugin-policy-workspace/src/index.ts"
+      ],
+      "@xandreed/website": [
+        "packages/website/src/index.ts"
+      ],
+      "@xandreed/issue-tracker-example": [
+        "packages/issue-tracker-example/src/index.ts"
+      ],
+      "@xandreed/plugin-tools-local": [
+        "packages/plugin-tools-local/src/index.ts"
+      ],
+      "@xandreed/tui": [
+        "packages/tui/src/index.ts"
+      ],
+      "@xandreed/cli": [
+        "packages/cli/src/index.ts"
+      ],
+      "@xandreed/sdk": [
+        "packages/sdk/src/index.ts"
+      ],
+      "@xandreed/plugin-context": [
+        "packages/plugin-context/src/index.ts"
+      ],
+      "@xandreed/plugin-models": [
+        "packages/plugin-models/src/index.ts"
+      ],
+      "@xandreed/plugin-telemetry": [
+        "packages/plugin-telemetry/src/index.ts"
+      ],
+      "@xandreed/plugin-session-sqlite": [
+        "packages/plugin-session-sqlite/src/index.ts"
+      ],
+      "@xandreed/plugin-memory": [
+        "packages/plugin-memory/src/index.ts"
+      ],
+      "@xandreed/plugin-tools-local/codingToolkit": [
+        "packages/plugin-tools-local/src/coding/codingToolkit.ts"
+      ],
+      "@xandreed/plugin-tools-local/nativeSearch": [
+        "packages/plugin-tools-local/src/coding/nativeSearch.ts"
+      ],
+      "@xandreed/plugin-tools-local/skills": [
+        "packages/plugin-tools-local/src/skills/skills.ts"
+      ],
+      "@xandreed/tui/approval": [
+        "packages/tui/src/approval.ts"
+      ],
+      "@xandreed/evals": [
+        "packages/evals/src/index.ts"
+      ],
+      "@xandreed/evals/*": [
+        "packages/evals/src/*.ts"
+      ]
     }
   }
 }

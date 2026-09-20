@@ -1,13 +1,7 @@
 import { Effect, Fiber, Match, Option } from "effect"
-import { AuthStore, ProviderId, Shell } from "@xandreed/engine"
-import type { Credential } from "@xandreed/engine"
-import {
-  beginAnthropicOAuth,
-  beginOpenAiCodexOAuth,
-  exchangeAnthropicCode,
-  exchangeOpenAiCodexCode,
-  parseAuthorizationInput,
-} from "@xandreed/providers"
+import { AuthStore, ProviderId, Shell } from "@xandreed/core"
+import type { Credential } from "@xandreed/core"
+import { beginAnthropicOAuth, beginOpenAiCodexOAuth, exchangeAnthropicCode, exchangeOpenAiCodexCode, parseAuthorizationInput } from "@xandreed/plugin-models"
 import {
   loginSetOAuthStatus,
   oauthStep,

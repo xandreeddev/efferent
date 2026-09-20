@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
 import { makeSmithCodingHandlers } from "./codingToolkit.js"
 
 const withHandlers = <A>(

@@ -1,13 +1,10 @@
 import { Toolkit } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
-import { buildMcpBridge, runAgent, UtilityLlm } from "@xandreed/engine"
-import type { AuthStore, ConversationId, SettingsStore } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalShellLive,
-  roleModelView,
-  SandboxedShellLive,
-} from "@xandreed/providers"
+import { buildMcpBridge, UtilityLlm } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
+import type { AuthStore, ConversationId, SettingsStore } from "@xandreed/core"
+import { LanguageModelLive, roleModelView } from "@xandreed/plugin-models"
+import { LocalShellLive, SandboxedShellLive } from "@xandreed/plugin-tools-local"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import {

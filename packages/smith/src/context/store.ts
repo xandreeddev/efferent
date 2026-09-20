@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
-import { FileSystem } from "@xandreed/engine"
-import type { FsError } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
+import type { FsError } from "@xandreed/core"
 import { ContextSet } from "./context-set.entity.js"
 import { emptyContextSet } from "./context-set.entity.functions.js"
 

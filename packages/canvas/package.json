@@ -10,11 +10,16 @@
   },
   "dependencies": {
     "@alpinejs/csp": "^3.15.12",
-    "@effect/ai": "^0.35.0",
-    "@xandreed/engine": "workspace:*",
-    "@xandreed/providers": "workspace:*",
+    "@effect/ai": "0.35.0",
     "@xandreed/surface": "workspace:*",
     "@xandreed/ui-agent": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "3.21.4",
+    "@xandreed/core": "workspace:*",
+    "@xandreed/plugin-session-sqlite": "workspace:*",
+    "@xandreed/plugin-telemetry": "workspace:*",
+    "@xandreed/plugin-models": "workspace:*",
+    "@xandreed/sdk": "workspace:*",
+    "@xandreed/runtime": "workspace:*",
+    "@effect/platform-bun": "^0.89.0"
   }
 }

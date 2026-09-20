@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { SpecDoc } from "@xandreed/engine"
+import { SpecDoc } from "@xandreed/core"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import { initialRefine, reduceRefine, withUserLine } from "./refine.js"
 

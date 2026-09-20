@@ -1,6 +1,6 @@
 import { Array as Arr, Effect, Option, Schema } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
-import { ConversationId, ConversationStore, FileSystem, UtilityLlm } from "@xandreed/engine"
+import { ConversationId, ConversationStore, FileSystem, UtilityLlm } from "@xandreed/core"
 import { distillSkillsFromMemory } from "../skills/distill.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { renderTrailForDigest } from "../implementor/efferentImplementor.js"

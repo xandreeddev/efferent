@@ -22,8 +22,21 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * a package may only name the internal packages beneath it.
  */
 const CHECKED = [
-  "packages/engine/src/**",
-  "packages/providers/src/**",
+  "packages/core/src/**",
+  "packages/evals/src/**",
+  "packages/plugin-agent-loop/src/**",
+  "packages/runtime/src/**",
+  "packages/sdk/src/**",
+  "packages/tui/src/**",
+  "packages/cli/src/**",
+  "packages/plugin-context/src/**",
+  "packages/plugin-memory/src/**",
+  "packages/plugin-models/src/**",
+  "packages/plugin-tools-local/src/**",
+  "packages/plugin-policy-workspace/src/**",
+  "packages/plugin-session-sqlite/src/**",
+  "packages/plugin-telemetry/src/**",
+  "packages/plugin-mcp/src/**",
   "packages/surface/src/**",
   "packages/ui-agent/src/**",
   "packages/canvas/src/**",
@@ -44,14 +57,15 @@ const CHECKED = [
  * Test scaffolding (scripted providers, stubbed ports) is out of scope.
  */
 const ERASURE_BOUNDARY = [
-  "packages/providers/src/llm/router.ts",
-  "packages/providers/src/llm/compat.ts",
-  "packages/providers/src/llm/openAiCodex.ts",
-  "packages/providers/src/llm/providers.ts",
-  "packages/engine/src/loop/loop.ts",
-  "packages/engine/src/mcp/bridge.ts",
+  "packages/plugin-models/src/llm/router.ts",
+  "packages/plugin-models/src/llm/compat.ts",
+  "packages/plugin-models/src/llm/openAiCodex.ts",
+  "packages/plugin-models/src/llm/providers.ts",
+  "packages/plugin-agent-loop/src/loop.ts",
+  "packages/core/src/mcp/bridge.ts",
+  "packages/plugin-tools-local/src/plugin.adapter.ts",
 ]
-const TEST_SCAFFOLDING = ["**/*.test.ts", "**/testing.ts", "packages/scenarios/src/**"]
+const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts", "packages/scenarios/src/**"]
 
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
@@ -78,7 +92,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "architecture/layers-live-at-edges", include: CHECKED },
     {
       rule: "effect/branded-id-fields",
-      include: ["packages/engine/src/domain/**", "packages/engine/src/spec/**"],
+      include: ["packages/core/src/domain/**", "packages/core/src/spec/**"],
     },
   ],
   checks: [
@@ -90,146 +104,472 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
   ],
   boundaries: {
-    layers: [
+    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","@xandreed/core","node:","bun:test"]},
       {
-        // The agent kernel: entities, ports, the loop, the session chassis,
-        // the spec module. Pure — imports nothing internal, no provider
-        // SDKs, no IO.
-        name: "engine",
-        path: "packages/engine/src/**",
-        canImport: [],
-        externals: ["effect", "@effect/ai", "bun:test"],
+            "name": "canvas",
+            "path": "packages/canvas/src/**",
+            "canImport": [
+                  "surface",
+                  "ui-agent",
+                  "core",
+                  "plugin-session-sqlite",
+                  "plugin-telemetry",
+                  "plugin-models"
+            ],
+            "externals": ["@xandreed/sdk", "@xandreed/runtime",
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@alpinejs/csp",
+                  "@xandreed/surface",
+                  "@xandreed/ui-agent",
+                  "@xandreed/core",
+                  "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-telemetry",
+                  "@xandreed/plugin-models"
+            ]
       },
       {
-        // The edge: Layer impls of the engine's ports (provider router,
-        // auth/settings stores, SQLite store, fs/shell).
-        name: "providers",
-        path: "packages/providers/src/**",
-        canImport: ["engine"],
-        // @opentelemetry/: the OTLP exporter + span processor behind
-        // TracingLive — observability is edge concern, so it lives here.
-        externals: [
-          "effect",
-          "@effect/",
-          "@opentelemetry/",
-          "@xandreed/engine",
-          "node:",
-          "ws",
-          "bun",
-          "bun:",
-        ],
+            "name": "cli",
+            "path": "packages/cli/src/**",
+            "canImport": [
+                  "core",
+                  "sdk",
+                  "runtime",
+                  "smith",
+                  "tui",
+                  "plugin-models"
+            ],
+            "externals": ["@xandreed/plugin-tools-local",
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "@xandreed/sdk",
+                  "@xandreed/runtime",
+                  "@xandreed/smith",
+                  "@xandreed/tui",
+                  "@xandreed/plugin-models"
+            ]
       },
       {
-        // Structured UI-agent domain and orchestration. It may use the engine
-        // chassis but has no browser, filesystem, provider, or HTML imports.
-        name: "ui-agent",
-        path: "packages/ui-agent/src/**",
-        canImport: ["engine"],
-        externals: ["effect", "@effect/", "@xandreed/engine", "bun:test"],
+            "name": "core",
+            "path": "packages/core/src/**",
+            "canImport": [],
+            "externals": [
+                  "effect",
+                  "@effect/ai",
+                  "bun:test"
+            ]
       },
       {
-        // The UI substrate: html template, sanitizers, validateUi, protocol
-        // contract, and trusted structured compiler. It consumes UI-agent
-        // data contracts; the UI agent never imports the renderer back.
-        name: "surface",
-        path: "packages/surface/src/**",
-        canImport: ["ui-agent"],
-        externals: ["effect", "@xandreed/ui-agent", "@dagrejs/dagre", "bun:test"],
+            "name": "foundry",
+            "path": "packages/foundry/src/**",
+            "canImport": [],
+            "externals": [
+                  "effect",
+                  "typescript",
+                  "node:",
+                  "bun:test"
+            ]
       },
       {
-        // The gate framework — the fixed point. Imports nothing internal.
-        name: "foundry",
-        path: "packages/foundry/src/**",
-        canImport: [],
-        externals: ["effect", "typescript", "node:", "bun:test"],
+            "name": "issue-tracker-example",
+            "path": "packages/issue-tracker-example/src/**",
+            "canImport": [
+                  "foundry"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/foundry"
+            ]
       },
       {
-        // The spec-driven coder at the forge: engine loop + smith coding
-        // toolkit as foundry's Implementor; gates outside the agent.
-        name: "smith",
-        path: "packages/smith/src/**",
-        canImport: ["engine", "providers", "foundry"],
-        externals: [
-          "effect",
-          "@effect/",
-          "@xandreed/engine",
-          "@xandreed/providers",
-          "@xandreed/foundry",
-          "@opentui/",
-          "solid-js",
-          "node:",
-          "bun",
-          "bun:",
-        ],
+            "name": "math",
+            "path": "packages/math/src/**",
+            "canImport": [
+                  "surface",
+                  "core",
+                  "plugin-agent-loop",
+                  "plugin-tools-local",
+                  "plugin-session-sqlite",
+                  "plugin-telemetry",
+                  "plugin-models"
+            ],
+            "externals": ["@xandreed/sdk", "@xandreed/runtime",
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/surface",
+                  "@xandreed/core",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-tools-local",
+                  "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-telemetry",
+                  "@xandreed/plugin-models"
+            ]
       },
       {
-        // The standalone math-practice product — owns its views/assets;
-        // sanitizeMathml lives in surface.
-        name: "math",
-        path: "packages/math/src/**",
-        canImport: ["engine", "providers", "surface"],
-        externals: [
-          "effect",
-          "@effect/",
-          "@xandreed/engine",
-          "@xandreed/providers",
-          "@xandreed/surface",
-          "node:",
-          "bun",
-          "bun:",
-        ],
+            "name": "plugin-agent-loop",
+            "path": "packages/plugin-agent-loop/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core"
+            ]
       },
       {
-        // The social engagement agent: draft-only toolkit, human review
-        // queue, deterministic policy gates at both chokepoints.
-        name: "social",
-        path: "packages/social/src/**",
-        canImport: ["engine", "providers"],
-        externals: [
-          "effect",
-          "@effect/",
-          "@xandreed/engine",
-          "@xandreed/providers",
-          "playwright",
-          "node:",
-          "bun",
-          "bun:",
-        ],
+            "name": "plugin-context",
+            "path": "packages/plugin-context/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core"
+            ]
       },
       {
-        // First host for the structured UI agent: adapters + browser delivery
-        // around the UI-agent runtime and trusted Surface compiler.
-        name: "canvas",
-        path: "packages/canvas/src/**",
-        canImport: ["engine", "providers", "surface", "ui-agent"],
-        externals: [
-          "effect",
-          "@effect/",
-          "@xandreed/engine",
-          "@xandreed/providers",
-          "@xandreed/surface",
-          "@xandreed/ui-agent",
-          "node:",
-          "bun",
-          "bun:",
-        ],
+            "name": "plugin-mcp",
+            "path": "packages/plugin-mcp/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "ws"
+            ]
       },
       {
-        // Canonical Effect-native ports-and-adapters example and eval world.
-        name: "issue-tracker-example",
-        path: "packages/issue-tracker-example/src/**",
-        canImport: [],
-        externals: ["effect", "bun:test"],
+            "name": "plugin-memory",
+            "path": "packages/plugin-memory/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core"
+            ]
       },
       {
-        // Evals v3: scenario packs over agent worlds. The TOP of the graph —
-        // packs may import the agents; nothing imports it.
-        name: "scenarios",
-        path: "packages/scenarios/src/**",
-        canImport: ["engine", "providers", "surface", "ui-agent", "foundry", "smith", "math", "social", "canvas"],
-        externals: ["effect", "@effect/", "@xandreed/", "playwright", "node:", "bun", "bun:"],
+            "name": "plugin-models",
+            "path": "packages/plugin-models/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "ws"
+            ]
       },
-    ],
+      {
+            "name": "plugin-policy-workspace",
+            "path": "packages/plugin-policy-workspace/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core"
+            ]
+      },
+      {
+            "name": "plugin-session-sqlite",
+            "path": "packages/plugin-session-sqlite/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "ws"
+            ]
+      },
+      {
+            "name": "plugin-telemetry",
+            "path": "packages/plugin-telemetry/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "@opentelemetry/exporter-metrics-otlp-http",
+                  "@opentelemetry/exporter-trace-otlp-http",
+                  "@opentelemetry/sdk-metrics",
+                  "@opentelemetry/sdk-trace-base"
+            ]
+      },
+      {
+            "name": "plugin-tools-local",
+            "path": "packages/plugin-tools-local/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "ws"
+            ]
+      },
+      {
+            "name": "runtime",
+            "path": "packages/runtime/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core"
+            ]
+      },
+      {
+            "name": "scenarios",
+            "path": "packages/scenarios/src/**",
+            "canImport": [
+                  "canvas",
+                  "foundry",
+                  "math",
+                  "smith",
+                  "core",
+                  "plugin-agent-loop",
+                  "plugin-tools-local",
+                  "plugin-session-sqlite",
+                  "plugin-mcp",
+                  "plugin-models",
+                  "ui-agent",
+                  "social"
+            ],
+            "externals": ["@xandreed/sdk","@xandreed/evals",
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@opentui/core",
+                  "@xandreed/canvas",
+                  "@xandreed/foundry",
+                  "@xandreed/math",
+                  "@xandreed/smith",
+                  "playwright",
+                  "@xandreed/core",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-tools-local",
+                  "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-mcp",
+                  "@xandreed/plugin-models",
+                  "@xandreed/ui-agent",
+                  "@xandreed/social"
+            ]
+      },
+      {
+            "name": "sdk-tests",
+            "path": "packages/sdk/src/**/*.test.ts",
+            "canImport": [
+                  "sdk",
+                  "core",
+                  "runtime",
+                  "plugin-memory",
+                  "plugin-session-sqlite"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "@xandreed/runtime",
+                  "@xandreed/plugin-memory",
+                  "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-memory",
+                  "@xandreed/plugin-session-sqlite"
+            ]
+      },
+      {
+            "name": "sdk",
+            "path": "packages/sdk/src/**",
+            "canImport": [
+                  "core",
+                  "runtime"
+            ],
+            "externals": [
+                  "effect",
+                  "@xandreed/core",
+                  "@xandreed/runtime",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "smith",
+            "path": "packages/smith/src/**",
+            "canImport": [
+                  "foundry",
+                  "core",
+                  "plugin-agent-loop",
+                  "plugin-tools-local",
+                  "plugin-session-sqlite",
+                  "plugin-telemetry",
+                  "plugin-mcp",
+                  "plugin-models",
+                  "plugin-policy-workspace",
+                  "sdk",
+                  "plugin-context",
+                  "plugin-memory"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@opentui/core",
+                  "@opentui/solid",
+                  "@xandreed/foundry",
+                  "solid-js",
+                  "@xandreed/core",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-tools-local",
+                  "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-telemetry",
+                  "@xandreed/plugin-mcp",
+                  "@xandreed/plugin-models",
+                  "@xandreed/plugin-policy-workspace",
+                  "@xandreed/sdk",
+                  "@xandreed/plugin-context",
+                  "@xandreed/plugin-memory"
+            ]
+      },
+      {
+            "name": "social",
+            "path": "packages/social/src/**",
+            "canImport": [
+                  "core",
+                  "plugin-agent-loop",
+                  "plugin-telemetry",
+                  "plugin-models"
+            ],
+            "externals": ["@xandreed/sdk", "@xandreed/runtime", "@xandreed/plugin-session-sqlite",
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "playwright",
+                  "@xandreed/core",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-telemetry",
+                  "@xandreed/plugin-models"
+            ]
+      },
+      {
+            "name": "surface",
+            "path": "packages/surface/src/**",
+            "canImport": [
+                  "ui-agent"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@dagrejs/dagre",
+                  "@xandreed/ui-agent"
+            ]
+      },
+      {
+            "name": "tui",
+            "path": "packages/tui/src/**",
+            "canImport": [
+                  "core",
+                  "sdk"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "@xandreed/sdk",
+                  "@opentui/core",
+                  "@opentui/solid",
+                  "solid-js"
+            ]
+      },
+      {
+            "name": "ui-agent",
+            "path": "packages/ui-agent/src/**",
+            "canImport": [
+                  "core",
+                  "plugin-agent-loop"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "@xandreed/plugin-agent-loop"
+            ]
+      }
+],
   },
 }
 

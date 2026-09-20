@@ -1,6 +1,6 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Ref, Schema } from "effect"
-import { Failure } from "@xandreed/engine"
+import { Failure } from "@xandreed/core"
 import { XPlatform } from "../ports/x-platform.port.js"
 import { BlogReader } from "../ports/blog-reader.port.js"
 import type { LedgerEntry } from "../domain/ledger.entity.js"

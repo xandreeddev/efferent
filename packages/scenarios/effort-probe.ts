@@ -4,8 +4,8 @@
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
 import { LanguageModel } from "@effect/ai"
-import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/providers"
-import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/engine"
+import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
+import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
 const MODELS = ["openai-codex:gpt-5.6-luna", "opencode:glm-5.2"]
 const EFFORTS = ["low", "medium", "high"] as const

@@ -3,16 +3,11 @@ import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
-import { ConversationId, ConversationStore, Shell, SpecDoc } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalFileSystemLive,
-  LocalShellLive,
-  McpClientLive,
-  SqliteConversationStoreLive,
-  UtilityLlmLive,
-} from "@xandreed/providers"
+import { ConversationId, ConversationStore, Shell, SpecDoc } from "@xandreed/core"
+import { LanguageModelLive, LocalAuthStoreLive, UtilityLlmLive } from "@xandreed/plugin-models"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
+import { McpClientLive } from "@xandreed/plugin-mcp"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { makeScriptedImplementor, vendoredPackFiles } from "@xandreed/foundry"
 import {
   makeProfileSession,
@@ -26,9 +21,9 @@ import {
   SmithSettingsStoreLive,
 } from "@xandreed/smith"
 import type { ProfileAgent, ProfileSession, SmithEvent, SmithRunConfig } from "@xandreed/smith"
-import type { Pack } from "../framework/model.js"
-import { scenario } from "../framework/run.js"
-import { eventWhere, fileContains, fileExists } from "../framework/evidence.js"
+import type { Pack } from "@xandreed/evals/model"
+import { scenario } from "@xandreed/evals/run"
+import { eventWhere, fileContains, fileExists } from "@xandreed/evals/evidence"
 import { CRITIC_RUBRIC_VERSION, makeTrajectoryCritic } from "../judges/trajectoryCritic.js"
 import { generalTierCall } from "../live/llm.js"
 import { seedWorkspace } from "../live/fixtures.js"

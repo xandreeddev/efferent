@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import type { FileSystem } from "@xandreed/engine"
+import type { FileSystem } from "@xandreed/core"
 import type { QualityBar } from "@xandreed/foundry"
 import { loadForgeLessons, loadWorkspaceRules } from "../forge/session.js"
 import { loadQualityBar } from "../gates/profile.js"

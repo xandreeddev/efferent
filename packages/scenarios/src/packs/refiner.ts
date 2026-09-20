@@ -3,8 +3,8 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
 import { snapshotWorkspace } from "@xandreed/foundry"
-import { ConversationStore } from "@xandreed/engine"
-import type { AgentMessage, SpecDoc } from "@xandreed/engine"
+import { ConversationStore } from "@xandreed/core"
+import type { AgentMessage, SpecDoc } from "@xandreed/core"
 import {
   makeCommandGate,
   makeRefineSession,
@@ -12,16 +12,11 @@ import {
   vacuousAccepts,
 } from "@xandreed/smith"
 import type { RefineSession } from "@xandreed/smith"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalFileSystemLive,
-  LocalSettingsStoreLive,
-  LocalShellLive,
-  SqliteConversationStoreLive,
-} from "@xandreed/providers"
-import type { Pack } from "../framework/model.js"
-import { scenario } from "../framework/run.js"
+import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive } from "@xandreed/plugin-models"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
+import type { Pack } from "@xandreed/evals/model"
+import { scenario } from "@xandreed/evals/run"
 import { listCases, seedWorkspace } from "../live/fixtures.js"
 import { codeTierCall } from "../live/llm.js"
 import { makeSpecQualityJudge, SPEC_QUALITY_RUBRIC_VERSION } from "../judges/specQuality.js"

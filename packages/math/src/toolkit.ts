@@ -1,6 +1,6 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Ref, Schema } from "effect"
-import type { AgentConfig } from "@xandreed/engine"
+import type { AgentConfig } from "@xandreed/plugin-agent-loop"
 import { parseMathItems, servedPromptKey, type MathItem } from "./domain/MathContent.js"
 import { mathAgentPrompt } from "./prompt.js"
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Either, Option } from "effect"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import {
   clearPins,
   emptyContextSet,

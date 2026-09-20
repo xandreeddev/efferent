@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Layer, Option, Ref, Schema } from "effect"
-import { UtilityLlm } from "@xandreed/engine"
+import { UtilityLlm } from "@xandreed/core"
 import {
   CandidateFact,
   consolidatePrompt,
@@ -13,8 +13,8 @@ import {
   MemoryRecord,
   stripFences,
 } from "@xandreed/smith"
-import type { Judge, Pack } from "../framework/model.js"
-import { scenario } from "../framework/run.js"
+import type { Judge, Pack } from "@xandreed/evals/model"
+import { scenario } from "@xandreed/evals/run"
 import { listCases } from "../live/fixtures.js"
 import { generalTierCall, utilityTier } from "../live/llm.js"
 

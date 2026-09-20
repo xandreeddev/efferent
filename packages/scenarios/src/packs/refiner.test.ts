@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
-import { SpecDoc } from "@xandreed/engine"
+import { SpecDoc } from "@xandreed/core"
 import { listCases } from "../live/fixtures.js"
 import {
   lastSpecGradesJson,

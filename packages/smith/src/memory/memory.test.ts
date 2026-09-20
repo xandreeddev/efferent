@@ -4,9 +4,9 @@ import { dirname, join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Schema } from "effect"
 import { FactoryRun } from "@xandreed/foundry"
-import { ConversationStore, StoredMessage, UtilityCompletion, UtilityLlm } from "@xandreed/engine"
-import type { AgentMessage } from "@xandreed/engine"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { ConversationStore, StoredMessage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import type { AgentMessage } from "@xandreed/core"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import {
   CorroborateMemory,

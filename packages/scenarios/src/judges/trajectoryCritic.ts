@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import type { Judge } from "../framework/model.js"
+import type { Judge } from "@xandreed/evals/model"
 
 /**
  * The trajectory CRITIC as a reusable `Judge<W>` (agent-as-a-judge, the

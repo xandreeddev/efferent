@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Either, Layer, Option } from "effect"
-import { Shell } from "@xandreed/engine"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { Shell } from "@xandreed/core"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { assembleContext, bundleSummary, fingerprintOf } from "./assemble.js"
 import { emptyContextSet, parsePinRef, withBudget, withPin } from "./context-set.entity.functions.js"
 import type { ContextSet } from "./context-set.entity.js"
@@ -56,7 +56,7 @@ const workspace = () => {
   return cwd
 }
 
-const run = <A>(cwd: string, calls: string[], effect: Effect.Effect<A, never, Shell | import("@xandreed/engine").FileSystem>) =>
+const run = <A>(cwd: string, calls: string[], effect: Effect.Effect<A, never, Shell | import("@xandreed/core").FileSystem>) =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(LocalFileSystemLive),

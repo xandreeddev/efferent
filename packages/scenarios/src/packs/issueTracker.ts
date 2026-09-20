@@ -2,15 +2,10 @@ import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { Effect, Layer, Option, Ref } from "effect"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalFileSystemLive,
-  LocalShellLive,
-  McpClientLive,
-  SqliteConversationStoreLive,
-  UtilityLlmLive,
-} from "@xandreed/providers"
+import { LanguageModelLive, LocalAuthStoreLive, UtilityLlmLive } from "@xandreed/plugin-models"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
+import { McpClientLive } from "@xandreed/plugin-mcp"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import {
   makeRefineSession,
   runForgeSession,
@@ -18,9 +13,9 @@ import {
   SMITH_LIMIT_DEFAULTS,
 } from "@xandreed/smith"
 import type { SmithEvent, SmithRunConfig } from "@xandreed/smith"
-import type { Check, Pack } from "../framework/model.js"
-import { scenario } from "../framework/run.js"
-import { eventOrder, eventWhere, fileContains, fileExists } from "../framework/evidence.js"
+import type { Check, Pack } from "@xandreed/evals/model"
+import { scenario } from "@xandreed/evals/run"
+import { eventOrder, eventWhere, fileContains, fileExists } from "@xandreed/evals/evidence"
 
 interface IssueTrackerWorld {
   readonly dir: string

@@ -1,6 +1,6 @@
 import type { Option } from "effect"
 import type { FactoryRun, GateReport, Spec } from "@xandreed/foundry"
-import type { LoopEvent, SpecDoc } from "@xandreed/engine"
+import type { LoopEvent, SpecDoc } from "@xandreed/core"
 
 /**
  * The ONE event union the smith UIs consume — in-process only (never a wire

@@ -15,7 +15,7 @@ import {
   writeWorkspaceFile,
 } from "@xandreed/foundry"
 import type { Gate } from "@xandreed/foundry"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import { gateRequestFromSpec } from "../spec/toForgeSpec.js"

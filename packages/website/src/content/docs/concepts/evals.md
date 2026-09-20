@@ -37,3 +37,10 @@ renamed) or rendering under real load. Those classes are covered by the
 frame-level TUI battery (the real renderer, headless) and by live smoke runs;
 when a live bug ships anyway, the rule is: reproduce it, fix it, and land the
 regression at whichever layer would have caught it first.
+
+## Reusable runner
+
+`@xandreed/evals` exports `scenario`, `runPack` and `evaluate`. Supply arbitrary
+scoped fixtures, checks, judges and reporters from your application. The runner
+contains no application pack registry. `packages/scenarios` hosts this repository’s
+reference-app batteries and committed baselines.

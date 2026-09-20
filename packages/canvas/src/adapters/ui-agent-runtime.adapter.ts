@@ -1,7 +1,7 @@
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
-import { parseModelSelection } from "@xandreed/engine"
-import { LanguageModelSelectionLive } from "@xandreed/providers"
+import { parseModelSelection } from "@xandreed/core"
+import { LanguageModelSelectionLive } from "@xandreed/plugin-models"
 import { UI_COMPOSER_PROMPT_VERSION, UI_PLANNER_PROMPT_VERSION, UI_REPAIR_PROMPT_VERSION, UiAgentExecutionProfile, UiAgentModels, UiAgentProfile, validateUiAgentProfile } from "@xandreed/ui-agent"
 import type { UiAgentProfileType } from "@xandreed/ui-agent"
 import profileJson from "@xandreed/ui-agent/profiles/streaming-ui-v1"
@@ -12,9 +12,9 @@ const expectedPrompts = {
   repair: UI_REPAIR_PROMPT_VERSION,
 }
 
-export const UiAgentExecutionProfileLive = Layer.effect(
+export const uiAgentExecutionProfileLive = (input: unknown) => Layer.effect(
   UiAgentExecutionProfile,
-  Schema.decodeUnknown(UiAgentProfile)(profileJson).pipe(
+  Schema.decodeUnknown(UiAgentProfile)(input).pipe(
     Effect.mapError((issue) => new Error(`invalid UI-agent profile: ${String(issue)}`)),
     Effect.flatMap((profile) => {
       const findings = validateUiAgentProfile(profile, expectedPrompts)
@@ -48,6 +48,6 @@ const UiAgentModelsLive = Layer.effect(
   }),
 )
 
-export const UiAgentRuntimeLive = UiAgentModelsLive.pipe(
-  Layer.provideMerge(UiAgentExecutionProfileLive),
-)
+export const uiAgentRuntimeLive = (input: unknown) => UiAgentModelsLive.pipe(Layer.provideMerge(uiAgentExecutionProfileLive(input)))
+export const UiAgentExecutionProfileLive = uiAgentExecutionProfileLive(profileJson)
+export const UiAgentRuntimeLive = uiAgentRuntimeLive(profileJson)

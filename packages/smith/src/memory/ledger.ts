@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Effect, Schema } from "effect"
-import { decodeJsonLines } from "@xandreed/engine"
+import { decodeJsonLines } from "@xandreed/core"
 import { MemoryEvent } from "./domain.js"
 
 /**

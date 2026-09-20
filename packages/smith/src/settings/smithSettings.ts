@@ -1,6 +1,6 @@
 import { Effect, Layer, Option } from "effect"
-import { EngineSettings, SettingsStore } from "@xandreed/engine"
-import { LocalSettingsStoreLive } from "@xandreed/providers"
+import { EngineSettings, SettingsStore } from "@xandreed/core"
+import { LocalSettingsStoreLive } from "@xandreed/plugin-models"
 import { SMITH_MODEL_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 

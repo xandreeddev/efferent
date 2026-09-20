@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Queue } from "effect"
-import type { LoopEvent } from "@xandreed/engine"
+import type { LoopEvent } from "@xandreed/core"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import { coalesceDeltas, runEventPump } from "./pump.js"
 

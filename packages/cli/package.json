@@ -1,0 +1,22 @@
+{
+  "name": "@xandreed/cli",
+  "version": "0.2.0-next.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@xandreed/core": "workspace:*",
+    "effect": "3.21.4",
+    "@xandreed/sdk": "workspace:*",
+    "@xandreed/runtime": "workspace:*",
+    "@xandreed/smith": "workspace:*",
+    "@xandreed/tui": "workspace:*",
+    "@xandreed/plugin-models": "workspace:*",
+    "@xandreed/plugin-tools-local": "workspace:*"
+  },
+  "bin": {
+    "efferent": "./src/main.ts"
+  }
+}

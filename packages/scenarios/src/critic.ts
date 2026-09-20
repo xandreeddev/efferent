@@ -3,14 +3,9 @@ import { join } from "node:path"
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { readRuns } from "@xandreed/foundry"
-import { ConversationStore } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalSettingsStoreLive,
-  roleModelView,
-  SqliteConversationStoreLive,
-} from "@xandreed/providers"
+import { ConversationStore } from "@xandreed/core"
+import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive, roleModelView } from "@xandreed/plugin-models"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { renderTrailForDigest } from "@xandreed/smith"
 import { gradesToReason, gradesToScore, Grades, criticRubric, lastGradesJson } from "./judges/trajectoryCritic.js"
 

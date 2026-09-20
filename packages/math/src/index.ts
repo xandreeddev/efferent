@@ -10,3 +10,5 @@ export {
   type MathSessionEvent,
 } from "./session.js"
 export { runMathMode, type MathModeInput } from "./mode.js"
+
+export { mathAgent, mathLoopPlugin, mathStorePlugin } from "./agent.js"

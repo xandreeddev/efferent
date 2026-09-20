@@ -1,53 +1,29 @@
 ---
 title: Architecture
-description: The package graph — foundry, engine, providers, surface, four agents, and the scenario packs — with one enforced dependency direction.
+description: Package boundaries and service composition in the agent SDK.
 ---
 
-The repo is a small set of packages with **one enforced dependency direction**,
-gated in CI by foundry's boundaries rule — an illegal import is a failing
-finding, not a review comment.
+# Efferent — composable agent SDK on Effect + Bun
 
-```
-packages/
-├── foundry/      THE FIXED POINT — the factory: forge loop + static-analysis
-│                 gates + the ratchet baseline machinery. Imports nothing internal.
-├── engine/       the agent KERNEL (pure; effect + @effect/ai only): entities,
-│                 ports, the loop, prompt mapping, the session chassis.
-├── providers/    the EDGE: routed LanguageModel, SQLite conversation store,
-│                 auth/settings, fs/shell, telemetry. providers → engine.
-├── surface/      the UI substrate (pure): scoped themes, catalog component
-│                 compiler, html template, sanitizer, validation boundaries.
-├── smith/        the coder        → engine + providers + foundry
-├── math/         the tutor        → engine + providers + surface
-├── ui-agent/     typed page/component/theme agent + catalog ports → engine
-├── surface/      trusted token/component compiler → ui-agent contracts
-├── canvas/       host + SQLite page/catalog/theme adapters → agent + surface + providers
-├── social/       the drafter      → engine + providers
-└── scenarios/    evals — the TOP of the graph; may import agents;
-                  nothing imports scenarios.
-```
+Efferent separates service contracts, runtime composition, session lifecycle,
+and host presentation. See the [framework guide](/docs/concepts/harness/) for
+the plugin and configuration APIs.
 
-## The rules the gates enforce
+## Architecture
 
-Every package rides a **zero-entry ratchet baseline** — `bun run typecheck`
-runs tsc plus the full gate suite, and any new violation anywhere fails:
+- `core`: shared schemas, ports and protocol helpers; no provider or host imports.
+- `runtime` → core: configuration, dependency graph and scoped plugin activation.
+- `sdk` → runtime/core: sessions, replay, queues, cancellation and safe reconfiguration.
+- `plugin-*` → core: independently configurable capabilities, including the agent loop.
+- `smith`: coding preset and optional spec/forge workflows.
+- `tui` → SDK/core: reusable terminal presentation. It must not import Smith.
+- `cli`: composition and user commands.
+- `evals`: reusable runner; `scenarios`: reference-application packs and baselines.
+- `foundry`: independent verification framework, no internal package dependencies.
+- Canvas, Math and Social enter through SDK presets; the structured UI-agent
+  supplies Canvas’s domain protocol.
 
-- **Errors are values** — no `try`/`catch`/`throw`; typed errors are
-  `Schema.TaggedError`; foreign promises cross via `Effect.tryPromise`.
-- **State is a fold** — no `let`, no loop statements; `Effect.iterate`,
-  `Effect.reduce`, array combinators, `Ref`.
-- **Absence is `Option`**, union branching is `Match`, no `as any`
-  laundering, entities carry branded id fields.
-- **Tool failures are data** — toolkits use a shared `Failure` struct with
-  `failureMode: "return"`, so the model corrects itself in the same run.
-- **Ports are `Context.Tag` services** in the engine; adapters are one
-  `<Thing>Live` Layer each in providers; composition happens at each agent's
-  `main.ts` edge and nowhere else.
-
-## History — the drop
-
-The original runtime (an SDK + CLI + web app) was frozen, its learnings
-re-authored into the packages above, and then deleted in one commit
-(2026-07-07). What survived is the doctrine, not the code: the new line was
-born under its own gates, with an empty baseline, and the audit numbers that
-motivated the rewrite are recorded in [the factory's docs](/docs/concepts/foundry).
+All production packages participate in the zero-baseline architecture gates.
+New session data uses `.efferent/runtime`; never delete old local data to reset it.
+Build artifacts go under `.artifacts`; external-consumer checks exercise the
+packed SDK and terminal without monorepo path aliases.

@@ -22,14 +22,10 @@ import type {
   TsProject,
   WorkspaceError,
 } from "@xandreed/foundry"
-import { FileSystem } from "@xandreed/engine"
-import type { AuthStore, SettingsStore, SpecDoc } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalShellLive,
-  roleModelView,
-  SandboxedShellLive,
-} from "@xandreed/providers"
+import { FileSystem } from "@xandreed/core"
+import type { AuthStore, SettingsStore, SpecDoc } from "@xandreed/core"
+import { LanguageModelLive, roleModelView } from "@xandreed/plugin-models"
+import { LocalShellLive, SandboxedShellLive } from "@xandreed/plugin-tools-local"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { makeEfferentImplementorLive } from "../implementor/efferentImplementor.js"

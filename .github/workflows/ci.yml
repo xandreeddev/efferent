@@ -42,3 +42,14 @@ jobs:
 
       # Evals v3: the scripted scenario packs (key-free) + committed baselines.
       - run: bun run scenarios
+
+      # Verify the built API outside the monorepo, without TypeScript aliases.
+      - run: bun run build:packages
+      - run: bun run verify:packages
+      - run: python scripts/verify-tui.py
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y tmux
+      - run: python scripts/verify-tmux.py
+      - run: bun run docs:generate
+      - run: git diff --exit-code -- docs/plugin-reference.json packages/website/src/content/docs/concepts/plugin-reference.md
+      - run: bun run --cwd packages/website check

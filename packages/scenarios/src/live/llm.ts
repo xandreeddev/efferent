@@ -1,14 +1,8 @@
 import { homedir } from "node:os"
 import { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option } from "effect"
-import { AuthStore, SettingsStore, UtilityLlm } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalSettingsStoreLive,
-  roleModelView,
-  UtilityLlmLive,
-} from "@xandreed/providers"
+import { AuthStore, SettingsStore, UtilityLlm } from "@xandreed/core"
+import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive, roleModelView, UtilityLlmLive } from "@xandreed/plugin-models"
 
 /**
  * The live batteries' model edges — the SAME service stacks production uses

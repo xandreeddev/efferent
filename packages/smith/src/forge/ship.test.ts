@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Schema } from "effect"
 import { FactoryRun } from "@xandreed/foundry"
-import { Shell, ShellError } from "@xandreed/engine"
+import { Shell, ShellError } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { HARNESS_STATE_PATHSPECS, renderShipPlan, runShip } from "./ship.js"
 

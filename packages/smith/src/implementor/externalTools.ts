@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import type { McpToolDescriptor } from "@xandreed/engine"
+import type { McpToolDescriptor } from "@xandreed/core"
 
 /**
  * The system-prompt block that lists the user's MCP tools (progressive

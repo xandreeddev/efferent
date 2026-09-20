@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import type { EngineSettings, ModelCatalogEntryType, ModelRole } from "@xandreed/engine"
+import type { EngineSettings, ModelCatalogEntryType, ModelRole } from "@xandreed/core"
 import { SMITH_MODEL_DEFAULTS } from "../../domain/SmithConfig.js"
 import type { SelectOption } from "./selectBox.js"
 

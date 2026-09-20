@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Stream } from "effect"
-import { ConversationId } from "@xandreed/engine"
+import { ConversationId } from "@xandreed/core"
 import { UiPageStore } from "@xandreed/ui-agent"
 import type { CanvasSession } from "../session.js"
 import { DefaultUiHostLive } from "../adapters/default-ui-host.adapter.js"
