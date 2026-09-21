@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { FactoryRun, makeScriptedImplementor } from "@xandreed/foundry"
-import { SpecDoc } from "@xandreed/engine"
+import { SpecDoc } from "@xandreed/core"
 import { runForgeSessionWith } from "../forge/session.js"
 import {
   bootTestTui,
@@ -987,6 +987,9 @@ describe("the smith TUI — the context set (:context)", () => {
       checks: [{ name: "out-exists", command: "test -f out.txt" }],
     })
     const tui = await boot({
+      // A stalled title service must never hold the turn registration or
+      // strand the next prompt after the first turn's queue drain.
+      titleCompletion: Effect.never,
       seams: {
         refineAgent: (cid, prompt, tools) => {
           prompts.push(prompt)
@@ -1005,10 +1008,15 @@ describe("the smith TUI — the context set (:context)", () => {
     expect(turn).toContain("handed to the model")
     expect(prompts[0]).toContain("## Context selected by the human")
     expect(prompts[0]).toContain("keep the API stable")
+    // Context is published before the turn settles. This assertion concerns
+    // the next turn, not the separate mid-turn steering path.
+    await waitFrame(tui, () => !tui.store.busy(), 400)
+    expect(tui.store.busy()).toBe(false)
     await tui.setup.mockInput.typeText("shorter")
     tui.setup.mockInput.pressEnter()
-    await waitFrame(tui, () => prompts.length === 2, 400)
+    await waitFrame(tui, () => prompts.length === 2 && !tui.store.busy(), 400)
     expect(prompts[1]).toBe("shorter")
+    expect(tui.store.busy()).toBe(false)
     await tui.setup.mockInput.typeText(":context add note: no new deps")
     tui.setup.mockInput.pressEnter()
     await waitFrame(tui, (f) => f.includes("pinned note: no new deps"), 100)

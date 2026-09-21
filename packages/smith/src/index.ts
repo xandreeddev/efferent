@@ -23,3 +23,6 @@ export * from "./headless/print.js"
 export * from "./profile/profilerPrompt.js"
 export * from "./profile/session.js"
 export * from "./profile/toolkit.js"
+export * from "./preset.js"
+
+export { smithWorkerPlugin, smithWorkflowPlugin, delegateLoopPlugin } from "./workflow.plugin.js"

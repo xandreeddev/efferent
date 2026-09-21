@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { Effect, Either, Layer, Schema } from "effect"
 import { UiPageEvent, UiPageStore } from "@xandreed/ui-agent"
-import type { ConversationId } from "@xandreed/engine"
+import type { ConversationId } from "@xandreed/core"
 
 const decodeEvent = Schema.decodeUnknownEither(Schema.parseJson(UiPageEvent))
 

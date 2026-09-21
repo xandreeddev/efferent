@@ -33,3 +33,7 @@ export { UI_COMPOSER_PROMPT_VERSION, UI_PLANNER_PROMPT_VERSION, UI_REPAIR_PROMPT
 export type { UiPromptContract } from "./prompts.js"
 export { makeUiAgentSession } from "./session.js"
 export type { UiAgentEvent, UiAgentRunServices, UiAgentSession, UiStageEvent } from "./session.js"
+export * from "./domain/ui-output.entity.js"
+export * from "./ports/ui-output.port.js"
+export * from "./ui-output.tools.js"
+export * from "./ui-output.adapter.js"

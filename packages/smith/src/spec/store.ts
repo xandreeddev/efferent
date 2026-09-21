@@ -1,14 +1,7 @@
 import { basename } from "node:path"
 import { Effect, Option } from "effect"
-import {
-  decodeSpecDocText,
-  encodeSpecDocText,
-  FileSystem,
-  SpecDoc,
-  specSlug,
-  uniqueSlug,
-} from "@xandreed/engine"
-import type { SpecDocParseError, SpecSlug } from "@xandreed/engine"
+import { decodeSpecDocText, encodeSpecDocText, FileSystem, SpecDoc, specSlug, uniqueSlug } from "@xandreed/core"
+import type { SpecDocParseError, SpecSlug } from "@xandreed/core"
 import { SPECS_DIR } from "../refine/refiner.js"
 import { ConfigError } from "@xandreed/foundry"
 

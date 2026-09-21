@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { expandFileRefs } from "./fileRefs.js"
 
 const dir = mkdtempSync(join(tmpdir(), "filerefs-"))

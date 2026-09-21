@@ -1,7 +1,7 @@
 import { McpServer, Toolkit } from "@effect/ai"
 import { BunContext, BunSink, BunStream } from "@effect/platform-bun"
 import { Effect, Layer, Logger } from "effect"
-import { LocalFileSystemLive, LocalShellLive } from "@xandreed/providers"
+import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
 import {
   LoadSkill,
   makeSmithCodingHandlers,

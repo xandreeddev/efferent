@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { ConversationId } from "@xandreed/engine"
+import type { ConversationId } from "@xandreed/core"
 import type { UiPageEvent } from "../domain/ui-page.entity.js"
 
 export interface UiPageStoreService {

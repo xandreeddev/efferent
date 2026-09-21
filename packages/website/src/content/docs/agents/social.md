@@ -34,3 +34,12 @@ gate-rejected, posted, discarded) with content and findings. Dedup consults
 the ledger forever: a discarded draft's target never re-engages. **Policy is
 data** (`posts/policy.json` over conservative defaults) — loosening a cap is
 a reviewed edit, never a prompt change.
+
+## Composable SDK preset
+
+The application entry now loads `efferent.config.json` or `efferent.config.ts`
+and activates its own SDK preset. Model, loop, persistence and domain host
+services can be replaced through plugins and explicit service bindings. New
+SDK sessions live under `.efferent/runtime`; historical databases are retained.
+
+See [SDK and sessions](/docs/concepts/harness) for configuration and lifecycle.

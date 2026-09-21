@@ -1,11 +1,12 @@
 import type { LanguageModel } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, runAgent, SpecSlug } from "@xandreed/engine"
+import { ConversationStore, FileSystem, SpecSlug } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
 import { makeContextInjector, withContextBlock } from "../context/inject.js"
 import { loadStandingSources } from "../context/standing.js"
 import { loadContextSet } from "../context/store.js"
-import type { AgentMessage, ConversationId, Shell, SpecDoc } from "@xandreed/engine"
+import type { AgentMessage, ConversationId, Shell, SpecDoc } from "@xandreed/core"
 import { expandFileRefs } from "./fileRefs.js"
 import {
   makeSpecRefinerHandlers,

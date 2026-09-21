@@ -1,5 +1,7 @@
+import type { LanguageModel } from "@effect/ai"
 import { Effect, Option } from "effect"
-import { CurrentModelCallPolicy, runLoop, type AgentMessage } from "@xandreed/engine"
+import { CurrentModelCallPolicy, type AgentMessage } from "@xandreed/core"
+import { runLoop } from "@xandreed/plugin-agent-loop"
 import { engagedTweetIds } from "../domain/ledger.entity.functions.js"
 import { LEDGER_PATH } from "../domain/paths.js"
 import { SocialWorkspace } from "../ports/social-workspace.port.js"
@@ -7,6 +9,7 @@ import { BlogReader } from "../ports/blog-reader.port.js"
 import { XPlatform, type XSearchResult } from "../ports/x-platform.port.js"
 import { socialToolkit, SocialToolkitLive } from "./socialToolkit.js"
 
+import { SocialDraftRunner } from "../ports/draft-runner.port.js"
 import { socialAgentSystemPrompt, socialTweetMessage } from "../prompt.js"
 
 /** Targets we've ALREADY engaged — the durable ledger is the truth (dedup
@@ -19,6 +22,7 @@ const getAlreadyEngagedTweetIds = (): Effect.Effect<ReadonlySet<string>, never, 
 
 export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
+    const runner = yield* Effect.serviceOption(SocialDraftRunner)
     const x = yield* XPlatform
     const blog = yield* BlogReader
     const alreadyDrafted = yield* getAlreadyEngagedTweetIds()
@@ -51,13 +55,13 @@ export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
                 { role: "user", content: socialTweetMessage({ author: tweet.author, text: tweet.text, id: tweet.id, postsSummary }) },
               ]
 
-              yield* runLoop({
+              const draft: Effect.Effect<{ readonly finalText: string }, unknown, LanguageModel.LanguageModel | XPlatform | BlogReader | SocialWorkspace> = Option.isSome(runner) ? runner.value.run(socialTweetMessage({ author: tweet.author, text: tweet.text, id: tweet.id, postsSummary })) : runLoop({
                 system: socialAgentSystemPrompt(),
                 messages,
                 toolkit: socialToolkit,
                 maxSteps: 8,
-              }).pipe(
-                Effect.provide(SocialToolkitLive),
+              }).pipe(Effect.provide(SocialToolkitLive))
+              yield* draft.pipe(
                 // The 2026-07-15 drafting matrix's pin (docs/evals/social-
                 // matrix-campaign-2026-07-15.md): effort MEDIUM — perfect
                 // draft/abstain discipline, judge 0.93, earned-only links.

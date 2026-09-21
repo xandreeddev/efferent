@@ -1,6 +1,6 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Schema } from "effect"
-import { Failure } from "@xandreed/engine"
+import { Failure } from "@xandreed/core"
 import { Glob, Grep, LoadSkill, Ls, ReadFile } from "../implementor/codingToolkit.js"
 
 /** The proposal as DATA — the tool's parameter shape and the draft.json

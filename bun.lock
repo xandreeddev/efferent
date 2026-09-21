@@ -26,27 +26,57 @@
       "version": "0.1.0",
       "dependencies": {
         "@alpinejs/csp": "^3.15.12",
-        "@effect/ai": "^0.35.0",
-        "@xandreed/engine": "workspace:*",
-        "@xandreed/providers": "workspace:*",
+        "@effect/ai": "0.35.0",
+        "@effect/platform-bun": "^0.89.0",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/plugin-telemetry": "workspace:*",
+        "@xandreed/runtime": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
         "@xandreed/surface": "workspace:*",
         "@xandreed/ui-agent": "workspace:*",
-        "effect": "^3.21.4",
+        "effect": "3.21.4",
       },
     },
-    "packages/engine": {
-      "name": "@xandreed/engine",
+    "packages/cli": {
+      "name": "@xandreed/cli",
+      "version": "0.2.0-next.0",
+      "bin": {
+        "efferent": "./src/main.ts",
+      },
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-tools-local": "workspace:*",
+        "@xandreed/runtime": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+        "@xandreed/smith": "workspace:*",
+        "@xandreed/tui": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/core": {
+      "name": "@xandreed/core",
       "version": "0.1.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "effect": "^3.21.4",
+        "@effect/ai": "0.35.0",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/evals": {
+      "name": "@xandreed/evals",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
       },
     },
     "packages/foundry": {
       "name": "@xandreed/foundry",
       "version": "0.0.0",
       "dependencies": {
-        "effect": "^3.21.4",
+        "effect": "3.21.4",
         "typescript": "^5.9.3",
       },
     },
@@ -54,7 +84,7 @@
       "name": "@xandreed/issue-tracker-example",
       "version": "0.1.0",
       "dependencies": {
-        "effect": "^3.21.4",
+        "effect": "3.21.4",
       },
       "devDependencies": {
         "@xandreed/foundry": "workspace:*",
@@ -64,65 +94,177 @@
       "name": "@xandreed/math",
       "version": "0.1.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "@effect/platform": "^0.96.1",
+        "@effect/ai": "0.35.0",
+        "@effect/platform": "0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@xandreed/engine": "workspace:*",
-        "@xandreed/providers": "workspace:*",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/plugin-telemetry": "workspace:*",
+        "@xandreed/plugin-tools-local": "workspace:*",
+        "@xandreed/runtime": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
         "@xandreed/surface": "workspace:*",
-        "effect": "^3.21.4",
+        "effect": "3.21.4",
       },
     },
-    "packages/providers": {
-      "name": "@xandreed/providers",
-      "version": "0.1.0",
+    "packages/plugin-agent-loop": {
+      "name": "@xandreed/plugin-agent-loop",
+      "version": "0.2.0-next.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-context": {
+      "name": "@xandreed/plugin-context",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-mcp": {
+      "name": "@xandreed/plugin-mcp",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+        "ws": "^8.21.0",
+      },
+    },
+    "packages/plugin-memory": {
+      "name": "@xandreed/plugin-memory",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-models": {
+      "name": "@xandreed/plugin-models",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
         "@effect/ai-google": "^0.14.0",
         "@effect/ai-openai": "^0.39.2",
+        "@effect/platform": "0.96.1",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+        "ws": "^8.21.0",
+      },
+    },
+    "packages/plugin-policy-workspace": {
+      "name": "@xandreed/plugin-policy-workspace",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-session-sqlite": {
+      "name": "@xandreed/plugin-session-sqlite",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+        "ws": "^8.21.0",
+      },
+    },
+    "packages/plugin-telemetry": {
+      "name": "@xandreed/plugin-telemetry",
+      "version": "0.2.0-next.0",
+      "dependencies": {
         "@effect/opentelemetry": "^0.63.0",
-        "@effect/platform": "^0.96.1",
+        "@effect/platform": "0.96.1",
         "@effect/platform-bun": "^0.89.0",
         "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
         "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
         "@opentelemetry/sdk-metrics": "^2.8.0",
         "@opentelemetry/sdk-trace-base": "^2.8.0",
-        "@xandreed/engine": "workspace:*",
-        "effect": "^3.21.4",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-tools-local": {
+      "name": "@xandreed/plugin-tools-local",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
         "ws": "^8.21.0",
+      },
+    },
+    "packages/runtime": {
+      "name": "@xandreed/runtime",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
       },
     },
     "packages/scenarios": {
       "name": "@xandreed/scenarios",
       "version": "0.1.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "@effect/platform": "^0.96.1",
+        "@effect/ai": "0.35.0",
+        "@effect/platform": "0.96.1",
         "@opentui/core": "0.3.1",
         "@xandreed/canvas": "workspace:*",
-        "@xandreed/engine": "workspace:*",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/evals": "workspace:*",
         "@xandreed/foundry": "workspace:*",
         "@xandreed/math": "workspace:*",
-        "@xandreed/providers": "workspace:*",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-mcp": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/plugin-tools-local": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
         "@xandreed/smith": "workspace:*",
-        "effect": "^3.21.4",
+        "@xandreed/social": "workspace:*",
+        "@xandreed/ui-agent": "workspace:*",
+        "effect": "3.21.4",
         "playwright": "^1.49.0",
+      },
+    },
+    "packages/sdk": {
+      "name": "@xandreed/sdk",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-memory": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/runtime": "workspace:*",
+        "effect": "3.21.4",
       },
     },
     "packages/smith": {
       "name": "@xandreed/smith",
       "version": "0.1.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "@effect/platform": "^0.96.1",
+        "@effect/ai": "0.35.0",
+        "@effect/platform": "0.96.1",
         "@effect/platform-bun": "^0.89.0",
         "@opentui/core": "0.3.1",
         "@opentui/solid": "0.3.1",
-        "@xandreed/engine": "workspace:*",
+        "@xandreed/core": "workspace:*",
         "@xandreed/foundry": "workspace:*",
-        "@xandreed/providers": "workspace:*",
-        "effect": "^3.21.4",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-context": "workspace:*",
+        "@xandreed/plugin-mcp": "workspace:*",
+        "@xandreed/plugin-memory": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-policy-workspace": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/plugin-telemetry": "workspace:*",
+        "@xandreed/plugin-tools-local": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+        "effect": "3.21.4",
         "solid-js": "1.9.12",
       },
     },
@@ -130,13 +272,18 @@
       "name": "@xandreed/social",
       "version": "0.0.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
+        "@effect/ai": "0.35.0",
         "@effect/cli": "^0.75.1",
-        "@effect/platform": "^0.96.1",
+        "@effect/platform": "0.96.1",
         "@effect/platform-bun": "^0.89.0",
-        "@xandreed/engine": "workspace:*",
-        "@xandreed/providers": "workspace:*",
-        "effect": "^3.21.4",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
+        "@xandreed/plugin-telemetry": "workspace:*",
+        "@xandreed/runtime": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+        "effect": "3.21.4",
         "playwright": "^1.49.0",
       },
     },
@@ -146,16 +293,29 @@
       "dependencies": {
         "@dagrejs/dagre": "^3.0.0",
         "@xandreed/ui-agent": "workspace:*",
-        "effect": "^3.21.4",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/tui": {
+      "name": "@xandreed/tui",
+      "version": "0.2.0-next.0",
+      "dependencies": {
+        "@opentui/core": "0.3.1",
+        "@opentui/solid": "0.3.1",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+        "effect": "3.21.4",
+        "solid-js": "1.9.12",
       },
     },
     "packages/ui-agent": {
       "name": "@xandreed/ui-agent",
       "version": "0.1.0",
       "dependencies": {
-        "@effect/ai": "^0.35.0",
-        "@xandreed/engine": "workspace:*",
-        "effect": "^3.21.4",
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "effect": "3.21.4",
       },
     },
     "packages/website": {
@@ -166,6 +326,7 @@
         "@astrojs/sitemap": "^3.7.3",
         "@fontsource-variable/hanken-grotesk": "^5.2.8",
         "@fontsource-variable/jetbrains-mono": "^5.2.8",
+        "@xandreed/foundry": "workspace:*",
         "astro": "^6.4.8",
         "remark-directive": "^4.0.0",
         "sharp": "^0.35.1",
@@ -616,7 +777,11 @@
 
     "@xandreed/canvas": ["@xandreed/canvas@workspace:packages/canvas"],
 
-    "@xandreed/engine": ["@xandreed/engine@workspace:packages/engine"],
+    "@xandreed/cli": ["@xandreed/cli@workspace:packages/cli"],
+
+    "@xandreed/core": ["@xandreed/core@workspace:packages/core"],
+
+    "@xandreed/evals": ["@xandreed/evals@workspace:packages/evals"],
 
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 
@@ -624,15 +789,37 @@
 
     "@xandreed/math": ["@xandreed/math@workspace:packages/math"],
 
-    "@xandreed/providers": ["@xandreed/providers@workspace:packages/providers"],
+    "@xandreed/plugin-agent-loop": ["@xandreed/plugin-agent-loop@workspace:packages/plugin-agent-loop"],
+
+    "@xandreed/plugin-context": ["@xandreed/plugin-context@workspace:packages/plugin-context"],
+
+    "@xandreed/plugin-mcp": ["@xandreed/plugin-mcp@workspace:packages/plugin-mcp"],
+
+    "@xandreed/plugin-memory": ["@xandreed/plugin-memory@workspace:packages/plugin-memory"],
+
+    "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
+
+    "@xandreed/plugin-policy-workspace": ["@xandreed/plugin-policy-workspace@workspace:packages/plugin-policy-workspace"],
+
+    "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
+
+    "@xandreed/plugin-telemetry": ["@xandreed/plugin-telemetry@workspace:packages/plugin-telemetry"],
+
+    "@xandreed/plugin-tools-local": ["@xandreed/plugin-tools-local@workspace:packages/plugin-tools-local"],
+
+    "@xandreed/runtime": ["@xandreed/runtime@workspace:packages/runtime"],
 
     "@xandreed/scenarios": ["@xandreed/scenarios@workspace:packages/scenarios"],
+
+    "@xandreed/sdk": ["@xandreed/sdk@workspace:packages/sdk"],
 
     "@xandreed/smith": ["@xandreed/smith@workspace:packages/smith"],
 
     "@xandreed/social": ["@xandreed/social@workspace:packages/social"],
 
     "@xandreed/surface": ["@xandreed/surface@workspace:packages/surface"],
+
+    "@xandreed/tui": ["@xandreed/tui@workspace:packages/tui"],
 
     "@xandreed/ui-agent": ["@xandreed/ui-agent@workspace:packages/ui-agent"],
 

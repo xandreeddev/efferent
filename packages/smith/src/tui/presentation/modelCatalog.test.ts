@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { EngineSettings } from "@xandreed/engine"
-import type { ModelCatalogEntryType } from "@xandreed/engine"
+import { EngineSettings } from "@xandreed/core"
+import type { ModelCatalogEntryType } from "@xandreed/core"
 import { SMITH_MODEL_DEFAULTS } from "../../domain/SmithConfig.js"
 import { costOf, customRow, fmtCost, modelPickerOptions } from "./modelCatalog.js"
 

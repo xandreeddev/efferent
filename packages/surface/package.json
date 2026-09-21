@@ -11,6 +11,6 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@xandreed/ui-agent": "workspace:*",
-    "effect": "^3.21.4"
+    "effect": "3.21.4"
   }
 }

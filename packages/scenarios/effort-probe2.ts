@@ -2,8 +2,8 @@
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
 import { LanguageModel } from "@effect/ai"
-import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/providers"
-import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/engine"
+import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
+import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
 const PROMPT =
   'Emit ONLY a JSON object (no prose, no fences): {"id":"observability-hero","kind":"hero","title":"...","subtitle":"...","body":"one short paragraph"} — a landing hero for an observability product for small teams.'

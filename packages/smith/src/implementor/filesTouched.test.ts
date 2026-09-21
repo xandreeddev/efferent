@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import type { LoopEvent } from "@xandreed/engine"
+import type { LoopEvent } from "@xandreed/core"
 import { WorkspacePath } from "@xandreed/foundry"
 import { capturePath } from "./filesTouched.js"
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Schema } from "effect"
 import { FactoryRun } from "@xandreed/foundry"
-import type { LoopEvent } from "@xandreed/engine"
+import type { LoopEvent } from "@xandreed/core"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 import {
   contextGauge,

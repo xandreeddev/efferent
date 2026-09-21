@@ -13,7 +13,7 @@
     "check": "bun ../../packages/foundry/src/main.ts check --config foundry.config.ts"
   },
   "dependencies": {
-    "effect": "^3.21.4"
+    "effect": "3.21.4"
   },
   "devDependencies": {
     "@xandreed/foundry": "workspace:*"

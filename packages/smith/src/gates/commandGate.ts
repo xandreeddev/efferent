@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Option } from "effect"
 import { Finding, GateCrash, GateName, RuleId, SourceLocation, WorkspacePath } from "@xandreed/foundry"
 import type { Gate, GateKind, Workspace } from "@xandreed/foundry"
-import { workspacePath } from "@xandreed/providers"
+import { workspacePath } from "@xandreed/plugin-tools-local"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 /** Findings parsed from `file:line` markers, at most. */

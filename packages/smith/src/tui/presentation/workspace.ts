@@ -1,6 +1,6 @@
 import { Option } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
-import type { ConversationSummary, SpecDoc } from "@xandreed/engine"
+import type { ConversationSummary, SpecDoc } from "@xandreed/core"
 import type { ProviderStatus } from "./loginFlow.js"
 
 /**

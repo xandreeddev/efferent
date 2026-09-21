@@ -57,3 +57,6 @@ packages/evals/results/
 # Fixture workspaces COMMIT their .efferent (they are the eval worlds, not live state)
 !packages/*/fixtures/**/.efferent/
 !packages/*/fixtures/**/.efferent/**
+
+# Local distribution and validation artifacts
+.artifacts/

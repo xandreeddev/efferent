@@ -1,6 +1,6 @@
 import { Option } from "effect"
 import type { Spec } from "@xandreed/foundry"
-import type { SpecDoc } from "@xandreed/engine"
+import type { SpecDoc } from "@xandreed/core"
 
 /** Bump when the coder system prompt or the brief framing changes — the
  *  smith-spec live battery records it.

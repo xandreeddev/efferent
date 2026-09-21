@@ -9,3 +9,5 @@ export { SqliteUiPageStoreLive } from "./adapters/sqlite-ui-page-store.adapter.j
 export { SqliteUiComponentCatalogLive } from "./adapters/sqlite-ui-component-catalog.adapter.js"
 export { SqliteUiThemeStoreLive } from "./adapters/sqlite-ui-theme-store.adapter.js"
 export { UiAgentExecutionProfileLive, UiAgentRuntimeLive } from "./adapters/ui-agent-runtime.adapter.js"
+
+export { canvasAgent, canvasHostPlugin, canvasProfilePlugin, canvasLoopPlugin } from "./agent.js"

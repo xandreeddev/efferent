@@ -1,0 +1,519 @@
+[
+  {
+    "id": "efferent/approval-host",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "efferent/Approval"
+    ],
+    "defaults": {},
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$id": "/schemas/%7B%7D",
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "array"
+        }
+      ]
+    }
+  },
+  {
+    "id": "@xandreed/plugin-session-sqlite",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "efferent/SessionStore"
+    ],
+    "defaults": {
+      "path": ".efferent/runtime/sessions.db"
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-models",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/SessionEnvironment"
+    ],
+    "provides": [
+      "@effect/ai/LanguageModel",
+      "@xandreed/core/UtilityLlm",
+      "@xandreed/core/AuthStore",
+      "@xandreed/core/SettingsStore",
+      "@xandreed/core/ModelCatalog"
+    ],
+    "defaults": {
+      "model": "",
+      "fastModel": "",
+      "fallbackModel": "",
+      "inheritPrevious": true
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "model",
+        "fastModel",
+        "fallbackModel",
+        "inheritPrevious"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "fastModel": {
+          "type": "string"
+        },
+        "fallbackModel": {
+          "type": "string"
+        },
+        "inheritPrevious": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-memory",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/SessionEnvironment"
+    ],
+    "provides": [
+      "efferent/Memory"
+    ],
+    "defaults": {
+      "file": ".efferent/runtime/memory.jsonl",
+      "limit": 8
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$defs": {
+        "Int": {
+          "type": "integer",
+          "description": "an integer",
+          "title": "int"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file",
+        "limit"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "limit": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 100",
+          "title": "between(1, 100)",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-context",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "@xandreed/core/UtilityLlm"
+    ],
+    "provides": [
+      "efferent/ContextManager"
+    ],
+    "defaults": {
+      "thresholdTokens": 80000,
+      "keepTurns": 6
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$defs": {
+        "Int": {
+          "type": "integer",
+          "description": "an integer",
+          "title": "int"
+        }
+      },
+      "type": "object",
+      "required": [
+        "thresholdTokens",
+        "keepTurns"
+      ],
+      "properties": {
+        "thresholdTokens": {
+          "$ref": "#/$defs/Int",
+          "description": "a positive number",
+          "title": "positive",
+          "exclusiveMinimum": 0
+        },
+        "keepTurns": {
+          "$ref": "#/$defs/Int",
+          "description": "a positive number",
+          "title": "positive",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-policy-workspace",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/SessionEnvironment",
+      "efferent/Approval"
+    ],
+    "provides": [
+      "efferent/ActionPolicy"
+    ],
+    "defaults": {},
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$id": "/schemas/%7B%7D",
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "array"
+        }
+      ]
+    }
+  },
+  {
+    "id": "@xandreed/plugin-mcp",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/SessionEnvironment",
+      "efferent/ActionPolicy"
+    ],
+    "provides": [
+      "@xandreed/core/McpClient"
+    ],
+    "defaults": {
+      "servers": {}
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "servers"
+      ],
+      "properties": {
+        "servers": {
+          "type": "object",
+          "required": [],
+          "properties": {},
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "required": [],
+                "properties": {},
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-tools-local",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/SessionEnvironment",
+      "efferent/ActionPolicy",
+      "efferent/Memory",
+      "@xandreed/core/McpClient"
+    ],
+    "provides": [
+      "efferent/AgentTools"
+    ],
+    "defaults": {
+      "readOnly": false
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "readOnly"
+      ],
+      "properties": {
+        "readOnly": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-agent-loop",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "@effect/ai/LanguageModel",
+      "efferent/AgentTools",
+      "efferent/SessionStore",
+      "efferent/Memory",
+      "efferent/ContextManager"
+    ],
+    "provides": [
+      "efferent/AgentLoop"
+    ],
+    "defaults": {
+      "maxSteps": 100,
+      "toolConcurrency": 1,
+      "streaming": true
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$defs": {
+        "Int": {
+          "type": "integer",
+          "description": "an integer",
+          "title": "int"
+        }
+      },
+      "type": "object",
+      "required": [
+        "maxSteps",
+        "toolConcurrency",
+        "streaming"
+      ],
+      "properties": {
+        "maxSteps": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 1000",
+          "title": "between(1, 1000)",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "toolConcurrency": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 32",
+          "title": "between(1, 32)",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "streaming": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-telemetry",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [],
+    "provides": [
+      "efferent/TurnHooks"
+    ],
+    "defaults": {
+      "enabled": false,
+      "serviceName": "efferent"
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "enabled",
+        "serviceName"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "serviceName": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/plugin-agent-loop/delegate",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "@effect/ai/LanguageModel",
+      "efferent/AgentTools",
+      "efferent/SessionStore",
+      "efferent/Memory",
+      "efferent/ContextManager"
+    ],
+    "provides": [
+      "efferent/DelegateLoop"
+    ],
+    "defaults": {
+      "maxSteps": 100,
+      "toolConcurrency": 1,
+      "streaming": true
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$defs": {
+        "Int": {
+          "type": "integer",
+          "description": "an integer",
+          "title": "int"
+        }
+      },
+      "type": "object",
+      "required": [
+        "maxSteps",
+        "toolConcurrency",
+        "streaming"
+      ],
+      "properties": {
+        "maxSteps": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 1000",
+          "title": "between(1, 1000)",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "toolConcurrency": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 32",
+          "title": "between(1, 32)",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "streaming": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "@xandreed/smith/workflow",
+    "version": "0.2.0-next.0",
+    "apiVersion": 1,
+    "scope": "session",
+    "requires": [
+      "efferent/DelegateLoop",
+      "efferent/SessionStore",
+      "efferent/Approval"
+    ],
+    "provides": [
+      "efferent/AgentLoop"
+    ],
+    "defaults": {
+      "mode": "spec",
+      "maxAttempts": 3,
+      "budgetMillis": 900000,
+      "testCommand": "",
+      "configPath": ""
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$defs": {
+        "Int": {
+          "type": "integer",
+          "description": "an integer",
+          "title": "int"
+        },
+        "Positive": {
+          "type": "number",
+          "description": "a positive number",
+          "title": "positive",
+          "exclusiveMinimum": 0
+        }
+      },
+      "type": "object",
+      "required": [
+        "mode",
+        "maxAttempts",
+        "budgetMillis",
+        "testCommand",
+        "configPath"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "spec",
+            "lock",
+            "forge"
+          ]
+        },
+        "maxAttempts": {
+          "$ref": "#/$defs/Int",
+          "description": "a number between 1 and 10",
+          "title": "between(1, 10)",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "budgetMillis": {
+          "$ref": "#/$defs/Positive"
+        },
+        "testCommand": {
+          "type": "string"
+        },
+        "configPath": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+]

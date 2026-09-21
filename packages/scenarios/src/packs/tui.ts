@@ -6,9 +6,9 @@ import {
   proposingRefineAgent,
 } from "@xandreed/smith/tui-testing"
 import type { TestTui } from "@xandreed/smith/tui-testing"
-import type { Check, Pack } from "../framework/model.js"
-import { scenario } from "../framework/run.js"
-import { fileContains, fileExists } from "../framework/evidence.js"
+import type { Check, Pack } from "@xandreed/evals/model"
+import { scenario } from "@xandreed/evals/run"
+import { fileContains, fileExists } from "@xandreed/evals/evidence"
 
 /**
  * The TUI pack: the workspace session's full loop driven at the FRAME level —

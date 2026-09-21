@@ -1,7 +1,7 @@
 import { isAbsolute, relative } from "node:path"
 import { Option } from "effect"
 import { WorkspacePath } from "@xandreed/foundry"
-import type { LoopEvent } from "@xandreed/engine"
+import type { LoopEvent } from "@xandreed/core"
 
 const WRITE_TOOLS = new Set(["edit_file", "write_file"])
 

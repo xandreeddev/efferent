@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
-import { LocalFileSystemLive } from "@xandreed/providers"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { armProfileTripwire, profileDrift } from "./profileTripwire.js"
 
 describe("the armed-profile tripwire", () => {

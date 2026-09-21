@@ -3,22 +3,31 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The agent in the factory: a coding agent whose outer loop is @xandreed/foundry's forge — the efferent coder implements, the gate pipeline judges, typed feedback drives the retry.",
+  "description": "The agent in the factory: a coding agent whose outer loop is @xandreed/foundry's forge \u2014 the efferent coder implements, the gate pipeline judges, typed feedback drives the retry.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
     "./tui-testing": "./src/tui/testing.ts"
   },
   "dependencies": {
-    "@effect/ai": "^0.35.0",
-    "@effect/platform": "^0.96.1",
+    "@effect/ai": "0.35.0",
+    "@effect/platform": "0.96.1",
     "@effect/platform-bun": "^0.89.0",
     "@opentui/core": "0.3.1",
     "@opentui/solid": "0.3.1",
-    "@xandreed/engine": "workspace:*",
     "@xandreed/foundry": "workspace:*",
-    "@xandreed/providers": "workspace:*",
-    "effect": "^3.21.4",
-    "solid-js": "1.9.12"
+    "effect": "3.21.4",
+    "solid-js": "1.9.12",
+    "@xandreed/core": "workspace:*",
+    "@xandreed/plugin-agent-loop": "workspace:*",
+    "@xandreed/plugin-tools-local": "workspace:*",
+    "@xandreed/plugin-session-sqlite": "workspace:*",
+    "@xandreed/plugin-telemetry": "workspace:*",
+    "@xandreed/plugin-mcp": "workspace:*",
+    "@xandreed/plugin-models": "workspace:*",
+    "@xandreed/plugin-policy-workspace": "workspace:*",
+    "@xandreed/sdk": "workspace:*",
+    "@xandreed/plugin-context": "workspace:*",
+    "@xandreed/plugin-memory": "workspace:*"
   }
 }

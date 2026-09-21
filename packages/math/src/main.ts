@@ -1,9 +1,8 @@
 /**
  * `bun run math` — the standalone math-practice product (docs/agents/
- * education.md), on the smith pattern: engine ports + providers composed at
- * this edge. Serves the math shell on 127.0.0.1 and runs the tutor agent
+ * education.md), using an SDK preset and configurable services. Serves the math shell on 127.0.0.1 and runs the tutor agent
  * over one persisted conversation (the workspace's own
- * `<cwd>/.efferent/math.db`).
+ * `<cwd>/.efferent/runtime/math.db`).
  *
  *   bun run math [--cwd <dir>] [--port <n>] [--open] [--grade <n>]
  *                [--theme "<topic>"] [--resume <conversationId>]
@@ -12,16 +11,16 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer, Logger, Option } from "effect"
-import { SettingsStore } from "@xandreed/engine"
-import {
-  LanguageModelLive,
-  LocalAuthStoreLive,
-  LocalSettingsStoreLive,
-  LocalShellLive,
-  SqliteConversationStoreLive,
-  TracingLive,
-} from "@xandreed/providers"
-import { runMathMode } from "./mode.js"
+import { ConversationId, ConversationStore, SettingsStore } from "@xandreed/core"
+import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive } from "@xandreed/plugin-models"
+import { LocalShellLive } from "@xandreed/plugin-tools-local"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
+import { TracingLive } from "@xandreed/plugin-telemetry"
+import { runMathHost } from "./mode.js"
+import { domainSession, Harness } from "@xandreed/sdk"
+import { loadConfig, loadPlugins } from "@xandreed/runtime"
+import { mathAgent } from "./agent.js"
+import type { MathSessionEvent } from "./session.js"
 
 interface ParseState {
   readonly cwd: string
@@ -120,17 +119,19 @@ if (isDirectRun) {
   // seed would silently override the user's configured model (the smith lesson).
   const envModel = process.env["EFFERENT_MODEL"]
   if (envModel !== undefined) {
-    console.error(`math: ignoring EFFERENT_MODEL=${envModel} — configure .efferent/config.json`)
+    console.error(`math: ignoring EFFERENT_MODEL=${envModel} — configure efferent.config.json`)
     delete process.env["EFFERENT_MODEL"]
   }
 
   const program = Effect.gen(function* () {
-    const settings = yield* SettingsStore
-    const resolved = yield* settings.load
-    process.stderr.write(
-      `math: tutor on ${Option.getOrElse(resolved.model, () => "(no model configured)")}\n`,
-    )
-    yield* runMathMode({
+    const preset = mathAgent(state.cwd)
+    const loaded = yield* loadConfig({ workspace: state.cwd, home: homedir(), preset: preset.config })
+    const plugins = yield* loadPlugins(loaded.config, [...preset.plugins, ...loaded.plugins], state.cwd, homedir())
+    const harness = yield* Harness.make({ workspace: state.cwd, config: loaded.config, plugins })
+    const handle = yield* Option.match(state.resume, { onNone: () => harness.create(), onSome: (id) => harness.resume(ConversationId.make(id)) })
+    const session = domainSession<MathSessionEvent>(handle, (value) => typeof value === "object" && value !== null && "type" in value ? Option.some(value as MathSessionEvent) : Option.none(), (message) => ({ type: "error", message }))
+    const history = yield* handle.use(ConversationStore, (store) => store.list(handle.record.id))
+    yield* runMathHost({
       workspace: state.cwd,
       version: "0.1.0",
       ...(Option.isSome(state.port) ? { port: state.port.value } : {}),
@@ -138,9 +139,10 @@ if (isDirectRun) {
       ...(state.open ? { open: true } : {}),
       ...(Option.isSome(state.grade) ? { grade: state.grade.value } : {}),
       ...(Option.isSome(state.theme) ? { theme: state.theme.value } : {}),
-    })
+    }, session, history, Option.isSome(state.resume))
   }).pipe(
-    Effect.provide(mathAppLive(state.cwd)),
+    Effect.scoped,
+    Effect.provide(LocalShellLive),
     Effect.provide(BunContext.layer),
     Effect.provide(TracingLive("math")),
     // Server logs to stderr; the shell is the product surface.

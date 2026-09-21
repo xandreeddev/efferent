@@ -7,15 +7,17 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./profiles/streaming-ui-v1": "./profiles/streaming-ui-v1.json"
+    "./profiles/streaming-ui-v1": "./profiles/streaming-ui-v1.json",
+    "./output": "./src/output.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test src"
   },
   "dependencies": {
-    "@effect/ai": "^0.35.0",
-    "@xandreed/engine": "workspace:*",
-    "effect": "^3.21.4"
+    "@effect/ai": "0.35.0",
+    "effect": "3.21.4",
+    "@xandreed/core": "workspace:*",
+    "@xandreed/plugin-agent-loop": "workspace:*"
   }
 }

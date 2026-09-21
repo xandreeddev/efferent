@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Option } from "effect"
-import { ConversationId } from "@xandreed/engine"
-import type { SpecDoc } from "@xandreed/engine"
+import { ConversationId } from "@xandreed/core"
+import type { SpecDoc } from "@xandreed/core"
 import type { RefineSession } from "../../refine/session.js"
 import {
   beginForge,

@@ -6,8 +6,8 @@
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
 import { LanguageModel } from "@effect/ai"
-import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/providers"
-import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/engine"
+import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
+import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
 const CONTENT =
   "a landing page for an observability product for small teams: a hero (title, subtitle, one-paragraph body), a navigation (brand name + 4 links with label and target-section-id), a stats section (3 items, label + value), and a feature grid (4 items, title + one-sentence body)"

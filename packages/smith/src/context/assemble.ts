@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
 import { Effect, Match, Option } from "effect"
-import { FileSystem, Shell } from "@xandreed/engine"
+import { FileSystem, Shell } from "@xandreed/core"
 import { readRuns } from "@xandreed/foundry"
 import { nativeGlob } from "../implementor/nativeSearch.js"
 import { loadSpecDoc } from "../spec/store.js"

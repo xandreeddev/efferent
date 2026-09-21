@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
-import type { Pack } from "./framework/model.js"
-import { runPack } from "./framework/run.js"
+import type { Pack } from "@xandreed/evals/model"
+import { runPack } from "@xandreed/evals/run"
 import {
   compareBaseline,
   DEFAULT_TOLERANCE,
@@ -9,8 +9,8 @@ import {
   unbaselinedEntries,
   versionDrift,
   writeBaseline,
-} from "./framework/baseline.js"
-import { renderReport } from "./framework/report.js"
+} from "@xandreed/evals/baseline"
+import { renderReport } from "@xandreed/evals/report"
 import { BASELINE_DIR } from "./main.js"
 import { modelMeta, preflightAuth } from "./live/llm.js"
 import { digestPack } from "./packs/digest.js"

@@ -22,7 +22,8 @@ The shared UI agent is a structured compiler client, never an HTML author.
 - `profiles/streaming-ui-v1.json` is the reusable default execution profile.
   Hosts load and validate it; it pins models, effort, budgets, prompt/schema/
   recipe versions, fallback, and the incremental generation protocol. Hosts
-  configure tokens/capabilities, not prompts or ad-hoc model roles.
+  may supply a versioned profile through the Canvas profile plugin. Schema,
+  recipe and prompt compatibility still validate before activation.
 - `compact-lines`, `a2ui-jsonl`, and `native-tools` are transport choices, not
   different products. Every decoded record invokes the same toolkit handler,
   validation, persistence, error conversion, and browser sink. A fast protocol
@@ -30,12 +31,13 @@ The shared UI agent is a structured compiler client, never an HTML author.
 - The model planner owns recipe selection, manifest, information architecture,
   and first blocks. No page event may exist before an accepted `start_ui` tool
   call, and no local content fallback may mark a model failure successful.
-- Model composition runs in one replaceable background fiber; follow-ups
-  interrupt the prior attempt.
+- Model composition runs in one replaceable background fiber. The SDK host
+  waits for completion and serializes turns; explicit interruption cancels the
+  active attempt. The low-level legacy host retains latest-wins follow-ups.
 - Each composition attempt uses an isolated child conversation containing the
   exact request and accepted page. Never replay a cancelled partial attempt
   into a follow-up.
-- UI profile changes are accepted only with a real-model, real-Canvas browser
-  matrix. Keep provider errors as semantic evidence, capture desktop/mobile
+- Promoting a changed default UI profile requires a real-model, real-Canvas browser
+  matrix. Configurable profiles are experimental until that evidence exists. Keep provider errors as semantic evidence, capture desktop/mobile
   screenshots and overflow, and use `--strict` only when failure should control
   the command exit code; exploratory matrices must still write every trial.

@@ -1,6 +1,6 @@
 import { join } from "node:path"
 import { Effect, Equal, Option } from "effect"
-import { FileSystem } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
 
 /**
  * THE ARMED-PROFILE TRIPWIRE (#111): the coding handlers refuse to write the

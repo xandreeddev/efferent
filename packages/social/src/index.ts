@@ -29,3 +29,5 @@ export {
   POLICY_PATH,
   SOCIAL_ROOT,
 } from "./domain/paths.js"
+
+export { socialAgent, socialLoopPlugin, socialHostPlugin } from "./agent.js"

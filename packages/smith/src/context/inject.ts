@@ -1,5 +1,5 @@
 import { Effect, Option, Ref } from "effect"
-import type { FileSystem, Shell } from "@xandreed/engine"
+import type { FileSystem, Shell } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { assembleContext } from "./assemble.js"
 import type { ContextBundle } from "./assemble.js"

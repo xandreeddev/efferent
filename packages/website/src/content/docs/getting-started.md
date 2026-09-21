@@ -1,68 +1,135 @@
 ---
 title: Getting started
-description: Clone the repo, log in a provider, and run the agents — smith, math, canvas, social — from source.
+description: Run the coding terminal and build a composable agent with Efferent.
 ---
 
-efferent is **a family of purpose-built agents on a shared kernel**, built in
-public on Effect.ts + Bun. There is no npm install for the current line — the
-agents are source-run from the repo, and that is deliberate: the repo *is* the
-product, gates and evals included.
+# Efferent
 
-> The previously published npm package (`efferent`, the old CLI) remains on the
-> registry but no longer receives updates. Everything current lives here.
+**Compose the agent. Own the harness.**
 
-## Prerequisites
+An Effect-native agent SDK and coding terminal for Bun on Linux. The model,
+agent loop, tools, policy, context, memory, persistence, MCP, and telemetry are
+configurable plugins. Smith is the coding preset; the SDK also runs headlessly.
 
-- [Bun](https://bun.sh) ≥ 1.2 — the only runtime.
-- A model provider: an [opencode zen](https://opencode.ai) key, an Anthropic
-  subscription or API key, a Google or OpenAI key.
+## Start
 
-```bash
-git clone https://github.com/xandreeddev/efferent
-cd efferent
+```sh
 bun install
-bun run typecheck   # tsc + the repo's own gate suite — should end 0 findings
-bun test
+bun run efferent
 ```
 
-## Credentials and model selection
+When no model is configured, the setup screen opens automatically. Use `/setup`
+to return to provider login, model selection, and plugin configuration at any time.
+`/login` connects an API key or subscription; `/model` shows available models.
 
-Credentials live in `~/.efferent/auth.json` (per-provider `api_key` / `oauth`
-entries). The easiest way to write them is smith's own `:login` flow — boot the
-TUI and follow the picker. Model selection comes from `.efferent/config.json`:
+Type `/` to see commands immediately, keep typing to filter, use ↑↓ to select,
+Enter to run, or Tab to complete a command before adding arguments. Ctrl+P opens
+the full command palette. Enter sends; Alt+Enter adds a line; Escape interrupts.
+`/plan` enables read-only tools.
+
+Use `/plugins` → select an instance → **Replace plugin…** to swap its implementation.
+Choose an available replacement or **Use another plugin…** for a local module
+or installed package. Efferent validates the resulting graph before saving; a
+failed replacement keeps the current configuration. The replacement uses its
+own default settings. Edit its options from the same menu afterward.
+Bubblewrap is required for sandboxed Bash (`bun run efferent doctor`).
+
+```sh
+bun run efferent -p "Explain this repository" --json
+bun run efferent config explain
+bun run efferent --resume SESSION_ID
+```
+
+## Compose
+
+```ts
+import { Effect } from "effect"
+import { Harness } from "@xandreed/sdk"
+import { smithAgent } from "@xandreed/smith"
+
+const agent = smithAgent(process.cwd())
+await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const harness = yield* Harness.make({
+    workspace: process.cwd(), config: agent.config, plugins: agent.plugins,
+  })
+  const session = yield* harness.create()
+  yield* session.send("Explain the architecture")
+  console.log(yield* session.history)
+})))
+```
+
+A plugin declares an Effect Schema, defaults, required/provided service tags,
+and a scoped Layer. The runtime rejects invalid options, missing dependencies,
+cycles, ambiguous providers, and incompatible plugin API versions before use.
+Override a service through an explicit binding; replace the loop or memory
+without importing Smith or the TUI.
+
+## Configuration
+
+Choose `efferent.config.json` or `efferent.config.ts` per directory. Both resolve
+through the same graph. TypeScript can additionally export a `plugins` array.
+JSON can refer to local modules or installed npm plugins through `use`.
 
 ```json
 {
-  "model": "opencode:kimi-k2.6",
-  "codeModel": "opencode:kimi-k2.7-code",
-  "fastModel": "opencode:deepseek-v4-flash"
+  "version": 1,
+  "profile": "smith",
+  "plugins": [
+    { "id": "memory", "use": "@xandreed/plugin-memory", "options": { "limit": 6 } },
+    { "id": "loop", "use": "@xandreed/plugin-agent-loop", "options": { "maxSteps": 40 } }
+  ]
 }
 ```
 
-Local config merges over global (`~/.efferent/config.json`), and the three
-roles are live: **general** drives conversation, **code** drives the forge
-implementor, **fast** drives one-shot helpers like session titling.
-`EFFERENT_MODEL` is deliberately ignored — a launch directory's `.env` must
-never silently pick your model.
+Order: preset → global base → workspace base → profile → workspace overrides →
+invocation. `/plugins` writes `.efferent/overrides.json` atomically. Session plugin
+changes apply between turns; runtime plugin changes require a restart.
 
-## Run the agents
+New sessions and memory live under `.efferent/runtime/`. Existing databases,
+auth files, specs, and memory are retained. The models plugin inherits existing
+model settings and sign-ins by default; explicit plugin options take precedence.
+Set `inheritPrevious: false` for an independent setup.
 
-```bash
-bun run smith --cwd <dir>          # the coder: dashboard → refine → :lock → :forge
-bun run math --grade 4 --open      # the tutor: server-graded practice in the browser
-bun run canvas --open              # governed UI agent: natural language → typed, streamed pages
-bun run social test|review         # the drafter: scan (supervised) · human review queue
-bun run scenarios                  # the regression batteries
-bun run foundry check              # the gate suite, standalone
+## Packages
+
+| Package | Responsibility |
+| --- | --- |
+| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
+| `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
+| `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
+| `@xandreed/plugin-*` | Replaceable first-party capabilities |
+| `@xandreed/smith` | Coding preset and optional spec/forge modules |
+| `@xandreed/tui` / `@xandreed/cli` | Reusable terminal client and application entry |
+| `@xandreed/evals` | Scoped fixtures, checks, judges, campaigns and reporters |
+| `@xandreed/foundry` | Independent deterministic verification framework |
+
+Canvas, Math and Social are reference applications with domain-specific checks.
+Their browser and review interfaces remain available through `bun run canvas`,
+`bun run math`, and `bun run social`. All three enter through SDK presets.
+
+Use `/spec idea`, `/lock`, and `/forge` for gated workflows in the new terminal. The historical spec/forge driver is
+available through `bun run smith:workflow` for old specs.
+
+## Build and verify
+
+```sh
+bun run typecheck
+bun test
+bun run foundry demo
+bun run scenarios
+bun run build:packages
+bun run verify:packages
+python scripts/verify-tui.py
+python scripts/verify-tmux.py
+bun run --cwd packages/website check
 ```
 
-Each agent persists its conversations to its own SQLite database under the
-workspace's `.efferent/` — an auditable trail the scenario packs read back as
-evidence.
+The distribution build prepares `0.2.0-next.0` artifacts under `.artifacts/`.
+The consumer check installs local tarballs outside the monorepo, then executes
+an external loop plugin, durable sessions, a fork, an eval and CLI startup.
+These artifacts have **not been published**. The historical `efferent` npm
+package is a different release line.
 
-## Where to go next
+See [the framework guide](/docs/concepts/harness/), [source and contributing guide](https://github.com/xandreeddev/efferent).
 
-- [Architecture](/docs/concepts/architecture) — the package graph and the one
-  dependency rule.
-- [The harness doctrine](/docs/concepts/harness) — why gates declare victory.
-- [smith](/docs/agents/smith) — the agent you'll probably run first.
+MIT · Xand Reed

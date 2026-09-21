@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
-import { decodeJsonLines, parseJsonWarn } from "@xandreed/engine"
+import { decodeJsonLines, parseJsonWarn } from "@xandreed/core"
 import { LedgerEntry } from "../domain/ledger.entity.js"
 import type { LedgerError } from "../domain/ledger.entity.js"
 import { DEFAULT_POLICY, SocialPolicy } from "../domain/social-policy.entity.js"

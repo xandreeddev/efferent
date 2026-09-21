@@ -37,17 +37,18 @@ export const docsNav: DocGroup[] = [
     group: "Concepts",
     items: [
       { slug: "concepts/architecture", label: "Architecture" },
-      { slug: "concepts/harness", label: "The harness doctrine" },
+      { slug: "concepts/harness", label: "SDK & sessions" },
       { slug: "concepts/foundry", label: "Foundry — the factory" },
-      { slug: "concepts/engine", label: "Engine — the kernel" },
-      { slug: "concepts/providers", label: "Providers — the edge" },
+      { slug: "concepts/engine", label: "Core contracts" },
+      { slug: "concepts/providers", label: "Plugin configuration" },
+      { slug: "concepts/plugin-reference", label: "Plugin reference" },
       { slug: "concepts/surface", label: "Surface — the UI substrate" },
       { slug: "concepts/evals", label: "Evals — scenario packs" },
       { slug: "concepts/observability", label: "Observability" },
     ],
   },
   {
-    group: "The agents",
+    group: "Reference applications",
     items: [
       { slug: "agents/smith", label: "smith — the coder" },
       { slug: "agents/math", label: "math — the tutor" },

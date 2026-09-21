@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { EngineSettings } from "@xandreed/engine"
+import { EngineSettings } from "@xandreed/core"
 import {
   parseArgs,
   SELFTEST_TASK,

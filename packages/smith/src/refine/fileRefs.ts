@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path"
 import { Effect, Option } from "effect"
-import { FileSystem } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
 
 /**
  * `@path` references in a composer message expand into inline file blocks

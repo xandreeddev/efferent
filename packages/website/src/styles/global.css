@@ -9,8 +9,8 @@
 
 /* ── Tokens ──────────────────────────────────────────────────────────────── */
 :root {
-  --ember: #ffa657;
-  --verdigris: #2dd4bf;
+  --ember: #78d6c6;
+  --verdigris: #78d6c6;
   --chartreuse: #a3e635;
 
   --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -29,16 +29,16 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #14110e;
-  --bg-soft: #1a1713;
-  --surface: #1f1c17;
-  --surface-2: #26221d;
-  --border: #322d26;
+  --bg: #10171e;
+  --bg-soft: #131e27;
+  --surface: #17232d;
+  --surface-2: #1d2b36;
+  --border: #2b3a46;
   --hairline: rgba(230, 225, 217, 0.08);
 
-  --text: #ece7df;
-  --text-dim: #a8a299;
-  --text-faint: #756f66;
+  --text: #e5edf2;
+  --text-dim: #a4b2bd;
+  --text-faint: #8596a3;
 
   --accent: var(--ember);
   --accent-2: var(--verdigris);
@@ -46,8 +46,8 @@
   --link: #ffb877;
   --link-hover: #ffd0a0;
 
-  --code-bg: #1b1813;
-  --code-border: #2c2720;
+  --code-bg: #131e27;
+  --code-border: #2b3a46;
   --inline-code-bg: rgba(255, 166, 87, 0.1);
   --inline-code-fg: #ffc89a;
 
@@ -75,8 +75,8 @@
   --link: #b8560f;
   --link-hover: #8f4209;
 
-  --code-bg: #1b1813; /* code stays dark in both themes — a terminal look */
-  --code-border: #2c2720;
+  --code-bg: #131e27; /* code stays dark in both themes — a terminal look */
+  --code-border: #2b3a46;
   --inline-code-bg: rgba(194, 90, 18, 0.1);
   --inline-code-fg: #9a4a12;
 

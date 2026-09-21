@@ -1,15 +1,16 @@
 import type { LanguageModel } from "@effect/ai"
 import { Effect, Ref } from "effect"
-import { makeSession, runAgent } from "@xandreed/engine"
-import type { ConversationId, ConversationStore, LoopEvent, Session } from "@xandreed/engine"
+import { ConversationStore, makeSession } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
+import type { ConversationId, LoopEvent, Session } from "@xandreed/core"
 import type { MathItem } from "./domain/MathContent.js"
-import { mathAgentBundle } from "./toolkit.js"
+import { makeMathHandlers, mathAgentBundle } from "./toolkit.js"
 
 /**
  * The math session on the engine chassis (one persisted conversation, an
  * append-only seq'd event ledger, serialized sends, interrupt) — the
  * hand-rolled copy this file used to carry was PROMOTED into
- * `@xandreed/engine` (`makeSession`); math keeps only its vocabulary and
+ * `@xandreed/core` (`makeSession`); math keeps only its vocabulary and
  * its turn: the loop events plus the ONE product event, `math_render`,
  * published by the `render_math` handler the moment a batch is accepted
  * (the UI never parses tool-call args).
@@ -35,8 +36,16 @@ export const makeMathSession = (args: {
 }): Effect.Effect<MathSession, never, MathRunServices> =>
   // The served-id set lives at SESSION scope (outlives turns): an exercise id
   // accepted in any earlier batch is rejected on re-send with a fix-it reason.
-  Effect.flatMap(Ref.make<ReadonlySet<string>>(new Set()), (served) =>
-    makeSession<MathSessionEvent, MathRunServices>({
+  Effect.gen(function* () {
+    const served = yield* Ref.make<ReadonlySet<string>>(new Set())
+    const store = yield* ConversationStore
+    const history = yield* store.list(args.conversationId).pipe(Effect.orElseSucceed(() => []))
+    const handlers = makeMathHandlers(() => Effect.void, served)
+    yield* Effect.forEach(history.flatMap((message) => message.role === "assistant" ? message.content.filter((part) => part.type === "tool-call" && part.toolName === "render_math") : []), (part) => {
+      if (part.type !== "tool-call" || typeof part.input !== "object" || part.input === null || !("items" in part.input) || !Array.isArray(part.input.items)) return Effect.void
+      return handlers.render_math({ items: part.input.items }).pipe(Effect.asVoid)
+    })
+    return yield* makeSession<MathSessionEvent, MathRunServices>({
       conversationId: args.conversationId,
       onError: (message) => ({ type: "error", message }),
       runTurn: (text, publish) => {
@@ -48,5 +57,5 @@ export const makeMathSession = (args: {
           onEvent: publish,
         }).pipe(Effect.provide(bundle.handlerLayer), Effect.asVoid)
       },
-    }),
-  )
+    })
+  })

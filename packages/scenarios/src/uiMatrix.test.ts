@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import { landingReference } from "@xandreed/ui-agent"
-import { cappedTrial, containTrialFailure } from "./framework/campaign.js"
+import { cappedTrial, containTrialFailure } from "@xandreed/evals/campaign"
 import { deriveStageMetrics, failedTrial, scoreInformationArchitecture, scoreRequestRelevance, serverReceiveMs } from "./uiMatrix.js"
 
 describe("the UI matrix deterministic scorers", () => {
@@ -58,17 +58,17 @@ describe("the UI matrix deterministic scorers", () => {
     expect(serverReceiveMs([])).toEqual(Option.none())
   })
 
-  test("a trial wedged inside an unbounded finalizer is abandoned at the hard cap instead of stalling the wave", async () => {
+  test("a trial deadline waits for bounded cleanup and records a failed sample", async () => {
     const candidate = { model: "opencode:test", effort: "low" as const, protocol: "compact-lines" as const }
     const task = { id: "test", prompt: "Build a test page.", archetype: "landing" as const, concepts: [["test"]], screening: true }
-    // A never-completing trial holding a never-completing finalizer: a plain
-    // timeout hangs here because interruption waits for the finalizer.
-    const wedged = Effect.never.pipe(Effect.ensuring(Effect.never)) as Effect.Effect<never, unknown>
+    // Browser/provider adapters must bound cleanup; the campaign awaits it rather
+    // than leaving a disconnected paid request alive.
+    const wedged = Effect.never.pipe(Effect.ensuring(Effect.sleep("20 millis"))) as Effect.Effect<never, unknown>
     const startedAt = Date.now()
     const trial = await Effect.runPromise(containTrialFailure((cause) => failedTrial(candidate, task, 1, cause), cappedTrial(150, wedged)))
 
     expect(Date.now() - startedAt).toBeLessThan(5_000)
     expect(trial.complete).toBe(false)
-    expect(trial.errors.join("\n")).toContain("hard wall-clock cap")
+    expect(trial.errors.join("\n")).toContain("execution deadline")
   })
 })

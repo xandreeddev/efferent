@@ -10,8 +10,10 @@ import {
   TsProjectCachedLive,
   vendoredPackFiles,
 } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, runAgent, Shell } from "@xandreed/engine"
-import type { AgentConfig, ConversationId } from "@xandreed/engine"
+import { ConversationStore, FileSystem, Shell } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
+import type { ConversationId } from "@xandreed/core"
+import type { AgentConfig } from "@xandreed/plugin-agent-loop"
 import { loadWorkspaceRules } from "../forge/session.js"
 import { makeCommandGate } from "../gates/commandGate.js"
 import { makeSmithCodingHandlers } from "../implementor/codingToolkit.js"

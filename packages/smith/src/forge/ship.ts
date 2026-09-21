@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Option } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
-import { Shell } from "@xandreed/engine"
-import type { SpecDoc } from "@xandreed/engine"
+import { Shell } from "@xandreed/core"
+import type { SpecDoc } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 
 /**

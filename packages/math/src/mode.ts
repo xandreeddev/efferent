@@ -11,7 +11,9 @@
 import { HttpServer } from "@effect/platform"
 import { BunHttpServer } from "@effect/platform-bun"
 import { Cause, Deferred, Effect, Exit, Layer } from "effect"
-import { ConversationStore, Shell } from "@xandreed/engine"
+import type { AgentMessage } from "@xandreed/core"
+import type { MathSession } from "./session.js"
+import { ConversationStore, Shell } from "@xandreed/core"
 import { WS_PATH } from "./web/contract.js"
 import { makeMathSession, type MathRunServices } from "./session.js"
 import { composeAgentMessage } from "./protocol.js"
@@ -42,7 +44,6 @@ export const runMathMode = (
 ): Effect.Effect<void, never, MathRunServices | Shell> =>
   Effect.gen(function* () {
     const conv = yield* ConversationStore
-    const shell = yield* Shell
 
     // A practice session is FRESH by default — only an explicit --resume
     // continues one (the product model: launch = start practicing).
@@ -63,6 +64,11 @@ export const runMathMode = (
         ? yield* conv.list(cid).pipe(Effect.orElseSucceed(() => []))
         : []
 
+    return yield* runMathHost(input, session, history, resumed !== undefined)
+  }).pipe(Effect.orDie)
+
+export const runMathHost = (input: MathModeInput, session: MathSession, history: ReadonlyArray<AgentMessage>, resumed: boolean): Effect.Effect<void, never, Shell> => Effect.gen(function* () {
+    const shell = yield* Shell
     const token = crypto.randomUUID().replace(/-/g, "")
     const startScope = {
       ...(input.grade !== undefined ? { grade: input.grade } : {}),
@@ -71,7 +77,7 @@ export const runMathMode = (
         : {}),
     }
     const autoStart =
-      resumed === undefined && (startScope.grade !== undefined || startScope.theme !== undefined)
+      !resumed && (startScope.grade !== undefined || startScope.theme !== undefined)
 
     const serve = Effect.gen(function* () {
       const shutdown = yield* Deferred.make<void>()

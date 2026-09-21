@@ -1,16 +1,11 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { argValue, fileStamp, persistJson, positiveInt, runMatrixMain } from "../framework/campaign.js"
+import { argValue, fileStamp, persistJson, positiveInt, runMatrixMain } from "@xandreed/evals/campaign"
 import { LanguageModel, Prompt, Toolkit } from "@effect/ai"
 import { HttpClientRequest } from "@effect/platform"
 import { Cause, Duration, Effect, Either, Option, Redacted, Ref, Stream } from "effect"
-import { AuthStore, CurrentModelCallPolicy, parseModelSelection } from "@xandreed/engine"
-import {
-  LanguageModelSelectionLive,
-  LocalAuthStoreLive,
-  OPENAI_CODEX_API_URL,
-  OpenAiCodexWebSocketHttpClient,
-} from "@xandreed/providers"
+import { AuthStore, CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
+import { LanguageModelSelectionLive, LocalAuthStoreLive, OPENAI_CODEX_API_URL, OpenAiCodexWebSocketHttpClient } from "@xandreed/plugin-models"
 import { StartUi, uiPlannerPrompt } from "@xandreed/ui-agent"
 
 /**

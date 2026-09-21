@@ -9,7 +9,7 @@ import {
   withBaselineRatchet,
 } from "@xandreed/foundry"
 import type { Gate, Pipeline, TsProject, Workspace, WorkspaceError } from "@xandreed/foundry"
-import { FileSystem } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { GateSuiteRequest } from "../spec/toForgeSpec.js"
 import { makeCommandGate } from "./commandGate.js"

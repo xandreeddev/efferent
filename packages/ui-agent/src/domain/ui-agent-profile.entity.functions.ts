@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import { parseModelSelection } from "@xandreed/engine"
+import { parseModelSelection } from "@xandreed/core"
 import { UI_AGENT_RECIPE_SET_VERSION, UI_AGENT_SCHEMA_VERSION } from "./ui-agent-profile.entity.js"
 import type { UiAgentProfile } from "./ui-agent-profile.entity.js"
 
@@ -7,7 +7,7 @@ export const validateUiAgentProfile = (
   profile: UiAgentProfile,
   expectedPrompts: { readonly planner: string; readonly composer: string; readonly repair: string },
 ): ReadonlyArray<string> => [
-  ...(profile.profile === "streaming-ui-v1" ? [] : ["profile id must be streaming-ui-v1"]),
+  ...(profile.profile.trim().length > 0 ? [] : ["profile id is required"]),
   ...(profile.version.length > 0 ? [] : ["profile version is required"]),
   ...(profile.schemaVersion === UI_AGENT_SCHEMA_VERSION ? [] : [`schemaVersion must be ${UI_AGENT_SCHEMA_VERSION}`]),
   ...(profile.recipeSetVersion === UI_AGENT_RECIPE_SET_VERSION ? [] : [`recipeSetVersion must be ${UI_AGENT_RECIPE_SET_VERSION}`]),

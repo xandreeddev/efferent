@@ -1,7 +1,8 @@
 import { LanguageModel, Toolkit } from "@effect/ai"
 import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
-import { ConversationStore, makeSession, runAgent, toAgentFailure, toolResultFailure } from "@xandreed/engine"
-import type { ConversationId, LoopEvent, Session } from "@xandreed/engine"
+import { ConversationStore, makeSession, toAgentFailure, toolResultFailure } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
+import type { ConversationId, LoopEvent, Session } from "@xandreed/core"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
 import type { UiBlock, UiPage } from "./domain/ui-page.entity.js"
 import { UiAgentExecutionProfile, UiAgentModels } from "./ports/ui-agent-runtime.port.js"
@@ -54,7 +55,7 @@ const defaultThemes: UiThemeStoreService = { list: Effect.succeed([]), put: () =
 const contractCacheKey = (contract: string): string =>
   `ui-contract-${[...contract].reduce((hash, ch) => Math.imul(hash ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261 >>> 0).toString(16)}`
 
-export const makeUiAgentSession = (args: { readonly conversationId: ConversationId }): Effect.Effect<UiAgentSession, never, UiAgentRunServices> =>
+export const makeUiAgentSession = (args: { readonly conversationId: ConversationId; readonly awaitCompletion?: boolean }): Effect.Effect<UiAgentSession, never, UiAgentRunServices> =>
   Effect.gen(function* () {
     const conversationStore = yield* ConversationStore
     const pageStore = yield* UiPageStore
@@ -447,6 +448,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         )
         const fiber = yield* Effect.forkDaemon(capped)
         yield* Ref.set(activeAttempt, Option.some(fiber))
+        if (args.awaitCompletion === true) yield* Fiber.await(fiber)
       }),
     })
 

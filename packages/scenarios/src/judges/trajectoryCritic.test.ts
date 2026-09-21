@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { runScenario } from "../framework/run.js"
+import { runScenario } from "@xandreed/evals/run"
 import {
   gradesToScore,
   lastGradesJson,

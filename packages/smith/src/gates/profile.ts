@@ -2,7 +2,7 @@ import { join } from "node:path"
 import { Effect, Option } from "effect"
 import { loadConfig, renderQualityBar } from "@xandreed/foundry"
 import type { QualityBar } from "@xandreed/foundry"
-import { FileSystem } from "@xandreed/engine"
+import { FileSystem } from "@xandreed/core"
 
 /**
  * The workspace's ARMED quality bar, rendered from its own gate config —

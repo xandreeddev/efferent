@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { ConfigError, Spec } from "@xandreed/foundry"
-import { SpecDoc } from "@xandreed/engine"
-import type { SpecCheck, SpecSlug } from "@xandreed/engine"
+import { SpecDoc } from "@xandreed/core"
+import type { SpecCheck, SpecSlug } from "@xandreed/core"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 
 /**

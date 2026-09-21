@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { Effect, Metric, Option, Schema } from "effect"
 import { GateCrash, GateName, makeJudgeGate } from "@xandreed/foundry"
 import type { Gate, Spec, Workspace } from "@xandreed/foundry"
-import type { SpecDoc } from "@xandreed/engine"
+import type { SpecDoc } from "@xandreed/core"
 
 /**
  * The smith judge — the rank-4 LLM gate over the strong (code) tier, wired

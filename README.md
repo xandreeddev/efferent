@@ -1,103 +1,131 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="efferent" width="440">
-</p>
+# Efferent
 
-> **A family of purpose-built agents on a shared Effect.ts kernel** — a spec-driven coder, a server-graded math tutor, a gated page builder, a human-approved social drafter — built to one doctrine: *Agent = Model + Harness*. Validation and looping are **enforced in deterministic code, never advisory**; the gates declare victory, not the model; how much autonomy each agent earns is set by the strength of its validation oracle.
+**Compose the agent. Own the harness.**
 
-> [!WARNING]
-> **This repo is in a high state of flux.** It's built in public and moving fast — package layout, commands, settings, and docs can change or break between commits without notice, and `main` is not guaranteed stable. The previously published npm packages (`efferent`, `@xandreed/cli`) are the **frozen previous line** and no longer receive updates — everything current is **source-run** with Bun.
+An Effect-native agent SDK and coding terminal for Bun on Linux. The model,
+agent loop, tools, policy, context, memory, persistence, MCP, and telemetry are
+configurable plugins. Smith is the coding preset; the SDK also runs headlessly.
 
-**Docs site:** [xandreeddev.github.io/efferent](https://xandreeddev.github.io/efferent/) · getting started, the concepts, and one page per agent.
+## Start
 
-## The line
-
-```
-packages/
-├── foundry/      THE FACTORY — forge loop (implement → snapshot → gate pipeline →
-│                 typed feedback → retry) + static-analysis gates + ratchet baselines
-├── engine/       the agent KERNEL (pure; effect + @effect/ai only): the loop as an
-│                 Effect.iterate fold, ports, prompt mapping, within-run compaction,
-│                 the MCP bridge, the session chassis, the SpecDoc
-├── providers/    the EDGE: routed LanguageModel (per-call re-resolution), SQLite
-│                 store, auth/settings, MCP stdio client, sandboxed shell (bwrap)
-├── ui-agent/     reusable typed UI agent: governed component/theme graph,
-│                 evolving catalog, incremental protocols, pinned model profile
-├── surface/      trusted UI compiler: semantic themes + components → HTML/HTMX/Alpine/SVG
-├── smith/        the CODER at the forge — refine a spec WITH the human, :lock it,
-│                 forge under gates; skills, workspace memory, judge gate, :ship
-├── math/         the tutor — authors exercises, the SERVER grades them
-├── canvas/       the first UI-agent host — structured streaming pages, never raw HTML
-├── social/       the drafter — a human approves everything outbound
-└── scenarios/    evals v3 — scenario packs over agent worlds, committed baselines
+```sh
+bun install
+bun run efferent
 ```
 
-Dependency direction is **a build-failing gate**, not a convention: UI-agent domain → engine; trusted Surface compiler → UI-agent contracts; Canvas → UI-agent + Surface + providers; nothing imports scenarios.
+When no model is configured, the setup screen opens automatically. Use `/setup`
+to return to provider login, model selection, and plugin configuration at any time.
+`/login` connects an API key or subscription; `/model` shows available models.
 
-## The doctrine
+Type `/` to see commands immediately, keep typing to filter, use ↑↓ to select,
+Enter to run, or Tab to complete a command before adding arguments. Ctrl+P opens
+the full command palette. Enter sends; Alt+Enter adds a line; Escape interrupts.
+`/plan` enables read-only tools.
 
-- **The gate declares victory.** A coder's turn ends in a snapshot judged by a staged pipeline — static rules → typecheck → tests → the spec's own accept commands → an LLM judge *last* (intent + honesty only, fail-closed). A rejected run is a result with typed findings that brief the next attempt, not an error.
-- **Fail-closed everywhere.** A gate that cannot run is a failure, never a silent pass.
-- **Errors are values, state is a fold.** No `try`/`catch`, no `let`, no loops, `Option` for absence, `Match` for unions — enforced by the repo's own gates at a **zero baseline**: one new violation anywhere fails `bun run typecheck`.
-- **The harness compounds.** Workspace rules files reach every brief; gate history distills into lessons; an LLM-curated memory ledger survives across runs; repeatedly-confirmed memories graduate into skills the agent loads on demand.
-- **The architecture is executable.** The root profile enforces Effect-native
-  entity/use-case cores, Context.Tag ports, Layer adapters, package boundaries,
-  and the repository's own typecheck/test/eval scripts. The
-  `issue-tracker-example` workspace is the canonical code and eval target.
+Use `/plugins` → select an instance → **Replace plugin…** to swap its implementation.
+Choose an available replacement or **Use another plugin…** for a local module
+or installed package. Efferent validates the resulting graph before saving; a
+failed replacement keeps the current configuration. The replacement uses its
+own default settings. Edit its options from the same menu afterward.
+Bubblewrap is required for sandboxed Bash (`bun run efferent doctor`).
 
-## Run the agents
-
-Credentials live in `~/.efferent/auth.json` (write them with smith's `:login`). Smith and general agents use the model roles in `.efferent/config.json`; the UI agent deliberately does not. Its model planner must create the manifest, information architecture, and first component nodes before anything renders; the composer completes model-generated content through the same governed handlers. Models, effort, budgets, timeouts, prompt/schema/recipe versions, incremental protocol, and fallback are pinned in `packages/ui-agent/profiles/streaming-ui-v1.json`. Select that profile with the live model × effort × protocol browser matrix rather than intuition. Requires [Bun](https://bun.sh) ≥ 1.2.
-
-```bash
-git clone https://github.com/xandreeddev/efferent && cd efferent && bun install
-
-bun run smith --cwd <dir>       # the coder: dashboard → refine → :lock → :forge → :ship
-bun run math --open             # the practice product (loopback + token)
-bun run canvas --open           # the page builder (loopback)
-bun run social review           # the human review queue
-bun run scenarios               # the regression batteries (key-free, scripted twins)
-bun run evals:ui-matrix         # live UI model × effort × protocol browser evidence
-bun run foundry demo            # the forge-loop E2E, no keys needed
+```sh
+bun run efferent -p "Explain this repository" --json
+bun run efferent config explain
+bun run efferent --resume SESSION_ID
 ```
 
-## smith in one minute
+## Compose
 
-```
-$ bun run smith --cwd ~/code/toy
+```ts
+import { Effect } from "effect"
+import { Harness } from "@xandreed/sdk"
+import { smithAgent } from "@xandreed/smith"
 
-> a stats module with tests          # describe the idea
-  … the refiner drafts a SpecDoc — goal, acceptance, machine checks
-:lock                                # only the human locks a spec
-:forge                               # implement → snapshot → gates → feedback → retry
-  ✓ typecheck  ✓ bun-test  ✓ accept-stats-tests  ✓ judge
-  ✓ ACCEPTED · artifact .foundry/runs/<id>.json
-:ship                                # branch → commit → push → PR
-```
-
-Under the hood: the coder runs unattended with read/write/edit/Bash (Bash inside a **bubblewrap sandbox**, workspace-rw/root-ro), discovers workspace **skills** by progressive disclosure, reaches user-configured **MCP servers** through `mcp_describe`/`mcp_call`, folds its own context past 80k tokens, and leaves an auditable conversation in `.efferent/smith.db` that the scenario packs read as evidence.
-
-## Develop
-
-```bash
-bun run typecheck     # tsc + foundry self-check + the zero-baseline repo gate suite
-bun test              # colocated unit tests, key-free
-bun run scenarios     # scenario packs vs committed baselines
+const agent = smithAgent(process.cwd())
+await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const harness = yield* Harness.make({
+    workspace: process.cwd(), config: agent.config, plugins: agent.plugins,
+  })
+  const session = yield* harness.create()
+  yield* session.send("Explain the architecture")
+  console.log(yield* session.history)
+})))
 ```
 
-CI runs all three plus the forge-loop E2E. The repo's own gates run on the repo's own source — a banned construct in any package fails the build.
+A plugin declares an Effect Schema, defaults, required/provided service tags,
+and a scoped Layer. The runtime rejects invalid options, missing dependencies,
+cycles, ambiguous providers, and incompatible plugin API versions before use.
+Override a service through an explicit binding; replace the loop or memory
+without importing Smith or the TUI.
 
-## Docs
+## Configuration
 
-- **[the docs site](https://xandreeddev.github.io/efferent/)** — getting started, concepts, the agents.
-- **[`docs/foundry.md`](./docs/foundry.md)** — the factory design (loop, gates, ratchet).
-- **[`docs/evals-v3.md`](./docs/evals-v3.md)** — the scenario-pack eval design.
-- **[`docs/roadmap.md`](./docs/roadmap.md)** — what's not built yet, and what's consciously skipped.
-- **[`docs/agents/`](./docs/agents)** — the agent-line plan docs.
+Choose `efferent.config.json` or `efferent.config.ts` per directory. Both resolve
+through the same graph. TypeScript can additionally export a `plugins` array.
+JSON can refer to local modules or installed npm plugins through `use`.
 
-## Tech
+```json
+{
+  "version": 1,
+  "profile": "smith",
+  "plugins": [
+    { "id": "memory", "use": "@xandreed/plugin-memory", "options": { "limit": 6 } },
+    { "id": "loop", "use": "@xandreed/plugin-agent-loop", "options": { "maxSteps": 40 } }
+  ]
+}
+```
 
-`effect` · `@effect/ai` · Bun (runtime + test runner + SQLite) · `@opentui/core` + `@opentui/solid` + `solid-js` (the TUI — no React, no Ink) · htmx + CSP Alpine.js over trusted server recipes · Dagre server-side diagrams · bubblewrap · OTLP + Grafana.
+Order: preset → global base → workspace base → profile → workspace overrides →
+invocation. `/plugins` writes `.efferent/overrides.json` atomically. Session plugin
+changes apply between turns; runtime plugin changes require a restart.
 
-## License
+New sessions and memory live under `.efferent/runtime/`. Existing databases,
+auth files, specs, and memory are retained. The models plugin inherits existing
+model settings and sign-ins by default; explicit plugin options take precedence.
+Set `inheritPrevious: false` for an independent setup.
 
-[MIT](./LICENSE)
+## Packages
+
+| Package | Responsibility |
+| --- | --- |
+| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
+| `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
+| `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
+| `@xandreed/plugin-*` | Replaceable first-party capabilities |
+| `@xandreed/smith` | Coding preset and optional spec/forge modules |
+| `@xandreed/tui` / `@xandreed/cli` | Reusable terminal client and application entry |
+| `@xandreed/evals` | Scoped fixtures, checks, judges, campaigns and reporters |
+| `@xandreed/foundry` | Independent deterministic verification framework |
+
+Canvas, Math and Social are reference applications with domain-specific checks.
+Their browser and review interfaces remain available through `bun run canvas`,
+`bun run math`, and `bun run social`. All three enter through SDK presets.
+
+Use `/spec idea`, `/lock`, and `/forge` for gated workflows in the new terminal. The historical spec/forge driver is
+available through `bun run smith:workflow` for old specs.
+
+## Build and verify
+
+```sh
+bun run typecheck
+bun test
+bun run foundry demo
+bun run scenarios
+bun run build:packages
+bun run verify:packages
+python scripts/verify-tui.py
+python scripts/verify-tmux.py
+bun run --cwd packages/website check
+```
+
+The distribution build prepares `0.2.0-next.0` artifacts under `.artifacts/`.
+The consumer check installs local tarballs outside the monorepo, then executes
+an external loop plugin, durable sessions, a fork, an eval and CLI startup.
+These artifacts have **not been published**. The historical `efferent` npm
+package is a different release line.
+
+See [the framework guide](docs/framework.md), [implementation status](docs/framework-reset.md),
+and [contributing](CONTRIBUTING.md).
+
+MIT · Xand Reed

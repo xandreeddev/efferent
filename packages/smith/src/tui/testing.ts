@@ -6,26 +6,13 @@ import { createComponent } from "solid-js"
 import { testRender } from "@opentui/solid"
 import type { TestRendererSetup } from "@opentui/core/testing"
 import { Deferred, Effect, Layer, Option, Queue, Schema, Scope } from "effect"
-import {
-  AuthStore,
-  EngineSettings,
-  McpClient,
-  McpError,
-  ModelCatalog,
-  Shell,
-  ShellResult,
-  SettingsStore,
-  UtilityCompletion,
-  UtilityLlm,
-} from "@xandreed/engine"
-import type { SpecDoc } from "@xandreed/engine"
-import type { Credential, ModelRole } from "@xandreed/engine"
+import { AuthStore, EngineSettings, McpClient, McpError, ModelCatalog, Shell, ShellResult, SettingsStore, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import type { SpecDoc } from "@xandreed/core"
+import type { Credential, ModelRole } from "@xandreed/core"
 import { FactoryRun } from "@xandreed/foundry"
-import {
-  configuredModelCatalog,
-  LocalFileSystemLive,
-  SqliteConversationStoreLive,
-} from "@xandreed/providers"
+import { configuredModelCatalog } from "@xandreed/plugin-models"
+import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { SMITH_LIMIT_DEFAULTS } from "../domain/SmithConfig.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { SmithEvent } from "../domain/SmithEvent.js"
@@ -47,6 +34,7 @@ import { App } from "./view/App.js"
  */
 
 export interface TestTuiOptions {
+  readonly titleCompletion?: Effect.Effect<UtilityCompletion>
   /** SpecDocs written to the workspace before boot (the dashboard reads them). */
   readonly specs?: ReadonlyArray<SpecDoc>
   /** FactoryRuns persisted to .foundry/runs before boot. */
@@ -151,7 +139,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     }),
     Layer.succeed(UtilityLlm, {
       complete: () =>
-        Effect.succeed(
+        options.titleCompletion ?? Effect.succeed(
           new UtilityCompletion({
             text: "scripted session title",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 },

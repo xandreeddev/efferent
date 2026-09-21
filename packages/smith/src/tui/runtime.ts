@@ -20,9 +20,9 @@ import { contextAssembledEvent, makeContextInjector, withContextBlock } from "..
 import { loadStandingSources } from "../context/standing.js"
 import { loadContextSet, saveContextSet } from "../context/store.js"
 import { contextView } from "./presentation/contextView.js"
-import { FileSystem, SettingsStore } from "@xandreed/engine"
-import type { AuthStore, ModelCatalog, Shell } from "@xandreed/engine"
-import type { SpecDoc } from "@xandreed/engine"
+import { FileSystem, SettingsStore } from "@xandreed/core"
+import type { AuthStore, ModelCatalog, Shell } from "@xandreed/core"
+import type { SpecDoc } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import type { SmithRunConfig } from "../domain/SmithConfig.js"
 import type { ImplementorServices } from "../implementor/efferentImplementor.js"
@@ -57,8 +57,8 @@ import { makeProfileSession } from "../profile/session.js"
 import { listSpecs, loadSpecDoc, lockSpecDoc, specPath } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
 import type { ProviderStatus, SmithProvider } from "./presentation/loginFlow.js"
-import { AuthStore as AuthStoreTag, ConversationId, ConversationStore, UtilityLlm, assistantModel, assistantUsage } from "@xandreed/engine"
-import type { Credential } from "@xandreed/engine"
+import { AuthStore as AuthStoreTag, ConversationId, ConversationStore, UtilityLlm, assistantModel, assistantUsage } from "@xandreed/core"
+import type { Credential } from "@xandreed/core"
 import { readRuns } from "@xandreed/foundry"
 import { join } from "node:path"
 import { runEventPump } from "./events/pump.js"
@@ -427,6 +427,7 @@ export const makeWorkspaceBody = (
     TuiServices | Scope.Scope
   > =>
     Effect.gen(function* () {
+      const workspaceScope = yield* Effect.scope
       // NOTHING forked may die silently — a crashed driver action surfaces
       // on the notice line (live-caught: a swallowed defect looked like
       // "nothing happens" to the user).
@@ -550,12 +551,12 @@ export const makeWorkspaceBody = (
           // the queue is read on the NEXT iteration, not held to session end.
           const queued = yield* Effect.sync(() => store.drainQueue())
           yield* queued.length > 0 ? turn(session, queued.join("\n\n")) : Effect.void
-        }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
+        })
 
       /** The turn as a registered fiber: it announces itself first and
        *  withdraws last, so the session never holds a dead handle. */
       const registered = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-        registerTurn.pipe(Effect.zipRight(body), Effect.ensuring(unregisterTurn))
+        registerTurn.pipe(Effect.zipRight(body), Effect.ensuring(unregisterTurn.pipe(Effect.zipRight(Effect.sync(() => store.setBusy(false))))))
 
       /** `:resume <id>`: rebuild the transcript through the SAME reducer the
        *  live path feeds (replay ≡ live-fold), then continue the conversation. */
@@ -884,17 +885,12 @@ export const makeWorkspaceBody = (
               Effect.sync(() => {
                 forked(
                   "turn",
-                  registered(
-                    turn(session, text).pipe(
-                      // The FAST model names a new session after its first
-                      // turn — the dashboard's sessions list shows titles, not
-                      // truncated prompts. Failures are silent; a nicety.
-                      Effect.zipLeft(
-                        fresh
-                          ? autoTitle(session.conversationId, text).pipe(Effect.catchAll(() => Effect.void))
-                          : Effect.void,
-                      ),
-                    ),
+                  registered(turn(session, text)).pipe(
+                    // Naming is background work. Keeping it inside the turn
+                    // could strand input queued after the final queue drain.
+                    Effect.tap(() => fresh
+                      ? autoTitle(session.conversationId, text).pipe(Effect.forkIn(workspaceScope), Effect.asVoid)
+                      : Effect.void),
                   ),
                 )
               })

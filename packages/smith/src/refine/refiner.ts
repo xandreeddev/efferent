@@ -1,16 +1,9 @@
 import { Tool, Toolkit } from "@effect/ai"
 import { Array as Arr, Effect, Option, Ref, Schema } from "effect"
 import { snapshotWorkspace } from "@xandreed/foundry"
-import {
-  DEFAULT_SPEC_LIMITS,
-  encodeSpecDocText,
-  Failure,
-  FileSystem,
-  SpecDoc,
-  specSlug,
-  uniqueSlug,
-} from "@xandreed/engine"
-import type { AgentConfig, SpecSlug } from "@xandreed/engine"
+import { DEFAULT_SPEC_LIMITS, encodeSpecDocText, Failure, FileSystem, SpecDoc, specSlug, uniqueSlug } from "@xandreed/core"
+import type { SpecSlug } from "@xandreed/core"
+import type { AgentConfig } from "@xandreed/plugin-agent-loop"
 import {
   Glob,
   Grep,

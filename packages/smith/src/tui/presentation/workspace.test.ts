@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { ConversationId, ConversationSummary, SpecDoc } from "@xandreed/engine"
+import { ConversationId, ConversationSummary, SpecDoc } from "@xandreed/core"
 import { FactoryRun } from "@xandreed/foundry"
 import { runLine, workspaceView } from "./workspace.js"
 

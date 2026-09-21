@@ -2,17 +2,10 @@ import type { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { QualityBar, WorkspacePath } from "@xandreed/foundry"
-import {
-  buildMcpBridge,
-  ConversationStore,
-  FileSystem,
-  McpClient,
-  runAgent,
-  Shell,
-  UtilityLlm,
-} from "@xandreed/engine"
+import { buildMcpBridge, ConversationStore, FileSystem, McpClient, Shell, UtilityLlm } from "@xandreed/core"
+import { runAgent } from "@xandreed/plugin-agent-loop"
 import { Toolkit } from "@effect/ai"
-import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/engine"
+import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
 import { discoverSkills, renderSkillsBlock } from "../skills/skills.js"
