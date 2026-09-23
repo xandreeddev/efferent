@@ -48,6 +48,7 @@ describe("makeCompatLanguageModel", () => {
           chatUrl: "https://gw.example/chat/completions",
           apiKey: "sk-test",
           model: "test-model",
+          temperature: 0.25,
           fetchImpl: impl,
         })
         return yield* svc.generateText({
@@ -69,6 +70,7 @@ describe("makeCompatLanguageModel", () => {
     expect(calls[0]?.url).toBe("https://gw.example/chat/completions")
     expect(sent.model).toBe("test-model")
     expect(sent.stream).toBe(false)
+    expect(calls[0]?.body).toMatchObject({ temperature: 0.25 })
     expect(sent.messages).toEqual([
       { role: "system", content: "sys" },
       { role: "user", content: "hi" },

@@ -15,7 +15,7 @@ import type { Pack, PackReport, ScenarioMode } from "./model.js"
 
 export interface Baseline {
   readonly mode: ScenarioMode
-  readonly mean: number
+  readonly mean: number | null
   readonly scenarios: Record<string, number>
   /** Prompt-version constants the pack declared when this baseline was
    *  minted — a drift against the current pack meta prints a loud warning. */
@@ -64,8 +64,7 @@ export const toBaseline = (report: PackReport, pack: Pack): Baseline => ({
   mean: report.mean,
   scenarios: Object.fromEntries(
     report.scenarios
-      .filter((s) => s.status === "ran")
-      .map((s) => [s.name, Number(s.combined.toFixed(4))]),
+      .flatMap((s) => s.status === "ran" && s.combined !== null ? [[s.name, Number(s.combined.toFixed(4))]] : []),
   ),
   ...(pack.meta !== undefined ? { versions: pack.meta } : {}),
   ...(pack.samples !== undefined ? { samples: pack.samples } : {}),
@@ -93,6 +92,7 @@ export const writeBaseline = (
   report: PackReport,
   pack: Pack,
 ): void => {
+  if (!report.passed || report.mean === null) return
   const path = baselinePath(dir, report.pack, report.mode)
   const next = toBaseline(report, pack)
   // A no-op re-mint must not churn the committed file: identical scores +
@@ -123,6 +123,7 @@ export const compareBaseline = (
   perScenario = false,
   perScenarioTolerance = tolerance,
 ): Option.Option<string> => {
+  if (report.mean === null || baseline.mean === null || report.scenarios.some((result) => result.status === "error")) return Option.some("Comparison unavailable: incomplete measurements")
   const meanDrop =
     report.mean < baseline.mean - tolerance
       ? [
@@ -134,7 +135,7 @@ export const compareBaseline = (
     : report.scenarios.flatMap((result) => {
         const minted = baseline.scenarios[result.name]
         return result.status === "ran" &&
-          minted !== undefined &&
+          minted !== undefined && result.combined !== null &&
           result.combined < minted - perScenarioTolerance
           ? [
               `"${result.name}" ${result.combined.toFixed(3)} < ${minted.toFixed(3)} − ${perScenarioTolerance}`,

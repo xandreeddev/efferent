@@ -33,7 +33,7 @@ describe("the trajectory critic judge", () => {
     expect(lastGradesJson(noisy)).toContain('"robustness": 4')
   })
 
-  test("a malformed reply FAILS the judge effect — the runner captures it as score 0", async () => {
+  test("a malformed reply FAILS the judge effect — the runner records an unavailable score", async () => {
     const result = await Effect.runPromise(
       runScenario(
         {
@@ -55,8 +55,10 @@ describe("the trajectory critic judge", () => {
         1,
       ),
     )
-    expect(result.judges[0]?.score).toBe(0)
-    expect(result.judges[0]?.reason).toContain("judge failed")
+    expect(result.judges[0]?.score).toBeNull()
+    expect(result.status).toBe("error")
+    expect(result.combined).toBeNull()
+    expect(result.judges[0]?.reason).toBeTruthy()
   })
 
   test("gradesToScore clamps naturally: all 5s = 1.0, all 1s = 0.2", () => {

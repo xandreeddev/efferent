@@ -173,7 +173,7 @@ const program = Effect.gen(function* () {
     const deltas = outcomes.flatMap((o) =>
       Option.match(o.prior, {
         onNone: () => [`${o.report.pack} (no baseline — mint with --update-baselines)`],
-        onSome: (b) => [`${o.report.pack} Δ${(o.report.mean - b.mean >= 0 ? "+" : "") + (o.report.mean - b.mean).toFixed(2)}`],
+        onSome: (b) => o.report.mean === null || b.mean === null ? [`${o.report.pack} unavailable`] : [`${o.report.pack} Δ${(o.report.mean - b.mean >= 0 ? "+" : "") + (o.report.mean - b.mean).toFixed(2)}`],
       }),
     )
     console.log(`baselines: ${deltas.join(" · ")}`)

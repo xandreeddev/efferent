@@ -33,7 +33,7 @@ export interface CompactionPlan {
  */
 
 export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
-  readonly system: string
+  readonly system: string | Prompt.Prompt
   /** Explicit opt-in: export prompt and result content on step spans.
    * Hosts own consent, redaction and exporter retention. Disabled by default. */
   readonly captureTraceContent?: boolean
@@ -257,10 +257,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const toolNames = Object.keys(selectedTools)
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
-        const prompt = Prompt.make([
-          { role: "system", content: options.system },
-          ...toPromptMessages(state.messages),
-        ] as never)
+        const instructions = typeof options.system === "string"
+          ? Prompt.make([{ role: "system", content: options.system }])
+          : options.system
+        const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(state.messages) as never))
 
         if (options.captureTraceContent === true)
           yield* Effect.annotateCurrentSpan({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AiError, LanguageModel, Tool, Toolkit } from "@effect/ai"
+import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "@effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { Failure } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
@@ -693,4 +693,20 @@ test("step trace content is explicit, includes replay context and is off by defa
     () => [{ type: "text", text: "private answer" }, finish("stop")])
   expect(snapshots[1]?.has("engine.step.input")).toBe(false)
   expect(snapshots[1]?.has("engine.step.output")).toBe(false)
+})
+
+
+test("native prompt instructions preserve messages and provider metadata", async () => {
+  const instructions = Prompt.make([{ role: "system", content: "shared" }, { role: "system", content: "model-specific", options: { google: { fixture: true } } }])
+  const captured: Prompt.Prompt[] = []
+  const model = Effect.gen(function* () {
+    return yield* LanguageModel.make({
+      generateText: (options) => Effect.sync(() => { captured.push(options.prompt); return [{ type: "text", text: "done" }, finish("stop")] as never }),
+      streamText: () => Stream.die("unused") as never,
+    })
+  })
+  await Effect.runPromise(runLoop({ system: instructions, messages: [user("question")], toolkit: kit }).pipe(Effect.provide(handlers), Effect.provideServiceEffect(LanguageModel.LanguageModel, model)))
+  expect(captured[0]?.content.slice(0, 2)).toEqual([...instructions.content])
+  expect(captured[0]?.content[2]?.role).toBe("user")
+  expect(instructions.content).toHaveLength(2)
 })
