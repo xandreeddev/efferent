@@ -35,3 +35,9 @@ export * from "./evaluators/legacy.js"
 export * from "./journey-assessment.usecase.functions.js"
 
 export * from "./assessment-report.functions.js"
+
+export * from "./semantic.entity.js"
+export * from "./semantic.entity.functions.js"
+export * from "./ports/semantic-judge.port.js"
+export * from "./evaluators/semantic.js"
+export * from "./adapters/semantic-llm.adapter.js"

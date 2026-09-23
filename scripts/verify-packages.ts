@@ -35,7 +35,8 @@ await writeFile(join(consumer, "verify.ts"), `
 import { Effect, Layer, Schema } from "effect"
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
-import { scenario, runPack } from "@xandreed/evals"
+import { scenario, runPack, assessAll, semanticEvaluator } from "@xandreed/evals"
+import { SemanticJevLive } from "@xandreed/evals/adapters/semantic-jev.adapter"
 const echo = definePlugin({ id: "external/echo", version: "1", config: Schema.Struct({prefix: Schema.String}), defaults: {prefix:"hello "}, provides:[AgentLoop], layer: ({prefix}) => Layer.succeed(AgentLoop,{ run: input => Effect.succeed({text:prefix+input.prompt,outcome:"completed"}) }) })
 await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const harness = yield* Harness.make({workspace:process.cwd(), plugins:[sessions,echo], config:{version:1,plugins:[{id:"store",use:sessions.id},{id:"loop",use:echo.id}]}})
@@ -48,7 +49,10 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
 })) )
 const report = await Effect.runPromise(runPack({name:"external",threshold:1,scenarios:[scenario({name:"custom fixture",modes:["scripted"],boot:Effect.succeed(42),steps:[{name:"score",act:()=>Effect.void,checks:[{name:"custom scorer",severity:"hard",run:world=>Effect.succeed({pass:world===42})}]}]})]},"scripted"))
 if(!report.passed) process.exit(1)
-console.log("External SDK, plugin, persistence, fork, and eval composition passed")
+const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
+const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
+if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
+console.log("External SDK, plugin, persistence, fork, eval composition, and optional rubric adapter passed")
 `)
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts"] }))
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
