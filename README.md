@@ -119,10 +119,13 @@ python scripts/verify-tmux.py
 bun run --cwd packages/website check
 ```
 
-The distribution build prepares `0.2.0-next.0` artifacts under `.artifacts/`.
+The distribution build prepares artifacts under `.artifacts/` using each
+package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, then executes
 an external loop plugin, durable sessions, a fork, an eval and CLI startup.
-These artifacts have **not been published**. The historical `efferent` npm
+`@xandreed/evals` and its `@xandreed/core` dependency are published as `0.3.0`
+under npm's `latest` tag. Install evals with `npm install @xandreed/evals`.
+The remaining artifacts are local builds. The historical `efferent` npm
 package is a different release line.
 
 See [the framework guide](docs/framework.md), [implementation status](docs/framework-reset.md),
