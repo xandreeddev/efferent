@@ -41,9 +41,10 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 The previously published npm packages (`efferent`, `@xandreed/cli`, and the
 `@xandreed/sdk-*` line) are the **frozen previous line** — they receive no
 further releases, and the release automation has been removed from this repo.
-The current CLI is source-run only. `@xandreed/evals` and `@xandreed/core`
-are published manually at `0.3.0` under npm's `latest` tag. Release automation
-has not been reintroduced.
+The current CLI is source-run only. `@xandreed/core`, `@xandreed/evals`,
+`@xandreed/runtime`, `@xandreed/sdk`, and all nine `@xandreed/plugin-*`
+packages are published manually at `0.3.0` under npm's `latest` tag.
+Release automation has not been reintroduced.
 
 For a manual evals release, bump `packages/evals/package.json` and its
 `@xandreed/core` dependency's manifest when that dependency needs a release.
@@ -60,6 +61,20 @@ npm publish ./.artifacts/packages/evals --access public --tag latest
 
 Publish only versions that are not already on npm. These commands are manual;
 merging a version bump does not publish anything automatically.
+
+For plugin releases, also update the version in each plugin definition and
+run `bun run docs:generate`. Publish core before the plugins and runtime;
+publish the SDK after runtime, plugin-memory, and plugin-session-sqlite are
+available. For example, after building and verifying, a full plugin release
+uses this dependency order (skip any version already published):
+
+```sh
+for package in plugin-agent-loop plugin-context plugin-mcp plugin-memory \
+  plugin-models plugin-policy-workspace plugin-session-sqlite \
+  plugin-telemetry plugin-tools-local runtime sdk; do
+  npm publish "./.artifacts/packages/$package" --access public --tag latest || exit
+done
+```
 
 ## Distribution and terminal changes
 

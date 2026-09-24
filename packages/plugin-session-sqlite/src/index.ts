@@ -65,7 +65,7 @@ export const SessionStoreLive = (path: string) => Layer.scoped(SessionStore, Eff
 }))
 
 export const sessionSqlitePlugin = definePlugin({
-  id: "@xandreed/plugin-session-sqlite", version: "0.2.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-session-sqlite", version: "0.3.0", scope: "runtime",
   config: Config, defaults: { path: ".efferent/runtime/sessions.db" }, provides: [SessionStore],
   layer: ({ path }) => SessionStoreLive(path),
 })

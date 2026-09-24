@@ -1,7 +1,7 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "runtime",
     "requires": [],
@@ -24,7 +24,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "runtime",
     "requires": [],
@@ -50,7 +50,7 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -97,7 +97,7 @@
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -141,7 +141,7 @@
   },
   {
     "id": "@xandreed/plugin-context",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -187,7 +187,7 @@
   },
   {
     "id": "@xandreed/plugin-policy-workspace",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -213,7 +213,7 @@
   },
   {
     "id": "@xandreed/plugin-mcp",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -270,7 +270,7 @@
   },
   {
     "id": "@xandreed/plugin-tools-local",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -301,7 +301,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
@@ -358,7 +358,7 @@
   },
   {
     "id": "@xandreed/plugin-telemetry",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [],
@@ -389,7 +389,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop/delegate",
-    "version": "0.2.0-next.0",
+    "version": "0.3.0",
     "apiVersion": 1,
     "scope": "session",
     "requires": [
