@@ -3,6 +3,9 @@
 Read `../CLAUDE.md` for identity and repository rules. The current architecture
 and configuration contract are documented in `README.md` and `docs/framework.md`.
 
+Shared development skills live in `.agents/skills/<name>/SKILL.md`.
+`CLAUDE.md` links to `AGENTS.md`; `.claude/skills` links to `.agents/skills`.
+
 ## Architecture
 
 - `core`: shared schemas, ports and protocol helpers; no provider or host imports.
