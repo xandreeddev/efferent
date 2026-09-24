@@ -1,7 +1,8 @@
 import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
-import { Effect, Match, Metric, Option, Ref, Stream } from "effect"
+import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "@xandreed/core"
+import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
@@ -33,7 +34,7 @@ export interface CompactionPlan {
  */
 
 export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
-  readonly system: string
+  readonly system: string | Prompt.Prompt
   /** Explicit opt-in: export prompt and result content on step spans.
    * Hosts own consent, redaction and exporter retention. Disabled by default. */
   readonly captureTraceContent?: boolean
@@ -257,10 +258,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const toolNames = Object.keys(selectedTools)
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
-        const prompt = Prompt.make([
-          { role: "system", content: options.system },
-          ...toPromptMessages(state.messages),
-        ] as never)
+        const instructions = typeof options.system === "string"
+          ? Prompt.make([{ role: "system", content: options.system }])
+          : options.system
+        const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(state.messages) as never))
 
         if (options.captureTraceContent === true)
           yield* Effect.annotateCurrentSpan({
@@ -541,7 +542,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
           streamingHealthy: outcome.streamingHealthy,
         } satisfies LoopState
-      }).pipe(Effect.withSpan("engine.turn", {
+      }).pipe(
+        Effect.onExit((exit) => onEvent({ type: "turn_end", turnIndex: state.turnIndex, status: Exit.isSuccess(exit) ? "completed" : Cause.isInterruptedOnly(exit.cause) ? "cancelled" : "failed" })),
+        Effect.locally(CurrentAgentStep, Option.some(state.turnIndex)),
+        Effect.withSpan("engine.turn", {
         attributes: { "engine.turn": state.turnIndex, "engine.step": state.turnIndex + 1 },
       }))
 

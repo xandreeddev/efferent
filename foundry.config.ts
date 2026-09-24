@@ -104,7 +104,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
   ],
   boundaries: {
-    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","@xandreed/core","node:","bun:test"]},
+    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","@effect/ai","@xandreed/core","node:","bun:test"]},
       {
             "name": "canvas",
             "path": "packages/canvas/src/**",

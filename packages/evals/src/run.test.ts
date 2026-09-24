@@ -114,7 +114,8 @@ describe("runScenario", () => {
       ),
     )
     expect(crashed.status).toBe("error")
-    expect(crashed.score).toBe(0)
+    expect(crashed.score).toBeNull()
+    expect(crashed.combined).toBeNull()
     expect(crashed.checks[0]?.detail).toContain("act failed")
   })
 

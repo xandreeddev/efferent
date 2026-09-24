@@ -157,14 +157,14 @@ export const calibrationSummary = (report: PackReport): ReadonlyArray<string> =>
     const group = report.scenarios.filter(
       (s) => s.status === "ran" && s.name.startsWith(prefix),
     )
-    if (group.length === 0) return Option.none()
+    if (group.length === 0 || group.some((scenario) => scenario.combined === null || scenario.samples?.scores.some((score) => score === null))) return Option.none()
     const trials = group.reduce((sum, scenario) => sum + (scenario.samples?.count ?? 1), 0)
     const successes = group.reduce(
       (sum, scenario) =>
         sum +
         (scenario.samples === undefined
-          ? scenario.combined
-          : scenario.samples.scores.reduce((a, score) => a + score, 0)),
+          ? (scenario.combined ?? 0)
+          : scenario.samples.scores.reduce<number>((a, score) => a + (score ?? 0), 0)),
       0,
     )
     const interval = wilsonInterval(successes, trials)

@@ -138,6 +138,9 @@ The model picker uses the configured model catalog. Ctrl+O expands tool details.
 
 ## Evals and reference applications
 
+For typed datasets, reusable evaluators, task/journey composition and native prompt
+examples, see [Composable evaluations](composable-evaluations.md).
+
 `@xandreed/evals` exports `scenario`, `runPack`, `evaluate`, campaign persistence,
 statistics, evidence checks and baseline comparison. A scenario supplies its
 own scoped fixture, actions, checks and judges. `evaluate` accepts arbitrary

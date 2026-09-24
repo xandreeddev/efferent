@@ -8,7 +8,7 @@ import type { Pack, PackReport, ScenarioResult } from "./model.js"
  */
 
 const statusGlyph = (s: ScenarioResult): string =>
-  s.status !== "ran" ? "·" : !s.hardPassed ? "✗" : s.combined >= 1 ? "✓" : s.combined > 0 ? "◐" : "✗"
+  s.status !== "ran" ? "·" : !s.hardPassed ? "✗" : (s.combined ?? -1) >= 1 ? "✓" : (s.combined ?? -1) > 0 ? "◐" : "✗"
 
 const samplesTag = (s: ScenarioResult): string =>
   s.samples === undefined
@@ -19,7 +19,7 @@ const samplesTag = (s: ScenarioResult): string =>
 
 const scenarioLines = (s: ScenarioResult, showJudges: boolean): ReadonlyArray<string> => {
   const head = `  ${statusGlyph(s)} ${s.name} — ${
-    s.status === "ran" ? s.combined.toFixed(2) : s.status
+    s.status === "ran" ? s.combined?.toFixed(2) ?? "unavailable" : s.status
   }${samplesTag(s)}${s.detail !== undefined ? ` (${s.detail})` : ""}`
   const failing = s.checks
     .filter((c) => !c.pass)
@@ -29,7 +29,7 @@ const scenarioLines = (s: ScenarioResult, showJudges: boolean): ReadonlyArray<st
     )
   const judges = showJudges
     ? s.judges.map(
-        (j) => `      ⚖ ${j.judge} ${j.score.toFixed(2)} — ${j.reason.slice(0, 160)}`,
+        (j) => `      ⚖ ${j.judge} ${j.score?.toFixed(2) ?? "unavailable"} — ${j.reason.slice(0, 160)}`,
       )
     : []
   return [head, ...failing, ...judges]
@@ -66,7 +66,7 @@ export const renderReport = (
           .map(([key, value]) => `${key} ${value}`)
           .join(" · ")}${pack.samples !== undefined && pack.samples > 1 ? ` · k=${pack.samples}` : ""}]`
   return [
-    `pack ${report.pack} (${report.mode}) — mean ${report.mean.toFixed(3)} / threshold ${report.threshold} — ${verdict}${meta}`,
+    `pack ${report.pack} (${report.mode}) — mean ${report.mean?.toFixed(3) ?? "unavailable"} / threshold ${report.threshold} — ${verdict}${meta}`,
     ...report.scenarios.flatMap((s) => scenarioLines(s, extras.showJudges)),
     ...extras.summary.map((line) => `  ${line}`),
     ...Option.toArray(Option.map(extras.regression, (message) => `  ⚠ ${message}`)),

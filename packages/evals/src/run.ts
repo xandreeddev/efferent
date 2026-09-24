@@ -1,3 +1,5 @@
+import { assess } from "./assessment.usecase.functions.js"
+import { judgeEvaluator } from "./evaluators/legacy.js"
 import { Effect, Option } from "effect"
 import type {
   BoundScenario,
@@ -18,7 +20,7 @@ import { wilsonInterval } from "./stats.js"
  * a failed HARD check marks the scenario failed and the remaining steps'
  * checks as failed (fail-closed) — then run judges (live mode) over the
  * finished world. Every act/boot failure is CAPTURED into the result
- * (the v2 `Effect.exit` discipline: a provider 429 scores 0, never crashes
+ * (the v2 `Effect.exit` discipline: a provider failure has no measured score, never crashes
  * the run).
  */
 
@@ -100,18 +102,9 @@ const runJudges = <W>(
   world: W,
   judges: ReadonlyArray<{ readonly name: string; readonly run: (w: W) => Effect.Effect<{ readonly score: number; readonly reason: string }, unknown> }>,
 ): Effect.Effect<ReadonlyArray<JudgeOutcome>> =>
-  Effect.forEach(judges, (judge) =>
-    judge.run(world).pipe(
-      Effect.map((verdict) => ({
-        judge: judge.name,
-        score: Math.max(0, Math.min(1, verdict.score)),
-        reason: verdict.reason,
-      })),
-      Effect.catchAll((cause) =>
-        Effect.succeed({ judge: judge.name, score: 0, reason: `judge failed: ${String(cause).slice(0, 200)}` }),
-      ),
-    ),
-  )
+  Effect.forEach(judges, (judge) => assess({ evaluator: judgeEvaluator(judge), select: ["score"] }, world).pipe(
+    Effect.map((result) => ({ judge: judge.name, score: result.status === "scored" && result.metrics[0]?.kind === "score" ? result.metrics[0].value : null, reason: Option.getOrElse(result.reason, () => result.status) })),
+  ))
 
 export const runScenario = <W>(
   raw: Scenario<W>,
@@ -125,8 +118,8 @@ export const runScenario = <W>(
       hardPassed: false,
       checks: [],
       judges: [],
-      score: 0,
-      combined: 0,
+      score: null,
+      combined: null,
       detail: `not supported in ${mode} mode`,
     })
   }
@@ -137,8 +130,8 @@ export const runScenario = <W>(
       hardPassed: false,
       checks: [],
       judges: [],
-      score: 0,
-      combined: 0,
+      score: null,
+      combined: null,
       detail:
         raw.steps.length === 0
           ? "invalid scenario: no steps"
@@ -155,18 +148,18 @@ export const runScenario = <W>(
           : []
       const evaluated = fold.outcomes.length
       const passed = fold.outcomes.filter((o) => o.pass).length
-      const score = evaluated === 0 ? 0 : passed / evaluated
+      const score = fold.crashed ? null : evaluated === 0 ? 0 : passed / evaluated
       const judgeMean =
         judges.length === 0
           ? Option.none<number>()
-          : Option.some(judges.reduce((a, j) => a + j.score, 0) / judges.length)
-      const combined = Option.match(judgeMean, {
+          : Option.some(judges.reduce((a, j) => a + (j.score ?? 0), 0) / judges.length)
+      const combined = score === null || judges.some((judge) => judge.score === null) ? null : Option.match(judgeMean, {
         onNone: () => score,
         onSome: (jm) => score * (1 - judgeWeight) + jm * judgeWeight,
       })
       return {
         name: raw.name,
-        status: fold.crashed ? ("error" as const) : ("ran" as const),
+        status: fold.crashed || judges.some((judge) => judge.score === null) ? ("error" as const) : ("ran" as const),
         hardPassed:
           !fold.stopped && fold.outcomes.every((o) => o.severity !== "hard" || o.pass),
         checks: fold.outcomes,
@@ -187,8 +180,8 @@ export const runScenario = <W>(
         hardPassed: false,
         checks: [],
         judges: [],
-        score: 0,
-        combined: 0,
+        score: null,
+        combined: null,
         detail: `boot/run crashed: ${String(cause).slice(0, 300)}`,
       }),
     ),
@@ -203,9 +196,8 @@ const hardGreen = (result: ScenarioResult): boolean =>
  * Run a scenario k times SEQUENTIALLY (each sample boots its own world) and
  * aggregate: `combined`/`score` become means over the samples, `passRate` is
  * the all-hard-green fraction, checks/judges shown are the LAST sample's.
- * A mode-skip is deterministic — returned as-is from the first sample. An
- * errored sample scores 0 and drags the mean (fail-closed), status stays
- * "ran" as long as any sample ran.
+ * A mode-skip is deterministic. Infrastructure failures leave the aggregate
+ * unavailable and keep the failed samples in the evidence.
  */
 const runSampled = <W>(
   raw: Scenario<W>,
@@ -225,8 +217,8 @@ const runSampled = <W>(
           hardPassed: false,
           checks: [],
           judges: [],
-          score: 0,
-          combined: 0,
+          score: null,
+          combined: null,
           detail: "no samples ran",
         }
       }
@@ -234,8 +226,8 @@ const runSampled = <W>(
       const infraFailures = results.filter((r) => r.status === "error").length
       const last = ran[ran.length - 1] ?? first
       const scores = results.map((r) => r.combined)
-      const mean = (xs: ReadonlyArray<number>) =>
-        xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length
+      const mean = (xs: ReadonlyArray<number | null>) =>
+        xs.length === 0 || xs.some((value) => value === null) ? null : xs.reduce<number>((a, b) => a + (b ?? 0), 0) / xs.length
       const passRate = results.filter(hardGreen).length / results.length
       const passRate95 = wilsonInterval(results.filter(hardGreen).length, results.length)
       return {
@@ -249,7 +241,7 @@ const runSampled = <W>(
           : {}),
         samples: {
           count: results.length,
-          scores: scores.map((s) => Number(s.toFixed(4))),
+          scores: scores.map((s) => s === null ? null : Number(s.toFixed(4))),
           passRate,
           passRate95,
           passAtK: 1 - Math.pow(1 - passRate, results.length),
@@ -291,7 +283,7 @@ export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackRepor
     const errored = scenarios.some((s) => s.status === "error")
     const hardFailed = ran.some((s) => !s.hardPassed)
     const mean =
-      ran.length === 0 ? 0 : ran.reduce((a, s) => a + s.combined, 0) / ran.length
+      ran.length === 0 || errored ? null : ran.reduce((a, s) => a + (s.combined ?? 0), 0) / ran.length
     return {
       pack: pack.name,
       mode,
@@ -305,7 +297,7 @@ export const runPack = (pack: Pack, mode: ScenarioMode): Effect.Effect<PackRepor
         !errored &&
         !hardFailed &&
         ran.length > 0 &&
-        mean >= pack.threshold,
+        mean !== null && mean >= pack.threshold,
     }
   }).pipe(
     Effect.tap((report) =>

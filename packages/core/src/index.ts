@@ -116,3 +116,9 @@ export { defineAgent, defineConfig } from "./harness/config.entity.functions.js"
 export * from "./harness/capability.entity.js"
 export * from "./harness/capability.entity.functions.js"
 export * from "./ports/capability.port.js"
+
+export * from "./domain/prompt-provenance.entity.js"
+
+export * from "./loop/promptProvenance.js"
+
+export { CurrentAgentStep } from "./loop/stepContext.js"

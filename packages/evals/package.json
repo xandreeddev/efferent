@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "effect": "3.21.4",
-    "@xandreed/core": "workspace:*"
+    "@xandreed/core": "workspace:*",
+    "@effect/ai": "0.35.0"
   }
 }

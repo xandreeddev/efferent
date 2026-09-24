@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { RequiredAction } from "./completeness.entity.js"
 
 export const JourneyAction = Schema.Union(
   Schema.Struct({ type: Schema.Literal("message"), text: Schema.String }),
@@ -17,6 +18,9 @@ export const JourneyExpectation = Schema.Struct({
   requiredLinks: Schema.optional(Schema.Array(Schema.String)),
   canvas: Schema.optional(Schema.Boolean),
   layout: Schema.optional(Schema.String),
+  maxAgentSteps: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
+  requiredActions: Schema.optional(Schema.Array(RequiredAction)),
+  requiredToolArguments: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String, arguments: Schema.Record({ key: Schema.String, value: Schema.Unknown }) }))),
   minAgentSteps: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
   maxNewRuns: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
 })
@@ -24,7 +28,9 @@ export const JourneyTurn = Schema.Struct({ action: JourneyAction, expected: Jour
 export const Journey = Schema.Struct({
   id: Schema.NonEmptyTrimmedString,
   persona: Schema.Struct({ id: Schema.String, category: Schema.String, authenticated: Schema.Boolean }),
-  tier: Schema.Literal("blocking", "quality", "exploratory"),
+  tier: Schema.Union(Schema.Literal("blocking", "quality", "exploratory"), Schema.Int.pipe(Schema.between(0, 3))),
+  coverage: Schema.optional(Schema.Struct({ tools: Schema.Array(Schema.String), recipes: Schema.Array(Schema.String) })),
+  evaluators: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, scope: Schema.Literal("turn", "journey") }))),
   tierReason: Schema.String,
   expectedLocale: Schema.String,
   description: Schema.String,
@@ -39,6 +45,7 @@ export const JourneyObservation = Schema.Struct({
   tools: Schema.Array(Schema.String), recipes: Schema.Array(Schema.String), components: Schema.Array(Schema.String),
   outcome: Schema.String, evidence: Schema.Array(Schema.String),
   costUsd: Schema.Number.pipe(Schema.nonNegative()), latencyMs: Schema.Number.pipe(Schema.nonNegative()),
+  toolCalls: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String, arguments: Schema.Record({ key: Schema.String, value: Schema.Unknown }) }))),
   links: Schema.optional(Schema.Array(Schema.String)),
   canvas: Schema.optional(Schema.Boolean),
   layout: Schema.optional(Schema.String),

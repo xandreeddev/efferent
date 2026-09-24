@@ -1,4 +1,4 @@
-import type { Tool, Toolkit } from "@effect/ai"
+import type { Prompt, Tool, Toolkit } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, ConversationId } from "@xandreed/core"
@@ -33,7 +33,7 @@ export interface CompactionPolicy {
  * decides which config runs; the engine stays agent-agnostic.
  */
 export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
-  readonly system: string
+  readonly system: string | Prompt.Prompt
   readonly toolkit: Toolkit.Toolkit<Tools>
   readonly maxSteps?: number
   /** Handler concurrency within one model turn. Agents with mutating tools

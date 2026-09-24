@@ -66,7 +66,8 @@ export interface CompatConfig {
   /** Host-selected thinking mode. Omit to retain family defaults. */
   readonly thinking?: "enabled" | "disabled"
   /** Gateway reasoning vocabulary, independent of provider-native thinking. */
-  readonly reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+  readonly reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+  readonly temperature?: number
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
@@ -282,6 +283,7 @@ const chatRequestBody = (
       const tools = toChatTools(options.tools)
       return {
         model: config.model,
+        ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
         messages: toChatMessages(options.prompt),
         stream: streaming,
         ...(options.responseFormat.type === "json" ? { response_format: {

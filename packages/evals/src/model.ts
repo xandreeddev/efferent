@@ -105,7 +105,7 @@ export interface CheckOutcome {
 
 export interface JudgeOutcome {
   readonly judge: string
-  readonly score: number
+  readonly score: number | null
   readonly reason: string
 }
 
@@ -119,10 +119,10 @@ export interface ScenarioSampleResult {
   readonly judges: ReadonlyArray<JudgeOutcome>
   /** Deterministic score: checks passed / checks evaluated (a hard fail marks
    *  the remaining steps' checks failed — fail-closed). */
-  readonly score: number
+  readonly score: number | null
   /** score folded with judge mean at the pack's judgeWeight (live mode).
    *  Under k>1 samples this is the MEAN of the per-sample combined scores. */
-  readonly combined: number
+  readonly combined: number | null
   readonly detail?: string
 }
 
@@ -131,7 +131,7 @@ export interface ScenarioResult extends ScenarioSampleResult {
    *  outcomes are retained so a mean never erases the failed trajectory. */
   readonly samples?: {
     readonly count: number
-    readonly scores: ReadonlyArray<number>
+    readonly scores: ReadonlyArray<number | null>
     readonly passRate: number
     readonly passRate95: { readonly low: number; readonly high: number }
     /** Estimated probability at least one of k attempts succeeds. */
@@ -148,7 +148,7 @@ export interface PackReport {
   readonly mode: ScenarioMode
   readonly scenarios: ReadonlyArray<ScenarioResult>
   /** Mean combined score over RAN scenarios. */
-  readonly mean: number
+  readonly mean: number | null
   readonly threshold: number
   readonly passed: boolean
 }
