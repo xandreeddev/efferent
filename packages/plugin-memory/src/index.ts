@@ -10,7 +10,7 @@ const Row = Schema.Union(
 )
 
 export const memoryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory", version: "0.2.0-next.0", requires: [SessionEnvironment], provides: [Memory],
+  id: "@xandreed/plugin-memory", version: "0.3.0", requires: [SessionEnvironment], provides: [Memory],
   config: Config, defaults: { file: ".efferent/runtime/memory.jsonl", limit: 8 },
   layer: ({ file, limit }) => Layer.effect(Memory, Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment

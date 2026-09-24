@@ -16,7 +16,7 @@ const extraToolkit = Toolkit.make(Remember, Recall, Forget, External)
 const asFailure = (error: { readonly message: string }) => ({ error: "ToolFailure", message: error.message })
 
 export const toolsLocalPlugin = definePlugin({
-  id: "@xandreed/plugin-tools-local", version: "0.2.0-next.0", config: Schema.Struct({ readOnly: Schema.Boolean }), defaults: { readOnly: false },
+  id: "@xandreed/plugin-tools-local", version: "0.3.0", config: Schema.Struct({ readOnly: Schema.Boolean }), defaults: { readOnly: false },
   requires: [SessionEnvironment, ActionPolicy, Memory, McpClient], provides: [AgentTools],
   layer: ({ readOnly }) => Layer.effect(AgentTools, Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment
