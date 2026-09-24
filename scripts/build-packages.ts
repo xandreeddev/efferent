@@ -6,10 +6,13 @@ import solidPlugin from "@opentui/solid/bun-plugin"
 // Build an isolated publish tree; development keeps source exports and workspace links.
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
-const version = "0.2.0-next.0"
 const names = ["core", "runtime", "sdk", "evals", "foundry", "smith", "tui", "cli",
   "plugin-agent-loop", "plugin-context", "plugin-memory", "plugin-models", "plugin-tools-local",
   "plugin-policy-workspace", "plugin-session-sqlite", "plugin-telemetry", "plugin-mcp", "ui-agent", "surface"]
+const manifests = new Map(await Promise.all(names.map(async (name) =>
+  [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
+)))
+const versions = new Map(Array.from(manifests.values(), (manifest) => [manifest.name, manifest.version]))
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 const declarations = join(root, ".artifacts/types")
@@ -21,7 +24,8 @@ const transpiler = new Bun.Transpiler({ target: "bun", loader: "ts" })
 await Promise.all(names.map(async (name) => {
   const source = join(root, "packages", name)
   const target = join(output, name)
-  const original = JSON.parse(await readFile(join(source, "package.json"), "utf8"))
+  const original = manifests.get(name)!
+  const version = original.version
   const files = Array.from(new Bun.Glob("src/**/*").scanSync({ cwd: source, onlyFiles: true })).filter((file) => !/\.(test|bench)\.[^.]+$/.test(file) && !file.endsWith("testing.ts"))
   await Promise.all(files.map(async (file) => {
     const destination = join(target, file.replace(/^src\//, "dist/").replace(/\.tsx?$/, ".js"))
@@ -55,7 +59,9 @@ await Promise.all(names.map(async (name) => {
   const exportTarget = (path: string) => path.endsWith(".json") ? { default: path } : ({ types: path.replace("./src/", "./dist/").replace(/\.tsx?$/, ".d.ts"), default: path.replace("./src/", "./dist/").replace(/\.tsx?$/, ".js") })
   const exports = Object.fromEntries(Object.entries(original.exports ?? { ".": "./src/index.ts" }).filter(([key]) => key !== "./tui-testing").map(([key, path]) => [key, exportTarget(String(path))]))
   if (exports["./*"]) exports["./*.js"] = exports["./*"]
-  const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? version : value]))
+  const missing = Object.entries(original.dependencies ?? {}).filter(([key, value]) => String(value).startsWith("workspace:") && !versions.has(key))
+  if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
+  const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: { bun: ">=1.3.0" }, license: "MIT",
     ...(name === "cli" ? { bin: { efferent: "./dist/main.js" }, main: "./dist/main.js" } : {}),

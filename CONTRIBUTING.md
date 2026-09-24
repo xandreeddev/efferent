@@ -41,8 +41,25 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 The previously published npm packages (`efferent`, `@xandreed/cli`, and the
 `@xandreed/sdk-*` line) are the **frozen previous line** — they receive no
 further releases, and the release automation has been removed from this repo.
-The current line is source-run only. Any future publishing will be set up
-deliberately, not resurrected from the old pipeline.
+The current CLI is source-run only. `@xandreed/evals` and `@xandreed/core`
+are published manually at `0.3.0` under npm's `latest` tag. Release automation
+has not been reintroduced.
+
+For a manual evals release, bump `packages/evals/package.json` and its
+`@xandreed/core` dependency's manifest when that dependency needs a release.
+The distribution build preserves those versions and resolves `workspace:*`
+dependencies to the corresponding package versions. Build and verify, then
+publish the dependency before evals:
+
+```sh
+bun run build:packages
+bun run verify:packages
+npm publish ./.artifacts/packages/core --access public --tag latest
+npm publish ./.artifacts/packages/evals --access public --tag latest
+```
+
+Publish only versions that are not already on npm. These commands are manual;
+merging a version bump does not publish anything automatically.
 
 ## Distribution and terminal changes
 
