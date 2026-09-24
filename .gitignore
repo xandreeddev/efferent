@@ -31,7 +31,7 @@ pg-data/
 *.png
 # tracked brand asset (the GitHub avatar) — exception to the *.png ignore above
 !assets/avatar.png
-# Skills are local to each workspace; agents read them, repos don't carry them.
+# Local Efferent state; shared development skills live in .agents/skills/.
 .efferent/
 !.efferent/
 .efferent/*

@@ -22,7 +22,7 @@ bun test              # colocated unit tests — key-free by design
 bun run scenarios     # scenario packs vs committed baselines (scripted twins)
 ```
 
-House rules the gates enforce (see the root `AGENT.md` for the full list):
+House rules the gates enforce (see the root `AGENTS.md` for the full list):
 errors are `Schema.TaggedError` values (no `try`/`catch`/`throw`), state is a
 fold (no `let`, no loop statements), absence is `Option`, union branching is
 `Match`, dependency direction between packages is a build-failing gate.
