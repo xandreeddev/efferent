@@ -5,10 +5,10 @@ export const EvaluationVersion = Schema.NonEmptyTrimmedString
 export const EvaluationSplit = Schema.Literal("calibration", "validation")
 export const LabelReview = Schema.Literal("known", "reviewed", "provisional")
 export const Metric = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("boolean"), name: Schema.NonEmptyString, value: Schema.Boolean }),
-  Schema.Struct({ kind: Schema.Literal("probability"), name: Schema.NonEmptyString, value: Schema.Number.pipe(Schema.between(0, 1)) }),
-  Schema.Struct({ kind: Schema.Literal("score"), name: Schema.NonEmptyString, value: Schema.Number.pipe(Schema.finite()), min: Schema.Number.pipe(Schema.finite()), max: Schema.Number.pipe(Schema.finite()) }),
-  Schema.Struct({ kind: Schema.Literal("preference"), name: Schema.NonEmptyString, value: Schema.Literal("A", "B", "tie") }),
+  Schema.Struct({ kind: Schema.Literal("boolean"), name: Schema.NonEmptyString, comment: Schema.optional(Schema.String), value: Schema.Boolean }),
+  Schema.Struct({ kind: Schema.Literal("probability"), name: Schema.NonEmptyString, comment: Schema.optional(Schema.String), value: Schema.Number.pipe(Schema.between(0, 1)) }),
+  Schema.Struct({ kind: Schema.Literal("score"), name: Schema.NonEmptyString, comment: Schema.optional(Schema.String), value: Schema.Number.pipe(Schema.finite()), min: Schema.Number.pipe(Schema.finite()), max: Schema.Number.pipe(Schema.finite()) }),
+  Schema.Struct({ kind: Schema.Literal("preference"), name: Schema.NonEmptyString, comment: Schema.optional(Schema.String), value: Schema.Literal("A", "B", "tie") }),
 )
 export type Metric = typeof Metric.Type
 export const EvaluationUsage = Schema.Struct({

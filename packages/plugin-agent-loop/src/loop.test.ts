@@ -107,7 +107,7 @@ describe("runLoop", () => {
     expect(result.outcome).toBe("ok")
     expect(result.reason).toBe("completed")
     expect(result.newTail).toHaveLength(1)
-    expect(events.map((e) => e.type)).toEqual(["turn_start", "assistant_message", "agent_end"])
+    expect(events.map((e) => e.type)).toEqual(["turn_start", "assistant_message", "turn_end", "agent_end"])
   })
 
   test("a tool-call turn resolves the handler and iterates to completion", async () => {

@@ -3,6 +3,8 @@ import type { JourneyExpectation, JourneyObservation, JourneyScore } from "./jou
 export const scoreJourneyTurn = (expected: JourneyExpectation, observed: JourneyObservation, locale: string): JourneyScore => {
   const missing = (label: string, required: ReadonlyArray<string>, actual: ReadonlyArray<string>) => required.filter((value) => !actual.includes(value)).map((value) => `Missing ${label}: ${value}`)
   const failures = [
+    ...(expected.maxAgentSteps === undefined || (observed.agentSteps !== undefined && observed.agentSteps <= expected.maxAgentSteps) ? [] : ["Agent step ceiling exceeded or unobserved"]),
+    ...(expected.requiredToolArguments ?? []).filter((required) => !(observed.toolCalls ?? []).some((call) => call.name === required.name && Object.entries(required.arguments).every(([key, value]) => JSON.stringify(call.arguments[key]) === JSON.stringify(value)))).map((required) => `Missing tool arguments: ${required.name}`),
     ...missing("tool", expected.requiredTools, observed.tools),
     ...expected.forbiddenTools.filter((tool) => observed.tools.includes(tool)).map((tool) => `Forbidden tool: ${tool}`),
     ...missing("recipe", expected.recipes, observed.recipes),

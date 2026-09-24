@@ -1,7 +1,8 @@
 import { LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
-import { Effect, Match, Metric, Option, Ref, Stream } from "effect"
+import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "@xandreed/core"
+import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
@@ -541,7 +542,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
           streamingHealthy: outcome.streamingHealthy,
         } satisfies LoopState
-      }).pipe(Effect.withSpan("engine.turn", {
+      }).pipe(
+        Effect.onExit((exit) => onEvent({ type: "turn_end", turnIndex: state.turnIndex, status: Exit.isSuccess(exit) ? "completed" : Cause.isInterruptedOnly(exit.cause) ? "cancelled" : "failed" })),
+        Effect.locally(CurrentAgentStep, Option.some(state.turnIndex)),
+        Effect.withSpan("engine.turn", {
         attributes: { "engine.turn": state.turnIndex, "engine.step": state.turnIndex + 1 },
       }))
 

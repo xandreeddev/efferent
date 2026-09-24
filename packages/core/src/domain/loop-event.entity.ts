@@ -19,6 +19,7 @@ export interface ToolCallSummary {
 
 export type LoopEvent =
   | { readonly type: "turn_start"; readonly turnIndex: number }
+  | { readonly type: "turn_end"; readonly turnIndex: number; readonly status: "completed" | "failed" | "cancelled" }
   /**
    * One streamed content increment, TRANSIENT by design: it exists only for
    * live rendering, is never ledgered or replayed, and every fact it carries
