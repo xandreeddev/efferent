@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { ActionPolicy, Approval, definePlugin, HarnessError, SessionEnvironment } from "@xandreed/core"
 
 export const workspacePolicyPlugin = definePlugin({
-  id: "@xandreed/plugin-policy-workspace", version: "0.3.0", config: Schema.Struct({}), defaults: {},
+  id: "@xandreed/plugin-policy-workspace", version: "0.4.0", config: Schema.Struct({}), defaults: {},
   requires: [SessionEnvironment, Approval], provides: [ActionPolicy],
   layer: () => Layer.effect(ActionPolicy, Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment

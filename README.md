@@ -124,7 +124,7 @@ package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, then executes
 an external loop plugin, durable sessions, a fork, an eval and CLI startup.
 `@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and
-all nine `@xandreed/plugin-*` packages are published as `0.3.0` under npm's
+all nine `@xandreed/plugin-*` packages are published as `0.4.0` under npm's
 `latest` tag. Install evals with `npm install @xandreed/evals`, or install the
 SDK and the plugins your application uses, for example:
 

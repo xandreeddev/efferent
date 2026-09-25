@@ -5,7 +5,7 @@ import { runLoop } from "./loop.js"
 
 const Config = Schema.Struct({ maxSteps: Schema.Int.pipe(Schema.between(1, 1000)), toolConcurrency: Schema.Int.pipe(Schema.between(1, 32)), streaming: Schema.Boolean })
 export const agentLoopPlugin = definePlugin({
-  id: "@xandreed/plugin-agent-loop", version: "0.3.0", config: Config,
+  id: "@xandreed/plugin-agent-loop", version: "0.4.0", config: Config,
   defaults: { maxSteps: 100, toolConcurrency: 1, streaming: true },
   requires: [LanguageModel.LanguageModel, AgentTools, SessionStore, Memory, ContextManager], provides: [AgentLoop],
   layer: (config) => Layer.effect(AgentLoop, Effect.gen(function* () {

@@ -43,7 +43,7 @@ The previously published npm packages (`efferent`, `@xandreed/cli`, and the
 further releases, and the release automation has been removed from this repo.
 The current CLI is source-run only. `@xandreed/core`, `@xandreed/evals`,
 `@xandreed/runtime`, `@xandreed/sdk`, and all nine `@xandreed/plugin-*`
-packages are published manually at `0.3.0` under npm's `latest` tag.
+packages are published manually at `0.4.0` under npm's `latest` tag.
 Release automation has not been reintroduced.
 
 For a manual evals release, bump `packages/evals/package.json` and its
