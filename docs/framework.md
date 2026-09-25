@@ -183,3 +183,69 @@ runLoop({
 ```
 
 The trace snapshots do not modify the message buffer, tool arguments, persistence callbacks or cancellation scopes. Exporters should preserve parent IDs when naming steps or grouping use cases. A timed-out evaluation awaits scoped cleanup; browser/provider adapters must bound their own finalizers rather than leave paid work running in disconnected fibers.
+
+## Host-planned initial tool batch
+
+`runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify
+from a finite plan set or construct a structured plan, validate the whole batch
+against its permissions and references, and persist its decision before calling
+the loop. The loop uses an in-memory Effect AI response to dispatch the batch
+through the ordinary argument decoder and instrumented toolkit without a provider
+request. The initial batch counts as step zero; completion, concurrency, events,
+errors and tail persistence follow the ordinary loop path.
+
+```ts
+const result = runLoop({
+  system: instructions,
+  messages: history,
+  toolkit,
+  initialStep: [{ name: "search", params: { query: "example" } }],
+  maxSteps: 5,
+  onTail: persistTail,
+})
+```
+
+The host must reject unsupported calls, dependencies on future results and unsafe
+publication before execution. Initial planning attempts are the host's provider
+measurements. The dispatch span marks `engine.step.host_planned` and
+`engine.step.usage_available=false`; it does not stamp invented provider usage onto
+persisted messages. Omitting `initialStep` preserves ordinary loop behavior.
+
+### Inspectable host decisions and continuation models
+
+`@xandreed/core` exports `DecisionRecord` and `DecisionOutcome` schemas. A record
+names the finite candidates, context/candidate hashes, policy version, provider
+attempt IDs, selection, host validation, applied fallback and optional reported
+probabilities. The outcome links the decision to a run's tool invocations, model
+attempts and delivered journal sequences. Downstream links describe chronology;
+they do not prove that a selector caused an improvement. Hosts own capture,
+redaction, storage, candidate eligibility and validation.
+
+The agent-loop plugin accepts an optional `prepareModel` hook:
+
+```ts
+runLoop({
+  system: baseInstructions,
+  messages,
+  toolkit,
+  initialStep: acceptedCalls,
+  prepareModel: ({ stepIndex, messages, activeTools }) =>
+    chooseContinuation({ stepIndex, messages, activeTools }),
+})
+// chooseContinuation returns an Effect of
+// { model: LanguageModel.Service, system: Prompt.Prompt }.
+```
+
+The hook runs at a provider step after any initial batch, with its actual tool
+results in `messages`. It does not run when the batch completes the task. Both
+settled and streaming execution use the selected model and native Effect prompt.
+A host wanting one route per turn caches the result in its scoped service. The
+loop still validates/adopts tools through its normal host-controlled toolkit.
+
+`@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
+`compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
+bootstrap scenario groups, preserve infrastructure failures, and leave missing
+costs/intervals unavailable. Choice Brier scores require a unique categorical gold
+label; multiple acceptable options support accepted-error metrics but have no
+unique Brier target. These helpers return evidence for a host report; they do not
+promote a model or apply application-specific quality/cost policy.

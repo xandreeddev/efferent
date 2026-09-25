@@ -1,4 +1,4 @@
-import { LanguageModel, Prompt } from "@effect/ai"
+import { AiError, LanguageModel, Prompt } from "@effect/ai"
 import type { Tool, Toolkit } from "@effect/ai"
 import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "@xandreed/core"
@@ -34,6 +34,20 @@ export interface CompactionPlan {
  */
 
 export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
+  /** A host-validated first batch. Runs as step zero through the ordinary
+   * Effect AI decoder, instrumented toolkit and durable tail hooks, without
+   * another provider request. Provider usage belongs to the host planner. */
+  readonly initialStep?: ReadonlyArray<{ readonly name: keyof Tools & string; readonly params: unknown }>
+  /** Host selection at a real provider boundary. Never called for initialStep.
+   * The host may cache its choice for a run; tools and completion remain loop-owned. */
+  readonly prepareModel?: (input: {
+    readonly stepIndex: number
+    readonly messages: ReadonlyArray<AgentMessage>
+    readonly activeTools: ReadonlyArray<string>
+  }) => Effect.Effect<{
+    readonly model: LanguageModel.Service
+    readonly system: Prompt.Prompt
+  }, AiError.AiError, R>
   readonly system: string | Prompt.Prompt
   /** Explicit opt-in: export prompt and result content on step spans.
    * Hosts own consent, redaction and exporter retention. Disabled by default. */
@@ -258,9 +272,15 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const toolNames = Object.keys(selectedTools)
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
-        const instructions = typeof options.system === "string"
-          ? Prompt.make([{ role: "system", content: options.system }])
-          : options.system
+        const prepared = state.turnIndex === 0 && options.initialStep !== undefined
+          ? Option.none<{ readonly model: LanguageModel.Service; readonly system: Prompt.Prompt }>()
+          : options.prepareModel === undefined
+            ? Option.none<{ readonly model: LanguageModel.Service; readonly system: Prompt.Prompt }>()
+            : Option.some(yield* options.prepareModel({ stepIndex: state.turnIndex, messages: state.messages, activeTools: toolNames }).pipe(Effect.provide(eventContext)))
+        const baseSystem = Option.match(prepared, { onNone: () => options.system, onSome: (value) => value.system })
+        const instructions = typeof baseSystem === "string"
+          ? Prompt.make([{ role: "system", content: baseSystem }])
+          : baseSystem
         const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(state.messages) as never))
 
         if (options.captureTraceContent === true)
@@ -290,7 +310,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         /** Both paths land on the SAME settled shape — after this point the
          *  turn body is identical code, streamed or not. */
         const settled = (streamingHealthy: boolean) =>
-          LanguageModel.generateText(callOptions).pipe(
+          (Option.isSome(prepared)
+            ? prepared.value.model.generateText(callOptions)
+            : LanguageModel.generateText(callOptions)).pipe(
             Effect.map((res) => ({
               _tag: "ok" as const,
               content: res.content as ReadonlyArray<unknown>,
@@ -309,7 +331,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const streamed = Effect.gen(function* () {
           const partSeen = yield* Ref.make(false)
           const folded = yield* foldStreamParts(
-            LanguageModel.streamText(callOptions).pipe(
+            (Option.isSome(prepared)
+              ? prepared.value.model.streamText(callOptions)
+              : LanguageModel.streamText(callOptions)).pipe(
               Stream.tap(() => Ref.set(partSeen, true)),
             ),
             (delta) =>
@@ -355,8 +379,20 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           })
         })
 
+        const planned = state.turnIndex === 0 && options.initialStep !== undefined
+        const initial = Effect.gen(function* () {
+          const provider = yield* LanguageModel.make({
+            generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
+              type: "tool-call" as const, id: `planned:0:${index}`, name: call.name,
+              params: call.params, providerExecuted: false,
+            })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined } }]),
+            streamText: () => Stream.empty,
+          })
+          yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)
+          return yield* settled(state.streamingHealthy).pipe(Effect.provideService(LanguageModel.LanguageModel, provider))
+        })
         const useStreaming = options.streaming === true && state.streamingHealthy
-        const outcome = yield* (useStreaming ? streamed : settled(state.streamingHealthy)).pipe(
+        const outcome = yield* (planned ? initial : useStreaming ? streamed : settled(state.streamingHealthy)).pipe(
           Effect.catchAll((err) =>
             (err as { readonly _tag?: string } | null)?._tag === "MalformedOutput"
               ? Effect.succeed({ _tag: "malformed" as const, err })
@@ -418,13 +454,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const usage = extractUsage(outcome.usage, content)
         yield* Effect.annotateCurrentSpan({
           "engine.step.finish_reason": outcome.finishReason,
-          "engine.step.usage": JSON.stringify(usage),
+          "engine.step.usage_available": !planned,
+          ...(!planned ? { "engine.step.usage": JSON.stringify(usage) } : {}),
           ...(options.captureTraceContent === true
             ? { "engine.step.output": JSON.stringify({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
         const model = extractModel(content)
-        const tail = withUsageOnAssistant(responseToAgentMessages(content), usage, model)
+        const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
         // position is known when its event is emitted (UIs key on it).
         const positions = yield* options.onTail?.(tail) ?? Effect.succeed([])
