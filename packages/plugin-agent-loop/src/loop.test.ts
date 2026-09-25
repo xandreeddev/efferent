@@ -710,3 +710,53 @@ test("native prompt instructions preserve messages and provider metadata", async
   expect(captured[0]?.content[2]?.role).toBe("user")
   expect(instructions.content).toHaveLength(2)
 })
+
+ test("host initial batch executes once before the first provider call", async () => {
+  const { events, onEvent } = collect()
+  const result = await run(runLoop({
+    system: "test", messages: [user("echo")], toolkit: kit, maxSteps: 2,
+    initialStep: [{ name: "echo", params: { value: "prepared" } }], onEvent,
+  }), () => [{ type: "text", text: "done" }, finish("stop")])
+  expect(result.outcome).toBe("ok")
+  expect(events.filter(e => e.type === "tool_end")).toHaveLength(1)
+  expect(events.filter(e => e.type === "turn_start").map(e => e.turnIndex)).toEqual([0, 1])
+  expect(result.newTail.some(m => m.role === "tool")).toBe(true)
+})
+ test("host batch obeys completion without a provider call", async () => {
+  const result = await run(runLoop({
+    system: "test", messages: [user("echo")], toolkit: kit,
+    initialStep: [{ name: "echo", params: { value: "prepared" } }],
+    isComplete: () => Effect.succeed(true), requireCompletion: true,
+  }), () => [])
+  expect(result.outcome).toBe("ok")
+})
+
+ test("continuation hook sees the initial tool result and replaces the provider", async () => {
+  const contexts: Array<{ stepIndex: number; messages: readonly { role: string }[] }> = []
+  const chosen = await Effect.runPromise(scriptedModel(() => [{ type: "text", text: "chosen" }, finish("stop")]))
+  const result = await run(runLoop({ system: "base", messages: [user("echo")], toolkit: kit, maxSteps: 2,
+    initialStep: [{ name: "echo", params: { value: "prepared" } }],
+    prepareModel: (context) => Effect.sync(() => { contexts.push(context); return { model: chosen, system: Prompt.make("selected instructions") } }),
+  }), () => [{ type: "text", text: "wrong provider" }, finish("stop")])
+  expect(contexts).toHaveLength(1)
+  expect(contexts[0]?.stepIndex).toBe(1)
+  expect(contexts[0]?.messages.some(m => m.role === "tool")).toBe(true)
+  expect(JSON.stringify(result.newTail)).toContain("chosen")
+})
+ test("completed initial work does not prepare a continuation model", async () => {
+  const calls: number[] = []
+  const chosen = await Effect.runPromise(scriptedModel(() => []))
+  await run(runLoop({ system: "base", messages: [user("echo")], toolkit: kit,
+    initialStep: [{ name: "echo", params: { value: "prepared" } }],
+    isComplete: () => Effect.succeed(true), requireCompletion: true,
+    prepareModel: () => Effect.sync(() => { calls.push(1); return { model: chosen, system: Prompt.make("chosen") } }),
+  }), () => [])
+  expect(calls).toHaveLength(0)
+})
+ test("streaming uses the model chosen by the continuation hook", async () => {
+  const chosen = await Effect.runPromise(streamingModel(() => [{ type: "text", text: "streamed selection" }, finish("stop")]))
+  const result = await run(runLoop({ system: "base", messages: [user("echo")], toolkit: kit, streaming: true,
+    prepareModel: () => Effect.succeed({ model: chosen, system: Prompt.make("selected") }),
+  }), () => [{ type: "text", text: "wrong provider" }, finish("stop")])
+  expect(JSON.stringify(result.newTail)).toContain("streamed selection")
+})

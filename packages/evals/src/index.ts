@@ -50,3 +50,6 @@ export * from "./evaluator-registry.usecase.js"
 export * from "./evaluator-registry.usecase.functions.js"
 export * from "./journey-selection.entity.js"
 export * from "./journey-selection.entity.functions.js"
+
+export * from "./decision-comparison.entity.js"
+export * from "./decision-comparison.entity.functions.js"

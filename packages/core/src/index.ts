@@ -122,3 +122,5 @@ export * from "./domain/prompt-provenance.entity.js"
 export * from "./loop/promptProvenance.js"
 
 export { CurrentAgentStep } from "./loop/stepContext.js"
+
+export * from "./decision-record.entity.js"
