@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import {
   ConversationId,
   Contributions,
+  DecisionRecord,
   defineContributions,
   defineSkill,
   defineTool,
@@ -189,7 +190,8 @@ describe("composable agent host", () => {
       return yield* Ref.get(j.events)
     }))
     const decision = events.find((event) => event.name === "decision.record")
-    expect(decision?.data).toMatchObject({ family: "skill-selection", selection: ["delivery"], validation: "accepted" })
+    expect(decision?.data).toMatchObject({ version: 1, family: "skill-selection", selection: "delivery", applied: "delivery", validation: "accepted" })
+    expect(Schema.decodeUnknownEither(DecisionRecord)(decision?.data)._tag).toBe("Right")
   })
 
   test("a follow-up turn rebuilt by a fresh process sees exactly what a continuing one would", async () => {

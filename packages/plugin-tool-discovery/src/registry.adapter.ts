@@ -4,8 +4,11 @@ import {
   activationsOf,
   canonicalJson,
   catalogOf,
+  DecisionId,
+  DecisionRecord,
   defineTool,
   Failure,
+  fingerprintOf,
   HarnessError,
   noHooks,
   resolveCapabilities,
@@ -244,14 +247,24 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         ? match.right.skills.filter((id) => candidates.some((skill) => skill.id === id) && !loadedBefore.includes(id))
         : []
       const applied = yield* chosen.length === 0 ? Effect.succeed(false) : activate(chosen, "matcher").pipe(Effect.as(true), Effect.orElseSucceed(() => false))
-      yield* run.publish({ name: "decision.record", runId: run.runId, data: {
-        family: "skill-selection", matcher: matcher.id, matcherVersion: matcher.version,
-        candidates: candidates.map((skill) => skill.id),
-        selection: chosen, applied,
-        validation: match._tag === "Left" ? "failed" : match.right.abstained ? "abstained" : chosen.length === 0 ? "abstained" : applied ? "accepted" : "rejected",
-        probabilities: match._tag === "Right" ? Option.getOrNull(match.right.probabilities) : null,
-        error: match._tag === "Left" ? match.left.message : null,
-      } })
+      // A multi-label decision: `selection` is the chosen skill ids joined by ",".
+      const selection = chosen.length === 0 ? Option.none<string>() : Option.some(chosen.join(","))
+      const record: DecisionRecord = {
+        version: 1,
+        id: DecisionId.make(`${run.runId}:skill-selection`),
+        family: "skill-selection",
+        contextHash: fingerprintOf(canonicalJson({ message, active: yield* Ref.get(active), history: history.length })),
+        candidateHash: fingerprintOf(canonicalJson(candidates.map((skill) => [skill.id, skill.version]))),
+        policyVersion: `${matcher.id}@${matcher.version}`,
+        candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),
+        attempts: [],
+        selection,
+        validation: match._tag === "Left" ? "failed" : match.right.abstained || chosen.length === 0 ? "abstained" : applied ? "accepted" : "rejected",
+        fallback: match._tag === "Left" ? Option.some(`always-on: ${match.left.message}`) : Option.none(),
+        applied: applied ? selection : Option.none(),
+        probabilities: match._tag === "Right" ? match.right.probabilities : Option.none(),
+      }
+      yield* run.publish({ name: "decision.record", runId: run.runId, data: Schema.encodeSync(DecisionRecord)(record) as Record<string, unknown> })
       if (applied && config.loadSkill) {
         const seeded = skills.filter((skill) => chosen.includes(skill.id))
         const callId = ToolCallId.make(`${run.runId}:matcher`)
