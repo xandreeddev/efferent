@@ -1,8 +1,8 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
     "provides": [
@@ -24,8 +24,8 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
     "provides": [
@@ -50,8 +50,8 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment"
@@ -97,8 +97,8 @@
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment"
@@ -141,8 +141,8 @@
   },
   {
     "id": "@xandreed/plugin-context",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "@xandreed/core/UtilityLlm"
@@ -187,8 +187,8 @@
   },
   {
     "id": "@xandreed/plugin-policy-workspace",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment",
@@ -213,8 +213,8 @@
   },
   {
     "id": "@xandreed/plugin-mcp",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment",
@@ -270,8 +270,8 @@
   },
   {
     "id": "@xandreed/plugin-tools-local",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment",
@@ -301,8 +301,8 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "@effect/ai/LanguageModel",
@@ -358,8 +358,8 @@
   },
   {
     "id": "@xandreed/plugin-telemetry",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [],
     "provides": [
@@ -389,8 +389,8 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop/delegate",
-    "version": "0.4.0",
-    "apiVersion": 1,
+    "version": "0.5.0-next.0",
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "@effect/ai/LanguageModel",
@@ -447,7 +447,7 @@
   {
     "id": "@xandreed/smith/workflow",
     "version": "0.2.0-next.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/DelegateLoop",

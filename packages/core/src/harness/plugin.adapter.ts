@@ -10,6 +10,8 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
   readonly scope?: "runtime" | "session"
   readonly requires?: ReadonlyArray<{ readonly key: string }>
   readonly provides: ReadonlyArray<{ readonly key: string }>
+  readonly contributes?: ReadonlyArray<{ readonly key: string }>
+  readonly optional?: ReadonlyArray<{ readonly key: string }>
   readonly config: Schema.Schema<A, I>
   readonly defaults: A
   readonly layer: (config: A) => Layer.Layer<Out, E, In>
@@ -20,6 +22,8 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
   scope: definition.scope ?? "session",
   requires: (definition.requires ?? []).map((tag) => tag.key),
   provides: definition.provides.map((tag) => tag.key),
+  contributes: (definition.contributes ?? []).map((tag) => tag.key),
+  optional: (definition.optional ?? []).map((tag) => tag.key),
   schema: definition.config,
   defaults: definition.defaults,
   build: (options, services) => Schema.decodeUnknown(definition.config)(options, { onExcessProperty: "error" }).pipe(

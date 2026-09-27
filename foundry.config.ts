@@ -31,6 +31,10 @@ const CHECKED = [
   "packages/cli/src/**",
   "packages/plugin-context/src/**",
   "packages/plugin-memory/src/**",
+  "packages/plugin-memory-log/src/**",
+  "packages/plugin-memory-window/src/**",
+  "packages/plugin-memory-summary/src/**",
+  "packages/plugin-tool-discovery/src/**",
   "packages/plugin-models/src/**",
   "packages/plugin-tools-local/src/**",
   "packages/plugin-policy-workspace/src/**",
@@ -64,6 +68,7 @@ const ERASURE_BOUNDARY = [
   "packages/plugin-agent-loop/src/loop.ts",
   "packages/core/src/mcp/bridge.ts",
   "packages/plugin-tools-local/src/plugin.adapter.ts",
+  "packages/plugin-tool-discovery/src/registry.adapter.ts",
 ]
 const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts", "packages/scenarios/src/**"]
 
@@ -266,6 +271,58 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
+            "name": "plugin-memory-log",
+            "path": "packages/plugin-memory-log/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-memory-window",
+            "path": "packages/plugin-memory-window/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-memory-summary",
+            "path": "packages/plugin-memory-summary/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-tool-discovery",
+            "path": "packages/plugin-tool-discovery/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
             "name": "plugin-memory",
             "path": "packages/plugin-memory/src/**",
             "canImport": [
@@ -424,7 +481,12 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "core",
                   "runtime",
                   "plugin-memory",
-                  "plugin-session-sqlite"
+                  "plugin-session-sqlite",
+                  "plugin-agent-loop",
+                  "plugin-memory-log",
+                  "plugin-memory-window",
+                  "plugin-memory-summary",
+                  "plugin-tool-discovery"
             ],
             "externals": [
                   "effect",
@@ -436,6 +498,11 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "@xandreed/runtime",
                   "@xandreed/plugin-memory",
                   "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-memory-log",
+                  "@xandreed/plugin-memory-window",
+                  "@xandreed/plugin-memory-summary",
+                  "@xandreed/plugin-tool-discovery",
                   "@xandreed/plugin-memory",
                   "@xandreed/plugin-session-sqlite"
             ]

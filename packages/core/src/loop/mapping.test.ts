@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { ToolCallId } from "../domain/message.entity.js"
 import {
   assistantUsage,
   extractUsage,
@@ -200,4 +201,12 @@ describe("the model stamp", () => {
   test("no stamp → None, and the usage stamp stays model-free", () => {
     expect(Option.isNone(extractModel([{ type: "finish", reason: "stop" }]))).toBe(true)
   })
+})
+
+test("tool results persist their schema encoding, not the decoded value", () => {
+  const [, tool] = responseToAgentMessages([
+    { type: "tool-call", id: "c1", name: "when", params: {} },
+    { type: "tool-result", id: "c1", name: "when", result: new Date(0), encodedResult: "1970-01-01T00:00:00.000Z", isFailure: false },
+  ])
+  expect(tool).toEqual({ role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "when", output: "1970-01-01T00:00:00.000Z", isError: false }] })
 })

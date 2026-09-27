@@ -57,6 +57,8 @@ interface AnyPart {
   readonly name?: string
   readonly params?: unknown
   readonly result?: unknown
+  /** The tool's success/failure schema encoding — what a provider may see. */
+  readonly encodedResult?: unknown
   readonly isFailure?: boolean
   readonly providerExecuted?: boolean
   readonly metadata?: unknown
@@ -216,7 +218,7 @@ export const responseToAgentMessages = (
             type: "tool-result" as const,
             toolCallId: ToolCallId.make(p.id ?? ""),
             toolName: p.name ?? "",
-            output: p.result,
+            output: encodedOf(p),
             isError: p.isFailure ?? false,
             ...withProviderOptions(p.metadata),
           },
@@ -260,6 +262,10 @@ export interface ToolResultSummary {
   readonly ok: boolean
   readonly result: unknown
 }
+
+/** The persisted form of a tool result: its schema encoding when the toolkit
+ *  produced one (a transforming schema's decoded value is not JSON-safe). */
+const encodedOf = (p: AnyPart): unknown => p.encodedResult !== undefined ? p.encodedResult : p.result
 
 /** Tool-result summaries; `id` matches the originating call's id. */
 export const responseToolResults = (

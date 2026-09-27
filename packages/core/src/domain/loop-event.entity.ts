@@ -68,6 +68,8 @@ export type LoopEvent =
       readonly args: unknown
       readonly ok: boolean
       readonly result: unknown
+      /** The schema-encoded result — the persisted, provider-visible form. */
+      readonly encoded?: unknown
     }
   /** The mid-run fold: the buffer outgrew the healthy context range and the
    *  older turns were replaced by a handoff summary — `kept` verbatim

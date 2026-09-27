@@ -87,7 +87,10 @@ export const makeHarness = (options: {
       yield* claim(input)
       yield* publish({ name: "run.started", runId, data: { config: current.fingerprint } })
       const args = { session: record, runId, prompt: input.text, system: current.graph.config.system ?? "You are a helpful agent.", publish,
-        transient: (event: EventBody) => PubSub.publish(transientHub, event).pipe(Effect.asVoid), steering }
+        transient: (event: EventBody) => PubSub.publish(transientHub, event).pipe(Effect.asVoid), steering,
+        history: (after: number, names: ReadonlyArray<string>) => store.read(record.id, after).pipe(
+          Effect.map((events) => names.length === 0 ? events : events.filter((event) => names.includes(event.name)))),
+        services: Context.empty() }
       const task = Effect.gen(function* () {
         const prepared = Option.isSome(hooks) ? yield* hooks.value.before(args) : args
         const result = yield* loop.run(prepared)

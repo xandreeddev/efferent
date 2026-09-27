@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { definePlugin, HarnessError } from "@xandreed/core"
 import { activateGraph, resolveGraph } from "./graph.js"
 
-import { Value, Consumer } from "./testing.port.js"
+import { Value, Consumer, Items } from "./testing.port.js"
 const provider = definePlugin({ id: "provider", version: "1", config: Schema.Struct({ value: Schema.Number }), defaults: { value: 1 }, provides: [Value], layer: ({ value }) => Layer.succeed(Value, value) })
 const consumer = definePlugin({ id: "consumer", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Value], provides: [Consumer], layer: () => Layer.effect(Consumer, Value.pipe(Effect.map((value) => value + 1))) })
 
@@ -43,5 +43,21 @@ describe("plugin graph", () => {
     expect(released).toEqual(["closed"])
     const graph = await Effect.runPromise(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }, { id: "b", use: "provider" }], bindings: { [Value.key]: "b" } }, [provider]))
     expect(graph.providers[Value.key]).toBe("b")
+  })
+  test("contributions concatenate in graph order; consumers wait for every other contributor", async () => {
+    const contributor = (id: string, items: ReadonlyArray<string>) => definePlugin({ id, version: "1", config: Schema.Struct({}), defaults: {}, provides: [], contributes: [Items], layer: () => Layer.succeed(Items, items) })
+    const collector = definePlugin({ id: "collector", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Items], provides: [Consumer], contributes: [Items],
+      layer: () => Layer.mergeAll(Layer.effect(Consumer, Items.pipe(Effect.map((items) => items.length))), Layer.succeed(Items, ["collector"])) })
+    const optionalValue = definePlugin({ id: "optional", version: "1", config: Schema.Struct({}), defaults: {}, optional: [Value], provides: [Consumer],
+      layer: () => Layer.succeed(Consumer, 0) })
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "c", use: "collector" }, { id: "a", use: "a" }, { id: "b", use: "b" }] }, [contributor("a", ["one"]), contributor("b", ["two", "three"]), collector])
+      expect(graph.nodes.map((node) => node.entry.id)).toEqual(["a", "b", "c"])
+      const context = yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope)
+      return { seen: Context.getOption(context, Consumer).pipe(Option.getOrThrow), all: Context.getOption(context, Items).pipe(Option.getOrThrow) }
+    })))
+    expect(result).toEqual({ seen: 3, all: ["one", "two", "three", "collector"] })
+    const alone = await Effect.runPromise(Effect.either(resolveGraph({ version: 1, plugins: [{ id: "o", use: "optional" }] }, [optionalValue])))
+    expect(alone._tag).toBe("Right")
   })
 })
