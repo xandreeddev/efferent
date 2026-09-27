@@ -221,8 +221,8 @@ attempts and delivered journal sequences. Downstream links describe chronology;
 they do not prove that a selector caused an improvement. Hosts own capture,
 redaction, storage, candidate eligibility and validation.
 
-`runLoop` accepts an optional `prepareModel` hook (the composable loop plugin
-exposes it to contributions as the `model` run hook):
+`runLoop` accepts an optional `prepareModel` hook (a turn exposes it as the
+`model` function of its `TurnPolicy`):
 
 ```ts
 runLoop({
@@ -251,91 +251,150 @@ label; multiple acceptable options support accepted-error metrics but have no
 unique Brier target. These helpers return evidence for a host report; they do not
 promote a model or apply application-specific quality/cost policy.
 
-## Composable agents: memory, tool discovery and contributions
+## Composable agents: the host composes the turn
 
-The composable loop (`@xandreed/plugin-agent-loop/composable`) owns no memory
-and no tools. Three generic capabilities are plugins, and a host only
-**defines** what plugs into them:
+A composable agent is a plugin graph built once and a turn the host writes
+as ordinary Effect code. Mechanisms are plugins; meaning (tools, views,
+skills, step context, completion) is the host's.
 
 | Concern | Port | Plugins |
 | --- | --- | --- |
-| Memory storage | `MemoryLog` | `@xandreed/plugin-memory-log` (the run journal) |
+| Memory storage | `MemoryLog` | `@xandreed/plugin-memory-log` (the host journal) |
 | Memory strategy | `ConversationMemory` | `@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary` |
+| Tool digests | `ResultDigester` (optional) | `@xandreed/plugin-memory-digest` |
 | Tool registry and discovery | `ToolRegistry` | `@xandreed/plugin-tool-discovery` |
-| Host definitions | `Contributions` (multi-provider) | any plugin that `contributes` |
-| Pre-turn skill selection | `IntentMatcher` (optional) | any matcher plugin |
+| Step iteration | `StepLoop` | `stepLoopPlugin` from `@xandreed/plugin-agent-loop` |
+| Host definitions | `Contributions` (multi-provider) | `AgentConfig.contributions`, or any plugin that `contributes` |
+| Pre-turn skill selection | `IntentMatcher` (optional, per turn) | any matcher service |
 
-**Memory.** Every message, tool result, turn context, step context, skill
-activation and compaction decision is an entry in an append-only log, and
-every model request is a pure fold of that log (`renderLog`). A strategy
-decides compactions (`maintain`) and records them with their replacement
-bytes before they apply, so a request rebuilt later — by another process,
-after a restart — is byte-identical to the one the model saw. Strategies
-apply only their own compaction entries: swapping `plugin-memory-window` for
-`plugin-memory-summary` is one `use:` change, and the new strategy rebuilds
-from the full-fidelity entries.
-
-- The window strategy keeps the current turn verbatim, shows earlier turns
-  through each tool's compact view (recorded at turn start, so only the
-  previous turn's region changes and the cached prefix survives), and under
-  budget pressure spills the current turn's largest results to a preview
-  plus a locator (read back with `recall_context`) and then replaces the
-  oldest turns with a ledger. It fails with `context.budget` only when the
-  current turn alone does not fit.
-- The summary strategy folds the oldest turns into one recorded summary,
-  with the previous summary included, once the render passes its trigger.
-
-**Tool discovery.** Hosts contribute tools (`defineTool`: handler, model view,
-compact view, subjects, annotations) and skills (`defineSkill`: a one-line
-summary, instructions, tools and references). The discovery plugin builds the
-full toolkit at run start and keeps a grow-only active set in memory:
-
-1. Tier 1 — the skill catalogue is a static system-prompt section.
-2. Tier 2 — `load_skill` returns a skill's instructions (pinned in memory) and
-   appends its tools to the active set from the next step.
-3. Tier 3 — `read_skill_reference` serves a loaded skill's references.
-
-Before each turn it activates the `always` skills and, when an
-`IntentMatcher` is present, the skills it selects (recorded as a
-`skill-selection` decision; timeouts and abstentions keep the always-on set).
-Probabilistic selection never authorizes: `resolveCapabilities` checks every
-activation against the run's grants. Every call passes one wrapper — active
-set, grants, `ActionPolicy`, per-run budgets, read/write lanes — and emits
-`tool.invocation` / `tool.result` events.
-
-Tools only grow within a conversation and are sent in activation order.
-Restrict a step with a tool choice (`step` hook) or a handler failure, never
-by removing a schema: removing one rewrites the cached prefix.
-
-**Contributions.** `definePlugin({ contributes: [Contributions] })` marks a
-multi-provider key: the runtime concatenates every contributor's array in
-graph order, and a consumer is ordered after every other contributor.
-`optional` keys are used when present and never required. A contribution
-carries tools, skills, prompt sections (`static`, `session`, `turn`), a
-per-run layer (host run state, built after `RunContext`), and run hooks:
-`preflight`, `initialStep`, `model`, `step` (context and tool choice),
-`isComplete`, `onToolResult`, `reply`, `settle` and `correctives`.
-
-**Hosts with their own run lifecycle.** `AgentHost.make({ config, plugins,
-workspace, services, turnServices })` activates the runtime graph once and
-the session graph per turn. The host keeps its queue, leases and journal and
-calls `host.run({ session, runId, prompt, io, services })`, where `io` is the
-host journal (`publish`, `history`, transient deltas, steering) and `services`
-the turn's own (e.g. a model with the turn's budget). The `Harness` remains
-the self-contained session host.
+**Defining the agent.** `Agent.define(config)` (from `@xandreed/sdk`) resolves
+the graph and activates its runtime plugins once, in the caller's scope.
+Session plugins, if any, are activated per turn with the turn's services.
+Swapping a strategy is swapping one entry.
 
 ```ts
-const host = yield* AgentHost.make({
-  config: { version: 1, plugins: [
-    { id: "log", use: "@xandreed/plugin-memory-log" },
-    { id: "memory", use: "@xandreed/plugin-memory-window" },
-    { id: "tools", use: "@xandreed/plugin-tool-discovery", options: { grants: ["public"] } },
-    { id: "loop", use: "@xandreed/plugin-agent-loop/composable", options: { budgetTokens: 24_000 } },
-    { id: "app", use: "my-app/contributions" },
-  ] },
-  plugins,
-  workspace,
-  services: appServices,
-  turnServices: [LanguageModel.LanguageModel],
+const agent = yield* Agent.define({
+  plugins: [
+    memoryLogPlugin,
+    { plugin: memoryWindowPlugin, options: { digestOnWriteChars: 4_000 } },
+    { plugin: toolDiscoveryPlugin, options: { grants: ["public"], maxCallsPerRun: 16 } },
+    stepLoopPlugin,
+    memoryDigestPlugin,                      // session scope: digests on the turn's UtilityLlm
+  ],
+  contributions: [appTools],               // tools + views + skills + sections
+  turnServices: [LanguageModel.LanguageModel, UtilityLlm],
+  cacheKeyPrefix: "app",                   // prompt-cache key `app:<conversation>`
+  budgetTokens: 24_000,
 })
 ```
+
+**One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
+turn and hands `use` a `Turn`: `prompt`, `memory` (read-only), `events`,
+`tasks`, `tools` (`select`, `activate`, `active`), `context(entry)`,
+`reply(text)` and `run(policy)`. The turn is scoped: subscriptions and tasks
+end with it. Tasks are joined before `turn.ended`, which is recorded exactly
+once, with a `failed` outcome when `use` fails or is interrupted.
+
+```ts
+yield* agent.turn({ conversation, runId, prompt, services, journal }, (turn) => Effect.gen(function* () {
+  const quick = yield* quickReply(turn.prompt)                   // no loop, still a recorded turn
+  if (Option.isSome(quick)) return yield* turn.reply(quick.value)
+
+  const state = yield* AnswerState.make
+  yield* subscribeAll(turn.events, [
+    onTool(Search, ({ result }) => state.remember(result)),     // typed by the tool's own schemas
+    onTool(Deliver, ({ input }) => state.deliver(input.text)),
+  ])
+  yield* turn.tools.select(turn.prompt)                          // always-on skills + the matcher's choice
+  const result = yield* turn.run({
+    step: (step) => state.directive(step),                       // step context and tool choice
+    completion: () => state.verdict,                             // { complete, awaiting, facts }
+    limits: { maxSteps: 6, requireCompletion: true },
+  })
+  return { outcome: result.outcome, reply: yield* state.reply }
+}))
+```
+
+`TurnPolicy` holds plain functions: `initial` (a host-planned first batch, run
+without a provider call), `model` (a model and prompt variant per step),
+`step`, `completion`, `limits`, `budgetTokens`, `stepContext` (`tail` or
+`system`) and `correctives`. A verdict whose `awaiting` names task tags joins
+those tasks and is evaluated once more. No provider call follows a complete
+verdict.
+
+**Events and tasks.** `TurnEvent` is one typed union: `turn.started`,
+`step.started`, `tool.started`, `tool.completed` (decoded result and encoded
+form), `step.ended` (the recorded results by entry id),
+`completion.evaluated`, `skills.activated`, `context.built`,
+`decision.recorded`, `assistant.message`, `assistant.delta` (transient),
+`turn.ended`, and host events from `defineHostEvent`. Publication is inline
+and ordered, depth-first up to a cap: every subscriber runs before `publish`
+returns, so state a subscriber changes is visible to the next step, and a
+subscriber failure fails the turn. Within a step the order is `step.started`
+< `tool.*` < `step.ended` < `completion.evaluated`. Background work goes to
+`turn.tasks.fork(tag, effect)`. The journal is the first subscriber: every
+event except transient deltas is appended with its name, and
+`tool.completed` keeps only the encoded result.
+
+**Memory.** Every message, tool result, turn context, step context, skill
+activation, digest and compaction decision is an entry in an append-only log
+with its own id (`<runId>:<n>`). Every request is a pure fold of that log, so
+a request rebuilt later (another process, a restart) is byte-identical to the
+one the model saw. A strategy decides compactions and digests (`maintain`)
+and records them before they apply; it applies only its own compactions, so
+a new strategy rebuilds from the full-fidelity entries.
+
+- The window strategy keeps the current turn verbatim and shows earlier turns
+  through each tool's compact view. Under budget pressure it spills the
+  current turn's largest results to a preview plus a locator (read back with
+  `recall_context`), then replaces the oldest turns with a ledger. It fails
+  with `context.budget` only when the current turn alone does not fit.
+- The summary strategy folds the oldest turns into one recorded summary once
+  the render passes its trigger. It reads the `UtilityLlm` from the turn's
+  services, so summaries run under the turn's budget.
+
+A tool owns how its result appears: `render`, `compact`, `subjects`,
+`artifacts` (image and file references, rendered as references for now) and
+an optional `digest`. A `Select` digest keeps whole items by key and
+re-renders them, so every identifier an answer may cite survives. A
+`Summarize` digest is accepted only when every `preserve`d identifier appears
+in the summary. The strategy decides when (on write above a size, or at
+compaction); the `ResultDigester` runs the tool's own prompt; the outcome is
+logged once as a `ToolDigest` entry and never recomputed on replay.
+
+`memoryConformance(memory, services)` and `stepLoopConformance(loop)` (from
+`@xandreed/core`) are the port contracts as runnable checks. Run them against
+a new strategy or loop.
+
+**Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
+annotations) and skills (`defineSkill`, or `skillsFromFiles` over
+`<skill>/SKILL.md` and `<skill>/references/*.md`). The registry keeps a
+grow-only active set in memory:
+
+1. Tier 1: the skill catalogue is a static system-prompt section.
+2. Tier 2: `load_skill` returns a skill's instructions and appends its tools
+   to the active set from the next step.
+3. Tier 3: `read_skill_reference` serves a loaded skill's references. It is
+   registered only when some skill has references.
+
+`turn.tools.select(message)` activates the `always` skills and, when the
+turn's services carry an `IntentMatcher`, the skills it selects. The choice is
+recorded with `recordDecision` as a `skill-selection` decision; timeouts and
+abstentions keep the always-on set. Probabilistic selection never
+authorizes: `resolveCapabilities` checks every activation against the turn's
+`CapabilityGrants` (or the configured grants). Every call passes one wrapper
+(active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes) that
+publishes `tool.started` and `tool.completed` before it returns.
+
+Tools only grow within a conversation and are sent in activation order.
+Restrict a step with a tool choice or a handler failure, never by removing a
+schema: removing one rewrites the cached prefix.
+
+**Contributions and the system prompt.** `definePlugin({ contributes:
+[Contributions] })` marks a multi-provider key: the runtime concatenates every
+contributor's array in graph order. A contribution carries tools, skills,
+prompt sections and a per-run layer (host run state, built after
+`RunContext`). The system prompt is the configured prefix, then the `static`
+sections, then the `session` sections, each tier by `order`. `turn` sections
+are recorded as turn context when the first run starts. The `Harness` remains
+the self-contained session host for applications that do not compose turns.
