@@ -12,5 +12,13 @@
     "@xandreed/runtime": "workspace:*",
     "@xandreed/plugin-memory": "workspace:*",
     "@xandreed/plugin-session-sqlite": "workspace:*"
+  },
+  "devDependencies": {
+    "@xandreed/plugin-agent-loop": "workspace:*",
+    "@xandreed/plugin-memory-log": "workspace:*",
+    "@xandreed/plugin-memory-window": "workspace:*",
+    "@xandreed/plugin-memory-summary": "workspace:*",
+    "@xandreed/plugin-tool-discovery": "workspace:*",
+    "@effect/ai": "0.35.0"
   }
 }

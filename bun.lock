@@ -58,7 +58,7 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.1.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "effect": "3.21.4",
@@ -66,7 +66,7 @@
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -112,7 +112,7 @@
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -121,7 +121,7 @@
     },
     "packages/plugin-context": {
       "name": "@xandreed/plugin-context",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -129,7 +129,7 @@
     },
     "packages/plugin-mcp": {
       "name": "@xandreed/plugin-mcp",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -138,15 +138,42 @@
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-memory-log": {
+      "name": "@xandreed/plugin-memory-log",
+      "version": "0.4.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-memory-summary": {
+      "name": "@xandreed/plugin-memory-summary",
+      "version": "0.4.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-memory-window": {
+      "name": "@xandreed/plugin-memory-window",
+      "version": "0.4.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
       },
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
@@ -160,7 +187,7 @@
     },
     "packages/plugin-policy-workspace": {
       "name": "@xandreed/plugin-policy-workspace",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -168,7 +195,7 @@
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -177,7 +204,7 @@
     },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/opentelemetry": "^0.63.0",
         "@effect/platform": "0.96.1",
@@ -190,9 +217,18 @@
         "effect": "3.21.4",
       },
     },
+    "packages/plugin-tool-discovery": {
+      "name": "@xandreed/plugin-tool-discovery",
+      "version": "0.4.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
     "packages/plugin-tools-local": {
       "name": "@xandreed/plugin-tools-local",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -202,7 +238,7 @@
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -235,13 +271,21 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.2.0-next.0",
+      "version": "0.4.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-memory": "workspace:*",
         "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/runtime": "workspace:*",
         "effect": "3.21.4",
+      },
+      "devDependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-memory-log": "workspace:*",
+        "@xandreed/plugin-memory-summary": "workspace:*",
+        "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-tool-discovery": "workspace:*",
       },
     },
     "packages/smith": {
@@ -798,6 +842,12 @@
 
     "@xandreed/plugin-memory": ["@xandreed/plugin-memory@workspace:packages/plugin-memory"],
 
+    "@xandreed/plugin-memory-log": ["@xandreed/plugin-memory-log@workspace:packages/plugin-memory-log"],
+
+    "@xandreed/plugin-memory-summary": ["@xandreed/plugin-memory-summary@workspace:packages/plugin-memory-summary"],
+
+    "@xandreed/plugin-memory-window": ["@xandreed/plugin-memory-window@workspace:packages/plugin-memory-window"],
+
     "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
 
     "@xandreed/plugin-policy-workspace": ["@xandreed/plugin-policy-workspace@workspace:packages/plugin-policy-workspace"],
@@ -805,6 +855,8 @@
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
 
     "@xandreed/plugin-telemetry": ["@xandreed/plugin-telemetry@workspace:packages/plugin-telemetry"],
+
+    "@xandreed/plugin-tool-discovery": ["@xandreed/plugin-tool-discovery@workspace:packages/plugin-tool-discovery"],
 
     "@xandreed/plugin-tools-local": ["@xandreed/plugin-tools-local@workspace:packages/plugin-tools-local"],
 
