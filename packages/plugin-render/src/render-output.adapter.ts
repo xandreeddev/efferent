@@ -1,8 +1,8 @@
 import { Effect, Layer, Schema } from "effect"
 import { definePlugin } from "@xandreed/core"
-import { UiOutputError, UiOutputProposal } from "./domain/ui-output.entity.js"
-import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal, UiOutputTools } from "./ports/ui-output.port.js"
-import { uiOutputToolkit } from "./ui-output.tools.js"
+import { UiOutputError, UiOutputProposal } from "./domain/render-output.entity.js"
+import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal, UiOutputTools } from "./ports/render-output.port.js"
+import { uiOutputToolkit } from "./render-output.tools.js"
 
 export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect.gen(function* () {
   const admission = yield* UiOutputAdmission
@@ -32,7 +32,7 @@ export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function*
 
 /** Transport-independent: WebSocket/SSE hosts consume the committed journal. */
 export const uiOutputPlugin = definePlugin({
-  id: "@xandreed/ui-agent/output", version: "0.2.0-next.0",
+  id: "@xandreed/plugin-render/output", version: "0.6.0-next.0",
   requires: [UiOutputAdmission, UiOutputJournal, UiOutputContext],
   provides: [UiOutput, UiOutputTools],
   config: Schema.Struct({ maxBytes: Schema.Int.pipe(Schema.between(1024, 131_072)) }),

@@ -18,6 +18,7 @@
     "@effect/ai": "0.35.0",
     "effect": "3.21.4",
     "@xandreed/core": "workspace:*",
-    "@xandreed/plugin-agent-loop": "workspace:*"
+    "@xandreed/plugin-agent-loop": "workspace:*",
+    "@xandreed/plugin-render": "workspace:*"
   }
 }

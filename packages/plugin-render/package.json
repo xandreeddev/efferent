@@ -1,0 +1,16 @@
+{
+  "name": "@xandreed/plugin-render",
+  "version": "0.6.0-next.0",
+  "type": "module",
+  "description": "Render surfaces, a journal feed and SSE/WebSocket transports for agent output.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./output": "./src/output.ts"
+  },
+  "dependencies": {
+    "@effect/ai": "0.35.0",
+    "@xandreed/core": "workspace:*",
+    "effect": "3.21.4"
+  }
+}

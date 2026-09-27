@@ -84,6 +84,12 @@
       "@xandreed/ui-agent/*": [
         "packages/ui-agent/src/*"
       ],
+      "@xandreed/plugin-render": [
+        "packages/plugin-render/src/index.ts"
+      ],
+      "@xandreed/plugin-render/*": [
+        "packages/plugin-render/src/*"
+      ],
       "@xandreed/plugin-agent-loop": [
         "packages/plugin-agent-loop/src/index.ts"
       ],

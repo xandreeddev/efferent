@@ -1,5 +1,2 @@
-/** Minimal host output plugin entrypoint; no reference-application runtime. */
-export * from "./domain/ui-output.entity.js"
-export * from "./ports/ui-output.port.js"
-export * from "./ui-output.tools.js"
-export * from "./ui-output.adapter.js"
+/** Minimal host output plugin entrypoint; the output layer lives in @xandreed/plugin-render. */
+export * from "@xandreed/plugin-render/output"

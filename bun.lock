@@ -201,6 +201,15 @@
         "effect": "3.21.4",
       },
     },
+    "packages/plugin-render": {
+      "name": "@xandreed/plugin-render",
+      "version": "0.6.0-next.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
       "version": "0.5.0-next.0",
@@ -369,6 +378,7 @@
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-render": "workspace:*",
         "effect": "3.21.4",
       },
     },
@@ -862,6 +872,8 @@
     "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
 
     "@xandreed/plugin-policy-workspace": ["@xandreed/plugin-policy-workspace@workspace:packages/plugin-policy-workspace"],
+
+    "@xandreed/plugin-render": ["@xandreed/plugin-render@workspace:packages/plugin-render"],
 
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
 
