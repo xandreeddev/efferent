@@ -49,20 +49,32 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
     readonly system: Prompt.Prompt
   }, AiError.AiError, R>
   readonly system: string | Prompt.Prompt
+  /** The READ side of memory: when present, each provider step sends these
+   * messages instead of the loop's own buffer. Persistence still flows through
+   * `onTail`, so a memory plugin can rebuild every request from its log. */
+  readonly render?: (step: StepView) => Effect.Effect<ReadonlyArray<AgentMessage>, never, R>
+  /** Per-step tool choice (e.g. force a delivery tool without removing others). */
+  readonly stepDirective?: (step: StepView) => Effect.Effect<{ readonly toolChoice: Option.Option<LoopToolChoice> }, never, R>
+  /** Host wording for the loop's own corrective turns. */
+  readonly correctives?: {
+    readonly malformed?: (tools: ReadonlyArray<string>, description: string) => string
+    readonly incomplete?: string
+  }
   /** Explicit opt-in: export prompt and result content on step spans.
    * Hosts own consent, redaction and exporter retention. Disabled by default. */
   readonly captureTraceContent?: boolean
   readonly messages: ReadonlyArray<AgentMessage>
   readonly toolkit: Toolkit.Toolkit<Tools>
-  /** Run-pinned deterministic capability selection, refreshed between steps.
-   * A capability-expansion tool can update this selection for the next call.
-   * Handlers must still enforce their own principal/action policy. */
   /** Host completion condition, checked after settled tools/events. Avoids a
    * paid final prose call when a tool already delivered the complete result. */
   readonly isComplete?: () => Effect.Effect<boolean, never, R>
   /** When true, a model stop cannot substitute for host completion. A bounded
    * corrective turn asks for the missing actions; maxSteps still applies. */
   readonly requireCompletion?: boolean
+  /** Run-pinned deterministic capability selection, refreshed between steps
+   * and sent in the order returned (append new tools to keep the prefix stable).
+   * A capability-expansion tool can update this selection for the next call.
+   * Handlers must still enforce their own principal/action policy. */
   readonly activeTools?: () => Effect.Effect<ReadonlyArray<keyof Tools>, never, R>
   /** A ceiling, not a target — a normal run ends when the model stops
    *  calling tools. Default {@link DEFAULT_MAX_STEPS}. */
@@ -114,6 +126,16 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    */
   readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
 }
+
+/** What the loop knows about the step it is about to take. */
+export interface StepView {
+  readonly stepIndex: number
+  /** Active tool names, in activation order. */
+  readonly activeTools: ReadonlyArray<string>
+  readonly lastUsage: Option.Option<TokenUsage>
+}
+
+export type LoopToolChoice = "required" | { readonly tool: string }
 
 export const DEFAULT_MAX_STEPS = 100
 export const DEFAULT_TOOL_CONCURRENCY = 4
@@ -236,6 +258,7 @@ interface LoopState {
   readonly seen: ReadonlySet<string>
   readonly staleTurns: number
   readonly usage: TokenUsage
+  readonly lastUsage: Option.Option<TokenUsage>
   readonly phase: Phase
   /** Trajectory vitals — annotated on the run span at the end. */
   readonly toolCalls: number
@@ -267,9 +290,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
     const step = (state: LoopState) =>
       Effect.gen(function* () {
         yield* onEvent({ type: "turn_start", turnIndex: state.turnIndex })
-        const active = options.activeTools === undefined ? Object.keys(toolkit.tools) : yield* options.activeTools().pipe(Effect.provide(eventContext))
-        const selectedTools = Object.fromEntries(Object.entries(toolkit.tools).filter(([name]) => active.includes(name))) as Tools
+        const active: ReadonlyArray<string> = options.activeTools === undefined ? Object.keys(toolkit.tools) : (yield* options.activeTools().pipe(Effect.provide(eventContext))).map(String)
+        // Activation order, not registration order: a newly activated tool is
+        // appended, so the declared tool list only ever grows at its end.
+        const selectedTools = Object.fromEntries(active.flatMap((name) => Object.hasOwn(toolkit.tools, name) ? [[name, toolkit.tools[name]] as const] : [])) as Tools
         const toolNames = Object.keys(selectedTools)
+        const stepView: StepView = { stepIndex: state.turnIndex, activeTools: toolNames, lastUsage: state.lastUsage }
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
         const prepared = state.turnIndex === 0 && options.initialStep !== undefined
@@ -281,7 +307,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const instructions = typeof baseSystem === "string"
           ? Prompt.make([{ role: "system", content: baseSystem }])
           : baseSystem
-        const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(state.messages) as never))
+        const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
+        const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(visible) as never))
+        const directive = options.stepDirective === undefined ? Option.none<LoopToolChoice>() : (yield* options.stepDirective(stepView).pipe(Effect.provide(eventContext))).toolChoice
 
         if (options.captureTraceContent === true)
           yield* Effect.annotateCurrentSpan({
@@ -297,7 +325,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
             return yield* toolkit.handle(name, params).pipe(Effect.tap((result) => onEvent({
               type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
-              ok: !result.isFailure, result: result.result,
+              ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
             })))
           }),
         }
@@ -305,6 +333,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           prompt,
           toolkit: instrumented,
           concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
+          ...Option.match(directive, { onNone: () => ({}), onSome: (toolChoice) => ({ toolChoice: toolChoice as never }) }),
         }
 
         /** Both paths land on the SAME settled shape — after this point the
@@ -423,7 +452,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           yield* Metric.increment(tagged(engineCorrections, { "engine.kind": "malformed" }))
           const corrective: AgentMessage = {
             role: "user",
-            content:
+            content: options.correctives?.malformed?.(toolNames, desc) ??
               `Your previous reply could not be parsed: ${desc}\n\n` +
               `This usually means you called a tool that doesn't exist or used the ` +
               `wrong argument shape. The only tools available are: ${toolNames.join(", ")}. ` +
@@ -508,7 +537,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const completed = yield* options.isComplete?.() ?? Effect.succeed(false)
         const requireMore = !completed && options.requireCompletion === true
         const completionNudge: ReadonlyArray<AgentMessage> = requireMore && toolCalls.length === 0
-          ? [{ role: "user", content: "The host reports that required actions are incomplete. Your ordinary text is not a delivered result. Complete the requested work using the available tools, or use an explicit supported failure/clarification action if the evidence is missing." }]
+          ? [{ role: "user", content: options.correctives?.incomplete ?? "The host reports that required actions are incomplete. Your ordinary text is not a delivered result. Complete the requested work using the available tools, or use an explicit supported failure/clarification action if the evidence is missing." }]
           : []
         yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge) ?? Effect.void) : Effect.void
         const wantsMore = !completed && (requireMore || outcome.finishReason === "tool-calls" && toolCalls.length > 0)
@@ -573,6 +602,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           seen,
           staleTurns: stale,
           usage: addUsage(state.usage, usage),
+          lastUsage: planned ? state.lastUsage : Option.some(usage),
           phase,
           toolCalls: state.toolCalls + toolCalls.length,
           toolFailures: state.toolFailures + toolResults.filter((tr) => !tr.ok).length,
@@ -596,6 +626,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         seen: new Set<string>(),
         staleTurns: 0,
         usage: zeroUsage,
+        lastUsage: Option.none(),
         phase: "continue",
         toolCalls: 0,
         toolFailures: 0,
