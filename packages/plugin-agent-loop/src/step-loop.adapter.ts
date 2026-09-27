@@ -147,7 +147,7 @@ export const StepLoopLive = Layer.succeed(StepLoop, StepLoop.of({ ...STEP_LOOP, 
 
 /** The step loop as a runtime plugin; the turn supplies everything per run. */
 export const stepLoopPlugin = definePlugin({
-  id: "@xandreed/plugin-agent-loop/steps", version: "0.5.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-agent-loop/steps", version: "0.6.0-next.0", scope: "runtime",
   config: Schema.Struct({}), defaults: {},
   provides: [StepLoop],
   layer: () => StepLoopLive,

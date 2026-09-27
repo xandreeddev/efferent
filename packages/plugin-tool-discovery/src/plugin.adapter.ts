@@ -32,7 +32,7 @@ const defaults: Config = {
  * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.5.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-tool-discovery", version: "0.6.0-next.0", scope: "runtime",
   config: Config, defaults,
   requires: [Contributions],
   provides: [ToolRegistry],
