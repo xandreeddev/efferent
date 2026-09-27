@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
   definePlugin,
@@ -20,13 +20,16 @@ const Config = Schema.Struct({
   cooldownTurns: Schema.Int.pipe(Schema.nonNegative()),
   turnContext: Schema.Literal("current", "all"),
   replies: Schema.Boolean,
-  stepContext: Schema.Literal("tail", "none"),
+  /** Show recorded tool digests in place of the results they digest. */
+  digests: Schema.Boolean,
+  media: Schema.Literal("none", "inline"),
+  maxImages: Schema.Int.pipe(Schema.nonNegative()),
   /** Instructions for the summarizer; the transcript and any earlier summary follow. */
   instructions: Schema.String,
 })
 type Config = typeof Config.Type
 const defaults: Config = {
-  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, stepContext: "tail",
+  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "none", maxImages: 8,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
 }
 
@@ -51,8 +54,16 @@ const keepFrom = (entries: ReadonlyArray<LogEntry>, turn: number, keepTokens: nu
  */
 export const summaryPolicy = (config: Config, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
-  render: { turnContext: config.turnContext, replies: config.replies, stepContext: config.stepContext },
-  maintain: ({ entries, signal, turn, render }) => Effect.gen(function* () {
+  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
+  digestOnWrite: Option.none(),
+  maintain: (input) => decide(config, summarize, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
+})
+
+const decide = (
+  config: Config,
+  summarize: (prompt: string) => Effect.Effect<string, HarnessError>,
+  { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0],
+): Effect.Effect<ReadonlyArray<CompactionAction>, HarnessError> => Effect.gen(function* () {
     const tokens = estimateMessageTokens(render(entries))
     const previous = latestSummary(entries)
     const cooling = Option.match(previous, { onNone: () => false, onSome: (prior) => turn - prior.turn < config.cooldownTurns })
@@ -68,24 +79,29 @@ export const summaryPolicy = (config: Config, summarize: (prompt: string) => Eff
     })}\n\nTRANSCRIPT:\n${transcript}`)).trim()
     const action: CompactionAction = { _tag: "Summarize", keepFromTurn: from, summary }
     return summary.length === 0 ? [] : [action]
-  }),
 })
 
+const missingUtility = new HarnessError({ code: "memory.summary", message: "The summary strategy needs a UtilityLlm in the turn's services" })
+
+/** The summarizer is read from each turn's services, so it runs under that turn's budget. */
 export const memorySummaryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-summary", version: "0.5.0-next.0",
+  id: "@xandreed/plugin-memory-summary", version: "0.5.0-next.0", scope: "runtime",
   config: Config, defaults,
-  requires: [MemoryLog, UtilityLlm],
+  requires: [MemoryLog],
   provides: [ConversationMemory],
   layer: (config) => Layer.effect(ConversationMemory, Effect.gen(function* () {
     const log = yield* MemoryLog
-    const utility = yield* UtilityLlm
-    const policy = summaryPolicy(config, (prompt) => utility.complete(prompt).pipe(
-      Effect.map((completion) => completion.text),
-      Effect.mapError((error) => new HarnessError({ code: "memory.summary", message: error.message })),
-    ))
     return ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,
-      open: ({ conversation, runId, io }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, runId))),
+      open: ({ conversation, runId, io, services }) => Effect.gen(function* () {
+        const utility = yield* Option.match(Context.getOption(services, UtilityLlm), { onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })
+        const policy = summaryPolicy(config, (prompt) => utility.complete(prompt).pipe(
+          Effect.map((completion) => completion.text),
+          Effect.mapError((error) => new HarnessError({ code: "memory.summary", message: error.message })),
+        ))
+        const handle = yield* log.open(conversation, io)
+        return yield* openLogSession(handle, policy, { runId, services })
+      }),
     })
   })),
 })

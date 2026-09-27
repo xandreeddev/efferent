@@ -1,26 +1,30 @@
 import { Tool, Toolkit } from "@effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Exit, FiberRef, Option, Ref, Schema } from "effect"
 import {
+  ActionPolicy,
   activationsOf,
   canonicalJson,
+  CapabilityGrants,
   catalogOf,
+  CurrentAgentStep,
   DecisionId,
-  DecisionRecord,
+  defineContributions,
   defineTool,
   Failure,
   fingerprintOf,
   HarnessError,
-  noHooks,
+  IntentMatcher,
+  recordDecision,
   resolveCapabilities,
   RunContext,
   ToolCallId,
 } from "@xandreed/core"
 import type {
   ActivationSource,
-  AgentMessage,
   CapabilityCatalog,
   Contribution,
-  IntentMatch,
+  DecisionRecord,
+  DigestTask,
   MemorySession,
   RegisteredTool,
   RunTools,
@@ -30,6 +34,7 @@ import type {
 } from "@xandreed/core"
 
 export interface DiscoveryConfig {
+  /** Granted permissions when the turn's services carry no CapabilityGrants. */
   readonly grants: ReadonlyArray<string>
   readonly loadSkill: boolean
   readonly maxCallsPerRun: number
@@ -37,16 +42,6 @@ export interface DiscoveryConfig {
   readonly readConcurrency: number
   readonly matcherTimeoutMs: number
   readonly catalogVersion: string
-}
-
-export interface DiscoveryServices {
-  readonly matcher: Option.Option<{
-    readonly id: string
-    readonly version: string
-    readonly match: (input: { readonly message: string; readonly skills: ReadonlyArray<SkillDefinition>; readonly active: ReadonlyArray<string>; readonly history: ReadonlyArray<AgentMessage> }) => Effect.Effect<IntentMatch, HarnessError>
-  }>
-  readonly grants: Option.Option<Effect.Effect<ReadonlySet<string>, HarnessError>>
-  readonly authorize: Option.Option<(tool: string, input: unknown) => Effect.Effect<void, HarnessError>>
 }
 
 const failure = (error: string, message: string) => ({ error, message })
@@ -91,7 +86,12 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
   ].join("\n"))
 }
 
-export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArray<Contribution>, services: DiscoveryServices) => Effect.gen(function* () {
+/**
+ * The registry over every contribution. Built once; each turn opens it with
+ * its own services, where it finds the RunContext (events, memory), and the
+ * optional IntentMatcher, CapabilityGrants and ActionPolicy of that turn.
+ */
+export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArray<Contribution>) => Effect.gen(function* () {
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
   const hasReferences = contributions.some((contribution) => contribution.skills.some((skill) => skill.references.length > 0))
   const own: ReadonlyArray<RegisteredTool> = config.loadSkill ? [
@@ -106,22 +106,29 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
   if (duplicateSkill !== undefined) return yield* Effect.fail(harness("skills.duplicate", `Two contributions define the skill ${duplicateSkill.id}`))
   const unknownTool = skills.flatMap((skill) => skill.tools.filter((tool) => !registered.some((entry) => entry.tool.name === tool)).map((tool) => `${skill.id} → ${tool}`))
   if (unknownTool.length > 0) return yield* Effect.fail(harness("skills.tools", `Skills reference unregistered tools: ${unknownTool.join(", ")}`))
-  const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...contributions, {
-    id: "tool-discovery", version: "1", tools: own, skills: [], sections: [], run: Option.none(), hooks: noHooks,
-  }])
+  const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...contributions, defineContributions({ id: "tool-discovery", version: "1", tools: own })])
   const byName = new Map(registered.map((entry) => [entry.tool.name, entry] as const))
   const skillsForTool = (tool: string) => skills.filter((skill) => skill.tools.includes(tool)).map((skill) => skill.id)
-  const onToolResult = contributions.flatMap((contribution) => Option.toArray(contribution.hooks.onToolResult))
+  const decoded = (name: string, encoded: unknown) => Option.match(Option.fromNullable(byName.get(name)), {
+    onNone: () => Effect.succeed(Option.none<{ readonly entry: RegisteredTool; readonly result: unknown }>()),
+    onSome: (entry) => Schema.decodeUnknown(contextFree(entry.tool.successSchema))(encoded).pipe(
+      Effect.map((result) => Option.some({ entry, result })),
+      Effect.orElseSucceed(() => Option.none<{ readonly entry: RegisteredTool; readonly result: unknown }>()),
+    ),
+  })
 
   const views: ToolViews = {
     view: (name, encoded, params, isError) => {
       const entry = byName.get(name)
       const pinned = entry?.annotations.pinned ?? false
-      const raw: ToolView = { text: rawText(encoded), version: "raw", subjects: [], pinned }
+      const raw: ToolView = { text: rawText(encoded), version: "raw", subjects: [], artifacts: [], pinned }
       if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
       const view = entry.view.value
       return Schema.decodeUnknown(contextFree(entry.tool.successSchema))(encoded).pipe(
-        Effect.map((result): ToolView => ({ text: view.render(result, params), version: view.version, subjects: view.subjects(result, params), pinned })),
+        Effect.map((result): ToolView => ({
+          text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
+          artifacts: view.artifacts(result, params), pinned,
+        })),
         Effect.orElseSucceed(() => raw),
       )
     },
@@ -135,6 +142,26 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
           Effect.orElseSucceed(() => Option.none<string>()),
         )
     },
+    digest: (name, encoded, params, question) => decoded(name, encoded).pipe(Effect.map((found) => Option.flatMap(found, ({ entry, result }) =>
+      Option.flatMap(Option.flatMap(entry.view, (view) => Option.map(view.digest, (digest) => ({ view, digest }))), ({ view, digest }): Option.Option<DigestTask> => {
+        const source = view.render(result, params)
+        const base = { tool: name, version: digest.version, instructions: digest.instructions, question, source }
+        if (digest._tag === "Summarize") {
+          const preserve = digest.preserve(result)
+          return Option.some({
+            ...base, mode: "summarize", items: [],
+            apply: (outcome) => Option.filter(outcome.summary, (summary) => summary.trim().length > 0 && preserve.every((id) => summary.includes(id))),
+          })
+        }
+        const items = digest.items(result)
+        return items.length === 0 ? Option.none() : Option.some({
+          ...base, mode: "select", items,
+          apply: (outcome) => {
+            const keep = outcome.keep.filter((key) => items.some((item) => item.key === key))
+            return keep.length === 0 ? Option.none() : Option.some(digest.render(result, params, keep))
+          },
+        })
+      })))),
   }
 
   const open = (session: MemorySession, runServices: Context.Context<never>) => Effect.gen(function* () {
@@ -142,7 +169,12 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       onNone: () => Effect.fail(harness("tools.run", "The run context is missing")),
       onSome: Effect.succeed,
     })
-    const grants = yield* Option.match(services.grants, { onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)), onSome: (value) => value })
+    const matcher = Context.getOption(runServices, IntentMatcher)
+    const policy = Context.getOption(runServices, ActionPolicy)
+    const grants = yield* Option.match(Context.getOption(runServices, CapabilityGrants), {
+      onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
+      onSome: (service) => service.grants,
+    })
     const initial = activationsOf(yield* session.entries)
     const active = yield* Ref.make(initial.tools)
     const loadedSkills = yield* Ref.make(initial.skills)
@@ -164,7 +196,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         yield* session.record([{ _tag: "ToolsActivated", skills: freshSkills, tools: fresh, source, decision: Option.none() }], 0)
         yield* Ref.set(active, [...current, ...fresh])
         yield* Ref.set(loadedSkills, [...loaded, ...freshSkills])
-        yield* run.publish({ name: "capabilities.expanded", runId: run.runId, data: { source, skills: freshSkills, tools: fresh } })
+        yield* run.events.publish({ _tag: "skills.activated", skills: freshSkills, tools: fresh, source }).pipe(Effect.orDie)
       }
       return yield* Ref.get(active)
     })
@@ -196,7 +228,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       }
       const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
       if (missing.length > 0) return yield* Effect.fail(failure("Forbidden", `${name} requires ${missing.join(", ")}`))
-      const authorized: Effect.Effect<void, HarnessError> = Option.match(services.authorize, { onNone: () => Effect.void, onSome: (authorize) => authorize(name, params) })
+      const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
       yield* authorized.pipe(Effect.mapError((error) => failure("Denied", error.message)))
       const counts = yield* Ref.get(calls)
       const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
@@ -208,8 +240,10 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
       const invocationId = `${run.runId}:call:${sequence}`
       const labels = entry.annotations.labels
-      const stage = Option.getOrNull(entry.annotations.stage)
-      yield* run.publish({ name: "tool.invocation", runId: run.runId, data: { invocationId, tool: name, input: params, labels, stage } })
+      const stage = entry.annotations.stage
+      const step = Option.getOrElse(yield* FiberRef.get(CurrentAgentStep), () => 0)
+      // A subscriber failure fails the turn, never the tool call (which the model would see).
+      yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
       const lane = entry.annotations.readOnly ? readLane : writeLane
       const exit = yield* lane.withPermits(1)(Effect.exit(handler(params).pipe(Effect.provide(runServices))))
@@ -218,8 +252,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const value: unknown = Exit.isSuccess(exit) ? exit.value
         : Option.getOrElse(Cause.failureOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
       const encoded = yield* Schema.encodeUnknown(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
-      yield* run.publish({ name: "tool.result", runId: run.runId, data: { invocationId, tool: name, ok, output: encoded, durationMs, labels, stage } })
-      yield* Effect.forEach(onToolResult, (hook) => hook({ tool: name, invocationId, input: params, ok, encoded }).pipe(Effect.provide(runServices)))
+      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
 
@@ -236,12 +269,12 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
     const select = (message: string) => Effect.gen(function* () {
       const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
       yield* always.length === 0 ? Effect.void : activate(always, "always").pipe(Effect.asVoid)
-      if (Option.isNone(services.matcher)) return yield* Ref.get(active)
-      const matcher = services.matcher.value
+      if (Option.isNone(matcher)) return yield* Ref.get(active)
+      const selector = matcher.value
       const candidates = skills.filter((skill) => !skill.always)
       const history = yield* session.transcript("reference")
       const loadedBefore = yield* Ref.get(loadedSkills)
-      const match = yield* matcher.match({ message, skills: candidates, active: yield* Ref.get(active), history }).pipe(
+      const match = yield* selector.match({ message, skills: candidates, active: yield* Ref.get(active), history }).pipe(
         Effect.timeoutFail({ duration: `${config.matcherTimeoutMs} millis`, onTimeout: () => harness("matcher.timeout", "The skill matcher timed out") }),
         Effect.either,
       )
@@ -257,7 +290,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         family: "skill-selection",
         contextHash: fingerprintOf(canonicalJson({ message, active: yield* Ref.get(active), history: history.length })),
         candidateHash: fingerprintOf(canonicalJson(candidates.map((skill) => [skill.id, skill.version]))),
-        policyVersion: `${matcher.id}@${matcher.version}`,
+        policyVersion: `${selector.id}@${selector.version}`,
         candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),
         attempts: [],
         selection,
@@ -266,7 +299,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         applied: applied ? selection : Option.none(),
         probabilities: match._tag === "Right" ? match.right.probabilities : Option.none(),
       }
-      yield* run.publish({ name: "decision.record", runId: run.runId, data: Schema.encodeSync(DecisionRecord)(record) as Record<string, unknown> })
+      yield* recordDecision(record).pipe(Effect.provideService(RunContext, run))
       if (applied && config.loadSkill) {
         const seeded = skills.filter((skill) => chosen.includes(skill.id))
         const callId = ToolCallId.make(`${run.runId}:matcher`)

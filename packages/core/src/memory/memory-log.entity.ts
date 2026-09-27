@@ -9,7 +9,7 @@ import { DecisionId } from "../decision-record.entity.js"
  * replay reproduces exactly what the model saw.
  */
 
-/** `<journal seq>:<index within the append>` — stable across processes. */
+/** `<runId>:<index within the run>` — assigned by memory, independent of any journal. */
 export const EntryId = Schema.NonEmptyTrimmedString.pipe(Schema.brand("EntryId"))
 export type EntryId = typeof EntryId.Type
 
@@ -21,6 +21,16 @@ export const Subject = Schema.Struct({
   data: Schema.OptionFromNullOr(Schema.Unknown),
 })
 export type Subject = typeof Subject.Type
+
+/** A file or image a tool result carries, kept by reference (never inlined in the log). */
+export const ArtifactRef = Schema.Struct({
+  id: Schema.NonEmptyTrimmedString,
+  kind: Schema.Literal("image", "file"),
+  mediaType: Schema.NonEmptyTrimmedString,
+  url: Schema.String,
+  alt: Schema.OptionFromNullOr(Schema.String),
+})
+export type ArtifactRef = typeof ArtifactRef.Type
 
 export const CompactionAction = Schema.Union(
   /** Older tool results shown through their compact views (texts align with entries). */
@@ -56,8 +66,23 @@ export const LogBody = Schema.Union(
     view: Schema.String,
     viewVersion: Schema.String,
     subjects: Schema.Array(Subject),
+    artifacts: Schema.Array(ArtifactRef),
     /** Pinned results survive every compaction verbatim. */
     pinned: Schema.Boolean,
+  }),
+  /**
+   * A tool-specific digest of one result (see `DigestDefinition`), recorded
+   * with its replacement text so replays never recompute it. Independent of
+   * the strategy: any strategy that renders with `digests` applies it.
+   */
+  Schema.TaggedStruct("ToolDigest", {
+    entry: EntryId,
+    version: Schema.String,
+    mode: Schema.Literal("select", "summarize"),
+    keep: Schema.Array(Schema.String),
+    text: Schema.String,
+    digester: Schema.String,
+    trigger: Schema.Literal("write", "compaction"),
   }),
   Schema.TaggedStruct("StepContext", { step: Schema.Int, text: Schema.String }),
   Schema.TaggedStruct("ToolsActivated", {
@@ -76,7 +101,6 @@ export type LogBody = typeof LogBody.Type
 
 export const LogEntry = Schema.Struct({
   id: EntryId,
-  seq: Schema.Int,
   runId: Schema.String,
   turn: Schema.Int,
   step: Schema.Int,
@@ -85,13 +109,11 @@ export const LogEntry = Schema.Struct({
 })
 export type LogEntry = typeof LogEntry.Type
 
-/** The journal payload one append writes. Bodies are canonical JSON, so their
- *  bytes survive any store (jsonb reorders keys); ids come from the journal. */
+/** The journal payload one append writes. Entries are canonical JSON, so their
+ *  bytes survive any store (jsonb reorders keys); ids travel with them. */
 export const LogAppendPayload = Schema.Struct({
-  v: Schema.Literal(1),
-  turn: Schema.Int,
-  step: Schema.Int,
-  bodies: Schema.String,
+  v: Schema.Literal(2),
+  entries: Schema.String,
 })
 export type LogAppendPayload = typeof LogAppendPayload.Type
 

@@ -26,17 +26,22 @@ const Config = Schema.Struct({
   compactPreviousTurn: Schema.Boolean,
   turnContext: Schema.Literal("current", "all"),
   replies: Schema.Boolean,
-  /** "none" when the agent loop puts the step context in the system prompt. */
-  stepContext: Schema.Literal("tail", "none"),
   /** Results shorter than this are never spilled. */
   spillMinChars: Schema.Int.pipe(Schema.positive()),
   previewChars: Schema.Int.pipe(Schema.positive()),
   ledgerTurnChars: Schema.Int.pipe(Schema.positive()),
+  /** Digest a result on write once its view reaches this many characters (0: never). */
+  digestOnWriteChars: Schema.Int.pipe(Schema.nonNegative()),
+  /** Show recorded digests in place of the results they digest. */
+  digests: Schema.Boolean,
+  media: Schema.Literal("none", "inline"),
+  maxImages: Schema.Int.pipe(Schema.nonNegative()),
 })
 type Config = typeof Config.Type
 const defaults: Config = {
-  compactPreviousTurn: true, turnContext: "current", replies: true, stepContext: "tail",
+  compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
+  digestOnWriteChars: 0, digests: true, media: "none", maxImages: 8,
 }
 
 export const WINDOW_STRATEGY = { id: "window", version: "1" } as const
@@ -47,8 +52,12 @@ const preview = (entry: LogEntry, view: string, chars: number): string =>
 /** The window policy: compact older turns, spill oversized results, then drop the oldest turns. */
 export const windowPolicy = (config: Config): MemoryPolicy => ({
   strategy: WINDOW_STRATEGY,
-  render: { turnContext: config.turnContext, replies: config.replies, stepContext: config.stepContext },
-  maintain: ({ entries, signal, turn, render }) => Effect.gen(function* () {
+  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
+  digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
+  maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
+})
+
+const decide = (config: Config, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
     const rewritten = rewrittenBy(entries, WINDOW_STRATEGY.id)
     const inputs = toolInputsOf(entries, [])
     const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body }] : [])
@@ -76,7 +85,6 @@ export const windowPolicy = (config: Config): MemoryPolicy => ({
       .find((actions) => !over(actions))
     if (dropped !== undefined) return dropped
     return yield* Effect.fail(new HarnessError({ code: "context.budget", message: `The current turn alone exceeds the ${signal.budgetTokens}-token context budget` }))
-  }),
 })
 
 const RecallContext = Tool.make("recall_context", {
@@ -114,7 +122,7 @@ export const recallContribution = defineContributions({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.5.0-next.0",
+  id: "@xandreed/plugin-memory-window", version: "0.5.0-next.0", scope: "runtime",
   config: Config, defaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],
@@ -125,7 +133,7 @@ export const memoryWindowPlugin = definePlugin({
       const policy = windowPolicy(config)
       return ConversationMemory.of({
         strategy: WINDOW_STRATEGY,
-        open: ({ conversation, runId, io }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, runId))),
+        open: ({ conversation, runId, io, services }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, { runId, services }))),
       })
     })),
     Layer.succeed(Contributions, [recallContribution]),

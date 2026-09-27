@@ -19,6 +19,7 @@
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",
-    "@effect/ai": "0.35.0"
+    "@effect/ai": "0.35.0",
+    "@xandreed/plugin-memory-digest": "workspace:*"
   }
 }

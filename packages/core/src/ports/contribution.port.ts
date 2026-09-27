@@ -4,7 +4,30 @@ import type { LanguageModel, Tool } from "@effect/ai"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { PromptTier, SkillDefinition, ToolAnnotations } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { Subject } from "../memory/memory-log.entity.js"
+import type { ArtifactRef, Subject } from "../memory/memory-log.entity.js"
+
+/**
+ * How a tool's long result may be digested for the current request, with the
+ * tool's own prompt. The memory strategy decides WHEN (on write above a size,
+ * or at compaction); the digester runs it; the outcome is logged once.
+ * `Select` (preferred) keeps whole items by key and re-renders them, so every
+ * identifier the answer may cite survives. `Summarize` is accepted only when
+ * every `preserve`d identifier appears verbatim in the summary.
+ */
+export type DigestDefinition<Result, Params> =
+  | {
+    readonly _tag: "Select"
+    readonly version: string
+    readonly instructions: string
+    readonly items: (result: Result) => ReadonlyArray<{ readonly key: string; readonly text: string }>
+    readonly render: (result: Result, params: Params, keep: ReadonlyArray<string>) => string
+  }
+  | {
+    readonly _tag: "Summarize"
+    readonly version: string
+    readonly instructions: string
+    readonly preserve: (result: Result) => ReadonlyArray<string>
+  }
 
 /** How one tool's result appears in context — owned by the tool, applied by memory. */
 export interface ToolViewDefinition<Result, Params> {
@@ -14,6 +37,9 @@ export interface ToolViewDefinition<Result, Params> {
   /** The older-turn form; None keeps `render`'s text. */
   readonly compact: Option.Option<(result: Result, params: Params) => string>
   readonly subjects: (result: Result, params: Params) => ReadonlyArray<Subject>
+  /** Files and images the result carries, kept by reference. */
+  readonly artifacts: (result: Result, params: Params) => ReadonlyArray<ArtifactRef>
+  readonly digest: Option.Option<DigestDefinition<Result, Params>>
 }
 
 /** The view as an author writes it; optional parts default in `defineTool`. */
@@ -22,6 +48,8 @@ export interface ToolViewInput<Result, Params> {
   readonly render: (result: Result, params: Params) => string
   readonly compact?: (result: Result, params: Params) => string
   readonly subjects?: (result: Result, params: Params) => ReadonlyArray<Subject>
+  readonly artifacts?: (result: Result, params: Params) => ReadonlyArray<ArtifactRef>
+  readonly digest?: DigestDefinition<Result, Params>
 }
 
 /** A typed tool definition as its author writes it (see `defineTool`). */
@@ -69,19 +97,6 @@ export interface StepDirective {
   readonly toolChoice: Option.Option<ToolChoice>
 }
 
-export interface ToolOutcome {
-  readonly tool: string
-  readonly invocationId: string
-  readonly input: unknown
-  readonly ok: boolean
-  readonly encoded: unknown
-}
-
-export interface RunSummary {
-  readonly outcome: "completed" | "partial"
-  readonly text: string
-}
-
 export interface InitialBatch {
   readonly calls: ReadonlyArray<{ readonly name: string; readonly params: unknown }>
   /** Skills the batch needs, activated before it runs. */
@@ -94,28 +109,6 @@ export interface ModelChoice {
   readonly variant: Option.Option<string>
 }
 
-/** Host policy for a run. Every hook is optional; contributions merge in graph order. */
-export interface RunHooks {
-  /** Some(reply) answers the turn without a model call (still recorded). First Some wins. */
-  readonly preflight: Option.Option<Effect.Effect<Option.Option<string>, HarnessError, unknown>>
-  /** A host-planned first batch, run as step zero without a provider call. First Some wins. */
-  readonly initialStep: Option.Option<Effect.Effect<Option.Option<InitialBatch>, HarnessError, unknown>>
-  /** Model selection at each provider step. First Some wins. */
-  readonly model: Option.Option<(step: StepInfo) => Effect.Effect<Option.Option<ModelChoice>, HarnessError, unknown>>
-  /** Per-step context and tool choice. Contexts concatenate; the first tool choice wins. */
-  readonly step: Option.Option<(step: StepInfo) => Effect.Effect<StepDirective, HarnessError, unknown>>
-  /** Host completion; every contribution must agree. */
-  readonly isComplete: Option.Option<(step: StepInfo) => Effect.Effect<boolean, never, unknown>>
-  readonly onToolResult: Option.Option<(outcome: ToolOutcome) => Effect.Effect<void, never, unknown>>
-  /** The delivered reply recorded for follow-up turns. First Some wins. */
-  readonly reply: Option.Option<Effect.Effect<Option.Option<string>, never, unknown>>
-  readonly settle: Option.Option<(summary: RunSummary) => Effect.Effect<void, HarnessError, unknown>>
-  readonly correctives: Option.Option<{
-    readonly malformed: (tools: ReadonlyArray<string>, description: string) => string
-    readonly incomplete: string
-  }>
-}
-
 /** One bundle a host (or a capability plugin) contributes. */
 export interface Contribution {
   readonly id: string
@@ -125,7 +118,6 @@ export interface Contribution {
   readonly sections: ReadonlyArray<PromptSection>
   /** Per-run services (built after RunContext, before the tools open). */
   readonly run: Option.Option<Layer.Layer<never, HarnessError, unknown>>
-  readonly hooks: RunHooks
 }
 
 /** A MULTI-provider key: every contributor's bundle, in graph order. */

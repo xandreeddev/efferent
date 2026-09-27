@@ -1,17 +1,9 @@
-import { Effect, Layer, Option, Schema } from "effect"
-import {
-  ActionPolicy,
-  CapabilityGrants,
-  Contributions,
-  defineContributions,
-  definePlugin,
-  IntentMatcher,
-  ToolRegistry,
-} from "@xandreed/core"
+import { Effect, Layer, Schema } from "effect"
+import { Contributions, defineContributions, definePlugin, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 
 const Config = Schema.Struct({
-  /** Granted permissions when no CapabilityGrants service is present. */
+  /** Granted permissions when the turn's services carry no CapabilityGrants. */
   grants: Schema.Array(Schema.String),
   /** Expose the skill catalogue, load_skill and read_skill_reference. */
   loadSkill: Schema.Boolean,
@@ -31,28 +23,23 @@ const defaults: Config = {
 
 /**
  * Tool registry and discovery. Hosts DEFINE tools and skills as
- * contributions; this plugin registers them, keeps the grow-only active set
- * in memory, runs the optional pre-turn matcher, serves load_skill (tier 2)
- * and references (tier 3), and checks every call centrally: active set,
- * grants, action policy, budgets and concurrency lanes.
+ * contributions; this plugin registers them once, keeps the grow-only active
+ * set in memory, runs the optional pre-turn matcher, serves load_skill
+ * (tier 2) and references (tier 3), checks every call centrally (active set,
+ * grants, action policy, budgets and concurrency lanes) and publishes
+ * `tool.started`, `tool.completed`, `skills.activated` and
+ * `decision.recorded` on the turn's bus. The matcher, grants and action
+ * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.5.0-next.0",
+  id: "@xandreed/plugin-tool-discovery", version: "0.5.0-next.0", scope: "runtime",
   config: Config, defaults,
   requires: [Contributions],
-  optional: [IntentMatcher, CapabilityGrants, ActionPolicy],
   provides: [ToolRegistry],
   contributes: [Contributions],
   layer: (config) => Layer.unwrapEffect(Effect.gen(function* () {
     const contributions = yield* Contributions
-    const matcher = yield* Effect.serviceOption(IntentMatcher)
-    const grants = yield* Effect.serviceOption(CapabilityGrants)
-    const policy = yield* Effect.serviceOption(ActionPolicy)
-    const registry = yield* makeRegistry(config, contributions, {
-      matcher,
-      grants: Option.map(grants, (service) => service.grants),
-      authorize: Option.map(policy, (service) => service.authorize),
-    })
+    const registry = yield* makeRegistry(config, contributions)
     const catalogue = defineContributions({
       id: "@xandreed/plugin-tool-discovery/catalogue",
       version: "1",
