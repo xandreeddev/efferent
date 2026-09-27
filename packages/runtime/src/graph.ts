@@ -1,6 +1,6 @@
 import { Context, Effect, Schema, Scope } from "effect"
 import { createHash } from "node:crypto"
-import { HarnessError, PLUGIN_API_VERSION } from "@xandreed/core"
+import { HarnessError, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "@xandreed/core"
 import type { HarnessConfig, Plugin, PluginEntry } from "@xandreed/core"
 
 export interface PluginNode {
@@ -16,6 +16,9 @@ export interface PluginGraph {
 }
 
 const invalid = (message: string) => Effect.fail(new HarnessError({ code: "config.graph", message }))
+/** Version 1 plugins predate contributions and optional services. */
+const contributes = (node: PluginNode): ReadonlyArray<string> => node.plugin.contributes ?? []
+const optional = (node: PluginNode): ReadonlyArray<string> => node.plugin.optional ?? []
 
 export const resolveGraph = (
   config: HarnessConfig,
@@ -30,7 +33,7 @@ export const resolveGraph = (
   const nodes = yield* Effect.forEach(entries, (entry) => Effect.gen(function* () {
     const plugin = plugins.find((candidate) => candidate.id === entry.use)
     if (plugin === undefined) return yield* invalid(`plugin ${entry.use} is not installed (instance ${entry.id})`)
-    if (plugin.apiVersion !== PLUGIN_API_VERSION) return yield* invalid(`${entry.id}: plugin API ${plugin.apiVersion} is incompatible with ${PLUGIN_API_VERSION}`)
+    if (!SUPPORTED_PLUGIN_API_VERSIONS.includes(plugin.apiVersion)) return yield* invalid(`${entry.id}: plugin API ${plugin.apiVersion} is incompatible with ${PLUGIN_API_VERSION}`)
     const options = { ...plugin.defaults, ...entry.options }
     yield* Schema.decodeUnknown(plugin.schema)(options, { onExcessProperty: "error" }).pipe(
       Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: entry.id, message: String(error) })),
@@ -51,23 +54,37 @@ export const resolveGraph = (
   })))
   yield* Effect.forEach(Object.keys(config.bindings ?? {}), (key) =>
     keys.includes(key) ? Effect.void : invalid(`binding references an unavailable service: ${key}`))
-  yield* Effect.forEach(nodes, (node) => Effect.forEach(node.plugin.requires, (key) => {
+  const contributors = (key: string, except: PluginNode): ReadonlyArray<PluginNode> =>
+    nodes.filter((node) => node !== except && contributes(node).includes(key))
+  const contributed = new Set(nodes.flatMap(contributes))
+  yield* Effect.forEach(nodes, (node) => Effect.forEach([...node.plugin.requires, ...optional(node)], (key) => {
     const provider = nodes.find((candidate) => candidate.entry.id === providers[key])
-    if (provider === undefined && !external.includes(key)) return invalid(`${node.entry.id} requires missing service ${key}`)
-    if (node.plugin.scope === "runtime" && provider?.plugin.scope === "session") {
+    const isContribution = contributed.has(key)
+    if (provider !== undefined && isContribution) return invalid(`${key} is both provided and contributed`)
+    if (provider === undefined && !isContribution && !external.includes(key) && node.plugin.requires.includes(key)) {
+      return invalid(`${node.entry.id} requires missing service ${key}`)
+    }
+    const sources = isContribution ? contributors(key, node) : provider === undefined ? [] : [provider]
+    if (node.plugin.scope === "runtime" && sources.some((source) => source.plugin.scope === "session")) {
       return invalid(`${node.entry.id}: runtime plugins cannot depend on session service ${key}`)
     }
     return Effect.void
   }))
   const order = (remaining: ReadonlyArray<PluginNode>, sorted: ReadonlyArray<PluginNode>): Effect.Effect<ReadonlyArray<PluginNode>, HarnessError> => {
     if (remaining.length === 0) return Effect.succeed(sorted)
-    const ready = remaining.filter((node) => node.plugin.requires.every((key) =>
-      external.includes(key) || sorted.some((candidate) => candidate.entry.id === providers[key])))
+    const ready = remaining.filter((node) => [...node.plugin.requires, ...optional(node)].every((key) =>
+      external.includes(key) ||
+      (contributed.has(key)
+        ? contributors(key, node).every((source) => sorted.includes(source))
+        : providers[key] === undefined ? !node.plugin.requires.includes(key) : sorted.some((candidate) => candidate.entry.id === providers[key]))))
     if (ready.length === 0) return invalid(`dependency cycle: ${remaining.map((node) => node.entry.id).join(" → ")}`)
     return Effect.suspend(() => order(remaining.filter((node) => !ready.includes(node)), [...sorted, ...ready]))
   }
   return { nodes: yield* order(nodes, []), providers, config }
 })
+
+const contributedKeys = (graph: PluginGraph): ReadonlySet<string> => new Set(graph.nodes.flatMap(contributes))
+const asArray = (value: unknown): ReadonlyArray<unknown> => Array.isArray(value) ? value : []
 
 /** Every activation is scoped. A failed staging scope is disposed by its caller. */
 export const activateGraph = (
@@ -78,13 +95,18 @@ export const activateGraph = (
 ): Effect.Effect<Context.Context<never>, HarnessError> => Effect.reduce(
   graph.nodes.filter((node) => node.plugin.scope === lifetime), services,
   (context, node) => Effect.gen(function* () {
-    const dependencies = Context.unsafeMake<never>(new Map(node.plugin.requires.flatMap((key) =>
-      context.unsafeMap.has(key) ? [[key, context.unsafeMap.get(key)] as const] : [])))
+    const dependencies = Context.unsafeMake<never>(new Map([...node.plugin.requires, ...optional(node)].flatMap((key) =>
+      context.unsafeMap.has(key) ? [[key, context.unsafeMap.get(key)] as const]
+        : contributedKeys(graph).has(key) ? [[key, []] as const] : [])))
     const built = yield* Scope.extend(node.plugin.build(node.options, dependencies), scope)
-    const missing = node.plugin.provides.filter((key) => !built.unsafeMap.has(key))
+    const missing = [...node.plugin.provides, ...contributes(node)].filter((key) => !built.unsafeMap.has(key))
     if (missing.length > 0) return yield* invalid(`${node.entry.id} did not provide declared services: ${missing.join(", ")}`)
-    const selected = new Map(node.plugin.provides.flatMap((key) =>
-      graph.providers[key] === node.entry.id ? [[key, built.unsafeMap.get(key)] as const] : []))
+    const invalidContribution = contributes(node).find((key) => !Array.isArray(built.unsafeMap.get(key)))
+    if (invalidContribution !== undefined) return yield* invalid(`${node.entry.id} contributed a non-array value to ${invalidContribution}`)
+    const selected = new Map([
+      ...node.plugin.provides.flatMap((key) => graph.providers[key] === node.entry.id ? [[key, built.unsafeMap.get(key)] as const] : []),
+      ...contributes(node).map((key) => [key, [...asArray(context.unsafeMap.get(key)), ...asArray(built.unsafeMap.get(key))]] as const),
+    ])
     return Context.merge(context, Context.unsafeMake<never>(selected))
   }),
 )

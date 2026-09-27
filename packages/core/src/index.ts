@@ -124,3 +124,16 @@ export * from "./loop/promptProvenance.js"
 export { CurrentAgentStep } from "./loop/stepContext.js"
 
 export * from "./decision-record.entity.js"
+
+// memory: the append-only log, its ports and the pure rebuild
+export * from "./memory/memory-log.entity.js"
+export * from "./memory/memory-log.entity.functions.js"
+export * from "./memory/memory-session.js"
+export * from "./ports/memory.port.js"
+
+// contributions: host-defined tools, skills and prompt sections for capability plugins
+export * from "./harness/contribution.entity.js"
+export * from "./harness/contribution.entity.functions.js"
+export * from "./ports/contribution.port.js"
+export * from "./ports/run-context.port.js"
+export * from "./ports/tool-registry.port.js"

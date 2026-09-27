@@ -22,6 +22,10 @@ export interface LoopInput {
   readonly publish: (event: EventBody) => Effect.Effect<SessionEvent, HarnessError>
   readonly transient: (event: EventBody) => Effect.Effect<void>
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
+  /** Journal reads for memory plugins: events after `after`, filtered by name (all when empty). */
+  readonly history: (after: number, names: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionEvent>, HarnessError>
+  /** Host services the run's tools and hooks may require (data ports, per-turn models). */
+  readonly services: Context.Context<never>
 }
 
 export class AgentLoop extends Context.Tag("efferent/AgentLoop")<AgentLoop, {
