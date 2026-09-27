@@ -72,7 +72,7 @@ export const summaryPolicy = (config: Config, summarize: (prompt: string) => Eff
 })
 
 export const memorySummaryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-summary", version: "0.4.0",
+  id: "@xandreed/plugin-memory-summary", version: "0.5.0-next.0",
   config: Config, defaults,
   requires: [MemoryLog, UtilityLlm],
   provides: [ConversationMemory],

@@ -83,7 +83,7 @@ const schemaTokens = (tools: RunTools, active: ReadonlyArray<string>): number =>
  */
 export const composableLoopPlugin = definePlugin({
   id: "@xandreed/plugin-agent-loop/composable",
-  version: "0.5.0",
+  version: "0.5.0-next.0",
   config: Config,
   defaults: defaults,
   requires: [LanguageModel.LanguageModel, ToolRegistry, ConversationMemory],

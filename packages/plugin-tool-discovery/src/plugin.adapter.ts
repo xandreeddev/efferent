@@ -37,7 +37,7 @@ const defaults: Config = {
  * grants, action policy, budgets and concurrency lanes.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.4.0",
+  id: "@xandreed/plugin-tool-discovery", version: "0.5.0-next.0",
   config: Config, defaults,
   requires: [Contributions],
   optional: [IntentMatcher, CapabilityGrants, ActionPolicy],

@@ -114,7 +114,7 @@ export const recallContribution = defineContributions({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.4.0",
+  id: "@xandreed/plugin-memory-window", version: "0.5.0-next.0",
   config: Config, defaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],

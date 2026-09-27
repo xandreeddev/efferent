@@ -9,7 +9,7 @@ const storage = (message: string) => new HarnessError({ code: "memory.log", mess
  * the Harness's session store or an application's own event log.
  */
 export const memoryLogPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-log", version: "0.4.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-log", version: "0.5.0-next.0", scope: "runtime",
   config: Schema.Struct({ event: Schema.NonEmptyString }), defaults: { event: "memory.entries" },
   provides: [MemoryLog],
   layer: ({ event }) => Layer.succeed(MemoryLog, MemoryLog.of({
