@@ -92,9 +92,11 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
 }
 
 export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArray<Contribution>, services: DiscoveryServices) => Effect.gen(function* () {
+  // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
+  const hasReferences = contributions.some((contribution) => contribution.skills.some((skill) => skill.references.length > 0))
   const own: ReadonlyArray<RegisteredTool> = config.loadSkill ? [
     defineTool({ tool: LoadSkill, handler: () => Effect.die("bound per run"), annotations: { readOnly: true, pinned: true } }),
-    defineTool({ tool: ReadSkillReference, handler: () => Effect.die("bound per run"), annotations: { readOnly: true } }),
+    ...(hasReferences ? [defineTool({ tool: ReadSkillReference, handler: () => Effect.die("bound per run"), annotations: { readOnly: true } })] : []),
   ] : []
   const registered = [...contributions.flatMap((contribution) => contribution.tools), ...own]
   const duplicateTool = registered.find((entry, index) => registered.findIndex((other) => other.tool.name === entry.tool.name) !== index)

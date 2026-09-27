@@ -155,9 +155,9 @@ describe("composable agent host", () => {
     const { first, events } = outcome
     expect(first.result).toEqual({ text: "record-alpha", outcome: "completed" })
     expect(first.seen.map((request) => request.tools)).toEqual([
-      ["load_skill", "read_skill_reference", "lookup", "recall_context"],
-      ["load_skill", "read_skill_reference", "lookup", "recall_context"],
-      ["load_skill", "read_skill_reference", "lookup", "recall_context", "deliver"],
+      ["load_skill", "lookup", "recall_context"],
+      ["load_skill", "lookup", "recall_context"],
+      ["load_skill", "lookup", "recall_context", "deliver"],
     ])
     const system = JSON.stringify(first.seen[0]!.prompt[0])
     expect(system).toContain("You are a test agent.")
