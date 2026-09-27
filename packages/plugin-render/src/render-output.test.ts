@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { Effect, Fiber, Layer } from "effect"
-import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal } from "./ports/ui-output.port.js"
-import { UiOutputError } from "./domain/ui-output.entity.js"
-import { UiOutputLive } from "./ui-output.adapter.js"
+import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal } from "./ports/render-output.port.js"
+import { UiOutputError } from "./domain/render-output.entity.js"
+import { UiOutputLive } from "./render-output.adapter.js"
 
 const scope = { threadId: "thread", runId: "run", messageId: "answer", principalId: "guest", fence: 1 }
 const proposal = { operationId: "op", nodeId: "map", release: { component: "map", version: "1", definitionHash: "a".repeat(64), rendererRelease: "1", tokensHash: "b".repeat(64), layoutVersion: "1" }, props: { factId: "course" }, evidence: ["course"] }

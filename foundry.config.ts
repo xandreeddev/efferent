@@ -43,6 +43,7 @@ const CHECKED = [
   "packages/plugin-mcp/src/**",
   "packages/surface/src/**",
   "packages/ui-agent/src/**",
+  "packages/plugin-render/src/**",
   "packages/canvas/src/**",
   "packages/scenarios/src/**",
   "packages/smith/src/**",
@@ -624,7 +625,8 @@ const config: typeof GateSuiteConfig.Encoded = {
             "path": "packages/ui-agent/src/**",
             "canImport": [
                   "core",
-                  "plugin-agent-loop"
+                  "plugin-agent-loop",
+                  "plugin-render"
             ],
             "externals": [
                   "effect",
@@ -633,7 +635,22 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun",
                   "bun:",
                   "@xandreed/core",
-                  "@xandreed/plugin-agent-loop"
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-render"
+            ]
+      },
+      {
+            "name": "plugin-render",
+            "path": "packages/plugin-render/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "@xandreed/core",
+                  "node:",
+                  "bun:test"
             ]
       }
 ],
