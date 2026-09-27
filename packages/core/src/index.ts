@@ -137,3 +137,9 @@ export * from "./harness/contribution.entity.functions.js"
 export * from "./ports/contribution.port.js"
 export * from "./ports/run-context.port.js"
 export * from "./ports/tool-registry.port.js"
+
+// the turn's typed events and background tasks
+export * from "./turn/turn-event.entity.js"
+export * from "./turn/turn-event.entity.functions.js"
+export * from "./turn/turn-bus.js"
+export * from "./ports/turn-events.port.js"
