@@ -23,6 +23,7 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  */
 const CHECKED = [
   "packages/core/src/**",
+  "packages/ai/src/**",
   "packages/evals/src/**",
   "packages/plugin-agent-loop/src/**",
   "packages/runtime/src/**",
@@ -112,6 +113,7 @@ const config: typeof GateSuiteConfig.Encoded = {
   ],
   boundaries: {
     layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","@effect/ai","@xandreed/core","node:","bun:test"]},
+      { name: "ai", path: "packages/ai/src/**", canImport: ["core"], externals: ["effect", "@effect/ai", "@xandreed/core", "bun:test"] },
       {
             "name": "canvas",
             "path": "packages/canvas/src/**",

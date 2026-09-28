@@ -2,12 +2,12 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { definePlugin, HarnessError, ResultDigester, UtilityLlm } from "@xandreed/core"
 import type { DigestOutcome, DigestTask } from "@xandreed/core"
 
-const Config = Schema.Struct({
+export const MemoryDigestConfig = Schema.Struct({
   /** The digester's source text is clipped to this many characters. */
   maxSourceChars: Schema.Int.pipe(Schema.between(1_000, 400_000)),
 })
-type Config = typeof Config.Type
-const defaults: Config = { maxSourceChars: 48_000 }
+export type MemoryDigestConfig = typeof MemoryDigestConfig.Type
+export const memoryDigestDefaults: MemoryDigestConfig = { maxSourceChars: 48_000 }
 
 export const UTILITY_DIGESTER = { id: "utility-digest", version: "1" } as const
 
@@ -47,8 +47,8 @@ export const outcomeOf = (task: DigestTask, reply: string): DigestOutcome => tas
  * decides how; this plugin only asks.
  */
 export const memoryDigestPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-digest", version: "0.6.0-next.1", scope: "session",
-  config: Config, defaults,
+  id: "@xandreed/plugin-memory-digest", version: "0.6.0-next.2", scope: "session",
+  config: MemoryDigestConfig, defaults: memoryDigestDefaults,
   requires: [UtilityLlm],
   provides: [ResultDigester],
   layer: (config) => Layer.effect(ResultDigester, Effect.gen(function* () {
@@ -62,4 +62,6 @@ export const memoryDigestPlugin = definePlugin({
     })
   })),
 })
+/** The digester as a typed layer, built per turn: provides ResultDigester; requires the turn's UtilityLlm. */
+export const MemoryDigestLive = memoryDigestPlugin.live
 export default memoryDigestPlugin

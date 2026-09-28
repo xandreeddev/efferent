@@ -59,6 +59,14 @@ cycles, ambiguous providers, and incompatible plugin API versions before use.
 Override a service through an explicit binding; replace the loop or memory
 without importing Smith or the TUI.
 
+Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
+that `stackPlugins` composes the way the graph does. A turn is public steps
+over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
+`runTurnLoop`, `guardTurn`): `Agent.turn` is one composition of them, and
+`turnConformance` checks any other. `@xandreed/ai` versions prompts and
+decision prompts, with variants per model and the provenance every call
+records. See [the framework guide](docs/framework.md).
+
 ## Configuration
 
 Choose `efferent.config.json` or `efferent.config.ts` per directory. Both resolve
@@ -90,6 +98,7 @@ Set `inheritPrevious: false` for an independent setup.
 | Package | Responsibility |
 | --- | --- |
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
+| `@xandreed/ai` | Versioned prompts and decision prompts on `@effect/ai`, with their provenance |
 | `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
 | `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
 | `@xandreed/plugin-*` | Replaceable first-party capabilities |
@@ -122,7 +131,8 @@ bun run --cwd packages/website check
 The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, then executes
-an external loop plugin, durable sessions, a fork, an eval and CLI startup.
+an external loop plugin, durable sessions, a fork, an eval, versioned prompts
+with a checked decision, and CLI startup.
 `@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and
 all nine `@xandreed/plugin-*` packages are published as `0.4.0` under npm's
 `latest` tag. Install evals with `npm install @xandreed/evals`, or install the

@@ -34,6 +34,8 @@ export interface TurnEventsService {
   ) => Effect.Effect<void, never, R | Scope.Scope>
   /** Wait until every background subscription has handled what was published to it. */
   readonly drain: Effect.Effect<void, HarnessError>
+  /** Background deliveries so far: a caller can tell whether a drain left new work. */
+  readonly activity: Effect.Effect<number>
 }
 
 /**
@@ -46,6 +48,8 @@ export interface TurnTasksService {
   readonly pending: (tag: string) => Effect.Effect<boolean>
   /** Join every task with one of these tags (all tasks when empty). */
   readonly await: (tags: ReadonlyArray<string>) => Effect.Effect<void, HarnessError>
+  /** Tasks forked so far: a caller can tell whether joining them started more. */
+  readonly activity: Effect.Effect<number>
 }
 
 export class TurnEvents extends Context.Tag("efferent/TurnEvents")<TurnEvents, TurnEventsService>() {}

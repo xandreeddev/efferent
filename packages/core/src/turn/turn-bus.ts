@@ -32,7 +32,7 @@ const defaultCapacity = 256
  * their own fiber; `drain` waits for them. `activity` counts background
  * deliveries so far, so a caller can tell whether a drain left new work.
  */
-export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.Effect<TurnEventsService & { readonly activity: Effect.Effect<number> }, never, Scope.Scope> => Effect.gen(function* () {
+export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.Effect<TurnEventsService, never, Scope.Scope> => Effect.gen(function* () {
   const subscribers = yield* Ref.make<ReadonlyArray<Subscriber>>([])
   const nextId = yield* Ref.make(0)
   const depth = yield* FiberRef.make(0)
@@ -107,7 +107,7 @@ interface Task {
 }
 
 /** Background work forked in `scope`: interrupted when it closes, joined on demand. `activity` counts tasks forked so far. */
-export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksService & { readonly activity: Effect.Effect<number> }> => Effect.gen(function* () {
+export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksService> => Effect.gen(function* () {
   const tasks = yield* Ref.make<ReadonlyArray<Task>>([])
   const fork = <R>(tag: string, task: Effect.Effect<void, HarnessError, R>) => Effect.gen(function* () {
     const context = yield* Effect.context<R>()

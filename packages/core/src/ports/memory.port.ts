@@ -87,7 +87,7 @@ export interface ToolViews {
   readonly digest: (tool: string, encoded: unknown, params: unknown, userMessage: UserMessage) => Effect.Effect<Option.Option<DigestTask>>
 }
 
-/** Runs a tool's digest prompt (see `DigestDefinition`). Read from the turn's services. */
+/** Runs a tool's digest prompt (see `DigestDefinition`). Read, when present, from where the session is opened. */
 export class ResultDigester extends Context.Tag("efferent/ResultDigester")<ResultDigester, {
   readonly id: string
   readonly version: string
@@ -126,11 +126,14 @@ export interface MemorySession extends MemoryReader {
 /** STRATEGY: how memory is kept, compacted and rebuilt. Swap this plugin to swap memory. */
 export class ConversationMemory extends Context.Tag("efferent/ConversationMemory")<ConversationMemory, {
   readonly strategy: { readonly id: string; readonly version: string }
-  /** `services` are the turn's: a strategy reads what it needs (a summarizer, a digester) here. */
+  /**
+   * Open the conversation's session for one run. A strategy reads what it
+   * needs per turn (a ResultDigester, a summarizer's UtilityLlm) with
+   * `Effect.serviceOption` from the environment it is opened in.
+   */
   readonly open: (scope: {
     readonly conversation: ConversationId
     readonly runId: string
     readonly io: JournalIO
-    readonly services: Context.Context<never>
   }) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>
 }>() {}

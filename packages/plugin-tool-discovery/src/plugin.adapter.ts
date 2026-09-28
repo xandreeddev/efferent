@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from "effect"
 import { Contributions, defineContributions, definePlugin, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 
-const Config = Schema.Struct({
+export const ToolDiscoveryConfig = Schema.Struct({
   /** Granted permissions when the turn's services carry no CapabilityGrants. */
   grants: Schema.Array(Schema.String),
   /** Expose the skill catalogue, load_skill and read_skill_reference. */
@@ -15,8 +15,8 @@ const Config = Schema.Struct({
   /** Order of the catalogue section within the system prompt. */
   catalogOrder: Schema.Int,
 })
-type Config = typeof Config.Type
-const defaults: Config = {
+export type ToolDiscoveryConfig = typeof ToolDiscoveryConfig.Type
+export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
   grants: [], loadSkill: true, maxCallsPerRun: 64, maxSkillLoadsPerRun: 4, readConcurrency: 4,
   matcherTimeoutMs: 3_000, catalogVersion: "1", catalogOrder: 900,
 }
@@ -32,8 +32,8 @@ const defaults: Config = {
  * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.6.0-next.1", scope: "runtime",
-  config: Config, defaults,
+  id: "@xandreed/plugin-tool-discovery", version: "0.6.0-next.2", scope: "runtime",
+  config: ToolDiscoveryConfig, defaults: toolDiscoveryDefaults,
   requires: [Contributions],
   provides: [ToolRegistry],
   contributes: [Contributions],
@@ -54,4 +54,6 @@ export const toolDiscoveryPlugin = definePlugin({
     )
   })),
 })
+/** Tool discovery as a typed layer: provides ToolRegistry and contributes the catalogue; requires the Contributions below it. */
+export const ToolDiscoveryLive = toolDiscoveryPlugin.live
 export default toolDiscoveryPlugin

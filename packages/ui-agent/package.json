@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/ui-agent",
-  "version": "0.3.0-next.1",
+  "version": "0.3.0-next.2",
   "private": true,
   "type": "module",
   "description": "Structured, token-governed UI agent contracts and runtime.",
