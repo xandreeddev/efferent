@@ -84,6 +84,8 @@ const observe = (loop: Context.Tag.Service<typeof StepLoop>, scenario: Scenario)
     handlers,
     active: Effect.succeed([Probe.name]),
     activate: () => Effect.succeed([Probe.name]),
+    match: (message) => Effect.succeed({ message, skills: [], probabilities: Option.none(), record: Option.none() }),
+    apply: () => Effect.succeed([Probe.name]),
     select: () => Effect.succeed([Probe.name]),
     views: {
       view: (_tool, encoded) => Effect.succeed({ text: String(encoded), version: "1", subjects: [], artifacts: [], pinned: false }),

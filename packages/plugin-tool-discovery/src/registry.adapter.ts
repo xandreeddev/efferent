@@ -29,6 +29,7 @@ import type {
   RegisteredTool,
   RunTools,
   SkillDefinition,
+  SkillMatch,
   ToolView,
   ToolViews,
 } from "@xandreed/core"
@@ -266,40 +267,67 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])) as never,
     )
 
-    const select = (message: string) => Effect.gen(function* () {
-      const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
-      yield* always.length === 0 ? Effect.void : activate(always, "always").pipe(Effect.asVoid)
-      if (Option.isNone(matcher)) return yield* Ref.get(active)
+    const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
+    const candidates = skills.filter((skill) => !skill.always)
+    const candidateHash = fingerprintOf(canonicalJson(candidates.map((skill) => [skill.id, skill.version])))
+
+    /** The tools active once the always-on skills are: what the matcher is told is already there. */
+    const activeWithAlways = Effect.gen(function* () {
+      const current = yield* Ref.get(active)
+      if (always.length === 0) return current
+      const resolved = yield* resolveCapabilities(catalog, { recipes: always, tools: [] }, grants)
+      return [...current, ...resolved.tools.map((tool) => tool.id).filter((tool) => !current.includes(tool))]
+    })
+
+    /** Ask the matcher. Nothing is activated, recorded or published. */
+    const match = (message: string) => Effect.gen(function* () {
+      if (Option.isNone(matcher)) return { message, skills: [], probabilities: Option.none(), record: Option.none() } satisfies SkillMatch
       const selector = matcher.value
-      const candidates = skills.filter((skill) => !skill.always)
       const history = yield* session.transcript("reference")
       const loadedBefore = yield* Ref.get(loadedSkills)
-      const match = yield* selector.match({ message, skills: candidates, active: yield* Ref.get(active), history }).pipe(
+      const activeNow = yield* activeWithAlways
+      const outcome = yield* selector.match({ message, skills: candidates, active: activeNow, history }).pipe(
         Effect.timeoutFail({ duration: `${config.matcherTimeoutMs} millis`, onTimeout: () => harness("matcher.timeout", "The skill matcher timed out") }),
         Effect.either,
       )
-      const chosen = match._tag === "Right" && !match.right.abstained
-        ? match.right.skills.filter((id) => candidates.some((skill) => skill.id === id) && !loadedBefore.includes(id))
+      const chosen = outcome._tag === "Right" && !outcome.right.abstained
+        ? outcome.right.skills.filter((id) => candidates.some((skill) => skill.id === id) && !loadedBefore.includes(id))
         : []
-      const applied = yield* chosen.length === 0 ? Effect.succeed(false) : activate(chosen, "matcher").pipe(Effect.as(true), Effect.orElseSucceed(() => false))
       // A multi-label decision: `selection` is the chosen skill ids joined by ",".
       const selection = chosen.length === 0 ? Option.none<string>() : Option.some(chosen.join(","))
+      const probabilities = outcome._tag === "Right" ? outcome.right.probabilities : Option.none()
       const record: DecisionRecord = {
         version: 1,
         id: DecisionId.make(`${run.runId}:skill-selection`),
         family: "skill-selection",
-        contextHash: fingerprintOf(canonicalJson({ message, active: yield* Ref.get(active), history: history.length })),
-        candidateHash: fingerprintOf(canonicalJson(candidates.map((skill) => [skill.id, skill.version]))),
+        contextHash: fingerprintOf(canonicalJson({ message, active: activeNow, history: history.length })),
+        candidateHash,
         policyVersion: `${selector.id}@${selector.version}`,
         candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),
         attempts: [],
         selection,
-        validation: match._tag === "Left" ? "failed" : match.right.abstained || chosen.length === 0 ? "abstained" : applied ? "accepted" : "rejected",
-        fallback: match._tag === "Left" ? Option.some(`always-on: ${match.left.message}`) : Option.none(),
-        applied: applied ? selection : Option.none(),
-        probabilities: match._tag === "Right" ? match.right.probabilities : Option.none(),
+        validation: outcome._tag === "Left" ? "failed" : outcome.right.abstained || chosen.length === 0 ? "abstained" : "accepted",
+        fallback: outcome._tag === "Left" ? Option.some(`always-on: ${outcome.left.message}`) : Option.none(),
+        applied: selection,
+        probabilities,
       }
-      yield* recordDecision(record).pipe(Effect.provideService(RunContext, run))
+      return { message, skills: chosen, probabilities, record: Option.some(record) } satisfies SkillMatch
+    })
+
+    /** Activate the always-on skills and the match, record the decision, seed the load_skill exchange. */
+    const apply = (matched: SkillMatch) => Effect.gen(function* () {
+      yield* always.length === 0 ? Effect.void : activate(always, "always").pipe(Effect.asVoid)
+      const loaded = yield* Ref.get(loadedSkills)
+      const chosen = matched.skills.filter((id) => !loaded.includes(id))
+      const applied = yield* chosen.length === 0 ? Effect.succeed(false) : activate(chosen, "matcher").pipe(Effect.as(true), Effect.orElseSucceed(() => false))
+      yield* Option.match(matched.record, {
+        onNone: () => Effect.void,
+        onSome: (record) => recordDecision({
+          ...record,
+          validation: record.validation === "accepted" && !applied ? "rejected" : record.validation,
+          applied: applied ? record.selection : Option.none(),
+        }).pipe(Effect.provideService(RunContext, run)),
+      })
       if (applied && config.loadSkill) {
         const seeded = skills.filter((skill) => chosen.includes(skill.id))
         const callId = ToolCallId.make(`${run.runId}:matcher`)
@@ -311,11 +339,15 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       return yield* Ref.get(active)
     })
 
+    const select = (message: string) => match(message).pipe(Effect.flatMap(apply))
+
     return {
       toolkit: toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>,
       handlers: handlers as Context.Context<never>,
       active: Ref.get(active).pipe(Effect.map((names) => [...own.map((entry) => entry.tool.name), ...names])),
       activate,
+      match,
+      apply,
       select,
       views,
       pollable: registered.filter((entry) => entry.annotations.pollable).map((entry) => entry.tool.name),
