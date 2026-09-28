@@ -2,7 +2,7 @@ import { Clock, Effect, Option, Ref } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
-import type { LogHandle, MaintainSignal, MemorySession, ToolViews } from "../ports/memory.port.js"
+import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews } from "../ports/memory.port.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
@@ -47,6 +47,16 @@ export interface MemoryPolicy {
 }
 
 const defaultDigestConcurrency = 4
+
+/** The read-only view of a session, as tools, sections, matchers and reactions get it. */
+export const readerOf = (session: MemorySession): MemoryReader => ({
+  turn: session.turn,
+  entries: session.entries,
+  query: session.query,
+  subjects: session.subjects,
+  resolve: session.resolve,
+  transcript: session.transcript,
+})
 
 /** The latest user message of the log — what a digest must serve. */
 const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<UserMessage> =>

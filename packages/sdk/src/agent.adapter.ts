@@ -1,6 +1,5 @@
-import { Context, Effect, Exit, JSONSchema, Layer, Option, Ref, Schema, Scope } from "effect"
+import { Context, Effect, Exit, Layer, Option, Ref, Schema, Scope } from "effect"
 import {
-  canonicalJson,
   ConversationMemory,
   Contributions,
   definePlugin,
@@ -12,7 +11,10 @@ import {
   makeJournalWriter,
   makeTurnEvents,
   makeTurnTasks,
+  readerOf,
+  renderSections,
   RunContext,
+  schemaTokens,
   SessionEnvironment,
   StepLoop,
   ToolRegistry,
@@ -25,11 +27,8 @@ import type {
   HarnessConfig,
   LogEntry,
   LoopLimits,
-  MemoryReader,
-  MemorySession,
   Plugin,
   PromptContext,
-  PromptSection,
   RunResult,
   RunTools,
   StepDirective,
@@ -118,32 +117,6 @@ const hostContributions = (contributions: ReadonlyArray<Contribution>) => define
   config: Schema.Struct({}), defaults: {},
   provides: [], contributes: [Contributions],
   layer: () => Layer.succeed(Contributions, contributions),
-})
-
-const tierRank = (section: PromptSection): number => section.tier === "static" ? 0 : section.tier === "session" ? 1 : 2
-
-/** Static sections first (the cacheable prefix), then session ones; each tier by order, then id. */
-export const orderSections = (sections: ReadonlyArray<PromptSection>): ReadonlyArray<PromptSection> =>
-  [...sections].sort((left, right) => tierRank(left) - tierRank(right) || left.order - right.order || left.id.localeCompare(right.id))
-
-const renderSections = (sections: ReadonlyArray<PromptSection>, context: PromptContext) =>
-  Effect.forEach(orderSections(sections), (section) => section.render(context).pipe(
-    Effect.map((text) => Option.map(text, (value) => ({ section, text: value }))),
-  )).pipe(Effect.map((rendered) => rendered.flatMap(Option.toArray)))
-
-const schemaTokens = (tools: RunTools, active: ReadonlyArray<string>): number =>
-  active.reduce((sum, name) => {
-    const tool = tools.toolkit.tools[name]
-    return tool === undefined ? sum : sum + estimateTokens(`${tool.description ?? ""}${canonicalJson(JSONSchema.make(tool.parametersSchema))}`)
-  }, 0)
-
-const readerOf = (session: MemorySession): MemoryReader => ({
-  turn: session.turn,
-  entries: session.entries,
-  query: session.query,
-  subjects: session.subjects,
-  resolve: session.resolve,
-  transcript: session.transcript,
 })
 
 /**
