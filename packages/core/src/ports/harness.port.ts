@@ -4,6 +4,7 @@ import type { Tool, Toolkit } from "@effect/ai"
 import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody, MemoryEntry, SessionEvent, SessionRecord } from "../harness/session.entity.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 
 export class SessionStore extends Context.Tag("efferent/SessionStore")<SessionStore, {
   readonly create: (workspace: string, profile: string) => Effect.Effect<SessionRecord, HarnessError>
@@ -17,7 +18,7 @@ export class SessionStore extends Context.Tag("efferent/SessionStore")<SessionSt
 export interface LoopInput {
   readonly session: SessionRecord
   readonly runId: string
-  readonly prompt: string
+  readonly userMessage: UserMessage
   readonly system: string
   readonly publish: (event: EventBody) => Effect.Effect<SessionEvent, HarnessError>
   readonly transient: (event: EventBody) => Effect.Effect<void>

@@ -2,7 +2,7 @@ import { Toolkit } from "@effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { buildMcpBridge, UtilityLlm } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
-import type { AuthStore, ConversationId, SettingsStore } from "@xandreed/core"
+import type { AuthStore, ConversationId, SettingsStore, UserMessage } from "@xandreed/core"
 import { LanguageModelLive, roleModelView } from "@xandreed/plugin-models"
 import { LocalShellLive, SandboxedShellLive } from "@xandreed/plugin-tools-local"
 import type { SmithEvent } from "../domain/SmithEvent.js"
@@ -62,7 +62,7 @@ const FOLLOW_UP_FOLD_TOKENS = 80_000
 export const runFollowUpTurn = (
   run: SmithRunConfig,
   conversationId: ConversationId,
-  prompt: string,
+  userMessage: UserMessage,
   publish: (event: SmithEvent) => Effect.Effect<void>,
   pendingInput: () => Effect.Effect<Option.Option<string>>,
 ): Effect.Effect<void, unknown, ImplementorServices | SettingsStore | AuthStore> =>
@@ -108,7 +108,7 @@ export const runFollowUpTurn = (
         },
       },
       conversationId,
-      prompt,
+      userMessage,
       {
         onEvent: (event) => publish({ type: "agent", event }),
         pendingInput,

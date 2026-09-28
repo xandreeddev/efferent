@@ -3,6 +3,7 @@ import type { ConversationId } from "../domain/message.entity.js"
 import type { SkillDefinition } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 import type { InitialBatch, ModelChoice, StepDirective, StepInfo } from "./contribution.port.js"
 import type { JournalIO, MemoryReader } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
@@ -37,11 +38,11 @@ export interface TurnOutcome {
 
 export interface TurnTools {
   /** Ask the matcher without writing anything (run it beside other pre-turn work). */
-  readonly match: (message: string) => Effect.Effect<SkillMatch, HarnessError>
+  readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>
   /** Activate the always-on skills and a match; recorded as a decision. */
   readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   /** `match` then `apply`. */
-  readonly select: (message: string) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   readonly active: Effect.Effect<ReadonlyArray<string>>
   readonly skills: ReadonlyArray<SkillDefinition>
@@ -52,7 +53,7 @@ export interface Turn {
   readonly conversation: ConversationId
   readonly runId: string
   readonly turn: number
-  readonly prompt: string
+  readonly userMessage: UserMessage
   readonly memory: MemoryReader
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
@@ -73,13 +74,13 @@ export type TurnServices = RunContext | TurnEvents | TurnTasks
 
 /**
  * One admitted turn's input. `layer` is the host's per-turn services (state
- * stores, per-question adapters…): built after RunContext, it is provided to
+ * stores, adapters for this user message…): built after RunContext, it is provided to
  * the host's `use`, to the tools, the policy, subscriptions and tasks alike.
  */
 export interface TurnInput<A = never, E = never> {
   readonly conversation: ConversationId
   readonly runId: string
-  readonly prompt: string
+  readonly userMessage: UserMessage
   /** This turn's services: the model, per-turn budgets, data ports… */
   readonly services: Context.Context<never>
   /** The conversation's journal: memory storage, and where every event is persisted. */

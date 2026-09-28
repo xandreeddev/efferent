@@ -4,6 +4,7 @@ import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, ToolViews } from "../ports/memory.port.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 import type { LogEntry } from "./memory-log.entity.js"
 import { openLogSession } from "./memory-session.js"
 import type { MemoryPolicy } from "./memory-session.js"
@@ -18,8 +19,8 @@ const policy: MemoryPolicy = {
 const views: ToolViews = {
   view: (_tool, encoded) => Effect.succeed({ text: `VIEW ${String(encoded)}`, version: "1", subjects: [], artifacts: [], pinned: false }),
   compact: () => Effect.succeed(Option.none()),
-  digest: (tool, encoded) => Effect.succeed(Option.some({
-    tool, version: "1", mode: "summarize" as const, instructions: "Summarize.", question: "", items: [],
+  digest: (tool, encoded, _params, userMessage) => Effect.succeed(Option.some({
+    tool, version: "1", mode: "summarize" as const, instructions: "Summarize.", userMessage, items: [],
     source: String(encoded), apply: (outcome) => outcome.summary,
   })),
 }
@@ -48,6 +49,7 @@ describe("the log session", () => {
         ),
       })
       const session = yield* openLogSession(log, { ...policy, digestConcurrency: 3 }, { runId: "run-1", services: Context.make(ResultDigester, digester) })
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "look up a, b and c" }) }], 0)
       const recorded = yield* session.recordTail([results(["a", "b", "c"])], views, 1)
       return {
         peak: yield* Ref.get(peak),
@@ -57,6 +59,27 @@ describe("the log session", () => {
     }))
     expect(outcome.peak).toBe(3)
     expect(outcome.digests).toEqual(["DIGEST a", "DIGEST b", "DIGEST c"])
-    expect(outcome.ids).toEqual(["run-1:0", "run-1:1", "run-1:2", "run-1:3", "run-1:4", "run-1:5"])
+    expect(outcome.ids).toEqual(["run-1:1", "run-1:2", "run-1:3", "run-1:4", "run-1:5", "run-1:6"])
+  })
+
+  test("digests serve the latest user message; a log without one digests nothing", async () => {
+    const served = await Effect.runPromise(Effect.gen(function* () {
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const digester = ResultDigester.of({
+        id: "echo", version: "1",
+        digest: (task) => Ref.update(seen, (all) => [...all, task.userMessage.text]).pipe(Effect.as({ keep: [], summary: Option.some("DIGEST") })),
+      })
+      const session = yield* openLogSession(log, policy, { runId: "run-1", services: Context.make(ResultDigester, digester) })
+      const before = yield* session.recordTail([results(["a"])], views, 1)
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "first" }) }], 0)
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "second" }) }], 0)
+      const after = yield* session.recordTail([results(["b"])], views, 1)
+      return { before: before.map((entry) => entry.body._tag), after: after.map((entry) => entry.body._tag), seen: yield* Ref.get(seen) }
+    }))
+    expect(served.before).toEqual(["ToolResult"])
+    expect(served.after).toEqual(["ToolResult", "ToolDigest"])
+    expect(served.seen).toEqual(["second"])
   })
 })

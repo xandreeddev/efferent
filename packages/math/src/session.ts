@@ -1,6 +1,6 @@
 import type { LanguageModel } from "@effect/ai"
 import { Effect, Ref } from "effect"
-import { ConversationStore, makeSession } from "@xandreed/core"
+import { ConversationStore, makeSession, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/core"
 import type { MathItem } from "./domain/MathContent.js"
@@ -53,7 +53,7 @@ export const makeMathSession = (args: {
           (items) => publish({ type: "math_render", items }),
           served,
         )
-        return runAgent(bundle.agentConfig, args.conversationId, text, {
+        return runAgent(bundle.agentConfig, args.conversationId, new UserMessage({ text }), {
           onEvent: publish,
         }).pipe(Effect.provide(bundle.handlerLayer), Effect.asVoid)
       },

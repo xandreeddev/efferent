@@ -6,6 +6,7 @@ import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import type { SkillDefinition } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ActivationSource } from "../memory/memory-log.entity.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemorySession, ToolViews } from "./memory.port.js"
 
 /**
@@ -14,7 +15,7 @@ import type { MemorySession, ToolViews } from "./memory.port.js"
  * when the turn ends early); `apply` activates, records and publishes it.
  */
 export interface SkillMatch {
-  readonly message: string
+  readonly userMessage: UserMessage
   /** Skills the matcher chose that are not loaded yet. */
   readonly skills: ReadonlyArray<string>
   readonly probabilities: Option.Option<Readonly<Record<string, number>>>
@@ -30,11 +31,11 @@ export interface RunTools {
   readonly active: Effect.Effect<ReadonlyArray<string>>
   readonly activate: (skills: ReadonlyArray<string>, source: ActivationSource) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   /** Ask the matcher, without writing anything. */
-  readonly match: (message: string) => Effect.Effect<SkillMatch, HarnessError>
+  readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>
   /** Always-on skills plus a match: activated, recorded as a decision, seeded as a load_skill exchange. */
   readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   /** `match` then `apply`. */
-  readonly select: (message: string) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   readonly views: ToolViews
   readonly pollable: ReadonlyArray<string>
   readonly skills: ReadonlyArray<SkillDefinition>

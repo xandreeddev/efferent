@@ -37,7 +37,7 @@ import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
 import { scenario, runPack, assessAll, semanticEvaluator } from "@xandreed/evals"
 import { SemanticJevLive } from "@xandreed/evals/adapters/semantic-jev.adapter"
-const echo = definePlugin({ id: "external/echo", version: "1", config: Schema.Struct({prefix: Schema.String}), defaults: {prefix:"hello "}, provides:[AgentLoop], layer: ({prefix}) => Layer.succeed(AgentLoop,{ run: input => Effect.succeed({text:prefix+input.prompt,outcome:"completed"}) }) })
+const echo = definePlugin({ id: "external/echo", version: "1", config: Schema.Struct({prefix: Schema.String}), defaults: {prefix:"hello "}, provides:[AgentLoop], layer: ({prefix}) => Layer.succeed(AgentLoop,{ run: input => Effect.succeed({text:prefix+input.userMessage.text,outcome:"completed"}) }) })
 await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const harness = yield* Harness.make({workspace:process.cwd(), plugins:[sessions,echo], config:{version:1,plugins:[{id:"store",use:sessions.id},{id:"loop",use:echo.id}]}})
  const session = yield* harness.create()

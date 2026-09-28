@@ -32,6 +32,7 @@ import type {
   SkillMatch,
   ToolView,
   ToolViews,
+  UserMessage,
 } from "@xandreed/core"
 
 export interface DiscoveryConfig {
@@ -143,10 +144,10 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
           Effect.orElseSucceed(() => Option.none<string>()),
         )
     },
-    digest: (name, encoded, params, question) => decoded(name, encoded).pipe(Effect.map((found) => Option.flatMap(found, ({ entry, result }) =>
+    digest: (name, encoded, params, userMessage) => decoded(name, encoded).pipe(Effect.map((found) => Option.flatMap(found, ({ entry, result }) =>
       Option.flatMap(Option.flatMap(entry.view, (view) => Option.map(view.digest, (digest) => ({ view, digest }))), ({ view, digest }): Option.Option<DigestTask> => {
         const source = view.render(result, params)
-        const base = { tool: name, version: digest.version, instructions: digest.instructions, question, source }
+        const base = { tool: name, version: digest.version, instructions: digest.instructions, userMessage, source }
         if (digest._tag === "Summarize") {
           const preserve = digest.preserve(result)
           return Option.some({
@@ -280,13 +281,13 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
     })
 
     /** Ask the matcher. Nothing is activated, recorded or published. */
-    const match = (message: string) => Effect.gen(function* () {
-      if (Option.isNone(matcher)) return { message, skills: [], probabilities: Option.none(), record: Option.none() } satisfies SkillMatch
+    const match = (userMessage: UserMessage) => Effect.gen(function* () {
+      if (Option.isNone(matcher)) return { userMessage, skills: [], probabilities: Option.none(), record: Option.none() } satisfies SkillMatch
       const selector = matcher.value
       const history = yield* session.transcript("reference")
       const loadedBefore = yield* Ref.get(loadedSkills)
       const activeNow = yield* activeWithAlways
-      const outcome = yield* selector.match({ message, skills: candidates, active: activeNow, history }).pipe(
+      const outcome = yield* selector.match({ userMessage, skills: candidates, active: activeNow, history }).pipe(
         Effect.timeoutFail({ duration: `${config.matcherTimeoutMs} millis`, onTimeout: () => harness("matcher.timeout", "The skill matcher timed out") }),
         Effect.either,
       )
@@ -300,7 +301,8 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         version: 1,
         id: DecisionId.make(`${run.runId}:skill-selection`),
         family: "skill-selection",
-        contextHash: fingerprintOf(canonicalJson({ message, active: activeNow, history: history.length })),
+        // Hashed under its original key, so decision context hashes are unchanged.
+        contextHash: fingerprintOf(canonicalJson({ message: userMessage.text, active: activeNow, history: history.length })),
         candidateHash,
         policyVersion: `${selector.id}@${selector.version}`,
         candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),
@@ -311,7 +313,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         applied: selection,
         probabilities,
       }
-      return { message, skills: chosen, probabilities, record: Option.some(record) } satisfies SkillMatch
+      return { userMessage, skills: chosen, probabilities, record: Option.some(record) } satisfies SkillMatch
     })
 
     /** Activate the always-on skills and the match, record the decision, seed the load_skill exchange. */
@@ -339,7 +341,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       return yield* Ref.get(active)
     })
 
-    const select = (message: string) => match(message).pipe(Effect.flatMap(apply))
+    const select = (userMessage: UserMessage) => match(userMessage).pipe(Effect.flatMap(apply))
 
     return {
       toolkit: toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>,

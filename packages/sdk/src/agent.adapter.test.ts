@@ -18,6 +18,7 @@ import {
   onTool,
   RunContext,
   subscribeAll,
+  UserMessage,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
@@ -127,8 +128,8 @@ const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> =
 })
 
 type Journal = Effect.Effect.Success<typeof inMemoryJournal>
-const inputFor = (journal: Journal, runId: string, prompt: string, model: LanguageModel.Service, services: Context.Context<never> = Context.empty()) => ({
-  conversation, runId, prompt, journal: journal.io,
+const inputFor = (journal: Journal, runId: string, text: string, model: LanguageModel.Service, services: Context.Context<never> = Context.empty()) => ({
+  conversation, runId, userMessage: new UserMessage({ text }), journal: journal.io,
   services: Context.merge(Context.make(LanguageModel.LanguageModel, model), services),
 })
 const named = (events: ReadonlyArray<EventBody>, name: string) => events.filter((event) => event.name === name)
@@ -137,7 +138,7 @@ const named = (events: ReadonlyArray<EventBody>, name: string) => events.filter(
 const answer = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutcome, HarnessError, Scope.Scope> => Effect.gen(function* () {
   const delivered = yield* Ref.make(Option.none<string>())
   yield* subscribeAll(turn.events, [onTool(Deliver, ({ input }) => Ref.set(delivered, Option.some(input.text)))])
-  yield* turn.tools.select(turn.prompt)
+  yield* turn.tools.select(turn.userMessage)
   const result = yield* turn.run({
     step: (step) => Effect.succeed({ context: Option.some(`step ${step.stepIndex}`), toolChoice: Option.none() }),
     completion: () => Ref.get(delivered).pipe(Effect.map((text) => ({ complete: Option.isSome(text), awaiting: [], facts: {} }))),
@@ -206,6 +207,9 @@ describe("Agent.turn", () => {
     expect(seen.every((request) => Option.contains(request.cacheKey, `agent:${conversation}`))).toBe(true)
     const names = events.map((event) => event.name).filter((name) => name !== "memory.entries")
     expect(names[0]).toBe("turn.started")
+    expect(named(events, "turn.started")[0]?.data).toEqual({ runId: "run-1", turn: 1, userMessage: { text: "find alpha" } })
+    // The memory log keeps the user's message as text under its original key.
+    expect(String(named(events, "memory.entries")[0]?.data.entries)).toContain('"body":{"_tag":"TurnStarted","prompt":"find alpha"}')
     expect(names.at(-1)).toBe("turn.ended")
     expect(named(events, "tool.completed").map((event) => event.data.tool)).toEqual(["lookup", "load_skill", "deliver"])
     expect(named(events, "tool.completed").every((event) => !("result" in event.data) && "encoded" in event.data)).toBe(true)
@@ -303,7 +307,7 @@ describe("Agent.turn", () => {
       yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), (turn) => Effect.gen(function* () {
         const known = yield* Ref.make<ReadonlyArray<string>>([])
         yield* subscribeAll(turn.events, [onTool(Lookup, ({ result }) => Ref.set(known, result.items.map((item) => item.id)))])
-        yield* turn.tools.select(turn.prompt)
+        yield* turn.tools.select(turn.userMessage)
         yield* turn.tools.activate(["delivery"])
         const result = yield* turn.run({
           step: () => Ref.get(known).pipe(Effect.map((ids) => ({ context: Option.some(`KNOWN [${ids.join(", ")}]`), toolChoice: Option.none() }))),
@@ -341,7 +345,7 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([call("c1", "deliver", { text: "done" })])
       const matcher = Context.make(IntentMatcher, IntentMatcher.of({
         id: "keyword", version: "1",
-        match: ({ message }) => Effect.succeed({ skills: message.includes("deliver") ? ["delivery"] : [], probabilities: Option.none(), abstained: false }),
+        match: ({ userMessage }) => Effect.succeed({ skills: userMessage.text.includes("deliver") ? ["delivery"] : [], probabilities: Option.none(), abstained: false }),
       }))
       yield* agent.turn(inputFor(journal, "run-1", "please deliver", model, matcher), answer())
       return yield* Ref.get(journal.stored)
@@ -363,7 +367,7 @@ describe("Agent.turn", () => {
           yield* subscribeAll(turn.events, [onTool(Note, ({ input }) => Tally.pipe(Effect.flatMap((same) => tallied(same, `subscriber:${input.text}`))))])
           yield* turn.tasks.fork("tally", Tally.pipe(Effect.flatMap((same) => tallied(same, "task"))))
           yield* turn.tasks.await(["tally"])
-          yield* turn.tools.select(turn.prompt)
+          yield* turn.tools.select(turn.userMessage)
           yield* turn.run({})
           return { outcome: "completed" as const, reply: Option.some((yield* Ref.get(tally.seen)).join(",")) }
         }))
@@ -384,13 +388,13 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([])
       const matcher = Context.make(IntentMatcher, IntentMatcher.of({
         id: "keyword", version: "1",
-        match: ({ message }) => Effect.succeed({ skills: message.includes("deliver") ? ["delivery"] : [], probabilities: Option.none(), abstained: false }),
+        match: ({ userMessage }) => Effect.succeed({ skills: userMessage.text.includes("deliver") ? ["delivery"] : [], probabilities: Option.none(), abstained: false }),
       }))
       const observed = yield* Ref.make({ matched: [] as ReadonlyArray<string>, recorded: false, wroteOnMatch: -1, activeBefore: [] as ReadonlyArray<string>, activeAfter: [] as ReadonlyArray<string> })
       yield* agent.turn(inputFor(journal, "run-1", "please deliver", model, matcher), (turn) => Effect.gen(function* () {
         yield* turn.flush
         const before = (yield* Ref.get(journal.stored)).length
-        const match = yield* turn.tools.match(turn.prompt)
+        const match = yield* turn.tools.match(turn.userMessage)
         yield* turn.flush
         const wroteOnMatch = (yield* Ref.get(journal.stored)).length - before
         const activeBefore = yield* turn.tools.active
@@ -448,9 +452,9 @@ describe("Agent.turn", () => {
       const agent = yield* define({ plugin: memorySummaryPlugin, options: { triggerRatio: 0.1, keepRatio: 0.05, cooldownTurns: 0 } }, { budgetTokens: 1_500 })
       const journal = yield* inMemoryJournal
       const utility = utilityText("SUMMARY of earlier turns")
-      const turnWith = (runId: string, prompt: string, script: ReadonlyArray<Part>) => Effect.gen(function* () {
+      const turnWith = (runId: string, text: string, script: ReadonlyArray<Part>) => Effect.gen(function* () {
         const { seen, model } = yield* scripted(script)
-        yield* agent.turn(inputFor(journal, runId, prompt, model, utility), answer())
+        yield* agent.turn(inputFor(journal, runId, text, model, utility), answer())
         return yield* Ref.get(seen)
       })
       yield* turnWith("run-1", "find alpha", lookupThenDeliver)

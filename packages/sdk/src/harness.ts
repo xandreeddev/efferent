@@ -1,5 +1,5 @@
 import { Cause, Context, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream } from "effect"
-import { AgentLoop, HarnessError, SessionEnvironment, SessionStore, TurnHooks } from "@xandreed/core"
+import { AgentLoop, HarnessError, SessionEnvironment, SessionStore, TurnHooks, UserMessage } from "@xandreed/core"
 import type { ConversationId, EventBody, HarnessConfig, Plugin, SessionHandle, SessionRecord } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 import type { PluginGraph } from "@xandreed/runtime"
@@ -86,7 +86,8 @@ export const makeHarness = (options: {
       const runId = crypto.randomUUID()
       yield* claim(input)
       yield* publish({ name: "run.started", runId, data: { config: current.fingerprint } })
-      const args = { session: record, runId, prompt: input.text, system: current.graph.config.system ?? "You are a helpful agent.", publish,
+      // Queued input is never blank (see `enqueue`), so it is a valid user message.
+      const args = { session: record, runId, userMessage: new UserMessage({ text: input.text }), system: current.graph.config.system ?? "You are a helpful agent.", publish,
         transient: (event: EventBody) => PubSub.publish(transientHub, event).pipe(Effect.asVoid), steering,
         history: (after: number, names: ReadonlyArray<string>) => store.read(record.id, after).pipe(
           Effect.map((events) => names.length === 0 ? events : events.filter((event) => names.includes(event.name)))),

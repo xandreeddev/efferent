@@ -210,7 +210,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const run = RunContext.of({
       conversation: input.conversation,
       runId: input.runId,
-      prompt: input.prompt,
+      userMessage: input.userMessage,
       memory: reader,
       events,
       tasks,
@@ -230,8 +230,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const inRun = <B, F>(effect: Effect.Effect<B, F, unknown>): Effect.Effect<B, F> => closeWith(effect, runServices)
 
     const number = (yield* session.turn) + 1
-    yield* session.record([{ _tag: "TurnStarted", prompt: input.prompt }], 0)
-    yield* events.publish({ _tag: "turn.started", runId: input.runId, turn: number, prompt: input.prompt })
+    yield* session.record([{ _tag: "TurnStarted", userMessage: input.userMessage }], 0)
+    yield* events.publish({ _tag: "turn.started", runId: input.runId, turn: number, userMessage: input.userMessage })
     const tools = yield* registry.open(session, runServices)
     yield* Ref.set(toolsRef, Option.some(tools))
 
@@ -335,7 +335,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       conversation: input.conversation,
       runId: input.runId,
       turn: number,
-      prompt: input.prompt,
+      userMessage: input.userMessage,
       memory: reader,
       events,
       tasks,

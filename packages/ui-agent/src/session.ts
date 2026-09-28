@@ -1,6 +1,6 @@
 import { LanguageModel, Toolkit } from "@effect/ai"
 import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
-import { ConversationStore, makeSession, toAgentFailure, toolResultFailure } from "@xandreed/core"
+import { ConversationStore, makeSession, toAgentFailure, toolResultFailure, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
 import type { ConversationId, LoopEvent, Session } from "@xandreed/core"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
@@ -248,13 +248,13 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
             ? runAgent(
               { system, toolkit: uiAgentToolkit, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens }, promptCacheKey },
               conversation,
-              userPrompt,
+              new UserMessage({ text: userPrompt }),
               { onEvent: stagePublish },
             )
             : runAgent(
               { system, toolkit: Toolkit.empty, maxSteps: stageProfile.maxSteps, toolConcurrency: 1, streaming: true, modelPolicy: { effort: stageProfile.effort, maxOutputTokens: stageProfile.maxOutputTokens }, promptCacheKey },
               conversation,
-              userPrompt,
+              new UserMessage({ text: userPrompt }),
               { onEvent: stagePublish },
             )
           return configured.pipe(

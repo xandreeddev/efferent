@@ -7,6 +7,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody } from "../harness/session.entity.js"
 import type { ConversationMemory, JournalIO, MemorySession, ToolViews } from "../ports/memory.port.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 import { canonicalJson } from "./memory-log.entity.functions.js"
 import { LogEntry } from "./memory-log.entity.js"
 
@@ -39,9 +40,12 @@ type Memory = Context.Tag.Service<typeof ConversationMemory>
 const fail = (check: string) => (message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check)(message)
 
-/** One recorded turn: prompt, a tool call with its result, the reply. */
-const recordTurn = (session: MemorySession, prompt: string, reply: string) => Effect.gen(function* () {
-  yield* session.record([{ _tag: "TurnStarted", prompt }], 0)
+/** The user's message of a recorded turn. */
+const said = (text: string) => ({ _tag: "TurnStarted" as const, userMessage: new UserMessage({ text }) })
+
+/** One recorded turn: the user's message, a tool call with its result, the reply. */
+const recordTurn = (session: MemorySession, userMessage: string, reply: string) => Effect.gen(function* () {
+  yield* session.record([said(userMessage)], 0)
   yield* session.recordTail(toolTail, views, 0)
   yield* session.record([{ _tag: "TurnEnded", outcome: "completed", reply: Option.some(reply) }], 1)
 })
@@ -64,11 +68,11 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
   return [
     check("entries get their own ids, <runId>:<n>, continuing across reopens", "ids", (open, io) => Effect.gen(function* () {
       const first = yield* open(io, "run-1")
-      const a = yield* first.record([{ _tag: "TurnStarted", prompt: "one" }, { _tag: "TurnContext", sectionId: "s", version: "1", text: "context" }], 0)
+      const a = yield* first.record([said("one"), { _tag: "TurnContext", sectionId: "s", version: "1", text: "context" }], 0)
       const again = yield* open(io, "run-1")
       const b = yield* again.record([{ _tag: "TurnEnded", outcome: "completed", reply: Option.none() }], 0)
       const other = yield* open(io, "run-2")
-      const c = yield* other.record([{ _tag: "TurnStarted", prompt: "two" }], 0)
+      const c = yield* other.record([said("two")], 0)
       const ids = [...a, ...b, ...c].map((entry) => String(entry.id))
       yield* expect("ids", ids.join() === "run-1:0,run-1:1,run-1:2,run-2:0", `ids were ${ids.join()}`)
     })),
@@ -96,7 +100,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
     })),
     check("the step context closes the tail only when asked", "step-context", (open, io) => Effect.gen(function* () {
       const session = yield* open(io, "run-1")
-      yield* session.record([{ _tag: "TurnStarted", prompt: "find alpha" }], 0)
+      yield* session.record([said("find alpha")], 0)
       yield* session.record([{ _tag: "StepContext", step: 0, text: "STEP-MARK" }], 0)
       const tail = canonicalJson((yield* session.build({ stepContext: "tail" })).messages)
       const none = canonicalJson((yield* session.build({ stepContext: "none" })).messages)
@@ -105,14 +109,14 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
     check("maintenance only appends to the log", "append-only", (open, io) => Effect.gen(function* () {
       const session = yield* open(io, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
-      yield* session.record([{ _tag: "TurnStarted", prompt: "and beta" }], 0)
+      yield* session.record([said("and beta")], 0)
       const before = yield* session.entries
       yield* session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: 100_000, views })
       yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: 100_000, views })
       const after = yield* session.entries
       yield* expect("append-only", encodeEntries(after.slice(0, before.length)) === encodeEntries(before), "maintenance rewrote earlier entries")
     })),
-    check("the reference transcript holds prompts and replies, never tool traffic", "reference", (open, io) => Effect.gen(function* () {
+    check("the reference transcript holds user messages and replies, never tool traffic", "reference", (open, io) => Effect.gen(function* () {
       const session = yield* open(io, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
       const transcript = yield* session.transcript("reference")

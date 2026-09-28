@@ -300,9 +300,9 @@ describe("the smith TUI — frame-level regressions", () => {
             ),
             doc,
           ),
-        followUp: (_run, cid, text, publish) =>
+        followUp: (_run, cid, userMessage, publish) =>
           Effect.gen(function* () {
-            followUps.push({ cid: String(cid), text })
+            followUps.push({ cid: String(cid), text: userMessage.text })
             yield* publish({
               type: "agent",
               event: {
@@ -834,9 +834,9 @@ describe("the smith TUI — the dashboard is a menu", () => {
     const tui = await boot({
       runs: [factoryRun],
       seams: {
-        followUp: (_run, cid, text, publish) =>
+        followUp: (_run, cid, userMessage, publish) =>
           Effect.gen(function* () {
-            followUps.push({ cid: String(cid), text })
+            followUps.push({ cid: String(cid), text: userMessage.text })
             yield* publish({
               type: "agent",
               event: {

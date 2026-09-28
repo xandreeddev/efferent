@@ -13,7 +13,7 @@ const directories: string[] = []
 afterEach(() => directories.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 const workspace = () => { const path = mkdtempSync(join(tmpdir(), "efferent-sdk-")); directories.push(path); return path }
 const loop = (id: string, run: (input: LoopInput) => Effect.Effect<{ text: string; outcome: "completed" }, HarnessError>) => definePlugin({ id, version: "1", config: Schema.Struct({}), defaults: {}, provides: [AgentLoop], layer: () => Layer.succeed(AgentLoop, { run }) })
-const echo = loop("echo", (input) => input.publish({ name: "answer", runId: input.runId, data: { text: input.prompt } }).pipe(Effect.as({ text: input.prompt, outcome: "completed" as const })))
+const echo = loop("echo", (input) => input.publish({ name: "answer", runId: input.runId, data: { text: input.userMessage.text } }).pipe(Effect.as({ text: input.userMessage.text, outcome: "completed" as const })))
 const config = (directory: string, use = "echo"): HarnessConfig => ({ version: 1, plugins: [
   { id: "store", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } },
   { id: "loop", use },
@@ -117,7 +117,7 @@ describe("durable SDK sessions", () => {
     }) })
     const customLoop = definePlugin({ id: "external/loop", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Memory], provides: [AgentLoop], layer: () => Layer.effect(AgentLoop, Effect.gen(function* () {
       const memory = yield* Memory
-      return { run: (input: LoopInput) => memory.recall(input.session.workspace, input.prompt).pipe(Effect.map((entries) => ({ text: entries[0]?.text ?? "", outcome: "completed" as const }))) }
+      return { run: (input: LoopInput) => memory.recall(input.session.workspace, input.userMessage.text).pipe(Effect.map((entries) => ({ text: entries[0]?.text ?? "", outcome: "completed" as const }))) }
     })) })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const first = config(directory)

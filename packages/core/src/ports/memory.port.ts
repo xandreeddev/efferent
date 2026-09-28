@@ -6,6 +6,7 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody } from "../harness/session.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
 import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, Subject } from "../memory/memory-log.entity.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 
 /**
  * Host-authorized journal access for one conversation: append an event,
@@ -67,8 +68,8 @@ export interface DigestTask {
   readonly mode: "select" | "summarize"
   /** The tool's own digest prompt. */
   readonly instructions: string
-  /** The user request the digest must serve. */
-  readonly question: string
+  /** The user message the digest must serve. */
+  readonly userMessage: UserMessage
   /** Select mode: the keyed items the digester chooses from. */
   readonly items: ReadonlyArray<{ readonly key: string; readonly text: string }>
   /** The full rendered result (summarize mode's input). */
@@ -83,7 +84,7 @@ export interface ToolViews {
   /** The older-turn form; None keeps the write-time view. */
   readonly compact: (tool: string, encoded: unknown, params: unknown) => Effect.Effect<Option.Option<string>>
   /** The tool's digest of this result, when it declares one. */
-  readonly digest: (tool: string, encoded: unknown, params: unknown, question: string) => Effect.Effect<Option.Option<DigestTask>>
+  readonly digest: (tool: string, encoded: unknown, params: unknown, userMessage: UserMessage) => Effect.Effect<Option.Option<DigestTask>>
 }
 
 /** Runs a tool's digest prompt (see `DigestDefinition`). Read from the turn's services. */

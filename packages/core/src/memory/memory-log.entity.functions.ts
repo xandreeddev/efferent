@@ -136,7 +136,7 @@ interface RenderState {
   readonly lastText: ReadonlyMap<number, string>
 }
 
-const userMessage = (content: string): AgentMessage => ({ role: "user", content })
+const userRoleMessage = (content: string): AgentMessage => ({ role: "user", content })
 const assistantMessage = (text: string): AgentMessage => ({ role: "assistant", content: [{ type: "text", text }] })
 
 export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
@@ -148,10 +148,10 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
   const initial: RenderState = { out: [], lastText: new Map() }
   const body = entries.reduce((state: RenderState, entry): RenderState => {
     const b: LogBody = entry.body
-    if (b._tag === "TurnStarted") return kept(entry) ? { ...state, out: [...state.out, userMessage(b.prompt)] } : state
+    if (b._tag === "TurnStarted") return kept(entry) ? { ...state, out: [...state.out, userRoleMessage(b.userMessage.text)] } : state
     if (b._tag === "TurnContext") {
       return kept(entry) && (options.turnContext === "all" || entry.turn === options.currentTurn)
-        ? { ...state, out: [...state.out, userMessage(b.text)] } : state
+        ? { ...state, out: [...state.out, userRoleMessage(b.text)] } : state
     }
     if (b._tag === "Message") {
       const calls = toolCallIds(b.message)
@@ -182,7 +182,7 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
     }
     return state
   }, initial).out
-  const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userMessage(entry.body.text)] : [])
+  const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userRoleMessage(entry.body.text)] : [])
   return mergeToolMessages([...Option.toArray(applied.preamble), ...body, ...tail])
 }
 
@@ -220,10 +220,10 @@ export const activationsOf = (entries: ReadonlyArray<LogEntry>): { readonly skil
       tools: [...active.tools, ...entry.body.tools.filter((tool) => !active.tools.includes(tool))],
     }, { skills: [], tools: [] })
 
-/** A compact user/assistant transcript for classifiers: prompts and replies only. */
+/** A compact user/assistant transcript for classifiers: user messages and replies only. */
 export const referenceTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<AgentMessage> =>
   entries.flatMap((entry): ReadonlyArray<AgentMessage> => {
-    if (entry.body._tag === "TurnStarted") return [{ role: "user", content: entry.body.prompt }]
+    if (entry.body._tag === "TurnStarted") return [userRoleMessage(entry.body.userMessage.text)]
     if (entry.body._tag === "TurnEnded") {
       return Option.match(entry.body.reply, { onNone: () => [], onSome: (text) => text.length === 0 ? [] : [{ role: "assistant", content: [{ type: "text", text }] }] })
     }
@@ -233,7 +233,7 @@ export const referenceTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyA
 /** The full-fidelity transcript: messages with every tool result's encoded value. */
 export const rawTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<AgentMessage> =>
   mergeToolMessages(entries.flatMap((entry): ReadonlyArray<AgentMessage> => {
-    if (entry.body._tag === "TurnStarted") return [{ role: "user", content: entry.body.prompt }]
+    if (entry.body._tag === "TurnStarted") return [userRoleMessage(entry.body.userMessage.text)]
     if (entry.body._tag === "Message") return [entry.body.message]
     if (entry.body._tag === "ToolResult") {
       return [{ role: "tool", content: [{ type: "tool-result", toolCallId: entry.body.toolCallId, toolName: entry.body.toolName, output: entry.body.encoded, isError: entry.body.isError }] }]
@@ -292,13 +292,13 @@ const clipText = (text: string, max: number): string => text.length <= max ? tex
 
 /**
  * A compact, human-readable transcript of the given turns for digests and
- * ledgers: prompts, assistant text, each tool result clipped, and replies.
+ * ledgers: user messages, assistant text, each tool result clipped, and replies.
  * The head (the first request) always survives the cap.
  */
 export const digestTranscript = (entries: ReadonlyArray<LogEntry>, caps: { readonly result: number; readonly total: number }): string => {
   const lines = entries.flatMap((entry): ReadonlyArray<string> => {
     const body = entry.body
-    if (body._tag === "TurnStarted") return [`User: ${body.prompt}`]
+    if (body._tag === "TurnStarted") return [`User: ${body.userMessage.text}`]
     if (body._tag === "Message") return Option.toArray(Option.map(assistantText(body.message), (text) => `Assistant: ${text}`))
     if (body._tag === "ToolResult") return [`Tool ${body.toolName}${body.isError ? " (failed)" : ""}: ${clipText(body.view, caps.result)}`]
     if (body._tag === "TurnEnded") return Option.toArray(Option.map(body.reply, (reply) => `Reply: ${reply}`))
@@ -316,9 +316,9 @@ export const ledgerOf = (entries: ReadonlyArray<LogEntry>, throughTurn: number, 
   const turns = [...new Set(kept.map((entry) => entry.turn))].sort((left, right) => left - right)
   const lines = turns.flatMap((turn) => {
     const inTurn = kept.filter((entry) => entry.turn === turn)
-    const prompt = inTurn.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.prompt] : []).at(0)
+    const asked = inTurn.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage.text] : []).at(0)
     const reply = inTurn.flatMap((entry) => entry.body._tag === "TurnEnded" ? Option.toArray(entry.body.reply) : []).at(-1)
-    return prompt === undefined ? [] : [`- Asked: ${clipText(prompt, perTurnChars)}${reply === undefined ? "" : ` — replied: ${clipText(reply, perTurnChars)}`}`]
+    return asked === undefined ? [] : [`- Asked: ${clipText(asked, perTurnChars)}${reply === undefined ? "" : ` — replied: ${clipText(reply, perTurnChars)}`}`]
   })
   const subjects = subjectsOf(kept, []).slice(-24).map((subject) => `${subject.kind} ${subject.id}${Option.match(subject.label, { onNone: () => "", onSome: (label) => ` (${label})` })}`)
   return [

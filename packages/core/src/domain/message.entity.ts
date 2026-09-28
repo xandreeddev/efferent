@@ -57,12 +57,13 @@ export const ToolResultPart = Schema.Struct({
 })
 export type ToolResultPart = typeof ToolResultPart.Type
 
-export const UserMessage = Schema.Struct({
+/** A model-visible message in the user role (the user's own words, turn context, host notes). */
+export const UserRoleMessage = Schema.Struct({
   role: Schema.Literal("user"),
   content: Schema.String,
   providerOptions: Schema.optional(Schema.Unknown),
 })
-export type UserMessage = typeof UserMessage.Type
+export type UserRoleMessage = typeof UserRoleMessage.Type
 
 export const AssistantMessage = Schema.Struct({
   role: Schema.Literal("assistant"),
@@ -79,7 +80,7 @@ export const ToolMessage = Schema.Struct({
 export type ToolMessage = typeof ToolMessage.Type
 
 /** The single conversation unit — persisted as-is, one row per entry. */
-export const AgentMessage = Schema.Union(UserMessage, AssistantMessage, ToolMessage)
+export const AgentMessage = Schema.Union(UserRoleMessage, AssistantMessage, ToolMessage)
 export type AgentMessage = typeof AgentMessage.Type
 
 /**

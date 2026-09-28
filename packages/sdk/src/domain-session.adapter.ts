@@ -33,7 +33,7 @@ export const domainLoop = <E extends { readonly type: string }, R>(options: {
       Stream.takeUntil(({ event }) => Option.isSome(options.result(event))), Stream.runDrain,
     ))
     yield* Effect.forkScoped(session.transient.pipe(Stream.runForEach((event) => input.transient({ name: "domain.delta", runId: input.runId, data: { event } }))))
-    yield* session.send(input.prompt)
+    yield* session.send(input.userMessage.text)
     const settled = (yield* session.state).log.filter((entry) => entry.seq >= cursor).some(({ event }) => Option.isSome(options.result(event)))
     if (!settled) return yield* Effect.fail(new HarnessError({ code: "domain.unsettled", message: "The domain turn ended without a terminal event" }))
     yield* Fiber.join(collector)

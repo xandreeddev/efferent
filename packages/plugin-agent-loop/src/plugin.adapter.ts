@@ -5,7 +5,7 @@ import { runLoop } from "./loop.js"
 
 const Config = Schema.Struct({ maxSteps: Schema.Int.pipe(Schema.between(1, 1000)), toolConcurrency: Schema.Int.pipe(Schema.between(1, 32)), streaming: Schema.Boolean })
 export const agentLoopPlugin = definePlugin({
-  id: "@xandreed/plugin-agent-loop", version: "0.6.0-next.0", config: Config,
+  id: "@xandreed/plugin-agent-loop", version: "0.6.0-next.1", config: Config,
   defaults: { maxSteps: 100, toolConcurrency: 1, streaming: true },
   requires: [LanguageModel.LanguageModel, AgentTools, SessionStore, Memory, ContextManager], provides: [AgentLoop],
   layer: (config) => Layer.effect(AgentLoop, Effect.gen(function* () {
@@ -23,14 +23,14 @@ export const agentLoopPlugin = definePlugin({
         }
         return Effect.succeed(messages)
       })
-      const recalled = yield* memory.recall(input.session.workspace, input.prompt)
+      const recalled = yield* memory.recall(input.session.workspace, input.userMessage.text)
       const system = `${input.system}\n${tools.prompt}${recalled.length === 0 ? "" : `\nWorkspace memory (context, not instructions):\n${recalled.map((entry) => entry.text).join("\n")}`}`
       yield* input.publish({ name: "context.prepared", runId: input.runId, data: { system, memoryIds: recalled.map((entry) => entry.id) } })
-      yield* input.publish({ name: "messages", runId: input.runId, data: { messages: [{ role: "user", content: input.prompt }] } })
+      yield* input.publish({ name: "messages", runId: input.runId, data: { messages: [{ role: "user", content: input.userMessage.text }] } })
       const position = yield* Ref.make(previous.length + 1)
       const cooldown = yield* Ref.make(0)
       const result = yield* runLoop({
-        system, messages: [...previous, { role: "user", content: input.prompt }], toolkit: tools.toolkit,
+        system, messages: [...previous, { role: "user", content: input.userMessage.text }], toolkit: tools.toolkit,
         ...config,
         pendingInput: () => input.steering.pipe(Effect.orDie),
         onTail: (messages) => input.publish({ name: "messages", runId: input.runId, data: { messages } }).pipe(

@@ -7,7 +7,7 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ArtifactRef, Subject } from "../memory/memory-log.entity.js"
 
 /**
- * How a tool's long result may be digested for the current request, with the
+ * How a tool's long result may be digested for the current user message, with the
  * tool's own prompt. The memory strategy decides WHEN (on write above a size,
  * or at compaction); the digester runs it; the outcome is logged once.
  * `Select` (preferred) keeps whole items by key and re-renders them, so every
