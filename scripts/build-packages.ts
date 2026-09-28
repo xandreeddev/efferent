@@ -6,7 +6,7 @@ import solidPlugin from "@opentui/solid/bun-plugin"
 // Build an isolated publish tree; development keeps source exports and workspace links.
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
-const names = ["core", "runtime", "sdk", "evals", "foundry", "smith", "tui", "cli",
+const names = ["core", "ai", "runtime", "sdk", "evals", "foundry", "smith", "tui", "cli",
   "plugin-agent-loop", "plugin-context", "plugin-memory", "plugin-memory-log", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models", "plugin-tools-local",
   "plugin-policy-workspace", "plugin-session-sqlite", "plugin-telemetry", "plugin-mcp", "plugin-render", "ui-agent", "surface"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>

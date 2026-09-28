@@ -32,7 +32,8 @@ console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
-import { Effect, Layer, Schema } from "effect"
+import { Effect, FiberRef, Layer, Option, Schema } from "effect"
+import { CurrentPromptProvenance, defineDecisionPrompt, definePrompt, evaluateDecision, EvaluationModelLive, renderPrompt, withProvenance } from "@xandreed/ai"
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
 import { scenario, runPack, assessAll, semanticEvaluator } from "@xandreed/evals"
@@ -53,6 +54,18 @@ const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{s
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
 console.log("External SDK, plugin, persistence, fork, eval composition, and optional rubric adapter passed")
+const greeting = definePrompt({ id: "external.greeting", version: "1", render: (name: string) => [{ role: "system", content: "Greet the user." }, { role: "user", content: name }], variants: { baseline: { shared: [], models: { "vendor/small": [{ role: "system", content: "Be brief." }] } } } })
+const small = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/small", variant: "baseline" }))
+const large = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/large", variant: "baseline" }))
+if (small.prompt.content.length !== 3 || large.prompt.content.length !== 2 || Option.getOrNull(small.provenance.modelOverride) !== "vendor/small" || Option.isSome(large.provenance.modelOverride)) process.exit(1)
+const current = await Effect.runPromise(FiberRef.get(CurrentPromptProvenance).pipe(withProvenance(small.provenance)))
+if (Option.getOrNull(current)?.hash !== small.provenance.hash || !/^[0-9a-f]{64}$/.test(small.provenance.hash) || small.provenance.hash === large.provenance.hash) process.exit(1)
+const route = defineDecisionPrompt({ id: "external.route", version: "1", family: "routing", state: (text: string) => text, questions: () => ({ lane: { type: "choice", instructions: "Which lane?", criteria: { fast: "Quick.", slow: "Careful." } } }) })
+const decide = (choice: string) => evaluateDecision(route, "hello").pipe(Effect.provide(EvaluationModelLive({ model: "stub/judge", transport: () => Promise.resolve({ answers: { lane: { type: "choice", choice } } }) })))
+const chosen = await Effect.runPromise(decide("fast"))
+const refused = await Effect.runPromise(Effect.either(decide("sideways")))
+if (chosen.lane.choice !== "fast" || refused._tag !== "Left" || refused.left._tag !== "EvaluationError" || refused.left.code !== "invalid") process.exit(1)
+console.log("Versioned prompts, their provenance and a checked decision passed")
 `)
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts"] }))
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })

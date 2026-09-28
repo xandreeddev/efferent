@@ -21,6 +21,15 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/ai": {
+      "name": "@xandreed/ai",
+      "version": "0.6.0-next.1",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
     "packages/canvas": {
       "name": "@xandreed/canvas",
       "version": "0.1.0",
@@ -58,7 +67,7 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "effect": "3.21.4",
@@ -66,7 +75,7 @@
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -112,7 +121,7 @@
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -121,7 +130,7 @@
     },
     "packages/plugin-context": {
       "name": "@xandreed/plugin-context",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -129,7 +138,7 @@
     },
     "packages/plugin-mcp": {
       "name": "@xandreed/plugin-mcp",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -138,7 +147,7 @@
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -146,7 +155,7 @@
     },
     "packages/plugin-memory-digest": {
       "name": "@xandreed/plugin-memory-digest",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -154,7 +163,7 @@
     },
     "packages/plugin-memory-log": {
       "name": "@xandreed/plugin-memory-log",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -163,7 +172,7 @@
     },
     "packages/plugin-memory-summary": {
       "name": "@xandreed/plugin-memory-summary",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -172,7 +181,7 @@
     },
     "packages/plugin-memory-window": {
       "name": "@xandreed/plugin-memory-window",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -181,7 +190,7 @@
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
@@ -195,7 +204,7 @@
     },
     "packages/plugin-policy-workspace": {
       "name": "@xandreed/plugin-policy-workspace",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -203,7 +212,7 @@
     },
     "packages/plugin-render": {
       "name": "@xandreed/plugin-render",
-      "version": "0.6.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -212,7 +221,7 @@
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -221,7 +230,7 @@
     },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/opentelemetry": "^0.63.0",
         "@effect/platform": "0.96.1",
@@ -236,7 +245,7 @@
     },
     "packages/plugin-tool-discovery": {
       "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -245,7 +254,7 @@
     },
     "packages/plugin-tools-local": {
       "name": "@xandreed/plugin-tools-local",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -255,7 +264,7 @@
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -288,7 +297,7 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.5.0-next.0",
+      "version": "0.6.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-memory": "workspace:*",
@@ -373,7 +382,7 @@
     },
     "packages/ui-agent": {
       "name": "@xandreed/ui-agent",
-      "version": "0.1.0",
+      "version": "0.3.0-next.1",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -838,6 +847,8 @@
     "@vue/reactivity": ["@vue/reactivity@3.1.5", "", { "dependencies": { "@vue/shared": "3.1.5" } }, "sha512-1tdfLmNjWG6t/CsPldh+foumYFo3cpyCHgBYQ34ylaMsJ+SNHQ1kApMIa8jN+i593zQuaw3AdWH0nJTARzCFhg=="],
 
     "@vue/shared": ["@vue/shared@3.1.5", "", {}, "sha512-oJ4F3TnvpXaQwZJNF3ZK+kLPHKarDmJjJ6jyzVNDKH9md1dptjC7lWR//jrGuLdek/U6iltWxqAnYOu8gCiOvA=="],
+
+    "@xandreed/ai": ["@xandreed/ai@workspace:packages/ai"],
 
     "@xandreed/canvas": ["@xandreed/canvas@workspace:packages/canvas"],
 
