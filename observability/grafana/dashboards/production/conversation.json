@@ -41,7 +41,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "tempo" },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.prompt, span.agent.prompt_chars)",
+          "query": "{ resource.service.name =~ \"smith|math|canvas|social\" && name = \"agent.run\" && span.agent.conversation_id = \"$conversation\" } | select(span.agent.userMessage, span.agent.userMessage_chars)",
           "tableType": "spans",
           "limit": 200,
           "spss": 1
@@ -59,15 +59,15 @@
               "duration": true
             },
             "indexByName": {
-              "agent.prompt": 0,
+              "agent.userMessage": 0,
               "time": 1,
-              "agent.prompt_chars": 2,
+              "agent.userMessage_chars": 2,
               "spanID": 3
             },
             "renameByName": {
-              "agent.prompt": "user message",
+              "agent.userMessage": "user message",
               "time": "when",
-              "agent.prompt_chars": "prompt chars",
+              "agent.userMessage_chars": "user message chars",
               "spanID": "span"
             }
           }
@@ -77,7 +77,7 @@
         "defaults": {},
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "agent.prompt" },
+            "matcher": { "id": "byName", "options": "agent.userMessage" },
             "properties": [{ "id": "custom.width", "value": 620 }]
           },
           {

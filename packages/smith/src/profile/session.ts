@@ -10,7 +10,7 @@ import {
   TsProjectCachedLive,
   vendoredPackFiles,
 } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, Shell } from "@xandreed/core"
+import { ConversationStore, FileSystem, Shell, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
 import type { ConversationId } from "@xandreed/core"
 import type { AgentConfig } from "@xandreed/plugin-agent-loop"
@@ -296,7 +296,7 @@ export const makeProfileSession = (
     }
 
     const realAgent: ProfileAgent = (cid, prompt) =>
-      runAgent(config, cid, prompt, {
+      runAgent(config, cid, new UserMessage({ text: prompt }), {
         onEvent: (event) => publish({ type: "agent", event }),
       }).pipe(Effect.provide(handlersLayer), Effect.provide(context), Effect.asVoid)
 

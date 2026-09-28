@@ -57,7 +57,7 @@ import { makeProfileSession } from "../profile/session.js"
 import { listSpecs, loadSpecDoc, lockSpecDoc, specPath } from "../spec/store.js"
 import { workspaceView } from "./presentation/workspace.js"
 import type { ProviderStatus, SmithProvider } from "./presentation/loginFlow.js"
-import { AuthStore as AuthStoreTag, ConversationId, ConversationStore, UtilityLlm, assistantModel, assistantUsage } from "@xandreed/core"
+import { AuthStore as AuthStoreTag, ConversationId, ConversationStore, UserMessage, UtilityLlm, assistantModel, assistantUsage } from "@xandreed/core"
 import type { Credential } from "@xandreed/core"
 import { readRuns } from "@xandreed/foundry"
 import { join } from "node:path"
@@ -912,7 +912,7 @@ export const makeWorkspaceBody = (
                       yield* (seams.followUp ?? runFollowUpTurn)(
                         run,
                         target,
-                        withContextBlock(block, text),
+                        new UserMessage({ text: withContextBlock(block, text) }),
                         publish,
                         steerFromQueue(store),
                       ).pipe(

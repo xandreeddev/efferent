@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
-import { AgentLoop, Approval, DelegateLoop, definePlugin, FileSystem, HarnessError, SessionStore } from "@xandreed/core"
+import { AgentLoop, Approval, DelegateLoop, definePlugin, FileSystem, HarnessError, SessionStore, UserMessage } from "@xandreed/core"
 import type { Plugin } from "@xandreed/core"
 import { agentLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
@@ -45,7 +45,7 @@ export const smithWorkflowPlugin = definePlugin({
       const allowed = yield* approval.request("Run Foundry verification for the locked specification? Coding stays in the workspace sandbox. Foundry loads the workspace gate configuration and runs its verification commands on the host.")
       if (!allowed) return yield* fail("Forge cancelled before implementation: host verification was not approved.")
       const implementor = Layer.succeed(Implementor, { implement: ({ spec, attempt, feedback }) => worker.run({
-        ...input, prompt: `${spec.goal}\n\n${Option.getOrElse(feedback, () => "Implement this locked specification, then run the relevant checks.")}`,
+        ...input, userMessage: new UserMessage({ text: `${spec.goal}\n\n${Option.getOrElse(feedback, () => "Implement this locked specification, then run the relevant checks.")}` }),
         publish: (event) => input.publish(event.name === "loop.event" ? { ...event, data: { ...event.data, turnIndex: Number(event.data.turnIndex ?? 0) + Number(attempt) * 10000 } } : event),
         transient: (event) => input.transient({ ...event, data: { ...event.data, turnIndex: Number(event.data.turnIndex ?? 0) + Number(attempt) * 10000 } }),
       }).pipe(Effect.mapError((error) => new ImplementorError({ attempt, message: error.message })), Effect.map(() => ({ filesTouched: [], ref: Option.some(`session:${input.session.id}`) }))) })

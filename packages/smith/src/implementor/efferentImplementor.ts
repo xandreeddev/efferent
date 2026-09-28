@@ -2,7 +2,7 @@ import type { LanguageModel } from "@effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { QualityBar, WorkspacePath } from "@xandreed/foundry"
-import { buildMcpBridge, ConversationStore, FileSystem, McpClient, Shell, UtilityLlm } from "@xandreed/core"
+import { buildMcpBridge, ConversationStore, FileSystem, McpClient, Shell, UserMessage, UtilityLlm } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
 import { Toolkit } from "@effect/ai"
 import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/core"
@@ -364,7 +364,7 @@ export const makeEfferentImplementorLive = (
                 },
               },
               cid,
-              brief,
+              new UserMessage({ text: brief }),
               {
                 onEvent,
                 ...(options.pendingInput !== undefined

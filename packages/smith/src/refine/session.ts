@@ -1,7 +1,7 @@
 import type { LanguageModel } from "@effect/ai"
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
-import { ConversationStore, FileSystem, SpecSlug } from "@xandreed/core"
+import { ConversationStore, FileSystem, SpecSlug, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
 import { makeContextInjector, withContextBlock } from "../context/inject.js"
 import { loadStandingSources } from "../context/standing.js"
@@ -168,7 +168,7 @@ export const makeRefineSession = (
     })
 
     const realAgent: RefineAgent = (cid, prompt) =>
-      runAgent(config, cid, prompt, {
+      runAgent(config, cid, new UserMessage({ text: prompt }), {
         onEvent: (event) => publish({ type: "agent", event }),
         ...(options.pendingInput !== undefined ? { pendingInput: options.pendingInput } : {}),
       }).pipe(

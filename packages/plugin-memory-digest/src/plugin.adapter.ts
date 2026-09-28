@@ -13,18 +13,18 @@ export const UTILITY_DIGESTER = { id: "utility-digest", version: "1" } as const
 
 const clip = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max)}…`
 
-/** The digest prompt: the tool's own instructions, the request, then the result. */
+/** The digest prompt: the tool's own instructions, the user message, then the result. */
 export const digestPrompt = (task: DigestTask, maxSourceChars: number): string => task.mode === "select"
   ? [
     task.instructions,
-    `Request: ${task.question}`,
+    `Request: ${task.userMessage.text}`,
     "Items:",
     ...task.items.map((item) => `[${item.key}] ${clip(item.text, Math.max(200, Math.floor(maxSourceChars / Math.max(1, task.items.length))))}`),
     "Reply with the keys of the items to keep, one per line, and nothing else.",
   ].join("\n\n")
   : [
     task.instructions,
-    `Request: ${task.question}`,
+    `Request: ${task.userMessage.text}`,
     `Result:\n${clip(task.source, maxSourceChars)}`,
     "Reply with the summary only.",
   ].join("\n\n")

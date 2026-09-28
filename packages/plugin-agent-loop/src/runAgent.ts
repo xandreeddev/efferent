@@ -7,6 +7,7 @@ import { ConversationStore } from "@xandreed/core"
 import { CurrentPromptCacheKey } from "@xandreed/core"
 import { CurrentModelCallPolicy } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
+import type { UserMessage } from "@xandreed/core"
 import { handoffToMessage, safeKeepFrom } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { CompactionPlan } from "./loop.js"
@@ -59,7 +60,7 @@ export interface AgentConfig<Tools extends Record<string, Tool.Any>> {
 const COMPACT_COOLDOWN_TURNS = 3
 
 /**
- * One user turn over a persisted conversation: append the prompt, load the
+ * One user turn over a persisted conversation: append the user message, load the
  * active window (prepending the latest fold's summary when one exists), run
  * the loop with incremental tail persistence, return the result. Store
  * failures are defects (`orDie`) — persistence breaking mid-run is
@@ -74,19 +75,19 @@ const COMPACT_COOLDOWN_TURNS = 3
 export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
   config: AgentConfig<Tools>,
   conversationId: ConversationId,
-  prompt: string,
+  userMessage: UserMessage,
   options?: {
     readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, never, R>
     /** The mid-turn steering seam — see `RunLoopOptions.pendingInput`. */
     readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
-    /** Prompt content is redacted from traces by default. Trusted local
+    /** The user message is redacted from traces by default. Trusted local
      *  drivers may opt in explicitly for debugging. */
     readonly traceContent?: boolean
   },
 ) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
-    yield* store.append(conversationId, { role: "user", content: prompt }).pipe(Effect.orDie)
+    yield* store.append(conversationId, { role: "user", content: userMessage.text }).pipe(Effect.orDie)
     const fold = yield* store.latestCheckpoint(conversationId).pipe(Effect.orDie)
     // The active window comes back WITH its positions — the mirror below is
     // read off the rows, never reconstructed by arithmetic (a row the store
@@ -190,8 +191,8 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       attributes: {
         "agent.kind": "run",
         "agent.conversation_id": String(conversationId),
-        "agent.prompt": options?.traceContent === true ? prompt.slice(0, 500) : "[redacted]",
-        "agent.prompt_chars": prompt.length,
+        "agent.userMessage": options?.traceContent === true ? userMessage.text.slice(0, 500) : "[redacted]",
+        "agent.userMessage_chars": userMessage.text.length,
       },
     }),
     Effect.locally(CurrentModelCallPolicy, Option.fromNullable(config.modelPolicy)),

@@ -27,7 +27,7 @@ export const socialLoopPlugin = definePlugin({
     return AgentLoop.of({ run: (input) => Effect.gen(function* () {
       const prior = (yield* store.read(input.session.id, -1)).filter((event) => event.name === "messages")
       const messages = (yield* Effect.forEach(prior, (event) => Schema.decodeUnknown(Schema.Array(AgentMessage))(event.data.messages))).flat()
-      const user = { role: "user" as const, content: input.prompt }
+      const user = { role: "user" as const, content: input.userMessage.text }
       yield* input.publish({ name: "messages", runId: input.runId, data: { messages: [user] } })
       const result = yield* runLoop({ system: input.system, messages: [...messages, user], toolkit: socialToolkit, maxSteps: config.maxSteps,
         onTail: (tail) => input.publish({ name: "messages", runId: input.runId, data: { messages: tail } }).pipe(Effect.as([] as ReadonlyArray<number>), Effect.orDie),
