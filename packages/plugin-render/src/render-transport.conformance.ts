@@ -1,4 +1,4 @@
-import { Effect, Fiber, Option, Ref, Stream } from "effect"
+import { Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
 import { canonicalJson } from "@xandreed/core"
 import { ConformanceFailure } from "./domain/conformance.entity.js"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
@@ -37,13 +37,19 @@ export const renderTransportConformance = (transports: {
   }),
 }]
 
-/** An appendable journal for feed checks. */
+/** An appendable journal for feed checks: `tail` polls only, `wakingTail` also signals each append. */
 export const makeMemoryJournal = (initial: ReadonlyArray<JournalRecord>) => Effect.gen(function* () {
   const records = yield* Ref.make(initial)
+  const appended = yield* PubSub.unbounded<void>()
   const tail: typeof JournalTail.Service = {
     read: (_feed, after) => Ref.get(records).pipe(Effect.map((all) => all.filter((record) => record.sequence > after))),
   }
-  return { tail, append: (record: JournalRecord) => Ref.update(records, (all) => [...all, record]) }
+  const wakingTail: typeof JournalTail.Service = { ...tail, changes: () => Stream.fromPubSub(appended) }
+  return {
+    tail,
+    wakingTail,
+    append: (record: JournalRecord) => Ref.update(records, (all) => [...all, record]).pipe(Effect.zipRight(PubSub.publish(appended, undefined)), Effect.asVoid),
+  }
 })
 
 const project: FeedProjection = (record) => Effect.succeed(record.kind === "hidden" ? Option.none() : Option.some({ event: record.kind, data: record.data }))
@@ -80,6 +86,21 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
         const frames = yield* Fiber.join(running)
         yield* expect(canonicalJson(sequences(frames)) === canonicalJson([1, 2, 4]), `in order, hidden records skipped, got ${canonicalJson(sequences(frames))}`)
         yield* expect(frames.some((frame) => frame._tag === "FeedHeartbeat"), "a heartbeat while idle")
+      }),
+    },
+    {
+      name: "a change signal polls at once instead of waiting out the interval",
+      run: Effect.gen(function* () {
+        const expect = holds("a change signal polls at once instead of waiting out the interval")
+        const slow: FeedOptions = { pollMs: 5_000, maxPollMs: 5_000, heartbeatMs: 10_000, maxDurationMs: 10_000 }
+        const journal = yield* makeMemoryJournal([record(1)])
+        const running = yield* Effect.fork(collect(makeFeed(journal.wakingTail, slow).frames(feedScope, 0, project).pipe(
+          Stream.takeUntil((frame) => frame._tag === "FeedRecord" && frame.sequence === 2))))
+        yield* Effect.sleep("50 millis")
+        yield* journal.append(record(2))
+        const frames = yield* Fiber.join(running).pipe(Effect.timeout("1 second"), Effect.option)
+        yield* expect(Option.isSome(frames), "the appended record arrived long before the next poll")
+        yield* expect(canonicalJson(sequences(Option.getOrElse(frames, () => []))) === canonicalJson([1, 2]), `records in order, got ${canonicalJson(sequences(Option.getOrElse(frames, () => [])))}`)
       }),
     },
   ]

@@ -31,7 +31,10 @@ const serveEvents = (response, feedScope, after: number) => Effect.gen(function*
   records a frozen, partial completion instead of failing.
 - `fill(placeholder, node)` commits into a declared placeholder, also after freezing.
 - `RenderFeed.frames` sends records after the cursor, one `ready` frame once caught up, and heartbeats
-  while idle; the stream ends after `maxDurationMs` and clients reconnect with their cursor.
+  while idle; the stream ends after `maxDurationMs` and clients reconnect with their cursor. Idle
+  polling backs off. A `JournalTail` may also offer `changes(feed)`, a stream whose every element
+  wakes the feed to poll at once (a database notification, an in-process signal). Polling stays the
+  fallback: a failed or ended `changes` stream only stops the wake-ups.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
   `event: ready`, and `: heartbeat` comments. WebSocket wire: one JSON object per frame
   (`{"type":"record","sequence":n,"event":…,"data":{…}}`, `{"type":"ready"}`, `{"type":"heartbeat"}`);

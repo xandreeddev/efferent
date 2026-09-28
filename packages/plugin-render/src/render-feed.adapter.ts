@@ -1,6 +1,6 @@
-import { Chunk, Clock, Duration, Effect, Layer, Option, Stream } from "effect"
+import { Chunk, Clock, Duration, Effect, Layer, Option, Queue, Scope, Stream } from "effect"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
-import type { FeedFrame, FeedOptions } from "./domain/feed-frame.entity.js"
+import type { FeedFrame, FeedOptions, FeedScope } from "./domain/feed-frame.entity.js"
 import { nextPollMs } from "./domain/feed-frame.entity.functions.js"
 import type { RenderError } from "./domain/render-surface.entity.js"
 import { JournalTail, RenderFeed } from "./ports/render.port.js"
@@ -17,14 +17,30 @@ interface Cursor {
 type Step = Option.Option<readonly [Chunk.Chunk<FeedFrame>, Cursor]>
 
 /**
+ * The wait between polls. With a `changes` stream, a signal cuts the wait
+ * short; signals that arrive during a read are kept (one is enough), so the
+ * next wait ends at once and nothing written meanwhile is missed.
+ */
+const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effect<(delayMs: number) => Effect.Effect<void>, never, Scope.Scope> =>
+  Option.match(Option.fromNullable(tail.changes), {
+    onNone: () => Effect.succeed((delayMs: number) => Effect.sleep(Duration.millis(delayMs))),
+    onSome: (changes) => Effect.gen(function* () {
+      const wake = yield* Queue.sliding<void>(1)
+      yield* changes(feed).pipe(Stream.runForEach(() => Queue.offer(wake, undefined)), Effect.ignore, Effect.forkScoped)
+      return (delayMs: number) => Effect.race(Effect.sleep(Duration.millis(delayMs)), Queue.take(wake))
+    }),
+  })
+
+/**
  * A journal tail as a stream of frames: records after the cursor (projected),
  * one ready frame after the first empty poll, heartbeats while idle, idle
- * polling backs off; the stream ends after `maxDurationMs`.
+ * polling backs off (a `changes` signal polls at once); the stream ends after
+ * `maxDurationMs`.
  */
 export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
-  frames: (feed, after, project) => Stream.unwrap(Clock.currentTimeMillis.pipe(Effect.map((now) =>
+  frames: (feed, after, project) => Stream.unwrapScoped(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)]).pipe(Effect.map(([now, wait]) =>
     Stream.unfoldChunkEffect({ after, ready: false, delayMs: 0, quietSince: now, startedAt: now } satisfies Cursor, (cursor): Effect.Effect<Step, RenderError> => Effect.gen(function* () {
-      yield* Effect.sleep(Duration.millis(cursor.delayMs))
+      yield* wait(cursor.delayMs)
       const at = yield* Clock.currentTimeMillis
       if (at - cursor.startedAt >= options.maxDurationMs) return Option.none()
       const fresh = (yield* tail.read(feed, cursor.after)).filter((record) => record.sequence > cursor.after)

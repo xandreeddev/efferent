@@ -63,6 +63,12 @@ export class Render extends Context.Tag("efferent/render/Render")<Render, {
 /** The host's journal, read after a cursor. The host authorizes the feed's principal. */
 export class JournalTail extends Context.Tag("efferent/render/JournalTail")<JournalTail, {
   readonly read: (feed: FeedScope, after: number) => Effect.Effect<ReadonlyArray<JournalRecord>, RenderError>
+  /**
+   * Optional wake signal: each element means the feed's journal may have new
+   * records, and the feed polls at once instead of waiting out its interval.
+   * Polling stays the fallback; a failed or ended stream only stops waking.
+   */
+  readonly changes?: (feed: FeedScope) => Stream.Stream<void, RenderError>
 }>() {}
 
 /** Maps a journal record to what a client receives; `None` skips it (the cursor still advances). */
