@@ -157,7 +157,7 @@ export const foldPageEvents = (events: ReadonlyArray<UiPageEvent>): ReadonlyArra
   events.reduce<ReadonlyArray<UiPage>>((pages, event) => {
     const id = event.type === "page_opened" ? event.page.id : event.pageId
     const current = pages.find((page) => page.manifest.id === id)
-    const next = reducePageEvent(Option.fromNullable(current), event)
+    const next = reducePageEvent(Option.fromNullishOr(current), event)
     return Option.match(next, {
       onNone: () => pages,
       onSome: (value) => current === undefined

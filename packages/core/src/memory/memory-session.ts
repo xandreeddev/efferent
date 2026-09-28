@@ -60,7 +60,7 @@ export const readerOf = (session: MemorySession): MemoryReader => ({
 
 /** The latest user message of the log — what a digest must serve. */
 const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<UserMessage> =>
-  Option.fromNullable(entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage] : []).at(-1))
+  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage] : []).at(-1))
 
 /**
  * The shared session over a log handle. It loads the log once, assigns
@@ -155,7 +155,7 @@ export const openLogSession = (
       entries: Ref.get(entries),
       query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),
       subjects: (kinds) => Ref.get(entries).pipe(Effect.map((all) => subjectsOf(all, kinds))),
-      resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullable(all.find((entry) => entry.id === id)))),
+      resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullishOr(all.find((entry) => entry.id === id)))),
       transcript: (fidelity) => Ref.get(entries).pipe(Effect.map((all) => fidelity === "raw" ? rawTranscript(all)
         : fidelity === "reference" ? referenceTranscript(all) : renderLog(all, renderOptions(all, "tail")))),
       record,

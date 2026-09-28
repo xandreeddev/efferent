@@ -7,7 +7,7 @@ export const DesignSystemRef = Schema.Struct({
 export type DesignSystemRef = typeof DesignSystemRef.Type
 
 export const RecipeRef = Schema.Struct({
-  id: Schema.Literal("landing.hero-grid", "app.workspace", "doc.architecture"),
+  id: Schema.Literals(["landing.hero-grid", "app.workspace", "doc.architecture"]),
   version: Schema.String,
 })
 export type RecipeRef = typeof RecipeRef.Type
@@ -32,12 +32,12 @@ export const DesignTokensV1 = Schema.Struct({
     display: Schema.String,
     body: Schema.String,
     mono: Schema.String,
-    scale: Schema.Literal("compact", "standard", "spacious"),
+    scale: Schema.Literals(["compact", "standard", "spacious"]),
   }),
-  density: Schema.Literal("compact", "standard", "comfortable"),
-  radius: Schema.Literal("sharp", "soft", "round"),
-  shadow: Schema.Literal("none", "subtle", "layered"),
-  motion: Schema.Literal("none", "reduced", "standard"),
+  density: Schema.Literals(["compact", "standard", "comfortable"]),
+  radius: Schema.Literals(["sharp", "soft", "round"]),
+  shadow: Schema.Literals(["none", "subtle", "layered"]),
+  motion: Schema.Literals(["none", "reduced", "standard"]),
 })
 export type DesignTokensV1 = typeof DesignTokensV1.Type
 
@@ -48,21 +48,21 @@ export type DesignTokensV1 = typeof DesignTokensV1.Type
  * on the same visual grammar.
  */
 export const ThemeIntent = Schema.Struct({
-  mode: Schema.Literal("dark", "light"),
+  mode: Schema.Literals(["dark", "light"]),
   accent: Schema.String,
   neutral: Schema.String,
   positive: Schema.String,
   warning: Schema.String,
   danger: Schema.String,
-  contrast: Schema.Literal("soft", "standard", "high"),
-  surface: Schema.Literal("flat", "layered", "translucent"),
-  border: Schema.Literal("none", "subtle", "strong"),
-  radius: Schema.Literal("sharp", "soft", "round"),
-  shadow: Schema.Literal("none", "subtle", "layered"),
-  typography: Schema.Literal("system", "editorial", "geometric"),
-  typeScale: Schema.Literal("compact", "standard", "spacious"),
-  density: Schema.Literal("compact", "standard", "comfortable"),
-  motion: Schema.Literal("none", "reduced", "standard"),
+  contrast: Schema.Literals(["soft", "standard", "high"]),
+  surface: Schema.Literals(["flat", "layered", "translucent"]),
+  border: Schema.Literals(["none", "subtle", "strong"]),
+  radius: Schema.Literals(["sharp", "soft", "round"]),
+  shadow: Schema.Literals(["none", "subtle", "layered"]),
+  typography: Schema.Literals(["system", "editorial", "geometric"]),
+  typeScale: Schema.Literals(["compact", "standard", "spacious"]),
+  density: Schema.Literals(["compact", "standard", "comfortable"]),
+  motion: Schema.Literals(["none", "reduced", "standard"]),
 })
 export type ThemeIntent = typeof ThemeIntent.Type
 
@@ -92,13 +92,13 @@ export const DesignTokensV2 = Schema.Struct({
   theme: ThemeIntent,
   typography: Schema.Struct({ mono: Schema.Literal("mono") }),
   layout: Schema.Struct({
-    contentWidth: Schema.Literal("narrow", "standard", "wide"),
-    grid: Schema.Literal("compact", "standard", "editorial"),
+    contentWidth: Schema.Literals(["narrow", "standard", "wide"]),
+    grid: Schema.Literals(["compact", "standard", "editorial"]),
   }),
 })
 export type DesignTokensV2 = typeof DesignTokensV2.Type
 
-export const DesignTokens = Schema.Union(DesignTokensV1, DesignTokensV2)
+export const DesignTokens = Schema.Union([DesignTokensV1, DesignTokensV2])
 export type DesignTokens = typeof DesignTokens.Type
 
 export const ThemeDefinition = Schema.Struct({
@@ -106,7 +106,7 @@ export const ThemeDefinition = Schema.Struct({
   version: Schema.String,
   designSystem: DesignSystemRef,
   intent: ThemeIntent,
-  status: Schema.Literal("workspace", "promoted", "deprecated"),
+  status: Schema.Literals(["workspace", "promoted", "deprecated"]),
   fingerprint: Schema.String,
   createdAt: Schema.Number,
 })

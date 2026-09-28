@@ -142,7 +142,7 @@ export const toolSequence = <W>(
           `matched ${matched.matched}/${sequence.length} of [${sequence.join(", ")}] in calls [${calls.join(", ")}]`,
         )
       }),
-      Effect.catchAll((cause) =>
+      Effect.catch((cause) =>
         Effect.succeed(ok(false, `conversation unavailable: ${String(cause).slice(0, 120)}`)),
       ),
     ),
@@ -172,7 +172,7 @@ export const turnAlternationValid = <W>(
         const orphans = callIds.filter((id) => !resultIds.has(id))
         return ok(orphans.length === 0, `tool calls without results: ${orphans.join(", ")}`)
       }),
-      Effect.catchAll((cause) =>
+      Effect.catch((cause) =>
         Effect.succeed(ok(false, `conversation unavailable: ${String(cause).slice(0, 120)}`)),
       ),
     ),
@@ -197,7 +197,7 @@ export const briefContains = <W>(
           typeof needle === "string" ? first.content.includes(needle) : needle.test(first.content)
         return ok(hit, `the brief does not contain ${String(needle)}`)
       }),
-      Effect.catchAll((cause) =>
+      Effect.catch((cause) =>
         Effect.succeed(ok(false, `conversation unavailable: ${String(cause).slice(0, 120)}`)),
       ),
     ),

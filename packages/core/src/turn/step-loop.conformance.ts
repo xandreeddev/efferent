@@ -1,6 +1,6 @@
-import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import type { Response } from "@effect/ai"
-import { Context, Effect, FiberRef, Option, Ref, Schema, Stream } from "effect"
+import { LanguageModel, Tool, Toolkit } from "effect/ai"
+import type { Response } from "effect/ai"
+import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { Failure } from "../domain/failure.entity.js"
@@ -17,7 +17,7 @@ import type { CompletionVerdict, TurnEvent } from "./turn-event.entity.js"
 
 const Probe = Tool.make("probe", {
   description: "Echo a number.",
-  parameters: { n: Schema.Number },
+  parameters: Schema.Struct({ n: Schema.Finite }),
   success: Schema.Number,
   failure: Failure,
   failureMode: "return",
@@ -28,7 +28,7 @@ const erased: ReadonlyArray<Tool.Any> = [Probe]
 const toolkit = Toolkit.make(...erased)
 
 type Part = Response.PartEncoded
-const usage = { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
 /** A scripted provider reply calling `probe`. */
 export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
@@ -55,7 +55,7 @@ interface Observed {
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
 
 /** Run one scenario on the loop with a scripted provider, the `probe` tool and an in-memory record. */
-const observe = (loop: Context.Tag.Service<typeof StepLoop>, scenario: Scenario): Effect.Effect<Observed, ConformanceFailure> => Effect.scoped(Effect.gen(function* () {
+const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenario): Effect.Effect<Observed, ConformanceFailure> => Effect.scoped(Effect.gen(function* () {
   const scope = yield* Effect.scope
   const events = yield* makeTurnEvents({ maxDepth: 8 })
   const tasks = yield* makeTurnTasks(scope)
@@ -69,9 +69,9 @@ const observe = (loop: Context.Tag.Service<typeof StepLoop>, scenario: Scenario)
     streamText: () => Stream.die("the conformance provider does not stream"),
   })
   const invocations = yield* Ref.make(0)
-  const handlers = yield* typed.toContext({
+  const handlers = yield* typed.toHandlers({
     probe: ({ n }) => Effect.gen(function* () {
-      const step = Option.getOrElse(yield* FiberRef.get(CurrentAgentStep), () => -1)
+      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => -1)
       const invocationId = `probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`
       const base = { step, invocationId, tool: Probe.name, input: { n }, labels: {}, stage: Option.none() }
       yield* events.publish({ _tag: "tool.started", ...base }).pipe(Effect.orDie)
@@ -110,8 +110,8 @@ const observe = (loop: Context.Tag.Service<typeof StepLoop>, scenario: Scenario)
     tools,
     handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: false, requireCompletion: false },
-    initial: Option.fromNullable(scenario.initial),
-    plan: () => Effect.succeed({ model: Option.none(), system: "conformance", messages: [{ role: "user", content: "go" }], toolChoice: Option.fromNullable(scenario.toolChoice) }),
+    initial: Option.fromNullishOr(scenario.initial),
+    plan: () => Effect.succeed({ model: Option.none(), system: "conformance", messages: [{ role: "user", content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice) }),
     record,
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
     steering: Effect.succeed(Option.none()),
@@ -137,7 +137,7 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * without a provider call, forced tool choices, awaiting verdicts, no call
  * after completion, and the step cap.
  */
-export const stepLoopConformance = (loop: Context.Tag.Service<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
     name: "orders step.started < tool.* < step.ended < completion.evaluated within every step",
     run: Effect.gen(function* () {
@@ -189,7 +189,7 @@ export const stepLoopConformance = (loop: Context.Tag.Service<typeof StepLoop>):
       const done = yield* Ref.make(false)
       const { events, providerCalls, result } = yield* observe(loop, {
         script: [probeCall("c1", 1)],
-        before: (tasks) => tasks.fork("work", Effect.sleep("20 millis").pipe(Effect.zipRight(Ref.set(done, true)))),
+        before: (tasks) => tasks.fork("work", Effect.sleep("20 millis").pipe(Effect.andThen(Ref.set(done, true)))),
         completion: () => Ref.get(done).pipe(Effect.map((complete): CompletionVerdict => ({ complete, awaiting: complete ? [] : ["work"], facts: {} }))),
       })
       const verdicts = events.flatMap((event) => event._tag === "completion.evaluated" && event.step === 0 ? [event.verdict] : [])

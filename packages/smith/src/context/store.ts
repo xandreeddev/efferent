@@ -7,7 +7,7 @@ import { emptyContextSet } from "./context-set.entity.functions.js"
 /** `<cwd>/.efferent/context.json` — the workspace's context set. */
 export const contextSetPath = (cwd: string): string => `${cwd}/.efferent/context.json`
 
-const ContextSetJson = Schema.parseJson(ContextSet)
+const ContextSetJson = Schema.fromJsonString(ContextSet)
 
 /** The set on file; absent = empty. A file that no longer decodes is
  *  logged and read as empty — a hand-edit gone wrong must not brick every
@@ -19,8 +19,8 @@ export const loadContextSet = (cwd: string): Effect.Effect<ContextSet, never, Fi
     const exists = yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false))
     if (!exists) return emptyContextSet
     const text = yield* fs.read(path).pipe(Effect.orElseSucceed(() => ""))
-    return yield* Schema.decodeUnknown(ContextSetJson)(text).pipe(
-      Effect.catchAll((issue) =>
+    return yield* Schema.decodeUnknownEffect(ContextSetJson)(text, { reportInput: true }).pipe(
+      Effect.catch((issue) =>
         Effect.logWarning(`${path}: unreadable context set — reading as empty: ${String(issue)}`).pipe(
           Effect.as(emptyContextSet),
         ),
@@ -34,7 +34,7 @@ export const saveContextSet = (
 ): Effect.Effect<void, FsError, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
-    yield* fs.mkdir(`${cwd}/.efferent`).pipe(Effect.catchAll(() => Effect.void))
+    yield* fs.mkdir(`${cwd}/.efferent`).pipe(Effect.catch(() => Effect.void))
     const encoded = Schema.encodeSync(ContextSet)(set)
     yield* fs.write(contextSetPath(cwd), `${JSON.stringify(encoded, null, 2)}\n`)
   })

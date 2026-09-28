@@ -1,5 +1,5 @@
 import { join as joinPath } from "node:path"
-import { Effect, Either, Option, Ref, Stream } from "effect"
+import { Effect, Result, Option, Ref, Stream } from "effect"
 import { compileDesignTokenCss, compileThemeCss } from "@xandreed/surface"
 import type { UiCompileContext } from "@xandreed/surface"
 import { CORE_UI_COMPONENTS, UiComponentCatalog, UiHost, UiPageStore, applyThemeDelta, renderUiAdmissionFindings, themeFingerprint, themeIntentFromTokens, validateBlocks } from "@xandreed/ui-agent"
@@ -57,7 +57,7 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "
  */
 const trustedOrigin = (origin: string | null, port: number | undefined): boolean =>
   Option.match(
-    Option.flatMap(Option.fromNullable(origin), (raw) =>
+    Option.flatMap(Option.fromNullishOr(origin), (raw) =>
       Option.liftThrowable(() => new URL(raw))(),
     ),
     {
@@ -97,8 +97,8 @@ export const serveCanvas = (args: {
     const localContext: UiRequestContext = { sessionId: String(args.session.conversationId), principal: undefined, csrfToken }
     const initial = (args.initialEvents ?? []).reduce(reduceEvent, emptyModel)
     const model = yield* Ref.make(initial)
-    const tokenCss = Either.getOrElse(compileDesignTokenCss(host.tokens), () => "")
-    const initialDefinitions = yield* catalog.list.pipe(Effect.catchAll((message) => Effect.logWarning(`component catalog unavailable: ${message}`).pipe(Effect.as(CORE_UI_COMPONENTS))))
+    const tokenCss = Result.getOrElse(compileDesignTokenCss(host.tokens), () => "")
+    const initialDefinitions = yield* catalog.list.pipe(Effect.catch((message) => Effect.logWarning(`component catalog unavailable: ${message}`).pipe(Effect.as(CORE_UI_COMPONENTS))))
     const components = new Map<string, UiComponentDefinitionType>(initialDefinitions.map((definition) => [definition.id, definition]))
     const themeCss = new Map<string, string>()
     const baseTheme = themeIntentFromTokens(host.tokens)
@@ -108,13 +108,13 @@ export const serveCanvas = (args: {
       { label: "Soft product", intent: applyThemeDelta(baseTheme, { typography: "system", radius: "round", border: "subtle", shadow: "subtle", surface: "translucent", accent: "#7c5cff" }) },
       { label: "Dense operations", intent: applyThemeDelta(baseTheme, { density: "compact", typeScale: "compact", radius: "sharp", contrast: "high", border: "strong", accent: "#2a9d6f" }) },
     ].map((theme) => ({ ...theme, id: themeFingerprint(theme.intent) }))
-    const galleryThemeCss = galleryThemes.map((theme) => Either.getOrElse(compileThemeCss(theme.intent, `[data-ui-theme="${theme.id}"]`), () => "")).join("\n")
+    const galleryThemeCss = galleryThemes.map((theme) => Result.getOrElse(compileThemeCss(theme.intent, `[data-ui-theme="${theme.id}"]`), () => "")).join("\n")
     const refreshCatalog = catalog.list.pipe(
       Effect.tap((definitions) => Effect.sync(() => {
         components.clear()
         definitions.forEach((definition) => components.set(definition.id, definition))
       })),
-      Effect.catchAll((message) => Effect.logWarning(`component catalog refresh failed: ${message}`)),
+      Effect.catch((message) => Effect.logWarning(`component catalog refresh failed: ${message}`)),
       Effect.asVoid,
     )
     const compileContext: UiCompileContext = { pageId: "", csrfToken, assets: host.assets, capabilities: new Set([...host.actions.keys(), ...host.queries.keys()]), components }
@@ -122,7 +122,7 @@ export const serveCanvas = (args: {
       if (page === undefined || page.kind === "legacy") return compileContext
       const intent = page.page.manifest.theme ?? themeIntentFromTokens(host.tokens)
       const id = themeFingerprint(intent)
-      const css = Either.getOrElse(compileThemeCss(intent, `[data-ui-theme="${id}"]`), () => "")
+      const css = Result.getOrElse(compileThemeCss(intent, `[data-ui-theme="${id}"]`), () => "")
       themeCss.set(id, css)
       return { ...compileContext, pageId: page.page.manifest.id, theme: { id, href: `/theme/${id}.css` } }
     }
@@ -171,13 +171,13 @@ export const serveCanvas = (args: {
           const findings = validateBlocks(page.page.manifest, event.blocks, host, components)
           return findings.length === 0 ? Effect.void : Effect.fail(`host action patch rejected:\n${renderUiAdmissionFindings(findings)}`)
         }),
-        Effect.zipRight(pageStore.append(args.session.conversationId, event)),
+        Effect.andThen(pageStore.append(args.session.conversationId, event)),
         Effect.flatMap(() => Ref.modify(model, (previous) => {
           const next = reduceEvent(previous, event)
           return [{ previous, next }, next] as const
         })),
         Effect.map(({ previous, next }) => void server.publish(TOPIC, fragmentsFor(next, event, previous))),
-        Effect.catchAll((error) => Effect.logError(`host action persistence failed: ${error}`)),
+        Effect.catch((error) => Effect.logError(`host action persistence failed: ${error}`)),
       )
 
     const server = Bun.serve({
@@ -229,7 +229,7 @@ export const serveCanvas = (args: {
                 Effect.flatMap(({ decoded, resolved }) => capability.authorize(decoded, resolved).pipe(Effect.as({ decoded, resolved }))),
                 Effect.flatMap(({ decoded, resolved }) => capability.run(decoded, resolved)),
                 Effect.flatMap((result) => result.blocks.length === 0 ? Effect.void : applyEvent({ type: "blocks_upserted", pageId: pageIdValue, blocks: result.blocks, at: Date.now() }, server)),
-                Effect.catchAll((error) => Effect.logWarning(`host capability rejected: ${error}`)),
+                Effect.catch((error) => Effect.logWarning(`host capability rejected: ${error}`)),
               ),
             )
             return new Response(null, { status: 202 })
@@ -240,14 +240,14 @@ export const serveCanvas = (args: {
       websocket: {
         open: (ws) => {
           ws.subscribe(TOPIC)
-          void Effect.runPromise(refreshCatalog.pipe(Effect.zipRight(Ref.get(model)), Effect.map((current) => void ws.send(fullSync(current)))))
+          void Effect.runPromise(refreshCatalog.pipe(Effect.andThen(Ref.get(model)), Effect.map((current) => void ws.send(fullSync(current)))))
         },
         message: () => {},
         close: (ws) => void ws.unsubscribe(TOPIC),
       },
     })
 
-    yield* Effect.forkDaemon(Stream.runForEach(args.session.subscribe(0), (seq) => refreshCatalog.pipe(Effect.zipRight(Ref.modify(model, (previous) => {
+    yield* Effect.forkDetach(Stream.runForEach(args.session.subscribe(0), (seq) => refreshCatalog.pipe(Effect.andThen(Ref.modify(model, (previous) => {
       const next = reduceEvent(previous, seq.event)
       return [{ previous, next }, next] as const
     })), Effect.map(({ previous, next }) => {

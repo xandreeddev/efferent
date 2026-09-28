@@ -9,8 +9,9 @@
  * machine-formatted message, and fork the turn (a failure lands as a
  * retryable error stage, never a hung request).
  */
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
-import { Effect, Option, PubSub, Queue } from "effect"
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { Socket } from "effect/socket"
+import { Effect, Option, PubSub } from "effect"
 import type { MathSession } from "../session.js"
 import {
   ACTION_CHECK_PATH,
@@ -120,9 +121,9 @@ export const mathRouter = (deps: {
         const [, drained] = drainProgress(m)
         return { model: setGenerating(drained, true), patches: ALL_PATCHES }
       })
-      yield* Effect.forkDaemon(
+      yield* Effect.forkDetach(
         session.send(message).pipe(
-          Effect.catchAll((e) =>
+          Effect.catch((e) =>
             pump
               .apply((m) => ({
                 model: setError(m, "The tutor could not run.", String(e)),
@@ -143,31 +144,45 @@ export const mathRouter = (deps: {
     }
   })
 
-  const assetRoutes = staticAssets.reduce(
-    (routes, asset) =>
-      routes.pipe(
-        HttpRouter.get(
-          asset.path as `/${string}`,
-          Effect.gen(function* () {
-            const req = yield* HttpServerRequest.HttpServerRequest
-            if (req.headers["if-none-match"] === asset.hash) {
-              return HttpServerResponse.empty({ status: 304 })
-            }
-            return HttpServerResponse.text(asset.content, {
-              headers: {
-                "content-type": asset.contentType,
-                etag: asset.hash,
-                "cache-control": "public, max-age=31536000, immutable",
-              },
-            })
-          }),
+  // Failures → a 500 with the message (never a crash).
+  const recover = <E, R>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    handler.pipe(
+      Effect.catch((e) =>
+        Effect.succeed(
+          HttpServerResponse.text(
+            typeof e === "object" && e !== null && "message" in e ? String(e.message) : "internal error",
+            { status: 500 },
+          ),
         ),
       ),
-    HttpRouter.empty,
+    )
+  const get = <E, R>(path: HttpRouter.PathInput, handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    HttpRouter.route("GET", path, recover(handler))
+  const post = <E, R>(path: HttpRouter.PathInput, handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    HttpRouter.route("POST", path, recover(handler))
+
+  const assetRoutes = staticAssets.map((asset) =>
+    get(
+      asset.path as `/${string}`,
+      Effect.gen(function* () {
+        const req = yield* HttpServerRequest.HttpServerRequest
+        if (req.headers["if-none-match"] === asset.hash) {
+          return HttpServerResponse.empty({ status: 304 })
+        }
+        return HttpServerResponse.text(asset.content, {
+          headers: {
+            "content-type": asset.contentType,
+            etag: asset.hash,
+            "cache-control": "public, max-age=31536000, immutable",
+          },
+        })
+      }),
+    ),
   )
 
-  return assetRoutes.pipe(
-    HttpRouter.get(
+  return HttpRouter.addAll([
+    ...assetRoutes,
+    get(
       "/health",
       HttpServerResponse.json({
         pid: deps.identity.pid,
@@ -178,7 +193,7 @@ export const mathRouter = (deps: {
 
     // The page: `?t=<token>` bootstraps the cookie; with the cookie already
     // set, a bare `/` works too. Wrong/missing token+cookie → 401.
-    HttpRouter.get(
+    get(
       "/",
       Effect.gen(function* () {
         const req = yield* HttpServerRequest.HttpServerRequest
@@ -199,7 +214,7 @@ export const mathRouter = (deps: {
 
     // The WebSocket: server→client fragments only. Client frames are
     // resync/ping — a `chat` frame is DROPPED (no chat on this product).
-    HttpRouter.get(
+    get(
       "/ws",
       Effect.gen(function* () {
         const req = yield* HttpServerRequest.HttpServerRequest
@@ -207,33 +222,37 @@ export const mathRouter = (deps: {
         const socket = yield* req.upgrade
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const write = yield* socket.writer
+            const writer = yield* socket.writer
+            const write = (fragment: string) => writer.write(fragment)
             const sub = yield* PubSub.subscribe(pump.hub)
             yield* write(yield* pump.fullRender)
             const outbound = Effect.forever(
-              Queue.take(sub).pipe(Effect.flatMap((batch) => write(batch))),
+              PubSub.take(sub).pipe(Effect.flatMap(write)),
             )
-            const decoder = new TextDecoder()
-            const inbound = socket.run((data) => {
-              const msg = parseClientMessage(typeof data === "string" ? data : decoder.decode(data))
-              return Option.match(msg, {
+            const onFrame = (data: string) =>
+              Option.match(parseClientMessage(data), {
                 onNone: () => Effect.void,
                 onSome: (m) =>
                   m.type === "resync"
-                    ? pump.fullRender.pipe(Effect.flatMap(write), Effect.catchAll(() => Effect.void))
+                    ? pump.fullRender.pipe(Effect.flatMap(write), Effect.catch(() => Effect.void))
                     : Effect.void,
               })
-            })
+            // A read fails once the socket closes (cleanly or not): either way
+            // the connection is over, so the race below ends with it.
+            const pull = yield* Socket.readerString(socket)
+            const inbound = Effect.forever(
+              pull.pipe(Effect.flatMap((frames) => Effect.forEach(frames, onFrame, { discard: true }))),
+            ).pipe(Effect.catch(() => Effect.void))
             yield* Effect.race(Effect.race(outbound, inbound), deps.closed ?? Effect.never)
           }),
-        ).pipe(Effect.catchAll(() => Effect.void))
+        ).pipe(Effect.catch(() => Effect.void))
         return HttpServerResponse.empty()
       }),
     ),
 
     // --- server-instant actions (no agent) --------------------------------
 
-    HttpRouter.post(
+    post(
       ACTION_CHECK_PATH as "/action/check",
       guard(
         Effect.gen(function* () {
@@ -251,7 +270,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_REVEAL_PATH as "/action/reveal",
       guard(
         Effect.gen(function* () {
@@ -265,7 +284,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_REPORT_PATH as "/action/report",
       guard(
         Effect.gen(function* () {
@@ -280,7 +299,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_NEXT_PATH as "/action/next",
       guard(
         Effect.gen(function* () {
@@ -291,7 +310,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_SETUP_PATH as "/action/setup",
       guard(
         Effect.gen(function* () {
@@ -303,20 +322,20 @@ export const mathRouter = (deps: {
 
     // --- agent actions (one turn each; coalesced while generating) --------
 
-    HttpRouter.post(
+    post(
       ACTION_MORE_PATH as "/action/more",
       guard(fireAgent({ kind: "more" }).pipe(Effect.as(noContent))),
     ),
-    HttpRouter.post(
+    post(
       ACTION_HARDER_PATH as "/action/harder",
       guard(fireAgent({ kind: "harder" }).pipe(Effect.as(noContent))),
     ),
-    HttpRouter.post(
+    post(
       ACTION_EASIER_PATH as "/action/easier",
       guard(fireAgent({ kind: "easier" }).pipe(Effect.as(noContent))),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_TOPIC_PATH as "/action/topic",
       guard(
         Effect.gen(function* () {
@@ -350,7 +369,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       ACTION_INTERRUPT_PATH as "/action/interrupt",
       guard(
         Effect.gen(function* () {
@@ -361,7 +380,7 @@ export const mathRouter = (deps: {
       ),
     ),
 
-    HttpRouter.post(
+    post(
       "/shutdown",
       guard(
         Effect.gen(function* () {
@@ -370,13 +389,5 @@ export const mathRouter = (deps: {
         }),
       ),
     ),
-
-    // Failures → a 500 with the message (never a crash).
-    HttpRouter.catchAll((e) =>
-      HttpServerResponse.text(
-        typeof e === "object" && e !== null && "message" in e ? String(e.message) : "internal error",
-        { status: 500 },
-      ),
-    ),
-  )
+  ])
 }

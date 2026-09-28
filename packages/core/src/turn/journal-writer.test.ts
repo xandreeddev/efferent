@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Ref, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Ref, Result, Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody } from "../harness/session.entity.js"
 import type { JournalIO } from "../ports/memory.port.js"
@@ -14,8 +14,8 @@ const makeStore = (options: { readonly batched: boolean; readonly failOn?: numbe
   const calls = yield* Ref.make<ReadonlyArray<ReadonlyArray<number>>>([])
   const gate = yield* Deferred.make<void>()
   const store = (events: ReadonlyArray<EventBody>) => Deferred.await(gate).pipe(
-    Effect.zipRight(Ref.update(calls, (all) => [...all, numbers(events).map(Number)])),
-    Effect.zipRight(events.some((event) => event.data.n === options.failOn)
+    Effect.andThen(Ref.update(calls, (all) => [...all, numbers(events).map(Number)])),
+    Effect.andThen(events.some((event) => event.data.n === options.failOn)
       ? Effect.fail(new HarnessError({ code: "journal.down", message: "store unavailable" }))
       : Ref.update(stored, (all) => [...all, ...events])),
   )
@@ -79,11 +79,11 @@ describe("the journal writer", () => {
       const writer = yield* makeJournalWriter(store.io, yield* Effect.scope, options)
       yield* writer.io.append(body(1))
       yield* writer.io.append(body(2))
-      const waiting = yield* Effect.fork(writer.write(Ref.get(store.stored).pipe(Effect.map(numbers))))
+      const waiting = yield* Effect.forkChild(writer.write(Ref.get(store.stored).pipe(Effect.map(numbers))))
       yield* store.release
-      const seenByOp = yield* waiting.await.pipe(Effect.flatten)
-      const failed = yield* Effect.either(writer.write(Effect.fail("op failed" as const)))
-      return { seenByOp, failed: failed._tag === "Left" ? failed.left : "none" }
+      const seenByOp = yield* Fiber.await(waiting).pipe(Effect.flatten)
+      const failed = yield* Effect.result(writer.write(Effect.fail("op failed" as const)))
+      return { seenByOp, failed: failed._tag === "Failure" ? failed.failure : "none" }
     })))
     expect(outcome).toEqual({ seenByOp: [1, 2], failed: "op failed" })
   })
@@ -94,11 +94,11 @@ describe("the journal writer", () => {
       yield* store.release
       const writer = yield* makeJournalWriter(store.io, yield* Effect.scope, options)
       yield* Effect.forEach([1, 2, 3], (n) => writer.io.append(body(n)), { discard: true })
-      const code = (either: { readonly _tag: "Left"; readonly left: unknown } | { readonly _tag: "Right" }) =>
-        either._tag === "Left" && either.left instanceof HarnessError ? either.left.code : "none"
-      const flushed = code(yield* Effect.either(writer.flush))
-      const appended = code(yield* Effect.either(writer.io.append(body(4))))
-      const written = code(yield* Effect.either(writer.write(Effect.succeed(1))))
+      const code = (result: Result.Result<unknown, unknown>) =>
+        Result.isFailure(result) && result.failure instanceof HarnessError ? result.failure.code : "none"
+      const flushed = code(yield* Effect.result(writer.flush))
+      const appended = code(yield* Effect.result(writer.io.append(body(4))))
+      const written = code(yield* Effect.result(writer.write(Effect.succeed(1))))
       return { flushed, appended, written, stored: numbers(yield* Ref.get(store.stored)) }
     })))
     expect(outcome).toEqual({ flushed: "journal.down", appended: "journal.down", written: "journal.down", stored: [1] })
@@ -110,7 +110,7 @@ describe("the journal writer", () => {
       const scope = yield* Scope.make()
       const writer = yield* makeJournalWriter(store.io, scope, options)
       yield* Effect.forEach([1, 2, 3], (n) => writer.io.append(body(n)), { discard: true })
-      yield* Effect.fork(Effect.sleep("5 millis").pipe(Effect.zipRight(store.release)))
+      yield* Effect.forkChild(Effect.sleep("5 millis").pipe(Effect.andThen(store.release)))
       yield* Scope.close(scope, Exit.void)
       return numbers(yield* Ref.get(store.stored))
     }))

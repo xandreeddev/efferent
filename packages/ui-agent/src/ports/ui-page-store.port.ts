@@ -7,4 +7,4 @@ export interface UiPageStoreService {
   readonly list: (conversationId: ConversationId) => Effect.Effect<ReadonlyArray<UiPageEvent>, string>
 }
 
-export class UiPageStore extends Context.Tag("@xandreed/ui-agent/UiPageStore")<UiPageStore, UiPageStoreService>() {}
+export class UiPageStore extends Context.Service<UiPageStore, UiPageStoreService>()("@xandreed/ui-agent/UiPageStore") {}

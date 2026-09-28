@@ -1,5 +1,5 @@
-import { Tool, Toolkit } from "@effect/ai"
-import { Cause, Clock, Context, Effect, Exit, FiberRef, Option, Ref, Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
 import {
   ActionPolicy,
   activationsOf,
@@ -51,7 +51,7 @@ const harness = (code: string, message: string) => new HarnessError({ code, mess
 
 const LoadSkill = Tool.make("load_skill", {
   description: "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
-  parameters: { skills: Schema.Array(Schema.String) },
+  parameters: Schema.Struct({ skills: Schema.Array(Schema.String) }),
   success: Schema.String,
   failure: Failure,
   failureMode: "return",
@@ -59,7 +59,7 @@ const LoadSkill = Tool.make("load_skill", {
 
 const ReadSkillReference = Tool.make("read_skill_reference", {
   description: "Read one reference document listed by a loaded skill.",
-  parameters: { skill: Schema.String, reference: Schema.String },
+  parameters: Schema.Struct({ skill: Schema.String, reference: Schema.String }),
   success: Schema.String,
   failure: Failure,
   failureMode: "return",
@@ -68,7 +68,7 @@ const ReadSkillReference = Tool.make("read_skill_reference", {
 const rawText = (encoded: unknown): string => typeof encoded === "string" ? encoded : canonicalJson(encoded)
 
 /** Tool result schemas are context-free by contract (they cross the wire). */
-const contextFree = (schema: Schema.Schema.All): Schema.Schema<unknown, unknown> => schema as Schema.Schema<unknown, unknown>
+const contextFree = (schema: Schema.Top): Schema.Codec<unknown, unknown> => schema as Schema.Codec<unknown, unknown>
 
 /** The text a load_skill call returns (tier 2) — also used for matcher-seeded skills. */
 export const skillInstructions = (skills: ReadonlyArray<SkillDefinition>, tools: ReadonlyArray<string>): string =>
@@ -112,13 +112,14 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
   const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...contributions, defineContributions({ id: "tool-discovery", version: "1", tools: own })])
   const byName = new Map(registered.map((entry) => [entry.tool.name, entry] as const))
   const skillsForTool = (tool: string) => skills.filter((skill) => skill.tools.includes(tool)).map((skill) => skill.id)
-  const decoded = (name: string, encoded: unknown) => Option.match(Option.fromNullable(byName.get(name)), {
-    onNone: () => Effect.succeed(Option.none<{ readonly entry: RegisteredTool; readonly result: unknown }>()),
-    onSome: (entry) => Schema.decodeUnknown(contextFree(entry.tool.successSchema))(encoded).pipe(
-      Effect.map((result) => Option.some({ entry, result })),
-      Effect.orElseSucceed(() => Option.none<{ readonly entry: RegisteredTool; readonly result: unknown }>()),
-    ),
-  })
+  const decoded = (name: string, encoded: unknown): Effect.Effect<Option.Option<{ readonly entry: RegisteredTool; readonly result: unknown }>> =>
+    Option.match(Option.fromNullishOr(byName.get(name)), {
+      onNone: () => Effect.succeed(Option.none()),
+      onSome: (entry) => Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
+        Effect.map((result) => Option.some({ entry, result })),
+        Effect.orElseSucceed(() => Option.none()),
+      ),
+    })
 
   const views: ToolViews = {
     view: (name, encoded, params, isError) => {
@@ -127,7 +128,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const raw: ToolView = { text: rawText(encoded), version: "raw", subjects: [], artifacts: [], pinned }
       if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
       const view = entry.view.value
-      return Schema.decodeUnknown(contextFree(entry.tool.successSchema))(encoded).pipe(
+      return Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
         Effect.map((result): ToolView => ({
           text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
           artifacts: view.artifacts(result, params), pinned,
@@ -136,11 +137,11 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       )
     },
     compact: (name, encoded, params) => {
-      const view = Option.flatMap(Option.fromNullable(byName.get(name)), (entry) => entry.view)
+      const view = Option.flatMap(Option.fromNullishOr(byName.get(name)), (entry) => entry.view)
       const compact = Option.flatMap(view, (value) => value.compact)
       const entry = byName.get(name)
       return Option.isNone(compact) || entry === undefined ? Effect.succeed(Option.none())
-        : Schema.decodeUnknown(contextFree(entry.tool.successSchema))(encoded).pipe(
+        : Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
           Effect.map((result) => Option.some(compact.value(result, params))),
           Effect.orElseSucceed(() => Option.none<string>()),
         )
@@ -183,8 +184,8 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
     const calls = yield* Ref.make(new Map<string, number>())
     const skillLoads = yield* Ref.make(0)
     const invocation = yield* Ref.make(0)
-    const readLane = yield* Effect.makeSemaphore(config.readConcurrency)
-    const writeLane = yield* Effect.makeSemaphore(1)
+    const readLane = yield* Semaphore.make(config.readConcurrency)
+    const writeLane = yield* Semaphore.make(1)
 
     const activate = (requested: ReadonlyArray<string>, source: ActivationSource) => Effect.gen(function* () {
       const unknown = requested.filter((id) => !skills.some((skill) => skill.id === id))
@@ -243,7 +244,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const invocationId = `${run.runId}:call:${sequence}`
       const labels = entry.annotations.labels
       const stage = entry.annotations.stage
-      const step = Option.getOrElse(yield* FiberRef.get(CurrentAgentStep), () => 0)
+      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
       // A subscriber failure fails the turn, never the tool call (which the model would see).
       yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
@@ -252,8 +253,8 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const durationMs = (yield* Clock.currentTimeMillis) - started
       const ok = Exit.isSuccess(exit)
       const value: unknown = Exit.isSuccess(exit) ? exit.value
-        : Option.getOrElse(Cause.failureOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
-      const encoded = yield* Schema.encodeUnknown(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
+        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
+      const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
       yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
@@ -264,7 +265,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
           : entry.handler
 
     const toolkit = Toolkit.make(...(registered.map((entry) => entry.tool) as never))
-    const handlers = yield* (toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>).toContext(
+    const handlers = yield* (toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>).toHandlers(
       Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])) as never,
     )
 
@@ -288,15 +289,15 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       const loadedBefore = yield* Ref.get(loadedSkills)
       const activeNow = yield* activeWithAlways
       const outcome = yield* selector.match({ userMessage, skills: candidates, active: activeNow, history }).pipe(
-        Effect.timeoutFail({ duration: `${config.matcherTimeoutMs} millis`, onTimeout: () => harness("matcher.timeout", "The skill matcher timed out") }),
-        Effect.either,
+        Effect.timeoutOrElse({ duration: `${config.matcherTimeoutMs} millis`, orElse: () => Effect.fail(harness("matcher.timeout", "The skill matcher timed out")) }),
+        Effect.result,
       )
-      const chosen = outcome._tag === "Right" && !outcome.right.abstained
-        ? outcome.right.skills.filter((id) => candidates.some((skill) => skill.id === id) && !loadedBefore.includes(id))
+      const chosen = outcome._tag === "Success" && !outcome.success.abstained
+        ? outcome.success.skills.filter((id) => candidates.some((skill) => skill.id === id) && !loadedBefore.includes(id))
         : []
       // A multi-label decision: `selection` is the chosen skill ids joined by ",".
       const selection = chosen.length === 0 ? Option.none<string>() : Option.some(chosen.join(","))
-      const probabilities = outcome._tag === "Right" ? outcome.right.probabilities : Option.none()
+      const probabilities = outcome._tag === "Success" ? outcome.success.probabilities : Option.none()
       const record: DecisionRecord = {
         version: 1,
         id: DecisionId.make(`${run.runId}:skill-selection`),
@@ -308,8 +309,8 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
         candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),
         attempts: [],
         selection,
-        validation: outcome._tag === "Left" ? "failed" : outcome.right.abstained || chosen.length === 0 ? "abstained" : "accepted",
-        fallback: outcome._tag === "Left" ? Option.some(`always-on: ${outcome.left.message}`) : Option.none(),
+        validation: outcome._tag === "Failure" ? "failed" : outcome.success.abstained || chosen.length === 0 ? "abstained" : "accepted",
+        fallback: outcome._tag === "Failure" ? Option.some(`always-on: ${outcome.failure.message}`) : Option.none(),
         applied: selection,
         probabilities,
       }

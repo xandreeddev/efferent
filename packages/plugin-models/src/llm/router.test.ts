@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel } from "@effect/ai"
-import { Chunk, Effect, Metric, Option, Stream } from "effect"
+import { AiError, LanguageModel } from "effect/ai"
+import { Effect, Metric, Option, Stream } from "effect"
 import { ModelSelection, parseModelSelection } from "@xandreed/core"
 import { stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
 const finish = {
   type: "finish",
   reason: "tool-calls",
-  usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+  usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
 }
 
 const content = [
@@ -37,19 +37,16 @@ describe("stampResponse", () => {
     expect(stamped).toBeInstanceOf(LanguageModel.GenerateTextResponse)
     expect(stamped.finishReason).toBe("tool-calls")
     expect(stamped.text).toBe("listing…")
-    expect(stamped.usage.totalTokens).toBe(15)
+    expect(stamped.usage.inputTokens.total).toBe(10)
   })
 })
 
-/** The SAME metric identities the router registers — description + tags are
- *  part of the registry key, so this pins the metric contract too. */
+/** The SAME metric identities the router registers — description + attributes
+ *  are part of the registry key, so this pins the metric contract too. */
 const counterValue = (name: string, description: string, tags: ReadonlyArray<[string, string]>) =>
   Effect.runPromise(
     Metric.value(
-      tags.reduce(
-        (metric, [key, value]) => Metric.tagged(metric, key, value),
-        Metric.counter(name, { description, incremental: true }),
-      ),
+      Metric.withAttributes(Metric.counter(name, { description, incremental: true }), Object.fromEntries(tags)),
     ),
   ).then((state) => state.count)
 
@@ -64,7 +61,7 @@ const streamedParts = [
   {
     type: "finish",
     reason: "tool-calls",
-    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
   },
 ]
 
@@ -74,7 +71,7 @@ describe("tapStreamTelemetry", () => {
     const collected = await Effect.runPromise(
       Stream.runCollect(
         tapStreamTelemetry(label)(Stream.fromIterable(streamedParts)),
-      ).pipe(Effect.map(Chunk.toReadonlyArray)),
+      ),
     )
     expect(collected).toEqual(streamedParts)
     expect(
@@ -143,8 +140,15 @@ describe("withFallbackRung", () => {
     Option.getOrThrow(parseModelSelection(raw))
   const primary = sel("opencode:kimi-k2.6")
   const fallback = Option.some(sel("google:gemini-3.5-flash"))
-  const transient = { _tag: "HttpResponseError", response: { status: 503 } }
-  const permanent = { _tag: "HttpResponseError", response: { status: 401 } }
+  const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
+  const statusError = (status: number) =>
+    AiError.make({
+      module: "Test",
+      method: "generateText",
+      reason: AiError.reasonFromHttpStatus({ status, http: { request, response: { status, headers: {} } } }),
+    })
+  const transient = statusError(503)
+  const permanent = statusError(401)
 
   const scripted = (outcomes: Record<string, Effect.Effect<string, unknown>>) => {
     const calls: Array<{ readonly model: string; readonly isFallback: boolean }> = []

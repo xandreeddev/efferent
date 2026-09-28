@@ -20,7 +20,7 @@ export const runHeadless = (
     const publish = (event: SmithEvent) =>
       Queue.offer(queue, Option.some(event)).pipe(Effect.asVoid)
 
-    const printer = yield* Effect.fork(
+    const printer = yield* Effect.forkChild(
       Effect.gen(function* () {
         const next = yield* Queue.take(queue)
         return Option.match(next, {
@@ -44,7 +44,7 @@ export const runHeadless = (
           ? runShip(renderShipPlan(run.cwd, doc, result.run), publish).pipe(Effect.as(0))
           : Effect.succeed(result.run.outcome._tag === "accepted" ? 0 : 1),
       ),
-      Effect.catchAll(() => Effect.succeed(2)),
+      Effect.catch(() => Effect.succeed(2)),
     )
     // Flush: the None sentinel ends the printer after every queued event printed.
     yield* Queue.offer(queue, Option.none())

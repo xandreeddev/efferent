@@ -10,14 +10,14 @@ import { Finding } from "./Finding.js"
  */
 export const PassVerdict = Schema.TaggedStruct("pass", {
   gate: GateName,
-  durationMs: Schema.NonNegative,
+  durationMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
   /** Advisory findings (warning/info) that did not fail the gate. */
   findings: Schema.Array(Finding),
 })
 
 export const FailVerdict = Schema.TaggedStruct("fail", {
   gate: GateName,
-  durationMs: Schema.NonNegative,
+  durationMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
   findings: Schema.NonEmptyArray(Finding),
 })
 
@@ -26,7 +26,7 @@ export const SkipVerdict = Schema.TaggedStruct("skip", {
   reason: Schema.NonEmptyString,
 })
 
-export const GateVerdict = Schema.Union(PassVerdict, FailVerdict, SkipVerdict)
+export const GateVerdict = Schema.Union([PassVerdict, FailVerdict, SkipVerdict])
 export type GateVerdict = typeof GateVerdict.Type
 
 /**

@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Either, Layer, Option } from "effect"
+import { Effect, Result, Layer, Option } from "effect"
 import { Shell } from "@xandreed/core"
 import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { assembleContext, bundleSummary, fingerprintOf } from "./assemble.js"
 import { emptyContextSet, parsePinRef, withBudget, withPin } from "./context-set.entity.functions.js"
 import type { ContextSet } from "./context-set.entity.js"
 
-const pin = (raw: string) => Either.getOrThrow(parsePinRef(raw))
+const pin = (raw: string) => Result.getOrThrow(parsePinRef(raw))
 const setOf = (...refs: ReadonlyArray<string>): ContextSet =>
   refs.reduce((set, ref) => withPin(set, pin(ref)), emptyContextSet)
 

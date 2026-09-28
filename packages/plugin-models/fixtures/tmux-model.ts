@@ -1,9 +1,9 @@
-import { LanguageModel } from "@effect/ai"
-import type { Response } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
+import type { Response } from "effect/ai"
 import { Effect, Layer, Option, Schedule, Schema, Stream } from "effect"
 import { AuthStore, definePlugin, EngineSettings, ModelCatalog, SettingsStore, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 
-const usage = { inputTokens: 12, outputTokens: 4, totalTokens: 16, cachedInputTokens: 0 }
+const usage = { inputTokens: { total: 12, uncached: 12, cacheRead: 0 }, outputTokens: { total: 4 } }
 const finish = { type: "finish", reason: "stop", usage } as const
 export default definePlugin({
   id: "fixture/tmux-model", version: "1", config: Schema.Struct({ model: Schema.String }), defaults: { model: "" },
@@ -34,6 +34,6 @@ export default definePlugin({
     Layer.succeed(SettingsStore, { load: Effect.succeed(new EngineSettings({ model: model ? Option.some(model) : Option.none() })), set: () => Effect.void, setRole: () => Effect.void }),
     Layer.succeed(ModelCatalog, { list: Effect.succeed(Array.from({ length: 30 }, (_, n) => ({ selection: `fixture:model-${n}`, provider: "fixture", credential: "local" as const }))) }),
     Layer.succeed(AuthStore, { all: Effect.succeed(new Map()), get: () => Effect.succeedNone, resolveKey: () => Effect.succeedNone, set: () => Effect.void, remove: () => Effect.void }),
-    Layer.succeed(UtilityLlm, { complete: () => Effect.succeed(new UtilityCompletion({ text: "summary", usage: { ...usage, cacheReadTokens: 0 } })) }),
+    Layer.succeed(UtilityLlm, { complete: () => Effect.succeed(new UtilityCompletion({ text: "summary", usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, cacheReadTokens: 0 } })) }),
   ),
 })

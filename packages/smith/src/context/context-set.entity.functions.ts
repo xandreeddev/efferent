@@ -1,4 +1,4 @@
-import { Either, Match, Option } from "effect"
+import { Result, Match, Option } from "effect"
 import { ContextSet } from "./context-set.entity.js"
 import type { ContextPin, StandingSource } from "./context-set.entity.js"
 
@@ -82,27 +82,27 @@ export const PIN_GRAMMAR =
   "a path, a dir/, a glob, note: <text>, spec:<slug>, run:<id>, diff[:<ref>], or cmd: <command>"
 
 /** The `:context add <ref>` grammar → a pin, or what was wrong with it. */
-export const parsePinRef = (raw: string): Either.Either<ContextPin, string> => {
+export const parsePinRef = (raw: string): Result.Result<ContextPin, string> => {
   const text = raw.trim()
-  if (text.length === 0) return Either.left(`nothing to add — ${PIN_GRAMMAR}`)
+  if (text.length === 0) return Result.fail(`nothing to add — ${PIN_GRAMMAR}`)
   const lower = text.toLowerCase()
   const after = (prefix: string): string => text.slice(prefix.length).trim()
   if (lower.startsWith("note:")) {
     const body = after("note:")
     return body.length > 0
-      ? Either.right({ _tag: "note", text: body, on: true })
-      : Either.left("note: needs the text after it")
+      ? Result.succeed({ _tag: "note", text: body, on: true })
+      : Result.fail("note: needs the text after it")
   }
   if (lower.startsWith("cmd:")) {
     const command = after("cmd:")
     return command.length > 0
-      ? Either.right({ _tag: "cmd", command, on: true })
-      : Either.left("cmd: needs a command after it")
+      ? Result.succeed({ _tag: "cmd", command, on: true })
+      : Result.fail("cmd: needs a command after it")
   }
-  if (lower === "diff") return Either.right({ _tag: "diff", ref: Option.none(), on: true })
+  if (lower === "diff") return Result.succeed({ _tag: "diff", ref: Option.none(), on: true })
   if (lower.startsWith("diff:")) {
     const ref = after("diff:")
-    return Either.right({
+    return Result.succeed({
       _tag: "diff",
       ref: ref.length > 0 ? Option.some(ref) : Option.none(),
       on: true,
@@ -111,23 +111,23 @@ export const parsePinRef = (raw: string): Either.Either<ContextPin, string> => {
   if (lower.startsWith("spec:")) {
     const slug = after("spec:")
     return slug.length > 0
-      ? Either.right({ _tag: "spec", slug, on: true })
-      : Either.left("spec: needs a slug after it")
+      ? Result.succeed({ _tag: "spec", slug, on: true })
+      : Result.fail("spec: needs a slug after it")
   }
   if (lower.startsWith("run:")) {
     const id = after("run:")
     return id.length > 0
-      ? Either.right({ _tag: "run", id, on: true })
-      : Either.left("run: needs a run id after it")
+      ? Result.succeed({ _tag: "run", id, on: true })
+      : Result.fail("run: needs a run id after it")
   }
   const path = text.startsWith("@") ? text.slice(1) : text
-  if (path.length === 0) return Either.left(`nothing to add — ${PIN_GRAMMAR}`)
-  if (/[*?[\]{}]/.test(path)) return Either.right({ _tag: "glob", pattern: path, on: true })
+  if (path.length === 0) return Result.fail(`nothing to add — ${PIN_GRAMMAR}`)
+  if (/[*?[\]{}]/.test(path)) return Result.succeed({ _tag: "glob", pattern: path, on: true })
   if (path.endsWith("/")) {
     const dir = path.replace(/\/+$/, "")
-    return Either.right({ _tag: "dir", path: dir.length > 0 ? dir : ".", on: true })
+    return Result.succeed({ _tag: "dir", path: dir.length > 0 ? dir : ".", on: true })
   }
-  return Either.right({ _tag: "file", path, on: true })
+  return Result.succeed({ _tag: "file", path, on: true })
 }
 
 export const setPinOn = (set: ContextSet, index: number, on: boolean): ContextSet =>

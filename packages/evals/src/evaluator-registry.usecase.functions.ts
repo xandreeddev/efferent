@@ -14,7 +14,7 @@ export const evaluatorRegistry = <I, R>(entries: ReadonlyArray<EvaluatorRegistra
     return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Registry needs unique versioned entries and matching evaluator identities" }))
   return {
     entries,
-    resolve: (id: string, version: string) => Option.fromNullable(entries.find((entry) => entry.id === id && entry.version === version)).pipe(
+    resolve: (id: string, version: string) => Option.fromNullishOr(entries.find((entry) => entry.id === id && entry.version === version)).pipe(
       Option.match({ onNone: () => Effect.fail(new AssessmentError({ code: "invalid", message: `Unknown evaluator ${id}@${version}` })), onSome: Effect.succeed }),
     ),
   }

@@ -88,12 +88,12 @@ export const foldStreamParts = <E, R, R2 = never>(
 ): Effect.Effect<FoldedTurn, E, R | R2> =>
   Stream.runFoldEffect(
     parts,
-    {
+    (): FoldState => ({
       entries: [],
       finishReason: Option.none(),
       usage: Option.none(),
-    } as FoldState,
-    (state, part) => {
+    }),
+    (state: FoldState, part): Effect.Effect<FoldState, never, R2> => {
       const p = part as {
         readonly type?: string
         readonly id?: string
@@ -142,9 +142,9 @@ export const foldStreamParts = <E, R, R2 = never>(
         // (a trailing usage-only finish has no meaningful reason), while a
         // usage-CARRYING finish wins for usage.
         const usage = p.usage as
-          | { readonly inputTokens?: number; readonly outputTokens?: number }
+          | { readonly inputTokens?: { readonly total?: number }; readonly outputTokens?: { readonly total?: number } }
           | undefined
-        const carriesUsage = usage?.inputTokens !== undefined || usage?.outputTokens !== undefined
+        const carriesUsage = usage?.inputTokens?.total !== undefined || usage?.outputTokens?.total !== undefined
         return Effect.succeed({
           entries: [...state.entries, { kind: "part", part } as Entry],
           finishReason: Option.orElse(state.finishReason, () =>

@@ -3,17 +3,17 @@ import { ThemeDelta } from "./design-system.entity.js"
 import { UiComponentDefinition } from "./ui-component.entity.js"
 import { PageManifestInput, UiBlock } from "./ui-page.entity.js"
 
-export const UiGenerationProtocol = Schema.Literal("native-tools", "a2ui-jsonl", "compact-lines")
+export const UiGenerationProtocol = Schema.Literals(["native-tools", "a2ui-jsonl", "compact-lines"])
 export type UiGenerationProtocol = typeof UiGenerationProtocol.Type
 
 export const UiProtocolRecord = Schema.Union(
   // The start record carries the WIRE manifest — v9's text protocols failed
   // admission on exactly the host-derivable fields the strict shape demanded.
-  Schema.Struct({ op: Schema.Literal("start"), input: Schema.Struct({ page: PageManifestInput, criticalBlocks: Schema.Array(UiBlock) }) }),
-  Schema.Struct({ op: Schema.Literal("patch"), input: Schema.Struct({ pageId: Schema.String, blocks: Schema.Array(UiBlock), complete: Schema.optional(Schema.Boolean) }) }),
+  [Schema.Struct({ op: Schema.Literal("start"), input: Schema.Struct({ page: PageManifestInput, criticalBlocks: Schema.Array(UiBlock) }) }),
+  Schema.Struct({ op: Schema.Literal("patch"), input: Schema.Struct({ pageId: Schema.String, blocks: Schema.Array(UiBlock), complete: Schema.optionalKey(Schema.Boolean) }) }),
   Schema.Struct({ op: Schema.Literal("prop"), input: Schema.Struct({ pageId: Schema.String, nodeId: Schema.String, key: Schema.String, value: Schema.Unknown }) }),
   Schema.Struct({ op: Schema.Literal("component"), input: Schema.Struct({ definition: UiComponentDefinition }) }),
-  Schema.Struct({ op: Schema.Literal("theme"), input: Schema.Struct({ pageId: Schema.String, delta: ThemeDelta }) }),
+  Schema.Struct({ op: Schema.Literal("theme"), input: Schema.Struct({ pageId: Schema.String, delta: ThemeDelta }) })],
 )
 export type UiProtocolRecord = typeof UiProtocolRecord.Type
 

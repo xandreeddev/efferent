@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { themeIntentFromTokens } from "@xandreed/ui-agent"
 import type { DesignTokensType, ThemeIntentType } from "@xandreed/ui-agent"
 
@@ -55,19 +55,19 @@ const themeRule = (theme: ThemeIntentType, selector: string, width = "1080px"): 
 }`
 }
 
-export const compileThemeCss = (theme: ThemeIntentType, selector: string): Either.Either<string, ReadonlyArray<string>> => {
+export const compileThemeCss = (theme: ThemeIntentType, selector: string): Result.Result<string, ReadonlyArray<string>> => {
   const findings = [
     ...validateThemeIntent(theme),
     ...(/^:root$|^\[data-ui-theme="[a-z0-9-]+"\]$/.test(selector) ? [] : ["theme selector is invalid"]),
   ]
-  return findings.length > 0 ? Either.left(findings) : Either.right(themeRule(theme, selector))
+  return findings.length > 0 ? Result.fail(findings) : Result.succeed(themeRule(theme, selector))
 }
 
-export const compileDesignTokenCss = (tokens: DesignTokensType): Either.Either<string, ReadonlyArray<string>> => {
+export const compileDesignTokenCss = (tokens: DesignTokensType): Result.Result<string, ReadonlyArray<string>> => {
   const findings = validateDesignTokens(tokens)
-  if (findings.length > 0) return Either.left(findings)
-  if (tokens.schemaVersion === 2) return Either.right(themeRule(tokens.theme, ":root", contentWidth[tokens.layout.contentWidth]))
-  return Either.right(`:root{
+  if (findings.length > 0) return Result.fail(findings)
+  if (tokens.schemaVersion === 2) return Result.succeed(themeRule(tokens.theme, ":root", contentWidth[tokens.layout.contentWidth]))
+  return Result.succeed(`:root{
 --ui-page:${tokens.colors.page};--ui-surface:${tokens.colors.surface};--ui-raised:${tokens.colors.raised};--ui-line:${tokens.colors.line};
 --ui-text:${tokens.colors.text};--ui-muted:${tokens.colors.muted};--ui-accent:${tokens.colors.accent};--ui-success:${tokens.colors.success};
 --ui-warning:${tokens.colors.warning};--ui-danger:${tokens.colors.danger};--ui-font-display:${font(tokens.typography.display)};

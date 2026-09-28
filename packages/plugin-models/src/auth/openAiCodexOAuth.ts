@@ -1,4 +1,4 @@
-import { Effect, Either, Option } from "effect"
+import { Effect, Result, Option } from "effect"
 import { AuthError } from "@xandreed/core"
 import { generatePkce } from "./anthropicOAuth.js"
 
@@ -40,14 +40,14 @@ const base64UrlJson = (segment: string): unknown => {
 export const openAiCodexAccountId = (accessToken: string): Option.Option<string> => {
   const segment = accessToken.split(".")[1]
   return Option.flatMap(
-    Option.fromNullable(segment),
+    Option.fromNullishOr(segment),
     (encoded) => Option.flatMap(
-      Either.getRight(Either.try(() => base64UrlJson(encoded) as Record<string, unknown>)),
+      Result.getSuccess(Result.try(() => base64UrlJson(encoded) as Record<string, unknown>)),
       (payload) => {
         const claim = payload[ACCOUNT_CLAIM]
         if (typeof claim !== "object" || claim === null) return Option.none<string>()
         const accountId = (claim as Record<string, unknown>)["chatgpt_account_id"]
-        return Option.filter(Option.fromNullable(typeof accountId === "string" ? accountId : undefined), (value) => value.length > 0)
+        return Option.filter(Option.fromNullishOr(typeof accountId === "string" ? accountId : undefined), (value) => value.length > 0)
       },
     ),
   )

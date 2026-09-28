@@ -2,7 +2,7 @@
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { readFile } from "node:fs/promises"
-import { Effect, Layer, Logger, Option, Ref, Runtime, Schema, Stream } from "effect"
+import { Effect, Layer, Logger, Option, Ref, Schema, Stream } from "effect"
 import { AgentLoop, AuthStore, ConversationId, DelegateLoop, Harness, HarnessError, ModelCatalog, parseModelSelection, ProviderId, SettingsStore } from "@xandreed/sdk"
 import type { HarnessConfig, Plugin } from "@xandreed/sdk"
 import { loadConfig, loadPlugins, mergeConfig, pluginSchema, redact, resolveGraph, writeConfig } from "@xandreed/runtime"
@@ -41,12 +41,12 @@ export const parseArgs = (args: ReadonlyArray<string>) => {
 const bad = (message: string) => new HarnessError({ code: "cli.input", message })
 const overridesAt = (workspace: string) => join(workspace, ".efferent/overrides.json")
 const readOverrides = (workspace: string) => Effect.tryPromise({ try: () => readFile(overridesAt(workspace), "utf8"), catch: (error) => error }).pipe(
-  Effect.catchAll((error) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT" ? Effect.succeed('{"version":1}') : Effect.fail(bad(String(error)))),
-  Effect.flatMap((text) => Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(text)),
+  Effect.catch((error) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT" ? Effect.succeed('{"version":1}') : Effect.fail(bad(String(error)))),
+  Effect.flatMap((text) => Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text)),
   Effect.flatMap((value) => importConfig(value)),
   Effect.mapError((error) => bad(String(error))),
 )
-const importConfig = (value: unknown) => Schema.decodeUnknown(HarnessConfigSchema)(value).pipe(Effect.mapError((error) => bad(String(error))))
+const importConfig = (value: unknown) => Schema.decodeUnknownEffect(HarnessConfigSchema)(value, { reportInput: true }).pipe(Effect.mapError((error) => bad(String(error))))
 import { HarnessConfig as HarnessConfigSchema } from "@xandreed/core"
 
 export const runCli = (args: ReadonlyArray<string>) => Effect.scoped(Effect.gen(function* () {
@@ -98,11 +98,11 @@ export const runCli = (args: ReadonlyArray<string>) => Effect.scoped(Effect.gen(
     }
     return
   }
-  const rt = yield* Effect.runtime<never>()
+  const rt = yield* Effect.context<never>()
   const cliScope = yield* Effect.scope
   const configRef = yield* Ref.make<HarnessConfig>(loaded.config)
   const pluginsRef = yield* Ref.make<ReadonlyArray<Plugin>>(plugins)
-  const launch = <A, E>(state: TuiState, effect: Effect.Effect<A, E>) => { Runtime.runFork(rt)(Effect.forkIn(effect.pipe(Effect.catchAllCause((cause) => Effect.sync(() => state.setNotice(String(cause))))), cliScope)) }
+  const launch = <A, E>(state: TuiState, effect: Effect.Effect<A, E>) => { Effect.runForkWith(rt)(Effect.forkIn(effect.pipe(Effect.catchCause((cause) => Effect.sync(() => state.setNotice(String(cause))))), cliScope)) }
   const applyConfig = (state: TuiState, patch: HarnessConfig) => Effect.gen(function* () {
     const current = yield* Ref.get(configRef)
     const registry = yield* Ref.get(pluginsRef)
@@ -148,7 +148,7 @@ export const runCli = (args: ReadonlyArray<string>) => Effect.scoped(Effect.gen(
           ...fields.map((key) => ({
             label: key, detail: JSON.stringify(redact({ [key]: node.options[key] })),
             select: () => state.setOverlay({ kind: "edit", secret: /secret|password|token|api.?key|credential/i.test(key), title: `${node.entry.id}.${key} · ${typeof node.options[key] === "string" ? "text" : "JSON"}`, value: typeof node.options[key] === "string" ? String(node.options[key]) : JSON.stringify(node.options[key], null, 2),
-              save: (text) => launch(state, (typeof node.options[key] === "string" ? Effect.succeed(text) : Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(text)).pipe(Effect.flatMap((value) => save(state, node.entry.id, key, value)))) }),
+              save: (text) => launch(state, (typeof node.options[key] === "string" ? Effect.succeed(text) : Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text)).pipe(Effect.flatMap((value) => save(state, node.entry.id, key, value)))) }),
           })),
           { label: "Replace plugin…", detail: `Current: ${node.plugin.id}`, select: () => state.setOverlay({ kind: "menu", title: `Replace ${node.entry.id}`, rows: [
             ...registry.filter((plugin) => plugin.id !== node.plugin.id && node.plugin.provides.every((port) => plugin.provides.includes(port))).map((plugin) => ({ label: plugin.id, detail: `${plugin.scope} · ${plugin.version}`, select: () => launch(state, replacePlugin(state, node.entry.id, plugin.id)) })),
@@ -228,8 +228,8 @@ export const runCli = (args: ReadonlyArray<string>) => Effect.scoped(Effect.gen(
     "workflow.event": (event) => [{ id: event.id, kind: "notice", text: `Forge · ${String(event.data.type).replaceAll("_", " ")}`, detail: JSON.stringify(event.data, null, 2), status: event.data.type === "forge_error" ? "failed" : "complete" }],
     "spec.locked": (event) => [{ id: event.id, kind: "notice", text: "Specification locked", detail: String(event.data.text), status: "complete" }],
   } })
-})).pipe(Effect.provide(process.stdout.isTTY ? Logger.remove(Logger.defaultLogger) : Layer.empty))
+})).pipe(Effect.provide(process.stdout.isTTY ? Logger.layer([Logger.tracerLogger]) : Layer.empty))
 
 if (import.meta.main) {
-  await Effect.runPromise(runCli(process.argv.slice(2)).pipe(Effect.catchAllCause((cause) => Effect.sync(() => { console.error(String(cause)); process.exitCode = 1 }))))
+  await Effect.runPromise(runCli(process.argv.slice(2)).pipe(Effect.catchCause((cause) => Effect.sync(() => { console.error(String(cause)); process.exitCode = 1 }))))
 }

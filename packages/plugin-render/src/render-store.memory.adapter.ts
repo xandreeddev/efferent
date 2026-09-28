@@ -1,4 +1,4 @@
-import { Effect, Either, Layer, Ref, Schema } from "effect"
+import { Effect, Result, Layer, Ref, Schema } from "effect"
 import { canonicalJson } from "@xandreed/core"
 import type { UiOutputReceipt } from "./domain/render-output.entity.js"
 import { RenderError, SurfaceCommitted, SurfaceFrozen } from "./domain/render-surface.entity.js"
@@ -31,13 +31,13 @@ export const makeMemoryRenderStore = Effect.gen(function* () {
         ? [false, state]
         : [true, { ...state, records: [...state.records, record] }],
     ).pipe(Effect.flatMap((accepted) => accepted ? Effect.void : Effect.fail(new RenderError({ code: "frozen", message: "The surface is frozen for this message" })))),
-    commit: (scope, { versionId, proposal }) => Ref.modify(stored, (state): readonly [Either.Either<UiOutputReceipt, RenderError>, MemoryState] => {
+    commit: (scope, { versionId, proposal }) => Ref.modify(stored, (state): readonly [Result.Result<UiOutputReceipt, RenderError>, MemoryState] => {
       const content = canonicalJson(proposal)
       const existing = state.receipts.get(proposal.operationId)
       if (existing !== undefined) {
         return existing.proposal === content
-          ? [Either.right(existing.receipt), state]
-          : [Either.left(new RenderError({ code: "conflict", message: `Operation ${proposal.operationId} was already committed with other content` })), state]
+          ? [Result.succeed(existing.receipt), state]
+          : [Result.fail(new RenderError({ code: "conflict", message: `Operation ${proposal.operationId} was already committed with other content` })), state]
       }
       const sequence = state.sequence + 1
       const receipt: UiOutputReceipt = {
@@ -46,13 +46,13 @@ export const makeMemoryRenderStore = Effect.gen(function* () {
       const committed = SurfaceCommitted.make({
         surfaceId: scope.surfaceId, messageId: scope.messageId, versionId, nodeId: proposal.nodeId, component: proposal.release.component, receipt,
       })
-      return [Either.right(receipt), {
+      return [Result.succeed(receipt), {
         ...state,
         sequence,
         receipts: new Map([...state.receipts, [proposal.operationId, { proposal: content, receipt }]]),
         records: [...state.records, committed],
       }]
-    }).pipe(Effect.flatMap(Either.match({ onLeft: Effect.fail, onRight: Effect.succeed }))),
+    }).pipe(Effect.flatMap(Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }))),
     complete: (_scope, record) => append(record),
     freeze: (_scope, record) => Ref.update(stored, (state) =>
       state.records.some((existing) => isFrozen(existing) && existing.versionId === record.versionId)

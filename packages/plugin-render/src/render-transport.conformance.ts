@@ -48,7 +48,7 @@ export const makeMemoryJournal = (initial: ReadonlyArray<JournalRecord>) => Effe
   return {
     tail,
     wakingTail,
-    append: (record: JournalRecord) => Ref.update(records, (all) => [...all, record]).pipe(Effect.zipRight(PubSub.publish(appended, undefined)), Effect.asVoid),
+    append: (record: JournalRecord) => Ref.update(records, (all) => [...all, record]).pipe(Effect.andThen(PubSub.publish(appended, undefined)), Effect.asVoid),
   }
 })
 
@@ -78,7 +78,7 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
       run: Effect.gen(function* () {
         const expect = holds("an idle feed sends heartbeats and later records in order")
         const journal = yield* makeMemoryJournal([record(1)])
-        const running = yield* Effect.fork(collect(makeFeed(journal.tail, options).frames(feedScope, 0, project)))
+        const running = yield* Effect.forkChild(collect(makeFeed(journal.tail, options).frames(feedScope, 0, project)))
         yield* Effect.sleep("60 millis")
         yield* journal.append(record(2))
         yield* journal.append(record(3, "hidden"))
@@ -94,7 +94,7 @@ export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Servic
         const expect = holds("a change signal polls at once instead of waiting out the interval")
         const slow: FeedOptions = { pollMs: 5_000, maxPollMs: 5_000, heartbeatMs: 10_000, maxDurationMs: 10_000 }
         const journal = yield* makeMemoryJournal([record(1)])
-        const running = yield* Effect.fork(collect(makeFeed(journal.wakingTail, slow).frames(feedScope, 0, project).pipe(
+        const running = yield* Effect.forkChild(collect(makeFeed(journal.wakingTail, slow).frames(feedScope, 0, project).pipe(
           Stream.takeUntil((frame) => frame._tag === "FeedRecord" && frame.sequence === 2))))
         yield* Effect.sleep("50 millis")
         yield* journal.append(record(2))

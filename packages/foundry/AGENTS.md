@@ -38,7 +38,7 @@ import the effect pack explicitly.
 ```
 src/
 ├── domain/    entities, brands, errors — imports effect ONLY
-├── ports/     Gate (a value contract) + Implementor/RunSink (Context.Tag)
+├── ports/     Gate (a value contract) + Implementor/RunSink (Context.Service)
 ├── pipeline/  runPipeline · renderFeedback · forge · baseline — pure use cases
 ├── gates/     the static-analysis adapters over ONE shared ts.Program
 ├── adapters/  fs/subprocess adapters (scripted + claude implementors, run sink)
@@ -50,11 +50,11 @@ src/
 
 - **Option, not nullable**: functions never return `A | undefined` / `A | null`
   (`effect/no-nullable-return`); entities express absence with
-  `Schema.optionalWith(S, { as: "Option" })` — Option in memory, plain
+  `Schema.OptionFromOptional(S)` — Option in memory, plain
   optional field on the wire. `undefined` only at optional parameters, TS
   compiler-API interop inside `src/gates/**`, and argv parsing.
 - **Match, not tag switches**: union branching via `Match.value(...).pipe(
-  Match.tag(...), Match.exhaustive)` or `Option.match`/`Either.match`
+  Match.tag(...), Match.exhaustive)` or `Option.match`/`Result.match`
   (`effect/match-over-tag-switch`). A single `_tag` guard is fine.
 - **No `let`/`var`** (`effect/no-let`): state is an immutable fold —
   `Effect.iterate` (the forge loop), `Effect.reduce` (the pipeline),

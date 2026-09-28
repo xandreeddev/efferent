@@ -6,9 +6,9 @@ import type { SkillDefinition } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 
-export class Capabilities extends Context.Tag("efferent/Capabilities")<Capabilities, {
+export class Capabilities extends Context.Service<Capabilities, {
   readonly catalog: CapabilityCatalog
-}>() {}
+}>()("efferent/Capabilities") {}
 
 export interface IntentMatch {
   readonly skills: ReadonlyArray<string>
@@ -18,7 +18,7 @@ export interface IntentMatch {
 }
 
 /** Pre-turn skill selection. Probabilistic intent never authorizes: the registry resolves grants. */
-export class IntentMatcher extends Context.Tag("efferent/IntentMatcher")<IntentMatcher, {
+export class IntentMatcher extends Context.Service<IntentMatcher, {
   readonly id: string
   readonly version: string
   readonly match: (input: {
@@ -28,9 +28,9 @@ export class IntentMatcher extends Context.Tag("efferent/IntentMatcher")<IntentM
     /** A reference transcript: user messages and replies only. */
     readonly history: ReadonlyArray<AgentMessage>
   }) => Effect.Effect<IntentMatch, HarnessError>
-}>() {}
+}>()("efferent/IntentMatcher") {}
 
 /** The permissions a run holds; skills and tools needing others are never activated. */
-export class CapabilityGrants extends Context.Tag("efferent/CapabilityGrants")<CapabilityGrants, {
+export class CapabilityGrants extends Context.Service<CapabilityGrants, {
   readonly grants: Effect.Effect<ReadonlySet<string>, HarnessError>
-}>() {}
+}>()("efferent/CapabilityGrants") {}

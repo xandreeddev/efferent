@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Fiber, FiberRef, Option, Queue, Ref } from "effect"
+import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
@@ -17,7 +17,7 @@ type Queued<E> =
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, HarnessError> }
 
 /** A background handler's failure as the typed error the turn fails with. */
-const failureOf = (cause: Cause.Cause<HarnessError>): HarnessError => Option.getOrElse(Cause.failureOption(cause), () => {
+const failureOf = (cause: Cause.Cause<HarnessError>): HarnessError => Option.getOrElse(Cause.findErrorOption(cause), () => {
   const defect = Cause.squash(cause)
   return defect instanceof HarnessError ? defect : new HarnessError({ code: "events.background", message: Cause.pretty(cause).slice(0, 300) })
 })
@@ -35,16 +35,17 @@ const defaultCapacity = 256
 export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.Effect<TurnEventsService, never, Scope.Scope> => Effect.gen(function* () {
   const subscribers = yield* Ref.make<ReadonlyArray<Subscriber>>([])
   const nextId = yield* Ref.make(0)
-  const depth = yield* FiberRef.make(0)
+  // Each bus counts its own nesting: a reference keyed by this bus alone.
+  const depth = Context.Reference<number>(`@xandreed/core/TurnEvents/depth/${yield* Effect.sync(() => crypto.randomUUID())}`, { defaultValue: () => 0 })
   /** Background deliveries so far: the drain repeats until a pass queues nothing new. */
   const queued = yield* Ref.make(0)
   const publish = (event: TurnEvent): Effect.Effect<void, HarnessError> => Effect.gen(function* () {
-    const current = yield* FiberRef.get(depth)
+    const current = yield* Effect.service(depth)
     if (current >= options.maxDepth) {
       return yield* Effect.fail(new HarnessError({ code: "events.depth", message: `${event._tag} published ${current} levels deep; a reaction cycle?` }))
     }
     const all = yield* Ref.get(subscribers)
-    yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { discard: true }).pipe(Effect.locally(depth, current + 1))
+    yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { discard: true }).pipe(Effect.provideService(depth, current + 1))
   })
 
   /** A queue and a fiber: handled in order, off the publisher's path; its depth travels with each event. */
@@ -59,8 +60,8 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       }
       if (Option.isSome(failure)) return
       yield* handle(item.event).pipe(
-        Effect.locally(depth, item.depth),
-        Effect.catchAllCause((cause) => Ref.set(failed, Option.some(failureOf(cause)))),
+        Effect.provideService(depth, item.depth),
+        Effect.catchCause((cause) => Ref.set(failed, Option.some(failureOf(cause)))),
       )
     })))
     yield* Effect.forkScoped(Effect.forever(take))
@@ -68,10 +69,10 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       const failure = yield* Ref.get(failed)
       if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
-      yield* Queue.offer(queue, { _tag: "Event", event, depth: yield* FiberRef.get(depth) })
+      yield* Queue.offer(queue, { _tag: "Event", event, depth: yield* Effect.service(depth) })
     })
     const drain = Deferred.make<void, HarnessError>().pipe(Effect.flatMap((done) =>
-      Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.zipRight(Deferred.await(done)))))
+      Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
     return { deliver, drain }
   })
 
@@ -103,7 +104,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
 
 interface Task {
   readonly tag: string
-  readonly fiber: Fiber.RuntimeFiber<void, HarnessError>
+  readonly fiber: Fiber.Fiber<void, HarnessError>
 }
 
 /** Background work forked in `scope`: interrupted when it closes, joined on demand. `activity` counts tasks forked so far. */
@@ -115,8 +116,8 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
     yield* Ref.update(tasks, (all) => [...all, { tag, fiber }])
   })
   const pending = (tag: string) => Ref.get(tasks).pipe(
-    Effect.flatMap((all) => Effect.forEach(all.filter((task) => task.tag === tag), (task) => task.fiber.poll)),
-    Effect.map((polls) => polls.some(Option.isNone)),
+    Effect.flatMap((all) => Effect.forEach(all.filter((task) => task.tag === tag), (task) => Effect.sync(() => task.fiber.pollUnsafe()))),
+    Effect.map((polls) => polls.some((exit) => exit === undefined)),
   )
   /** Joins from `from` on, then again for tasks the joined ones forked meanwhile. */
   const awaitFrom = (tags: ReadonlyArray<string>, from: number): Effect.Effect<void, HarnessError> => Ref.get(tasks).pipe(
@@ -124,7 +125,7 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
       all.slice(from).filter((task) => tags.length === 0 || tags.includes(task.tag)),
       (task) => Fiber.join(task.fiber),
       { discard: true },
-    ).pipe(Effect.zipRight(Effect.suspend(() => awaitFrom(tags, all.length))))),
+    ).pipe(Effect.andThen(Effect.suspend(() => awaitFrom(tags, all.length))))),
   )
   return { fork, pending, await: (tags) => awaitFrom(tags, 0), activity: Ref.get(tasks).pipe(Effect.map((all) => all.length)) }
 })
@@ -135,4 +136,4 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
  * at the turn boundary so a subscriber failure fails the turn, typed.
  */
 export const harnessDefectsAsFailures = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>
-  effect.pipe(Effect.catchSomeDefect((defect) => defect instanceof HarnessError ? Option.some(Effect.fail(defect)) : Option.none()))
+  effect.pipe(Effect.catchDefect((defect) => defect instanceof HarnessError ? Effect.fail(defect) : Effect.die(defect)))

@@ -7,12 +7,12 @@ const BLOCK_SCOPED =
   ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing
 
 /** Mutable bindings are how imperative loop state sneaks in — fold state
- *  through `Effect.iterate`/`Effect.reduce`/Array combinators instead. */
+ *  through `Effect.reduce`/a recursive Effect step/Array combinators instead. */
 export const noLet: IdiomRule = {
   id: RuleId.make("effect/no-let"),
   defaultSeverity: "error",
   description: "`let` and `var` are banned",
-  fixHint: "model evolving state as an immutable fold (Effect.iterate / Effect.reduce / Array combinators) or a Ref",
+  fixHint: "model evolving state as an immutable fold (Effect.reduce / a recursive Effect step / Array combinators) or a Ref",
   check: ({ sourceFile }) => {
     const matches: Array<RuleMatch> = []
     walk(sourceFile, (node) => {

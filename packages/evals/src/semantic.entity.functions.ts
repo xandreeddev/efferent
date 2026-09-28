@@ -4,11 +4,11 @@ import { SemanticAnswers, SemanticInput } from "./semantic.entity.js"
 import type { SemanticQuestions } from "./semantic.entity.js"
 
 const invalid = (error: unknown) => new AssessmentError({ code: "invalid", message: String(error) })
-export const validateSemanticInput = (input: SemanticInput) => Schema.validate(SemanticInput)(input).pipe(Effect.mapError(invalid))
+export const validateSemanticInput = (input: SemanticInput) => Schema.decodeEffect(Schema.toType(SemanticInput))(input).pipe(Effect.mapError(invalid))
 
 export const validateSemanticAnswers = (input: SemanticInput, value: unknown) => Effect.gen(function* () {
   yield* validateSemanticInput(input)
-  const answers = yield* Schema.decodeUnknown(SemanticAnswers)(value).pipe(Effect.mapError(invalid))
+  const answers = yield* Schema.decodeUnknownEffect(SemanticAnswers)(value).pipe(Effect.mapError(invalid))
   const ids = Object.keys(input.questions)
   if (Object.keys(answers).length !== ids.length || ids.some((id) => {
     const question = input.questions[id]!
@@ -21,14 +21,22 @@ export const validateSemanticAnswers = (input: SemanticInput, value: unknown) =>
   return answers
 })
 
+/** A struct that refuses keys it does not declare (the rest may hold only undeclared keys, as never). */
+const exactStruct = <Fields extends Schema.Struct.Fields>(fields: Fields) => {
+  const declared = Object.keys(fields)
+  return Schema.StructWithRest(Schema.Struct(fields), [
+    Schema.Record(Schema.String.check(Schema.makeFilter((key: string) => !declared.includes(key))), Schema.Never),
+  ])
+}
+
 /** A provider-facing schema with exactly the rubric's question IDs and offered choices. */
 export const semanticResponseSchema = (questions: SemanticQuestions) => Schema.Struct({
-  answers: Schema.Struct(Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
+  answers: exactStruct(Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
     Match.value(question).pipe(
-      Match.when({ type: "boolean" }, () => Schema.Struct({ type: Schema.Literal("boolean"), probability: Schema.Number.pipe(Schema.between(0, 1)) })),
-      Match.when({ type: "score" }, (value) => Schema.Struct({ type: Schema.Literal("score"), score: Schema.Number.pipe(Schema.between(0, value.criteria.length - 1)) })),
-      Match.when({ type: "choice" }, (value) => Schema.Struct({ type: Schema.Literal("choice"), choice: Schema.Literal(...Object.keys(value.criteria)) })),
+      Match.when({ type: "boolean" }, () => Schema.Struct({ type: Schema.Literal("boolean"), probability: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 }))) })),
+      Match.when({ type: "score" }, (value) => Schema.Struct({ type: Schema.Literal("score"), score: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: value.criteria.length - 1 }))) })),
+      Match.when({ type: "choice" }, (value) => Schema.Struct({ type: Schema.Literal("choice"), choice: Schema.Literals(Object.keys(value.criteria)) })),
       Match.exhaustive,
     ),
-  ]))).annotations({ parseOptions: { onExcessProperty: "error" } }),
+  ]))),
 })

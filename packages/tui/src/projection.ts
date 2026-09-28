@@ -2,7 +2,7 @@ import type { EventBody, SessionEvent } from "@xandreed/core"
 
 const failureText = (value: unknown) => {
   const text = String(value ?? "")
-  if (text.includes("MalformedOutput:")) return "The provider returned an incompatible response. Check your model or try another provider."
+  if (text.includes("Invalid output:")) return "The provider returned an incompatible response. Check your model or try another provider."
   return text.split("\n")[0]!.replace(/^(?:(?:HarnessError|UnknownError|Error):\s*)+/, "").slice(0, 600)
 }
 

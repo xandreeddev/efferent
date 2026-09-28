@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Effect, Stream } from "effect"
+import { AiError } from "effect/ai"
+import { Cause, Effect, Exit, Option, Stream } from "effect"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import { classifyLlmError, rejectEmptyResponse, retryableLlmStream } from "./retry.js"
 
+const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
+/** A provider status failure, as the adapters build it. */
+const httpError = (status: number, headers: Record<string, string> = {}) =>
+  AiError.make({
+    module: "Test",
+    method: "generateText",
+    reason: AiError.reasonFromHttpStatus({ status, http: { request, response: { status, headers } } }),
+  })
+const reasonError = (reason: AiError.AiErrorReason) => AiError.make({ module: "Test", method: "generateText", reason })
+
 describe("classifyLlmError", () => {
   test("429 and 5xx are transient; other 4xx permanent", () => {
-    const http = (status: number) => ({ _tag: "HttpResponseError", response: { status } })
+    const http = (status: number) => httpError(status)
     expect(classifyLlmError(http(429))).toBe("transient")
     expect(classifyLlmError(http(500))).toBe("transient")
     expect(classifyLlmError(http(503))).toBe("transient")
@@ -15,16 +26,15 @@ describe("classifyLlmError", () => {
   })
 
   test("transport/timeout (UnknownError) is transient; decode failures permanent", () => {
-    expect(classifyLlmError({ _tag: "UnknownError" })).toBe("transient")
-    expect(classifyLlmError({ _tag: "MalformedOutput" })).toBe("permanent")
+    expect(classifyLlmError(reasonError(new AiError.UnknownError({ description: "socket hang up" })))).toBe("transient")
+    // Effect's own providers report transport failures as NetworkError.
+    expect(classifyLlmError(reasonError(new AiError.NetworkError({ reason: "TransportError", request, description: "reset" })))).toBe("transient")
+    expect(classifyLlmError(reasonError(new AiError.InvalidOutputError({ description: "not JSON" })))).toBe("permanent")
     expect(classifyLlmError("boom")).toBe("permanent")
   })
 
   test("429 with a Retry-After beyond the honored cap is a DAILY QUOTA — permanent", () => {
-    const quota429 = (retryAfter: string) => ({
-      _tag: "HttpResponseError",
-      response: { status: 429, headers: { "retry-after": retryAfter } },
-    })
+    const quota429 = (retryAfter: string) => httpError(429, { "retry-after": retryAfter })
     // Seconds form: 1h is a quota, 5s is an outage blip.
     expect(classifyLlmError(quota429("3600"))).toBe("permanent")
     expect(classifyLlmError(quota429("5"))).toBe("transient")
@@ -33,9 +43,7 @@ describe("classifyLlmError", () => {
       "permanent",
     )
     // No header / garbage header: plain transient 429.
-    expect(
-      classifyLlmError({ _tag: "HttpResponseError", response: { status: 429, headers: {} } }),
-    ).toBe("transient")
+    expect(classifyLlmError(httpError(429))).toBe("transient")
     expect(classifyLlmError(quota429("soon-ish"))).toBe("transient")
   })
 })
@@ -46,9 +54,8 @@ describe("rejectEmptyResponse", () => {
       rejectEmptyResponse("test")(Effect.succeed({ content: [{ type: "finish" }] })),
     )
     expect(empty._tag).toBe("Failure")
-    expect(classifyLlmError((empty as { cause: { error: unknown } }).cause.error)).toBe(
-      "transient",
-    )
+    const error = Exit.isFailure(empty) ? Cause.findErrorOption(empty.cause) : Option.none()
+    expect(classifyLlmError(Option.getOrUndefined(error))).toBe("transient")
 
     const full = await Effect.runPromise(
       rejectEmptyResponse("test")(
@@ -64,7 +71,7 @@ describe("rejectEmptyResponse", () => {
     // succeeded, ui composers riding 55s deadlines after their last patch).
     const passed = await Effect.runPromise(
       rejectEmptyResponse("test")(Effect.succeed({ content: [{ type: "finish" }] })).pipe(
-        Effect.locally(CurrentEmptyResponseTolerance, true),
+        Effect.provideService(CurrentEmptyResponseTolerance, true),
       ),
     )
     expect(passed.content).toEqual([{ type: "finish" }])
@@ -84,14 +91,14 @@ const scripted = (runs: ReadonlyArray<Stream.Stream<unknown, unknown>>) => {
   return { attempts, stream }
 }
 
-const transient500 = { _tag: "HttpResponseError", response: { status: 500 } }
-const permanent400 = { _tag: "HttpResponseError", response: { status: 400 } }
+const transient500 = httpError(500)
+const permanent400 = httpError(400)
 const delta = { type: "text-delta", id: "text-1", delta: "hi" }
 const finish = { type: "finish", reason: "stop", usage: { totalTokens: 1 } }
 
 const collect = (stream: Stream.Stream<unknown, unknown>) =>
   Effect.runPromise(
-    Stream.runCollect(stream).pipe(Effect.map(Chunk.toReadonlyArray)),
+    Stream.runCollect(stream),
   )
 
 describe("retryableLlmStream", () => {

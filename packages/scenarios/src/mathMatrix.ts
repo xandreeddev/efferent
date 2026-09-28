@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Cause, Context, Duration, Effect, Layer, Option, Ref, Stream } from "effect"
 import { ConversationStore, CurrentModelCallPolicy, parseModelSelection, toAgentFailure } from "@xandreed/core"
 import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
@@ -103,11 +103,11 @@ const boundedTurn = (
   policy: Option.Option<{ readonly effort: Effort; readonly maxOutputTokens: number }>,
 ): Effect.Effect<void> =>
   session.send(message).pipe(
-    Effect.locally(CurrentModelCallPolicy, policy),
-    Effect.zipRight(waitForAgentEnds(session, agentEnds, timeoutMs)),
+    Effect.provideService(CurrentModelCallPolicy, policy),
+    Effect.andThen(waitForAgentEnds(session, agentEnds, timeoutMs)),
     Effect.timeout(Duration.millis(timeoutMs + 5_000)),
     Effect.asVoid,
-    Effect.catchAll((error) => Effect.logWarning(`math-matrix turn gave up after ${timeoutMs}ms: ${String(error)}`)),
+    Effect.catch((error) => Effect.logWarning(`math-matrix turn gave up after ${timeoutMs}ms: ${String(error)}`)),
   )
 
 const exercisesOf = (events: ReadonlyArray<MathSessionEvent>): ReadonlyArray<MathExercise> =>
@@ -153,7 +153,7 @@ const solverAgreement = (
           agreed: gradeAnswer(exercise.answer, lastLine).correct,
         })
       }),
-      Effect.catchAll(() => Effect.succeed(Option.none<SolverVerdict>())),
+      Effect.catch(() => Effect.succeed(Option.none<SolverVerdict>())),
     )
   }, { concurrency: 2 }).pipe(
     Effect.map((outcomes) => {
@@ -191,7 +191,7 @@ const runTrial = (
         Stream.filter((entry) => entry.event.type === "math_render"),
         Stream.take(1),
         Stream.runDrain,
-        Effect.zipRight(Ref.update(firstBatch, (current) => current ?? Date.now() - startedAt)),
+        Effect.andThen(Ref.update(firstBatch, (current) => current ?? Date.now() - startedAt)),
       ))
 
       yield* boundedTurn(session, composeAgentMessage([], { kind: "start", grade: task.grade, theme: task.theme }), 1, budgets.turnTimeoutMs, policy)
@@ -241,7 +241,7 @@ const runTrial = (
     (dir) => Effect.try({
       try: () => rmSync(dir, { recursive: true, force: true }),
       catch: (error) => error,
-    }).pipe(Effect.catchAll((error) => Effect.logWarning(`math-matrix could not remove ${dir}: ${String(error)}`))),
+    }).pipe(Effect.catch((error) => Effect.logWarning(`math-matrix could not remove ${dir}: ${String(error)}`))),
   )
 
 const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, error: unknown): Trial => {

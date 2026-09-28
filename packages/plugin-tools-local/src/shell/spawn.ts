@@ -68,7 +68,7 @@ const readCapped = async (
 const killGroup = (pid: number): void => {
   const attempt = Effect.try(() => process.kill(-pid, "SIGKILL")).pipe(
     // The leader may already be gone; fall back to the direct child.
-    Effect.orElse(() => Effect.try(() => process.kill(pid, "SIGKILL"))),
+    Effect.catch(() => Effect.try(() => process.kill(pid, "SIGKILL"))),
     Effect.ignore,
   )
   Effect.runSync(attempt)

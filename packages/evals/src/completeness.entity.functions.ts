@@ -5,8 +5,8 @@ import { ActionAssessment, CompletenessEvidence } from "./completeness.entity.js
 
 /** The model labels actions; it never sets the denominator or aggregate score. */
 export const assessCompleteness = (evidence: CompletenessEvidence, raw: ReadonlyArray<ActionAssessment>): Effect.Effect<Assessment, AssessmentError> => Effect.gen(function* () {
-  yield* Schema.validate(CompletenessEvidence)(evidence).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })))
-  const actions = yield* Schema.validate(Schema.Array(ActionAssessment))(raw).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })))
+  yield* Schema.decodeEffect(Schema.toType(CompletenessEvidence))(evidence).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })))
+  const actions = yield* Schema.decodeEffect(Schema.toType(Schema.Array(ActionAssessment)))(raw).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })))
   if (evidence.required.length === 0) return yield* Effect.fail(new AssessmentError({ code: "unavailable", message: "No applicable required actions" }))
   const ids = actions.map((action) => action.actionId)
   const expected = evidence.required.map((action) => action.id)

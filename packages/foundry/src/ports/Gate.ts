@@ -6,7 +6,7 @@ import type { Finding } from "../domain/Finding.js"
 /**
  * A gate is a VALUE, not a service (like an eval `Scorer`): pipelines are
  * data you compose. Only genuinely shared infrastructure (`TsProject`,
- * `Implementor`, `RunSink`) is a `Context.Tag`; a gate's own requirements
+ * `Implementor`, `RunSink`) is a `Context.Service`; a gate's own requirements
  * flow up into the pipeline type through `R`.
  */
 

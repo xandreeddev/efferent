@@ -54,10 +54,16 @@ describe("the Effect architecture pack", () => {
     ).toEqual([])
   })
 
-  test("Context.Tag and Layer construction are confined to their file roles", () => {
+  test("Context.Service (and v3's Context.Tag) and Layer construction are confined to their file roles", () => {
     expect(
       run(contextTagsLiveInPorts, "/src/repository.ts", "class Repo extends Context.Tag(\"Repo\")<Repo, {}>() {}"),
     ).toHaveLength(1)
+    expect(
+      run(contextTagsLiveInPorts, "/src/repository.ts", "class Repo extends Context.Service<Repo, {}>()(\"Repo\") {}"),
+    ).toHaveLength(1)
+    expect(
+      run(contextTagsLiveInPorts, "/src/repository.port.ts", "class Repo extends Context.Service<Repo, {}>()(\"Repo\") {}"),
+    ).toEqual([])
     expect(
       run(contextTagsLiveInPorts, "/src/repository.port.ts", "class Repo extends Context.Tag(\"Repo\")<Repo, {}>() {}"),
     ).toEqual([])

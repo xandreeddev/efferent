@@ -49,10 +49,10 @@ const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n[…clipped…]`
 
 /** The verdict the model must end with — one JSON object on the LAST line. */
-const Verdict = Schema.parseJson(
+const Verdict = Schema.fromJsonString(
   Schema.Struct({
     sound: Schema.Boolean,
-    reasons: Schema.optionalWith(Schema.Array(Schema.String), { default: () => [] }),
+    reasons: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
   }),
 )
 
@@ -108,7 +108,7 @@ export const gatherEvidence = (
     const candidates = newestFirst.filter((file) => SOURCE_FILE.test(file.path))
     const picked = yield* Effect.reduce(
       candidates,
-      { used: 0, blocks: [] as ReadonlyArray<string> },
+      () => ({ used: 0, blocks: [] as ReadonlyArray<string> }),
       (acc, file) =>
         acc.used >= FILE_BUDGET_CHARS
           ? Effect.succeed(acc)
@@ -188,7 +188,7 @@ const judgeVerdicts = Metric.counter("smith.judge.verdicts", {
   incremental: true,
 })
 const countVerdict = (verdict: "sound" | "unsound" | "crash"): Effect.Effect<void> =>
-  Metric.increment(Metric.tagged(judgeVerdicts, "verdict", verdict)).pipe(Effect.asVoid)
+  Metric.update(Metric.withAttributes(judgeVerdicts, { verdict }), 1)
 
 export const makeSmithJudgeGate = (options: {
   readonly spec: Spec
@@ -223,7 +223,7 @@ export const makeSmithJudgeGate = (options: {
           }),
         )
       }
-      const verdict = yield* Schema.decodeUnknown(Verdict)(raw.value).pipe(
+      const verdict = yield* Schema.decodeUnknownEffect(Verdict)(raw.value, { reportInput: true }).pipe(
         Effect.mapError(
           (error) =>
             new GateCrash({

@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/plugin-models",
-  "version": "0.6.0-next.2",
+  "version": "0.7.0-next.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -9,12 +9,9 @@
   },
   "dependencies": {
     "@xandreed/core": "workspace:*",
-    "effect": "3.21.4",
-    "@effect/ai": "0.35.0",
-    "@effect/ai-anthropic": "^0.25.0",
-    "@effect/ai-google": "^0.14.0",
-    "@effect/ai-openai": "^0.39.2",
-    "@effect/platform": "0.96.1",
+    "effect": "4.0.0-rc.118",
+    "@effect/ai-anthropic": "4.0.0-rc.118",
+    "@effect/ai-openai": "4.0.0-rc.118",
     "ws": "^8.21.0"
   }
 }

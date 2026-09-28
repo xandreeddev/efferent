@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { Effect, Layer, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { ConversationId, ConversationStore, FileSystem, Shell } from "@xandreed/core"
 import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import { discoverGateSuite } from "../gates/suite.js"
@@ -118,7 +118,7 @@ describe("the profile session — propose (dry-run) → lock (arm)", () => {
     const countingAgent: ProfileAgent = (cid, prompt, tools) =>
       Effect.sync(() => {
         calls.count += 1
-      }).pipe(Effect.zipRight(scriptedAgent(cid, prompt, tools)))
+      }).pipe(Effect.andThen(scriptedAgent(cid, prompt, tools)))
     const code = await Effect.runPromise(
       Effect.gen(function* () {
         const session = yield* makeProfileSession(dir, () => Effect.void, {
@@ -199,10 +199,10 @@ describe("the profile session — propose (dry-run) → lock (arm)", () => {
   test("lock REFUSES without a draft, and never overwrites an existing config", async () => {
     const dir = seedWorld()
     const noDraft = await Effect.runPromise(
-      Effect.either(lockProfile(dir).pipe(Effect.provide(LocalFileSystemLive))),
+      Effect.result(lockProfile(dir).pipe(Effect.provide(LocalFileSystemLive))),
     )
-    expect(noDraft._tag).toBe("Left")
-    expect(noDraft._tag === "Left" ? noDraft.left.error : "?").toBe("NoDraft")
+    expect(noDraft._tag).toBe("Failure")
+    expect(noDraft._tag === "Failure" ? noDraft.failure.error : "?").toBe("NoDraft")
 
     // A draft exists but the workspace already carries a committed profile.
     mkdirSync(join(dir, PROFILE_DRAFT_DIR), { recursive: true })
@@ -212,10 +212,10 @@ describe("the profile session — propose (dry-run) → lock (arm)", () => {
     )
     writeFileSync(join(dir, "foundry.config.ts"), "export default {}\n")
     const exists = await Effect.runPromise(
-      Effect.either(lockProfile(dir).pipe(Effect.provide(LocalFileSystemLive))),
+      Effect.result(lockProfile(dir).pipe(Effect.provide(LocalFileSystemLive))),
     )
-    expect(exists._tag).toBe("Left")
-    expect(exists._tag === "Left" ? exists.left.error : "?").toBe("ConfigExists")
+    expect(exists._tag).toBe("Failure")
+    expect(exists._tag === "Failure" ? exists.failure.error : "?").toBe("ConfigExists")
   })
 
   test("an existing AGENTS.md wins the precedence chain — lock never writes rules.md beside it", async () => {

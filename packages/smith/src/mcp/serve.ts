@@ -1,6 +1,6 @@
-import { McpServer, Toolkit } from "@effect/ai"
-import { BunContext, BunSink, BunStream } from "@effect/platform-bun"
-import { Effect, Layer, Logger } from "effect"
+import { McpProtocol, McpServer, Toolkit } from "effect/ai"
+import { BunServices } from "@effect/platform-bun"
+import { Effect, Layer } from "effect"
 import { LocalFileSystemLive, LocalShellLive } from "@xandreed/plugin-tools-local"
 import {
   LoadSkill,
@@ -10,6 +10,7 @@ import {
   Glob,
   Ls,
 } from "../implementor/codingToolkit.js"
+import { StderrPrettyLoggerLive } from "../stderrLogger.js"
 
 /**
  * `smith mcp --cwd <dir>` — smith AS an MCP server: the coder's READ-ONLY
@@ -52,14 +53,15 @@ export const runMcpServe = (cwd: string): Effect.Effect<never, unknown, never> =
         McpServer.layerStdio({
           name: SERVER_NAME,
           version: SERVER_VERSION,
-          stdin: BunStream.stdin,
-          stdout: BunSink.stdout,
+          // 2025-06-18 first (the revision served before); newer and older
+          // clients get their own when they ask for it.
+          protocols: [McpProtocol.v2025_06_18, McpProtocol.v2025_11_25, McpProtocol.v2025_03_26],
         }),
       ),
-      Layer.provide(Layer.mergeAll(LocalFileSystemLive, LocalShellLive, BunContext.layer)),
+      Layer.provide(Layer.mergeAll(LocalFileSystemLive, LocalShellLive, BunServices.layer)),
       // stdout is the JSON-RPC wire — logs MUST ride stderr or the protocol
       // corrupts on the first log line.
-      Layer.provide(Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true }))),
+      Layer.provide(StderrPrettyLoggerLive),
     ),
   )
 

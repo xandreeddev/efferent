@@ -37,7 +37,7 @@ const stubBlog = Layer.succeed(
 
 const withHandlers = <A>(
   f: (
-    handlers: Effect.Effect.Success<ReturnType<typeof makeSocialHandlers>>,
+    handlers: Effect.Success<ReturnType<typeof makeSocialHandlers>>,
     dirs: { pending: string; ledger: string },
   ) => Effect.Effect<A, unknown>,
 ): Promise<A> => {
@@ -60,7 +60,7 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
   test("a reply drafted WITHOUT reading its thread bounces with thread-context, and the rejection is ledgered", async () => {
     const result = await withHandlers((handlers, dirs) =>
       Effect.gen(function* () {
-        const outcome = yield* Effect.either(
+        const outcome = yield* Effect.result(
           handlers.write_draft({
             type: "reply",
             content: "Model it as a Schedule. https://xandreed.dev/posts/effect-retries",
@@ -73,9 +73,9 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
         return { outcome, ledger }
       }),
     )
-    expect(result.outcome._tag).toBe("Left")
-    if (result.outcome._tag === "Left") {
-      const failure = result.outcome.left as { error: string; message?: string }
+    expect(result.outcome._tag).toBe("Failure")
+    if (result.outcome._tag === "Failure") {
+      const failure = result.outcome.failure as { error: string; message?: string }
       expect(failure.error).toBe("GateRejected")
       expect(failure.message).toContain("thread-context")
     }
@@ -88,7 +88,7 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
     const result = await withHandlers((handlers, dirs) =>
       Effect.gen(function* () {
         yield* handlers.read_thread({ tweetId: "111" })
-        const first = yield* Effect.either(
+        const first = yield* Effect.result(
           handlers.write_draft({
             type: "reply",
             content: "Model it as a Schedule and compose. https://xandreed.dev/posts/effect-retries",
@@ -97,7 +97,7 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
             referenceBlogSlug: "effect-retries",
           }),
         )
-        const second = yield* Effect.either(
+        const second = yield* Effect.result(
           handlers.write_draft({
             type: "reply",
             content: "Another take on the same tweet.",
@@ -109,13 +109,13 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
         return { first, second, ledger }
       }),
     )
-    expect(result.first._tag).toBe("Right")
-    if (result.first._tag === "Right") {
-      expect(result.first.right.filename).toBe("reply_111.md")
+    expect(result.first._tag).toBe("Success")
+    if (result.first._tag === "Success") {
+      expect(result.first.success.filename).toBe("reply_111.md")
     }
-    expect(result.second._tag).toBe("Left")
-    if (result.second._tag === "Left") {
-      expect((result.second.left as { message?: string }).message).toContain("dedup")
+    expect(result.second._tag).toBe("Failure")
+    if (result.second._tag === "Failure") {
+      expect((result.second.failure as { message?: string }).message).toContain("dedup")
     }
     expect(result.ledger.map((e) => e.event)).toEqual(["drafted", "gate_rejected"])
   })
@@ -124,7 +124,7 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
     const result = await withHandlers((handlers) =>
       Effect.gen(function* () {
         yield* handlers.read_thread({ tweetId: "111" })
-        return yield* Effect.either(
+        return yield* Effect.result(
           handlers.write_draft({
             type: "reply",
             content: "Nice post! see https://spam.example.com",
@@ -135,9 +135,9 @@ describe("Gate A — write_draft is the chokepoint into the queue", () => {
         )
       }),
     )
-    expect(result._tag).toBe("Left")
-    if (result._tag === "Left") {
-      const message = (result.left as { message?: string }).message ?? ""
+    expect(result._tag).toBe("Failure")
+    if (result._tag === "Failure") {
+      const message = (result.failure as { message?: string }).message ?? ""
       expect(message).toContain("banned-content")
       expect(message).toContain("link-allowlist")
       expect(message).toContain("blog-slug-exists")

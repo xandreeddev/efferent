@@ -9,7 +9,7 @@
  */
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { BunContext, BunRuntime } from "@effect/platform-bun"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Logger, Option } from "effect"
 import { ConversationId, ConversationStore, SettingsStore } from "@xandreed/core"
 import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive } from "@xandreed/plugin-models"
@@ -143,10 +143,11 @@ if (isDirectRun) {
   }).pipe(
     Effect.scoped,
     Effect.provide(LocalShellLive),
-    Effect.provide(BunContext.layer),
+    Effect.provide(BunServices.layer),
     Effect.provide(TracingLive("math")),
-    // Server logs to stderr; the shell is the product surface.
-    Effect.provide(Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true }))),
+    // Server logs to stderr; the shell is the product surface. Spans keep their log events.
+    Effect.provide(Logger.layer([Logger.consolePretty(), Logger.tracerLogger])),
+    Effect.provideService(Logger.LogToStderr, true),
   )
 
   BunRuntime.runMain(program)

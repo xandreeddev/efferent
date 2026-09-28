@@ -13,13 +13,13 @@ import type { McpServerSpec } from "./config.js"
 const REQUEST_TIMEOUT_MS = 60_000
 
 const RpcResponse = Schema.Struct({
-  id: Schema.optional(Schema.Union(Schema.Number, Schema.String)),
+  id: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(
     Schema.Struct({ code: Schema.optional(Schema.Number), message: Schema.String }),
   ),
 })
-const decodeResponse = Schema.decodeUnknownEither(RpcResponse)
+const decodeResponse = Schema.decodeUnknownResult(RpcResponse)
 
 export interface McpConnection {
   readonly request: (method: string, params: unknown) => Effect.Effect<unknown, McpError>
@@ -65,10 +65,10 @@ export const openStdioConnection = (
     // lines (notifications, junk) are ignored; reader death rejects nothing
     // by itself — pending requests die on their own timeouts.
     yield* Effect.forkScoped(
-      Stream.fromReadableStream(
-        () => child.stdout,
-        (cause) => fail(`stdout failed: ${String(cause)}`),
-      ).pipe(
+      Stream.fromReadableStream({
+        evaluate: () => child.stdout,
+        onError: (cause) => fail(`stdout failed: ${String(cause)}`),
+      }).pipe(
         Stream.decodeText(),
         Stream.splitLines,
         Stream.runForEach((line) =>
@@ -79,8 +79,8 @@ export const openStdioConnection = (
             }).pipe(Effect.orElseSucceed(() => undefined))
             if (parsed === undefined) return
             const decoded = decodeResponse(parsed)
-            if (decoded._tag !== "Right") return
-            const response = decoded.right
+            if (decoded._tag !== "Success") return
+            const response = decoded.success
             const id = response.id
             if (typeof id !== "number") return
             const pending = yield* Ref.get(pendingRef)
@@ -88,7 +88,7 @@ export const openStdioConnection = (
               onNone: () => Effect.void,
               onSome: (deferred) =>
                 Ref.update(pendingRef, HashMap.remove(id)).pipe(
-                  Effect.zipRight(
+                  Effect.andThen(
                     response.error !== undefined
                       ? Deferred.fail(deferred, fail(response.error.message))
                       : Deferred.succeed(deferred, response.result),
@@ -98,7 +98,7 @@ export const openStdioConnection = (
             })
           }),
         ),
-        Effect.catchAll(() => Effect.void),
+        Effect.catch(() => Effect.void),
       ),
     )
 
@@ -109,9 +109,9 @@ export const openStdioConnection = (
         yield* Ref.update(pendingRef, HashMap.set(id, deferred))
         yield* send({ jsonrpc: "2.0", id, method, params })
         return yield* Deferred.await(deferred).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: REQUEST_TIMEOUT_MS,
-            onTimeout: () => fail(`${method} timed out after ${REQUEST_TIMEOUT_MS}ms`),
+            orElse: () => Effect.fail(fail(`${method} timed out after ${REQUEST_TIMEOUT_MS}ms`)),
           }),
           Effect.ensuring(Ref.update(pendingRef, HashMap.remove(id))),
         )

@@ -23,12 +23,24 @@ const hasModifier = (node: ts.Node, kind: ts.SyntaxKind): boolean =>
   ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === kind)
 const isExported = (node: ts.Node): boolean => hasModifier(node, ts.SyntaxKind.ExportKeyword)
 
+/**
+ * Whether `access` (`X.name`) resolves to a function the `effect` package
+ * exports. Effect v4 names its handler `Effect.catch` (`Stream.catch`…),
+ * which is not Promise#catch. Unresolved names count as foreign.
+ */
+const isEffectExport = (checker: ts.TypeChecker, access: ts.PropertyAccessExpression): boolean => {
+  const symbol = checker.getSymbolAtLocation(access.name)
+  const resolved = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  return (resolved?.declarations ?? []).some((declaration) =>
+    /[\\/]node_modules[\\/]effect[\\/]/.test(declaration.getSourceFile().fileName))
+}
+
 const noRawPromiseCore = {
   id: "architecture/no-raw-promise-core",
   defaultSeverity: "error",
   description: "entity and use-case code is Effect-native",
   fixHint: "compose Effect values and wrap foreign promises in an adapter with Effect.tryPromise",
-  check: ({ sourceFile }: Context): ReadonlyArray<Match> => {
+  check: ({ sourceFile, checker }: Context): ReadonlyArray<Match> => {
     if (!isCore(sourceFile)) return []
     const matches: Array<Match> = []
     walk(sourceFile, (node) => {
@@ -49,7 +61,7 @@ const noRawPromiseCore = {
         if (ts.isIdentifier(owner) && owner.text === "Promise") {
           matches.push({ node, message: `Promise.${method} is banned; use Effect concurrency` })
         }
-        if (method === "then" || method === "catch") matches.push({ node, message: `.${method}() is banned in the Effect core` })
+        if (method === "then" || (method === "catch" && !isEffectExport(checker, node.expression))) matches.push({ node, message: `.${method}() is banned in the Effect core` })
         if (ts.isIdentifier(owner) && owner.text === "Effect" && (method.startsWith("runPromise") || method.startsWith("runSync"))) {
           matches.push({ node, message: `Effect.${method} belongs at a runtime edge` })
         }
@@ -63,7 +75,7 @@ const noRuntimeImportsCore = {
   id: "architecture/no-runtime-imports-core",
   defaultSeverity: "error",
   description: "the inner core imports no runtimes, providers, UI frameworks, or concrete SDKs",
-  fixHint: "move the integration behind a Context.Tag port and implement it in a .adapter.ts file",
+  fixHint: "move the integration behind a Context.Service port and implement it in a .adapter.ts file",
   check: ({ sourceFile }: Context): ReadonlyArray<Match> => {
     if (!isCore(sourceFile)) return []
     const banned = ["node:", "bun", "@xandreed/providers", "playwright", "@opentui/", "solid-js"]
@@ -101,13 +113,13 @@ const contractsContainNoBehavior = {
 const contextTagsLiveInPorts = {
   id: "architecture/context-tags-live-in-ports",
   defaultSeverity: "error",
-  description: "Context.Tag service contracts live in .port.ts files",
+  description: "Context.Service contracts live in .port.ts files",
   fixHint: "move the service contract to a .port.ts file and keep implementations in adapters",
   check: ({ sourceFile }: Context): ReadonlyArray<Match> => {
     if (/\.port\.ts$/.test(nameOf(sourceFile)) || nameOf(sourceFile).includes("/ports/")) return []
     const matches: Array<Match> = []
     walk(sourceFile, (node) => {
-      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Context" && (node.name.text === "Tag" || node.name.text === "GenericTag")) {
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Context" && (node.name.text === "Service" || node.name.text === "Tag" || node.name.text === "GenericTag")) {
         matches.push({ node, message: `Context.${node.name.text} declared outside a .port.ts file` })
       }
     })

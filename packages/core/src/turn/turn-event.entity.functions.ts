@@ -25,14 +25,14 @@ export interface ToolCall<Input, Result> {
   readonly result: Result
 }
 
-export const onTool = <Params extends Schema.Schema.Any, Success extends Schema.Schema.Any, R>(
+export const onTool = <Params extends Schema.Top, Success extends Schema.Top, R>(
   tool: { readonly name: string; readonly parametersSchema: Params; readonly successSchema: Success },
-  handle: (call: ToolCall<Schema.Schema.Type<Params>, Schema.Schema.Type<Success>>) => Effect.Effect<void, HarnessError, R>,
+  handle: (call: ToolCall<Params["Type"], Success["Type"]>) => Effect.Effect<void, HarnessError, R>,
   options?: SubscribeOptions,
 ): Subscription<R> => {
   const isInput = Schema.is(tool.parametersSchema)
   const isResult = Schema.is(tool.successSchema)
-  return (events) => events.subscribe((event): Option.Option<ToolCall<Schema.Schema.Type<Params>, Schema.Schema.Type<Success>>> => {
+  return (events) => events.subscribe((event): Option.Option<ToolCall<Params["Type"], Success["Type"]>> => {
     if (event._tag !== "tool.completed" || event.tool !== tool.name || !event.ok) return Option.none()
     const input = event.input
     const result = event.result
@@ -51,10 +51,10 @@ export const subscribeAll = <R>(events: TurnEventsService, subscriptions: Readon
  * (e.g. `answer.published`); payloads are encoded with the schema, so a
  * journal sink can persist them like any other event.
  */
-export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(name: string, schema: Schema.Schema<A, I>) => {
+export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(name: string, schema: Schema.Codec<A, I>) => {
   const select = (event: TurnEvent): Option.Option<A> =>
     event._tag === "host" && event.name === name ? Schema.decodeUnknownOption(schema)(event.data) : Option.none()
-  const make = (data: A): Effect.Effect<TurnEvent, HarnessError> => Schema.encode(schema)(data).pipe(
+  const make = (data: A): Effect.Effect<TurnEvent, HarnessError> => Schema.encodeEffect(schema)(data).pipe(
     Effect.map((encoded): TurnEvent => ({ _tag: "host", name, data: encoded })),
     Effect.mapError((error) => new HarnessError({ code: "events.encode", message: `${name}: ${error.message}` })),
   )

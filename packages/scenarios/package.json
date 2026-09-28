@@ -3,20 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Evals v3: scenario packs over agent worlds \u2014 ordered steps, deterministic evidence checks, LLM judges, standing baselines. The regression battery of the agent line.",
+  "description": "Evals v3: scenario packs over agent worlds — ordered steps, deterministic evidence checks, LLM judges, standing baselines. The regression battery of the agent line.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@effect/ai": "0.35.0",
-    "@effect/platform": "0.96.1",
     "@opentui/core": "0.3.1",
     "@xandreed/canvas": "workspace:*",
     "@xandreed/foundry": "workspace:*",
     "@xandreed/math": "workspace:*",
     "@xandreed/smith": "workspace:*",
-    "effect": "3.21.4",
+    "effect": "4.0.0-rc.118",
     "playwright": "^1.49.0",
     "@xandreed/core": "workspace:*",
     "@xandreed/plugin-agent-loop": "workspace:*",

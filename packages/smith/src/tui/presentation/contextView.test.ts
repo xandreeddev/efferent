@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Either, Option } from "effect"
+import { Result, Option } from "effect"
 import { contextHeadline, contextView, pinLine, standingLine } from "./contextView.js"
 import { emptyContextSet, parsePinRef, toggleStanding, withPin } from "../../context/context-set.entity.functions.js"
 import type { ContextBundle } from "../../context/assemble.js"
 import type { StandingSources } from "../../context/standing.js"
 
-const pin = (raw: string) => Either.getOrThrow(parsePinRef(raw))
+const pin = (raw: string) => Result.getOrThrow(parsePinRef(raw))
 
 describe("the context panel's view model", () => {
   test("standing and pinned sources read back with their sizes; off is off, deferred is deferred", () => {

@@ -10,12 +10,12 @@ import { runForgeSessionWith } from "./forge/session.js"
 export const delegateLoopPlugin = (plugin: Plugin): Plugin => ({
   ...plugin, id: `${plugin.id}/delegate`, provides: plugin.provides.map((key) => key === AgentLoop.key ? DelegateLoop.key : key),
   build: (options, services) => plugin.build(options, services).pipe(Effect.map((context) => {
-    const entries = [...context.unsafeMap].map(([key, value]) => [key === AgentLoop.key ? DelegateLoop.key : key, value] as const)
-    return Context.unsafeMake<never>(new Map(entries))
+    const entries = [...context.mapUnsafe].map(([key, value]) => [key === AgentLoop.key ? DelegateLoop.key : key, value] as const)
+    return Context.makeUnsafe<never>(new Map(entries))
   })),
 })
 export const smithWorkerPlugin = delegateLoopPlugin(agentLoopPlugin)
-const Config = Schema.Struct({ mode: Schema.Literal("spec", "lock", "forge"), maxAttempts: Schema.Int.pipe(Schema.between(1, 10)), budgetMillis: Schema.Positive, testCommand: Schema.String, configPath: Schema.String })
+const Config = Schema.Struct({ mode: Schema.Literals(["spec", "lock", "forge"]), maxAttempts: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 }))), budgetMillis: Schema.Number.check(Schema.isGreaterThan(0)), testCommand: Schema.String, configPath: Schema.String })
 const fail = (message: string) => Effect.fail(new HarnessError({ code: "workflow.invalid", message }))
 
 export const smithWorkflowPlugin = definePlugin({

@@ -77,4 +77,4 @@ export const filterBackspace = <T>(state: SelectState<T>): SelectState<T> =>
   reFilter(state, state.filter.slice(0, -1))
 
 export const selectedValue = <T>(state: SelectState<T>): Option.Option<T> =>
-  Option.map(Option.fromNullable(state.matches[state.selected]), (o) => o.value)
+  Option.map(Option.fromNullishOr(state.matches[state.selected]), (o) => o.value)

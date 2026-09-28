@@ -8,10 +8,7 @@ export interface BlogPost {
   readonly content: string
 }
 
-export class BlogReader extends Context.Tag("BlogReader")<
-  BlogReader,
-  {
+export class BlogReader extends Context.Service<BlogReader, {
     readonly getPosts: () => Effect.Effect<ReadonlyArray<BlogPost>, Error>
     readonly getPostContent: (slug: string) => Effect.Effect<string, Error>
-  }
->() {}
+  }>()("BlogReader") {}

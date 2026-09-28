@@ -1,4 +1,4 @@
-import { Chunk, Deferred, Effect, Option, Queue, Ref, Scope } from "effect"
+import { Deferred, Effect, Option, Queue, Ref, Scope } from "effect"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody } from "../harness/session.entity.js"
 import type { JournalIO, JournalWriter } from "../ports/memory.port.js"
@@ -44,21 +44,21 @@ export const makeJournalWriter = (journal: JournalIO, scope: Scope.Scope, option
   const process = (item: Item): Effect.Effect<void> => Ref.get(failed).pipe(Effect.flatMap((failure) => {
     if (item._tag === "Marker") return Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (error) => Deferred.fail(item.done, error) }).pipe(Effect.asVoid)
     if (item._tag === "Run") return item.run
-    return Option.isSome(failure) ? Effect.void : store(item.events).pipe(Effect.catchAll((error) => Ref.set(failed, Option.some(error))))
+    return Option.isSome(failure) ? Effect.void : store(item.events).pipe(Effect.catch((error) => Ref.set(failed, Option.some(error))))
   }))
 
   const writer = Queue.takeBetween(queue, 1, options.batch).pipe(
-    Effect.flatMap((chunk) => Effect.forEach(groupsOf(Chunk.toReadonlyArray(chunk)), process, { discard: true })),
+    Effect.flatMap((chunk) => Effect.forEach(groupsOf(chunk), process, { discard: true })),
     Effect.forever,
   )
   yield* Effect.forkIn(writer, scope)
 
   const refuseAfterFailure = Ref.get(failed).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Effect.fail })))
   const enqueue = (events: ReadonlyArray<EventBody>) => refuseAfterFailure.pipe(
-    Effect.zipRight(events.length === 0 ? Effect.void : Queue.offer(queue, { _tag: "Append", events }).pipe(Effect.asVoid)),
+    Effect.andThen(events.length === 0 ? Effect.void : Queue.offer(queue, { _tag: "Append", events }).pipe(Effect.asVoid)),
   )
   const flush: Effect.Effect<void, HarnessError> = Deferred.make<void, HarnessError>().pipe(Effect.flatMap((done) =>
-    Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.zipRight(Deferred.await(done)))))
+    Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
 
   const write = <A, E>(op: Effect.Effect<A, E>): Effect.Effect<A, E | HarnessError> => Effect.gen(function* () {
     const result = yield* Deferred.make<A, E | HarnessError>()
@@ -77,7 +77,7 @@ export const makeJournalWriter = (journal: JournalIO, scope: Scope.Scope, option
     io: {
       append: (event) => enqueue([event]),
       appendAll: enqueue,
-      read: (names) => flush.pipe(Effect.zipRight(journal.read(names))),
+      read: (names) => flush.pipe(Effect.andThen(journal.read(names))),
     },
     flush,
     write,

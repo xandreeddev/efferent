@@ -14,8 +14,8 @@ export const sseHeaders = {
 export const SseTransport: RenderTransport<SsePeer> = {
   id: "sse",
   serve: (frames, peer) => peer.write(ssePreamble).pipe(
-    Effect.zipRight(Stream.runForEach(frames, (frame) => peer.write(encodeSse(frame)))),
-    Effect.catchAll(() => Effect.void),
+    Effect.andThen(Stream.runForEach(frames, (frame) => peer.write(encodeSse(frame)))),
+    Effect.catch(() => Effect.void),
     Effect.raceFirst(peer.closed),
   ),
 }
@@ -24,7 +24,7 @@ export const SseTransport: RenderTransport<SsePeer> = {
 export const WebSocketTransport: RenderTransport<SocketPeer> = {
   id: "websocket",
   serve: (frames, peer) => Stream.runForEach(frames, (frame) => peer.send(encodeSocketFrame(frame))).pipe(
-    Effect.catchAll(() => Effect.void),
+    Effect.catch(() => Effect.void),
     Effect.raceFirst(peer.closed),
   ),
 }
@@ -33,10 +33,10 @@ export const WebSocketTransport: RenderTransport<SocketPeer> = {
 export const sseNodePeer = (response: ServerResponse, headers: Readonly<Record<string, string>> = {}): Effect.Effect<SsePeer> => Effect.sync(() => {
   response.writeHead(200, { ...sseHeaders, ...headers })
   return {
-    write: (chunk: string) => Effect.async<void>((resume) => {
+    write: (chunk: string) => Effect.callback<void>((resume) => {
       response.write(chunk, () => resume(Effect.void))
     }),
-    closed: Effect.async<void>((resume) => {
+    closed: Effect.callback<void>((resume) => {
       if (response.closed) resume(Effect.void)
       else response.once("close", () => resume(Effect.void))
     }),

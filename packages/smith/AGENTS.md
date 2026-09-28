@@ -81,7 +81,7 @@ src/
 │                      per-block status, shell pins only when a turn asks) · inject (the
 │                      once-on-change seam for refine + follow-up; the forge brief takes
 │                      the bundle whole)
-├── implementor/       efferentImplementor (EfferentImplementorLive: Layer.scoped capturing
+├── implementor/       efferentImplementor (EfferentImplementorLive: Layer.effect capturing
 │                      the service Context so Implementor stays R=never; ONE conversation
 │                      per forge run — retries continue it with the gate brief; receipt.ref
 │                      links artifact↔conversation; runFleetToCompletion settles spawns;

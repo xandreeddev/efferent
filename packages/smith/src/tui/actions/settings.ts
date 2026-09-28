@@ -97,7 +97,7 @@ export const submitSetting = (
             }),
           )
         }),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             ctx.store.closeOverlay()
             ctx.store.setNotice(error.message)
@@ -124,7 +124,7 @@ export const toggleViMode = (ctx: SmithTuiContext): void => {
           ctx.store.setNotice(`vi mode ${next ? "on — Esc for NORMAL, i to type" : "off"}`)
           openSettingsMenu(ctx)
         }),
-        Effect.catchAll((error) => Effect.sync(() => ctx.store.setNotice(error.message))),
+        Effect.catch((error) => Effect.sync(() => ctx.store.setNotice(error.message))),
       ),
     ),
   )
@@ -143,7 +143,7 @@ export const toggleSandbox = (ctx: SmithTuiContext): void => {
           ctx.store.setNotice(`sandbox ${next ? "on" : "off"} — applies on the next smith launch`)
           openSettingsMenu(ctx)
         }),
-        Effect.catchAll((error) => Effect.sync(() => ctx.store.setNotice(error.message))),
+        Effect.catch((error) => Effect.sync(() => ctx.store.setNotice(error.message))),
       ),
     ),
   )

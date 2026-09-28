@@ -38,7 +38,7 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
   `Schema.Class`/`Struct` with branded id fields; no parallel interfaces.
 - Tool failures are DATA: toolkits use the shared `Failure` struct with
   `failureMode: "return"` so the model corrects in the same run.
-- Ports are `Context.Tag` services in core or domain packages; adapters are
+- Ports are `Context.Service` services in core or domain packages; adapters are
   `<Thing>Live` Layers in capability plugins; composition happens at each agent's
   `main.ts` edge and nowhere else.
 - New domain/application features use qualified pairs: `thing.entity.ts` +

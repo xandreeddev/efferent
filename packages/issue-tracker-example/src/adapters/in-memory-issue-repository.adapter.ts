@@ -8,7 +8,7 @@ export const InMemoryIssueRepositoryLive = Layer.effect(
     get: (id: IssueId) =>
       Ref.get(state).pipe(
         Effect.flatMap((issues) =>
-          Option.match(Option.fromNullable(issues.get(id)), {
+          Option.match(Option.fromNullishOr(issues.get(id)), {
             onNone: () => Effect.fail({ _tag: "IssueNotFound" as const, issueId: id }),
             onSome: Effect.succeed,
           }),

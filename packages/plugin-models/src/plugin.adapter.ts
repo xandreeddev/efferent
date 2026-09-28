@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { AuthStore, definePlugin, EngineSettings, ModelCatalog, SessionEnvironment, SettingsError, SettingsStore, UtilityLlm } from "@xandreed/core"
 import { LocalAuthStoreLive } from "./auth/localAuth.js"
@@ -10,10 +10,10 @@ import { LocalSettingsStoreLive } from "./settings/localSettings.js"
 
 const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean })
 export const modelsPlugin = definePlugin({
-  id: "@xandreed/plugin-models", version: "0.6.0-next.2", config: Config,
+  id: "@xandreed/plugin-models", version: "0.7.0-next.0", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true }, requires: [SessionEnvironment],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
-  layer: (config) => Layer.unwrapEffect(Effect.gen(function* () {
+  layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment
     const previous = config.inheritPrevious
       ? yield* SettingsStore.pipe(Effect.flatMap((settings) => settings.load), Effect.provide(LocalSettingsStoreLive(workspace, homedir())))

@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
-import { Command } from "@effect/cli"
-import { LanguageModel } from "@effect/ai"
-import { BunContext, BunRuntime } from "@effect/platform-bun"
+import { Command } from "effect/cli"
+import { LanguageModel } from "effect/ai"
+import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import { Harness } from "@xandreed/sdk"
 import { loadConfig, loadPlugins } from "@xandreed/runtime"
@@ -31,7 +31,7 @@ const withSdk = <A, E>(program: Effect.Effect<A, E, Services>) => Effect.scoped(
     Effect.provideService(SocialWorkspace, files), Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(SocialDraftRunner, { run: (prompt) => Effect.gen(function* () {
       const session = yield* harness.create()
-      return yield* session.send(prompt).pipe(Effect.zipRight(session.history), Effect.map((events) => ({ finalText: String(events.filter((event) => event.name === "run.completed").at(-1)?.data.text ?? "") })), Effect.ensuring(session.close))
+      return yield* session.send(prompt).pipe(Effect.andThen(session.history), Effect.map((events) => ({ finalText: String(events.filter((event) => event.name === "run.completed").at(-1)?.data.text ?? "") })), Effect.ensuring(session.close))
     }) }),
   )
 }))
@@ -40,5 +40,4 @@ const daemonCmd = Command.make("daemon", {}, () => withSdk(startDaemon()))
 const reviewCmd = Command.make("review", {}, () => withSdk(runReviewQueue()))
 const testCmd = Command.make("test", {}, () => withSdk(findOpportunitiesAndDraft(["EffectTS"])))
 const root = Command.make("social", {}).pipe(Command.withSubcommands([daemonCmd, reviewCmd, testCmd]))
-const cli = Command.run(root, { name: "efferent-social", version: "0.2.0-next.0" })
-BunRuntime.runMain(cli(process.argv).pipe(Effect.provide(BunContext.layer)))
+BunRuntime.runMain(Command.run(root, { version: "0.2.0-next.0" }).pipe(Effect.provide(BunServices.layer)))

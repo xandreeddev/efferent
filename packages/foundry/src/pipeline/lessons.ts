@@ -43,8 +43,8 @@ interface Tally {
 }
 
 const byRecurrence: Order.Order<Lesson> = Order.combineAll([
-  Order.mapInput(Order.reverse(Order.number), (l: Lesson) => l.failedAttempts),
-  Order.mapInput(Order.string, (l: Lesson) => l.rule),
+  Order.mapInput(Order.flip(Order.Number), (l: Lesson) => l.failedAttempts),
+  Order.mapInput(Order.String, (l: Lesson) => l.rule),
 ])
 
 /**
@@ -61,7 +61,7 @@ export const deriveLessons = (
   const max = options.max ?? DEFAULT_MAX_LESSONS
   const ordered = Arr.sort(
     runs,
-    Order.mapInput(Order.number, (run: FactoryRun) => run.endedAt),
+    Order.mapInput(Order.Number, (run: FactoryRun) => run.endedAt),
   )
   const tallies = ordered.reduce((acc: ReadonlyMap<string, Tally>, run) => {
     const perAttempt = run.attempts.flatMap((attempt) => {

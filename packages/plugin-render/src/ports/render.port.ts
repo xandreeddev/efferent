@@ -24,14 +24,14 @@ import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain
  *   different proposal fails with `conflict`. It persists a `SurfaceCommitted`.
  * - `hydrate` returns this surface's records, in write order, for every message.
  */
-export class RenderStore extends Context.Tag("efferent/render/Store")<RenderStore, {
+export class RenderStore extends Context.Service<RenderStore, {
   readonly hydrate: (scope: SurfaceScope) => Effect.Effect<ReadonlyArray<SurfaceRecord>, RenderError>
   readonly plan: (scope: SurfaceScope, record: SurfacePlanned) => Effect.Effect<void, RenderError>
   readonly commit: (scope: SurfaceScope, write: { readonly versionId: string; readonly proposal: UiOutputProposal }) => Effect.Effect<UiOutputReceipt, RenderError>
   readonly complete: (scope: SurfaceScope, record: SurfaceCompleted) => Effect.Effect<void, RenderError>
   readonly freeze: (scope: SurfaceScope, record: SurfaceFrozen) => Effect.Effect<void, RenderError>
   readonly annotate: (scope: SurfaceScope, kind: string, data: Readonly<Record<string, unknown>>) => Effect.Effect<void, RenderError>
-}>() {}
+}>()("efferent/render/Store") {}
 
 /** Everything a host does with one surface during a run. Writes are serialized. */
 export interface RenderSurface {
@@ -56,12 +56,12 @@ export interface RenderOpenOptions {
   readonly fork: (tag: string, work: Effect.Effect<void>) => Effect.Effect<void>
 }
 
-export class Render extends Context.Tag("efferent/render/Render")<Render, {
+export class Render extends Context.Service<Render, {
   readonly open: (scope: SurfaceScope, options: RenderOpenOptions) => Effect.Effect<RenderSurface, RenderError>
-}>() {}
+}>()("efferent/render/Render") {}
 
 /** The host's journal, read after a cursor. The host authorizes the feed's principal. */
-export class JournalTail extends Context.Tag("efferent/render/JournalTail")<JournalTail, {
+export class JournalTail extends Context.Service<JournalTail, {
   readonly read: (feed: FeedScope, after: number) => Effect.Effect<ReadonlyArray<JournalRecord>, RenderError>
   /**
    * Optional wake signal: each element means the feed's journal may have new
@@ -69,14 +69,14 @@ export class JournalTail extends Context.Tag("efferent/render/JournalTail")<Jour
    * Polling stays the fallback; a failed or ended stream only stops waking.
    */
   readonly changes?: (feed: FeedScope) => Stream.Stream<void, RenderError>
-}>() {}
+}>()("efferent/render/JournalTail") {}
 
 /** Maps a journal record to what a client receives; `None` skips it (the cursor still advances). */
 export type FeedProjection = (record: JournalRecord) => Effect.Effect<Option.Option<FeedPayload>, RenderError>
 
-export class RenderFeed extends Context.Tag("efferent/render/Feed")<RenderFeed, {
+export class RenderFeed extends Context.Service<RenderFeed, {
   readonly frames: (feed: FeedScope, after: number, project: FeedProjection) => Stream.Stream<FeedFrame, RenderError>
-}>() {}
+}>()("efferent/render/Feed") {}
 
 /** A wire: SSE, WebSocket, or anything that can carry text frames to one peer. */
 export interface RenderTransport<Peer> {

@@ -82,7 +82,7 @@ export const distillSkillsFromMemory = (options: {
       return qualifying.length === 0
         ? fs.remove(path).pipe(Effect.ignore, Effect.as([] as ReadonlyArray<string>))
         : fs.mkdir(dir).pipe(
-            Effect.zipRight(fs.write(path, renderDistilledSkill(topic, qualifying))),
+            Effect.andThen(fs.write(path, renderDistilledSkill(topic, qualifying))),
             Effect.as([distilledSkillName(topic)] as ReadonlyArray<string>),
             Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
           )

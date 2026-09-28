@@ -1,7 +1,7 @@
-import { AiError, LanguageModel } from "@effect/ai"
+import { AiError, LanguageModel } from "effect/ai"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
-import { HttpClient, HttpClientRequest } from "@effect/platform"
-import { Effect, Either, FiberRef, Option, Redacted, Stream } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/http"
+import { Effect, Result, Option, Redacted, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, foldStreamParts } from "@xandreed/core"
 import { OpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
 
@@ -76,10 +76,10 @@ const transformRequest = (
   if (request.body._tag !== "Uint8Array") return withHeaders
   const encodedBody = request.body.body
   return Option.match(
-    Either.getRight(Either.try(() => JSON.parse(new TextDecoder().decode(encodedBody)) as unknown)),
+    Result.getSuccess(Result.try(() => JSON.parse(new TextDecoder().decode(encodedBody)) as unknown)),
     {
       onNone: () => withHeaders,
-      onSome: (decoded) => HttpClientRequest.bodyUnsafeJson(
+      onSome: (decoded) => HttpClientRequest.bodyJsonUnsafe(
         withHeaders,
         toOpenAiCodexRequestBody(decoded, reasoningEffort),
       ),
@@ -87,26 +87,26 @@ const transformRequest = (
   )
 }
 
-const responseStatus = (error: unknown): number | undefined => {
-  const value = record(error)
-  const response = record(value["response"])
-  return typeof response["status"] === "number" ? response["status"] : undefined
-}
+/** The HTTP status an Effect provider error carries, when it has one. */
+const responseStatus = (error: unknown): number | undefined =>
+  AiError.isAiError(error) && "http" in error.reason ? error.reason.http?.response?.status : undefined
 
 export const mapOpenAiCodexError = (model: string, error: unknown): unknown =>
   responseStatus(error) === 404
-    ? new AiError.MalformedInput({
+    ? AiError.make({
         module: "OpenAiCodex",
         method: "responses",
-        description: `model ${model} is not available to the configured ChatGPT subscription account`,
-        cause: error,
+        reason: new AiError.InvalidRequestError({
+          description: `model ${model} is not available to the configured ChatGPT subscription account`,
+        }),
       })
     : responseStatus(error) === 200
-      ? new AiError.MalformedOutput({
+      ? AiError.make({
           module: "OpenAiCodex",
           method: "responses",
-          description: `the ${model} subscription stream returned a rejected or incompatible event`,
-          cause: error,
+          reason: new AiError.InvalidOutputError({
+            description: `the ${model} subscription stream returned a rejected or incompatible event`,
+          }),
         })
       : error
 
@@ -116,8 +116,8 @@ export const makeOpenAiCodexLanguageModel = (args: {
   readonly accountId: string
 }) =>
   Effect.all({
-    cacheKey: FiberRef.get(CurrentPromptCacheKey),
-    policy: FiberRef.get(CurrentModelCallPolicy),
+    cacheKey: Effect.service(CurrentPromptCacheKey),
+    policy: Effect.service(CurrentModelCallPolicy),
   }).pipe(
     Effect.flatMap(({ cacheKey, policy }) =>
       OpenAiClient.make({
@@ -143,7 +143,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
           OpenAiLanguageModel.make({
             model: args.model,
             config: {
-              strict: false,
+              strictJsonSchema: false,
               store: false,
               prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
               text: { verbosity: "low" },
@@ -175,15 +175,15 @@ export const makeOpenAiCodexLanguageModel = (args: {
           const streamText = ((options: unknown) =>
             streaming.streamText(options as never).pipe(
               Stream.mapError((error) => mapOpenAiCodexError(args.model, error)),
-            )) as LanguageModel.Service["streamText"]
+            )) as LanguageModel.LanguageModel["streamText"]
           return {
             ...streaming,
             streamText,
             generateText: ((options: unknown) =>
               foldStreamParts(streamText(options as never), () => Effect.void).pipe(
                 Effect.map((turn) => new LanguageModel.GenerateTextResponse(turn.content as never)),
-              )) as LanguageModel.Service["generateText"],
-          } satisfies LanguageModel.Service
+              )) as never,
+          } satisfies LanguageModel.LanguageModel
         }),
       ),
     ),

@@ -1,6 +1,6 @@
-import { AiError, LanguageModel } from "@effect/ai"
-import { FetchHttpClient, HttpClient } from "@effect/platform"
-import { Clock, Duration, Effect, FiberRef, Layer, Metric, Option, Ref, Stream } from "effect"
+import { AiError, LanguageModel } from "effect/ai"
+import { FetchHttpClient, HttpClient } from "effect/http"
+import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
 import { AuthStore, CurrentModelCallPolicy, formatModelSelection, parseModelSelection, SettingsStore } from "@xandreed/core"
 import type { ModelSelection } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
@@ -20,8 +20,8 @@ import {
  * timeout + transient-retry + empty-response guards from `retry.ts`.
  */
 
-const configError = (message: string): AiError.UnknownError =>
-  new AiError.UnknownError({ module: "Router", method: "selection", description: message })
+const configError = (message: string): AiError.AiError =>
+  AiError.make({ module: "Router", method: "selection", reason: new AiError.UnknownError({ description: message }) })
 
 /**
  * The routed-call metrics — every LLM request crosses this seam, so this is
@@ -43,15 +43,32 @@ const llmRequests = Metric.counter("llm.requests", {
 })
 /** Wall-clock per routed call INCLUDING retries, in millisecond buckets
  *  spanning a fast cached turn (100ms) to the 300s request timeout. */
-const llmDuration = Metric.timerWithBoundaries(
-  "llm.request.duration",
-  [100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000],
-)
+const llmDuration = Metric.timer("llm.request.duration", {
+  boundaries: [100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000],
+})
 
-const byModel = <Type, In, Out>(
-  metric: Metric.Metric<Type, In, Out>,
+const byModel = <Input, State>(
+  metric: Metric.Metric<Input, State>,
   label: string,
-): Metric.Metric<Type, In, Out> => Metric.tagged(metric, "llm.model", label)
+): Metric.Metric<Input, State> => Metric.withAttributes(metric, { "llm.model": label })
+
+/** One routed call's outcome, per model and rung. */
+const countRequest = (label: string, outcome: "ok" | "error", isFallback?: boolean) =>
+  Metric.update(
+    Metric.withAttributes(byModel(llmRequests, label), {
+      outcome,
+      ...(isFallback === undefined ? {} : { fallback: isFallback ? "true" : "false" }),
+    }),
+    1,
+  )
+
+/** Effect's usage: the input total (cache reads included) and the output total. */
+const usageTotals = (usage: unknown) => {
+  const u = usage as
+    | { readonly inputTokens?: { readonly total?: number }; readonly outputTokens?: { readonly total?: number } }
+    | undefined
+  return { input: u?.inputTokens?.total ?? 0, output: u?.outputTokens?.total ?? 0 }
+}
 
 const tracedContent = (content: string): string =>
   process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"
@@ -99,12 +116,12 @@ const withConfiguredEffort = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   effort: EngineSettings["reasoningEffort"],
 ): Effect.Effect<A, E, R> =>
-  FiberRef.get(CurrentModelCallPolicy).pipe(
+  Effect.service(CurrentModelCallPolicy).pipe(
     Effect.flatMap((current) =>
       Option.isSome(current) || Option.isNone(effort)
         ? effect
         : effect.pipe(
-            Effect.locally(
+            Effect.provideService(
               CurrentModelCallPolicy,
               Option.some({ effort: effort.value }),
             ),
@@ -136,7 +153,7 @@ export const generateWith = (
       ) as Effect.Effect<{
         readonly content: ReadonlyArray<unknown>
         readonly usage: unknown
-      }>
+      }, unknown>
     ).pipe(
       rejectEmptyResponse(label),
       retryableLlm(label),
@@ -147,8 +164,8 @@ export const generateWith = (
       Effect.tap((res) =>
         Effect.annotateCurrentSpan({
           "llm.finish_reason": String(res.finishReason),
-          "llm.usage.input_tokens": res.usage.inputTokens ?? 0,
-          "llm.usage.output_tokens": res.usage.outputTokens ?? 0,
+          "llm.usage.input_tokens": usageTotals(res.usage).input,
+          "llm.usage.output_tokens": usageTotals(res.usage).output,
           "llm.response_chars": res.text.length,
           "llm.tool_calls": res.content
             .flatMap((part) => {
@@ -163,31 +180,18 @@ export const generateWith = (
       Effect.tap((res) =>
         Effect.all(
           [
-            Metric.incrementBy(byModel(llmInputTokens, label), res.usage.inputTokens ?? 0),
-            Metric.incrementBy(byModel(llmOutputTokens, label), res.usage.outputTokens ?? 0),
+            Metric.update(byModel(llmInputTokens, label), usageTotals(res.usage).input),
+            Metric.update(byModel(llmOutputTokens, label), usageTotals(res.usage).output),
           ],
           { discard: true },
         ),
       ),
-      Effect.tapBoth({
-        onFailure: () =>
-          Metric.increment(
-            Metric.tagged(
-              Metric.tagged(byModel(llmRequests, label), "outcome", "error"),
-              "fallback",
-              isFallback ? "true" : "false",
-            ),
-          ),
-        onSuccess: () =>
-          Metric.increment(
-            Metric.tagged(
-              Metric.tagged(byModel(llmRequests, label), "outcome", "ok"),
-              "fallback",
-              isFallback ? "true" : "false",
-            ),
-          ),
-      }),
-      Metric.trackDuration(byModel(llmDuration, label)),
+      Effect.tap(() => countRequest(label, "ok", isFallback)),
+      Effect.tapError(() => countRequest(label, "error", isFallback)),
+      // Duration of successful calls only, as before.
+      Effect.timed,
+      Effect.tap(([duration]) => Metric.update(byModel(llmDuration, label), duration)),
+      Effect.map(([, res]) => res),
       Effect.withSpan("providers.generate", {
         attributes: { "llm.model": label },
       }),
@@ -208,7 +212,7 @@ export const withFallbackRung = <A, R>(
   call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, unknown, R>,
 ): Effect.Effect<A, unknown, R> =>
   call(primary, false).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Option.match(
         Option.filter(
           fallback,
@@ -221,7 +225,7 @@ export const withFallbackRung = <A, R>(
           onSome: (fb) =>
             Effect.logWarning(
               `${formatModelSelection(primary)} exhausted retries (${String(error).slice(0, 200)}) — falling back to ${formatModelSelection(fb)}`,
-            ).pipe(Effect.zipRight(call(fb, true))),
+            ).pipe(Effect.andThen(call(fb, true))),
         },
       ),
     ),
@@ -308,7 +312,7 @@ export const tapStreamTelemetry =
             const p = part as {
               readonly type?: string
               readonly reason?: string
-              readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number }
+              readonly usage?: unknown
             }
             if (p.type !== "finish") {
               return Ref.update(stats, (s) => accumulateStats(s, part)).pipe(Effect.as(part))
@@ -317,21 +321,18 @@ export const tapStreamTelemetry =
               Effect.flatMap((s) =>
                 Effect.annotateCurrentSpan({
                   "llm.finish_reason": String(p.reason),
-                  "llm.usage.input_tokens": p.usage?.inputTokens ?? 0,
-                  "llm.usage.output_tokens": p.usage?.outputTokens ?? 0,
+                  "llm.usage.input_tokens": usageTotals(p.usage).input,
+                  "llm.usage.output_tokens": usageTotals(p.usage).output,
                   "llm.response_chars": s.textChars,
                   "llm.tool_calls": s.toolNames.join(","),
                   "llm.reasoning": tracedContent(s.reasoning),
                 }),
               ),
-              Effect.zipRight(
+              Effect.andThen(
                 Effect.all(
                   [
-                    Metric.incrementBy(byModel(llmInputTokens, label), p.usage?.inputTokens ?? 0),
-                    Metric.incrementBy(
-                      byModel(llmOutputTokens, label),
-                      p.usage?.outputTokens ?? 0,
-                    ),
+                    Metric.update(byModel(llmInputTokens, label), usageTotals(p.usage).input),
+                    Metric.update(byModel(llmOutputTokens, label), usageTotals(p.usage).output),
                   ],
                   { discard: true },
                 ),
@@ -339,16 +340,8 @@ export const tapStreamTelemetry =
               Effect.as(part),
             )
           }),
-          Stream.onDone(() =>
-            Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "ok")).pipe(
-              Effect.zipRight(recordDuration),
-            ),
-          ),
-          Stream.tapErrorCause(() =>
-            Metric.increment(Metric.tagged(byModel(llmRequests, label), "outcome", "error")).pipe(
-              Effect.zipRight(recordDuration),
-            ),
-          ),
+          Stream.onEnd(countRequest(label, "ok").pipe(Effect.andThen(recordDuration))),
+          Stream.tapCause(() => countRequest(label, "error").pipe(Effect.andThen(recordDuration))),
         )
       }),
     )
@@ -361,7 +354,7 @@ export const streamWith = (
   selection: ModelSelection,
   options: unknown,
 ): Stream.Stream<unknown, unknown, AuthStore | HttpClient.HttpClient> =>
-  Stream.unwrapScoped(
+  Stream.unwrap(
     Effect.gen(function* () {
       const auth = yield* AuthStore
       const label = formatModelSelection(selection)
@@ -394,8 +387,9 @@ export const LanguageModelLive = Layer.effect(
     const context = yield* Effect.context<AuthStore | SettingsStore>()
     const http = yield* HttpClient.HttpClient
 
-    const service: LanguageModel.Service = {
-      generateText: (options) =>
+    const service: LanguageModel.LanguageModel = {
+      [LanguageModel.TypeId]: LanguageModel.TypeId,
+      generateText: (options: unknown) =>
         currentSelection.pipe(
           Effect.flatMap(({ effort, fallback, primary }) =>
             withConfiguredEffort(
@@ -416,24 +410,26 @@ export const LanguageModelLive = Layer.effect(
       // already falls back to generateText in the engine loop, and THAT
       // call rides this router's fallback — one rung, no double-hop.
       streamText: ((options: unknown) =>
-        Stream.unwrapScoped(
+        Stream.unwrap(
           currentSelection.pipe(
             Effect.flatMap(({ effort, primary }) =>
-              FiberRef.get(CurrentModelCallPolicy).pipe(
+              Effect.service(CurrentModelCallPolicy).pipe(
                 Effect.flatMap((current) => {
                   const stream = streamWith(primary, options)
-                  return Option.isSome(current) || Option.isNone(effort)
-                    ? Effect.succeed(stream)
-                    : Effect.locallyScoped(
-                        CurrentModelCallPolicy,
-                        Option.some({ effort: effort.value }),
-                      ).pipe(Effect.as(stream))
+                  // The persisted effort applies to the stream's whole run.
+                  return Effect.succeed(
+                    Option.isSome(current) || Option.isNone(effort)
+                      ? stream
+                      : stream.pipe(
+                          Stream.provideService(CurrentModelCallPolicy, Option.some({ effort: effort.value })),
+                        ),
+                  )
                 }),
               ),
             ),
           ),
         ).pipe(
-          Stream.provideSomeContext(context),
+          Stream.provideContext(context),
           Stream.provideService(HttpClient.HttpClient, http),
         )) as never,
     }
@@ -453,15 +449,16 @@ export const LanguageModelSelectionLive = (
     const context = yield* Effect.context<AuthStore>()
     const http = yield* HttpClient.HttpClient
     return {
-      generateText: (options) => withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)).pipe(
+      [LanguageModel.TypeId]: LanguageModel.TypeId,
+      generateText: (options: unknown) => withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)).pipe(
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
       generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
       streamText: ((options: unknown) => streamWith(primary, options).pipe(
-        Stream.provideSomeContext(context),
+        Stream.provideContext(context),
         Stream.provideService(HttpClient.HttpClient, http),
       )) as never,
-    } satisfies LanguageModel.Service
+    } satisfies LanguageModel.LanguageModel
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

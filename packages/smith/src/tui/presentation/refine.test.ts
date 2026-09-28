@@ -5,7 +5,7 @@ import type { SmithEvent } from "../../domain/SmithEvent.js"
 import { initialRefine, reduceRefine, withUserLine } from "./refine.js"
 
 const doc = Effect.runSync(
-  Schema.decodeUnknown(SpecDoc)({
+  Schema.decodeUnknownEffect(SpecDoc)({
     slug: "widget",
     status: "draft",
     created: "2026-07-07T10:00:00Z",

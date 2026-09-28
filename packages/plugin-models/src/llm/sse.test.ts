@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Effect, Stream } from "effect"
+import { Effect, Stream } from "effect"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { sseStreamParts } from "./sse.js"
 
@@ -30,10 +30,10 @@ const collect = (
   Effect.runPromise(
     Stream.runCollect(
       sseStreamParts({ moduleName: "Test", body: bodyFromChunks(chunker(enc.encode(text))) }),
-    ).pipe(Effect.map(Chunk.toReadonlyArray)),
+    ),
   )
 
-const zeroUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedInputTokens: 0 }
+const zeroUsage = { inputTokens: { total: 0, uncached: 0, cacheRead: 0 }, outputTokens: { total: 0 } }
 
 describe("sseStreamParts", () => {
   test("text deltas: start → deltas → end → finish with the final-chunk usage", async () => {
@@ -54,7 +54,7 @@ describe("sseStreamParts", () => {
       {
         type: "finish",
         reason: "stop",
-        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, cachedInputTokens: 0 },
+        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0 }, outputTokens: { total: 2 } },
       },
     ])
   })
@@ -180,11 +180,11 @@ describe("sseStreamParts", () => {
         `[DONE]`,
       ),
     )
-    const finish = parts[parts.length - 1] as { usage: { cachedInputTokens: number } }
-    expect(finish.usage.cachedInputTokens).toBe(90)
+    const finish = parts[parts.length - 1] as { usage: { inputTokens: { total: number; uncached: number; cacheRead: number } } }
+    expect(finish.usage.inputTokens).toEqual({ total: 100, uncached: 10, cacheRead: 90 })
   })
 
-  test("a non-JSON data line is a MalformedOutput", async () => {
+  test("a non-JSON data line is an invalid output", async () => {
     const exit = await Effect.runPromiseExit(
       Stream.runCollect(
         sseStreamParts({
@@ -194,7 +194,7 @@ describe("sseStreamParts", () => {
       ),
     )
     expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("MalformedOutput")
+    expect(JSON.stringify(exit)).toContain("InvalidOutputError")
   })
 
   test("an error chunk mid-stream fails the stream", async () => {
@@ -210,7 +210,7 @@ describe("sseStreamParts", () => {
     expect(JSON.stringify(exit)).toContain("overloaded")
   })
 
-  test("unparseable accumulated tool arguments are a MalformedOutput at flush", async () => {
+  test("unparseable accumulated tool arguments are an invalid output at flush", async () => {
     const exit = await Effect.runPromiseExit(
       Stream.runCollect(
         sseStreamParts({
@@ -227,7 +227,7 @@ describe("sseStreamParts", () => {
       ),
     )
     expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("MalformedOutput")
+    expect(JSON.stringify(exit)).toContain("InvalidOutputError")
   })
 
   test("round-trip parity: folded stream parts ≡ fromChatCompletion on the same completion", async () => {
@@ -313,7 +313,7 @@ describe("compat streamText", () => {
         })
         return yield* Stream.runCollect(
           svc.streamText({ prompt: [{ role: "user", content: "hi" }] } as never),
-        ).pipe(Effect.map(Chunk.toReadonlyArray))
+        )
       }).pipe(Effect.scoped),
     )
     const sent = calls[0]?.body as { stream: boolean; stream_options: unknown }
@@ -325,7 +325,7 @@ describe("compat streamText", () => {
     expect(delta.delta).toBe("hi")
   })
 
-  test("a non-OK status is an HttpResponseError BEFORE any part (the retry boundary)", async () => {
+  test("a non-OK status is a status-classified AiError BEFORE any part (the retry boundary)", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -343,7 +343,7 @@ describe("compat streamText", () => {
     )
     expect(exit._tag).toBe("Failure")
     const rendered = JSON.stringify(exit)
-    expect(rendered).toContain("HttpResponseError")
+    expect(rendered).toContain("RateLimitError")
     expect(rendered).toContain("429")
   })
 
@@ -379,7 +379,7 @@ describe("compat streamText", () => {
         })
         return yield* Stream.runFold(
           svc.streamText({ prompt: [{ role: "user", content: "hi" }] } as never),
-          [] as ReadonlyArray<{ readonly type: string; readonly at: number }>,
+          (): ReadonlyArray<{ readonly type: string; readonly at: number }> => [],
           (acc, part) => [
             ...acc,
             { type: (part as { type: string }).type, at: performance.now() },

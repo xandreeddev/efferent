@@ -11,14 +11,14 @@ import type { SmithRunConfig } from "../domain/SmithConfig.js"
  * `ConfigError` (same discipline as the flag path).
  */
 export const toForgeSpec = (doc: SpecDoc): Effect.Effect<Spec, ConfigError> =>
-  Schema.decodeUnknown(Spec)({
+  Schema.decodeUnknownEffect(Spec)({
     goal: doc.goal,
     acceptance: doc.acceptance,
     limits: {
       maxAttempts: doc.limits.maxAttempts,
       budgetMillis: doc.limits.budgetMinutes * 60_000,
     },
-  }).pipe(
+  }, { reportInput: true }).pipe(
     Effect.mapError(
       (error) => new ConfigError({ path: `${doc.slug}.md`, message: String(error) }),
     ),
@@ -46,7 +46,7 @@ export const trivialSpecDoc = (
   slug: SpecSlug,
   now: string,
 ): Effect.Effect<SpecDoc, ConfigError> =>
-  Schema.decodeUnknown(SpecDoc)({
+  Schema.decodeUnknownEffect(SpecDoc)({
     slug: String(slug),
     status: "locked",
     created: now,
@@ -61,7 +61,7 @@ export const trivialSpecDoc = (
       budgetMinutes: Math.max(1, Math.round(run.budgetMillis / 60_000)),
     },
     gates: {},
-  }).pipe(
+  }, { reportInput: true }).pipe(
     Effect.mapError(
       (error) => new ConfigError({ path: "<flags>", message: String(error) }),
     ),

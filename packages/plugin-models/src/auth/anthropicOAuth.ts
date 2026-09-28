@@ -167,7 +167,7 @@ export interface AuthRedirect {
 }
 
 const fromNullableTrimmed = (value: string | null | undefined): Option.Option<string> =>
-  Option.filter(Option.fromNullable(value), (v) => v.trim().length > 0)
+  Option.filter(Option.fromNullishOr(value), (v) => v.trim().length > 0)
 
 /** Pull `code`/`state` out of a pasted redirect URL, `code#state` pair,
  *  bare query string, or raw code. Total — garbage is `{none, none}`. */

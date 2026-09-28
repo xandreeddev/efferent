@@ -27,8 +27,8 @@ export const makeSemanticJevJudge = (options: SemanticJevOptions) => Effect.gen(
       const response = yield* Effect.tryPromise({
         try: (signal) => options.evaluate(input, signal),
         catch: (error) => new AssessmentError({ code: "provider", message: String(error) }),
-      }).pipe(Effect.timeoutFail({ duration: timeoutMs, onTimeout: () => new AssessmentError({ code: "timeout", message: "Jev deadline exceeded" }) }))
-      const decoded = yield* Schema.decodeUnknown(Schema.Struct({ answers: Schema.Unknown }))(response).pipe(
+      }).pipe(Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => Effect.fail((() => new AssessmentError({ code: "timeout", message: "Jev deadline exceeded" }))()) }))
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.Struct({ answers: Schema.Unknown }))(response).pipe(
         Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })),
       )
       const answers = yield* validateSemanticAnswers(input, decoded.answers)

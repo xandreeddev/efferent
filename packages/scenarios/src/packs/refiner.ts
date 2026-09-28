@@ -31,14 +31,14 @@ import { makeSpecQualityJudge, SPEC_QUALITY_RUBRIC_VERSION } from "../judges/spe
 
 const FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "refiner-golden")
 
-const ExpectFile = Schema.parseJson(
+const ExpectFile = Schema.fromJsonString(
   Schema.Struct({
     /** Needles the draft should name (the refiner explored before proposing). */
     mentions: Schema.Array(Schema.NonEmptyString),
     /** An oversized idea must be staged with explicit non-goals. */
     wantsNonGoals: Schema.Boolean,
     /** The vague-idea protocol: unattended assumptions carry the prefix. */
-    wantsAssumptions: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+    wantsAssumptions: Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => false)), Schema.withConstructorDefault(Effect.sync(() => false))),
   }),
 )
 export type RefinerExpect = typeof ExpectFile.Type
@@ -51,7 +51,7 @@ export const readRefinerCase = (
     const idea = yield* Effect.try(() =>
       readFileSync(join(dir, name, "idea.txt"), "utf-8").trim(),
     )
-    const expect = yield* Schema.decodeUnknown(ExpectFile)(
+    const expect = yield* Schema.decodeUnknownEffect(ExpectFile)(
       readFileSync(join(dir, name, "expect.json"), "utf-8"),
     )
     return { idea, expect }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "@effect/ai"
+import { Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
@@ -32,7 +32,7 @@ const capture = (): { calls: Array<{ url: string; body: unknown }>; impl: typeof
 
 const Echo = Tool.make("echo", {
   description: "echo back",
-  parameters: { value: Schema.String },
+  parameters: Schema.Struct({ value: Schema.String }),
   success: Schema.Struct({ echoed: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -87,7 +87,7 @@ describe("makeCompatLanguageModel", () => {
           return completion({ choices: [{ finish_reason: "stop", message: { content: '{"covered":true}' } }] })(String(url))
         }) as typeof fetch,
       })
-      return yield* svc.generateObject({ prompt: "Judge coverage", objectName: "grounding", schema: Schema.Struct({ covered: Schema.Boolean }) }).pipe(Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 256 })))
+      return yield* svc.generateObject({ prompt: "Judge coverage", objectName: "grounding", schema: Schema.Struct({ covered: Schema.Boolean }) }).pipe(Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 256 })))
     }))
     expect(result.value).toEqual({ covered: true })
     expect(calls[0]).toMatchObject({ thinking: { type: "disabled" }, reasoning: { effort: "none" }, max_tokens: 256 })
@@ -95,7 +95,7 @@ describe("makeCompatLanguageModel", () => {
     expect(calls[0]).toMatchObject({ response_format: { type: "json_schema", json_schema: { name: "grounding", strict: true, schema: { type: "object", required: ["covered"] } } } })
   })
 
-  test("a non-OK status becomes HttpResponseError with the status + body excerpt", async () => {
+  test("a non-OK status becomes a status-classified AiError with the status + body excerpt", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const svc = yield* makeCompatLanguageModel({
@@ -112,8 +112,9 @@ describe("makeCompatLanguageModel", () => {
     )
     expect(exit._tag).toBe("Failure")
     const rendered = JSON.stringify(exit)
-    expect(rendered).toContain("HttpResponseError")
+    expect(rendered).toContain("RateLimitError")
     expect(rendered).toContain("429")
+    expect(rendered).toContain("overloaded")
   })
 
   test("a gateway ModelError is semantic validation, not fake authentication", async () => {
@@ -134,9 +135,10 @@ describe("makeCompatLanguageModel", () => {
     )
     expect(exit._tag).toBe("Failure")
     const rendered = JSON.stringify(exit)
-    expect(rendered).toContain("MalformedInput")
+    expect(rendered).toContain("InvalidRequestError")
     expect(rendered).toContain("not supported")
-    expect(rendered).not.toContain("HttpResponseError")
+    // A 401 would otherwise read as a bad key.
+    expect(rendered).not.toContain("AuthenticationError")
   })
 
   test("tool_calls parse into tool-call parts with object params + tool-calls finish", async () => {
@@ -161,7 +163,7 @@ describe("makeCompatLanguageModel", () => {
       {
         type: "finish",
         reason: "tool-calls",
-        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8, cachedInputTokens: 0 },
+        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0 }, outputTokens: { total: 3 } },
       },
     ])
   })
@@ -210,7 +212,7 @@ describe("makeCompatLanguageModel", () => {
         })
         return yield* svc.generateText({ prompt: [{ role: "user", content: "plan" }] } as never)
       }).pipe(
-        Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 1800 })),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 1800 })),
       ),
     )
     expect((calls[0]?.body as { reasoning_effort?: unknown }).reasoning_effort).toBe("low")
@@ -248,11 +250,11 @@ describe("makeCompatLanguageModel", () => {
         },
       }),
     )
-    const finish = parts[parts.length - 1] as { usage: { cachedInputTokens: number } }
-    expect(finish.usage.cachedInputTokens).toBe(90)
+    const finish = parts[parts.length - 1] as { usage: { inputTokens: { cacheRead: number } } }
+    expect(finish.usage.inputTokens.cacheRead).toBe(90)
   })
 
-  test("unparseable tool arguments are a MalformedOutput (the loop's corrective path)", async () => {
+  test("unparseable tool arguments are an invalid output (the loop's corrective path)", async () => {
     const exit = await Effect.runPromiseExit(
       fromChatCompletion("Test", {
         choices: [
@@ -266,7 +268,7 @@ describe("makeCompatLanguageModel", () => {
       }),
     )
     expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("MalformedOutput")
+    expect(JSON.stringify(exit)).toContain("InvalidOutputError")
   })
 
   test("Echo tool declaration shape is exported for the request", () => {
@@ -287,7 +289,7 @@ describe("makeCompatLanguageModel", () => {
     )
     const request = svc.generateText({ prompt: [{ role: "user", content: "hi" }] } as never)
     await Effect.runPromise(
-      request.pipe(Effect.locally(CurrentPromptCacheKey, Option.some("conv-abc"))),
+      request.pipe(Effect.provideService(CurrentPromptCacheKey, Option.some("conv-abc"))),
     )
     await Effect.runPromise(request)
     expect((calls[0]?.body as { prompt_cache_key?: string }).prompt_cache_key).toBe("conv-abc")
@@ -304,11 +306,11 @@ test("interrupting a provider call aborts fetch while response bytes are pending
       fetchImpl: ((_url: unknown, init: RequestInit) => Promise.resolve(new Response(new ReadableStream({
         start(controller) {
           init.signal?.addEventListener("abort", () => { aborted.push(true); controller.error(new Error("aborted")) }, { once: true })
-          Deferred.unsafeDone(started, Effect.void)
+          Deferred.doneUnsafe(started, Effect.void)
         },
       })))) as typeof fetch,
     })
-    const fiber = yield* Effect.fork(model.generateText({ prompt: "hello" }))
+    const fiber = yield* Effect.forkChild(model.generateText({ prompt: "hello" }))
     yield* Deferred.await(started)
     yield* Fiber.interrupt(fiber)
   }))

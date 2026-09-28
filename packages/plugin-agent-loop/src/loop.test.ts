@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "@effect/ai"
+import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { Failure } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
@@ -61,12 +61,12 @@ const streamingModel = (script: (call: number) => ReadonlyArray<unknown>) =>
 const finish = (reason: "stop" | "tool-calls") => ({
   type: "finish",
   reason,
-  usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+  usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
 })
 
 const Echo = Tool.make("echo", {
   description: "echo a value back",
-  parameters: { value: Schema.String },
+  parameters: Schema.Struct({ value: Schema.String }),
   success: Schema.Struct({ echoed: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -396,7 +396,7 @@ describe("runLoop steering (pendingInput)", () => {
         system: "sys",
         messages: [user("go")],
         toolkit: kit,
-        pendingInput: () => Effect.sync(() => Option.fromNullable(queue.shift())),
+        pendingInput: () => Effect.sync(() => Option.fromNullishOr(queue.shift())),
         onTail: (tail) =>
           Effect.sync(() => {
             persisted.push(...tail.map((m) => m.role))
@@ -542,10 +542,10 @@ describe("runLoop streaming", () => {
                     ]).pipe(
                       Stream.concat(
                         Stream.fail(
-                          new AiError.MalformedOutput({
+                          AiError.make({
                             module: "Test",
                             method: "streamText",
-                            description: "the stream broke mid-turn",
+                            reason: new AiError.InvalidOutputError({ description: "the stream broke mid-turn" }),
                           }),
                         ),
                       ),
@@ -623,7 +623,7 @@ describe("runLoop — the decisions, pure", () => {
 })
 
 test("capability selection is recomputed after a tool expands the active recipe", async () => {
-  const Done = Tool.make("done", { parameters: {}, success: Schema.Boolean })
+  const Done = Tool.make("done", { parameters: Schema.Struct({}), success: Schema.Boolean })
   const dynamicKit = Toolkit.make(Echo, Done)
   const visible: string[][] = []
   await Effect.runPromise(Effect.gen(function* () {

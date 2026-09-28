@@ -1,9 +1,9 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { UiProtocolEnvelope, UiProtocolRecord } from "./ui-generation-protocol.entity.js"
 import type { UiGenerationProtocol, UiProtocolDecodeResult, UiProtocolDecoderState } from "./ui-generation-protocol.entity.js"
 
-const decodeRecord = Schema.decodeUnknownEither(UiProtocolRecord)
-const decodeEnvelope = Schema.decodeUnknownEither(UiProtocolEnvelope)
+const decodeRecord = Schema.decodeUnknownResult(UiProtocolRecord)
+const decodeEnvelope = Schema.decodeUnknownResult(UiProtocolEnvelope)
 
 export const emptyUiProtocolDecoderState = (): UiProtocolDecoderState => ({ buffer: "", seen: new Set(), sawDelta: false })
 
@@ -14,20 +14,20 @@ export const isUiProtocolPayload = (text: string): boolean => {
   return first.startsWith("@ui ") || /^\{\s*"ui"\s*:/.test(first)
 }
 
-const json = (source: string): Either.Either<unknown, string> => Either.try({ try: () => JSON.parse(source) as unknown, catch: () => "record is not valid JSON" })
+const json = (source: string): Result.Result<unknown, string> => Result.try({ try: () => JSON.parse(source) as unknown, catch: () => "record is not valid JSON" })
 
-const parseCompact = (line: string): Either.Either<typeof UiProtocolRecord.Type, string> => {
+const parseCompact = (line: string): Result.Result<typeof UiProtocolRecord.Type, string> => {
   const match = /^@ui\s+(start|patch|prop|component|theme)\s+(.+)$/.exec(line)
-  if (match === null) return Either.left("line does not use @ui <operation> <json>")
-  return Either.flatMap(json(match[2] ?? ""), (input) => Either.mapLeft(decodeRecord({ op: match[1], input }), (issue) => String(issue)))
+  if (match === null) return Result.fail("line does not use @ui <operation> <json>")
+  return Result.flatMap(json(match[2] ?? ""), (input) => Result.mapError(decodeRecord({ op: match[1], input }), (issue) => String(issue)))
 }
 
-const parseJsonl = (line: string): Either.Either<typeof UiProtocolRecord.Type, string> => Either.flatMap(
+const parseJsonl = (line: string): Result.Result<typeof UiProtocolRecord.Type, string> => Result.flatMap(
   json(line),
-  (decoded) => Either.map(Either.mapLeft(decodeEnvelope(decoded), (issue) => String(issue)), (envelope) => envelope.ui),
+  (decoded) => Result.map(Result.mapError(decodeEnvelope(decoded), (issue) => String(issue)), (envelope) => envelope.ui),
 )
 
-const parseLine = (protocol: UiGenerationProtocol, line: string): Either.Either<typeof UiProtocolRecord.Type, string> => protocol === "compact-lines" ? parseCompact(line) : parseJsonl(line)
+const parseLine = (protocol: UiGenerationProtocol, line: string): Result.Result<typeof UiProtocolRecord.Type, string> => protocol === "compact-lines" ? parseCompact(line) : parseJsonl(line)
 
 export const decodeUiProtocolChunk = (
   protocol: UiGenerationProtocol,
@@ -40,15 +40,15 @@ export const decodeUiProtocolChunk = (
   const lines = joined.split("\n")
   const complete = lines.slice(0, -1).map((line) => line.trim()).filter((line) => line.length > 0 && !line.startsWith("```") && (protocol === "compact-lines" ? line.startsWith("@ui ") : line.startsWith("{")))
   const parsed = complete.map((line) => ({ line, result: parseLine(protocol, line) }))
-  const accepted = parsed.flatMap(({ line, result }) => Either.match(result, {
-    onLeft: () => [],
-    onRight: (record) => state.seen.has(line) ? [] : [{ line, record }],
+  const accepted = parsed.flatMap(({ line, result }) => Result.match(result, {
+    onFailure: () => [],
+    onSuccess: (record) => state.seen.has(line) ? [] : [{ line, record }],
   }))
   const seen = new Set([...state.seen, ...accepted.map(({ line }) => line)])
   return {
     state: { buffer: lines.at(-1) ?? "", seen, sawDelta: state.sawDelta || isDelta },
     records: accepted.map(({ record }) => record),
-    findings: parsed.flatMap(({ result }) => Either.match(result, { onLeft: (finding) => [finding], onRight: () => [] })),
+    findings: parsed.flatMap(({ result }) => Result.match(result, { onFailure: (finding) => [finding], onSuccess: () => [] })),
   }
 }
 

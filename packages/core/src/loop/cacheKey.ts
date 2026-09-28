@@ -1,4 +1,4 @@
-import { FiberRef, GlobalValue, Option } from "effect"
+import { Context, Option } from "effect"
 
 /**
  * The CURRENT conversation's cache identity, stamped by `runAgent` for the
@@ -7,11 +7,10 @@ import { FiberRef, GlobalValue, Option } from "effect"
  * one conversation, one cache lane, so parallel sessions stop evicting
  * each other's prefixes. `None` (the default) sends nothing.
  *
- * A FiberRef, not a port: it's ambient call metadata, not a capability —
+ * A context reference, not a port: it's ambient call metadata, not a capability —
  * and it must flow through the loop's fibers without threading a parameter
  * through every seam.
  */
-export const CurrentPromptCacheKey = GlobalValue.globalValue(
-  "@xandreed/core/CurrentPromptCacheKey",
-  () => FiberRef.unsafeMake(Option.none<string>()),
-)
+export const CurrentPromptCacheKey = Context.Reference("@xandreed/core/CurrentPromptCacheKey", {
+  defaultValue: () => Option.none<string>(),
+})

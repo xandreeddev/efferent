@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConfigError,
@@ -67,11 +67,11 @@ const buildSpec = (
   Option.match(doc, {
     onSome: toForgeSpec,
     onNone: () =>
-      Schema.decodeUnknown(Spec)({
+      Schema.decodeUnknownEffect(Spec)({
         goal: run.task,
         acceptance: run.acceptance,
         limits: { maxAttempts: run.maxAttempts, budgetMillis: run.budgetMillis },
-      }).pipe(
+      }, { reportInput: true }).pipe(
         Effect.mapError(
           (parseError) => new ConfigError({ path: "<flags>", message: String(parseError) }),
         ),
@@ -181,7 +181,7 @@ export const loadWorkspaceRules = (
 ): Effect.Effect<Option.Option<string>, never, FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem
-    return yield* Effect.reduce(RULE_FILES, Option.none<string>(), (found, name) =>
+    return yield* Effect.reduce(RULE_FILES, () => Option.none<string>(), (found, name) =>
       Option.isSome(found)
         ? Effect.succeed(found)
         : fs.exists(join(cwd, name)).pipe(
@@ -197,7 +197,7 @@ export const loadWorkspaceRules = (
                 `## Workspace rules (${name} — the human's standing instructions; obey them)\n${clipped}`,
               )
             }),
-            Effect.catchAll(() => Effect.succeed(Option.none<string>())),
+            Effect.catch(() => Effect.succeed(Option.none<string>())),
           ),
     )
   })

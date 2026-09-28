@@ -1,5 +1,4 @@
 import { Context, Effect, Layer, Schema } from "effect"
-import type { ParseResult } from "effect"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
 
@@ -18,11 +17,11 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
   readonly provides: ReadonlyArray<{ readonly key: string }>
   readonly contributes?: ReadonlyArray<{ readonly key: string }>
   readonly optional?: ReadonlyArray<{ readonly key: string }>
-  readonly config: Schema.Schema<A, I>
+  readonly config: Schema.Codec<A, I>
   readonly defaults: A
   readonly layer: (config: A) => Layer.Layer<Out, E, In>
 }): TypedPlugin<A, I, Out, E, In> => {
-  const decodeOptions = (options: unknown): Effect.Effect<A, ParseResult.ParseError> => Schema.decodeUnknown(definition.config)(
+  const decodeOptions = (options: unknown): Effect.Effect<A, Schema.SchemaError> => Schema.decodeUnknownEffect(definition.config)(
     typeof options === "object" && options !== null ? { ...definition.defaults, ...options } : options ?? definition.defaults,
     { onExcessProperty: "error" },
   )
@@ -39,14 +38,16 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
     config: definition.config,
     defaults: definition.defaults,
     build: (options, services) => decodeOptions(options).pipe(
-      Effect.flatMap((config) => Layer.build(definition.layer(config)).pipe(
-        Effect.provide(Context.unsafeMake<In>(services.unsafeMap)),
-        Effect.map((built) => Context.unsafeMake<never>(built.unsafeMap)),
+      // Each activation builds its own layers (v4 would reuse ones the caller
+      // memoized), and exposes only what it provides.
+      Effect.flatMap((config) => Layer.build(Layer.fresh(definition.layer(config))).pipe(
+        Effect.provide(Context.makeUnsafe<In>(services.mapUnsafe)),
+        Effect.map((built) => Context.makeUnsafe<never>(Context.omit(Layer.CurrentMemoMap)(built).mapUnsafe)),
       )),
       Effect.mapError((error) => new HarnessError({ code: "plugin.activation", plugin: definition.id, message: String(error) })),
-      Effect.catchAllDefect((error) => Effect.fail(new HarnessError({ code: "plugin.defect", plugin: definition.id, message: String(error) }))),
+      Effect.catchDefect((error) => Effect.fail(new HarnessError({ code: "plugin.defect", plugin: definition.id, message: String(error) }))),
     ),
-    live: (options) => Layer.unwrapEffect(decodeOptions(options).pipe(
+    live: (options) => Layer.unwrap(decodeOptions(options).pipe(
       Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: definition.id, message: String(error) })),
       Effect.map(definition.layer),
     )),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Tool, Toolkit } from "@effect/ai"
-import { Effect, FiberRef, Layer, Option, Ref, Schema, Stream } from "effect"
+import { LanguageModel, Tool, Toolkit } from "effect/ai"
+import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { Failure } from "@xandreed/core"
 import { Checkpoint, ConversationId } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
@@ -22,11 +22,11 @@ const memoryStore = Effect.gen(function* () {
       create: () => Effect.succeed(cid),
       append: (_id, message) =>
         Ref.update(writes, (all) => [...all, [message]]).pipe(
-          Effect.zipRight(Ref.modify(rows, (all) => [all.length, [...all, message]] as const)),
+          Effect.andThen(Ref.modify(rows, (all) => [all.length, [...all, message]] as const)),
         ),
       appendAll: (_id, messages) =>
         Ref.update(writes, (all) => [...all, messages]).pipe(
-          Effect.zipRight(
+          Effect.andThen(
             Ref.modify(rows, (all) => [
               messages.map((_, i) => all.length + i),
               [...all, ...messages],
@@ -83,7 +83,7 @@ const memoryStore = Effect.gen(function* () {
 
 const Noop = Tool.make("noop", {
   description: "does nothing",
-  parameters: { value: Schema.String },
+  parameters: Schema.Struct({ value: Schema.String }),
   success: Schema.Struct({ done: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
@@ -99,7 +99,7 @@ const textModel = (text: string) =>
         {
           type: "finish",
           reason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
         },
       ] as never),
     streamText: () => Stream.die("not scripted") as never,
@@ -144,7 +144,7 @@ describe("runAgent", () => {
                 {
                   type: "finish",
                   reason: "stop",
-                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
                 },
               ] as never),
             ),
@@ -189,7 +189,7 @@ describe("runAgent", () => {
                         {
                           type: "finish",
                           reason: "tool-calls",
-                          usage: { inputTokens: 90_000, outputTokens: 5, totalTokens: 90_005 },
+                          usage: { inputTokens: { total: 90_000 }, outputTokens: { total: 5 } },
                         },
                       ]
                     : [
@@ -197,7 +197,7 @@ describe("runAgent", () => {
                         {
                           type: "finish",
                           reason: "stop",
-                          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                          usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
                         },
                       ]) as never,
               ),
@@ -266,7 +266,7 @@ describe("runAgent", () => {
                         {
                           type: "finish",
                           reason: "tool-calls",
-                          usage: { inputTokens: 90_000, outputTokens: 5, totalTokens: 90_005 },
+                          usage: { inputTokens: { total: 90_000 }, outputTokens: { total: 5 } },
                         },
                       ]
                     : [
@@ -274,7 +274,7 @@ describe("runAgent", () => {
                         {
                           type: "finish",
                           reason: "stop",
-                          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                          usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
                         },
                       ]) as never,
               ),
@@ -314,14 +314,14 @@ describe("runAgent", () => {
     const spyModel = LanguageModel.make({
       generateText: () =>
         Effect.gen(function* () {
-          const key = yield* FiberRef.get(CurrentPromptCacheKey)
+          const key = yield* Effect.service(CurrentPromptCacheKey)
           seen.push(Option.getOrElse(key, () => "(none)"))
           return [
             { type: "text", text: "ok" },
             {
               type: "finish",
               reason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
             },
           ] as never
         }),
@@ -358,7 +358,7 @@ describe("runAgent — persistence that survives an interrupt", () => {
                         {
                           type: "finish",
                           reason: "tool-calls",
-                          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                          usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
                         },
                       ]
                     : [
@@ -366,7 +366,7 @@ describe("runAgent — persistence that survives an interrupt", () => {
                         {
                           type: "finish",
                           reason: "stop",
-                          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                          usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
                         },
                       ]) as never,
               ),
@@ -436,11 +436,11 @@ describe("runAgent — persistence that survives an interrupt", () => {
                   (n < 2
                     ? [
                         { type: "tool-call", id: `c${n}`, name: "noop", params: { value: "x" } },
-                        { type: "finish", reason: "tool-calls", usage: { inputTokens: 90_000, outputTokens: 5, totalTokens: 90_005 } },
+                        { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 90_000 }, outputTokens: { total: 5 } } },
                       ]
                     : [
                         { type: "text", text: "done" },
-                        { type: "finish", reason: "stop", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+                        { type: "finish", reason: "stop", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } },
                       ]) as never,
               ),
             ),
@@ -485,7 +485,7 @@ describe("runAgent — the outcome goes beside the trail", () => {
           generateText: () =>
             Effect.succeed([
               { type: "tool-call", id: "c", name: "noop", params: { value: "x" } },
-              { type: "finish", reason: "tool-calls", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+              { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } },
             ] as never),
           streamText: () => Stream.die("not scripted") as never,
         })

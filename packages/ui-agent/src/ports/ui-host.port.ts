@@ -27,4 +27,4 @@ export interface UiHostService {
   readonly queries: ReadonlyMap<string, UiCapability>
 }
 
-export class UiHost extends Context.Tag("@xandreed/ui-agent/UiHost")<UiHost, UiHostService>() {}
+export class UiHost extends Context.Service<UiHost, UiHostService>()("@xandreed/ui-agent/UiHost") {}

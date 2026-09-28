@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Schema, SchemaTransformation } from "effect"
 
 /**
  * What the user said to start a turn. A prompt is text sent to a model; the
@@ -10,8 +10,12 @@ export class UserMessage extends Schema.Class<UserMessage>("UserMessage")({
 }) {}
 
 /** A `UserMessage` stored as its plain text, for records that keep a string on the wire. */
-export const UserMessageFromString = Schema.transform(Schema.String, UserMessage, {
-  strict: true,
-  decode: (text) => ({ text }),
-  encode: (userMessage) => userMessage.text,
-})
+export const UserMessageFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    UserMessage,
+    SchemaTransformation.transform({
+      decode: (text) => ({ text }),
+      encode: (userMessage) => userMessage.text,
+    }),
+  ),
+)

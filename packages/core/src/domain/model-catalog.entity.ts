@@ -6,6 +6,6 @@ export const ModelCatalogEntry = Schema.Struct({
   /** Human-facing route name. `selection` remains the stable persisted id. */
   label: Schema.optional(Schema.String),
   provider: Schema.String,
-  credential: Schema.Literal("api_key", "oauth", "local"),
+  credential: Schema.Literals(["api_key", "oauth", "local"]),
 })
 export type ModelCatalogEntry = typeof ModelCatalogEntry.Type

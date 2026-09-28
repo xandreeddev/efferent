@@ -1,7 +1,7 @@
 // E4b — glm-5.2 low-vs-medium stability (is low pathological or was it a blip?)
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
 import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
@@ -29,16 +29,16 @@ const probe = ({ model, effort }: (typeof CASES)[number]) =>
     const t0 = Date.now()
     const done = yield* LanguageModel.generateText({ prompt: PROMPT }).pipe(
       Effect.provideService(LanguageModel.LanguageModel, service),
-      Effect.locally(CurrentModelCallPolicy, Option.some({ effort, maxOutputTokens: 900 })),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort, maxOutputTokens: 900 })),
       Effect.timeout(Duration.seconds(45)),
-      Effect.either,
+      Effect.result,
     )
     const wall = Date.now() - t0
     console.log(
-      done._tag === "Right"
+      done._tag === "Success"
         ? `${model.padEnd(28)} effort=${effort.padEnd(6)} ${String(wall).padStart(6)}ms`
         : `${model.padEnd(28)} effort=${effort.padEnd(6)} FAILED after ${wall}ms`,
     )
-  }).pipe(Effect.catchAll((e) => Effect.sync(() => console.log(`${model} ${effort} ERROR: ${String(e).slice(0, 90)}`))))
+  }).pipe(Effect.catch((e) => Effect.sync(() => console.log(`${model} ${effort} ERROR: ${String(e).slice(0, 90)}`))))
 
 await Effect.runPromise(Effect.forEach(CASES, probe, { concurrency: 1 }).pipe(Effect.asVoid))

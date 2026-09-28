@@ -50,7 +50,7 @@ export const writeSpecDoc = (
     // The engine's FileSystem does NOT create parents (live-caught: the
     // shorthand's first write in a fresh workspace ENOENT'd) — the store
     // owns its layout.
-    yield* fs.mkdir(`${cwd}/${SPECS_DIR}`).pipe(Effect.catchAll(() => Effect.void))
+    yield* fs.mkdir(`${cwd}/${SPECS_DIR}`).pipe(Effect.catch(() => Effect.void))
     yield* fs.write(path, encodeSpecDocText(doc)).pipe(
       Effect.mapError((error) => new ConfigError({ path, message: String(error) })),
     )
@@ -75,7 +75,7 @@ export const listSpecs = (cwd: string): Effect.Effect<ReadonlyArray<string>, nev
     const fs = yield* FileSystem
     const entries = yield* fs
       .list(`${cwd}/${SPECS_DIR}`)
-      .pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<string>)))
+      .pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<string>)))
     return entries
       .map((name) => slugOfPath(name))
       .filter((slug) => slug.length > 0)

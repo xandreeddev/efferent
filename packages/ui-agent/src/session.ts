@@ -1,4 +1,4 @@
-import { LanguageModel, Toolkit } from "@effect/ai"
+import { LanguageModel, Toolkit } from "effect/ai"
 import { Duration, Effect, Fiber, Option, Ref, Schedule } from "effect"
 import { ConversationStore, makeSession, toAgentFailure, toolResultFailure, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
@@ -12,7 +12,7 @@ import { UiComponentCatalog } from "./ports/ui-component-catalog.port.js"
 import { UiThemeStore } from "./ports/ui-theme-store.port.js"
 import type { UiComponentCatalogService } from "./ports/ui-component-catalog.port.js"
 import type { UiThemeStoreService } from "./ports/ui-theme-store.port.js"
-import { makeUiAgentHandlers, uiAgentToolkit } from "./toolkit.js"
+import { makeUiAgentHandlers, settledResult, uiAgentToolkit } from "./toolkit.js"
 import { uiComposerPrompt, uiPlannerPrompt, uiRepairPrompt } from "./prompts.js"
 import { admitComponent, retrieveComponents, componentPromptLine } from "./domain/ui-component.entity.functions.js"
 import { validatePageCompleteness } from "./domain/ui-quality.functions.js"
@@ -21,6 +21,21 @@ import { decodeUiProtocolChunk, emptyUiProtocolDecoderState } from "./domain/ui-
 import type { UiProtocolRecord } from "./domain/ui-generation-protocol.entity.js"
 import { extractEarlyPatch, extractEarlyStart } from "./domain/ui-early-admission.functions.js"
 import type { EarlyStart } from "./domain/ui-early-admission.functions.js"
+
+/**
+ * Interrupting the caller returns at once while `effect` is interrupted in
+ * the background (Effect 3's `Effect.disconnect`).
+ */
+const disconnect = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.forkDetach(restore(effect)).pipe(
+      Effect.flatMap((fiber) =>
+        restore(Fiber.join(fiber)).pipe(
+          Effect.onInterrupt(() => Effect.asVoid(Effect.forkDetach(Fiber.interrupt(fiber)))),
+        ),
+      ),
+    ),
+  )
 
 /**
  * Stage-boundary telemetry: wall-clock stamps for the turn's server receive
@@ -66,13 +81,13 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
     const themes: UiThemeStoreService = Option.getOrElse(themeOption, () => defaultThemes)
     const models = yield* UiAgentModels
     const profile = yield* UiAgentExecutionProfile
-    const activeAttempt = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
+    const activeAttempt = yield* Ref.make(Option.none<Fiber.Fiber<void>>())
     const interruptAttempt = Ref.get(activeAttempt).pipe(
       Effect.flatMap(Option.match({
         onNone: () => Effect.void,
         onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
       })),
-      Effect.zipRight(Ref.set(activeAttempt, Option.none())),
+      Effect.andThen(Ref.set(activeAttempt, Option.none())),
     )
 
     const session = yield* makeSession<UiAgentEvent, ConversationStore>({
@@ -87,7 +102,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         yield* stamp("turn", "started")
         yield* interruptAttempt
         yield* publish({ type: "turn_start", turnIndex: 0 })
-        const definitions = yield* catalog.list.pipe(Effect.catchAll((message) => Effect.logWarning(`component catalog unavailable: ${message}`).pipe(Effect.as([]))))
+        const definitions = yield* catalog.list.pipe(Effect.catch((message) => Effect.logWarning(`component catalog unavailable: ${message}`).pipe(Effect.as([]))))
         const relevantComponents = retrieveComponents(definitions, text, 18)
         const promptContract = {
           designSystem: { id: host.tokens.id, version: host.tokens.version },
@@ -111,21 +126,21 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const applyRecord = (record: UiProtocolRecord): Effect.Effect<void> => Effect.gen(function* () {
           const toolkit = yield* uiAgentToolkit
           const named = record.op === "start"
-            ? { name: "start_ui" as const, outcome: yield* toolkit.handle("start_ui", record.input) }
+            ? { name: "start_ui" as const, outcome: yield* toolkit.handle("start_ui", record.input).pipe(Effect.flatMap(settledResult)) }
             : record.op === "patch"
-              ? { name: "patch_ui" as const, outcome: yield* toolkit.handle("patch_ui", record.input) }
+              ? { name: "patch_ui" as const, outcome: yield* toolkit.handle("patch_ui", record.input).pipe(Effect.flatMap(settledResult)) }
               : record.op === "prop"
-                ? { name: "patch_ui_prop" as const, outcome: yield* toolkit.handle("patch_ui_prop", record.input) }
+                ? { name: "patch_ui_prop" as const, outcome: yield* toolkit.handle("patch_ui_prop", record.input).pipe(Effect.flatMap(settledResult)) }
                 : record.op === "component"
-                  ? { name: "propose_component" as const, outcome: yield* toolkit.handle("propose_component", record.input) }
-                  : { name: "patch_theme" as const, outcome: yield* toolkit.handle("patch_theme", record.input) }
+                  ? { name: "propose_component" as const, outcome: yield* toolkit.handle("propose_component", record.input).pipe(Effect.flatMap(settledResult)) }
+                  : { name: "patch_theme" as const, outcome: yield* toolkit.handle("patch_theme", record.input).pipe(Effect.flatMap(settledResult)) }
           if (!named.outcome.isFailure) return
           const failure = toolResultFailure(named.outcome.result, named.name)
           yield* Ref.update(rejectedRecords, (current) => [...current, { record, finding: `[${failure.code}] ${failure.message}` }])
           yield* publish({ type: "error", message: `${named.name} record rejected: ${failure.message}`, failure })
         }).pipe(
           Effect.provide(handlers),
-          Effect.catchAll((error) => {
+          Effect.catch((error) => {
             const failure = toAgentFailure(error, `ui-protocol:${record.op}`)
             return publish({ type: "error", message: `${record.op} record failed: ${failure.message}`, failure })
           }),
@@ -142,19 +157,19 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         // duplicate findings).
         const earlyOpen = (early: EarlyStart): Effect.Effect<void> => Effect.gen(function* () {
           const toolkit = yield* uiAgentToolkit
-          yield* toolkit.handle("start_ui", { page: early.page, criticalBlocks: [early.firstBlock] })
+          yield* toolkit.handle("start_ui", { page: early.page, criticalBlocks: [early.firstBlock] }).pipe(Effect.flatMap(settledResult))
         }).pipe(
           Effect.provide(handlers),
           Effect.asVoid,
-          Effect.catchAll(() => Effect.void),
+          Effect.catch(() => Effect.void),
         )
         const earlyUpsert = (pageId: string, blocks: ReadonlyArray<UiBlock>): Effect.Effect<void> => Effect.gen(function* () {
           const toolkit = yield* uiAgentToolkit
-          yield* toolkit.handle("patch_ui", { pageId, blocks })
+          yield* toolkit.handle("patch_ui", { pageId, blocks }).pipe(Effect.flatMap(settledResult))
         }).pipe(
           Effect.provide(handlers),
           Effect.asVoid,
-          Effect.catchAll(() => Effect.void),
+          Effect.catch(() => Effect.void),
         )
         const trackToolParams = (event: { readonly id: string; readonly delta: string; readonly toolName?: string }): Effect.Effect<void> =>
           protocol !== "native-tools" ? Effect.void : Ref.modify(toolParams, (map) => {
@@ -172,7 +187,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
                 return Option.match(extractEarlyStart(entry.buffer), {
                   onNone: () => Effect.void,
                   onSome: (early) => Ref.update(toolParams, (map) => new Map(map).set(event.id, { ...entry, started: true })).pipe(
-                    Effect.zipRight(earlyOpen(early)),
+                    Effect.andThen(earlyOpen(early)),
                   ),
                 })
               }
@@ -182,7 +197,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
                   onSome: (patch) => patch.blocks.length <= entry.admittedBlocks
                     ? Effect.void
                     : Ref.update(toolParams, (map) => new Map(map).set(event.id, { ...entry, admittedBlocks: patch.blocks.length })).pipe(
-                      Effect.zipRight(earlyUpsert(patch.pageId, patch.blocks.slice(entry.admittedBlocks))),
+                      Effect.andThen(earlyUpsert(patch.pageId, patch.blocks.slice(entry.admittedBlocks))),
                     ),
                 })
               }
@@ -191,11 +206,11 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           )
         const stagePublish = (event: LoopEvent): Effect.Effect<void> => {
           if (event.type === "turn_start" || event.type === "agent_end") return Effect.void
-          if (event.type === "assistant_delta" && event.channel === "tool-params") return trackToolParams(event).pipe(Effect.zipRight(publish(event)))
-          if (event.type === "assistant_delta" && event.channel === "text") return ingestProtocol(event.delta, true).pipe(Effect.zipRight(publish(event)))
+          if (event.type === "assistant_delta" && event.channel === "tool-params") return trackToolParams(event).pipe(Effect.andThen(publish(event)))
+          if (event.type === "assistant_delta" && event.channel === "text") return ingestProtocol(event.delta, true).pipe(Effect.andThen(publish(event)))
           if (event.type === "assistant_message" && protocol !== "native-tools") return Ref.get(decoder).pipe(
             Effect.flatMap((state) => ingestProtocol(state.sawDelta ? "\n" : `${event.text}\n`, false)),
-            Effect.zipRight(publish(event)),
+            Effect.andThen(publish(event)),
           )
           return publish(event)
         }
@@ -212,7 +227,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const publishFailure = (stage: "planner" | "composer" | "repair", error: unknown) => {
           const failure = toAgentFailure(error, stage)
           return Effect.logWarning(`UI ${stage} gave up after ${Duration.toMillis(stageDeadline(stage))}ms (3x the ${profile[stage].timeoutMs}ms budget): [${failure.code}] ${failure.message}`).pipe(
-            Effect.zipRight(publish({ type: "error", message: `UI ${stage} failed after an extended wait: ${failure.message} — any blocks already accepted remain on the page`, failure })),
+            Effect.andThen(publish({ type: "error", message: `UI ${stage} failed after an extended wait: ${failure.message} — any blocks already accepted remain on the page`, failure })),
           )
         }
         const attemptConversationId = yield* conversationStore.create(`ui-attempt:${args.conversationId}`).pipe(Effect.orDie)
@@ -226,7 +241,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const goalReached = (reached: () => Effect.Effect<boolean>): Effect.Effect<void> =>
           Effect.suspend(reached).pipe(
             Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("250 millis") }),
-            Effect.zipRight(Effect.sleep("2 seconds")),
+            Effect.andThen(Effect.sleep("2 seconds")),
             Effect.asVoid,
           )
 
@@ -260,9 +275,9 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           return configured.pipe(
             Effect.provideService(LanguageModel.LanguageModel, models[stage]),
             Effect.provide(handlers),
-            Effect.disconnect,
+            disconnect,
             Effect.timeout(stageDeadline(stage)),
-            Effect.catchAll((error) => publishFailure(stage, error)),
+            Effect.catch((error) => publishFailure(stage, error)),
           )
         }
         // The loser is DISCONNECTED: a goal victory must never wait on the
@@ -274,7 +289,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         const runStage = (stage: "planner" | "composer" | "repair", system: string, userPrompt: string, goal?: Effect.Effect<void>) => {
           const bounded = stageCall(stage, system, userPrompt, attemptConversationId)
           return stamp(stage, "started").pipe(
-            Effect.zipRight(goal === undefined ? bounded : Effect.race(Effect.disconnect(bounded), goal)),
+            Effect.andThen(goal === undefined ? bounded : Effect.race(disconnect(bounded), goal)),
             Effect.ensuring(stamp(stage, "settled")),
           )
         }
@@ -300,8 +315,8 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         // incomplete page falls through to the normal repair path.
         const declareComplete = (pageId: string): Effect.Effect<void> => Effect.gen(function* () {
           const toolkit = yield* uiAgentToolkit
-          yield* toolkit.handle("patch_ui", { pageId, blocks: [], complete: true })
-        }).pipe(Effect.provide(handlers), Effect.asVoid, Effect.catchAll(() => Effect.void))
+          yield* toolkit.handle("patch_ui", { pageId, blocks: [], complete: true }).pipe(Effect.flatMap(settledResult))
+        }).pipe(Effect.provide(handlers), Effect.asVoid, Effect.catch(() => Effect.void))
 
         /** Phase 3: the composer fans out over DISJOINT slot ranges, one
          * child conversation per worker (interleaved appends on a shared
@@ -328,7 +343,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           const workerCall = (ids: ReadonlyArray<string>, index: number) => Effect.gen(function* () {
             const conversation = yield* conversationStore.create(`ui-composer-worker-${index}:${args.conversationId}`).pipe(Effect.orDie)
             yield* Effect.race(
-              Effect.disconnect(stageCall(
+              disconnect(stageCall(
                 "composer",
                 uiComposerPrompt(promptContract, protocol),
                 `[request]\n${text}\n\n[accepted-page]\n${JSON.stringify(page)}\n\nFill ONLY these slots with specific, useful content: ${ids.join(", ")}. Another worker owns every other slot — do not touch them and do NOT set complete.`,
@@ -339,7 +354,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           })
           const fleet = Effect.all(ranges.filter((range) => range.length > 0).map((ids, index) => workerCall(ids, index)), { concurrency: workers }).pipe(Effect.asVoid)
           yield* stamp("composer", "started").pipe(
-            Effect.zipRight(Effect.race(Effect.disconnect(fleet), goal)),
+            Effect.andThen(Effect.race(disconnect(fleet), goal)),
             Effect.ensuring(stamp("composer", "settled")),
           )
           const events = yield* pageStore.list(args.conversationId).pipe(Effect.orDie)
@@ -376,7 +391,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           const plannedPage = plannedEvents.length > initialCount ? foldPageEvents(plannedEvents).at(-1) : undefined
           const page = plannedPage === undefined
             ? yield* repair("planner", text, undefined, pageOpenedGoal).pipe(
-              Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
+              Effect.andThen(pageStore.list(args.conversationId).pipe(Effect.orDie)),
               Effect.map((repairedEvents) => repairedEvents.length > initialCount ? foldPageEvents(repairedEvents).at(-1) : undefined),
             )
             : plannedPage
@@ -408,7 +423,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           const accepted = acceptedBeforeRepair
             ? true
             : yield* repair("composer", text, composedPage, pageCompleteGoal).pipe(
-              Effect.zipRight(pageStore.list(args.conversationId).pipe(Effect.orDie)),
+              Effect.andThen(pageStore.list(args.conversationId).pipe(Effect.orDie)),
               Effect.map((repairedEvents) => repairedEvents.length > beforeComposition && foldPageEvents(repairedEvents).at(-1)?.complete === true),
             )
           if (!accepted) {
@@ -421,8 +436,8 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
           return accepted
         }).pipe(
           Effect.flatMap((accepted) => publish({ type: "agent_end", outcome: accepted ? "ok" : "partial", reason: accepted ? "completed" : "step-cap", finalText: "" })),
-          Effect.catchAllCause((cause) => publish({ type: "error", message: `UI generation failed: ${String(cause)}` }).pipe(
-            Effect.zipRight(publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
+          Effect.catchCause((cause) => publish({ type: "error", message: `UI generation failed: ${String(cause)}` }).pipe(
+            Effect.andThen(publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
           )),
           Effect.onInterrupt(() => publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
           Effect.ensuring(Ref.set(activeAttempt, Option.none())),
@@ -435,18 +450,18 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
         // (disconnected — a wedged runtime must never hold the cap hostage).
         const attemptCapMs = stageDeadlineTotalMs + 12_000
         const capped = Effect.race(
-          Effect.disconnect(attempt),
+          disconnect(attempt),
           Effect.sleep(Duration.millis(attemptCapMs)).pipe(
-            Effect.zipRight(publish({
+            Effect.andThen(publish({
               type: "error",
               message: `The UI attempt exceeded its ${attemptCapMs}ms hard cap and was abandoned — blocks already accepted remain on the page.`,
               failure: { code: "UiAttemptCapExceeded", category: "timeout", stage: "attempt", message: `no agent_end within ${attemptCapMs}ms`, retryable: true },
             })),
-            Effect.zipRight(publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
-            Effect.zipRight(Ref.set(activeAttempt, Option.none())),
+            Effect.andThen(publish({ type: "agent_end", outcome: "partial", reason: "step-cap", finalText: "" })),
+            Effect.andThen(Ref.set(activeAttempt, Option.none())),
           ),
         )
-        const fiber = yield* Effect.forkDaemon(capped)
+        const fiber = yield* Effect.forkDetach(capped)
         yield* Ref.set(activeAttempt, Option.some(fiber))
         if (args.awaitCompletion === true) yield* Fiber.await(fiber)
       }),
@@ -454,7 +469,7 @@ export const makeUiAgentSession = (args: { readonly conversationId: Conversation
 
     return {
       ...session,
-      interrupt: interruptAttempt.pipe(Effect.zipRight(session.interrupt)),
-      shutdown: interruptAttempt.pipe(Effect.zipRight(session.shutdown)),
+      interrupt: interruptAttempt.pipe(Effect.andThen(session.interrupt)),
+      shutdown: interruptAttempt.pipe(Effect.andThen(session.shutdown)),
     }
   })

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Arbitrary, FastCheck, Schema } from "effect"
+import { Effect, Schema } from "effect"
+import * as Arbitrary from "effect/Arbitrary"
 import { AttemptNumber, RuleId, Score } from "./Brands.js"
 
 describe("Score", () => {
@@ -15,14 +16,12 @@ describe("Score", () => {
     expect(Schema.is(Score)(Number.NaN)).toBe(false)
   })
 
-  test("arbitrary values round-trip decode∘encode", () => {
-    const arb = Arbitrary.make(Score)
-    FastCheck.assert(
-      FastCheck.property(arb, (score) => {
-        const encoded = Schema.encodeSync(Score)(score)
-        return Schema.decodeSync(Score)(encoded) === score
-      }),
-    )
+  test("arbitrary values round-trip decode∘encode", async () => {
+    const result = await Effect.runPromise(Arbitrary.checkEffect(Arbitrary.schema(Score), (score) => {
+      const encoded = Schema.encodeSync(Score)(score)
+      return Schema.decodeSync(Score)(encoded) === score
+    }))
+    expect(result._tag).toBe("Passed")
   })
 })
 

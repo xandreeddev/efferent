@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Prompt } from "@effect/ai"
-import { Effect, FiberRef, Option, Ref, Schema, Stream } from "effect"
+import { LanguageModel, Prompt } from "effect/ai"
+import { Effect, Option, Ref, Schema, Stream } from "effect"
 import { CurrentPromptProvenance, PromptId } from "@xandreed/core"
 import type { HarnessError } from "@xandreed/core"
 import type { PromptContext, PromptProvenance } from "@xandreed/core"
@@ -45,11 +45,11 @@ const expectedHash = (prompt: Prompt.Prompt) => new Bun.CryptoHasher("sha256").u
 const recording = Effect.gen(function* () {
   const calls = yield* Ref.make<ReadonlyArray<{ readonly prompt: Prompt.Prompt; readonly provenance: Option.Option<PromptProvenance> }>>([])
   const model = yield* LanguageModel.make({
-    generateText: (options) => FiberRef.get(CurrentPromptProvenance).pipe(
+    generateText: (options) => Effect.service(CurrentPromptProvenance).pipe(
       Effect.flatMap((provenance) => Ref.update(calls, (all) => [...all, { prompt: options.prompt, provenance }])),
       Effect.as((options.responseFormat.type === "json"
-        ? [{ type: "text", text: JSON.stringify({ summary: "short" }) }, { type: "finish", reason: "stop", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }]
-        : [{ type: "text", text: "a summary" }, { type: "finish", reason: "stop", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }]) as never),
+        ? [{ type: "text", text: JSON.stringify({ summary: "short" }) }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }]
+        : [{ type: "text", text: "a summary" }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }]) as never),
     ),
     streamText: () => Stream.die("not streamed") as never,
   })
@@ -63,11 +63,11 @@ describe("versioned prompts", () => {
 
   test("the most specific fragment applies: the model, then the provider, then shared; an unknown variant fails", async () => {
     const variants = { concise: { shared: "shared", providers: { openai: "provider" }, models: { "openai/gpt-small": "model" } } }
-    const pick = (model: string, variant = "concise") => Effect.runPromise(Effect.either(selectVariant(variants, { model, variant })))
-    expect(await pick("openai/gpt-small")).toMatchObject({ _tag: "Right", right: { fragment: "model", override: Option.some("openai/gpt-small") } })
-    expect(await pick("openai/gpt-large")).toMatchObject({ _tag: "Right", right: { fragment: "provider", override: Option.some("openai") } })
-    expect(await pick("other/model")).toMatchObject({ _tag: "Right", right: { fragment: "shared", override: Option.none() } })
-    expect(await pick("openai/gpt-small", "constructor")).toMatchObject({ _tag: "Left", left: { code: "variant.unknown" } })
+    const pick = (model: string, variant = "concise") => Effect.runPromise(Effect.result(selectVariant(variants, { model, variant })))
+    expect(await pick("openai/gpt-small")).toMatchObject({ _tag: "Success", success: { fragment: "model", override: Option.some("openai/gpt-small") } })
+    expect(await pick("openai/gpt-large")).toMatchObject({ _tag: "Success", success: { fragment: "provider", override: Option.some("openai") } })
+    expect(await pick("other/model")).toMatchObject({ _tag: "Success", success: { fragment: "shared", override: Option.none() } })
+    expect(await pick("openai/gpt-small", "constructor")).toMatchObject({ _tag: "Failure", failure: { code: "variant.unknown" } })
   })
 
   test("a fragment goes after the system messages and before the rest", () => {
@@ -104,7 +104,7 @@ describe("versioned prompts", () => {
   test("withProvenance is what model adapters read", async () => {
     const read = await Effect.runPromise(Effect.gen(function* () {
       const rendered = yield* renderPrompt(summary, { text: "x" })
-      return yield* FiberRef.get(CurrentPromptProvenance).pipe(withProvenance(rendered.provenance))
+      return yield* Effect.service(CurrentPromptProvenance).pipe(withProvenance(rendered.provenance))
     }))
     expect(Option.map(read, (provenance) => String(provenance.id))).toEqual(Option.some("test.summary"))
   })
@@ -127,10 +127,10 @@ describe("versioned prompts", () => {
 
   test("a prompt without an output cannot generate an object", async () => {
     const plain = definePrompt({ id: "test.plain", version: "1", render: () => "hello" })
-    const exit = await Effect.runPromise(Effect.either(generateObject(plain, undefined).pipe(
+    const exit = await Effect.runPromise(Effect.result(generateObject(plain, undefined).pipe(
       Effect.provideServiceEffect(LanguageModel.LanguageModel, recording.pipe(Effect.map((recorded) => recorded.model))),
     )))
-    expect(exit).toMatchObject({ _tag: "Left", left: { _tag: "PromptError", code: "output.missing" } })
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { _tag: "PromptError", code: "output.missing" } })
   })
 
   test("a prompt section renders the system messages for the encoded target", async () => {
@@ -140,11 +140,11 @@ describe("versioned prompts", () => {
       variants: { baseline: { shared: [] }, concise: { shared: [{ role: "system", content: "Be brief." }] } },
     })
     const section = promptSection(guide, { id: "guide", version: "1", tier: "static", order: 0 })
-    const render = (variant: Option.Option<string>) => Effect.runPromise(Effect.either(section.render({ variant, active: ["lookup"], skills: [] }) as Effect.Effect<Option.Option<string>, HarnessError>))
+    const render = (variant: Option.Option<string>) => Effect.runPromise(Effect.result(section.render({ variant, active: ["lookup"], skills: [] }) as Effect.Effect<Option.Option<string>, HarnessError>))
     const target = { model: "openai/gpt-small", variant: "concise" }
     expect(decodeTarget(encodeTarget(target))).toEqual(target)
-    expect(await render(Option.some(encodeTarget(target)))).toMatchObject({ _tag: "Right", right: Option.some("Tools: lookup\n\nBe brief.") })
-    expect(await render(Option.none())).toMatchObject({ _tag: "Right", right: Option.some("Tools: lookup") })
-    expect(await render(Option.some("missing"))).toMatchObject({ _tag: "Left", left: { _tag: "HarnessError", code: "prompt.variant.unknown" } })
+    expect(await render(Option.some(encodeTarget(target)))).toMatchObject({ _tag: "Success", success: Option.some("Tools: lookup\n\nBe brief.") })
+    expect(await render(Option.none())).toMatchObject({ _tag: "Success", success: Option.some("Tools: lookup") })
+    expect(await render(Option.some("missing"))).toMatchObject({ _tag: "Failure", failure: { _tag: "HarnessError", code: "prompt.variant.unknown" } })
   })
 })

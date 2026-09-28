@@ -5,7 +5,7 @@ import { UiComponentNode } from "./ui-component.entity.js"
 const ActionRef = Schema.Struct({
   capability: Schema.String,
   label: Schema.String,
-  variant: Schema.optional(Schema.Literal("primary", "secondary", "danger")),
+  variant: Schema.optional(Schema.Literals(["primary", "secondary", "danger"])),
 })
 
 const Link = Schema.Struct({ label: Schema.String, target: Schema.String })
@@ -19,18 +19,18 @@ const Card = Schema.Struct({
 const Field = Schema.Struct({
   name: Schema.String,
   label: Schema.String,
-  kind: Schema.Literal("text", "email", "number", "select", "textarea", "checkbox"),
+  kind: Schema.Literals(["text", "email", "number", "select", "textarea", "checkbox"]),
   placeholder: Schema.optional(Schema.String),
   options: Schema.optional(Schema.Array(Schema.String)),
   required: Schema.optional(Schema.Boolean),
 })
 const TableColumn = Schema.Struct({ key: Schema.String, label: Schema.String })
-const TableRow = Schema.Record({ key: Schema.String, value: Schema.String })
+const TableRow = Schema.Record(Schema.String, Schema.String)
 
 export const ArchitectureNode = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
-  kind: Schema.Literal("user", "service", "module", "database", "queue", "external"),
+  kind: Schema.Literals(["user", "service", "module", "database", "queue", "external"]),
   group: Schema.optional(Schema.String),
   detail: Schema.optional(Schema.String),
 })
@@ -40,14 +40,14 @@ export const ArchitectureEdge = Schema.Struct({
   from: Schema.String,
   to: Schema.String,
   label: Schema.optional(Schema.String),
-  kind: Schema.optional(Schema.Literal("sync", "async", "data", "dependency")),
+  kind: Schema.optional(Schema.Literals(["sync", "async", "data", "dependency"])),
 })
 export type ArchitectureEdge = typeof ArchitectureEdge.Type
 
 export const ArchitectureGraph = Schema.Struct({
   title: Schema.String,
   description: Schema.String,
-  direction: Schema.Literal("LR", "TB"),
+  direction: Schema.Literals(["LR", "TB"]),
   groups: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String }))),
   nodes: Schema.Array(ArchitectureNode),
   edges: Schema.Array(ArchitectureEdge),
@@ -55,7 +55,7 @@ export const ArchitectureGraph = Schema.Struct({
 export type ArchitectureGraph = typeof ArchitectureGraph.Type
 
 export const UiBlock = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("hero"), id: Schema.String, eyebrow: Schema.optional(Schema.String), title: Schema.String, lede: Schema.String, actions: Schema.optional(Schema.Array(ActionRef)), assetId: Schema.optional(Schema.String) }),
+  [Schema.Struct({ kind: Schema.Literal("hero"), id: Schema.String, eyebrow: Schema.optional(Schema.String), title: Schema.String, lede: Schema.String, actions: Schema.optional(Schema.Array(ActionRef)), assetId: Schema.optional(Schema.String) }),
   Schema.Struct({ kind: Schema.Literal("navigation"), id: Schema.String, brand: Schema.String, links: Schema.Array(Link), action: Schema.optional(ActionRef) }),
   Schema.Struct({ kind: Schema.Literal("prose"), id: Schema.String, title: Schema.optional(Schema.String), paragraphs: Schema.Array(Schema.String) }),
   Schema.Struct({ kind: Schema.Literal("media"), id: Schema.String, assetId: Schema.String, caption: Schema.optional(Schema.String) }),
@@ -67,11 +67,11 @@ export const UiBlock = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("data-table"), id: Schema.String, title: Schema.String, columns: Schema.Array(TableColumn), rows: Schema.Array(TableRow), empty: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("tabs"), id: Schema.String, title: Schema.optional(Schema.String), tabs: Schema.Array(Schema.Struct({ label: Schema.String, body: Schema.String })) }),
   Schema.Struct({ kind: Schema.Literal("code"), id: Schema.String, title: Schema.optional(Schema.String), language: Schema.String, code: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("callout"), id: Schema.String, tone: Schema.Literal("info", "success", "warning", "danger"), title: Schema.String, body: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("callout"), id: Schema.String, tone: Schema.Literals(["info", "success", "warning", "danger"]), title: Schema.String, body: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("timeline"), id: Schema.String, title: Schema.String, items: Schema.Array(Schema.Struct({ title: Schema.String, body: Schema.String })) }),
-  Schema.Struct({ kind: Schema.Literal("decisions"), id: Schema.String, title: Schema.String, items: Schema.Array(Schema.Struct({ decision: Schema.String, rationale: Schema.String, status: Schema.Literal("proposed", "accepted", "deprecated") })) }),
+  Schema.Struct({ kind: Schema.Literal("decisions"), id: Schema.String, title: Schema.String, items: Schema.Array(Schema.Struct({ decision: Schema.String, rationale: Schema.String, status: Schema.Literals(["proposed", "accepted", "deprecated"]) })) }),
   Schema.Struct({ kind: Schema.Literal("architecture"), id: Schema.String, graph: ArchitectureGraph }),
-  UiComponentNode,
+  UiComponentNode],
 )
 export type UiBlock = typeof UiBlock.Type
 
@@ -79,14 +79,14 @@ export const PageSlot = Schema.Struct({
   id: Schema.String,
   blockKind: Schema.String,
   component: Schema.optional(Schema.String),
-  importance: Schema.Literal("critical", "standard", "supporting"),
+  importance: Schema.Literals(["critical", "standard", "supporting"]),
 })
 export type PageSlot = typeof PageSlot.Type
 
 export const PageManifest = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
-  archetype: Schema.Literal("landing", "application", "document"),
+  archetype: Schema.Literals(["landing", "application", "document"]),
   recipe: RecipeRef,
   designSystem: DesignSystemRef,
   theme: Schema.optional(ThemeIntent),
@@ -99,13 +99,13 @@ export type PageManifest = typeof PageManifest.Type
  * `critical`). The IA plan — root ids in visual order — stays model-owned;
  * the metadata the host can derive no longer costs generation time. */
 export const PageSlotInput = Schema.Union(
-  Schema.String,
+  [Schema.String,
   Schema.Struct({
     id: Schema.String,
     blockKind: Schema.optional(Schema.String),
     component: Schema.optional(Schema.String),
-    importance: Schema.optional(Schema.Literal("critical", "standard", "supporting")),
-  }),
+    importance: Schema.optional(Schema.Literals(["critical", "standard", "supporting"])),
+  })],
 )
 export type PageSlotInput = typeof PageSlotInput.Type
 
@@ -119,7 +119,7 @@ export type PageSlotInput = typeof PageSlotInput.Type
 export const PageManifestInput = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
-  archetype: Schema.Literal("landing", "application", "document"),
+  archetype: Schema.Literals(["landing", "application", "document"]),
   recipe: Schema.optional(RecipeRef),
   designSystem: Schema.optional(DesignSystemRef),
   theme: Schema.optional(ThemeIntent),
@@ -128,10 +128,10 @@ export const PageManifestInput = Schema.Struct({
 export type PageManifestInput = typeof PageManifestInput.Type
 
 export const UiPageEvent = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("page_opened"), page: PageManifest, blocks: Schema.Array(UiBlock), at: Schema.Number }),
+  [Schema.Struct({ type: Schema.Literal("page_opened"), page: PageManifest, blocks: Schema.Array(UiBlock), at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("blocks_upserted"), pageId: Schema.String, blocks: Schema.Array(UiBlock), at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("theme_patched"), pageId: Schema.String, theme: ThemeIntent, at: Schema.Number }),
-  Schema.Struct({ type: Schema.Literal("page_completed"), pageId: Schema.String, at: Schema.Number }),
+  Schema.Struct({ type: Schema.Literal("page_completed"), pageId: Schema.String, at: Schema.Number })],
 )
 export type UiPageEvent = typeof UiPageEvent.Type
 

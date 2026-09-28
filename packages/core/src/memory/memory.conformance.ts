@@ -35,7 +35,7 @@ const toolTail: ReadonlyArray<AgentMessage> = [
 ]
 const encodeEntries = (entries: ReadonlyArray<LogEntry>) => canonicalJson(Schema.encodeSync(Schema.Array(LogEntry))(entries))
 
-type Memory = Context.Tag.Service<typeof ConversationMemory>
+type Memory = Context.Service.Shape<typeof ConversationMemory>
 
 const fail = (check: string) => (message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check)(message)

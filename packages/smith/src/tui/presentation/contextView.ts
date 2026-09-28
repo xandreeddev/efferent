@@ -51,7 +51,7 @@ export const contextView = (
 ): ContextView => ({
   standing: standing.measured.map((m) => ({ name: m.name, on: isStandingOn(set, m.name), chars: m.chars })),
   pins: set.pins.map((pin, index) => {
-    const block = Option.fromNullable(bundle.blocks[index])
+    const block = Option.fromNullishOr(bundle.blocks[index])
     return {
       index,
       label: pinLabel(pin),

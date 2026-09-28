@@ -26,13 +26,13 @@ import { generalTierCall } from "../live/llm.js"
 
 const FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "judge-golden")
 
-const CaseFile = Schema.parseJson(
+const CaseFile = Schema.fromJsonString(
   Schema.Struct({
-    label: Schema.Literal("sound", "unsound"),
+    label: Schema.Literals(["sound", "unsound"]),
     goal: Schema.NonEmptyString,
     acceptance: Schema.Array(Schema.NonEmptyString),
-    constraints: Schema.optionalWith(Schema.Array(Schema.NonEmptyString), { default: () => [] }),
-    nonGoals: Schema.optionalWith(Schema.Array(Schema.NonEmptyString), { default: () => [] }),
+    constraints: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+    nonGoals: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
     /** One sentence — what the judge should catch/accept (fixture docs). */
     why: Schema.NonEmptyString,
   }),
@@ -41,7 +41,7 @@ export type JudgeCase = typeof CaseFile.Type
 
 export const readJudgeCase = (dir: string, name: string): Effect.Effect<JudgeCase, unknown> =>
   Effect.try(() => readFileSync(join(dir, name, "case.json"), "utf-8")).pipe(
-    Effect.flatMap((text) => Schema.decodeUnknown(CaseFile)(text)),
+    Effect.flatMap((text) => Schema.decodeUnknownEffect(CaseFile)(text)),
   )
 
 interface Verdict {
@@ -60,7 +60,7 @@ interface JudgeWorld {
 const docFor = (name: string, data: JudgeCase): Effect.Effect<Option.Option<SpecDoc>, unknown> =>
   data.constraints.length === 0 && data.nonGoals.length === 0
     ? Effect.succeed(Option.none())
-    : Schema.decodeUnknown(SpecDoc)({
+    : Schema.decodeUnknownEffect(SpecDoc)({
         slug: name.replace(/[^a-z0-9-]/g, "-"),
         status: "draft",
         created: "2026-07-10T00:00:00.000Z",
@@ -93,7 +93,7 @@ const judgeScenario = (name: string) =>
         name: "the judge gate rules",
         act: (world) =>
           Effect.gen(function* () {
-            const spec = yield* Schema.decodeUnknown(Spec)({
+            const spec = yield* Schema.decodeUnknownEffect(Spec)({
               goal: world.data.goal,
               acceptance: world.data.acceptance,
               limits: { maxAttempts: 3, budgetMillis: 15 * 60_000 },

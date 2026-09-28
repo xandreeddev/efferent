@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { ConversationStore, FileSystem, Shell } from "@xandreed/core"
 import { ConversationId } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
@@ -122,19 +122,19 @@ describe("makeRefineSession — scripted E2E (no keys, no LLM)", () => {
           checks: [{ name: "probe", command }],
           maxAttempts: undefined,
           budgetMinutes: undefined,
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       }).pipe(Effect.provide(Layer.mergeAll(fs.layer, stubServices)), Effect.runPromise)
 
     // `true` passes on the untouched workspace → vacuous → bounce, no write.
     const green = await drive("true")
-    expect(green._tag).toBe("Left")
+    expect(green._tag).toBe("Failure")
     expect(JSON.stringify(green)).toContain("VacuousChecks")
     expect(JSON.stringify(green)).toContain("red-first")
     expect([...fs.files.keys()].some((path) => path.includes("specs"))).toBe(false)
 
     // `test -f out.txt` fails now (red) → the draft lands.
     const red = await drive("test -f out.txt")
-    expect(red._tag).toBe("Right")
+    expect(red._tag).toBe("Success")
     expect([...fs.files.keys()].some((path) => path.includes("specs"))).toBe(true)
   })
 
@@ -204,11 +204,11 @@ describe("makeRefineSession — scripted E2E (no keys, no LLM)", () => {
         unattended: true,
         agent: scriptedAgent,
       })
-      return yield* Effect.either(session.lock)
+      return yield* Effect.result(session.lock)
     }).pipe(Effect.provide(Layer.mergeAll(fs.layer, stubServices)), Effect.runPromise)
-    expect(result._tag).toBe("Left")
-    if (result._tag !== "Left") return
-    expect(result.left.message).toContain("nothing to lock")
+    expect(result._tag).toBe("Failure")
+    if (result._tag !== "Failure") return
+    expect(result.failure.message).toContain("nothing to lock")
   })
 })
 

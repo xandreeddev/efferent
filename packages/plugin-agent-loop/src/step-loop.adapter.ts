@@ -1,6 +1,6 @@
-import { LanguageModel, Prompt } from "@effect/ai"
-import type { Tool } from "@effect/ai"
-import { Context, Effect, FiberRef, Layer, Option, Ref, Schema } from "effect"
+import { LanguageModel, Prompt } from "effect/ai"
+import type { Tool } from "effect/ai"
+import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, HarnessError, StepLoop } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage } from "@xandreed/core"
 import { runLoop } from "./loop.js"
@@ -34,7 +34,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
   const results = yield* Ref.make(new Map<number, ReadonlyArray<StepResult>>())
   const ended = yield* Ref.make(new Set<number>())
   const steps = yield* Ref.make(0)
-  const currentStep = FiberRef.get(CurrentAgentStep).pipe(Effect.map(Option.getOrElse(() => 0)))
+  const currentStep = Effect.service(CurrentAgentStep).pipe(Effect.map(Option.getOrElse(() => 0)))
   const infoOf = (step: number, activeTools: ReadonlyArray<string>) =>
     Ref.get(lastUsage).pipe(Effect.map((usage): StepInfo => ({ stepIndex: step, activeTools, lastUsage: usage })))
 
@@ -75,7 +75,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
         if (!isPlanned(event.turnIndex)) yield* Ref.set(lastUsage, Option.some(event.usage))
         yield* request.events.publish({
           _tag: "assistant.message", step: event.turnIndex, text: event.text, reasoning: event.reasoning,
-          model: Option.fromNullable(event.model), toolCalls: event.toolCalls.map((call) => ({ id: call.id, tool: call.toolName, input: call.args })),
+          model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: call.id, tool: call.toolName, input: call.args })),
           usage: event.usage,
         })
       }).pipe(Effect.orDie)
@@ -83,7 +83,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     if (event.type === "turn_end") {
       const ending = endStep(event.turnIndex, event.status)
       // A step that already failed must not fail again on its way out.
-      return event.status === "completed" ? ending.pipe(Effect.orDie) : ending.pipe(Effect.catchAllCause(() => Effect.void))
+      return event.status === "completed" ? ending.pipe(Effect.orDie) : ending.pipe(Effect.catchCause(() => Effect.void))
     }
     return Effect.void
   }
@@ -132,7 +132,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
   const result = yield* harnessDefectsAsFailures(loop.pipe(
     Effect.provide(handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
-    Effect.locally(CurrentPromptCacheKey, request.cacheKey),
+    Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
     Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
   ))
   return {
@@ -147,7 +147,7 @@ export const StepLoopLive = Layer.succeed(StepLoop, StepLoop.of({ ...STEP_LOOP, 
 
 /** The step loop as a runtime plugin; the turn supplies everything per run. */
 export const stepLoopPlugin = definePlugin({
-  id: "@xandreed/plugin-agent-loop/steps", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-agent-loop/steps", version: "0.7.0-next.0", scope: "runtime",
   config: Schema.Struct({}), defaults: {},
   provides: [StepLoop],
   layer: () => StepLoopLive,

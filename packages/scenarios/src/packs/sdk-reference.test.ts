@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Ref, Schema, Stream } from "effect"
 import { AgentLoop, ConversationStore, definePlugin } from "@xandreed/core"
 import { Harness } from "@xandreed/sdk"
@@ -10,7 +10,7 @@ import { mathAgent } from "@xandreed/math"
 import { canvasAgent } from "@xandreed/canvas"
 import { socialAgent } from "@xandreed/social"
 
-const finish = (reason: string) => ({ type: "finish", reason, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })
+const finish = (reason: string) => ({ type: "finish", reason, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })
 describe("reference applications on the SDK", () => {
   test("all three presets activate their configurable service graphs without model calls", async () => {
     await Promise.all([mathAgent, canvasAgent, socialAgent].map(async (preset) => {

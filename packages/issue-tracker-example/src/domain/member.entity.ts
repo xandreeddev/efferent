@@ -3,7 +3,7 @@ import { MemberId } from "./issue.entity.js"
 
 export const Member = Schema.Struct({
   id: MemberId,
-  name: Schema.String.pipe(Schema.minLength(1)),
+  name: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
   active: Schema.Boolean,
 })
 export type Member = typeof Member.Type

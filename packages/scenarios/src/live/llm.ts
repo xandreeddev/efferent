@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option } from "effect"
 import { AuthStore, SettingsStore, UtilityLlm } from "@xandreed/core"
 import { LanguageModelLive, LocalAuthStoreLive, LocalSettingsStoreLive, roleModelView, UtilityLlmLive } from "@xandreed/plugin-models"

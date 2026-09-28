@@ -170,12 +170,12 @@ describe("SqliteConversationStoreLive", () => {
       Effect.gen(function* () {
         const store = yield* ConversationStore
         const ghost = ConversationId.make(crypto.randomUUID())
-        const outcome = yield* Effect.either(store.fork(ghost))
-        expect(outcome._tag).toBe("Left")
-        if (outcome._tag === "Left") {
-          expect(outcome.left).toBeInstanceOf(StoreError)
-          expect(outcome.left.message).toContain("not found")
-          expect(outcome.left.message).toContain(ghost)
+        const outcome = yield* Effect.result(store.fork(ghost))
+        expect(outcome._tag).toBe("Failure")
+        if (outcome._tag === "Failure") {
+          expect(outcome.failure).toBeInstanceOf(StoreError)
+          expect(outcome.failure.message).toContain("not found")
+          expect(outcome.failure.message).toContain(ghost)
         }
       }),
     )

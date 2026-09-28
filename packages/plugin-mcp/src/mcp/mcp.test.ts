@@ -88,7 +88,7 @@ describe("McpClientLive against a canned stdio server", () => {
           const bad = yield* client.callTool("canned", "echo", { value: "boom" })
           const unknown = yield* client
             .callTool("nope", "echo", {})
-            .pipe(Effect.either)
+            .pipe(Effect.result)
           return { tools, ok, bad, unknown }
         }).pipe(Effect.provide(McpClientLive(cwd, "/nonexistent-home"))),
       ),
@@ -101,7 +101,7 @@ describe("McpClientLive against a canned stdio server", () => {
     expect(result.ok.result).toBe("echo: hello")
     expect(result.bad.isError).toBe(true)
     expect(result.bad.result).toBe("echo exploded")
-    expect(result.unknown._tag).toBe("Left")
+    expect(result.unknown._tag).toBe("Failure")
     expect(JSON.stringify(result.unknown)).toContain("no such server")
   })
 })
@@ -124,8 +124,8 @@ describe("McpClientLive — one dead server never blocks a live one", () => {
         Effect.gen(function* () {
           const client = yield* McpClient
           const tools = yield* client.listTools
-          const first = yield* client.callTool("dead", "echo", {}).pipe(Effect.either)
-          const second = yield* client.callTool("dead", "echo", {}).pipe(Effect.either)
+          const first = yield* client.callTool("dead", "echo", {}).pipe(Effect.result)
+          const second = yield* client.callTool("dead", "echo", {}).pipe(Effect.result)
           return { tools, first, second }
         }).pipe(Effect.provide(McpClientLive(cwd, "/nonexistent-home"))),
       ),
@@ -134,9 +134,9 @@ describe("McpClientLive — one dead server never blocks a live one", () => {
     expect(result.tools.map((t) => `${t.server}/${t.name}`)).toEqual(["canned/echo"])
     // Both attempts report the SPAWN failure — the second did not inherit a
     // dead promise from the first.
-    expect(result.first._tag).toBe("Left")
+    expect(result.first._tag).toBe("Failure")
     expect(JSON.stringify(result.first)).toContain("spawn failed")
-    expect(result.second._tag).toBe("Left")
+    expect(result.second._tag).toBe("Failure")
     expect(JSON.stringify(result.second)).toContain("spawn failed")
   })
 })

@@ -2,13 +2,13 @@ import { Schema } from "effect"
 
 export class ForgeLimits extends Schema.Class<ForgeLimits>("ForgeLimits")({
   /** Attempt ceiling for the forge loop. */
-  maxAttempts: Schema.Int.pipe(Schema.between(1, 10)),
+  maxAttempts: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 }))),
   /**
    * Wall-clock budget, checked at attempt boundaries (a soft deadline — the
    * first attempt always completes, mirroring the runtime's step-cap
    * philosophy of never interrupting mid-work).
    */
-  budgetMillis: Schema.Positive,
+  budgetMillis: Schema.Number.check(Schema.isGreaterThan(0)),
 }) {}
 
 /**

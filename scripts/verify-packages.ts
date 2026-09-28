@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 const root = join(import.meta.dir, "..")
+/** The consumer installs the Effect the packages were built against. */
+const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string } }
 const packages = join(root, ".artifacts/packages")
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
@@ -18,7 +20,7 @@ const artifacts = await Promise.all(manifests.map(async (file) => {
   return { manifest, file: tarballPath, shasum }
 }))
 const consumer = await mkdtemp(join(tmpdir(), "efferent-consumer-"))
-const registry = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+const registry: Bun.Server<undefined> = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request): Response {
   const path = decodeURIComponent(new URL(request.url).pathname).slice(1)
   const artifact = artifacts.find((entry) => entry.manifest.name === path || `${entry.manifest.name}/artifact.tgz` === path)
   if (artifact === undefined) return new Response("Unknown local package", { status: 404 })
@@ -27,12 +29,12 @@ const registry = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
   return Response.json({ name: manifest.name, "dist-tags": { latest: manifest.version }, versions: { [manifest.version]: { ...manifest, dist: { shasum: artifact.shasum, tarball: `http://127.0.0.1:${registry.port}/${manifest.name}/artifact.tgz` } } } })
 } })
 await writeFile(join(consumer, "bunfig.toml"), `[install.scopes]\n"@xandreed" = { url = "http://127.0.0.1:${registry.port}" }\n`)
-await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: "3.21.4", "@types/bun": "1.3.14" } }))
+await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: rootManifest.dependencies.effect, "@types/bun": "1.3.14" } }))
 console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
-import { Effect, FiberRef, Layer, Option, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { CurrentPromptProvenance, defineDecisionPrompt, definePrompt, evaluateDecision, EvaluationModelLive, renderPrompt, withProvenance } from "@xandreed/ai"
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
@@ -58,13 +60,13 @@ const greeting = definePrompt({ id: "external.greeting", version: "1", render: (
 const small = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/small", variant: "baseline" }))
 const large = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/large", variant: "baseline" }))
 if (small.prompt.content.length !== 3 || large.prompt.content.length !== 2 || Option.getOrNull(small.provenance.modelOverride) !== "vendor/small" || Option.isSome(large.provenance.modelOverride)) process.exit(1)
-const current = await Effect.runPromise(FiberRef.get(CurrentPromptProvenance).pipe(withProvenance(small.provenance)))
+const current = await Effect.runPromise(Effect.service(CurrentPromptProvenance).pipe(withProvenance(small.provenance)))
 if (Option.getOrNull(current)?.hash !== small.provenance.hash || !/^[0-9a-f]{64}$/.test(small.provenance.hash) || small.provenance.hash === large.provenance.hash) process.exit(1)
 const route = defineDecisionPrompt({ id: "external.route", version: "1", family: "routing", state: (text: string) => text, questions: () => ({ lane: { type: "choice", instructions: "Which lane?", criteria: { fast: "Quick.", slow: "Careful." } } }) })
 const decide = (choice: string) => evaluateDecision(route, "hello").pipe(Effect.provide(EvaluationModelLive({ model: "stub/judge", transport: () => Promise.resolve({ answers: { lane: { type: "choice", choice } } }) })))
 const chosen = await Effect.runPromise(decide("fast"))
-const refused = await Effect.runPromise(Effect.either(decide("sideways")))
-if (chosen.lane.choice !== "fast" || refused._tag !== "Left" || refused.left._tag !== "EvaluationError" || refused.left.code !== "invalid") process.exit(1)
+const refused = await Effect.runPromise(Effect.result(decide("sideways")))
+if (chosen.lane.choice !== "fast" || refused._tag !== "Failure" || refused.failure._tag !== "EvaluationError" || refused.failure.code !== "invalid") process.exit(1)
 console.log("Versioned prompts, their provenance and a checked decision passed")
 `)
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts"] }))

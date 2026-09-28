@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Cause, Context, Duration, Effect, Layer, Option, Ref, Schedule, Stream } from "effect"
 import { ConversationStore, parseModelSelection, toAgentFailure, toolResultFailure } from "@xandreed/core"
 import type { AgentFailureType } from "@xandreed/core"
@@ -289,7 +289,7 @@ export const deriveStageMetrics = (timeline: ReadonlyArray<TimelineEvent>): Read
 }
 
 export const serverReceiveMs = (timeline: ReadonlyArray<TimelineEvent>): Option.Option<number> =>
-  Option.fromNullable(timeline.find((event) => event.type === "ui_stage" && event.stage === "turn" && event.phase === "started")?.tMs)
+  Option.fromNullishOr(timeline.find((event) => event.type === "ui_stage" && event.stage === "turn" && event.phase === "started")?.tMs)
 
 const evidenceName = (candidate: Candidate, task: MatrixTask, sample: number): string => `${candidate.model}-${candidate.effort}-${candidate.protocol}-${task.id}-${sample}`.replaceAll(/[^a-z0-9.-]+/gi, "-").toLowerCase()
 
@@ -429,7 +429,7 @@ const cleanupTrialWorkspace = (dir: string): Effect.Effect<void> => Effect.try({
   try: () => rmSync(dir, { recursive: true, force: true }),
   catch: (error) => error,
 }).pipe(
-  Effect.catchAll((error) => Effect.logWarning(`ui-matrix could not remove ${dir}: ${String(error)}`)),
+  Effect.catch((error) => Effect.logWarning(`ui-matrix could not remove ${dir}: ${String(error)}`)),
 )
 
 const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budgets: MatrixBudgets, evidenceDir: string): Effect.Effect<Trial, unknown> =>
@@ -464,7 +464,7 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
         const server = yield* serveCanvas({ session, port: 0, initialEvents: [] }).pipe(Effect.provide(services))
         yield* Effect.addFinalizer(() => server.close.pipe(
           Effect.timeout(Duration.seconds(10)),
-          Effect.catchAllCause((cause) => Effect.logWarning(`ui-matrix server cleanup failed: ${Cause.pretty(cause)}`)),
+          Effect.catchCause((cause) => Effect.logWarning(`ui-matrix server cleanup failed: ${Cause.pretty(cause)}`)),
         ))
         return yield* driveBrowser(session, server.url, task.prompt, budgets.trialTimeoutMs, evidenceDir, evidenceName(candidate, task, sample))
       }))
@@ -477,8 +477,8 @@ const runTrial = (candidate: Candidate, task: MatrixTask, sample: number, budget
     // corruption.
     const evidenceRead = <A>(label: string, read: Effect.Effect<A, unknown>, fresh: Effect.Effect<A, unknown>): Effect.Effect<A> => read.pipe(
       Effect.retry({ times: 1, schedule: Schedule.spaced("500 millis") }),
-      Effect.orElse(() => Effect.logWarning(`${label}: handle read failed twice — retrying on a FRESH handle (#118 diagnostic)`).pipe(
-        Effect.zipRight(fresh),
+      Effect.catch(() => Effect.logWarning(`${label}: handle read failed twice — retrying on a FRESH handle (#118 diagnostic)`).pipe(
+        Effect.andThen(fresh),
         Effect.tap(() => Effect.logWarning(`${label}: fresh-handle recovery SUCCEEDED (handle-state corruption)`)),
       )),
       Effect.mapError((error) => new Error(`${label} (fresh handle too — file-state corruption): ${String(error)}`)),
@@ -610,7 +610,7 @@ const judgeCandidate = (
     ? Effect.succeed(0)
     : judge.run({ page: trial.page, request: trial.request }).pipe(
       Effect.map((result) => result.score),
-      Effect.catchAll(() => Effect.succeed(0)),
+      Effect.catch(() => Effect.succeed(0)),
     ), { concurrency: 1 }).pipe(
     Effect.map((scores) => {
       const judgeScore = mean(scores)

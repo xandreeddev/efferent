@@ -1,5 +1,5 @@
-import { AiError, LanguageModel, Prompt } from "@effect/ai"
-import type { Tool, Toolkit } from "@effect/ai"
+import { AiError, LanguageModel, Prompt } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
 import { foldStreamParts } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
@@ -30,7 +30,7 @@ export interface CompactionPlan {
  * `LanguageModel.generateText`, appends the response as the new tail, and
  * re-invokes until the model stops requesting tools, `maxSteps` is hit, or
  * the degenerate-loop breaker fires. State is an immutable fold through
- * `Effect.iterate` — the same discipline as foundry's forge loop.
+ * a recursive step — the same discipline as foundry's forge loop.
  */
 
 export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
@@ -45,7 +45,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
     readonly messages: ReadonlyArray<AgentMessage>
     readonly activeTools: ReadonlyArray<string>
   }) => Effect.Effect<{
-    readonly model: LanguageModel.Service
+    readonly model: LanguageModel.LanguageModel
     readonly system: Prompt.Prompt
   }, AiError.AiError, R>
   readonly system: string | Prompt.Prompt
@@ -160,11 +160,21 @@ const engineCorrections = Metric.counter("engine.corrections", {
   description: "self-corrections by kind (malformed recovery, degenerate nudge)",
   incremental: true,
 })
-const tagged = <Type, In, Out>(
-  metric: Metric.Metric<Type, In, Out>,
+const tagged = <Input, State>(
+  metric: Metric.Metric<Input, State>,
   tags: Record<string, string>,
-): Metric.Metric<Type, In, Out> =>
-  Object.entries(tags).reduce((m, [key, value]) => Metric.tagged(m, key, value), metric)
+): Metric.Metric<Input, State> => Metric.withAttributes(metric, tags)
+
+/**
+ * A response the loop can correct: it does not decode (an unknown tool, a
+ * part that does not parse) or a tool call's parameters do not.
+ */
+type MalformedResponse = AiError.AiError & {
+  readonly reason: AiError.InvalidOutputError | AiError.ToolParameterValidationError | AiError.ToolNotFoundError
+}
+const malformedReasons: ReadonlySet<string> = new Set(["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"])
+const isMalformed = (error: unknown): error is MalformedResponse =>
+  AiError.isAiError(error) && malformedReasons.has(error.reason._tag)
 
 /** Consecutive malformed responses tolerated before the run fails for real. */
 const MAX_MALFORMED = 3
@@ -299,16 +309,16 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
         const prepared = state.turnIndex === 0 && options.initialStep !== undefined
-          ? Option.none<{ readonly model: LanguageModel.Service; readonly system: Prompt.Prompt }>()
+          ? Option.none<{ readonly model: LanguageModel.LanguageModel; readonly system: Prompt.Prompt }>()
           : options.prepareModel === undefined
-            ? Option.none<{ readonly model: LanguageModel.Service; readonly system: Prompt.Prompt }>()
+            ? Option.none<{ readonly model: LanguageModel.LanguageModel; readonly system: Prompt.Prompt }>()
             : Option.some(yield* options.prepareModel({ stepIndex: state.turnIndex, messages: state.messages, activeTools: toolNames }).pipe(Effect.provide(eventContext)))
         const baseSystem = Option.match(prepared, { onNone: () => options.system, onSome: (value) => value.system })
         const instructions = typeof baseSystem === "string"
           ? Prompt.make([{ role: "system", content: baseSystem }])
           : baseSystem
         const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
-        const prompt = Prompt.merge(instructions, Prompt.make(toPromptMessages(visible) as never))
+        const prompt = Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never))
         const directive = options.stepDirective === undefined ? Option.none<LoopToolChoice>() : (yield* options.stepDirective(stepView).pipe(Effect.provide(eventContext))).toolChoice
 
         if (options.captureTraceContent === true)
@@ -319,15 +329,23 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const toolSequence = yield* Ref.make(0)
         const instrumented: Toolkit.WithHandler<Tools> = {
           tools: selectedTools,
-          handle: (name, params) => Effect.gen(function* () {
+          handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
             const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
             const toolCallId = `execution:${state.turnIndex}:${sequence}`
             yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
-            return yield* toolkit.handle(name, params).pipe(Effect.tap((result) => onEvent({
-              type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
-              ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
-            })))
-          }),
+            const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
+            return results.pipe(
+              // Parameters that do not decode are a malformed response whatever
+              // the tool's failure mode: the loop answers with a corrective turn.
+              Stream.mapEffect((result) => result.isFailure && result.failureOrigin === "parameters"
+                ? Effect.fail(result.result as AiError.AiError)
+                : Effect.succeed(result)),
+              Stream.tap((result) => result.preliminary ? Effect.void : onEvent({
+                type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
+                ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
+              })),
+            )
+          }) as never,
         }
         const callOptions = {
           prompt,
@@ -338,10 +356,13 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
 
         /** Both paths land on the SAME settled shape — after this point the
          *  turn body is identical code, streamed or not. */
+        // Tools declare no dependencies (handlers carry their own context), so a
+        // model call needs the model alone; `Tool.Any` would widen it to `any`.
+        const generated = (Option.isSome(prepared)
+          ? prepared.value.model.generateText(callOptions)
+          : LanguageModel.generateText(callOptions)) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
         const settled = (streamingHealthy: boolean) =>
-          (Option.isSome(prepared)
-            ? prepared.value.model.generateText(callOptions)
-            : LanguageModel.generateText(callOptions)).pipe(
+          generated.pipe(
             Effect.map((res) => ({
               _tag: "ok" as const,
               content: res.content as ReadonlyArray<unknown>,
@@ -360,9 +381,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const streamed = Effect.gen(function* () {
           const partSeen = yield* Ref.make(false)
           const folded = yield* foldStreamParts(
-            (Option.isSome(prepared)
+            ((Option.isSome(prepared)
               ? prepared.value.model.streamText(callOptions)
-              : LanguageModel.streamText(callOptions)).pipe(
+              : LanguageModel.streamText(callOptions)) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
               Stream.tap(() => Ref.set(partSeen, true)),
             ),
             (delta) =>
@@ -384,14 +405,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
                 streamingHealthy: true,
               }),
             ),
-            Effect.catchAll((err) =>
+            Effect.catch((err) =>
               Ref.get(partSeen).pipe(
                 Effect.flatMap((armed) =>
                   armed ? Effect.fail(err) : Effect.succeed(Option.none<never>()),
                 ),
               ),
             ),
-            Effect.catchAllDefect((defect) =>
+            Effect.catchDefect((defect) =>
               Ref.get(partSeen).pipe(
                 Effect.flatMap((armed) =>
                   armed ? Effect.die(defect) : Effect.succeed(Option.none<never>()),
@@ -404,7 +425,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             onNone: () =>
               Effect.logWarning(
                 "streaming failed before any part arrived — falling back to generateText for this run",
-              ).pipe(Effect.zipRight(settled(false))),
+              ).pipe(Effect.andThen(settled(false))),
           })
         })
 
@@ -414,7 +435,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
               type: "tool-call" as const, id: `planned:0:${index}`, name: call.name,
               params: call.params, providerExecuted: false,
-            })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined } }]),
+            })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]),
             streamText: () => Stream.empty,
           })
           yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)
@@ -422,16 +443,16 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         })
         const useStreaming = options.streaming === true && state.streamingHealthy
         const outcome = yield* (planned ? initial : useStreaming ? streamed : settled(state.streamingHealthy)).pipe(
-          Effect.catchAll((err) =>
-            (err as { readonly _tag?: string } | null)?._tag === "MalformedOutput"
-              ? Effect.succeed({ _tag: "malformed" as const, err })
+          Effect.catch((err) =>
+            isMalformed(err)
+              ? Effect.succeed({ _tag: "malformed" as const, err: err as MalformedResponse })
               : Effect.fail(err),
           ),
           // Once the run has tool calls, a following empty response is the
           // model saying "done" — adapters must return it (the fold below
           // ends the turn) instead of rejecting it into the patient outage
           // ladder, which parks the turn until a deadline kills it.
-          Effect.locally(CurrentEmptyResponseTolerance, state.toolCalls > 0),
+          Effect.provideService(CurrentEmptyResponseTolerance, state.toolCalls > 0),
         )
 
         // A response that doesn't decode — a hallucinated tool NAME or a
@@ -441,15 +462,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         if (outcome._tag === "malformed") {
           const streak = state.malformedStreak + 1
           if (streak >= MAX_MALFORMED) return yield* Effect.fail(outcome.err)
-          const desc = clip(
-            String(
-              (outcome.err as { readonly description?: unknown }).description ??
-                "the response could not be parsed",
-            ),
-            600,
-          )
+          const reason = outcome.err.reason
+          const desc = clip("description" in reason ? reason.description : reason.message, 600)
           yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
-          yield* Metric.increment(tagged(engineCorrections, { "engine.kind": "malformed" }))
+          yield* Metric.update(tagged(engineCorrections, { "engine.kind": "malformed" }), 1)
           const corrective: AgentMessage = {
             role: "user",
             content: options.correctives?.malformed?.(toolNames, desc) ??
@@ -496,7 +512,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const positions = yield* options.onTail?.(tail) ?? Effect.succeed([])
         const assistantAt = tail.findIndex((m) => m.role === "assistant")
         const assistantPosition =
-          assistantAt >= 0 ? Option.fromNullable(positions[assistantAt]) : Option.none<number>()
+          assistantAt >= 0 ? Option.fromNullishOr(positions[assistantAt]) : Option.none<number>()
 
         const text = responseText(content)
         const toolCalls = responseToolCalls(content)
@@ -514,9 +530,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           }),
         })
         const toolResults = responseToolResults(content)
-        yield* Effect.forEach(toolResults, (tr) => Metric.increment(tagged(engineToolCalls, {
+        yield* Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
           "engine.tool": tr.toolName, "engine.ok": tr.ok ? "true" : "false",
-        })))
+        }), 1))
 
         // --- Degenerate-loop circuit breaker ---
         // A turn whose progress signature was already seen produced nothing
@@ -529,7 +545,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           : []
         yield* nudge.length > 0 ? (options.onTail?.(nudge) ?? Effect.void) : Effect.void
         yield* nudge.length > 0
-          ? Metric.increment(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }))
+          ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
           : Effect.void
 
         const finalText = text.length > 0 ? text : state.finalText
@@ -610,14 +626,19 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           streamingHealthy: outcome.streamingHealthy,
         } satisfies LoopState
       }).pipe(
-        Effect.onExit((exit) => onEvent({ type: "turn_end", turnIndex: state.turnIndex, status: Exit.isSuccess(exit) ? "completed" : Cause.isInterruptedOnly(exit.cause) ? "cancelled" : "failed" })),
-        Effect.locally(CurrentAgentStep, Option.some(state.turnIndex)),
+        Effect.onExit((exit) => onEvent({ type: "turn_end", turnIndex: state.turnIndex, status: Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed" })),
+        Effect.provideService(CurrentAgentStep, Option.some(state.turnIndex)),
         Effect.withSpan("engine.turn", {
         attributes: { "engine.turn": state.turnIndex, "engine.step": state.turnIndex + 1 },
       }))
 
-    const final = yield* Effect.iterate(
-      {
+    /** Steps until the loop leaves `continue` (Effect runs the recursion stack-safely). */
+    type Settled = LoopState & { readonly phase: Exclude<LoopState["phase"], "continue"> }
+    const runSteps = (
+      state: LoopState,
+    ): Effect.Effect<Settled, Effect.Error<ReturnType<typeof step>>, Effect.Services<ReturnType<typeof step>>> =>
+      state.phase === "continue" ? Effect.flatMap(step(state), runSteps) : Effect.succeed(state as Settled)
+    const initial: LoopState = {
         messages: options.messages,
         newTail: [],
         finalText: "",
@@ -632,9 +653,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         toolFailures: 0,
         corrections: 0,
         streamingHealthy: true,
-      } as LoopState,
-      { while: (state) => state.phase === "continue", body: step },
-    )
+      }
+    const final = yield* runSteps(initial)
 
     const { outcome, reason } = Match.value(final.phase).pipe(
       Match.when("completed", () => ({ outcome: "ok" as const, reason: "completed" as const })),
@@ -646,12 +666,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         outcome: "partial" as const,
         reason: "degenerate-loop" as const,
       })),
-      Match.when("continue", () => ({ outcome: "ok" as const, reason: "completed" as const })),
       Match.exhaustive,
     )
     yield* onEvent({ type: "agent_end", outcome, reason, finalText: final.finalText })
-    yield* Metric.increment(
+    yield* Metric.update(
       tagged(engineRuns, { "engine.outcome": outcome, "engine.reason": reason }),
+      1,
     )
     // The run span states its verdict AND its trajectory vitals — a
     // "completed" run with 25 steps, five failed calls, and three

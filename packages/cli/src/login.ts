@@ -10,7 +10,7 @@ export const loginCommand = (workspace: string, home: string, launch: (state: Tu
   const apiKey = (provider: string, state: TuiState) => state.setOverlay({ kind: "edit", title: `API key · ${provider}`, value: "", secret: true,
     save: (key) => launch(state, key.trim().length === 0 ? Effect.fail(invalid("Enter an API key")) : store(AuthStore.pipe(Effect.flatMap((auth) => auth.set(ProviderId.make(provider), { type: "api_key", key: key.trim() })))).pipe(Effect.tap(() => Effect.sync(() => {
       state.setOverlay({ kind: "none" }); state.setNotice(`Connected ${provider}. Use /model provider:model to select a model.`)
-    })), Effect.zipRight(onConnected?.() ?? Effect.void))),
+    })), Effect.andThen(onConnected?.() ?? Effect.void))),
   })
   const oauth = (provider: "openai" | "anthropic", state: TuiState) => Effect.scoped(Effect.gen(function* () {
     const begun = yield* provider === "openai" ? beginOpenAiCodexOAuth : beginAnthropicOAuth.pipe(Effect.map((value) => ({ ...value, state: value.verifier })))
@@ -43,7 +43,7 @@ export const loginCommand = (workspace: string, home: string, launch: (state: Tu
       { label: "Cancel", detail: "", select: () => state.setOverlay({ kind: "none" }) },
     ] })
     const code = yield* Effect.race(Deferred.await(landed).pipe(Effect.map(Option.some)), Deferred.await(cancelled).pipe(Effect.as(Option.none<string>()))).pipe(
-      Effect.timeoutFail({ duration: "5 minutes", onTimeout: () => invalid("Login expired. Start /login again.") }),
+      Effect.timeoutOrElse({ duration: "5 minutes", orElse: () => Effect.fail((() => invalid("Login expired. Start /login again."))()) }),
     )
     if (Option.isNone(code)) return
     const tokens = yield* (provider === "openai" ? exchangeOpenAiCodexCode(code.value, begun.verifier) : exchangeAnthropicCode(code.value, begun.verifier)).pipe(Effect.mapError((error) => invalid(error.message)))

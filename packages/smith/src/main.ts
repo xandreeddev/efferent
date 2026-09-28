@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Logger, Option } from "effect"
-import { BunContext } from "@effect/platform-bun"
+import { BunServices } from "@effect/platform-bun"
 import { EngineSettings, SettingsStore } from "@xandreed/core"
 import { FileLoggerLive, FileLoggerAddLive, TracingLive } from "@xandreed/plugin-telemetry"
 import { ConfiguredModelCatalogLive, LanguageModelLive, UtilityLlmLive, LocalAuthStoreLive, LocalSettingsStoreLive } from "@xandreed/plugin-models"
@@ -18,6 +18,7 @@ import { ConfigError } from "@xandreed/foundry"
 import { SMITH_LIMIT_DEFAULTS } from "./domain/SmithConfig.js"
 import type { SmithRunConfig } from "./domain/SmithConfig.js"
 import { SmithSettingsStoreLive } from "./settings/smithSettings.js"
+import { StderrPrettyLoggerLive } from "./stderrLogger.js"
 import { runHeadless } from "./headless/print.js"
 import { runHeadlessRefine } from "./refine/headless.js"
 import { loadSpecDoc, mintUniqueSlug, writeSpecDoc } from "./spec/store.js"
@@ -270,7 +271,7 @@ if (isDirectRun) {
     // Serving never returns on its own; a failure prints and exits 2 below.
     await Effect.runPromise(
       runMcpServe(state.cwd).pipe(
-        Effect.catchAll((cause) =>
+        Effect.catch((cause) =>
           Effect.sync(() => {
             console.error(`smith mcp: ${String(cause)}`)
           }),
@@ -402,7 +403,7 @@ if (isDirectRun) {
     return yield* runTui(forgeRun, Option.some(doc))
   }).pipe(
     Effect.provide(smithAppLive(run)),
-    Effect.provide(BunContext.layer),
+    Effect.provide(BunServices.layer),
     // The kernel's spans (engine.run/turn, providers.generate) reach the local
     // LGTM stack when it's up (`bun run obs:up`); a missing collector fails
     // silently — always-on costs nothing.
@@ -415,13 +416,14 @@ if (isDirectRun) {
     Effect.provide(
       interactive
         ? FileLoggerLive(join(run.cwd, ".efferent", "logs", "smith.log"))
-        : Layer.mergeAll(
-            Logger.replace(Logger.defaultLogger, Logger.prettyLogger({ stderr: true })),
-            FileLoggerAddLive(join(run.cwd, ".efferent", "logs", "smith.log")),
+        : Layer.merge(
+            Layer.succeed(Logger.LogToStderr, true),
+            // the file logger joins the stderr loggers it is built over
+            FileLoggerAddLive(join(run.cwd, ".efferent", "logs", "smith.log")).pipe(Layer.provide(StderrPrettyLoggerLive)),
           ),
     ),
     // A layer-build failure (store selection, migration) is an infra error.
-    Effect.catchAll((cause) =>
+    Effect.catch((cause) =>
       Effect.sync(() => {
         console.error(`smith: ${String(cause)}`)
         return 2
@@ -430,7 +432,7 @@ if (isDirectRun) {
     // DEFECTS must exit self-describing, never a raw stack dump: the classic
     // one is launching the TUI outside the repo root, where the lazy .tsx
     // import dies without the Solid JSX preload (root bunfig.toml).
-    Effect.catchAllDefect((defect) =>
+    Effect.catchDefect((defect) =>
       Effect.sync(() => {
         const text = String(defect)
         console.error(`smith: crashed — ${text.slice(0, 300)}`)

@@ -41,7 +41,7 @@ export const expandFileRefs = (
     if (refs.length === 0) return { text, notes: [] }
     const folded = yield* Effect.reduce(
       refs,
-      { blocks: [] as ReadonlyArray<string>, notes: [] as ReadonlyArray<string>, used: 0 },
+      () => ({ blocks: [] as ReadonlyArray<string>, notes: [] as ReadonlyArray<string>, used: 0 }),
       (acc, ref) =>
         Effect.gen(function* () {
           if (/[*?[\]]/.test(ref)) {

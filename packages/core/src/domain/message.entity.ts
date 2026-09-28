@@ -7,7 +7,7 @@ import { Schema } from "effect"
  * `thought_signature` on a reasoning part) without the engine inspecting them.
  */
 
-export const ConversationId = Schema.UUID.pipe(Schema.brand("ConversationId"))
+export const ConversationId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
 
 /** A tool call's pairing key — the provider's id, or the loop's deterministic
@@ -67,7 +67,7 @@ export type UserRoleMessage = typeof UserRoleMessage.Type
 
 export const AssistantMessage = Schema.Struct({
   role: Schema.Literal("assistant"),
-  content: Schema.Array(Schema.Union(TextPart, ReasoningPart, ToolCallPart)),
+  content: Schema.Array(Schema.Union([TextPart, ReasoningPart, ToolCallPart])),
   providerOptions: Schema.optional(Schema.Unknown),
 })
 export type AssistantMessage = typeof AssistantMessage.Type
@@ -80,7 +80,7 @@ export const ToolMessage = Schema.Struct({
 export type ToolMessage = typeof ToolMessage.Type
 
 /** The single conversation unit — persisted as-is, one row per entry. */
-export const AgentMessage = Schema.Union(UserRoleMessage, AssistantMessage, ToolMessage)
+export const AgentMessage = Schema.Union([UserRoleMessage, AssistantMessage, ToolMessage])
 export type AgentMessage = typeof AgentMessage.Type
 
 /**
@@ -94,7 +94,7 @@ export const AgentResult = Schema.Struct({
   newTail: Schema.Array(AgentMessage),
   /** "ok" — the model finished on its own; "partial" — the step cap or the
    *  degenerate-loop breaker stopped it, so `finalText` is NOT a deliverable. */
-  outcome: Schema.Literal("ok", "partial"),
-  reason: Schema.Literal("completed", "step-cap", "degenerate-loop"),
+  outcome: Schema.Literals(["ok", "partial"]),
+  reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
 })
 export type AgentResult = typeof AgentResult.Type

@@ -2,13 +2,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Metric, Option, Schema, TestClock, TestContext } from "effect"
+import { Effect, Fiber, Layer, Metric, Option, Schema } from "effect"
+import { TestClock, TestConsole } from "effect/testing"
 import { Spec, WorkspacePath } from "@xandreed/foundry"
 import type { Workspace } from "@xandreed/foundry"
 import { extractVerdictJson, gatherEvidence, judgePrompt, makeSmithJudgeGate } from "./judge.js"
 
 const spec = Effect.runSync(
-  Schema.decodeUnknown(Spec)({
+  Schema.decodeUnknownEffect(Spec)({
     goal: "port stats.py",
     acceptance: ["bun test exits 0"],
     limits: { maxAttempts: 3, budgetMillis: 1000 },
@@ -138,10 +139,10 @@ describe("makeSmithJudgeGate", () => {
   const crashExit = (gate: { readonly run: (ws: Workspace) => Effect.Effect<unknown, unknown> }) =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.fork(Effect.exit(gate.run(workspace)))
+        const fiber = yield* Effect.forkChild(Effect.exit(gate.run(workspace)))
         yield* TestClock.adjust("60 seconds")
         return yield* Fiber.join(fiber)
-      }).pipe(Effect.provide(TestContext.TestContext)),
+      }).pipe(Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer()))),
     )
 
   test("FAIL-CLOSED: no verdict / undecodable / model failure are all GateCrash", async () => {
@@ -166,13 +167,12 @@ describe("makeSmithJudgeGate", () => {
     const counter = (verdict: string) =>
       Effect.runPromise(
         Metric.value(
-          Metric.tagged(
+          Metric.withAttributes(
             Metric.counter("smith.judge.verdicts", {
               description: "judge gate verdicts by outcome",
               incremental: true,
             }),
-            "verdict",
-            verdict,
+            { verdict },
           ),
         ),
       ).then((state) => state.count)

@@ -1,9 +1,9 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { ContextManager, definePlugin, HarnessError, safeKeepFrom, UtilityLlm } from "@xandreed/core"
 
-const Config = Schema.Struct({ thresholdTokens: Schema.Int.pipe(Schema.positive()), keepTurns: Schema.Int.pipe(Schema.positive()) })
+const Config = Schema.Struct({ thresholdTokens: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))), keepTurns: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))) })
 export const contextPlugin = definePlugin({
-  id: "@xandreed/plugin-context", version: "0.6.0-next.2", requires: [UtilityLlm], provides: [ContextManager],
+  id: "@xandreed/plugin-context", version: "0.7.0-next.0", requires: [UtilityLlm], provides: [ContextManager],
   config: Config, defaults: { thresholdTokens: 80000, keepTurns: 6 },
   layer: (config) => Layer.effect(ContextManager, Effect.gen(function* () {
     const utility = yield* UtilityLlm

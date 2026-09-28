@@ -7,7 +7,7 @@ import type { ThemeName } from "./theme.js"
 import { Cause, Option } from "effect"
 
 export const errorMessage = (error: unknown): string => {
-  const value = Cause.isCause(error) ? Option.getOrElse(Cause.failureOption(error), () => error) : error
+  const value = Cause.isCause(error) ? Option.getOrElse(Cause.findErrorOption(error), () => error) : error
   const message = typeof value === "object" && value !== null && "message" in value ? String(value.message) : String(value)
   return message.split("\n")[0]!.replace(/^(?:(?:HarnessError|UnknownError|Error):\s*)+/, "")
 }

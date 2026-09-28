@@ -1,5 +1,4 @@
-import { Context, Option, Schema } from "effect"
-import type { Effect } from "effect"
+import { Context, Effect, Option, Schema } from "effect"
 import { ReasoningEffort } from "../domain/model-call-policy.entity.js"
 
 /**
@@ -13,9 +12,9 @@ import { ReasoningEffort } from "../domain/model-call-policy.entity.js"
  * every launch (`sandbox`, `maxAttempts`, `budgetMillis`). Resolution stays
  * the driver's: flags > config > defaults.
  */
-const optionField = <A, I>(schema: Schema.Schema<A, I>) =>
-  Schema.optionalWith(schema, { as: "Option" }).pipe(
-    Schema.withConstructorDefault(Option.none),
+const optionField = <A, I>(schema: Schema.Codec<A, I>) =>
+  Schema.OptionFromOptional(schema).pipe(
+    Schema.withConstructorDefault(Effect.succeed(Option.none())),
   )
 
 export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings")({
@@ -59,9 +58,7 @@ export type SettingsKey = (typeof SETTINGS_KEYS)[number]
  * so a value changed mid-session takes effect on the next turn — callers must
  * not cache the result across turns.
  */
-export class SettingsStore extends Context.Tag("@xandreed/core/SettingsStore")<
-  SettingsStore,
-  {
+export class SettingsStore extends Context.Service<SettingsStore, {
     readonly load: Effect.Effect<EngineSettings, SettingsError>
     /** Persist one role's model selection (the human's `:model` action);
      *  `None` clears the role so it falls back to its default again. */
@@ -77,5 +74,4 @@ export class SettingsStore extends Context.Tag("@xandreed/core/SettingsStore")<
       key: SettingsKey,
       value: Option.Option<string>,
     ) => Effect.Effect<void, SettingsError>
-  }
->() {}
+  }>()("@xandreed/core/SettingsStore") {}

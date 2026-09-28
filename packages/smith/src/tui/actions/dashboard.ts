@@ -43,7 +43,7 @@ export const openRowActions = (ctx: SmithTuiContext, row: DashboardRow): void =>
 /** The row under the dashboard cursor, if any. */
 export const focusedRow = (ctx: SmithTuiContext): Option.Option<DashboardRow> =>
   Option.flatMap(ctx.store.dashboardFocus(), (index) =>
-    Option.fromNullable(dashboardRows(ctx.store.workspace(), ctx.store.context())[index]),
+    Option.fromNullishOr(dashboardRows(ctx.store.workspace(), ctx.store.context())[index]),
   )
 
 /** ⏎ on the `:open` list — that row's actions. */
@@ -128,7 +128,7 @@ export const submitDeleteConfirm = (
     ctx.store.setNotice(`kept ${slug}`)
     return
   }
-  Option.match(Option.fromNullable(ctx.dashboard), {
+  Option.match(Option.fromNullishOr(ctx.dashboard), {
     onNone: () => ctx.store.setNotice("the dashboard only acts in the workspace session"),
     onSome: (dashboard) => dashboard.deleteSpec(slug),
   })

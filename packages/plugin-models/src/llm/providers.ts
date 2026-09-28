@@ -1,9 +1,8 @@
-import { LanguageModel, Prompt } from "@effect/ai"
+import { LanguageModel, Prompt } from "effect/ai"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
-import { GoogleClient, GoogleLanguageModel } from "@effect/ai-google"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
-import { HttpClient, HttpClientRequest } from "@effect/platform"
-import { Effect, FiberRef, Option, Redacted } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/http"
+import { Effect, Option, Redacted } from "effect"
 import type { Scope } from "effect"
 import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/core"
 import type { Credential, ModelSelection } from "@xandreed/core"
@@ -13,12 +12,13 @@ import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 
 /**
- * Per-provider `LanguageModel.Service` construction. Built PER REQUEST from a
+ * Per-provider `LanguageModel` construction. Built PER REQUEST from a
  * freshly-resolved key (never captured at layer build), so a credential or
  * model switch applies on the next call.
  *
- * v1 providers: opencode (OpenAI-compatible gateway — the default), google,
- * anthropic (api key or subscription OAuth), openai (api key). OpenAI-OAuth
+ * v1 providers: opencode (OpenAI-compatible gateway — the default), google
+ * (Gemini's OpenAI-compatible endpoint), anthropic (api key or subscription
+ * OAuth), openai (api key). OpenAI-OAuth
  * (Codex) and ollama are deferred until an agent needs them.
  */
 
@@ -26,11 +26,14 @@ export const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions
 /** OpenCode serves GPT models through the OpenAI Responses protocol. */
 export const OPENCODE_RESPONSES_API_URL = "https://opencode.ai/zen/v1"
 
+/** Gemini through its OpenAI-compatible chat completions (Bearer API key). */
+export const GOOGLE_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
 /** Pure protocol routing decision; provider details stay inside this adapter. */
 export const usesOpenCodeResponses = (modelId: string): boolean => /^gpt-/i.test(modelId)
 
 export interface BuiltProvider {
-  readonly svc: LanguageModel.Service
+  readonly svc: LanguageModel.LanguageModel
   /** Anthropic subscription auth requires the Claude Code system block first. */
   readonly prependClaudeCode: boolean
 }
@@ -56,7 +59,7 @@ const claudeCodePrompt = Prompt.make([{ role: "system", content: CLAUDE_CODE_SYS
 /** Prepend the Claude Code system block (subscription-auth requirement). */
 export const prependClaudeCode = (options: unknown): unknown => ({
   ...(options as Record<string, unknown>),
-  prompt: Prompt.merge(
+  prompt: Prompt.concat(
     claudeCodePrompt,
     Prompt.make((options as { prompt: Prompt.RawInput }).prompt),
   ),
@@ -119,8 +122,8 @@ export const buildProvider = (
     if (key === undefined) return Effect.fail(missingKey(selection))
     if (usesOpenCodeResponses(selection.modelId)) {
       return Effect.all({
-        cacheKey: FiberRef.get(CurrentPromptCacheKey),
-        policy: FiberRef.get(CurrentModelCallPolicy),
+        cacheKey: Effect.service(CurrentPromptCacheKey),
+        policy: Effect.service(CurrentModelCallPolicy),
       }).pipe(
         Effect.flatMap(({ cacheKey, policy }) =>
           OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL }).pipe(
@@ -131,7 +134,7 @@ export const buildProvider = (
                   // UI tools contain genuinely optional fields. OpenAI strict
                   // schemas require every property, so use normal function
                   // calling and let Effect decode the domain schema.
-                  strict: false,
+                  strictJsonSchema: false,
                   prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
                   ...Option.match(policy, {
                     onNone: () => ({}),
@@ -169,15 +172,14 @@ export const buildProvider = (
   if (selection.provider === "google") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : GoogleClient.make({ apiKey: key }).pipe(
-          Effect.flatMap((client) =>
-            GoogleLanguageModel.make({
-              model: selection.modelId,
-              config: { toolConfig: {} },
-            }).pipe(Effect.provideService(GoogleClient.GoogleClient, client)),
-          ),
-          Effect.map((svc) => ({ svc, prependClaudeCode: false })),
-        )
+      : makeCompatLanguageModel({
+          moduleName: "Google",
+          chatUrl: GOOGLE_CHAT_URL,
+          apiKey: Redacted.value(key),
+          model: selection.modelId,
+          // As before: no cache key, thinking defaults or call policy for Gemini.
+          standardOnly: true,
+        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "anthropic") {
     if (key === undefined) return Effect.fail(missingKey(selection))
@@ -199,7 +201,7 @@ export const buildProvider = (
   }
   if (selection.provider === "openai-codex") {
     if (key === undefined || credential?.type !== "oauth") return Effect.fail(missingKey(selection))
-    const accountId = Option.orElse(Option.fromNullable(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
+    const accountId = Option.orElse(Option.fromNullishOr(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
     if (Option.isNone(accountId)) {
       return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in again with Smith :login" }))
     }
@@ -210,7 +212,7 @@ export const buildProvider = (
   if (selection.provider === "openai") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : Effect.flatMap(FiberRef.get(CurrentPromptCacheKey), (cacheKey) =>
+      : Effect.flatMap(Effect.service(CurrentPromptCacheKey), (cacheKey) =>
           OpenAiClient.make({ apiKey: key }).pipe(
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
@@ -218,7 +220,7 @@ export const buildProvider = (
                 // The per-conversation cache lane, same as the compat path —
                 // one shared constant lane cross-evicts between conversations
                 // (construction happens per call, inside the run's fiber, so
-                // the FiberRef is set here).
+                // the reference is set here).
                 config: {
                   prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
                 },

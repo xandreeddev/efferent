@@ -30,7 +30,7 @@ const Response = Schema.Struct({ answers: Schema.Unknown })
  * by a deadline (abandoned calls are aborted), and the answers must answer
  * exactly the questions asked, choosing only offered choices.
  */
-export const makeEvaluationModel = (options: EvaluationModelOptions): Effect.Effect<Context.Tag.Service<typeof EvaluationModel>, EvaluationError> => Effect.gen(function* () {
+export const makeEvaluationModel = (options: EvaluationModelOptions): Effect.Effect<Context.Service.Shape<typeof EvaluationModel>, EvaluationError> => Effect.gen(function* () {
   const maxInputBytes = options.maxInputBytes ?? 24_000
   const timeoutMs = options.timeoutMs ?? 10_000
   if (!Number.isInteger(maxInputBytes) || maxInputBytes < 1 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -44,11 +44,11 @@ export const makeEvaluationModel = (options: EvaluationModelOptions): Effect.Eff
       const response = yield* Effect.tryPromise({
         try: (signal) => options.transport({ model: options.model, state: rendered.state, questions: rendered.questions }, signal),
         catch: (error) => new EvaluationError({ code: "unavailable", message: String(error) }),
-      }).pipe(Effect.timeoutFail({
+      }).pipe(Effect.timeoutOrElse({
         duration: timeoutMs,
-        onTimeout: () => new EvaluationError({ code: "timeout", message: `${options.model} took longer than ${timeoutMs} ms` }),
+        orElse: () => Effect.fail(new EvaluationError({ code: "timeout", message: `${options.model} took longer than ${timeoutMs} ms` })),
       }))
-      const decoded = yield* Schema.decodeUnknown(Response)(response).pipe(
+      const decoded = yield* Schema.decodeUnknownEffect(Response)(response, { reportInput: true }).pipe(
         Effect.mapError((error) => new EvaluationError({ code: "invalid", message: error.message })),
       )
       return yield* validateAnswers(rendered.questions, decoded.answers)
@@ -69,5 +69,5 @@ export const EvaluationModelLive = (options: EvaluationModelOptions): Layer.Laye
   Layer.effect(EvaluationModel, makeEvaluationModel(options))
 
 /** An EvaluationModel that answers from a script (in the wire form), checked like any other. */
-export const scriptedEvaluationModel = (script: (rendered: RenderedDecision) => unknown, model = "scripted"): Context.Tag.Service<typeof EvaluationModel> =>
+export const scriptedEvaluationModel = (script: (rendered: RenderedDecision) => unknown, model = "scripted"): Context.Service.Shape<typeof EvaluationModel> =>
   EvaluationModel.of({ model, evaluate: (rendered) => validateAnswers(rendered.questions, script(rendered)) })

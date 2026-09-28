@@ -1,4 +1,4 @@
-import { Either, Match, Option, Schema } from "effect"
+import { Result, Match, Option, Schema } from "effect"
 import { FeedHeartbeat, FeedReady, FeedRecord, SocketFrame, SocketResume } from "./feed-frame.entity.js"
 import type { FeedFrame, FeedOptions } from "./feed-frame.entity.js"
 
@@ -24,7 +24,7 @@ const fieldsOf = (block: string): ReadonlyMap<string, string> => new Map(block.s
 }))
 
 const parseObject = (text: string): Option.Option<Record<string, unknown>> =>
-  Either.getRight(Schema.decodeUnknownEither(Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown })))(text))
+  Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(text))
 
 const decodeSseBlock = (block: string): ReadonlyArray<FeedFrame> => {
   if (block.startsWith(": heartbeat")) return [FeedHeartbeat.make({})]
@@ -49,7 +49,7 @@ export const encodeSocketFrame = (frame: FeedFrame): string => JSON.stringify(Ma
 }))
 
 export const decodeSocketFrame = (text: string): Option.Option<FeedFrame> =>
-  Either.getRight(Schema.decodeUnknownEither(Schema.parseJson(SocketFrame))(text)).pipe(Option.map((frame): FeedFrame =>
+  Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(SocketFrame))(text)).pipe(Option.map((frame): FeedFrame =>
     Match.value(frame).pipe(
       Match.when({ type: "record" }, (record) => FeedRecord.make({ sequence: record.sequence, event: record.event, data: record.data })),
       Match.when({ type: "ready" }, () => FeedReady.make({})),
@@ -58,7 +58,7 @@ export const decodeSocketFrame = (text: string): Option.Option<FeedFrame> =>
 
 /** The cursor a WebSocket client asks to resume after (`{"after": n}`). */
 export const socketResumeOf = (text: string): Option.Option<number> =>
-  Either.getRight(Schema.decodeUnknownEither(Schema.parseJson(SocketResume))(text)).pipe(Option.map((resume) => resume.after))
+  Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(SocketResume))(text)).pipe(Option.map((resume) => resume.after))
 
 /** Back off while idle; poll promptly again once records arrive. */
 export const nextPollMs = (current: number, options: FeedOptions, received: boolean): number =>

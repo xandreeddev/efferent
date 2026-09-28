@@ -23,8 +23,8 @@ const toFinding = (diagnostic: ts.Diagnostic, rootDir: string): Finding =>
     severity: severityOf(diagnostic.category),
     message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
     location: Option.gen(function* () {
-      const file = yield* Option.fromNullable(diagnostic.file)
-      const start = yield* Option.fromNullable(diagnostic.start)
+      const file = yield* Option.fromNullishOr(diagnostic.file)
+      const start = yield* Option.fromNullishOr(diagnostic.start)
       const { line, character } = file.getLineAndCharacterOfPosition(start)
       return new SourceLocation({
         file: toWorkspacePath(rootDir, file.fileName),

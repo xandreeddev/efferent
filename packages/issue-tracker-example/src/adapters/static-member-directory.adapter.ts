@@ -8,12 +8,12 @@ export const StaticMemberDirectoryLive = (
 ): Layer.Layer<MemberDirectory> =>
   Layer.succeed(MemberDirectory, {
     get: (id: MemberId) =>
-      Option.match(Option.fromNullable(members.find((member) => member.id === id)), {
+      Option.match(Option.fromNullishOr(members.find((member) => member.id === id)), {
         onNone: () => Effect.fail({ _tag: "MemberNotFound" as const, memberId: id }),
         onSome: Effect.succeed,
       }),
     recommend: (_issue: Issue) =>
-      Option.match(Option.fromNullable(members.find((member) => member.active)), {
+      Option.match(Option.fromNullishOr(members.find((member) => member.active)), {
         onNone: () => Effect.fail({ _tag: "NoAvailableMember" as const }),
         onSome: Effect.succeed,
       }),

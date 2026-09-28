@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Stream } from "effect"
 import type { Scope } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import {
   cacheKeyOf,
   ContributionsLive,
@@ -80,7 +80,7 @@ const runners: ReadonlyArray<readonly [string, Effect.Effect<Pick<Agent, "turn">
 runners.map(([name, runner]) => describe(`${name} conforms to the turn contract`, () => {
   const checks = turnConformance(runner, Effect.runSync(services))
   checks.map((check) => test(check.name, async () => {
-    const exit = await Effect.runPromise(Effect.either(check.run))
-    expect(exit._tag === "Left" ? exit.left.message : "ok").toBe("ok")
+    const exit = await Effect.runPromise(Effect.result(check.run))
+    expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
 }))

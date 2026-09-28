@@ -1,7 +1,7 @@
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Deferred, Effect, Either, Fiber, Match, Option, Queue, Ref, Runtime, Schema, Scope } from "effect"
+import { Context, Deferred, Effect, Fiber, Match, Option, Queue, Ref, Result, Schema, Scope } from "effect"
 import { assembleContext, bundleSummary, fmtChars } from "../context/assemble.js"
 import type { ContextSet, StandingSource } from "../context/context-set.entity.js"
 import {
@@ -114,7 +114,7 @@ const withTuiChassis = (
   body: (chassis: {
     readonly store: SmithStore
     readonly publish: (event: SmithEvent) => Effect.Effect<void>
-    readonly rt: Runtime.Runtime<TuiServices>
+    readonly rt: Context.Context<TuiServices>
     readonly exitDeferred: Deferred.Deferred<number>
   }) => Effect.Effect<SmithTuiContext, never, TuiServices | Scope.Scope>,
 ): Effect.Effect<number, never, TuiServices> => {
@@ -124,7 +124,7 @@ const withTuiChassis = (
       const queue = yield* Queue.unbounded<SmithEvent>()
       const publish = (event: SmithEvent) =>
         Queue.offer(queue, event).pipe(Effect.asVoid)
-      const rt = yield* Effect.runtime<TuiServices>()
+      const rt = yield* Effect.context<TuiServices>()
 
       const settings = yield* Effect.flatMap(SettingsStore, (store) => store.load).pipe(
         Effect.orDie,
@@ -210,19 +210,19 @@ export const runTui = (
       const session = yield* Effect.forkScoped(
         runForgeSession(run, publish, doc).pipe(
           Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
-          Effect.catchAll(() => Effect.succeed(2)),
+          Effect.catch(() => Effect.succeed(2)),
           Effect.tap((code) => Effect.sync(() => store.setExitCode(code))),
         ),
       )
       return {
         store,
         runConfig: run,
-        run: (effect) => Runtime.runPromise(rt)(effect),
+        run: (effect) => Effect.runPromiseWith(rt)(effect),
         interrupt: () => {
-          Runtime.runFork(rt)(Fiber.interrupt(session))
+          Effect.runForkWith(rt)(Fiber.interrupt(session))
         },
         exit: (code) => {
-          Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+          Effect.runForkWith(rt)(Deferred.succeed(exitDeferred, code))
         },
       }
     }),
@@ -244,7 +244,7 @@ export const runTuiProfile = (
             store.addUserLine(text)
             store.setBusy(true)
           })
-          yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
+          yield* session.send(text).pipe(Effect.catch(() => Effect.succeedNone))
           const queued = yield* Effect.sync(() => store.drainQueue())
           yield* queued.length > 0 ? turn(queued.join("\n\n")) : Effect.void
         }).pipe(Effect.ensuring(Effect.sync(() => store.setBusy(false))))
@@ -258,10 +258,10 @@ export const runTuiProfile = (
       return {
         store,
         runConfig: run,
-        run: (effect) => Runtime.runPromise(rt)(effect),
+        run: (effect) => Effect.runPromiseWith(rt)(effect),
         interrupt: () => store.setNotice("profile has no forge run to interrupt — :quit to leave"),
         exit: (code) => {
-          Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+          Effect.runForkWith(rt)(Deferred.succeed(exitDeferred, code))
         },
         sendProfile: (text) => {
           if (store.busy()) {
@@ -269,13 +269,13 @@ export const runTuiProfile = (
             store.setNotice("queued — steered in at the next step")
             return
           }
-          Runtime.runFork(rt)(turn(text))
+          Effect.runForkWith(rt)(turn(text))
         },
         lock: () => {
-          Runtime.runFork(rt)(
+          Effect.runForkWith(rt)(
             session.lock.pipe(
               Effect.tap(() => Effect.sync(() => store.setNotice("profile locked"))),
-              Effect.catchAll((error) => Effect.sync(() => store.setNotice(error.message))),
+              Effect.catch((error) => Effect.sync(() => store.setNotice(error.message))),
             ),
           )
         },
@@ -308,14 +308,14 @@ export const runTuiRefine = (
             store.addUserLine(text)
             store.setBusy(true)
           })
-          const draft = yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
+          const draft = yield* session.send(text).pipe(Effect.catch(() => Effect.succeedNone))
           yield* Effect.sync(() => {
             if (autoLock && Option.isSome(draft) && !store.refine().locked) {
               store.setNotice("draft ready — auto-locking (--yes)")
             }
           })
           if (autoLock && Option.isSome(draft) && !store.refine().locked) {
-            yield* session.lock.pipe(Effect.catchAll(() => Effect.void))
+            yield* session.lock.pipe(Effect.catch(() => Effect.void))
           }
           // Anything typed WHILE this turn ran is drained into the next one,
           // all at once — never dropped, never held until the session ends.
@@ -327,7 +327,7 @@ export const runTuiRefine = (
       yield* Effect.forkScoped(turn(idea))
 
       const startForge = (): void => {
-        Runtime.runFork(
+        Effect.runForkWith(
           rt,
         )(
           Effect.gen(function* () {
@@ -349,7 +349,7 @@ export const runTuiRefine = (
               steerFromQueue(store),
             ).pipe(
               Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
-              Effect.catchAll(() => Effect.succeed(2)),
+              Effect.catch(() => Effect.succeed(2)),
             )
             yield* Effect.sync(() => store.setExitCode(code))
           }),
@@ -359,12 +359,12 @@ export const runTuiRefine = (
       return {
         store,
         runConfig: run,
-        run: (effect) => Runtime.runPromise(rt)(effect),
+        run: (effect) => Effect.runPromiseWith(rt)(effect),
         interrupt: () => {
           store.setNotice("refine has no run to interrupt — :quit to leave")
         },
         exit: (code) => {
-          Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+          Effect.runForkWith(rt)(Deferred.succeed(exitDeferred, code))
         },
         sendRefine: (text) => {
           if (store.busy()) {
@@ -372,15 +372,15 @@ export const runTuiRefine = (
             store.setNotice("queued — steered in at the next step")
             return
           }
-          Runtime.runFork(rt)(turn(text))
+          Effect.runForkWith(rt)(turn(text))
         },
         lock: () => {
-          Runtime.runFork(
+          Effect.runForkWith(
             rt,
           )(
             session.lock.pipe(
               Effect.tap(() => Effect.sync(() => store.setNotice("locked — :forge to build"))),
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.sync(() => store.setNotice(error.message)),
               ),
             ),
@@ -403,7 +403,7 @@ export const runTuiRefine = (
 export interface WorkspaceChassis {
   readonly store: SmithStore
   readonly publish: (event: SmithEvent) => Effect.Effect<void>
-  readonly rt: Runtime.Runtime<TuiServices>
+  readonly rt: Context.Context<TuiServices>
   readonly exitDeferred: Deferred.Deferred<number>
 }
 
@@ -432,9 +432,9 @@ export const makeWorkspaceBody = (
       // on the notice line (live-caught: a swallowed defect looked like
       // "nothing happens" to the user).
       const forked = <A, E>(label: string, effect: Effect.Effect<A, E, TuiServices>) =>
-        Runtime.runFork(rt)(
+        Effect.runForkWith(rt)(
           effect.pipe(
-            Effect.catchAllCause((cause) =>
+            Effect.catchCause((cause) =>
               Effect.sync(() => {
                 store.setNotice(`${label} crashed: ${String(cause).slice(0, 140)}`)
               }),
@@ -451,11 +451,11 @@ export const makeWorkspaceBody = (
         )
       const sessionState = Ref.get(stateRef)
       /** A fiber's first action: register as the running turn. */
-      const registerTurn = Effect.withFiberRuntime<void>((fiber) =>
+      const registerTurn = Effect.withFiber<void>((fiber) =>
         transition(turnStarted(fiber)).pipe(Effect.asVoid),
       )
       /** A fiber's `ensuring`: unregister — only its own registration. */
-      const unregisterTurn = Effect.withFiberRuntime<void>((fiber) =>
+      const unregisterTurn = Effect.withFiber<void>((fiber) =>
         transition(turnEnded(fiber)).pipe(Effect.asVoid),
       )
 
@@ -496,7 +496,7 @@ export const makeWorkspaceBody = (
         const docs = yield* Effect.forEach(slugs, (slug) =>
           loadSpecDoc(run.cwd, slug).pipe(
             Effect.map(Option.some),
-            Effect.catchAll(() => Effect.succeedNone),
+            Effect.catch(() => Effect.succeedNone),
           ),
         )
         const runs = yield* readRuns(join(run.cwd, ".foundry", "runs"))
@@ -508,7 +508,7 @@ export const makeWorkspaceBody = (
         const statuses: ReadonlyArray<ProviderStatus> = SMITH_PROVIDERS.map((provider) => ({
           provider,
           configured: Option.map(
-            Option.fromNullable(
+            Option.fromNullishOr(
               provider === "openai"
                 ? credentials.get("openai-codex") ?? credentials.get("openai")
                 : credentials.get(provider),
@@ -545,7 +545,7 @@ export const makeWorkspaceBody = (
             store.addUserLine(text)
             store.setBusy(true)
           })
-          yield* session.send(text).pipe(Effect.catchAll(() => Effect.succeedNone))
+          yield* session.send(text).pipe(Effect.catch(() => Effect.succeedNone))
           yield* refreshWorkspace
           // Drain anything typed during this turn into the next one, batched —
           // the queue is read on the NEXT iteration, not held to session end.
@@ -556,7 +556,7 @@ export const makeWorkspaceBody = (
       /** The turn as a registered fiber: it announces itself first and
        *  withdraws last, so the session never holds a dead handle. */
       const registered = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-        registerTurn.pipe(Effect.zipRight(body), Effect.ensuring(unregisterTurn.pipe(Effect.zipRight(Effect.sync(() => store.setBusy(false))))))
+        registerTurn.pipe(Effect.andThen(body), Effect.ensuring(unregisterTurn.pipe(Effect.andThen(Effect.sync(() => store.setBusy(false))))))
 
       /** `:resume <id>`: rebuild the transcript through the SAME reducer the
        *  live path feeds (replay ≡ live-fold), then continue the conversation. */
@@ -619,7 +619,7 @@ export const makeWorkspaceBody = (
                   totalTokens: 0,
                   cacheReadTokens: 0,
                 }))
-                return Effect.zipRight(
+                return Effect.andThen(
                   publish({
                     type: "agent",
                     event: {
@@ -705,7 +705,7 @@ export const makeWorkspaceBody = (
           if (title.length === 0) return
           yield* conv.setTitle(cid, title).pipe(Effect.orDie)
           yield* refreshWorkspace
-        }).pipe(Effect.catchAllDefect(() => Effect.void))
+        }).pipe(Effect.catchDefect(() => Effect.void))
 
       const dropRefine = Effect.gen(function* () {
         yield* stopTurn
@@ -733,7 +733,7 @@ export const makeWorkspaceBody = (
       const replayRun = (id: string, armFollowUp: boolean) =>
         Effect.gen(function* () {
           const runs = yield* readRuns(join(run.cwd, ".foundry", "runs"))
-          const found = Option.fromNullable(runs.find((r) => String(r.id) === id))
+          const found = Option.fromNullishOr(runs.find((r) => String(r.id) === id))
           if (Option.isNone(found)) {
             yield* Effect.sync(() => store.setNotice(`no run ${id.slice(0, 8)} on file`))
             return
@@ -778,7 +778,7 @@ export const makeWorkspaceBody = (
       const specOnFile = (slug: string) =>
         loadSpecDoc(run.cwd, slug).pipe(
           Effect.map(Option.some),
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.sync(() => store.setNotice(error.message)).pipe(Effect.as(Option.none<SpecDoc>())),
           ),
         )
@@ -825,7 +825,7 @@ export const makeWorkspaceBody = (
           const at = yield* Effect.sync(() => new Date().toISOString())
           const locked = yield* lockSpecDoc(run.cwd, doc.value, at).pipe(
             Effect.map(Option.some),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.sync(() => store.setNotice(error.message)).pipe(Effect.as(Option.none<SpecDoc>())),
             ),
           )
@@ -853,7 +853,7 @@ export const makeWorkspaceBody = (
           yield* Option.exists(current, (open) => open === slug) ? dropRefine : Effect.void
           yield* fs
             .remove(specPath(run.cwd, slug))
-            .pipe(Effect.catchAll((error) => Effect.sync(() => store.setNotice(error.message))))
+            .pipe(Effect.catch((error) => Effect.sync(() => store.setNotice(error.message))))
           yield* refreshWorkspace
           yield* Effect.sync(() => store.setNotice(`deleted ${slug}`))
         })
@@ -916,7 +916,7 @@ export const makeWorkspaceBody = (
                         publish,
                         steerFromQueue(store),
                       ).pipe(
-                        Effect.catchAll((error) =>
+                        Effect.catch((error) =>
                           publish({ type: "forge_error", message: `follow-up: ${String(error)}` }),
                         ),
                       )
@@ -949,7 +949,7 @@ export const makeWorkspaceBody = (
                       // No follow-up target: new text starts the next idea.
                       onNone: () =>
                         dropRefine.pipe(
-                          Effect.zipRight(newRefine),
+                          Effect.andThen(newRefine),
                           Effect.flatMap((created) => refineTurn(created, true)),
                         ),
                     }),
@@ -974,7 +974,7 @@ export const makeWorkspaceBody = (
               onSome: (s) =>
                 loadSpecDoc(run.cwd, s).pipe(
                   Effect.map(Option.some),
-                  Effect.catchAll((error) =>
+                  Effect.catch((error) =>
                     Effect.sync(() => {
                       store.setNotice(error.message)
                     }).pipe(Effect.as(Option.none<SpecDoc>())),
@@ -1004,14 +1004,14 @@ export const makeWorkspaceBody = (
             })
             yield* transition(beginForge(doc.value))
             const forgeRunner = seams.forgeRunner ?? runForgeSession
-            Runtime.runFork(rt)(
+            Effect.runForkWith(rt)(
               // The forge fiber registers itself as its FIRST action and
               // settles the session in `ensuring` — the parent never holds
               // a handle that may already be dead (the old stale-Some race).
-              Effect.withFiberRuntime<void>((fiber) =>
+              Effect.withFiber<void>((fiber) =>
                 transition(forgeStarted(fiber)).pipe(Effect.asVoid),
               ).pipe(
-                Effect.zipRight(
+                Effect.andThen(
                   forgeRunner({ ...run, task: doc.value.goal }, publish, doc, steerFromQueue(store)),
                 ),
                 // ANY finished run arms follow-up (a rejected run is the one
@@ -1032,7 +1032,7 @@ export const makeWorkspaceBody = (
                           : Option.none(),
                     }),
                   ).pipe(
-                    Effect.zipRight(
+                    Effect.andThen(
                       Effect.sync(() => {
                         store.setNotice(
                           "run finished — follow up freely (the coder keeps its context) · :new for the next idea",
@@ -1042,9 +1042,9 @@ export const makeWorkspaceBody = (
                   ),
                 ),
                 Effect.map((result) => (result.run.outcome._tag === "accepted" ? 0 : 1)),
-                Effect.catchAll(() => Effect.succeed(2)),
+                Effect.catch(() => Effect.succeed(2)),
                 Effect.tap((code) => Effect.sync(() => store.setExitCode(code))),
-                Effect.zipLeft(refreshWorkspace),
+                Effect.tap(() => refreshWorkspace),
                 Effect.asVoid,
                 // A crashed or interrupted forge still SETTLES the session —
                 // with nothing armed; a settled one is left as it is.
@@ -1063,19 +1063,19 @@ export const makeWorkspaceBody = (
        *  notice) → save → re-measure the panel → say what happened. */
       const updateContext = (
         label: string,
-        change: (set: ContextSet) => Either.Either<{ readonly set: ContextSet; readonly notice: string }, string>,
+        change: (set: ContextSet) => Result.Result<{ readonly set: ContextSet; readonly notice: string }, string>,
       ): void => {
         forked(
           label,
           Effect.gen(function* () {
             const set = yield* loadContextSet(run.cwd)
-            yield* Either.match(change(set), {
-              onLeft: (message) => Effect.sync(() => store.setNotice(message)),
-              onRight: (next) =>
+            yield* Result.match(change(set), {
+              onFailure: (message) => Effect.sync(() => store.setNotice(message)),
+              onSuccess: (next) =>
                 saveContextSet(run.cwd, next.set).pipe(
-                  Effect.zipRight(refreshContext),
-                  Effect.zipRight(Effect.sync(() => store.setNotice(next.notice))),
-                  Effect.catchAll((error) => Effect.sync(() => store.setNotice(error.message))),
+                  Effect.andThen(refreshContext),
+                  Effect.andThen(Effect.sync(() => store.setNotice(next.notice))),
+                  Effect.catch((error) => Effect.sync(() => store.setNotice(error.message))),
                 ),
             })
           }),
@@ -1083,26 +1083,26 @@ export const makeWorkspaceBody = (
       }
 
       const pinAt = (set: ContextSet, token: string) =>
-        Either.fromOption(findPinIndex(set, token), () => `no such pin: ${token} (:context lists them by number)`)
+        Result.fromOption(findPinIndex(set, token), () => `no such pin: ${token} (:context lists them by number)`)
 
       const contextActions = {
         add: (ref: string) =>
           updateContext("context add", (set) =>
-            Either.map(parsePinRef(ref), (pin) => ({
+            Result.map(parsePinRef(ref), (pin) => ({
               set: withPin(set, pin),
               notice: `pinned ${renderPinRef(pin)} — :context show previews what the next turn carries`,
             })),
           ),
         drop: (token: string) =>
           updateContext("context drop", (set) =>
-            Either.map(pinAt(set, token), (index) => ({
+            Result.map(pinAt(set, token), (index) => ({
               set: withoutPin(set, index),
               notice: `dropped ${renderPinRef(set.pins[index]!)}`,
             })),
           ),
         toggle: (name: StandingSource) =>
           updateContext("context toggle", (set) =>
-            Either.right({
+            Result.succeed({
               set: toggleStanding(set, name),
               notice: `${name} ${isStandingOn(set, name) ? "off — the model stops seeing it" : "on"}`,
             }),
@@ -1110,12 +1110,12 @@ export const makeWorkspaceBody = (
         set: (name: StandingSource, on: boolean) =>
           updateContext("context set", (set) =>
             isStandingOn(set, name) === on
-              ? Either.left(`${name} is already ${on ? "on" : "off"}`)
-              : Either.right({ set: toggleStanding(set, name), notice: `${name} ${on ? "on" : "off"}` }),
+              ? Result.fail(`${name} is already ${on ? "on" : "off"}`)
+              : Result.succeed({ set: toggleStanding(set, name), notice: `${name} ${on ? "on" : "off"}` }),
           ),
         setPin: (token: string, on: boolean) =>
           updateContext("context pin", (set) =>
-            Either.map(pinAt(set, token), (index) => ({
+            Result.map(pinAt(set, token), (index) => ({
               set: setPinOn(set, index, on),
               notice: `${renderPinRef(set.pins[index]!)} ${on ? "on" : "off"}`,
             })),
@@ -1142,19 +1142,19 @@ export const makeWorkspaceBody = (
         clear: () =>
           updateContext("context clear", (set) =>
             set.pins.length === 0
-              ? Either.left("no pins to clear")
-              : Either.right({ set: clearPins(set), notice: `cleared ${set.pins.length} pin(s)` }),
+              ? Result.fail("no pins to clear")
+              : Result.succeed({ set: clearPins(set), notice: `cleared ${set.pins.length} pin(s)` }),
           ),
         budget: (chars: number) =>
           updateContext("context budget", (set) =>
-            Either.right({ set: withBudget(set, chars), notice: `pins budget ${fmtChars(withBudget(set, chars).budgetChars)} chars` }),
+            Result.succeed({ set: withBudget(set, chars), notice: `pins budget ${fmtChars(withBudget(set, chars).budgetChars)} chars` }),
           ),
       }
 
       const teardown = (): void => {
         // A live forge fiber and any OAuth loopback server must die BEFORE
         // the renderer restores, or the process outlives the terminal.
-        Runtime.runFork(rt)(
+        Effect.runForkWith(rt)(
           Effect.flatMap(sessionState, (state) =>
             Effect.forEach([runningTurn(state), forgeFiber(state)], (fiber) =>
               Option.match(fiber, {
@@ -1176,16 +1176,16 @@ export const makeWorkspaceBody = (
       return {
         store,
         runConfig: run,
-        run: (effect) => Runtime.runPromise(rt)(effect),
+        run: (effect) => Effect.runPromiseWith(rt)(effect),
         interrupt: () => {
-          Runtime.runFork(rt)(
+          Effect.runForkWith(rt)(
             Effect.gen(function* () {
               const target = interruptTarget(yield* sessionState)
               yield* Option.match(target, {
                 onNone: () => Effect.sync(() => store.setNotice("nothing to interrupt")),
                 onSome: ({ kind, fiber }) =>
                   Fiber.interrupt(fiber).pipe(
-                    Effect.zipRight(
+                    Effect.andThen(
                       Effect.sync(() =>
                         store.setNotice(kind === "turn" ? "turn interrupted" : "forge interrupted"),
                       ),
@@ -1198,11 +1198,11 @@ export const makeWorkspaceBody = (
         isRunning: () => isRunning(Effect.runSync(Ref.get(stateRef))),
         exit: (code) => {
           teardown()
-          Runtime.runFork(rt)(Deferred.succeed(exitDeferred, code))
+          Effect.runForkWith(rt)(Deferred.succeed(exitDeferred, code))
         },
         sendText,
         lock: () => {
-          Runtime.runFork(
+          Effect.runForkWith(
             rt,
           )(
             Effect.flatMap(Effect.map(sessionState, currentSession), (session) =>
@@ -1214,8 +1214,8 @@ export const makeWorkspaceBody = (
                     Effect.tap(() =>
                       Effect.sync(() => store.setNotice("locked — :forge to build")),
                     ),
-                    Effect.zipLeft(refreshWorkspace),
-                    Effect.catchAll((error) =>
+                    Effect.tap(() => refreshWorkspace),
+                    Effect.catch((error) =>
                       Effect.sync(() => store.setNotice(error.message)),
                     ),
                     Effect.asVoid,
@@ -1224,9 +1224,9 @@ export const makeWorkspaceBody = (
             ),
           )
         },
-        forge: (slug?: string) => startForge(Option.fromNullable(slug)),
+        forge: (slug?: string) => startForge(Option.fromNullishOr(slug)),
         newSpec: () => {
-          Runtime.runFork(rt)(dropRefine)
+          Effect.runForkWith(rt)(dropRefine)
         },
         dashboard: {
           openSpec: (slug) => {

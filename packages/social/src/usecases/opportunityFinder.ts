@@ -1,4 +1,4 @@
-import type { LanguageModel } from "@effect/ai"
+import type { LanguageModel } from "effect/ai"
 import { Effect, Option } from "effect"
 import { CurrentModelCallPolicy, type AgentMessage } from "@xandreed/core"
 import { runLoop } from "@xandreed/plugin-agent-loop"
@@ -38,7 +38,7 @@ export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
     yield* Effect.forEach(queries, (query) =>
       Effect.gen(function* () {
         const results: ReadonlyArray<XSearchResult> = yield* x.search(query).pipe(
-          Effect.catchAll((err) =>
+          Effect.catch((err) =>
             Effect.logError(`Search failed for query "${query}": ${err.message}`).pipe(
               Effect.as([] as ReadonlyArray<XSearchResult>),
             ),
@@ -67,11 +67,11 @@ export const findOpportunitiesAndDraft = (queries: ReadonlyArray<string>) =>
                 // draft/abstain discipline, judge 0.93, earned-only links.
                 // The model follows the general role; re-run
                 // `bun run evals:social-matrix` before trusting a role change.
-                Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2000 })),
+                Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2000 })),
                 Effect.tap((result) =>
                   Effect.logInfo(`Evaluation complete for ${tweet.id}. Final text: ${result.finalText.slice(0, 100)}...`),
                 ),
-                Effect.catchAll((err) => {
+                Effect.catch((err) => {
                   const detail =
                     typeof err === "object" && err !== null
                       ? ((err as { message?: string }).message ?? (err as { error?: string }).error ?? String(err))

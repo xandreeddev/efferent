@@ -38,7 +38,7 @@ export const matchOverTagSwitch: IdiomRule = {
   id: RuleId.make("effect/match-over-tag-switch"),
   defaultSeverity: "error",
   description: "discriminated unions are branched with Match, not `switch (x._tag)` / else-if ladders",
-  fixHint: "Match.value(x).pipe(Match.tag(…), Match.exhaustive) — or Option.match / Either.match / Exit.match",
+  fixHint: "Match.value(x).pipe(Match.tag(…), Match.exhaustive) — or Option.match / Result.match / Exit.match",
   check: ({ sourceFile }) => {
     const matches: Array<RuleMatch> = []
     walk(sourceFile, (node) => {

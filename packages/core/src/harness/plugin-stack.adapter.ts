@@ -30,13 +30,13 @@ const contributionsOf = (context: Context.Context<never>): ReadonlyArray<Contrib
  */
 export const stackPlugins = <A2, E2, R2>(next: Layer.Layer<A2, E2, R2>) =>
   <A1, E1, R1>(base: Layer.Layer<A1, E1, R1>): Layer.Layer<A1 | A2, E1 | E2, R1 | Exclude<R2, A1>> =>
-    Layer.scopedContext(Effect.gen(function* () {
+    Layer.effectContext(Effect.gen(function* () {
       const scope = yield* Effect.scope
       const lower = yield* Layer.buildWithScope(base, scope)
       const upper = yield* Layer.buildWithScope(next, scope).pipe(Effect.provide(lower))
       const merged = Context.merge(lower, upper)
-      const contributes = lower.unsafeMap.has(Contributions.key) || upper.unsafeMap.has(Contributions.key)
+      const contributes = lower.mapUnsafe.has(Contributions.key) || upper.mapUnsafe.has(Contributions.key)
       return contributes
-        ? Context.unsafeMake<A1 | A2>(new Map([...merged.unsafeMap, [Contributions.key, [...contributionsOf(lower), ...contributionsOf(upper)]]]))
+        ? Context.makeUnsafe<A1 | A2>(new Map([...merged.mapUnsafe, [Contributions.key, [...contributionsOf(lower), ...contributionsOf(upper)]]]))
         : merged
     }))

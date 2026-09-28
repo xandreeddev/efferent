@@ -40,7 +40,7 @@ export const noNullableReturn: IdiomRule = {
   id: RuleId.make("effect/no-nullable-return"),
   defaultSeverity: "error",
   description: "exported functions must not return `A | undefined` / `A | null`",
-  fixHint: "return Option<A> (Option.fromNullable at the boundary); keep nullable unions for wire schemas only",
+  fixHint: "return Option<A> (Option.fromNullishOr at the boundary); keep nullable unions for wire schemas only",
   check: ({ sourceFile, checker }) =>
     exportedFunctions(sourceFile).flatMap((fn): ReadonlyArray<RuleMatch> => {
       const signature = checker.getSignatureFromDeclaration(fn)

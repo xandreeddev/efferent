@@ -13,7 +13,7 @@ export const memoryLogDefaults: MemoryLogConfig = { event: "memory.entries" }
  * ids inside — any host journal works, whatever its sequence numbering.
  */
 export const memoryLogPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-log", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-memory-log", version: "0.7.0-next.0", scope: "runtime",
   config: MemoryLogConfig, defaults: memoryLogDefaults,
   provides: [MemoryLog],
   layer: ({ event }) => Layer.succeed(MemoryLog, MemoryLog.of({

@@ -298,7 +298,7 @@ export const reduceConversationIn = (
           // session (the session-level number is the ctx gauge). The cached
           // share shows what the prefix cache absorbed of the input.
           const tag = [
-            ...Option.match(Option.fromNullable(m.model), { onNone: () => [], onSome: (id) => [id] }),
+            ...Option.match(Option.fromNullishOr(m.model), { onNone: () => [], onSome: (id) => [id] }),
             `turn ${fmtTokens(tokens.input)} in${
               tokens.cached > 0 ? ` (${fmtTokens(tokens.cached)} cached)` : ""
             } · ${fmtTokens(tokens.output)} out`,
@@ -441,7 +441,7 @@ export const fmtTokens = (n: number): string =>
  *  everything the model was just sent. None until a turn completes. A live
  *  (streaming) block carries no usage yet and must not zero the gauge. */
 export const contextTokens = (state: ConversationState): Option.Option<number> =>
-  Option.fromNullable(
+  Option.fromNullishOr(
     state.blocks.reduce<number | undefined>(
       (latest, block) =>
         (block.kind === "assistant" || block.kind === "reasoning") &&

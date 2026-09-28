@@ -9,7 +9,7 @@ import { makeSmithCodingHandlers } from "./codingToolkit.js"
 const withHandlers = <A>(
   cwd: string,
   run: (
-    handlers: Effect.Effect.Success<ReturnType<typeof makeSmithCodingHandlers>>,
+    handlers: Effect.Success<ReturnType<typeof makeSmithCodingHandlers>>,
   ) => Effect.Effect<A, unknown>,
 ): Promise<A> =>
   Effect.runPromise(
@@ -28,17 +28,17 @@ describe("the smith coding handlers — the direct coder's hands", () => {
       Effect.gen(function* () {
         const db = yield* h
           .write_file({ path: ".efferent/smith.db", content: "gone" })
-          .pipe(Effect.either)
-        expect(db._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(db._tag).toBe("Failure")
         expect(JSON.stringify(db)).toContain("harness state")
         const artifact = yield* h
           .write_file({ path: ".foundry/runs/x.json", content: "{}" })
-          .pipe(Effect.either)
-        expect(artifact._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(artifact._tag).toBe("Failure")
         const edit = yield* h
           .edit_file({ path: ".efferent/memory/ledger.jsonl", oldText: "a", newText: "b" })
-          .pipe(Effect.either)
-        expect(edit._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(edit._tag).toBe("Failure")
         // A sibling that merely SHARES the prefix is untouched.
         const ok = yield* h.write_file({ path: ".efferent-notes.md", content: "fine" })
         expect(ok.written).toBe(true)
@@ -60,18 +60,18 @@ describe("the smith coding handlers — the direct coder's hands", () => {
             // Weakening or deleting it is refused, by convention path…
             const write = yield* h
               .write_file({ path: "foundry.config.ts", content: "export default { typecheck: false }" })
-              .pipe(Effect.either)
-            expect(write._tag).toBe("Left")
+              .pipe(Effect.result)
+            expect(write._tag).toBe("Failure")
             expect(JSON.stringify(write)).toContain("ARMED gate profile")
             const edit = yield* h
               .edit_file({ path: "foundry.config.ts", oldText: "true", newText: "false" })
-              .pipe(Effect.either)
-            expect(edit._tag).toBe("Left")
+              .pipe(Effect.result)
+            expect(edit._tag).toBe("Failure")
             // …and by the run's explicit --config path.
             const custom = yield* h
               .write_file({ path: "custom-gates.ts", content: "export default {}" })
-              .pipe(Effect.either)
-            expect(custom._tag).toBe("Left")
+              .pipe(Effect.result)
+            expect(custom._tag).toBe("Failure")
             expect(JSON.stringify(custom)).toContain("ARMED gate profile")
           }),
         ),
@@ -87,14 +87,14 @@ describe("the smith coding handlers — the direct coder's hands", () => {
       Effect.gen(function* () {
         const denied = yield* h
           .read_file({ path: `${process.env.HOME}/.efferent/auth.json` })
-          .pipe(Effect.either)
-        expect(denied._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(denied._tag).toBe("Failure")
         expect(JSON.stringify(denied)).toContain("OutsideWorkspace")
         // A relative dodge resolves to the same file and is equally refused.
         const dodged = yield* h
           .read_file({ path: "../../../../../../../..//" + `${process.env.HOME}/.efferent/auth.json`.slice(1) })
-          .pipe(Effect.either)
-        expect(dodged._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(dodged._tag).toBe("Failure")
       }),
     )
   })
@@ -107,15 +107,15 @@ describe("the smith coding handlers — the direct coder's hands", () => {
         // Ambiguous ("= 1" appears twice) → bounced, file untouched.
         const ambiguous = yield* h
           .edit_file({ path: "a.ts", oldText: "= 1", newText: "= 2" })
-          .pipe(Effect.either)
-        expect(ambiguous._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(ambiguous._tag).toBe("Failure")
         expect(JSON.stringify(ambiguous)).toContain("2 times")
 
         // Miss → bounced with the re-read hint.
         const miss = yield* h
           .edit_file({ path: "a.ts", oldText: "const z = 9", newText: "" })
-          .pipe(Effect.either)
-        expect(miss._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(miss._tag).toBe("Failure")
         expect(JSON.stringify(miss)).toContain("not found")
 
         // Unique → applied (the flat single-edit shape).
@@ -138,12 +138,12 @@ describe("the smith coding handlers — the direct coder's hands", () => {
       Effect.gen(function* () {
         const refused = yield* h
           .write_file({ path: join(outside, "evil.txt"), content: "x" })
-          .pipe(Effect.either)
-        expect(refused._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(refused._tag).toBe("Failure")
         expect(JSON.stringify(refused)).toContain("OutsideWorkspace")
 
-        const read = yield* h.read_file({ path: join(outside, "secret.txt") }).pipe(Effect.either)
-        expect(read._tag).toBe("Left")
+        const read = yield* h.read_file({ path: join(outside, "secret.txt") }).pipe(Effect.result)
+        expect(read._tag).toBe("Failure")
         expect(JSON.stringify(read)).toContain("OutsideWorkspace")
       }),
     )
@@ -156,13 +156,13 @@ describe("the smith coding handlers — the direct coder's hands", () => {
     symlinkSync(outside, join(cwd, "escape"), "dir")
     await withHandlers(cwd, (h) =>
       Effect.gen(function* () {
-        const read = yield* h.read_file({ path: "escape/secret.txt" }).pipe(Effect.either)
-        expect(read._tag).toBe("Left")
+        const read = yield* h.read_file({ path: "escape/secret.txt" }).pipe(Effect.result)
+        expect(read._tag).toBe("Failure")
 
         const write = yield* h
           .write_file({ path: "escape/overwrite.txt", content: "escaped" })
-          .pipe(Effect.either)
-        expect(write._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(write._tag).toBe("Failure")
         expect(JSON.stringify(write)).toContain("OutsideWorkspace")
       }),
     )
@@ -177,8 +177,8 @@ describe("the smith coding handlers — the direct coder's hands", () => {
       Effect.gen(function* () {
         const refused = yield* h
           .write_file({ path: "src/empty.ts", content: "" })
-          .pipe(Effect.either)
-        expect(refused._tag).toBe("Left")
+          .pipe(Effect.result)
+        expect(refused._tag).toBe("Failure")
         expect(JSON.stringify(refused)).toContain("EmptyContent")
       }),
     )

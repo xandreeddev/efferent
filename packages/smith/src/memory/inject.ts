@@ -16,8 +16,8 @@ const STALE_MS = 90 * 24 * 60 * 60 * 1000
 const MIN_CORROBORATION_WHEN_STALE = 2
 
 const byTrust: Order.Order<MemoryRecord> = Order.combineAll([
-  Order.mapInput(Order.reverse(Order.number), (r: MemoryRecord) => r.corroboration),
-  Order.mapInput(Order.reverse(Order.string), (r: MemoryRecord) => r.updatedAt),
+  Order.mapInput(Order.flip(Order.Number), (r: MemoryRecord) => r.corroboration),
+  Order.mapInput(Order.flip(Order.String), (r: MemoryRecord) => r.updatedAt),
 ])
 
 /** The injectable view: trusted-first, stale-uncorroborated pruned, bounded. */

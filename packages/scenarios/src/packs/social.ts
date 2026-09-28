@@ -106,7 +106,7 @@ const bootSocial = Effect.gen(function* () {
       }),
     ),
     readAndDraft: handlers.read_thread({ tweetId: "111" }).pipe(
-      Effect.zipRight(handlers.write_draft(draft)),
+      Effect.andThen(handlers.write_draft(draft)),
       Effect.matchEffect({
         onFailure: () => Ref.set(accepted, false),
         onSuccess: () => Ref.set(accepted, true),

@@ -9,13 +9,13 @@ export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(
     !dataset.cases.some((item) => item.split === "calibration") || !dataset.cases.some((item) => item.split === "validation")
   if (invalid) return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Dataset needs unique cases, provenance and disjoint calibration/validation families" }))
   yield* Effect.forEach(dataset.cases, (item) => Effect.all([
-    Schema.validate(dataset.input)(item.input), Schema.validate(dataset.reference)(item.reference),
+    Schema.decodeEffect(Schema.toType(dataset.input))(item.input), Schema.decodeEffect(Schema.toType(dataset.reference))(item.reference),
   ]).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) }))))
   return dataset
 })
 
 export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: ReadonlyArray<string>) =>
-  Schema.validate(Schema.Array(Metric))(metrics).pipe(
+  Schema.decodeEffect(Schema.toType(Schema.Array(Metric)))(metrics).pipe(
     Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })),
     Effect.flatMap((values) => {
       const names = values.map((metric) => metric.name)

@@ -12,7 +12,7 @@ import type { Judge } from "@xandreed/evals/model"
 
 export const SPEC_QUALITY_RUBRIC_VERSION = "1.0.0"
 
-export const SpecGrades = Schema.parseJson(
+export const SpecGrades = Schema.fromJsonString(
   Schema.Struct({
     goal: Schema.Number,
     acceptance: Schema.Number,
@@ -55,7 +55,7 @@ export const makeSpecQualityJudge = <W>(options: {
     Effect.gen(function* () {
       const doc = yield* options.doc(world)
       const reply = yield* options.call(specQualityRubric(encodeSpecDocText(doc)))
-      const grades = yield* Schema.decodeUnknown(SpecGrades)(lastSpecGradesJson(reply))
+      const grades = yield* Schema.decodeUnknownEffect(SpecGrades)(lastSpecGradesJson(reply))
       return {
         score: specGradesToScore(grades),
         reason: `${grades.summary} — ${AXES.map((axis) => `${axis} ${grades[axis]}/5`).join(" · ")}`,

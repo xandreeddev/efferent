@@ -19,7 +19,12 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  *
  * Boundaries: bun-workspace cross-package imports are bare specifiers, so
  * dependency DIRECTION is expressed via each layer's `externals` allowlist —
- * a package may only name the internal packages beneath it.
+ * a package may only name the internal packages beneath it. `effect` admits
+ * Effect's core modules; each `effect/<module>` barrel that was its own v3
+ * package (effect/ai was @effect/ai) is allowed by name, or all of them with
+ * the raw `effect/` prefix beside `@effect/`. v4 no longer re-exports
+ * fast-check, so property tests name it (core, math) where v3 reached it
+ * through `effect`.
  */
 const CHECKED = [
   "packages/core/src/**",
@@ -58,7 +63,7 @@ const CHECKED = [
 
 /**
  * The declared TYPE-ERASURE boundary: the router wrapping arbitrary provider
- * services, the compat/codex clients speaking @effect/ai's generic surface,
+ * services, the compat/codex clients speaking effect/ai's generic surface,
  * the loop's prompt assembly, the bridge over dynamic MCP tools. `as never`
  * is the design there and nowhere else — a new one anywhere else fails.
  * Test scaffolding (scripted providers, stubbed ports) is out of scope.
@@ -112,8 +117,8 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
   ],
   boundaries: {
-    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","@effect/ai","@xandreed/core","node:","bun:test"]},
-      { name: "ai", path: "packages/ai/src/**", canImport: ["core"], externals: ["effect", "@effect/ai", "@xandreed/core", "bun:test"] },
+    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","effect/ai","@xandreed/core","node:","bun:test"]},
+      { name: "ai", path: "packages/ai/src/**", canImport: ["core"], externals: ["effect", "effect/ai", "@xandreed/core", "bun:test"] },
       {
             "name": "canvas",
             "path": "packages/canvas/src/**",
@@ -128,6 +133,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": ["@xandreed/sdk", "@xandreed/runtime",
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -154,6 +160,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": ["@xandreed/plugin-tools-local",
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -171,7 +178,8 @@ const config: typeof GateSuiteConfig.Encoded = {
             "canImport": [],
             "externals": [
                   "effect",
-                  "@effect/ai",
+                  "effect/ai",
+                  "fast-check",
                   "bun:test"
             ]
       },
@@ -195,6 +203,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -215,7 +224,9 @@ const config: typeof GateSuiteConfig.Encoded = {
             ],
             "externals": ["@xandreed/sdk", "@xandreed/runtime",
                   "effect",
+                  "fast-check",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -237,6 +248,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -252,6 +264,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -267,6 +280,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -283,6 +297,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "bun:test"
             ]
@@ -296,6 +311,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "bun:test"
             ]
@@ -309,6 +325,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "bun:test"
             ]
@@ -322,6 +339,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "bun:test"
             ]
@@ -335,6 +353,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "bun:test"
             ]
@@ -348,6 +367,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -363,6 +383,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -379,6 +400,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -394,6 +416,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -410,6 +433,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -429,6 +453,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -445,6 +470,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -471,6 +497,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": ["@xandreed/sdk","@xandreed/evals",
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -509,6 +536,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -560,6 +588,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -592,6 +621,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": ["@xandreed/sdk", "@xandreed/runtime", "@xandreed/plugin-session-sqlite",
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -611,6 +641,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -628,6 +659,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -649,6 +681,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "node:",
                   "bun",
                   "bun:",
@@ -666,6 +699,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "@effect/",
+                  "effect/",
                   "@xandreed/core",
                   "node:",
                   "bun:test"

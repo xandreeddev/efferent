@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { readRuns } from "@xandreed/foundry"
 import { ConversationStore } from "@xandreed/core"
@@ -24,14 +24,14 @@ const program = (cwd: string) =>
   Effect.gen(function* () {
     const store = yield* ConversationStore
     const sessions = yield* store.listByWorkspace(cwd)
-    const newest = Option.fromNullable(sessions[0])
+    const newest = Option.fromNullishOr(sessions[0])
     if (Option.isNone(newest)) {
       console.error(`no conversations in ${cwd}/.efferent/smith.db`)
       return 2
     }
     const trail = yield* store.list(newest.value.id)
     const runs = yield* readRuns(join(cwd, ".foundry", "runs"))
-    const outcome = Option.match(Option.fromNullable(runs[runs.length - 1]), {
+    const outcome = Option.match(Option.fromNullishOr(runs[runs.length - 1]), {
       onNone: () => "unknown (no run artifact)",
       onSome: (run) => `${run.outcome._tag} after ${run.attempts.length} attempt(s)`,
     })
@@ -39,7 +39,7 @@ const program = (cwd: string) =>
     const reply = yield* LanguageModel.generateText({
       prompt: criticRubric(renderTrailForDigest(trail), outcome),
     })
-    const grades = yield* Schema.decodeUnknown(Grades)(lastGradesJson(reply.text))
+    const grades = yield* Schema.decodeUnknownEffect(Grades)(lastGradesJson(reply.text))
     console.log(`trajectory critic — ${cwd} (${outcome})`)
     console.log(`  score ${gradesToScore(grades).toFixed(2)} — ${gradesToReason(grades)}`)
     return 0
@@ -63,7 +63,7 @@ const code = await Effect.runPromise(
   Effect.scoped(
     program(cwd).pipe(
       Effect.provide(services),
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.sync(() => {
           console.error(`critic failed: ${String(error)}`)
           return 2

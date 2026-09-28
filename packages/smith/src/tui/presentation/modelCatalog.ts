@@ -28,7 +28,7 @@ const CONTEXT_WINDOWS: ReadonlyArray<readonly [RegExp, number]> = [
 ]
 
 export const contextWindowOf = (model: string): Option.Option<number> =>
-  Option.fromNullable(CONTEXT_WINDOWS.find(([pattern]) => pattern.test(model))?.[1])
+  Option.fromNullishOr(CONTEXT_WINDOWS.find(([pattern]) => pattern.test(model))?.[1])
 
 /** Curated $/Mtok (input, output) per model family — the same no-network,
  *  best-effort-constants stance as the context windows. Unknown → None and
@@ -61,7 +61,7 @@ export const costOf = (
   },
 ): Option.Option<number> =>
   Option.map(
-    Option.fromNullable(PRICING.find(([pattern]) => pattern.test(model))?.[1]),
+    Option.fromNullishOr(PRICING.find(([pattern]) => pattern.test(model))?.[1]),
     (rate) => {
       const fresh = Math.max(0, usage.inputTokens - usage.cacheReadTokens)
       return (

@@ -1,4 +1,4 @@
-import type { LanguageModel } from "@effect/ai"
+import type { LanguageModel } from "effect/ai"
 import { Effect, Ref } from "effect"
 import { ConversationStore, makeSession, UserMessage } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"

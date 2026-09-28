@@ -280,61 +280,39 @@ export const responseToolResults = (
       result: p.result,
     }))
 
+/** Effect v4 usage: input and output totals, cache reads inside the input. */
+interface ProviderUsage {
+  readonly inputTokens?: { readonly total?: number | undefined; readonly cacheRead?: number | undefined } | undefined
+  readonly outputTokens?: { readonly total?: number | undefined } | undefined
+}
+
+const carriesUsage = (usage: ProviderUsage | undefined): boolean =>
+  usage?.inputTokens?.total !== undefined || usage?.outputTokens?.total !== undefined
+
 /**
- * Token usage from a response's `usage` + the finish part's metadata. The
- * Anthropic fold matters: its `input_tokens` EXCLUDES cache reads/writes
- * (both ride only in the raw usage on the finish part's anthropic metadata),
- * so without folding them back a fully-cached turn reads ~0 input.
- * Gemini/OpenAI already include cached tokens in their prompt counts.
+ * Token usage from a response's `usage` + the finish part's. Effect's
+ * providers report the FULL input (cache reads and writes included, e.g.
+ * Anthropic's `input_tokens` plus both cache counts) with the cache reads
+ * beside it; Gemini's raw usage metadata is the last fallback.
  */
 export const extractUsage = (
   usage: unknown,
   content: ReadonlyArray<unknown>,
 ): TokenUsage => {
-  const u = (usage ?? {}) as {
-    readonly inputTokens?: number
-    readonly outputTokens?: number
-    readonly totalTokens?: number
-    readonly cachedInputTokens?: number
-  }
+  const u = (usage ?? {}) as ProviderUsage
   // Some streaming adapters emit a finish part from the choice AND a later
   // usage-only finish part — scan all of them, prefer the one carrying usage.
   const finishes = (content as ReadonlyArray<AnyPart>).filter((p) => p.type === "finish")
-  const finish =
-    finishes.find((p) => {
-      const fu = p.usage as { readonly inputTokens?: number; readonly outputTokens?: number } | undefined
-      return fu?.inputTokens !== undefined || fu?.outputTokens !== undefined
-    }) ?? finishes[0]
+  const finish = finishes.find((p) => carriesUsage(p.usage as ProviderUsage | undefined)) ?? finishes[0]
   const gm = (finish?.metadata as
     | { readonly google?: { readonly usageMetadata?: Record<string, number> } }
     | undefined)?.google?.usageMetadata
-  const fu = finish?.usage as
-    | {
-        readonly inputTokens?: number
-        readonly outputTokens?: number
-        readonly totalTokens?: number
-        readonly cachedInputTokens?: number
-      }
-    | undefined
-  const inputTokens = u.inputTokens ?? fu?.inputTokens ?? gm?.["promptTokenCount"] ?? 0
-  const outputTokens = u.outputTokens ?? fu?.outputTokens ?? gm?.["candidatesTokenCount"] ?? 0
-  const totalTokens = u.totalTokens ?? fu?.totalTokens ?? gm?.["totalTokenCount"] ?? 0
+  const fu = finish?.usage as ProviderUsage | undefined
+  const inputTokens = u.inputTokens?.total ?? fu?.inputTokens?.total ?? gm?.["promptTokenCount"] ?? 0
+  const outputTokens = u.outputTokens?.total ?? fu?.outputTokens?.total ?? gm?.["candidatesTokenCount"] ?? 0
+  const totalTokens = carriesUsage(u) || carriesUsage(fu) ? inputTokens + outputTokens : gm?.["totalTokenCount"] ?? 0
   const cacheReadTokens =
-    u.cachedInputTokens ?? fu?.cachedInputTokens ?? gm?.["cachedContentTokenCount"] ?? 0
-  const au = (finish?.metadata as
-    | { readonly anthropic?: { readonly usage?: Record<string, number> } }
-    | undefined)?.anthropic?.usage
-  if (au !== undefined && au !== null && typeof au === "object") {
-    const cacheRead = au["cache_read_input_tokens"] ?? 0
-    const cacheWrite = au["cache_creation_input_tokens"] ?? 0
-    const fullInput = inputTokens + cacheRead + cacheWrite
-    return {
-      inputTokens: fullInput,
-      outputTokens,
-      totalTokens: fullInput + outputTokens,
-      cacheReadTokens: cacheRead,
-    }
-  }
+    u.inputTokens?.cacheRead ?? fu?.inputTokens?.cacheRead ?? gm?.["cachedContentTokenCount"] ?? 0
   return { inputTokens, outputTokens, totalTokens, cacheReadTokens }
 }
 

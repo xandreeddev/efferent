@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Ref, TestClock, TestContext } from "effect"
+import { Effect, Fiber, Ref } from "effect"
+import { TestClock } from "effect/testing"
 import { GateName, WorkspacePath } from "../domain/Brands.js"
 import { GateCrash } from "../domain/Errors.js"
 import type { Workspace } from "../ports/Gate.js"
@@ -19,24 +20,24 @@ describe("makeJudgeGate", () => {
               : Effect.succeed({ sound: true, reasons: [] }),
           ),
         ))
-      const fiber = yield* Effect.fork(gate.run(ws))
+      const fiber = yield* Effect.forkChild(gate.run(ws))
       yield* TestClock.adjust("30 seconds")
       const findings = yield* Fiber.join(fiber)
       expect(findings).toEqual([])
       expect(yield* Ref.get(calls)).toBe(3)
     })
-    await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)))
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer())))
   })
 
   test("retries exhausted still crash fail-closed", async () => {
     const program = Effect.gen(function* () {
       const gate = makeJudgeGate("verifier", () =>
         Effect.fail(new GateCrash({ gate: GateName.make("verifier"), message: "hard down" })))
-      const fiber = yield* Effect.fork(Effect.exit(gate.run(ws)))
+      const fiber = yield* Effect.forkChild(Effect.exit(gate.run(ws)))
       yield* TestClock.adjust("60 seconds")
       const exit = yield* Fiber.join(fiber)
       expect(exit._tag).toBe("Failure")
     })
-    await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)))
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer())))
   })
 })

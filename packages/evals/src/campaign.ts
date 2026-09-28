@@ -19,7 +19,7 @@ import { Cause, Duration, Effect, Option } from "effect"
 
 export const argValue = (name: string): Option.Option<string> => {
   const at = process.argv.indexOf(name)
-  return Option.fromNullable(at < 0 ? undefined : process.argv[at + 1])
+  return Option.fromNullishOr(at < 0 ? undefined : process.argv[at + 1])
 }
 
 export const hasFlag = (name: string): boolean => process.argv.includes(name)
@@ -70,10 +70,10 @@ export const grid = <C, T>(
  * in a disconnected fiber would violate experiment cost and isolation bounds. */
 export const cappedTrial = <A>(capMs: number, trial: Effect.Effect<A, unknown>): Effect.Effect<A, unknown> =>
   trial.pipe(
-    Effect.timeoutFail({
+    Effect.timeoutOrElse({
       duration: Duration.millis(capMs),
-      onTimeout: () =>
-        `trial exceeded the ${capMs}ms execution deadline`,
+      orElse: () => Effect.fail((() =>
+        `trial exceeded the ${capMs}ms execution deadline`)()),
     }),
   )
 
@@ -83,7 +83,7 @@ export const containTrialFailure = <A>(
   failed: (cause: string) => A,
   trial: Effect.Effect<A, unknown>,
 ): Effect.Effect<A> =>
-  trial.pipe(Effect.catchAllCause((cause) => Effect.succeed(failed(Cause.pretty(cause)))))
+  trial.pipe(Effect.catchCause((cause) => Effect.succeed(failed(Cause.pretty(cause)))))
 
 export const persistJson = (path: string, value: unknown): Effect.Effect<void, Error> =>
   Effect.try({
@@ -111,7 +111,7 @@ export const persistTrial = (
     version,
     recordedAt: new Date().toISOString(),
     trial,
-  }).pipe(Effect.catchAll((error) => Effect.logWarning(String(error))))
+  }).pipe(Effect.catch((error) => Effect.logWarning(String(error))))
 
 /* -------------------------------- campaign ------------------------------- */
 
@@ -147,7 +147,7 @@ export const runCampaign = <C, T, Trial>(
     options.cells,
     (cell) =>
       Effect.logInfo(`${options.name} ${options.describe(cell)}`).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           containTrialFailure(
             (cause) => options.failed(cell, cause),
             cappedTrial(options.capMs(cell), options.run(cell)),
@@ -168,7 +168,7 @@ export const runMatrixMain = (scriptName: string, program: Effect.Effect<number,
   if (process.argv[1]?.endsWith(scriptName) !== true) return
   Effect.runPromise(
     program.pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.sync(() => {
           console.error(`${scriptName.replace(/\.ts$/, "")} failed: ${String(error)}`)
           return 1

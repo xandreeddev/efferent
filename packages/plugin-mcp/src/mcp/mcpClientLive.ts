@@ -51,7 +51,7 @@ const outcomeOf = (result: unknown): McpCallOutcome => {
 }
 
 export const McpClientLive = (cwd: string, home: string, configured?: ReadonlyArray<readonly [string, McpServerSpec]>): Layer.Layer<McpClient> =>
-  Layer.scoped(
+  Layer.effect(
     McpClient,
     Effect.gen(function* () {
       const scope = yield* Effect.scope
@@ -65,14 +65,14 @@ export const McpClientLive = (cwd: string, home: string, configured?: ReadonlyAr
       const open = (name: string): Effect.Effect<McpConnection, McpError> =>
         Effect.gen(function* () {
           const servers = yield* configured === undefined ? readMcpServers(cwd, home) : Effect.succeed(configured)
-          const spec = Option.fromNullable(servers.find(([serverName]) => serverName === name)?.[1])
+          const spec = Option.fromNullishOr(servers.find(([serverName]) => serverName === name)?.[1])
           if (Option.isNone(spec)) {
             return yield* Effect.fail(
               new McpError({ server: name, message: "no such server in .efferent/config.json" }),
             )
           }
           const connection = yield* openStdioConnection(name, spec.value, cwd).pipe(
-            Scope.extend(scope),
+            Scope.provide(scope),
           )
           yield* connection
             .request("initialize", {
@@ -81,13 +81,13 @@ export const McpClientLive = (cwd: string, home: string, configured?: ReadonlyAr
               clientInfo: { name: "efferent", version: "1.0.0" },
             })
             .pipe(
-              Effect.timeoutFail({
+              Effect.timeoutOrElse({
                 duration: HANDSHAKE_TIMEOUT_MS,
-                onTimeout: () =>
-                  new McpError({
+                orElse: () =>
+                  Effect.fail(new McpError({
                     server: name,
                     message: `initialize did not answer within ${HANDSHAKE_TIMEOUT_MS}ms`,
-                  }),
+                  })),
               }),
             )
           yield* connection.notify("notifications/initialized", {})
@@ -115,7 +115,7 @@ export const McpClientLive = (cwd: string, home: string, configured?: ReadonlyAr
             // A failed open frees the slot: the next call retries the server
             // instead of inheriting a dead promise forever.
             Effect.tapError((error) =>
-              Deferred.fail(claim.deferred, error).pipe(Effect.zipRight(evict(name))),
+              Deferred.fail(claim.deferred, error).pipe(Effect.andThen(evict(name))),
             ),
           )
         })

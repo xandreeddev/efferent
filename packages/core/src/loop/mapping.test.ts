@@ -98,7 +98,7 @@ describe("responseToAgentMessages ↔ toPromptMessages", () => {
 
 describe("extractUsage", () => {
   test("reads plain usage", () => {
-    const usage = extractUsage({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }, [])
+    const usage = extractUsage({ inputTokens: { total: 10 }, outputTokens: { total: 5 } }, [])
     expect(usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,
@@ -107,12 +107,13 @@ describe("extractUsage", () => {
     })
   })
 
-  test("folds Anthropic cache reads/writes back into input", () => {
-    const usage = extractUsage({ inputTokens: 3, outputTokens: 7, totalTokens: 10 }, [
+  test("reads the provider's full input and its cache reads, never folding them twice", () => {
+    // Effect's Anthropic provider already adds both cache counts to the input total.
+    const usage = extractUsage({ inputTokens: { uncached: 3, total: 100, cacheRead: 90, cacheWrite: 7 }, outputTokens: { total: 7 } }, [
       {
         type: "finish",
         reason: "stop",
-        usage: { inputTokens: 3, outputTokens: 7 },
+        usage: { inputTokens: { uncached: 3, total: 100, cacheRead: 90, cacheWrite: 7 }, outputTokens: { total: 7 } },
         metadata: {
           anthropic: {
             usage: { cache_read_input_tokens: 90, cache_creation_input_tokens: 7 },
@@ -183,7 +184,7 @@ describe("the model stamp", () => {
       {
         type: "finish",
         reason: "stop",
-        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        usage: { inputTokens: { total: 5 }, outputTokens: { total: 3 } },
         metadata: { router: { model: "opencode:kimi-k2.7-code" } },
       },
     ]

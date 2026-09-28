@@ -1,8 +1,13 @@
-import { JSONSchema } from "effect"
+import { JsonSchema, Schema } from "effect"
 import { smithAgent } from "@xandreed/smith"
+/** A self-contained draft-07 schema, as the reference has always published. */
+const jsonSchemaOf = (schema: Schema.Top) => {
+  const document = JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
+  return { $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07, ...document.schema, ...(Object.keys(document.definitions).length > 0 ? { definitions: document.definitions } : {}) }
+}
 const plugins = smithAgent("<workspace>").plugins.map((plugin) => ({
   id: plugin.id, version: plugin.version, apiVersion: plugin.apiVersion, scope: plugin.scope,
-  requires: plugin.requires, provides: plugin.provides, defaults: plugin.defaults, schema: JSONSchema.make(plugin.schema),
+  requires: plugin.requires, provides: plugin.provides, defaults: plugin.defaults, schema: jsonSchemaOf(plugin.schema),
 }))
 await Bun.write("docs/plugin-reference.json", `${JSON.stringify(plugins, null, 2)}\n`)
 const sections = plugins.map((plugin) => `## ${plugin.id}\n\nScope: **${plugin.scope}** · API ${plugin.apiVersion} · Version ${plugin.version}\n\nProvides: ${plugin.provides.map((key) => `\`${key}\``).join(", ")}\n\nRequires: ${plugin.requires.map((key) => `\`${key}\``).join(", ") || "none"}\n\n### Defaults\n\n\`\`\`json\n${JSON.stringify(plugin.defaults, null, 2)}\n\`\`\`\n\n### Configuration schema\n\n\`\`\`json\n${JSON.stringify(plugin.schema, null, 2)}\n\`\`\``).join("\n\n")

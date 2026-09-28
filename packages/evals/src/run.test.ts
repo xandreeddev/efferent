@@ -128,9 +128,9 @@ describe("runScenario", () => {
               name: "emit",
               act: (w) =>
                 w.emit("a").pipe(
-                  Effect.zipRight(w.emit("noise")),
-                  Effect.zipRight(w.emit("b")),
-                  Effect.zipRight(
+                  Effect.andThen(w.emit("noise")),
+                  Effect.andThen(w.emit("b")),
+                  Effect.andThen(
                     Effect.sync(() => writeFileSync(join(w.dir, "made.txt"), "x")),
                   ),
                 ),

@@ -38,7 +38,7 @@ const readStatuses: Effect.Effect<ReadonlyArray<ProviderStatus>, never, AuthStor
               : all.get(provider)
           return {
             provider,
-            configured: Option.map(Option.fromNullable(credential), (c) => c.type),
+            configured: Option.map(Option.fromNullishOr(credential), (c) => c.type),
           }
         }),
     ),
@@ -122,7 +122,7 @@ const startOAuth = (ctx: SmithTuiContext, provider: SmithProvider): void => {
       setFlow(ctx, oauthStep(statuses, provider, begun.authorizeUrl))
       const expectedState = begun.state
 
-      const waiter = yield* Effect.forkDaemon(
+      const waiter = yield* Effect.forkDetach(
         Effect.scoped(
           Effect.gen(function* () {
             const server = yield* startCallbackServer(begun.callbackPort, begun.callbackPath)

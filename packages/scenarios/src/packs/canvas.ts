@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Context, Duration, Effect, Layer, Ref, Stream } from "effect"
 import { ConversationStore } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
@@ -27,7 +27,7 @@ import { eventWhere, toolSequence, turnAlternationValid } from "@xandreed/evals/
 import { generalTierCall } from "../live/llm.js"
 import { UI_PAGE_QUALITY_RUBRIC_VERSION, makeUiPageQualityJudge } from "../judges/uiPageQuality.js"
 
-const finish = (reason: string) => ({ type: "finish", reason, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })
+const finish = (reason: string) => ({ type: "finish", reason, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })
 const toolCall = (id: string, name: string, params: unknown) => ({ type: "tool-call", id, name, params })
 
 const violatingHero = {
@@ -185,6 +185,16 @@ const bootFollowupWorld = Effect.gen(function* () {
   } satisfies FollowupWorld
 })
 
+/** The turn's own terminal event, not a fixed sleep: the scripted run's duration is the runtime's, not the scenario's. */
+const untilAgentEnd = (session: CanvasSession) =>
+  session.subscribe(0).pipe(
+    Stream.filter((entry) => entry.event.type === "agent_end"),
+    Stream.runHead,
+    Effect.timeout(Duration.seconds(10)),
+    Effect.asVoid,
+    Effect.orDie,
+  )
+
 const uiEvents = (events: ReadonlyArray<CanvasEvent>): ReadonlyArray<UiPageEvent> => events.flatMap((event) =>
   event.type === "page_opened" || event.type === "blocks_upserted" || event.type === "page_completed" ? [event] : [],
 )
@@ -220,7 +230,7 @@ const liveWorld = (prompt: string) => Effect.gen(function* () {
     session,
     messages: conversationStore.list(conversationId).pipe(Effect.orDie),
     startedAt: () => Effect.runSync(Ref.get(started)),
-    start: Ref.set(started, Date.now()).pipe(Effect.zipRight(session.send(prompt)), Effect.zipRight(waitForEnrichment)),
+    start: Ref.set(started, Date.now()).pipe(Effect.andThen(session.send(prompt)), Effect.andThen(waitForEnrichment)),
   } satisfies LiveCanvasWorld
 })
 
@@ -288,7 +298,7 @@ export const canvasPack: Pack = {
       name: "model-generated plan → rejected content bounce → durable completion",
       modes: ["scripted"], boot: bootCanvasWorld,
       steps: [
-        { name: "one ask is planned and composed through model tool calls", act: (world) => world.session.send(SCRIPTED_PROMPT).pipe(Effect.zipRight(Effect.sleep("50 millis"))), checks: [
+        { name: "one ask is planned and composed through model tool calls", act: (world) => world.session.send(SCRIPTED_PROMPT).pipe(Effect.andThen(untilAgentEnd(world.session))), checks: [
           eventWhere<CanvasEvent>("only model-tool governed UI events reach the canvas", (events) => {
             const accepted = uiEvents(events)
             return accepted.map((event) => event.type).join(",") === "page_opened,blocks_upserted,page_completed" && !JSON.stringify(accepted).includes('"html"')

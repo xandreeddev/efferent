@@ -1,5 +1,5 @@
-import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+import { Effect, Option, Schema, Stream } from "effect"
 import type { ConversationId } from "@xandreed/core"
 import { Failure } from "@xandreed/core"
 import { PageManifestInput, UiBlock } from "./domain/ui-page.entity.js"
@@ -22,7 +22,7 @@ export const UI_BATCH_MAX_BLOCKS = 8
 
 export const StartUi = Tool.make("start_ui", {
   description: "Open a governed page and publish its first meaningful blocks. The manifest is minimal: id, title, archetype, an ordered compact slot plan, and an optional theme — the host derives the recipe, design-system reference, and slot metadata. Emit structured data only; HTML, CSS, classes, HTMX, Alpine expressions, SVG, and URLs are not accepted.",
-  parameters: { page: PageManifestInput, criticalBlocks: Schema.Array(UiBlock) },
+  parameters: Schema.Struct({ page: PageManifestInput, criticalBlocks: Schema.Array(UiBlock) }),
   success: Schema.Struct({ opened: Schema.Boolean, pageId: Schema.String, accepted: Schema.Number }),
   failure: Failure,
   failureMode: "return",
@@ -30,7 +30,7 @@ export const StartUi = Tool.make("start_ui", {
 
 export const PatchUi = Tool.make("patch_ui", {
   description: "Upsert up to eight governed blocks into an open page. Prefer one complete refinement patch so useful content arrives atomically. Set complete only after every required recipe slot has content.",
-  parameters: { pageId: Schema.String, blocks: Schema.Array(UiBlock), complete: Schema.optional(Schema.Boolean) },
+  parameters: Schema.Struct({ pageId: Schema.String, blocks: Schema.Array(UiBlock), complete: Schema.optionalKey(Schema.Boolean) }),
   success: Schema.Struct({ patched: Schema.Boolean, pageId: Schema.String, accepted: Schema.Number, complete: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
@@ -38,15 +38,15 @@ export const PatchUi = Tool.make("patch_ui", {
 
 export const ProposeComponent = Tool.make("propose_component", {
   description: "Propose one reusable component only when the registered catalog and typed composition cannot express the required anatomy or behavior. The constrained template AST contains no HTML, CSS, classes, URLs, HTMX attributes, Alpine expressions, SVG, or JavaScript.",
-  parameters: { definition: UiComponentDefinition },
-  success: Schema.Struct({ canonicalId: Schema.String, disposition: Schema.Literal("reused", "variant", "admitted"), similarity: Schema.Number }),
+  parameters: Schema.Struct({ definition: UiComponentDefinition }),
+  success: Schema.Struct({ canonicalId: Schema.String, disposition: Schema.Literals(["reused", "variant", "admitted"]), similarity: Schema.Number }),
   failure: Failure,
   failureMode: "return",
 })
 
 export const PatchTheme = Tool.make("patch_theme", {
   description: "Patch semantic theme tokens for an open page. Use this for shades, typography, borders, radius, density, shadow, contrast, or motion; never create a styling-only component.",
-  parameters: { pageId: Schema.String, delta: ThemeDelta },
+  parameters: Schema.Struct({ pageId: Schema.String, delta: ThemeDelta }),
   success: Schema.Struct({ patched: Schema.Boolean, pageId: Schema.String, themeId: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -54,13 +54,28 @@ export const PatchTheme = Tool.make("patch_theme", {
 
 export const PatchUiProp = Tool.make("patch_ui_prop", {
   description: "Patch one declared prop on an accepted component node so useful fields can paint progressively before the whole section is complete.",
-  parameters: { pageId: Schema.String, nodeId: Schema.String, key: Schema.String, value: Schema.Unknown },
+  parameters: Schema.Struct({ pageId: Schema.String, nodeId: Schema.String, key: Schema.String, value: Schema.Unknown }),
   success: Schema.Struct({ patched: Schema.Boolean, pageId: Schema.String, nodeId: Schema.String, key: Schema.String }),
   failure: Failure,
   failureMode: "return",
 })
 
 export const uiAgentToolkit = Toolkit.make(StartUi, PatchUi, PatchUiProp, ProposeComponent, PatchTheme)
+
+/**
+ * A call's settled result. `toolkit.handle` streams a call's results from the
+ * handler's child fiber: reading to the last non-preliminary one is what waits
+ * for the handler, and that result is the outcome.
+ */
+export const settledResult = <A extends { readonly preliminary: boolean }, E, R>(results: Stream.Stream<A, E, R>): Effect.Effect<A, E, R> =>
+  results.pipe(
+    Stream.filter((result) => !result.preliminary),
+    Stream.runLast,
+    Effect.flatMap(Option.match({
+      onNone: () => Effect.die(new Error("the tool handler streamed no final result")),
+      onSome: Effect.succeed,
+    })),
+  )
 export type UiAgentToolkit = typeof uiAgentToolkit
 
 const bounded = (value: unknown, blocks: ReadonlyArray<UiBlock>): Effect.Effect<void, { readonly error: string; readonly message: string }> => {
@@ -109,7 +124,7 @@ export const makeUiAgentHandlers = (
         yield* store.append(conversationId, event).pipe(Effect.mapError((message) => ({ error: "PageStoreError", message })))
         yield* sink(event)
         yield* Effect.forEach(admitted.blocks, (block) => block.kind === "component"
-          ? catalog.recordUsage({ componentId: block.component, pageId: page.id, intent: page.title, renderedAt: event.at }).pipe(Effect.catchAll((message) => Effect.logWarning(`component usage was not recorded: ${message}`)))
+          ? catalog.recordUsage({ componentId: block.component, pageId: page.id, intent: page.title, renderedAt: event.at }).pipe(Effect.catch((message) => Effect.logWarning(`component usage was not recorded: ${message}`)))
           : Effect.void, { concurrency: "unbounded" })
         return { opened: true, pageId: page.id, accepted: criticalBlocks.length }
       }),
@@ -130,7 +145,7 @@ export const makeUiAgentHandlers = (
         yield* store.append(conversationId, event).pipe(Effect.mapError((message) => ({ error: "PageStoreError", message })))
         yield* sink(event)
         yield* Effect.forEach(admitted, (block) => block.kind === "component"
-          ? catalog.recordUsage({ componentId: block.component, pageId, intent: page.manifest.title, renderedAt: event.at }).pipe(Effect.catchAll((message) => Effect.logWarning(`component usage was not recorded: ${message}`)))
+          ? catalog.recordUsage({ componentId: block.component, pageId, intent: page.manifest.title, renderedAt: event.at }).pipe(Effect.catch((message) => Effect.logWarning(`component usage was not recorded: ${message}`)))
           : Effect.void, { concurrency: "unbounded" })
         if (complete === true) {
           const completedPage = foldPageEvents([...events, event]).find((candidate) => candidate.manifest.id === pageId)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Toolkit } from "@effect/ai"
+import { Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { Scope } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
@@ -69,7 +69,7 @@ const registry = ToolRegistry.of({
 
 const turnInput = (journal: JournalIO, runId: string) => ({ conversation, runId, userMessage: new UserMessage({ text: `message of ${runId}` }), journal })
 const services = Layer.merge(Layer.succeed(ConversationMemory, memory), Layer.succeed(ToolRegistry, registry))
-const names = (journal: Effect.Effect.Success<typeof inMemoryJournal>) => Ref.get(journal.stored).pipe(Effect.map((all) => all.map((event) => event.name)))
+const names = (journal: Effect.Success<typeof inMemoryJournal>) => Ref.get(journal.stored).pipe(Effect.map((all) => all.map((event) => event.name)))
 const inTurn = <A, E>(journal: JournalIO, runId: string, body: Effect.Effect<A, E, TurnMemory | TurnToolbox | TurnEvents | TurnTasks | RunContext | Scope.Scope>) =>
   Effect.scoped(body).pipe(Effect.provide(TurnLive(turnInput(journal, runId))), Effect.provide(services))
 
@@ -80,21 +80,21 @@ describe("TurnLive", () => {
       return yield* inTurn(journal.io, "run-1", Effect.gen(function* () {
         const turn = yield* TurnMemory
         const run = yield* RunContext
-        const before = yield* Effect.either(turn.number)
+        const before = yield* Effect.result(turn.number)
         const recordedBefore = (yield* turn.entries).length
         // A later subscriber sees each event already queued for the journal.
         const journaledFirst = yield* Ref.make<ReadonlyArray<string>>([])
         yield* run.events.subscribe(Option.some, (event) => run.flush.pipe(
-          Effect.zipRight(names(journal)),
+          Effect.andThen(names(journal)),
           Effect.flatMap((stored) => Ref.update(journaledFirst, (all) => [...all, `${event._tag}:${stored.includes(event._tag)}`])),
         ))
         const number = yield* turn.persistMessage
-        const again = yield* Effect.either(turn.persistMessage)
+        const again = yield* Effect.result(turn.persistMessage)
         yield* run.flush
         return {
-          before: before._tag === "Left" ? before.left.code : "started",
+          before: before._tag === "Failure" ? before.failure.code : "started",
           recordedBefore, number, numberAfter: yield* turn.number,
-          again: again._tag === "Left" ? again.left.code : "twice",
+          again: again._tag === "Failure" ? again.failure.code : "twice",
           journal: yield* names(journal),
           journaledFirst: yield* Ref.get(journaledFirst),
         }
@@ -112,14 +112,14 @@ describe("TurnLive", () => {
       return yield* inTurn(journal.io, "run-1", Effect.gen(function* () {
         const toolbox = yield* TurnToolbox
         const run = yield* RunContext
-        const before = yield* Effect.either(toolbox.tools)
-        const activateBefore = yield* Effect.either(run.activate(["early"]))
+        const before = yield* Effect.result(toolbox.tools)
+        const activateBefore = yield* Effect.result(run.activate(["early"]))
         yield* openTurnTools
-        const again = yield* Effect.either(openTurnTools)
+        const again = yield* Effect.result(openTurnTools)
         return {
-          before: before._tag === "Left" ? before.left.code : "open",
-          activateBefore: activateBefore._tag === "Left" ? activateBefore.left.code : "activated",
-          again: again._tag === "Left" ? again.left.code : "twice",
+          before: before._tag === "Failure" ? before.failure.code : "open",
+          activateBefore: activateBefore._tag === "Failure" ? activateBefore.failure.code : "activated",
+          again: again._tag === "Failure" ? again.failure.code : "twice",
           active: yield* run.activate(["notes"]),
         }
       }))
@@ -151,7 +151,7 @@ describe("guardTurn", () => {
       yield* (yield* TurnMemory).persistMessage
       return yield* body
     })))
-  const endings = (journal: Effect.Effect.Success<typeof inMemoryJournal>) => Ref.get(journal.stored).pipe(
+  const endings = (journal: Effect.Success<typeof inMemoryJournal>) => Ref.get(journal.stored).pipe(
     Effect.map((all) => all.filter((event) => event.name === "turn.ended").map((event) => event.data.outcome)),
   )
 
@@ -160,7 +160,7 @@ describe("guardTurn", () => {
       const journal = yield* inMemoryJournal
       yield* guarded(journal.io, Effect.gen(function* () {
         const run = yield* RunContext
-        yield* run.tasks.fork("late", Effect.sleep("5 millis").pipe(Effect.zipRight(run.events.publish({ _tag: "host", name: "task.done", data: {} }))))
+        yield* run.tasks.fork("late", Effect.sleep("5 millis").pipe(Effect.andThen(run.events.publish({ _tag: "host", name: "task.done", data: {} }))))
         return { outcome: "completed", reply: Option.some("done") } satisfies TurnOutcome
       }))
       return yield* names(journal)
@@ -171,10 +171,10 @@ describe("guardTurn", () => {
   test("a failure keeps its cause and records turn.ended failed, once", async () => {
     const { exit, ended } = await Effect.runPromise(Effect.gen(function* () {
       const journal = yield* inMemoryJournal
-      const exit = yield* Effect.either(guarded(journal.io, Effect.fail({ _tag: "HostFailure" as const })))
+      const exit = yield* Effect.result(guarded(journal.io, Effect.fail({ _tag: "HostFailure" as const })))
       return { exit, ended: yield* endings(journal) }
     }))
-    expect(exit).toMatchObject({ _tag: "Left", left: { _tag: "HostFailure" } })
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { _tag: "HostFailure" } })
     expect(ended).toEqual(["failed"])
   })
 
@@ -182,7 +182,7 @@ describe("guardTurn", () => {
     const ended = await Effect.runPromise(Effect.gen(function* () {
       const journal = yield* inMemoryJournal
       const started = yield* Deferred.make<void>()
-      const fiber = yield* Effect.fork(guarded(journal.io, Deferred.succeed(started, undefined).pipe(Effect.zipRight(Effect.never))))
+      const fiber = yield* Effect.forkChild(guarded(journal.io, Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))))
       yield* Deferred.await(started)
       yield* Fiber.interrupt(fiber)
       return yield* endings(journal)
@@ -193,10 +193,10 @@ describe("guardTurn", () => {
   test("a HarnessError carried as a defect fails the turn, typed", async () => {
     const { exit, ended } = await Effect.runPromise(Effect.gen(function* () {
       const journal = yield* inMemoryJournal
-      const exit = yield* Effect.either(guarded(journal.io, Effect.die(new HarnessError({ code: "reaction.failed", message: "a subscriber failed" }))))
+      const exit = yield* Effect.result(guarded(journal.io, Effect.die(new HarnessError({ code: "reaction.failed", message: "a subscriber failed" }))))
       return { exit, ended: yield* endings(journal) }
     }))
-    expect(exit).toMatchObject({ _tag: "Left", left: { code: "reaction.failed" } })
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { code: "reaction.failed" } })
     expect(ended).toEqual(["failed"])
   })
 })

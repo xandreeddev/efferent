@@ -29,7 +29,7 @@ test("a failed preparation is annotated with its message", async () => {
     const render = yield* Render.pipe(Effect.provide(RenderLive().pipe(Layer.provide(Layer.mergeAll(
       Layer.succeed(RenderStore, memory.store), Layer.succeed(UiOutputAdmission, { validate: () => Effect.void }),
     )))))
-    const surface = yield* render.open(scope, { fork: (_tag, work) => Effect.forkDaemon(work).pipe(Effect.asVoid) })
+    const surface = yield* render.open(scope, { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) })
     yield* surface.prepare(Stream.fail(new Error("composer unavailable")), () => Effect.void)
     yield* surface.settled
     return yield* memory.annotations
@@ -44,7 +44,7 @@ test("the host fork receives every preparation with the surface tag", async () =
       Layer.succeed(RenderStore, memory.store), Layer.succeed(UiOutputAdmission, { validate: () => Effect.void }),
     )))))
     const seen: Array<string> = []
-    const surface = yield* render.open(scope, { fork: (tag, work) => Effect.sync(() => seen.push(tag)).pipe(Effect.zipRight(Effect.forkDaemon(work)), Effect.asVoid) })
+    const surface = yield* render.open(scope, { fork: (tag, work) => Effect.sync(() => seen.push(tag)).pipe(Effect.andThen(Effect.forkDetach(work)), Effect.asVoid) })
     const snapshot = { phase: "complete" as const, spec: { layout: "single" }, nodes: [{ nodeId: "a", release, props: {}, evidence: ["a"] }] }
     yield* surface.prepare(Stream.make(snapshot), () => Effect.void)
     yield* surface.settled
@@ -59,7 +59,7 @@ test("an oversized component is rejected before admission and storage", async ()
     const render = yield* Render.pipe(Effect.provide(RenderLive(1024).pipe(Layer.provide(Layer.mergeAll(
       Layer.succeed(RenderStore, memory.store), Layer.succeed(UiOutputAdmission, { validate: () => Effect.die("admission must not run") }),
     )))))
-    const surface = yield* render.open(scope, { fork: (_tag, work) => Effect.forkDaemon(work).pipe(Effect.asVoid) })
+    const surface = yield* render.open(scope, { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) })
     const big = { phase: "partial" as const, spec: {}, nodes: [{ nodeId: "a", release, props: { text: "x".repeat(4096) }, evidence: ["a"] }] }
     return yield* surface.publish(big).pipe(Effect.flip)
   }))

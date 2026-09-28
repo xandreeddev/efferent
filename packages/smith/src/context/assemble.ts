@@ -77,7 +77,7 @@ interface Resolved {
 const ok = (text: string, clipped: boolean, note?: string): Resolved => ({
   text: Option.some(text),
   status: clipped ? "clipped" : "included",
-  note: Option.fromNullable(note),
+  note: Option.fromNullishOr(note),
 })
 const missing = (note: string): Resolved => ({ text: Option.none(), status: "missing", note: Option.some(note) })
 const deferred: Resolved = {
@@ -174,12 +174,12 @@ const resolveSpec = (cwd: string, slug: string) =>
         false,
       )
     }),
-    Effect.catchAll((error) => Effect.succeed(missing(error.message))),
+    Effect.catch((error) => Effect.succeed(missing(error.message))),
   )
 
 const resolveRun = (cwd: string, id: string) =>
   Effect.map(readRuns(`${cwd}/.foundry/runs`), (runs) =>
-    Option.match(Option.fromNullable(runs.find((r) => String(r.id).startsWith(id))), {
+    Option.match(Option.fromNullishOr(runs.find((r) => String(r.id).startsWith(id))), {
       onNone: () => missing("no such run on file"),
       onSome: (run) => {
         const last = run.attempts[run.attempts.length - 1]
@@ -193,7 +193,7 @@ const resolveRun = (cwd: string, id: string) =>
           .map((v) => `${v._tag === "pass" ? "✓" : v._tag === "fail" ? "✗" : "◌"} ${String(v.gate)}`)
           .join(" · ")
         const feedback = Option.getOrElse(
-          Option.flatMap(Option.fromNullable(last), (a) => a.feedback),
+          Option.flatMap(Option.fromNullishOr(last), (a) => a.feedback),
           () => "(no gate feedback recorded — the last attempt was accepted)",
         )
         const body = clipTo(feedback, FEEDBACK_CAP_CHARS)
@@ -217,7 +217,7 @@ const resolveShell = (cwd: string, command: string, cap: number, execute: boolea
             const body = clipTo(out.length > 0 ? out : "(no output)", cap)
             return ok(`${header} (exit ${result.exitCode})\n${body.text}`, body.clipped)
           }),
-          Effect.catchAll((error) => Effect.succeed(missing(`could not run: ${error.message}`))),
+          Effect.catch((error) => Effect.succeed(missing(`could not run: ${error.message}`))),
         ),
       )
 

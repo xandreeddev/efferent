@@ -52,8 +52,8 @@ export interface TurnTasksService {
   readonly activity: Effect.Effect<number>
 }
 
-export class TurnEvents extends Context.Tag("efferent/TurnEvents")<TurnEvents, TurnEventsService>() {}
-export class TurnTasks extends Context.Tag("efferent/TurnTasks")<TurnTasks, TurnTasksService>() {}
+export class TurnEvents extends Context.Service<TurnEvents, TurnEventsService>()("efferent/TurnEvents") {}
+export class TurnTasks extends Context.Service<TurnTasks, TurnTasksService>()("efferent/TurnTasks") {}
 
 /** One subscription, ready to attach to a turn's bus (see `onTool`, `onEvent`). */
 export type Subscription<R> = (events: TurnEventsService) => Effect.Effect<void, never, R | Scope.Scope>

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Ref, Stream } from "effect"
 import { ConversationStore } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
@@ -33,7 +33,7 @@ const exercise = (id: string): Record<string, unknown> => ({
 const finish = (reason: string) => ({
   type: "finish",
   reason,
-  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
 })
 
 /** Call 0: a batch with one malformed key (must bounce, the rest render).

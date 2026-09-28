@@ -3,26 +3,26 @@ import type { Option } from "effect"
 import type { PromptId, PromptProvenance } from "@xandreed/core"
 import type { Variants } from "./prompt.entity.js"
 
-export const Probability = Schema.Number.pipe(Schema.finite(), Schema.between(0, 1))
+export const Probability = Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 })))
 
 /** Choose one of the offered criteria (keys are the choices, values describe them). */
 export const ChoiceQuestion = Schema.Struct({
   type: Schema.Literal("choice"),
-  instructions: Schema.NonEmptyTrimmedString,
-  criteria: Schema.Record({ key: Schema.NonEmptyTrimmedString, value: Schema.NonEmptyTrimmedString }),
+  instructions: Schema.Trimmed.check(Schema.isNonEmpty()),
+  criteria: Schema.Record(Schema.Trimmed.check(Schema.isNonEmpty()), Schema.Trimmed.check(Schema.isNonEmpty())),
 })
 export type ChoiceQuestion = typeof ChoiceQuestion.Type
 
 /** How likely the statement in the instructions holds. */
 export const BooleanQuestion = Schema.Struct({
   type: Schema.Literal("boolean"),
-  instructions: Schema.NonEmptyTrimmedString,
+  instructions: Schema.Trimmed.check(Schema.isNonEmpty()),
 })
 export type BooleanQuestion = typeof BooleanQuestion.Type
 
-export const DecisionQuestion = Schema.Union(ChoiceQuestion, BooleanQuestion)
+export const DecisionQuestion = Schema.Union([ChoiceQuestion, BooleanQuestion])
 export type DecisionQuestion = typeof DecisionQuestion.Type
-export const DecisionQuestions = Schema.Record({ key: Schema.NonEmptyTrimmedString, value: DecisionQuestion })
+export const DecisionQuestions = Schema.Record(Schema.Trimmed.check(Schema.isNonEmpty()), DecisionQuestion)
 export type DecisionQuestions = typeof DecisionQuestions.Type
 
 export const ChoiceAnswer = Schema.TaggedStruct("choice", {
@@ -32,18 +32,18 @@ export const ChoiceAnswer = Schema.TaggedStruct("choice", {
 export type ChoiceAnswer = typeof ChoiceAnswer.Type
 export const BooleanAnswer = Schema.TaggedStruct("boolean", { probability: Probability })
 export type BooleanAnswer = typeof BooleanAnswer.Type
-export const DecisionAnswer = Schema.Union(ChoiceAnswer, BooleanAnswer)
+export const DecisionAnswer = Schema.Union([ChoiceAnswer, BooleanAnswer])
 export type DecisionAnswer = typeof DecisionAnswer.Type
-export const DecisionAnswers = Schema.Record({ key: Schema.String, value: DecisionAnswer })
+export const DecisionAnswers = Schema.Record(Schema.String, DecisionAnswer)
 export type DecisionAnswers = typeof DecisionAnswers.Type
 
 /** One answer as an evaluation transport returns it. */
 export const WireAnswer = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("choice"), choice: Schema.NonEmptyString, confidence: Schema.optional(Probability) }),
-  Schema.Struct({ type: Schema.Literal("boolean"), probability: Probability }),
+  [Schema.Struct({ type: Schema.Literal("choice"), choice: Schema.NonEmptyString, confidence: Schema.optional(Probability) }),
+  Schema.Struct({ type: Schema.Literal("boolean"), probability: Probability })],
 )
 export type WireAnswer = typeof WireAnswer.Type
-export const WireAnswers = Schema.Record({ key: Schema.String, value: WireAnswer })
+export const WireAnswers = Schema.Record(Schema.String, WireAnswer)
 export type WireAnswers = typeof WireAnswers.Type
 
 /** The answers to exactly these questions: a choice answer per choice question, a probability per boolean one. */
@@ -85,6 +85,6 @@ export interface RenderedDecision<Q extends DecisionQuestions = DecisionQuestion
 }
 
 export class EvaluationError extends Schema.TaggedError<EvaluationError>()("EvaluationError", {
-  code: Schema.Literal("unavailable", "timeout", "invalid", "budget"),
+  code: Schema.Literals(["unavailable", "timeout", "invalid", "budget"]),
   message: Schema.String,
 }) {}

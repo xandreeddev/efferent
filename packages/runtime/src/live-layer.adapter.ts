@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Ref, Scope } from "effect"
+import { Context, Effect, Exit, Ref, Scope, Semaphore } from "effect"
 import type { Layer } from "effect"
 import * as Layers from "effect/Layer"
 import { HarnessError } from "@xandreed/core"
@@ -6,7 +6,7 @@ import { HarnessError } from "@xandreed/core"
 type Generation<A> = {
   readonly id: number
   readonly services: Context.Context<A>
-  readonly scope: Scope.CloseableScope
+  readonly scope: Scope.Closeable
   readonly leases: number
   readonly retired: boolean
 }
@@ -16,14 +16,16 @@ type Generation<A> = {
  * last user completes. Failed staging never replaces the working services. */
 export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.gen(function* () {
   const dependencies = yield* Effect.context<R>()
-  const gate = yield* Effect.makeSemaphore(1)
+  const gate = yield* Semaphore.make(1)
   const generations = yield* Ref.make<ReadonlyMap<number, Generation<A>>>(new Map())
   const current = yield* Ref.make(0)
   const closed = yield* Ref.make(false)
   const unavailable = () => new HarnessError({ code: "module.closed", message: "Module registry is closed" })
   const stage = (layer: Layer.Layer<A, E, R>, id: number) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
     const scope = yield* Scope.make()
-    const services = yield* restore(Layers.buildWithScope(layer, scope).pipe(Effect.provide(dependencies))).pipe(
+    // Each generation builds afresh: a replacement never reuses an instance memoized elsewhere.
+    const memoMap = yield* Layers.makeMemoMap
+    const services = yield* restore(Layers.buildWithMemoMap(layer, memoMap, scope).pipe(Effect.provide(dependencies))).pipe(
       Effect.onExit((exit) => Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void),
     )
     return { id, services, scope, leases: 0, retired: false } satisfies Generation<A>

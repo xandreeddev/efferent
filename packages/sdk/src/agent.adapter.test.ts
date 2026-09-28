@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Tool } from "@effect/ai"
-import { Context, Deferred, Effect, Fiber, FiberRef, Layer, Option, Ref, Schema, Stream } from "effect"
+import { LanguageModel, Tool } from "effect/ai"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
@@ -38,14 +38,14 @@ import { Tally } from "./testing.port.js"
 const Item = Schema.Struct({ id: Schema.String, detail: Schema.String })
 const Lookup = Tool.make("lookup", {
   description: "Look records up by query.",
-  parameters: { query: Schema.String },
+  parameters: Schema.Struct({ query: Schema.String }),
   success: Schema.Struct({ items: Schema.Array(Item) }),
   failure: Failure,
   failureMode: "return",
 })
 const Deliver = Tool.make("deliver", {
   description: "Deliver the final answer.",
-  parameters: { text: Schema.String },
+  parameters: Schema.Struct({ text: Schema.String }),
   success: Schema.Boolean,
   failure: Failure,
   failureMode: "return",
@@ -91,7 +91,7 @@ interface Seen {
   readonly toolChoice: unknown
   readonly cacheKey: Option.Option<string>
 }
-const usage = { inputTokens: 100, outputTokens: 10, totalTokens: 110 }
+const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
 type Part = ReadonlyArray<unknown>
 const call = (id: string, name: string, params: unknown): Part => [{ type: "tool-call", id, name, params }, { type: "finish", reason: "tool-calls", usage }]
 const stop = (text: string): Part => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
@@ -100,7 +100,7 @@ const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
   const seen = yield* Ref.make<ReadonlyArray<Seen>>([])
   const model = yield* LanguageModel.make({
     generateText: (options) => Effect.gen(function* () {
-      const cacheKey = yield* FiberRef.get(CurrentPromptCacheKey)
+      const cacheKey = yield* Effect.service(CurrentPromptCacheKey)
       const index = yield* Ref.modify(seen, (all): [number, ReadonlyArray<Seen>] => [all.length, [...all, {
         tools: options.tools.map((tool) => tool.name), prompt: JSON.stringify(options.prompt.content), toolChoice: options.toolChoice, cacheKey,
       }]])
@@ -127,8 +127,8 @@ const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> =
   ...(extra.budgetTokens === undefined ? {} : { budgetTokens: extra.budgetTokens }),
 })
 
-type Journal = Effect.Effect.Success<typeof inMemoryJournal>
-const inputFor = (journal: Journal, runId: string, text: string, model: LanguageModel.Service, services: Context.Context<never> = Context.empty()) => ({
+type Journal = Effect.Success<typeof inMemoryJournal>
+const inputFor = (journal: Journal, runId: string, text: string, model: LanguageModel.LanguageModel, services: Context.Context<never> = Context.empty()) => ({
   conversation, runId, userMessage: new UserMessage({ text }), journal: journal.io,
   services: Context.merge(Context.make(LanguageModel.LanguageModel, model), services),
 })
@@ -157,7 +157,7 @@ const tallyLayer = Layer.effect(Tally, Effect.gen(function* () {
 const tallied = (tally: typeof Tally.Service, text: string) => Ref.update(tally.seen, (all) => [...all, `${text}@${tally.runId}`])
 const Note = Tool.make("note", {
   description: "Take a note.",
-  parameters: { text: Schema.String },
+  parameters: Schema.Struct({ text: Schema.String }),
   success: Schema.Boolean,
   failure: Failure,
   failureMode: "return",
@@ -172,7 +172,7 @@ const noting = defineContributions({
 const slowJournal = (failOn: Option.Option<string>) => Effect.gen(function* () {
   const stored = yield* Ref.make<ReadonlyArray<EventBody>>([])
   const io: JournalIO = {
-    append: (event) => Effect.sleep("1 millis").pipe(Effect.zipRight(Option.contains(failOn, event.name)
+    append: (event) => Effect.sleep("1 millis").pipe(Effect.andThen(Option.contains(failOn, event.name)
       ? Effect.fail(new HarnessError({ code: "journal.down", message: "store unavailable" }))
       : Ref.update(stored, (all) => [...all, event]))),
     read: (names) => Ref.get(stored).pipe(Effect.map((all) => all.filter((event) => names.length === 0 || names.includes(event.name)))),
@@ -241,10 +241,10 @@ describe("Agent.turn", () => {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemoryJournal
       const { model } = yield* scripted([])
-      const exit = yield* Effect.either(agent.turn(inputFor(journal, "run-1", "fail", model), () => Effect.fail(new HarnessError({ code: "host.failed", message: "no" }))))
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "fail", model), () => Effect.fail(new HarnessError({ code: "host.failed", message: "no" }))))
       return { exit, events: yield* Ref.get(journal.stored) }
     })))
-    expect(exit._tag === "Left" ? exit.left.code : "none").toBe("host.failed")
+    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("host.failed")
     expect(named(events, "turn.ended").map((event) => event.data.outcome)).toEqual(["failed"])
   })
 
@@ -253,13 +253,13 @@ describe("Agent.turn", () => {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemoryJournal
       const { seen, model } = yield* scripted(lookupThenDeliver)
-      const exit = yield* Effect.either(agent.turn(inputFor(journal, "run-1", "find alpha", model), (turn) => Effect.gen(function* () {
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "find alpha", model), (turn) => Effect.gen(function* () {
         yield* turn.events.subscribe(Option.liftPredicate((event) => event._tag === "tool.completed"), () => Effect.fail(new HarnessError({ code: "reaction.failed", message: "broken" })))
         return yield* answer()(turn)
       })))
       return { exit, seen: yield* Ref.get(seen) }
     })))
-    expect(exit._tag === "Left" ? exit.left.code : "none").toBe("reaction.failed")
+    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("reaction.failed")
     expect(seen).toHaveLength(1)
   })
 
@@ -270,8 +270,8 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([])
       const started = yield* Deferred.make<void>()
       const interrupted = yield* Ref.make(false)
-      const fiber = yield* Effect.fork(agent.turn(inputFor(journal, "run-1", "wait", model), (turn) => Effect.gen(function* () {
-        yield* turn.tasks.fork("slow", Deferred.succeed(started, undefined).pipe(Effect.zipRight(Effect.never), Effect.onInterrupt(() => Ref.set(interrupted, true))))
+      const fiber = yield* Effect.forkChild(agent.turn(inputFor(journal, "run-1", "wait", model), (turn) => Effect.gen(function* () {
+        yield* turn.tasks.fork("slow", Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Ref.set(interrupted, true))))
         return yield* Effect.never
       })))
       yield* Deferred.await(started)
@@ -289,7 +289,7 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([])
       const Prepared = defineHostEvent("page.prepared", Schema.Struct({ id: Schema.String }))
       yield* agent.turn(inputFor(journal, "run-1", "prepare", model), (turn) => Effect.gen(function* () {
-        yield* turn.tasks.fork("page", Effect.sleep("20 millis").pipe(Effect.zipRight(Prepared.publish(turn.events, { id: "p1" }))))
+        yield* turn.tasks.fork("page", Effect.sleep("20 millis").pipe(Effect.andThen(Prepared.publish(turn.events, { id: "p1" }))))
         return yield* turn.reply("preparing")
       }))
       return yield* Ref.get(journal.stored)
@@ -352,7 +352,7 @@ describe("Agent.turn", () => {
     })))
     const decision = named(events, "decision.recorded")[0]?.data.record
     expect(decision).toMatchObject({ family: "skill-selection", selection: "delivery", applied: "delivery", validation: "accepted" })
-    expect(Schema.decodeUnknownEither(DecisionRecord)(decision)._tag).toBe("Right")
+    expect(Schema.decodeUnknownResult(DecisionRecord)(decision)._tag).toBe("Success")
   })
 
   test("the turn's layer is built per turn and provided to use, tools and subscriptions alike", async () => {
@@ -422,7 +422,7 @@ describe("Agent.turn", () => {
       const Noted = defineHostEvent("item.noted", Schema.Struct({ n: Schema.Number }))
       const Handled = defineHostEvent("item.handled", Schema.Struct({ n: Schema.Number }))
       yield* agent.turn(inputFor({ stored: journal.stored, io: journal.io }, "run-1", "note", model), (turn) => Effect.gen(function* () {
-        yield* Noted.on((item) => Effect.sleep("3 millis").pipe(Effect.zipRight(Handled.publish(turn.events, item))), { mode: "background" })(turn.events)
+        yield* Noted.on((item) => Effect.sleep("3 millis").pipe(Effect.andThen(Handled.publish(turn.events, item))), { mode: "background" })(turn.events)
         yield* Effect.forEach([1, 2, 3], (n) => Noted.publish(turn.events, { n }), { discard: true })
         return yield* turn.reply("noted")
       }))
@@ -439,10 +439,10 @@ describe("Agent.turn", () => {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* slowJournal(Option.some("tool.completed"))
       const { model } = yield* scripted(lookupThenDeliver)
-      const exit = yield* Effect.either(agent.turn(inputFor(journal, "run-1", "find alpha", model), answer()))
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "find alpha", model), answer()))
       return { exit, events: yield* Ref.get(journal.stored) }
     })))
-    expect(exit._tag === "Left" ? exit.left.code : "none").toBe("journal.down")
+    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("journal.down")
     expect(named(events, "tool.completed")).toHaveLength(0)
     expect(named(events, "turn.ended")).toHaveLength(0)
   })

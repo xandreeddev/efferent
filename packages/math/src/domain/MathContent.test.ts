@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { FastCheck } from "effect"
+import * as FastCheck from "fast-check"
 import { gradeAnswer, parseMathItems, servedPromptKey } from "./MathContent.js"
 import type { MathAnswer, MathExercise } from "./MathContent.js"
 

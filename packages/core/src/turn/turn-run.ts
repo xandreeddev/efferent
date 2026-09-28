@@ -1,4 +1,5 @@
-import { Context, Effect, JSONSchema, Option } from "effect"
+import { Context, Effect, Option } from "effect"
+import { toolParametersSchema } from "../loop/toolSchema.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { canonicalJson, estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { StepDirective, StepInfo } from "../ports/contribution.port.js"
@@ -23,7 +24,7 @@ const noDirective: StepDirective = { context: Option.none(), toolChoice: Option.
 export const schemaTokens = (tools: RunTools, active: ReadonlyArray<string>): number =>
   active.reduce((sum, name) => {
     const tool = tools.toolkit.tools[name]
-    return tool === undefined ? sum : sum + estimateTokens(`${tool.description ?? ""}${canonicalJson(JSONSchema.make(tool.parametersSchema))}`)
+    return tool === undefined ? sum : sum + estimateTokens(`${tool.description ?? ""}${canonicalJson(toolParametersSchema(tool))}`)
   }, 0)
 
 /** The prompt-cache key of a conversation: `<prefix>:<conversation>`, none without a prefix. */
@@ -52,7 +53,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
     const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
     const stepContext = policy.stepContext ?? "tail"
-    yield* Option.match(Option.fromNullable(policy.initial), {
+    yield* Option.match(Option.fromNullishOr(policy.initial), {
       onNone: () => Effect.void,
       onSome: (batch) => batch.skills.length === 0 ? Effect.void : tools.activate(batch.skills, "host").pipe(Effect.asVoid),
     })
@@ -90,12 +91,12 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       tools,
       handlers: Context.merge(runServices, tools.handlers),
       limits,
-      initial: Option.fromNullable(policy.initial),
+      initial: Option.fromNullishOr(policy.initial),
       plan,
       record: (step, tail) => session.recordTail(tail, tools.views, step),
       completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)),
       steering: options.steering ?? Effect.succeed(Option.none()),
-      correctives: Option.fromNullable(policy.correctives),
+      correctives: Option.fromNullishOr(policy.correctives),
       events,
       tasks,
       cacheKey: options.cacheKey ?? Option.none(),

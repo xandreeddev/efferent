@@ -46,7 +46,7 @@ const activate = (
 ): Effect.Effect<ReadonlyArray<ActiveRule>, GateCrash> =>
   Effect.forEach(configs, (config) =>
     Option.match(
-      Option.fromNullable(rules.find((r) => r.id === config.rule)),
+      Option.fromNullishOr(rules.find((r) => r.id === config.rule)),
       {
         onNone: () =>
           Effect.fail(

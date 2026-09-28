@@ -30,7 +30,7 @@ const sourceLineOf = (
         try: () => fs.readFile(path.join(rootDir, location.file), "utf8"),
         catch: () => "unreadable" as const,
       }).pipe(
-        Effect.map((text) => Option.fromNullable(text.split("\n")[location.line - 1])),
+        Effect.map((text) => Option.fromNullishOr(text.split("\n")[location.line - 1])),
         Effect.orElseSucceed(() => Option.none<string>()),
       ),
   })

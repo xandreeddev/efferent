@@ -17,10 +17,10 @@ export class McpError extends Schema.TaggedError<McpError>()("McpError", {
 export class McpToolDescriptor extends Schema.Class<McpToolDescriptor>("McpToolDescriptor")({
   server: Schema.String,
   name: Schema.String,
-  description: Schema.optionalWith(Schema.String, { as: "Option" }),
+  description: Schema.OptionFromOptional(Schema.String),
   /** The server's inputSchema, verbatim JSON Schema — the provider sees it
    *  unchanged through the bridge's annotation override. */
-  inputSchema: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  inputSchema: Schema.Record(Schema.String, Schema.Unknown),
 }) {}
 
 export class McpCallOutcome extends Schema.Class<McpCallOutcome>("McpCallOutcome")({
@@ -30,9 +30,7 @@ export class McpCallOutcome extends Schema.Class<McpCallOutcome>("McpCallOutcome
   result: Schema.Unknown,
 }) {}
 
-export class McpClient extends Context.Tag("@xandreed/core/McpClient")<
-  McpClient,
-  {
+export class McpClient extends Context.Service<McpClient, {
     /** Aggregate across every configured server — best-effort: an
      *  unreachable server contributes nothing, never a failure. */
     readonly listTools: Effect.Effect<ReadonlyArray<McpToolDescriptor>>
@@ -41,5 +39,4 @@ export class McpClient extends Context.Tag("@xandreed/core/McpClient")<
       tool: string,
       args: unknown,
     ) => Effect.Effect<McpCallOutcome, McpError>
-  }
->() {}
+  }>()("@xandreed/core/McpClient") {}

@@ -1,24 +1,24 @@
 import { Schema } from "effect"
 
 export const CapabilityTool = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  version: Schema.NonEmptyTrimmedString,
-  description: Schema.NonEmptyTrimmedString,
-  returns: Schema.NonEmptyTrimmedString,
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  version: Schema.Trimmed.check(Schema.isNonEmpty()),
+  description: Schema.Trimmed.check(Schema.isNonEmpty()),
+  returns: Schema.Trimmed.check(Schema.isNonEmpty()),
   permissions: Schema.Array(Schema.String),
-  inputSchema: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  outputSchema: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  inputSchema: Schema.Record(Schema.String, Schema.Unknown),
+  outputSchema: Schema.Record(Schema.String, Schema.Unknown),
 })
 export type CapabilityTool = typeof CapabilityTool.Type
 export const CapabilityRecipe = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  version: Schema.NonEmptyTrimmedString,
-  instructions: Schema.NonEmptyTrimmedString,
-  tools: Schema.Array(Schema.NonEmptyTrimmedString),
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  version: Schema.Trimmed.check(Schema.isNonEmpty()),
+  instructions: Schema.Trimmed.check(Schema.isNonEmpty()),
+  tools: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
 })
 export type CapabilityRecipe = typeof CapabilityRecipe.Type
 export const CapabilityCatalog = Schema.Struct({
-  version: Schema.NonEmptyTrimmedString,
+  version: Schema.Trimmed.check(Schema.isNonEmpty()),
   recipes: Schema.Array(CapabilityRecipe),
   tools: Schema.Array(CapabilityTool),
 })

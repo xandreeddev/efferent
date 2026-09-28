@@ -13,12 +13,12 @@ import { asJsonRecord, parseJsonWarn } from "@xandreed/core"
 
 export const McpServerSpec = Schema.Struct({
   command: Schema.String,
-  args: Schema.optionalWith(Schema.Array(Schema.String), { default: () => [] }),
-  env: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
+  args: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 })
 export type McpServerSpec = typeof McpServerSpec.Type
 
-const decodeSpec = Schema.decodeUnknownEither(McpServerSpec)
+const decodeSpec = Schema.decodeUnknownResult(McpServerSpec)
 
 const readTier = (
   dir: string,
@@ -35,7 +35,7 @@ const readTier = (
       if (typeof servers !== "object" || servers === null) return []
       return Object.entries(servers).flatMap(([name, raw]) => {
         const decoded = decodeSpec(raw)
-        return decoded._tag === "Right" ? [[name, decoded.right] as const] : []
+        return decoded._tag === "Success" ? [[name, decoded.success] as const] : []
       })
     }),
     Effect.orElseSucceed(() => []),

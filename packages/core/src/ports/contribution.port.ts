@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { LanguageModel, Tool } from "@effect/ai"
+import type { LanguageModel, Tool } from "effect/ai"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { PromptTier, SkillDefinition, ToolAnnotations } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -104,7 +104,7 @@ export interface InitialBatch {
 }
 
 export interface ModelChoice {
-  readonly model: LanguageModel.Service
+  readonly model: LanguageModel.LanguageModel
   /** Selects a system-prompt variant; sections receive it. */
   readonly variant: Option.Option<string>
 }
@@ -119,4 +119,4 @@ export interface Contribution {
 }
 
 /** A MULTI-provider key: every contributor's bundle, in graph order. */
-export class Contributions extends Context.Tag("efferent/Contributions")<Contributions, ReadonlyArray<Contribution>>() {}
+export class Contributions extends Context.Service<Contributions, ReadonlyArray<Contribution>>()("efferent/Contributions") {}

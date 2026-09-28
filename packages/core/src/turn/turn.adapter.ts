@@ -37,7 +37,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   RunContext | TurnEvents | TurnTasks | TurnMemory | TurnToolbox | TurnPrompt,
   HarnessError,
   ConversationMemory | ToolRegistry
-> => Layer.scopedContext(Effect.gen(function* () {
+> => Layer.effectContext(Effect.gen(function* () {
   const scope = yield* Effect.scope
   const memory = yield* ConversationMemory
   const registry = yield* ToolRegistry
@@ -106,7 +106,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const toolbox = TurnToolbox.of({
     open: Effect.gen(function* () {
       if (yield* Ref.getAndSet(opened, true)) return yield* Effect.fail(failure("tools.opened", "The turn's tools are already open"))
-      const tools = yield* registry.open(session).pipe(Effect.provideService(RunContext, run), Scope.extend(scope))
+      const tools = yield* registry.open(session).pipe(Effect.provideService(RunContext, run), Scope.provide(scope))
       yield* Ref.set(slot, Option.some(tools))
       return tools
     }),
@@ -117,7 +117,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     tools.active.pipe(Effect.map((active): PromptContext => ({ variant, active, skills: tools.skills })))
   const rendered = (tools: RunTools, variant: Option.Option<string>, tiers: (section: PromptSection) => boolean) =>
     inCaller(promptContext(tools, variant).pipe(Effect.flatMap((context) => renderSections(sections.filter(tiers), context))))
-  const lastSystem = yield* Ref.make(Option.fromNullable((yield* session.entries).flatMap((entry: LogEntry) =>
+  const lastSystem = yield* Ref.make(Option.fromNullishOr((yield* session.entries).flatMap((entry: LogEntry) =>
     entry.body._tag === "SystemPrepared" ? [entry.body.fingerprint] : []).at(-1)))
   const systems = yield* Ref.make(new Map<string, string>())
   const turnSections = yield* Ref.make(false)

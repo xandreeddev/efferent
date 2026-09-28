@@ -9,7 +9,7 @@ import {
 } from "./prompt.js"
 
 const spec = Effect.runSync(
-  Schema.decodeUnknown(Spec)({
+  Schema.decodeUnknownEffect(Spec)({
     goal: "implement stringStats with Option-returning longest",
     acceptance: ["longest returns Option<string>", "histogram counts words"],
     limits: { maxAttempts: 3, budgetMillis: 60_000 },
@@ -28,7 +28,7 @@ describe("implementor briefs", () => {
 
   test("no acceptance criteria → no empty acceptance section", () => {
     const bare = Effect.runSync(
-      Schema.decodeUnknown(Spec)({
+      Schema.decodeUnknownEffect(Spec)({
         goal: "do the thing",
         acceptance: [],
         limits: { maxAttempts: 1, budgetMillis: 1_000 },

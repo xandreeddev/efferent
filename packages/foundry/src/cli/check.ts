@@ -52,7 +52,7 @@ export const loadConfig = (configPath: string): Effect.Effect<LoadedConfig, Conf
         readonly customRules?: unknown
       }) =>
         Effect.all({
-          config: Schema.decodeUnknown(GateSuiteConfig)(module.default).pipe(
+          config: Schema.decodeUnknownEffect(GateSuiteConfig)(module.default).pipe(
             Effect.mapError(
               (parseError) => new ConfigError({ path: configPath, message: parseError.message }),
             ),
@@ -99,7 +99,7 @@ export const fingerprintFindings = (
         }).pipe(
           Effect.map((text) => ({
             finding,
-            fingerprint: fingerprint(finding, Option.fromNullable(text.split("\n")[location.line - 1])),
+            fingerprint: fingerprint(finding, Option.fromNullishOr(text.split("\n")[location.line - 1])),
           })),
         ),
     }),
@@ -111,7 +111,7 @@ const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, 
     catch: () => new ConfigError({ path: baselinePath, message: "unreadable" }),
   }).pipe(
     Effect.flatMap((text) =>
-      Schema.decodeUnknown(Schema.parseJson(BaselineFile))(text).pipe(
+      Schema.decodeUnknownEffect(Schema.fromJsonString(BaselineFile))(text).pipe(
         Effect.mapError(
           (parseError) => new ConfigError({ path: baselinePath, message: parseError.message }),
         ),
@@ -119,14 +119,14 @@ const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, 
     ),
     Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
     // An absent baseline means "nothing grandfathered", not an error.
-    Effect.catchAll(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
+    Effect.catch(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
   )
 
 const writeBaseline = (
   baselinePath: string,
   fingerprints: ReadonlyArray<string>,
 ): Effect.Effect<void, WorkspaceError> =>
-  Schema.encode(Schema.parseJson(BaselineFile))({ version: 1, fingerprints }).pipe(
+  Schema.encodeEffect(Schema.fromJsonString(BaselineFile))({ version: 1, fingerprints }).pipe(
     Effect.mapError((e) => new WorkspaceError({ message: e.message })),
     Effect.flatMap((text) =>
       Effect.tryPromise({
@@ -151,7 +151,7 @@ export const runCheck = (
     const { config, rootDir, registry } = yield* loadConfig(args.configPath)
     const workspace: Workspace = { rootDir, files: [] }
     const gates = gatesFromConfig(config, registry)
-    if (!Arr.isNonEmptyReadonlyArray(gates)) {
+    if (!Arr.isReadonlyArrayNonEmpty(gates)) {
       return yield* Effect.fail(
         new ConfigError({
           path: args.configPath,

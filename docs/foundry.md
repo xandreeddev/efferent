@@ -44,7 +44,7 @@ flagship demo).
   Free-form text is deliberately unbranded.
 - **Entities are `Schema.Class`** — the class IS the type, constructor, and
   Equal/Hash; interface drift is unrepresentable. Absence is
-  `Schema.optionalWith(S, { as: "Option" })`: `Option` in memory, a plain
+  `Schema.OptionFromOptional(S)`: `Option` in memory, a plain
   omitted field on the wire.
 - **Errors are `Schema.TaggedError`** (`GateCrash`, `ImplementorError`,
   `WorkspaceError`, `ConfigError`, `ProjectLoadError`) — they cross a

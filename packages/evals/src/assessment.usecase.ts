@@ -13,8 +13,8 @@ export interface DatasetCase<I, Ref> {
 export interface Dataset<I, Ref> {
   readonly id: string
   readonly version: string
-  readonly input: Schema.Schema<I>
-  readonly reference: Schema.Schema<Ref>
+  readonly input: Schema.Codec<I>
+  readonly reference: Schema.Codec<Ref>
   readonly cases: ReadonlyArray<DatasetCase<I, Ref>>
 }
 export interface Assessment {
@@ -46,8 +46,8 @@ export interface Benchmark<I, O, E, Ref, R = never> {
   readonly id: string
   readonly kind: "benchmark" | "journey"
   readonly dataset: Dataset<I, Ref>
-  readonly output: Schema.Schema<O>
-  readonly evidence: Schema.Schema<E>
+  readonly output: Schema.Codec<O>
+  readonly evidence: Schema.Codec<E>
   /** References are intentionally absent from the task's arguments. */
   readonly task: (input: I) => Effect.Effect<{ readonly output: O; readonly evidence: E }, AssessmentError, R | Scope.Scope>
   readonly evaluators: ReadonlyArray<EvaluatorBinding<AssessmentInput<I, O, E, Ref>, R>>

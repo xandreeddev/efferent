@@ -7,7 +7,7 @@ export const ActionToolReference = Schema.Struct({
 })
 export const ActionAssessment = Schema.Struct({
   actionId: Schema.NonEmptyString,
-  status: Schema.Literal("matched", "partial", "missing"),
+  status: Schema.Literals(["matched", "partial", "missing"]),
   tools: Schema.Array(ActionToolReference), evidenceRefs: Schema.Array(Schema.String), reason: Schema.String,
 })
 export type ActionAssessment = typeof ActionAssessment.Type

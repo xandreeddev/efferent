@@ -58,7 +58,7 @@ export const emptyMathModel = (seed?: { grade?: number; theme?: string }): MathM
 })
 
 export const findExercise = (m: MathModel, id: string): Option.Option<ExerciseState> =>
-  Option.fromNullable(m.exercises.find((e) => e.item.id === id))
+  Option.fromNullishOr(m.exercises.find((e) => e.item.id === id))
 
 /* exactOptionalPropertyTypes: optional fields clear by OMISSION, never by an
  * explicit `undefined`. */

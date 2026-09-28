@@ -1,5 +1,5 @@
-import { LanguageModel, Prompt } from "@effect/ai"
-import type { AiError } from "@effect/ai"
+import { LanguageModel, Prompt } from "effect/ai"
+import type { AiError } from "effect/ai"
 import { Effect, Option } from "effect"
 import type { Schema } from "effect"
 import { CurrentPromptProvenance, HarnessError, PromptId } from "@xandreed/core"
@@ -18,7 +18,7 @@ export const currentTarget: Effect.Effect<ModelTarget> = Effect.serviceOption(Cu
 )
 
 const own = <V>(record: Readonly<Record<string, V>> | undefined, key: string): Option.Option<V> =>
-  record !== undefined && Object.hasOwn(record, key) ? Option.fromNullable(record[key]) : Option.none()
+  record !== undefined && Object.hasOwn(record, key) ? Option.fromNullishOr(record[key]) : Option.none()
 
 /** The provider of a `provider/model` target. */
 export const providerOf = (target: ModelTarget): Option.Option<string> => {
@@ -83,16 +83,16 @@ export const definePrompt = <I, O = never, OI extends Record<string, unknown> = 
   readonly version: string
   readonly render: (input: I) => Prompt.RawInput
   readonly variants?: Variants<Prompt.RawInput>
-  readonly output?: (input: I) => { readonly name?: string; readonly schema: Schema.Schema<O, OI> }
+  readonly output?: (input: I) => { readonly name?: string; readonly schema: Schema.Codec<O, OI> }
 }): VersionedPrompt<I, O, OI> => ({
   _tag: "VersionedPrompt",
   id: PromptId.make(definition.id),
   version: definition.version,
   render: (input) => Prompt.make(definition.render(input)),
-  variants: Option.map(Option.fromNullable(definition.variants), (variants) => mapVariants(variants, Prompt.make)),
-  output: Option.map(Option.fromNullable(definition.output), (of) => (input: I): PromptOutput<O, OI> => {
+  variants: Option.map(Option.fromNullishOr(definition.variants), (variants) => mapVariants(variants, Prompt.make)),
+  output: Option.map(Option.fromNullishOr(definition.output), (of) => (input: I): PromptOutput<O, OI> => {
     const output = of(input)
-    return { name: Option.fromNullable(output.name), schema: output.schema }
+    return { name: Option.fromNullishOr(output.name), schema: output.schema }
   }),
 })
 
@@ -125,7 +125,7 @@ export const renderPrompt = <I, O, OI extends Record<string, unknown>>(
 
 /** Run `effect` with this provenance as the CurrentPromptProvenance model adapters read. */
 export const withProvenance = (provenance: PromptProvenance) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.locally(effect, CurrentPromptProvenance, Option.some(provenance))
+  Effect.provideService(effect, CurrentPromptProvenance, Option.some(provenance))
 
 /** Render the prompt and generate text with the LanguageModel, under the prompt's provenance. */
 export const generateText = <I, O, OI extends Record<string, unknown>>(
@@ -141,7 +141,7 @@ export const generateObject = <I, O, OI extends Record<string, unknown>>(
   prompt: VersionedPrompt<I, O, OI>,
   input: I,
   options: { readonly target?: ModelTarget } = {},
-): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, O>, PromptError | AiError.AiError, LanguageModel.LanguageModel> => Effect.gen(function* () {
+): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, O, "opaque">, PromptError | AiError.AiError, LanguageModel.LanguageModel> => Effect.gen(function* () {
   const rendered = yield* renderPrompt(prompt, input, options.target)
   const output = yield* Option.match(rendered.output, {
     onNone: () => Effect.fail(new PromptError({ code: "output.missing", message: `${prompt.id}@${prompt.version} declares no output` })),

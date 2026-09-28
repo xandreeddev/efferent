@@ -1,5 +1,6 @@
-import type { Tool } from "@effect/ai"
-import { JSONSchema, Option } from "effect"
+import type { Tool } from "effect/ai"
+import { Option } from "effect"
+import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
 import type { Effect } from "effect"
 import type { Contribution, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/contribution.port.js"
 import type { CapabilityCatalog } from "./capability.entity.js"
@@ -18,13 +19,13 @@ export const defineTool = <T extends Tool.Any, R>(definition: {
 }): RegisteredTool => ({
   tool: definition.tool,
   handler: definition.handler as (params: unknown) => Effect.Effect<unknown, unknown, unknown>,
-  view: Option.map(Option.fromNullable(definition.view), (view) => ({
+  view: Option.map(Option.fromNullishOr(definition.view), (view) => ({
     version: view.version,
     render: view.render,
-    compact: Option.fromNullable(view.compact),
+    compact: Option.fromNullishOr(view.compact),
     subjects: view.subjects ?? (() => []),
     artifacts: view.artifacts ?? (() => []),
-    digest: Option.fromNullable(view.digest),
+    digest: Option.fromNullishOr(view.digest),
   })) as RegisteredTool["view"],
   annotations: { ...defaultAnnotations, ...definition.annotations },
 })
@@ -75,7 +76,7 @@ export const catalogOf = (version: string, contributions: ReadonlyArray<Contribu
     description: registered.tool.description ?? registered.tool.name,
     returns: "tool result",
     permissions: registered.annotations.permissions,
-    inputSchema: { ...JSONSchema.make(registered.tool.parametersSchema) },
-    outputSchema: { ...JSONSchema.make(registered.tool.successSchema) },
+    inputSchema: { ...toolParametersSchema(registered.tool) },
+    outputSchema: { ...strictJsonSchema(registered.tool.successSchema) },
   })),
 })

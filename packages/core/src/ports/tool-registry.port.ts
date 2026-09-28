@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
-import type { Tool, Toolkit } from "@effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 import type { DecisionRecord } from "../decision-record.entity.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import type { SkillDefinition } from "../harness/contribution.entity.js"
@@ -42,7 +42,7 @@ export interface RunTools {
   readonly skills: ReadonlyArray<SkillDefinition>
 }
 
-export class ToolRegistry extends Context.Tag("efferent/ToolRegistry")<ToolRegistry, {
+export class ToolRegistry extends Context.Service<ToolRegistry, {
   readonly catalog: CapabilityCatalog
   /**
    * Open the tools of one run. The handlers run with the services of where
@@ -50,4 +50,4 @@ export class ToolRegistry extends Context.Tag("efferent/ToolRegistry")<ToolRegis
    * an IntentMatcher, ActionPolicy and CapabilityGrants there are used.
    */
   readonly open: (session: MemorySession) => Effect.Effect<RunTools, HarnessError, RunContext | Scope.Scope>
-}>() {}
+}>()("efferent/ToolRegistry") {}

@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Option, PubSub, Ref, Stream } from "effect"
+import { Effect, Exit, Fiber, Option, PubSub, Ref, Stream, Semaphore } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 
 /**
@@ -69,8 +69,8 @@ export const makeSession = <E, RS = never>(args: {
     const log = yield* Ref.make<ReadonlyArray<SeqEvent<E>>>([])
     const hub = yield* PubSub.sliding<SeqEvent<E>>(512)
     const transientHub = yield* PubSub.sliding<E>(128)
-    const running = yield* Ref.make(Option.none<Fiber.RuntimeFiber<void>>())
-    const gate = yield* Effect.makeSemaphore(1)
+    const running = yield* Ref.make(Option.none<Fiber.Fiber<void>>())
+    const gate = yield* Semaphore.make(1)
 
     const publish = (event: E): Effect.Effect<void> =>
       args.isTransient?.(event) === true
@@ -86,8 +86,8 @@ export const makeSession = <E, RS = never>(args: {
     const runContained = (text: string): Effect.Effect<void> =>
       args.runTurn(text, publish).pipe(
         Effect.provide(context),
-        Effect.catchAll((error) => publish(args.onError(String(error)))),
-        Effect.catchAllDefect((defect) =>
+        Effect.catch((error) => publish(args.onError(String(error)))),
+        Effect.catchDefect((defect) =>
           publish(args.onError(`turn crashed: ${String(defect)}`)),
         ),
       )
@@ -95,7 +95,7 @@ export const makeSession = <E, RS = never>(args: {
     const send = (text: string): Effect.Effect<void> =>
       gate.withPermits(1)(
         Effect.gen(function* () {
-          const fiber = yield* Effect.fork(runContained(text))
+          const fiber = yield* Effect.forkChild(runContained(text))
           yield* Ref.set(running, Option.some(fiber))
           // AWAIT, never join: joining an interrupted turn would interrupt
           // the sender too — an interrupted turn ends the send normally,
@@ -113,8 +113,9 @@ export const makeSession = <E, RS = never>(args: {
           onNone: () => Effect.void,
           onSome: (fiber) =>
             Fiber.interrupt(fiber).pipe(
+              Effect.andThen(Fiber.await(fiber)),
               Effect.flatMap((exit) =>
-                Exit.isInterrupted(exit) && args.onInterrupt !== undefined
+                Exit.hasInterrupts(exit) && args.onInterrupt !== undefined
                   ? publish(args.onInterrupt())
                   : Effect.void,
               ),
@@ -131,7 +132,7 @@ export const makeSession = <E, RS = never>(args: {
         Effect.map((entries) => ({ log: entries, cursor: entries.length })),
       ),
       subscribe: (since) =>
-        Stream.unwrapScoped(
+        Stream.unwrap(
           Effect.gen(function* () {
             // Subscribe FIRST, then snapshot — anything landing between the
             // snapshot and the live tail is deduped by seq (the identity).
@@ -139,7 +140,7 @@ export const makeSession = <E, RS = never>(args: {
             const entries = yield* Ref.get(log)
             const replay = Stream.fromIterable(entries.filter((e) => e.seq >= since))
             const seenThrough = entries.length
-            const live = Stream.fromQueue(sub).pipe(
+            const live = Stream.fromSubscription(sub).pipe(
               Stream.filter((e) => e.seq >= Math.max(since, seenThrough)),
             )
             return Stream.concat(replay, live)

@@ -173,7 +173,7 @@ The same rubric can run through `SemanticLlmLive`, which requires a native
 `LanguageModel` service and a host-owned native prompt builder:
 
 ```ts
-import { LanguageModel, Prompt } from "@effect/ai"
+import { LanguageModel, Prompt } from "effect/ai"
 import { Layer } from "effect"
 import { SemanticLlmLive, type SemanticInput } from "@xandreed/evals"
 

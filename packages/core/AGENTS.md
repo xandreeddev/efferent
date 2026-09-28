@@ -1,7 +1,7 @@
 # @xandreed/core
 
 Shared schemas, service ports, message codecs and protocol helpers. Runtime
-dependencies are Effect and the provider-neutral @effect/ai contracts only.
+dependencies are Effect and the provider-neutral effect/ai contracts only.
 No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 
 Plugin and configuration contracts live in `src/harness`; service tags live in

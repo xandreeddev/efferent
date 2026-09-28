@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { LanguageModel } from "@effect/ai"
+import type { LanguageModel } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -27,7 +27,7 @@ export interface Correctives {
 /** Everything one provider request needs, prepared by the turn. */
 export interface StepPlan {
   /** None: the LanguageModel in the turn's services. */
-  readonly model: Option.Option<LanguageModel.Service>
+  readonly model: Option.Option<LanguageModel.LanguageModel>
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
   readonly toolChoice: Option.Option<ToolChoice>
@@ -67,8 +67,8 @@ export interface RunResult {
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict.
  */
-export class StepLoop extends Context.Tag("efferent/StepLoop")<StepLoop, {
+export class StepLoop extends Context.Service<StepLoop, {
   readonly id: string
   readonly version: string
   readonly run: (request: StepRequest) => Effect.Effect<RunResult, HarnessError>
-}>() {}
+}>()("efferent/StepLoop") {}

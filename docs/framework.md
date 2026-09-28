@@ -310,7 +310,7 @@ gets the same per-turn instance. The type of `agent.turn` removes what the
 turn provides from `use`'s requirements.
 
 ```ts
-class AnswerState extends Context.Tag("app/AnswerState")<AnswerState, AnswerStateService>() {}
+class AnswerState extends Context.Service<AnswerState, AnswerStateService>()("app/AnswerState") {}
 const answerStateLayer = Layer.effect(AnswerState, RunContext.pipe(Effect.flatMap(makeAnswerState)))
 
 const userMessage = new UserMessage({ text })
@@ -558,7 +558,7 @@ joined before it, and the host layer seeing only earlier turns.
 
 ## Versioned prompts: `@xandreed/ai`
 
-`@xandreed/ai` gives prompts an identity on top of `@effect/ai`, and records
+`@xandreed/ai` gives prompts an identity on top of `effect/ai`, and records
 it on every call.
 
 **Model prompts.** `definePrompt({ id, version, render, variants?, output? })`

@@ -1,6 +1,6 @@
-import { Effect, Fiber, Option, Ref, Stream } from "effect"
+import { Effect, Fiber, Filter, Option, Ref, Stream } from "effect"
 import { AgentLoop, HarnessError, SessionEnvironment, SessionStore } from "@xandreed/core"
-import type { ConversationId, Session, SessionHandle } from "@xandreed/core"
+import type { ConversationId, EventBody, Session, SessionHandle } from "@xandreed/core"
 
 /** Adapt a domain session's event protocol to the durable harness lifecycle. */
 export const domainLoop = <E extends { readonly type: string }, R>(options: {
@@ -50,7 +50,7 @@ export const domainSession = <E>(handle: SessionHandle, decode: (value: unknown)
     conversationId: handle.record.id,
     send: (text) => handle.send(text).pipe(Effect.ignore), interrupt: handle.interrupt, shutdown: handle.close,
     state: handle.history.pipe(Effect.map((events) => ({ cursor: (events.at(-1)?.seq ?? -1) + 1, log: events.flatMap((entry) => Option.toArray(Option.map(event(entry.name, entry.data), (value) => ({ seq: entry.seq, event: value })))) })), Effect.orDie),
-    subscribe: (since) => handle.events(since - 1).pipe(Stream.map((entry) => Option.map(event(entry.name, entry.data), (value) => ({ seq: entry.seq, event: value }))), Stream.filterMap((value) => value), Stream.orDie),
-    transient: handle.transient.pipe(Stream.filterMap((entry) => entry.name === "domain.delta" ? decode(entry.data.event) : Option.none())),
+    subscribe: (since) => handle.events(since - 1).pipe(Stream.map((entry) => Option.map(event(entry.name, entry.data), (value) => ({ seq: entry.seq, event: value }))), Stream.filterMap(Filter.fromPredicateOption((value) => value)), Stream.orDie),
+    transient: handle.transient.pipe(Stream.filterMap(Filter.fromPredicateOption((entry: EventBody) => entry.name === "domain.delta" ? decode(entry.data.event) : Option.none()))),
   }
 }

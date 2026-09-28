@@ -9,7 +9,7 @@ import type { ProviderId } from "../domain/model-selection.entity.js"
  * established, so existing credentials keep working.
  */
 export const Credential = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("api_key"), key: Schema.String }),
+  [Schema.Struct({ type: Schema.Literal("api_key"), key: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("oauth"),
     access: Schema.String,
@@ -18,7 +18,7 @@ export const Credential = Schema.Union(
     accountId: Schema.optional(Schema.String),
     installationId: Schema.optional(Schema.String),
   }),
-  Schema.Struct({ type: Schema.Literal("local"), baseUrl: Schema.optional(Schema.String) }),
+  Schema.Struct({ type: Schema.Literal("local"), baseUrl: Schema.optional(Schema.String) })],
 )
 export type Credential = typeof Credential.Type
 
@@ -33,9 +33,7 @@ export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
  * so a credential added mid-session takes effect on the next call with no
  * restart. `None` means the provider is not configured.
  */
-export class AuthStore extends Context.Tag("@xandreed/core/AuthStore")<
-  AuthStore,
-  {
+export class AuthStore extends Context.Service<AuthStore, {
     readonly all: Effect.Effect<ReadonlyMap<string, Credential>, AuthError>
     readonly get: (p: ProviderId) => Effect.Effect<Option.Option<Credential>, AuthError>
     readonly resolveKey: (
@@ -45,5 +43,4 @@ export class AuthStore extends Context.Tag("@xandreed/core/AuthStore")<
     readonly set: (p: ProviderId, credential: Credential) => Effect.Effect<void, AuthError>
     /** Remove a provider's credential everywhere it is stored (`:logout`). */
     readonly remove: (p: ProviderId) => Effect.Effect<void, AuthError>
-  }
->() {}
+  }>()("@xandreed/core/AuthStore") {}

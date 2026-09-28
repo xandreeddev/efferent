@@ -7,7 +7,7 @@ import type { DecisionAnswers, EvaluationError, RenderedDecision } from "../deci
  * boolean question and one offered choice per choice question, for every
  * question asked and nothing else.
  */
-export class EvaluationModel extends Context.Tag("efferent/ai/EvaluationModel")<EvaluationModel, {
+export class EvaluationModel extends Context.Service<EvaluationModel, {
   readonly model: string
   readonly evaluate: (rendered: RenderedDecision) => Effect.Effect<DecisionAnswers, EvaluationError>
-}>() {}
+}>()("efferent/ai/EvaluationModel") {}

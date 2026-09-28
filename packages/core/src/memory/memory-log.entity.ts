@@ -11,13 +11,13 @@ import { UserMessageFromString } from "../turn/user-message.entity.js"
  */
 
 /** `<runId>:<index within the run>` — assigned by memory, independent of any journal. */
-export const EntryId = Schema.NonEmptyTrimmedString.pipe(Schema.brand("EntryId"))
+export const EntryId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("EntryId"))
 export type EntryId = typeof EntryId.Type
 
 /** Something a tool result discovered, e.g. a record the next turn may cite. */
 export const Subject = Schema.Struct({
-  kind: Schema.NonEmptyTrimmedString,
-  id: Schema.NonEmptyTrimmedString,
+  kind: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
   label: Schema.OptionFromNullOr(Schema.String),
   data: Schema.OptionFromNullOr(Schema.Unknown),
 })
@@ -25,9 +25,9 @@ export type Subject = typeof Subject.Type
 
 /** A file or image a tool result carries, kept by reference (never inlined in the log). */
 export const ArtifactRef = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  kind: Schema.Literal("image", "file"),
-  mediaType: Schema.NonEmptyTrimmedString,
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  kind: Schema.Literals(["image", "file"]),
+  mediaType: Schema.Trimmed.check(Schema.isNonEmpty()),
   url: Schema.String,
   alt: Schema.OptionFromNullOr(Schema.String),
 })
@@ -35,21 +35,21 @@ export type ArtifactRef = typeof ArtifactRef.Type
 
 export const CompactionAction = Schema.Union(
   /** Older tool results shown through their compact views (texts align with entries). */
-  Schema.TaggedStruct("CompactViews", { entries: Schema.Array(EntryId), texts: Schema.Array(Schema.String) }),
+  [Schema.TaggedStruct("CompactViews", { entries: Schema.Array(EntryId), texts: Schema.Array(Schema.String) }),
   /** One large result replaced by a preview; the full value stays resolvable. */
   Schema.TaggedStruct("Spill", { entry: EntryId, preview: Schema.String }),
   /** Whole turns up to `throughTurn` replaced by a ledger. */
   Schema.TaggedStruct("DropTurns", { throughTurn: Schema.Int, ledger: Schema.String }),
   /** Everything before `keepFromTurn` replaced by a summary. */
-  Schema.TaggedStruct("Summarize", { keepFromTurn: Schema.Int, summary: Schema.String }),
+  Schema.TaggedStruct("Summarize", { keepFromTurn: Schema.Int, summary: Schema.String })],
 )
 export type CompactionAction = typeof CompactionAction.Type
 
-export const ActivationSource = Schema.Literal("always", "matcher", "load_skill", "host")
+export const ActivationSource = Schema.Literals(["always", "matcher", "load_skill", "host"])
 export type ActivationSource = typeof ActivationSource.Type
 
 export const LogBody = Schema.Union(
-  Schema.TaggedStruct("SystemPrepared", {
+  [Schema.TaggedStruct("SystemPrepared", {
     fingerprint: Schema.String,
     text: Schema.String,
     sections: Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, fingerprint: Schema.String })),
@@ -59,9 +59,9 @@ export const LogBody = Schema.Union(
    * `prompt`: existing logs decode unchanged and an entry's canonical bytes
    * (and so every fingerprint and cache key) stay the same.
    */
-  Schema.TaggedStruct("TurnStarted", {
-    userMessage: Schema.propertySignature(UserMessageFromString).pipe(Schema.fromKey("prompt")),
-  }),
+  Schema.TaggedStruct("TurnStarted", { userMessage: UserMessageFromString }).pipe(
+    Schema.encodeKeys({ userMessage: "prompt" }),
+  ),
   Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String }),
   Schema.TaggedStruct("Message", { message: AgentMessage }),
   Schema.TaggedStruct("ToolResult", {
@@ -86,11 +86,11 @@ export const LogBody = Schema.Union(
   Schema.TaggedStruct("ToolDigest", {
     entry: EntryId,
     version: Schema.String,
-    mode: Schema.Literal("select", "summarize"),
+    mode: Schema.Literals(["select", "summarize"]),
     keep: Schema.Array(Schema.String),
     text: Schema.String,
     digester: Schema.String,
-    trigger: Schema.Literal("write", "compaction"),
+    trigger: Schema.Literals(["write", "compaction"]),
   }),
   Schema.TaggedStruct("StepContext", { step: Schema.Int, text: Schema.String }),
   Schema.TaggedStruct("ToolsActivated", {
@@ -101,9 +101,9 @@ export const LogBody = Schema.Union(
   }),
   Schema.TaggedStruct("Compaction", { strategy: Schema.String, version: Schema.String, action: CompactionAction }),
   Schema.TaggedStruct("TurnEnded", {
-    outcome: Schema.Literal("completed", "partial", "failed"),
+    outcome: Schema.Literals(["completed", "partial", "failed"]),
     reply: Schema.OptionFromNullOr(Schema.String),
-  }),
+  })],
 )
 export type LogBody = typeof LogBody.Type
 

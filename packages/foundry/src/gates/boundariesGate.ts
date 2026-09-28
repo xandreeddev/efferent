@@ -15,7 +15,7 @@ const ILLEGAL_IMPORT = RuleId.make("boundaries/illegal-import")
 const ILLEGAL_EXTERNAL = RuleId.make("boundaries/illegal-external")
 
 const layerOf = (layers: LayerConfig, relPath: string): Option.Option<LayerSpec> =>
-  Option.fromNullable(layers.layers.find((l) => matchesGlob(l.path, relPath)))
+  Option.fromNullishOr(layers.layers.find((l) => matchesGlob(l.path, relPath)))
 
 /** `./x.js` (the ESM authoring convention) resolves to `./x.ts` on disk. */
 const toSourceRelative = (importerRel: string, specifier: string): string => {
@@ -23,17 +23,36 @@ const toSourceRelative = (importerRel: string, specifier: string): string => {
   return joined.endsWith(".ts") ? joined : joined.replace(/\.js$/, ".ts")
 }
 
-/** A prefix ending in `/` or `:` is a raw prefix (`@effect/` → `@effect/ai`,
- *  `node:` → `node:path`); otherwise it matches the exact package or its
- *  subpaths (`effect` → `effect`, `effect/Function` — never `effect-foo`). */
+/**
+ * Effect v4 folds packages that were separate in v3 (`@effect/ai`,
+ * `@effect/platform`, `@effect/sql`…) into these `effect/<module>` barrels
+ * (the migration guide's unstable modules). Each stays its own allowance:
+ * `effect` admits the core modules only, so a layer allowed `effect` alone
+ * cannot reach `effect/ai` any more than it could reach `@effect/ai`.
+ */
+const EFFECT_BARRELS: ReadonlySet<string> = new Set([
+  "ai", "cli", "cluster", "devtools", "eventlog", "http", "http-api", "jsonschema", "observability",
+  "persistence", "process", "reactivity", "rpc", "schema", "socket", "sql", "workflow", "workers",
+])
+
+const effectBarrelOf = (specifier: string): Option.Option<string> => {
+  const name = /^effect\/([a-z][a-z-]*)(?:\/|$)/.exec(specifier)?.[1]
+  return name !== undefined && EFFECT_BARRELS.has(name) ? Option.some(`effect/${name}`) : Option.none()
+}
+
+/** A prefix ending in `/` or `:` is a raw prefix (`@effect/` → `@effect/ai-openai`,
+ *  `effect/` → `effect/ai`, `node:` → `node:path`); otherwise it matches the
+ *  exact package or its subpaths (`effect` → `effect`, `effect/Function` —
+ *  never `effect-foo`, and never an Effect barrel, which is named itself). */
 const externalAllowed = (layer: LayerSpec, specifier: string): boolean =>
-  layer.externals.some(
-    (prefix) =>
-      specifier === prefix ||
-      specifier.startsWith(
-        prefix.endsWith("/") || prefix.endsWith(":") ? prefix : `${prefix}/`,
-      ),
-  )
+  layer.externals.some((prefix) => {
+    if (prefix.endsWith("/") || prefix.endsWith(":")) return specifier.startsWith(prefix)
+    const within = specifier === prefix || specifier.startsWith(`${prefix}/`)
+    return within && Option.match(effectBarrelOf(specifier), {
+      onNone: () => true,
+      onSome: (barrel) => prefix === barrel || prefix.startsWith(`${barrel}/`),
+    })
+  })
 
 /** Every import (and re-export) clause of a source file, with its node. */
 const moduleSpecifiers = (

@@ -4,11 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@effect/ai": "0.35.0",
-    "@effect/cli": "^0.75.1",
-    "@effect/platform": "0.96.1",
-    "@effect/platform-bun": "^0.89.0",
-    "effect": "3.21.4",
+    "@effect/platform-bun": "4.0.0-rc.118",
+    "effect": "4.0.0-rc.118",
     "playwright": "^1.49.0",
     "@xandreed/core": "workspace:*",
     "@xandreed/plugin-agent-loop": "workspace:*",
