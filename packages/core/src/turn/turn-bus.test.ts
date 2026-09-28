@@ -81,6 +81,56 @@ describe("the turn event bus", () => {
     expect(pages).toEqual(["p1@5"])
   })
 
+  test("a background subscription handles events in order, off the publisher's path, and drain waits for it", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const gate = yield* Deferred.make<void>()
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      yield* onEvent("step.started", (event) => Deferred.await(gate).pipe(Effect.zipRight(Ref.update(seen, (all) => [...all, event.step]))), { mode: "background" })(events)
+      yield* Effect.forEach([0, 1, 2], (step) => events.publish(started(step)), { discard: true })
+      const beforeDrain = yield* Ref.get(seen)
+      yield* Deferred.succeed(gate, undefined)
+      yield* events.drain
+      return { beforeDrain, afterDrain: yield* Ref.get(seen) }
+    })))
+    expect(outcome).toEqual({ beforeDrain: [], afterDrain: [0, 1, 2] })
+  })
+
+  test("drain also waits for what background handlers publish meanwhile", async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const log = yield* Ref.make<ReadonlyArray<string>>([])
+      yield* onEvent("step.started", (event) => Effect.sleep("5 millis").pipe(
+        Effect.zipRight(Ref.update(log, (all) => [...all, `first${event.step}`])),
+        Effect.zipRight(event.step === 0 ? events.publish(started(1)) : Effect.void),
+      ), { mode: "background" })(events)
+      yield* onEvent("step.started", (event) => Effect.sleep("5 millis").pipe(Effect.zipRight(Ref.update(log, (all) => [...all, `second${event.step}`]))), { mode: "background" })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+      return yield* Ref.get(log)
+    })))
+    expect([...seen].sort()).toEqual(["first0", "first1", "second0", "second1"])
+  })
+
+  test("a failed background handler fails the drain and the next delivery, and skips the rest", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      yield* onEvent("step.started", (event) => event.step === 1
+        ? Effect.fail(new HarnessError({ code: "reaction.failed", message: "no" }))
+        : Ref.update(seen, (all) => [...all, event.step]), { mode: "background" })(events)
+      yield* Effect.forEach([0, 1, 2], (step) => events.publish(started(step)), { discard: true })
+      const drained = yield* Effect.either(events.drain)
+      const next = yield* Effect.either(events.publish(started(3)))
+      return {
+        drained: drained._tag === "Left" ? drained.left.code : "none",
+        next: next._tag === "Left" ? next.left.code : "none",
+        seen: yield* Ref.get(seen),
+      }
+    })))
+    expect(outcome).toEqual({ drained: "reaction.failed", next: "reaction.failed", seen: [0] })
+  })
+
   test("the journal form drops transient events and decoded results", () => {
     expect(Option.isNone(journalBodyOf("run-1", { _tag: "assistant.delta", step: 0, channel: "text", id: "t", delta: "hi" }))).toBe(true)
     const body = Option.getOrThrow(journalBodyOf("run-1", completed("lookup", { query: "alpha" }, { id: "r1" })))

@@ -1,17 +1,18 @@
 import { Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody } from "../harness/session.entity.js"
-import type { Subscription, TurnEventsService } from "../ports/turn-events.port.js"
+import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
 import { TransientTurnEvents, TurnEvent as TurnEventSchema } from "./turn-event.entity.js"
 import type { TurnEvent, TurnEventName, TurnEventOf } from "./turn-event.entity.js"
 
 const isNamed = <Name extends TurnEventName>(name: Name) => (event: TurnEvent): event is TurnEventOf<Name> => event._tag === name
 
-/** Subscribe to one event kind by name, typed by the event's schema. */
+/** Subscribe to one event kind by name, typed by the event's schema (inline unless `options.mode` says background). */
 export const onEvent = <Name extends TurnEventName, R>(
   name: Name,
   handle: (event: TurnEventOf<Name>) => Effect.Effect<void, HarnessError, R>,
-): Subscription<R> => (events) => events.subscribe((event) => Option.liftPredicate(event, isNamed(name)), handle)
+  options?: SubscribeOptions,
+): Subscription<R> => (events) => events.subscribe((event) => Option.liftPredicate(event, isNamed(name)), handle, options)
 
 /**
  * React to one tool's successful calls, typed by the tool's own schemas:
@@ -27,6 +28,7 @@ export interface ToolCall<Input, Result> {
 export const onTool = <Params extends Schema.Schema.Any, Success extends Schema.Schema.Any, R>(
   tool: { readonly name: string; readonly parametersSchema: Params; readonly successSchema: Success },
   handle: (call: ToolCall<Schema.Schema.Type<Params>, Schema.Schema.Type<Success>>) => Effect.Effect<void, HarnessError, R>,
+  options?: SubscribeOptions,
 ): Subscription<R> => {
   const isInput = Schema.is(tool.parametersSchema)
   const isResult = Schema.is(tool.successSchema)
@@ -37,7 +39,7 @@ export const onTool = <Params extends Schema.Schema.Any, Success extends Schema.
     return isInput(input) && isResult(result)
       ? Option.some({ step: event.step, invocationId: event.invocationId, input, result })
       : Option.none()
-  }, handle)
+  }, handle, options)
 }
 
 /** Attach several subscriptions to one bus. */
@@ -61,7 +63,8 @@ export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(
     make,
     select,
     publish: (events: TurnEventsService, data: A) => make(data).pipe(Effect.flatMap(events.publish)),
-    on: <R>(handle: (data: A) => Effect.Effect<void, HarnessError, R>): Subscription<R> => (events) => events.subscribe(select, handle),
+    on: <R>(handle: (data: A) => Effect.Effect<void, HarnessError, R>, options?: SubscribeOptions): Subscription<R> =>
+      (events) => events.subscribe(select, handle, options),
   }
 }
 
