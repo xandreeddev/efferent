@@ -11,7 +11,7 @@ export const renderSurfaceDefaults: typeof SurfaceConfig.Type = { maxBytes: 32_7
 
 /** Surfaces over the host's RenderStore, with the host's admission rules. */
 export const renderSurfacePlugin = definePlugin({
-  id: "@xandreed/plugin-render/surface", version: "0.6.0-next.1", scope: "runtime",
+  id: "@xandreed/plugin-render/surface", version: "0.6.0-next.2", scope: "runtime",
   requires: [RenderStore, UiOutputAdmission],
   provides: [Render],
   config: SurfaceConfig, defaults: renderSurfaceDefaults,
@@ -22,7 +22,7 @@ export const renderFeedDefaults: typeof FeedOptions.Type = { pollMs: 200, maxPol
 
 /** The journal as client frames; pair it with SseTransport or WebSocketTransport at the host's HTTP edge. */
 export const renderFeedPlugin = definePlugin({
-  id: "@xandreed/plugin-render/feed", version: "0.6.0-next.1", scope: "runtime",
+  id: "@xandreed/plugin-render/feed", version: "0.6.0-next.2", scope: "runtime",
   requires: [JournalTail],
   provides: [RenderFeed],
   config: FeedOptions, defaults: renderFeedDefaults,
