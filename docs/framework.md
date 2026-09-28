@@ -165,8 +165,9 @@ still checked. New profiles require live browser evidence before promotion.
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
-SDK sessions, replacement plugins, persistence, forks, custom evals and CLI
-startup, followed by the packed terminal in a real PTY. Publishing is a separate release action.
+SDK sessions, replacement plugins, persistence, forks, custom evals, versioned
+prompts with a checked decision (`@xandreed/ai`) and CLI startup, followed by
+the packed terminal in a real PTY. Publishing is a separate release action.
 
 ## Agent-loop trace content
 
@@ -388,8 +389,9 @@ a new strategy rebuilds from the full-fidelity entries.
   `recall_context`), then replaces the oldest turns with a ledger. It fails
   with `context.budget` only when the current turn alone does not fit.
 - The summary strategy folds the oldest turns into one recorded summary once
-  the render passes its trigger. It reads the `UtilityLlm` from the turn's
-  services, so summaries run under the turn's budget.
+  the render passes its trigger. It reads the `UtilityLlm` where its session
+  is opened (the turn), so summaries run under the turn's budget, and fails
+  with `memory.summary` without one.
 
 Digests of several results run concurrently (`MemoryPolicy.digestConcurrency`,
 four by default) and are recorded in the order of their results.
@@ -404,9 +406,18 @@ compaction); the `ResultDigester` runs the tool's own prompt for the latest
 `userMessage` (a log without one digests nothing); the outcome is
 logged once as a `ToolDigest` entry and never recomputed on replay.
 
-`memoryConformance(memory, services)` and `stepLoopConformance(loop)` (from
-`@xandreed/core`) are the port contracts as runnable checks. Run them against
-a new strategy or loop.
+`ConversationMemory.open({ conversation, runId, io })` reads what a strategy
+needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
+`Effect.serviceOption` from the environment it is opened in; provide them to
+the open, not as an argument. `ToolRegistry.open(session)` requires
+`RunContext` and a scope, and its handlers run with the services of where it
+is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
+`CapabilityGrants` there are used when present.
+
+`memoryConformance(memory, services)`, `stepLoopConformance(loop)` and
+`turnConformance(runner, services)` (from `@xandreed/core`) are the port
+contracts as runnable checks. Run them against a new strategy, loop or turn
+composition.
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
 annotations) and skills (`defineSkill`, or `skillsFromFiles` over
@@ -447,3 +458,164 @@ system prompt is the configured prefix, then the `static`
 sections, then the `session` sections, each tier by `order`. `turn` sections
 are recorded as turn context when the first run starts. The `Harness` remains
 the self-contained session host for applications that do not compose turns.
+
+### Typed plugin layers
+
+`definePlugin` returns a `TypedPlugin`: the `Plugin` the graph loads, plus its
+`config` schema, its typed `defaults` and `live(options?)`, the plugin's own
+layer with the services it provides and requires in its type. Options merge
+over the defaults and are decoded as the graph decodes them; an unknown key
+fails with `config.options`. Each capability package exports its schema, its
+defaults and its layer:
+
+| Package | Layer | Provides | Requires |
+| --- | --- | --- | --- |
+| `@xandreed/plugin-memory-log` | `MemoryLogLive` | `MemoryLog` | — |
+| `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Contributions` (recall) | `MemoryLog` |
+| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory` | `MemoryLog` |
+| `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
+| `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Contributions` (catalogue) | `Contributions` |
+| `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
+
+The schemas are `MemoryLogConfig`, `MemoryWindowConfig`, `MemorySummaryConfig`,
+`MemoryDigestConfig` and `ToolDiscoveryConfig`, with `memoryLogDefaults` and so
+on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
+
+`stackPlugins(next)(base)` composes them the way the graph activates plugins:
+`next` is built over everything `base` provides, the two `Contributions`
+arrays concatenate base first, and any other service of `next` wins.
+`ContributionsLive(...bundles)` is the host's own bundle at the bottom of the
+stack.
+
+```ts
+const plugins = ContributionsLive(appTools).pipe(
+  stackPlugins(MemoryLogLive()),
+  stackPlugins(MemoryWindowLive({ digestOnWriteChars: 4_000 })), // + the recall tool
+  stackPlugins(ToolDiscoveryLive({ grants: ["public"] })),       // registry over [app, recall]; + the catalogue
+  stackPlugins(StepLoopLive),
+)
+```
+
+The order is load-bearing, as in the graph: the registry is built over the
+contributions below it (the host's tools, then recall), while the system
+prompt sees all three bundles, and that order is the order of the tools sent
+to the model. Never combine layers that contribute with `Layer.merge` or
+`Layer.mergeAll`: a merge keeps one `Contributions` array and silently drops
+the other's tools, skills and sections, and neither layer sees the other's.
+
+### The turn as services
+
+The steps of a turn are public, over typed services, so a host composes the
+turn it needs; `Agent.turn` is one such composition. `TurnLive(input)` (from
+`@xandreed/core`, requiring `ConversationMemory` and `ToolRegistry`) builds, in
+this order, the event bus, the tasks and the write-behind journal, with the
+journal as the bus's first subscriber, then the memory session (opened where
+the layer is built) and `RunContext`. It provides:
+
+- `TurnMemory`: the session, the turn's `number`, `persistMessage`
+  (TurnStarted, then `turn.started`; once), `context(entry)` and
+  `persistReply(outcome)` (TurnEnded, then `turn.ended`; once, and a no-op
+  when the message was never persisted);
+- `TurnToolbox`: `open` (once; the handlers run with the opener's services)
+  and `tools` (fails with `tools.unavailable` before `open`);
+- `TurnPrompt`: `system(variant)` and `turnSections`;
+- `RunContext`, `TurnEvents` and `TurnTasks`.
+
+The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
+host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
+`finishTurn(outcome)` (persist the reply, drain, flush), `guardTurn(body)`
+(settle on success, else finish as failed keeping the cause), `turnOf(options)`
+(the `Turn` a host's code gets), and `stepRequestOf(policy, options)` and
+`runTurnLoop(policy, options)` for one run of the step loop. `cacheKeyOf(prefix,
+conversation)` builds the prompt-cache key.
+
+`Agent.turn` is, in order:
+
+```ts
+const body = Effect.gen(function* () {
+  yield* (yield* TurnMemory).persistMessage       // 3. the user's message
+  yield* openTurnTools                            // 4. inside the host layer: its services reach the handlers
+  return yield* use(yield* turnOf(runOptions))    // 5. the host's code
+})
+body.pipe(
+  guardTurn,
+  Effect.scoped,
+  Effect.provide(input.layer),                    // 2. built after RunContext, before TurnStarted
+  Effect.provide(TurnLive(turnInput)),            // 1. journal first, then memory and RunContext
+  Effect.provide(agentContext),                   // the graph's services and the turn's
+)
+```
+
+The order matters. The message is persisted before the matcher runs, because
+the matcher reads the reference transcript and a decision's context hash
+includes its length. Anything built before `persistMessage` (the host's layer)
+sees only earlier turns. A host composing by hand uses the same pieces over a
+`stackPlugins` stack instead of a graph, and builds session plugins such as
+`MemoryDigestLive()` per turn over the turn's services. `turnConformance`
+checks a composition: the journal first, the message before the matcher's
+history, `turn.ended` exactly once on success, failure and interrupt, tasks
+joined before it, and the host layer seeing only earlier turns.
+
+## Versioned prompts: `@xandreed/ai`
+
+`@xandreed/ai` gives prompts an identity on top of `@effect/ai`, and records
+it on every call.
+
+**Model prompts.** `definePrompt({ id, version, render, variants?, output? })`
+renders an input into a native `Prompt`. A variant has a `shared` fragment and
+optional fragments per provider and per model; for a `ModelTarget` (`{ model:
+"provider/model", variant }`) the most specific applies:
+`models[model] ?? providers[provider] ?? shared`. An unknown variant fails; a
+prompt without variants accepts any. The fragment goes after the prompt's
+system messages (`composeVariant`).
+
+```ts
+const summary = definePrompt({
+  id: "app.summary",
+  version: "summary-v2",
+  render: (input: { readonly text: string }) => [
+    { role: "system", content: "Summarize the text for a reader in a hurry." },
+    { role: "user", content: input.text },
+  ],
+  variants: {
+    baseline: { shared: [] },
+    concise: {
+      shared: [{ role: "system", content: "Keep it short." }],
+      models: { "vendor/small-model": [{ role: "system", content: "One sentence." }] },
+    },
+  },
+  output: () => ({ name: "summary", schema: Schema.Struct({ summary: Schema.String }) }),
+})
+
+const reply = yield* generateObject(summary, { text }, { target: { model: "vendor/small-model", variant: "concise" } })
+```
+
+`renderPrompt(prompt, input, target?)` returns the composed prompt and its
+`PromptProvenance`: id, version, variant, the override that applied (the
+model or the provider) and a hash, the SHA-256 hex of `JSON.stringify` of the
+encoded composed prompt. `generateText` and `generateObject` call the
+`LanguageModel` inside `withProvenance`, which sets the
+`CurrentPromptProvenance` model adapters read. Without an explicit target a
+prompt reads `CurrentModelTarget`, and renders for `{ model: "unknown",
+variant: "baseline" }` without one. `promptSection(prompt, { id, version,
+tier, order })` turns a prompt over the `PromptContext` into a system-prompt
+section; the variant string a policy's `model` choice passes is
+`encodeTarget(target)`.
+
+**Decision prompts.** `defineDecisionPrompt({ id, version, family, state,
+questions, variants? })` asks an `EvaluationModel` choice questions (`{ type:
+"choice", instructions, criteria }`) and boolean questions (`{ type:
+"boolean", instructions }`) about a state, which is data, never instructions.
+A variant rewords questions and describes their choices; it cannot add a
+question or a choice. `renderDecision` hashes `JSON.stringify({ state,
+questions })`. `evaluateDecision(prompt, input)` returns answers typed per
+question, and `validateAnswers` holds every answer to the questions asked:
+all of them, nothing else, and only offered choices. `makeEvaluationModel({
+model, transport, timeoutMs?, maxInputBytes? })` (or `EvaluationModelLive`)
+bridges a host transport with a byte budget and a deadline, and
+`scriptedEvaluationModel` answers from a script under the same checks. Every
+failure is an `EvaluationError` (`unavailable`, `timeout`, `invalid` or
+`budget`).
+
+`PromptId`, `PromptProvenance` and `CurrentPromptProvenance` stay in
+`@xandreed/core`, where transports read them; `@xandreed/ai` re-exports them.
