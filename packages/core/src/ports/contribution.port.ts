@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { Effect, Layer, Option } from "effect"
+import type { Effect, Option } from "effect"
 import type { LanguageModel, Tool } from "@effect/ai"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { PromptTier, SkillDefinition, ToolAnnotations } from "../harness/contribution.entity.js"
@@ -116,8 +116,6 @@ export interface Contribution {
   readonly tools: ReadonlyArray<RegisteredTool>
   readonly skills: ReadonlyArray<SkillDefinition>
   readonly sections: ReadonlyArray<PromptSection>
-  /** Per-run services (built after RunContext, before the tools open). */
-  readonly run: Option.Option<Layer.Layer<never, HarnessError, unknown>>
 }
 
 /** A MULTI-provider key: every contributor's bundle, in graph order. */

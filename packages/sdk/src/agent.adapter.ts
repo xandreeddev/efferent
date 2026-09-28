@@ -9,6 +9,7 @@ import {
   harnessDefectsAsFailures,
   HarnessError,
   journalBodyOf,
+  makeJournalWriter,
   makeTurnEvents,
   makeTurnTasks,
   RunContext,
@@ -38,6 +39,7 @@ import type {
   TurnInput,
   TurnOutcome,
   TurnPolicy,
+  TurnServices,
 } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 
@@ -72,6 +74,8 @@ export interface AgentConfig {
   readonly budgetTokens?: number
   /** How deep event reactions may nest before the bus fails the publisher. */
   readonly maxEventDepth?: number
+  /** The write-behind journal: queued items before appends wait, and items written per batch. */
+  readonly journal?: { readonly capacity?: number; readonly batch?: number }
 }
 
 /** A defined agent: its graph is built; each turn is composed by the host. */
@@ -79,14 +83,17 @@ export interface Agent {
   readonly fingerprint: string
   /**
    * Run one admitted turn. The turn is scoped: its subscriptions and tasks
-   * end with it. Tasks are joined before `turn.ended`, which is recorded
-   * exactly once — with a failed outcome when `use` fails or is interrupted.
-   * `use` runs in the turn's scope, so its subscriptions need no scope of their own.
+   * end with it. Tasks and background subscriptions are drained before
+   * `turn.ended`, which is recorded exactly once — with a failed outcome
+   * when `use` fails or is interrupted — and the journal is flushed before
+   * the turn returns. `use` runs in the turn's scope with the turn's
+   * services (RunContext, TurnEvents, TurnTasks and the input's `layer`)
+   * provided: the same instances the tools, policy and subscriptions see.
    */
-  readonly turn: <R>(
-    input: TurnInput,
+  readonly turn: <A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ) => Effect.Effect<TurnOutcome, HarnessError, Exclude<R, Scope.Scope>>
+  ) => Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }
 
 const defaultLimits: LoopLimits = { maxSteps: 50, toolConcurrency: 1, streaming: true, requireCompletion: false }
@@ -171,7 +178,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   const perTurn = graph.nodes.some((node) => node.plugin.scope === "session")
   const maxDepth = config.maxEventDepth ?? 8
 
-  const turn = <R>(input: TurnInput, use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>): Effect.Effect<TurnOutcome, HarnessError, Exclude<R, Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
+  const turn = <A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
+  ): Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.unsafeMap.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
@@ -185,9 +195,15 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
 
     const events = yield* makeTurnEvents({ maxDepth })
     const tasks = yield* makeTurnTasks(scope)
-    // The journal is the first subscriber: every durable event is persisted before any reaction runs.
-    yield* events.subscribe((event) => journalBodyOf(input.runId, event), input.journal.append)
-    const session = yield* memory.open({ conversation: input.conversation, runId: input.runId, io: input.journal, services: context })
+    // One ordered write-behind journal for events and memory: producers queue and go on; the
+    // turn waits only at flushes. Memory builds every request from its in-process log.
+    const writer = yield* makeJournalWriter(input.journal, scope, {
+      capacity: config.journal?.capacity ?? 1_024,
+      batch: config.journal?.batch ?? 64,
+    })
+    // The journal is the first subscriber: every durable event is queued before any reaction runs.
+    yield* events.subscribe((event) => journalBodyOf(input.runId, event), writer.io.append)
+    const session = yield* memory.open({ conversation: input.conversation, runId: input.runId, io: writer.io, services: context })
     const reader = readerOf(session)
 
     const toolsRef = yield* Ref.make(Option.none<RunTools>())
@@ -202,13 +218,16 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         onNone: () => Effect.fail(failure("tools.unavailable", "Tools are not open yet")),
         onSome: (tools) => tools.activate(skills, "host"),
       }))),
+      flush: writer.flush,
+      write: writer.write,
     })
     const base = Context.add(Context.add(Context.add(context, RunContext, run), TurnEvents, events), TurnTasks, tasks)
-    const runServices = yield* Effect.reduce(contributions, base, (current, contribution) => Option.match(contribution.run, {
-      onNone: () => Effect.succeed(current),
-      onSome: (layer) => closeWith(Layer.buildWithScope(layer, scope), current).pipe(Effect.map((built) => Context.merge(current, built))),
-    }))
-    const inRun = <A, E>(effect: Effect.Effect<A, E, unknown>): Effect.Effect<A, E> => closeWith(effect, runServices)
+    // The host's per-turn services: built against the turn, then provided to everything below.
+    const runServices = yield* Option.match(Option.fromNullable(input.layer), {
+      onNone: () => Effect.succeed(base),
+      onSome: (layer) => closeWith(Layer.buildWithScope(layer, scope), base).pipe(Effect.map((built) => Context.merge(base, built))),
+    })
+    const inRun = <B, F>(effect: Effect.Effect<B, F, unknown>): Effect.Effect<B, F> => closeWith(effect, runServices)
 
     const number = (yield* session.turn) + 1
     yield* session.record([{ _tag: "TurnStarted", prompt: input.prompt }], 0)
@@ -321,22 +340,37 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       events,
       tasks,
       tools: {
+        match: tools.match,
+        apply: tools.apply,
         select: tools.select,
         activate: (skills) => tools.activate(skills, "host"),
         active: tools.active,
         skills: tools.skills,
       },
-      services: runServices,
       context: (entry) => session.record([{ _tag: "TurnContext", sectionId: entry.id, version: entry.version, text: entry.text }], 0).pipe(Effect.asVoid),
       reply: (text) => Effect.succeed({ outcome: "completed", reply: Option.some(text) }),
       run: runWith,
+      flush: writer.flush,
+      write: writer.write,
     }
 
+    /** Tasks, then background reactions, again until a round starts nothing new: nothing of the turn is still running. */
+    const activity = Effect.zipWith(tasks.activity, events.activity, (forked, delivered) => forked + delivered)
+    const settle: Effect.Effect<void, HarnessError> = Effect.gen(function* () {
+      const before = yield* activity
+      yield* tasks.await([])
+      yield* events.drain
+      if ((yield* activity) !== before) yield* Effect.suspend(() => settle)
+    })
     const finish = (outcome: TurnOutcome) => Effect.gen(function* () {
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
       yield* events.publish({ _tag: "turn.ended", runId: input.runId, turn: number, outcome: outcome.outcome, reply: outcome.reply })
+      yield* events.drain
+      yield* writer.flush
     })
-    const outcome = yield* harnessDefectsAsFailures(Scope.extend(use(value), scope).pipe(Effect.tap(() => tasks.await([])))).pipe(
+    // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
+    const provided = Scope.extend(use(value), scope).pipe(Effect.provide(runServices)) as Effect.Effect<TurnOutcome, HarnessError, Exclude<R, A | TurnServices | Scope.Scope>>
+    const outcome = yield* harnessDefectsAsFailures(provided.pipe(Effect.tap(() => settle))).pipe(
       Effect.onExit(Exit.match({
         onSuccess: () => Effect.void,
         // The turn already failed; recording that must not replace its cause.

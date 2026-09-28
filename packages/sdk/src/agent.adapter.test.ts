@@ -16,11 +16,12 @@ import {
   inMemoryJournal,
   IntentMatcher,
   onTool,
+  RunContext,
   subscribeAll,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { EventBody, LogEntry, Plugin, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { EventBody, JournalIO, LogEntry, Plugin, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memoryLogPlugin } from "@xandreed/plugin-memory-log"
@@ -29,6 +30,7 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "./agent.adapter.js"
 import type { AgentConfig, AgentPluginEntry } from "./agent.adapter.js"
+import { Tally } from "./testing.port.js"
 
 /* ── the host's definitions: thin tools with views, skills and sections ── */
 
@@ -117,7 +119,7 @@ const utilityText = (text: string) => Context.make(UtilityLlm, UtilityLlm.of({
 
 const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> = {}) => Agent.define({
   plugins: [memoryLogPlugin, memory, toolDiscoveryPlugin, stepLoopPlugin, ...(extra.plugins ?? [])],
-  contributions: [host],
+  contributions: [host, ...(extra.contributions ?? [])],
   turnServices: [LanguageModel.LanguageModel, ...(extra.turnServices ?? [])],
   limits: { streaming: false, maxSteps: 6 },
   cacheKeyPrefix: "agent",
@@ -143,6 +145,38 @@ const answer = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutc
     ...policy,
   })
   return { outcome: result.outcome, reply: Option.orElse(yield* Ref.get(delivered), () => Option.some(result.text)) }
+})
+
+/* ── a per-turn host service, built by the turn's layer against RunContext ── */
+
+const tallyLayer = Layer.effect(Tally, Effect.gen(function* () {
+  const run = yield* RunContext
+  return { runId: run.runId, seen: yield* Ref.make<ReadonlyArray<string>>([]) }
+}))
+const tallied = (tally: typeof Tally.Service, text: string) => Ref.update(tally.seen, (all) => [...all, `${text}@${tally.runId}`])
+const Note = Tool.make("note", {
+  description: "Take a note.",
+  parameters: { text: Schema.String },
+  success: Schema.Boolean,
+  failure: Failure,
+  failureMode: "return",
+})
+const noting = defineContributions({
+  id: "test-noting", version: "1",
+  tools: [defineTool({ tool: Note, handler: ({ text }) => Tally.pipe(Effect.flatMap((tally) => tallied(tally, `tool:${text}`)), Effect.as(true)) })],
+  skills: [defineSkill({ id: "noting", summary: "Take notes.", tools: ["note"], always: true })],
+})
+
+/** A journal whose store is slow, and fails on one event name when asked to. */
+const slowJournal = (failOn: Option.Option<string>) => Effect.gen(function* () {
+  const stored = yield* Ref.make<ReadonlyArray<EventBody>>([])
+  const io: JournalIO = {
+    append: (event) => Effect.sleep("1 millis").pipe(Effect.zipRight(Option.contains(failOn, event.name)
+      ? Effect.fail(new HarnessError({ code: "journal.down", message: "store unavailable" }))
+      : Ref.update(stored, (all) => [...all, event]))),
+    read: (names) => Ref.get(stored).pipe(Effect.map((all) => all.filter((event) => names.length === 0 || names.includes(event.name)))),
+  }
+  return { stored, io }
 })
 
 const lookupThenDeliver = [call("c1", "lookup", { query: "alpha" }), call("c2", "load_skill", { skills: ["delivery"] }), call("c3", "deliver", { text: "record-alpha-a" })]
@@ -315,6 +349,98 @@ describe("Agent.turn", () => {
     const decision = named(events, "decision.recorded")[0]?.data.record
     expect(decision).toMatchObject({ family: "skill-selection", selection: "delivery", applied: "delivery", validation: "accepted" })
     expect(Schema.decodeUnknownEither(DecisionRecord)(decision)._tag).toBe("Right")
+  })
+
+  test("the turn's layer is built per turn and provided to use, tools and subscriptions alike", async () => {
+    const replies = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin, { contributions: [noting] })
+      const journal = yield* inMemoryJournal
+      const turnWith = (runId: string) => Effect.gen(function* () {
+        const { model } = yield* scripted([call("c1", "note", { text: "x" }), stop("done")])
+        const outcome = yield* agent.turn({ ...inputFor(journal, runId, "take a note", model), layer: tallyLayer }, (turn) => Effect.gen(function* () {
+          const tally = yield* Tally
+          yield* tallied(tally, "use")
+          yield* subscribeAll(turn.events, [onTool(Note, ({ input }) => Tally.pipe(Effect.flatMap((same) => tallied(same, `subscriber:${input.text}`))))])
+          yield* turn.tasks.fork("tally", Tally.pipe(Effect.flatMap((same) => tallied(same, "task"))))
+          yield* turn.tasks.await(["tally"])
+          yield* turn.tools.select(turn.prompt)
+          yield* turn.run({})
+          return { outcome: "completed" as const, reply: Option.some((yield* Ref.get(tally.seen)).join(",")) }
+        }))
+        return Option.getOrElse(outcome.reply, () => "")
+      })
+      return [yield* turnWith("run-1"), yield* turnWith("run-2")]
+    })))
+    expect(replies).toEqual([
+      "use@run-1,task@run-1,tool:x@run-1,subscriber:x@run-1",
+      "use@run-2,task@run-2,tool:x@run-2,subscriber:x@run-2",
+    ])
+  })
+
+  test("matching skills writes nothing; applying the match activates and records it", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin, { turnServices: [] })
+      const journal = yield* inMemoryJournal
+      const { model } = yield* scripted([])
+      const matcher = Context.make(IntentMatcher, IntentMatcher.of({
+        id: "keyword", version: "1",
+        match: ({ message }) => Effect.succeed({ skills: message.includes("deliver") ? ["delivery"] : [], probabilities: Option.none(), abstained: false }),
+      }))
+      const observed = yield* Ref.make({ matched: [] as ReadonlyArray<string>, recorded: false, wroteOnMatch: -1, activeBefore: [] as ReadonlyArray<string>, activeAfter: [] as ReadonlyArray<string> })
+      yield* agent.turn(inputFor(journal, "run-1", "please deliver", model, matcher), (turn) => Effect.gen(function* () {
+        yield* turn.flush
+        const before = (yield* Ref.get(journal.stored)).length
+        const match = yield* turn.tools.match(turn.prompt)
+        yield* turn.flush
+        const wroteOnMatch = (yield* Ref.get(journal.stored)).length - before
+        const activeBefore = yield* turn.tools.active
+        yield* turn.tools.apply(match)
+        yield* Ref.set(observed, { matched: match.skills, recorded: Option.isSome(match.record), wroteOnMatch, activeBefore, activeAfter: yield* turn.tools.active })
+        return yield* turn.reply("ok")
+      }))
+      return { ...(yield* Ref.get(observed)), events: yield* Ref.get(journal.stored) }
+    })))
+    expect(outcome.matched).toEqual(["delivery"])
+    expect(outcome.recorded).toBe(true)
+    expect(outcome.wroteOnMatch).toBe(0)
+    expect(outcome.activeBefore).not.toContain("deliver")
+    expect(outcome.activeAfter).toContain("deliver")
+    expect(named(outcome.events, "decision.recorded").map((event) => event.data.record)).toEqual([
+      expect.objectContaining({ family: "skill-selection", selection: "delivery", applied: "delivery", validation: "accepted" }),
+    ])
+  })
+
+  test("background subscribers handle events in order and are drained before turn.ended", async () => {
+    const events = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* slowJournal(Option.none())
+      const { model } = yield* scripted([])
+      const Noted = defineHostEvent("item.noted", Schema.Struct({ n: Schema.Number }))
+      const Handled = defineHostEvent("item.handled", Schema.Struct({ n: Schema.Number }))
+      yield* agent.turn(inputFor({ stored: journal.stored, io: journal.io }, "run-1", "note", model), (turn) => Effect.gen(function* () {
+        yield* Noted.on((item) => Effect.sleep("3 millis").pipe(Effect.zipRight(Handled.publish(turn.events, item))), { mode: "background" })(turn.events)
+        yield* Effect.forEach([1, 2, 3], (n) => Noted.publish(turn.events, { n }), { discard: true })
+        return yield* turn.reply("noted")
+      }))
+      return yield* Ref.get(journal.stored)
+    })))
+    const names = events.map((event) => event.name)
+    expect(named(events, "item.handled").map((event) => event.data.n)).toEqual([1, 2, 3])
+    expect(names.lastIndexOf("item.handled")).toBeLessThan(names.indexOf("turn.ended"))
+    expect(names.at(-1)).toBe("turn.ended")
+  })
+
+  test("a journal that stops storing fails the turn with its error", async () => {
+    const { exit, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* slowJournal(Option.some("tool.completed"))
+      const { model } = yield* scripted(lookupThenDeliver)
+      const exit = yield* Effect.either(agent.turn(inputFor(journal, "run-1", "find alpha", model), answer()))
+      return { exit, events: yield* Ref.get(journal.stored) }
+    })))
+    expect(exit._tag === "Left" ? exit.left.code : "none").toBe("journal.down")
+    expect(named(events, "tool.completed")).toHaveLength(0)
+    expect(named(events, "turn.ended")).toHaveLength(0)
   })
 
   test("swapping the memory strategy is one config entry", async () => {

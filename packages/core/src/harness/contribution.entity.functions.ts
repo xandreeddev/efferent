@@ -55,14 +55,12 @@ export const defineContributions = (contribution: {
   readonly tools?: Contribution["tools"]
   readonly skills?: Contribution["skills"]
   readonly sections?: Contribution["sections"]
-  readonly run?: Contribution["run"]
 }): Contribution => ({
   id: contribution.id,
   version: contribution.version,
   tools: contribution.tools ?? [],
   skills: contribution.skills ?? [],
   sections: contribution.sections ?? [],
-  run: contribution.run ?? Option.none(),
 })
 
 /** The resolver's catalogue: skills are recipes, registered tools are capability tools. */
