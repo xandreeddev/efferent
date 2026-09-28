@@ -1,8 +1,8 @@
 import { Effect, Option, ParseResult, Schema } from "effect"
 import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
-import type { BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
-import { EntryId as EntryIdSchema, LogAppendPayload, LogBody as LogBodySchema } from "./memory-log.entity.js"
+import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
+import { EntryId as EntryIdSchema, LogAppendPayload, LogEntry as LogEntrySchema } from "./memory-log.entity.js"
 
 /** Key-sorted JSON: identical values always serialize to identical bytes. */
 export const canonicalJson = (value: unknown): string => JSON.stringify(sortKeys(value)) ?? "null"
@@ -29,23 +29,23 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 export const estimateMessageTokens = (messages: ReadonlyArray<AgentMessage>): number =>
   messages.reduce((sum, message) => sum + estimateTokens(canonicalJson(message)), 0)
 
-export const entryId = (seq: number, index: number): EntryId => EntryIdSchema.make(`${seq}:${index}`)
+export const entryId = (runId: string, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
 
-const BodiesJson = Schema.parseJson(Schema.Array(LogBodySchema))
+const EntriesJson = Schema.parseJson(Schema.Array(LogEntrySchema))
 
-/** One append's bodies → the canonical journal payload. */
-export const encodeAppend = (at: { readonly turn: number; readonly step: number }, bodies: ReadonlyArray<LogBody>): Effect.Effect<LogAppendPayload, ParseResult.ParseError> =>
-  Schema.encode(Schema.Array(LogBodySchema))(bodies).pipe(
-    Effect.map((encoded) => ({ v: 1 as const, turn: at.turn, step: at.step, bodies: canonicalJson(encoded) })),
+/** One append's entries → the canonical journal payload. */
+export const encodeAppend = (entries: ReadonlyArray<LogEntry>): Effect.Effect<LogAppendPayload, ParseResult.ParseError> =>
+  Schema.encode(Schema.Array(LogEntrySchema))(entries).pipe(
+    Effect.map((encoded) => ({ v: 2 as const, entries: canonicalJson(encoded) })),
   )
 
-/** A journal event → its log entries; ids derive from the event's position. */
-export const entriesOfEvent = (event: { readonly seq: number; readonly at: number; readonly runId?: string | undefined; readonly data: unknown }): Effect.Effect<ReadonlyArray<LogEntry>, ParseResult.ParseError> =>
-  Schema.decodeUnknown(LogAppendPayload)(event.data).pipe(
-    Effect.flatMap((payload) => Schema.decodeUnknown(BodiesJson)(payload.bodies).pipe(Effect.map((bodies) => bodies.map((body, index): LogEntry => ({
-      id: entryId(event.seq, index), seq: event.seq, runId: event.runId ?? "", turn: payload.turn, step: payload.step, at: event.at, body,
-    }))))),
-  )
+/** A stored journal payload → its log entries (ids travel inside). */
+export const entriesOfPayload = (data: unknown): Effect.Effect<ReadonlyArray<LogEntry>, ParseResult.ParseError> =>
+  Schema.decodeUnknown(LogAppendPayload)(data).pipe(Effect.flatMap((payload) => Schema.decodeUnknown(EntriesJson)(payload.entries)))
+
+/** Recorded digests by result entry; the latest digest of an entry wins. */
+const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
+  new Map(entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[String(entry.body.entry), entry.body.text] as const] : []))
 
 /** What a strategy decided for one render: only its own compactions apply. */
 interface Applied {
@@ -103,6 +103,27 @@ export interface RenderOptions {
   readonly replies: boolean
   /** The current step's context closes the messages ("tail") or rides in the system prompt ("none"). */
   readonly stepContext: "tail" | "none"
+  /** Show recorded tool digests in place of the results they digest. */
+  readonly digests: boolean
+  /**
+   * How artifacts reach the model. `none`: a reference line after the
+   * result's text. `inline` is reserved for image parts; messages carry text
+   * only today, so it renders like `none`.
+   */
+  readonly media: { readonly mode: "none" | "inline"; readonly maxImages: number }
+}
+
+/** The reference lines a result's artifacts add to its text. */
+export const artifactLines = (artifacts: ReadonlyArray<ArtifactRef>, maxImages: number): string => {
+  if (artifacts.length === 0) return ""
+  const shown = artifacts.slice(0, Math.max(0, maxImages))
+  const more = artifacts.length - shown.length
+  return [
+    "",
+    "Artifacts:",
+    ...shown.map((artifact) => `- ${artifact.kind} ${artifact.id} (${artifact.mediaType})${Option.match(artifact.alt, { onNone: () => "", onSome: (alt) => `: ${alt}` })}`),
+    ...(more > 0 ? [`- … ${more} more`] : []),
+  ].join("\n")
 }
 
 /**
@@ -120,6 +141,7 @@ const assistantMessage = (text: string): AgentMessage => ({ role: "assistant", c
 
 export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
   const applied = appliedCompactions(entries, options.strategy)
+  const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
   const pinned: ReadonlySet<string> = new Set(entries.flatMap((entry) => entry.body._tag === "ToolResult" && entry.body.pinned ? [String(entry.body.toolCallId)] : []))
   const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) => entry.body._tag === "StepContext" && entry.runId === options.currentRun).slice(-1)
@@ -143,9 +165,10 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
     }
     if (b._tag === "ToolResult") {
       if (!kept(entry) && !b.pinned) return state
+      const text = applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view
       const part: ToolResultPart = {
         type: "tool-result", toolCallId: b.toolCallId, toolName: b.toolName,
-        output: applied.views.get(entry.id) ?? b.view, isError: b.isError,
+        output: `${text}${artifactLines(b.artifacts, options.media.maxImages)}`, isError: b.isError,
       }
       const message: AgentMessage = { role: "tool", content: [part] }
       return { ...state, out: [...state.out, message] }
@@ -261,7 +284,7 @@ export const rewrittenBy = (entries: ReadonlyArray<LogEntry>, strategy: string):
 
 /** A hypothetical compaction entry, for estimating a render before recording it. */
 export const pendingCompaction = (strategy: { readonly id: string; readonly version: string }, action: CompactionAction, index: number): LogEntry => ({
-  id: EntryIdSchema.make(`pending:${index}`), seq: -1, runId: "", turn: 0, step: 0, at: 0,
+  id: EntryIdSchema.make(`pending:${index}`), runId: "", turn: 0, step: 0, at: 0,
   body: { _tag: "Compaction", strategy: strategy.id, version: strategy.version, action },
 })
 

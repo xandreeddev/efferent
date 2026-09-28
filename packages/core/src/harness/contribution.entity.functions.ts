@@ -1,7 +1,7 @@
 import type { Tool } from "@effect/ai"
 import { JSONSchema, Option } from "effect"
 import type { Effect } from "effect"
-import type { Contribution, RegisteredTool, RunHooks, ToolDefinition, ToolViewInput } from "../ports/contribution.port.js"
+import type { Contribution, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/contribution.port.js"
 import type { CapabilityCatalog } from "./capability.entity.js"
 import type { SkillDefinition, ToolAnnotations } from "./contribution.entity.js"
 
@@ -23,6 +23,8 @@ export const defineTool = <T extends Tool.Any, R>(definition: {
     render: view.render,
     compact: Option.fromNullable(view.compact),
     subjects: view.subjects ?? (() => []),
+    artifacts: view.artifacts ?? (() => []),
+    digest: Option.fromNullable(view.digest),
   })) as RegisteredTool["view"],
   annotations: { ...defaultAnnotations, ...definition.annotations },
 })
@@ -47,27 +49,18 @@ export const defineSkill = (skill: {
   references: skill.references ?? [],
 })
 
-export const noHooks: RunHooks = {
-  preflight: Option.none(), initialStep: Option.none(), model: Option.none(), step: Option.none(),
-  isComplete: Option.none(), onToolResult: Option.none(), reply: Option.none(), settle: Option.none(), correctives: Option.none(),
-}
-
 export const defineContributions = (contribution: {
   readonly id: string
   readonly version: string
   readonly tools?: Contribution["tools"]
   readonly skills?: Contribution["skills"]
   readonly sections?: Contribution["sections"]
-  readonly run?: Contribution["run"]
-  readonly hooks?: Partial<RunHooks>
 }): Contribution => ({
   id: contribution.id,
   version: contribution.version,
   tools: contribution.tools ?? [],
   skills: contribution.skills ?? [],
   sections: contribution.sections ?? [],
-  run: contribution.run ?? Option.none(),
-  hooks: { ...noHooks, ...contribution.hooks },
 })
 
 /** The resolver's catalogue: skills are recipes, registered tools are capability tools. */
@@ -86,6 +79,3 @@ export const catalogOf = (version: string, contributions: ReadonlyArray<Contribu
     outputSchema: { ...JSONSchema.make(registered.tool.successSchema) },
   })),
 })
-
-/** Every contribution's hooks, merged in graph order (see RunHooks for the rules). */
-export const mergeHooks = (contributions: ReadonlyArray<Contribution>): ReadonlyArray<RunHooks> => contributions.map((contribution) => contribution.hooks)

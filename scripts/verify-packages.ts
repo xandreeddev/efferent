@@ -59,6 +59,14 @@ const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit
 if (await typecheck.exited !== 0) process.exit(1)
 const verify = Bun.spawn(["bun", "verify.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await verify.exited !== 0) process.exit(1)
+if (Bun.which("node") !== null) {
+  await writeFile(join(consumer, "render-node.mjs"), `import { encodeSse, FeedReady, renderSurfacePlugin } from "@xandreed/plugin-render"
+if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
+console.log("plugin-render imports on Node")
+`)
+  const node = Bun.spawn(["node", "render-node.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+  if (await node.exited !== 0) process.exit(1)
+} else console.log("node not on PATH: skipped the plugin-render Node import check")
 const cli = Bun.spawn(["bun", "node_modules/@xandreed/cli/dist/main.js", "--help"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await cli.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "tui-fixture.ts"), await readFile(join(root, "scripts/tui-fixture.ts"), "utf8"))

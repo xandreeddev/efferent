@@ -1,5 +1,5 @@
 import { Context } from "effect"
-import type { Option, Ref } from "effect"
+import type { Ref } from "effect"
 
-/** Per-run state the composable-host tests keep for their own policy. */
-export class Delivered extends Context.Tag("test/Delivered")<Delivered, Ref.Ref<Option.Option<string>>>() {}
+/** A per-turn host service for the agent tests: built by the turn's layer, read by use, tools and subscriptions. */
+export class Tally extends Context.Tag("test/Tally")<Tally, { readonly runId: string; readonly seen: Ref.Ref<ReadonlyArray<string>> }>() {}

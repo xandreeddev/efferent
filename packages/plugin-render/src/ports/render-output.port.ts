@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { uiOutputToolkit } from "../ui-output.tools.js"
-import type { UiOutputError, UiOutputProposal, UiOutputReceipt, UiOutputScope } from "../domain/ui-output.entity.js"
+import type { uiOutputToolkit } from "../render-output.tools.js"
+import type { UiOutputError, UiOutputProposal, UiOutputReceipt, UiOutputScope } from "../domain/render-output.entity.js"
 
 /** Exact release lookup + prop schema + evidence/permissions. Fail closed. */
 export class UiOutputAdmission extends Context.Tag("efferent/ui/OutputAdmission")<UiOutputAdmission, {

@@ -58,7 +58,7 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "effect": "3.21.4",
@@ -66,7 +66,7 @@
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -112,7 +112,7 @@
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -121,7 +121,7 @@
     },
     "packages/plugin-context": {
       "name": "@xandreed/plugin-context",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -129,7 +129,7 @@
     },
     "packages/plugin-mcp": {
       "name": "@xandreed/plugin-mcp",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -138,7 +138,15 @@
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-memory-digest": {
+      "name": "@xandreed/plugin-memory-digest",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -146,7 +154,7 @@
     },
     "packages/plugin-memory-log": {
       "name": "@xandreed/plugin-memory-log",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -155,7 +163,7 @@
     },
     "packages/plugin-memory-summary": {
       "name": "@xandreed/plugin-memory-summary",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -164,7 +172,7 @@
     },
     "packages/plugin-memory-window": {
       "name": "@xandreed/plugin-memory-window",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -173,7 +181,7 @@
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@effect/ai-anthropic": "^0.25.0",
@@ -187,15 +195,24 @@
     },
     "packages/plugin-policy-workspace": {
       "name": "@xandreed/plugin-policy-workspace",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "3.21.4",
+      },
+    },
+    "packages/plugin-render": {
+      "name": "@xandreed/plugin-render",
+      "version": "0.6.0-next.0",
+      "dependencies": {
+        "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
       },
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -204,7 +221,7 @@
     },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/opentelemetry": "^0.63.0",
         "@effect/platform": "0.96.1",
@@ -219,7 +236,7 @@
     },
     "packages/plugin-tool-discovery": {
       "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -228,7 +245,7 @@
     },
     "packages/plugin-tools-local": {
       "name": "@xandreed/plugin-tools-local",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
@@ -238,7 +255,7 @@
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "3.21.4",
@@ -271,7 +288,7 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.4.0",
+      "version": "0.5.0-next.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-memory": "workspace:*",
@@ -282,6 +299,7 @@
       "devDependencies": {
         "@effect/ai": "0.35.0",
         "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-memory-digest": "workspace:*",
         "@xandreed/plugin-memory-log": "workspace:*",
         "@xandreed/plugin-memory-summary": "workspace:*",
         "@xandreed/plugin-memory-window": "workspace:*",
@@ -360,6 +378,7 @@
         "@effect/ai": "0.35.0",
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-render": "workspace:*",
         "effect": "3.21.4",
       },
     },
@@ -842,6 +861,8 @@
 
     "@xandreed/plugin-memory": ["@xandreed/plugin-memory@workspace:packages/plugin-memory"],
 
+    "@xandreed/plugin-memory-digest": ["@xandreed/plugin-memory-digest@workspace:packages/plugin-memory-digest"],
+
     "@xandreed/plugin-memory-log": ["@xandreed/plugin-memory-log@workspace:packages/plugin-memory-log"],
 
     "@xandreed/plugin-memory-summary": ["@xandreed/plugin-memory-summary@workspace:packages/plugin-memory-summary"],
@@ -851,6 +872,8 @@
     "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
 
     "@xandreed/plugin-policy-workspace": ["@xandreed/plugin-policy-workspace@workspace:packages/plugin-policy-workspace"],
+
+    "@xandreed/plugin-render": ["@xandreed/plugin-render@workspace:packages/plugin-render"],
 
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
 

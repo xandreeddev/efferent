@@ -1,12 +1,14 @@
-import { Effect, Option, Ref } from "effect"
+import { Clock, Context, Effect, Option, Ref } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { MaintainSignal, MemorySession, ToolViews } from "../ports/memory.port.js"
-import type { CompactionAction, LogBody, LogEntry } from "./memory-log.entity.js"
+import { ResultDigester } from "../ports/memory.port.js"
+import type { LogHandle, MaintainSignal, MemorySession, ToolViews } from "../ports/memory.port.js"
+import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   buildContext,
   currentTurnOf,
+  entryId,
   queryLog,
   rawTranscript,
   referenceTranscript,
@@ -15,18 +17,24 @@ import {
   toolInputsOf,
 } from "./memory-log.entity.functions.js"
 
-/** An opened log: what MemoryLog.open returns. */
-export interface LogHandle {
-  readonly read: Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
-  readonly append: (runId: string, at: { readonly turn: number; readonly step: number }, bodies: ReadonlyArray<LogBody>) =>
-    Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+/** What a strategy decides at one maintain point. */
+export interface MaintainDecision {
+  readonly actions: ReadonlyArray<CompactionAction>
+  /** Tool-result entries to digest now (recorded with trigger "compaction"). */
+  readonly digest: ReadonlyArray<EntryId>
 }
+
+export const noMaintenance: MaintainDecision = { actions: [], digest: [] }
 
 /** What distinguishes one memory strategy from another. */
 export interface MemoryPolicy {
   readonly strategy: { readonly id: string; readonly version: string }
-  readonly render: Pick<RenderOptions, "turnContext" | "replies" | "stepContext">
-  /** Decide compactions from the full log; the session records them before the next build. */
+  readonly render: Pick<RenderOptions, "turnContext" | "replies" | "digests" | "media">
+  /** Digest a result as it is written; None never digests at write time. */
+  readonly digestOnWrite: Option.Option<(result: { readonly tool: string; readonly chars: number }) => boolean>
+  /** Digest calls run at once (default 4); results are recorded in log order either way. */
+  readonly digestConcurrency?: number
+  /** Decide compactions and digests from the full log; the session records them before the next build. */
   readonly maintain: (input: {
     readonly entries: ReadonlyArray<LogEntry>
     readonly signal: MaintainSignal
@@ -34,29 +42,73 @@ export interface MemoryPolicy {
     readonly runId: string
     /** The render the strategy would send now (its own compactions applied). */
     readonly render: (entries: ReadonlyArray<LogEntry>) => ReadonlyArray<AgentMessage>
-  }) => Effect.Effect<ReadonlyArray<CompactionAction>, HarnessError>
+  }) => Effect.Effect<MaintainDecision, HarnessError>
 }
 
+const defaultDigestConcurrency = 4
+
+/** The latest request of the log — what a digest must serve. */
+const questionOf = (entries: ReadonlyArray<LogEntry>): string =>
+  entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.prompt] : []).at(-1) ?? ""
+
 /**
- * The shared session over a log handle. It loads the log once, appends
- * through to storage, and renders with the strategy's own compactions —
- * so every strategy stores, retrieves and rebuilds the same way and differs
- * only in the decisions it records.
+ * The shared session over a log handle. It loads the log once, assigns
+ * entry ids (`<runId>:<n>`), appends through to storage, runs the tools'
+ * digests the strategy asks for (with the turn's `ResultDigester`, when the
+ * services carry one), and renders with the strategy's own compactions — so
+ * every strategy stores, retrieves and rebuilds the same way and differs only
+ * in the decisions it records.
  */
-export const openLogSession = (log: LogHandle, policy: MemoryPolicy, runId: string): Effect.Effect<MemorySession, HarnessError> =>
+export const openLogSession = (
+  log: LogHandle,
+  policy: MemoryPolicy,
+  scope: { readonly runId: string; readonly services: Context.Context<never> },
+): Effect.Effect<MemorySession, HarnessError> =>
   Effect.gen(function* () {
-    const entries = yield* Ref.make(yield* log.read)
-    const renderOptions = (all: ReadonlyArray<LogEntry>): RenderOptions => ({
-      ...policy.render, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId,
+    const runId = scope.runId
+    const digester = Context.getOption(scope.services, ResultDigester)
+    const stored = yield* log.read
+    const entries = yield* Ref.make(stored)
+    const counter = yield* Ref.make(stored.filter((entry) => entry.runId === runId).length)
+    const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none"): RenderOptions => ({
+      ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId,
     })
     const record = (bodies: ReadonlyArray<LogBody>, step: number) => Effect.gen(function* () {
       if (bodies.length === 0) return []
       const current = currentTurnOf(yield* Ref.get(entries))
       const turn = bodies.some((body) => body._tag === "TurnStarted") ? current + 1 : Math.max(current, 1)
-      const appended = yield* log.append(runId, { turn, step }, bodies)
+      const at = yield* Clock.currentTimeMillis
+      const start = yield* Ref.getAndUpdate(counter, (value) => value + bodies.length)
+      const appended = bodies.map((body, index): LogEntry => ({ id: entryId(runId, start + index), runId, turn, step, at, body }))
+      yield* log.append(appended)
       yield* Ref.update(entries, (all) => [...all, ...appended])
       return appended
     })
+    /** Digest the given results with their tools' prompts, concurrently, recorded in target order; a failed digest keeps the view. */
+    const digest = (targets: ReadonlyArray<LogEntry>, views: ToolViews, trigger: "write" | "compaction", step: number) =>
+      Option.match(digester, {
+        onNone: () => Effect.succeed<ReadonlyArray<LogEntry>>([]),
+        onSome: (service) => Effect.gen(function* () {
+          const all = yield* Ref.get(entries)
+          const inputs = toolInputsOf(all, [])
+          const question = questionOf(all)
+          const bodies = yield* Effect.forEach(targets, (entry): Effect.Effect<ReadonlyArray<LogBody>> => entry.body._tag !== "ToolResult" || entry.body.isError
+            ? Effect.succeed([])
+            : views.digest(entry.body.toolName, entry.body.encoded, inputs.get(String(entry.body.toolCallId)) ?? {}, question).pipe(
+              Effect.flatMap(Option.match({
+                onNone: () => Effect.succeed<ReadonlyArray<LogBody>>([]),
+                onSome: (task) => service.digest(task).pipe(
+                  Effect.map((outcome) => Option.toArray(Option.map(task.apply(outcome), (text): LogBody => ({
+                    _tag: "ToolDigest", entry: entry.id, version: task.version, mode: task.mode, keep: outcome.keep,
+                    text, digester: `${service.id}@${service.version}`, trigger,
+                  })))),
+                  Effect.orElseSucceed((): ReadonlyArray<LogBody> => []),
+                ),
+              })),
+            ), { concurrency: policy.digestConcurrency ?? defaultDigestConcurrency })
+          return yield* record(bodies.flat(), step)
+        }),
+      })
     const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.gen(function* () {
       const inputs = toolInputsOf(yield* Ref.get(entries), tail)
       const bodies = yield* Effect.forEach(tail, (message): Effect.Effect<ReadonlyArray<LogBody>> => message.role !== "tool"
@@ -65,18 +117,27 @@ export const openLogSession = (log: LogHandle, policy: MemoryPolicy, runId: stri
           const params = inputs.get(String(part.toolCallId)) ?? {}
           return views.view(part.toolName, part.output, params, part.isError ?? false).pipe(Effect.map((view): LogBody => ({
             _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError: part.isError ?? false,
-            encoded: part.output, view: view.text, viewVersion: view.version, subjects: view.subjects, pinned: view.pinned,
+            encoded: part.output, view: view.text, viewVersion: view.version, subjects: view.subjects,
+            artifacts: view.artifacts, pinned: view.pinned,
           })))
         }))
-      return yield* record(bodies.flat(), step)
+      const recorded = yield* record(bodies.flat(), step)
+      const onWrite = policy.digestOnWrite
+      const targets = Option.isNone(onWrite) ? [] : recorded.filter((entry) =>
+        entry.body._tag === "ToolResult" && onWrite.value({ tool: entry.body.toolName, chars: entry.body.view.length }))
+      const digests = yield* digest(targets, views, "write", step)
+      return [...recorded, ...digests]
     })
     const maintain = (signal: MaintainSignal) => Effect.gen(function* () {
       const all = yield* Ref.get(entries)
-      const actions = yield* policy.maintain({
+      const decision = yield* policy.maintain({
         entries: all, signal, turn: currentTurnOf(all), runId,
-        render: (candidate) => renderLog(candidate, renderOptions(candidate)),
+        render: (candidate) => renderLog(candidate, renderOptions(candidate, "tail")),
       })
-      return yield* record(actions.map((action) => ({ _tag: "Compaction" as const, strategy: policy.strategy.id, version: policy.strategy.version, action })), 0)
+      const compactions = yield* record(decision.actions.map((action) => ({ _tag: "Compaction" as const, strategy: policy.strategy.id, version: policy.strategy.version, action })), 0)
+      const wanted = new Set(decision.digest.map(String))
+      const digests = yield* digest(all.filter((entry) => wanted.has(String(entry.id))), signal.views, "compaction", 0)
+      return [...compactions, ...digests]
     })
     return {
       strategy: policy.strategy,
@@ -86,10 +147,10 @@ export const openLogSession = (log: LogHandle, policy: MemoryPolicy, runId: stri
       subjects: (kinds) => Ref.get(entries).pipe(Effect.map((all) => subjectsOf(all, kinds))),
       resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullable(all.find((entry) => entry.id === id)))),
       transcript: (fidelity) => Ref.get(entries).pipe(Effect.map((all) => fidelity === "raw" ? rawTranscript(all)
-        : fidelity === "reference" ? referenceTranscript(all) : renderLog(all, renderOptions(all)))),
+        : fidelity === "reference" ? referenceTranscript(all) : renderLog(all, renderOptions(all, "tail")))),
       record,
       recordTail,
       maintain,
-      build: Ref.get(entries).pipe(Effect.map((all) => buildContext(all, renderOptions(all)))),
+      build: ({ stepContext }) => Ref.get(entries).pipe(Effect.map((all) => buildContext(all, renderOptions(all, stepContext)))),
     } satisfies MemorySession
   })
