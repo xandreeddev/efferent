@@ -14,7 +14,24 @@ import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, Subject } f
  */
 export interface JournalIO {
   readonly append: (event: EventBody) => Effect.Effect<void, HarnessError>
+  /** Several events in order, in one write when the store can (one transaction, one round trip). */
+  readonly appendAll?: (events: ReadonlyArray<EventBody>) => Effect.Effect<void, HarnessError>
   readonly read: (names: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<EventBody>, HarnessError>
+}
+
+/**
+ * The turn's ordered write-behind journal (see `makeJournalWriter`). Appends
+ * return once queued; one writer stores them in the order they were queued,
+ * batching consecutive appends. A failed write is latched: the next append,
+ * read, flush or write fails with it.
+ */
+export interface JournalWriter {
+  /** The journal as memory and the event sink use it: `append` queues, `read` flushes first. */
+  readonly io: JournalIO
+  /** Wait until everything queued so far is stored. */
+  readonly flush: Effect.Effect<void, HarnessError>
+  /** Run `op` in journal order (after everything queued before it) and return its result. */
+  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
 }
 
 /** An opened log: stored entries, and one atomic append. */
