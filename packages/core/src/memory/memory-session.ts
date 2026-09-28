@@ -32,6 +32,8 @@ export interface MemoryPolicy {
   readonly render: Pick<RenderOptions, "turnContext" | "replies" | "digests" | "media">
   /** Digest a result as it is written; None never digests at write time. */
   readonly digestOnWrite: Option.Option<(result: { readonly tool: string; readonly chars: number }) => boolean>
+  /** Digest calls run at once (default 4); results are recorded in log order either way. */
+  readonly digestConcurrency?: number
   /** Decide compactions and digests from the full log; the session records them before the next build. */
   readonly maintain: (input: {
     readonly entries: ReadonlyArray<LogEntry>
@@ -42,6 +44,8 @@ export interface MemoryPolicy {
     readonly render: (entries: ReadonlyArray<LogEntry>) => ReadonlyArray<AgentMessage>
   }) => Effect.Effect<MaintainDecision, HarnessError>
 }
+
+const defaultDigestConcurrency = 4
 
 /** The latest request of the log — what a digest must serve. */
 const questionOf = (entries: ReadonlyArray<LogEntry>): string =>
@@ -80,7 +84,7 @@ export const openLogSession = (
       yield* Ref.update(entries, (all) => [...all, ...appended])
       return appended
     })
-    /** Digest the given results with their tools' prompts; a failed digest keeps the view. */
+    /** Digest the given results with their tools' prompts, concurrently, recorded in target order; a failed digest keeps the view. */
     const digest = (targets: ReadonlyArray<LogEntry>, views: ToolViews, trigger: "write" | "compaction", step: number) =>
       Option.match(digester, {
         onNone: () => Effect.succeed<ReadonlyArray<LogEntry>>([]),
@@ -101,7 +105,7 @@ export const openLogSession = (
                   Effect.orElseSucceed((): ReadonlyArray<LogBody> => []),
                 ),
               })),
-            ))
+            ), { concurrency: policy.digestConcurrency ?? defaultDigestConcurrency })
           return yield* record(bodies.flat(), step)
         }),
       })
