@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
+import { UserMessageFromString } from "../turn/user-message.entity.js"
 
 /**
  * The conversation memory log — the single source every model request is
@@ -53,7 +54,14 @@ export const LogBody = Schema.Union(
     text: Schema.String,
     sections: Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, fingerprint: Schema.String })),
   }),
-  Schema.TaggedStruct("TurnStarted", { prompt: Schema.String }),
+  /**
+   * The user's message, stored as plain text under its original key
+   * `prompt`: existing logs decode unchanged and an entry's canonical bytes
+   * (and so every fingerprint and cache key) stay the same.
+   */
+  Schema.TaggedStruct("TurnStarted", {
+    userMessage: Schema.propertySignature(UserMessageFromString).pipe(Schema.fromKey("prompt")),
+  }),
   Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String }),
   Schema.TaggedStruct("Message", { message: AgentMessage }),
   Schema.TaggedStruct("ToolResult", {

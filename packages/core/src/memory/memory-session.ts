@@ -3,6 +3,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, MaintainSignal, MemorySession, ToolViews } from "../ports/memory.port.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
@@ -47,15 +48,16 @@ export interface MemoryPolicy {
 
 const defaultDigestConcurrency = 4
 
-/** The latest request of the log — what a digest must serve. */
-const questionOf = (entries: ReadonlyArray<LogEntry>): string =>
-  entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.prompt] : []).at(-1) ?? ""
+/** The latest user message of the log — what a digest must serve. */
+const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<UserMessage> =>
+  Option.fromNullable(entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage] : []).at(-1))
 
 /**
  * The shared session over a log handle. It loads the log once, assigns
  * entry ids (`<runId>:<n>`), appends through to storage, runs the tools'
  * digests the strategy asks for (with the turn's `ResultDigester`, when the
- * services carry one), and renders with the strategy's own compactions — so
+ * services carry one, for the latest user message: a log without one digests
+ * nothing), and renders with the strategy's own compactions — so
  * every strategy stores, retrieves and rebuilds the same way and differs only
  * in the decisions it records.
  */
@@ -86,15 +88,13 @@ export const openLogSession = (
     })
     /** Digest the given results with their tools' prompts, concurrently, recorded in target order; a failed digest keeps the view. */
     const digest = (targets: ReadonlyArray<LogEntry>, views: ToolViews, trigger: "write" | "compaction", step: number) =>
-      Option.match(digester, {
+      Ref.get(entries).pipe(Effect.flatMap((all) => Option.match(Option.all([digester, latestUserMessage(all)]), {
         onNone: () => Effect.succeed<ReadonlyArray<LogEntry>>([]),
-        onSome: (service) => Effect.gen(function* () {
-          const all = yield* Ref.get(entries)
+        onSome: ([service, userMessage]) => Effect.gen(function* () {
           const inputs = toolInputsOf(all, [])
-          const question = questionOf(all)
           const bodies = yield* Effect.forEach(targets, (entry): Effect.Effect<ReadonlyArray<LogBody>> => entry.body._tag !== "ToolResult" || entry.body.isError
             ? Effect.succeed([])
-            : views.digest(entry.body.toolName, entry.body.encoded, inputs.get(String(entry.body.toolCallId)) ?? {}, question).pipe(
+            : views.digest(entry.body.toolName, entry.body.encoded, inputs.get(String(entry.body.toolCallId)) ?? {}, userMessage).pipe(
               Effect.flatMap(Option.match({
                 onNone: () => Effect.succeed<ReadonlyArray<LogBody>>([]),
                 onSome: (task) => service.digest(task).pipe(
@@ -108,7 +108,7 @@ export const openLogSession = (
             ), { concurrency: policy.digestConcurrency ?? defaultDigestConcurrency })
           return yield* record(bodies.flat(), step)
         }),
-      })
+      })))
     const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.gen(function* () {
       const inputs = toolInputsOf(yield* Ref.get(entries), tail)
       const bodies = yield* Effect.forEach(tail, (message): Effect.Effect<ReadonlyArray<LogBody>> => message.role !== "tool"
