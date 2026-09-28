@@ -133,7 +133,7 @@ export const memoryWindowPlugin = definePlugin({
       const policy = windowPolicy(config)
       return ConversationMemory.of({
         strategy: WINDOW_STRATEGY,
-        open: ({ conversation, runId, io, services }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, { runId, services }))),
+        open: ({ conversation, runId, io }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, { runId }))),
       })
     })),
     Layer.succeed(Contributions, [recallContribution]),

@@ -203,7 +203,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     })
     // The journal is the first subscriber: every durable event is queued before any reaction runs.
     yield* events.subscribe((event) => journalBodyOf(input.runId, event), writer.io.append)
-    const session = yield* memory.open({ conversation: input.conversation, runId: input.runId, io: writer.io, services: context })
+    const session = yield* memory.open({ conversation: input.conversation, runId: input.runId, io: writer.io }).pipe(Effect.provide(context))
     const reader = readerOf(session)
 
     const toolsRef = yield* Ref.make(Option.none<RunTools>())
@@ -232,7 +232,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const number = (yield* session.turn) + 1
     yield* session.record([{ _tag: "TurnStarted", userMessage: input.userMessage }], 0)
     yield* events.publish({ _tag: "turn.started", runId: input.runId, turn: number, userMessage: input.userMessage })
-    const tools = yield* registry.open(session, runServices)
+    const tools = yield* registry.open(session).pipe(Effect.provideService(RunContext, run), Effect.provide(runServices))
     yield* Ref.set(toolsRef, Option.some(tools))
 
     const promptContext = (variant: Option.Option<string>) =>

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Ref } from "effect"
+import { Effect, Option, Ref } from "effect"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
@@ -48,7 +48,7 @@ describe("the log session", () => {
           Effect.as({ keep: [], summary: Option.some(`DIGEST ${task.source}`) }),
         ),
       })
-      const session = yield* openLogSession(log, { ...policy, digestConcurrency: 3 }, { runId: "run-1", services: Context.make(ResultDigester, digester) })
+      const session = yield* openLogSession(log, { ...policy, digestConcurrency: 3 }, { runId: "run-1" }).pipe(Effect.provideService(ResultDigester, digester))
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "look up a, b and c" }) }], 0)
       const recorded = yield* session.recordTail([results(["a", "b", "c"])], views, 1)
       return {
@@ -71,7 +71,7 @@ describe("the log session", () => {
         id: "echo", version: "1",
         digest: (task) => Ref.update(seen, (all) => [...all, task.userMessage.text]).pipe(Effect.as({ keep: [], summary: Option.some("DIGEST") })),
       })
-      const session = yield* openLogSession(log, policy, { runId: "run-1", services: Context.make(ResultDigester, digester) })
+      const session = yield* openLogSession(log, policy, { runId: "run-1" }).pipe(Effect.provideService(ResultDigester, digester))
       const before = yield* session.recordTail([results(["a"])], views, 1)
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "first" }) }], 0)
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "second" }) }], 0)

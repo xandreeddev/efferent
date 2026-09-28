@@ -89,9 +89,10 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
 }
 
 /**
- * The registry over every contribution. Built once; each turn opens it with
- * its own services, where it finds the RunContext (events, memory), and the
- * optional IntentMatcher, CapabilityGrants and ActionPolicy of that turn.
+ * The registry over every contribution. Built once; each turn opens it
+ * where its services are, which the handlers then run with: the RunContext
+ * (events, memory), and the optional IntentMatcher, CapabilityGrants and
+ * ActionPolicy of that turn.
  */
 export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArray<Contribution>) => Effect.gen(function* () {
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
@@ -166,14 +167,13 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
       })))),
   }
 
-  const open = (session: MemorySession, runServices: Context.Context<never>) => Effect.gen(function* () {
-    const run = yield* Option.match(Context.getOption(runServices, RunContext), {
-      onNone: () => Effect.fail(harness("tools.run", "The run context is missing")),
-      onSome: Effect.succeed,
-    })
-    const matcher = Context.getOption(runServices, IntentMatcher)
-    const policy = Context.getOption(runServices, ActionPolicy)
-    const grants = yield* Option.match(Context.getOption(runServices, CapabilityGrants), {
+  const open = (session: MemorySession) => Effect.gen(function* () {
+    const run = yield* RunContext
+    // What the handlers run with: everything where the tools are opened.
+    const runServices = yield* Effect.context<never>()
+    const matcher = yield* Effect.serviceOption(IntentMatcher)
+    const policy = yield* Effect.serviceOption(ActionPolicy)
+    const grants = yield* Option.match(yield* Effect.serviceOption(CapabilityGrants), {
       onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
       onSome: (service) => service.grants,
     })

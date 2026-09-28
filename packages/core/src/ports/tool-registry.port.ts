@@ -8,6 +8,7 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ActivationSource } from "../memory/memory-log.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemorySession, ToolViews } from "./memory.port.js"
+import type { RunContext } from "./run-context.port.js"
 
 /**
  * What the pre-turn matcher chose, before anything is recorded: `match`
@@ -43,6 +44,10 @@ export interface RunTools {
 
 export class ToolRegistry extends Context.Tag("efferent/ToolRegistry")<ToolRegistry, {
   readonly catalog: CapabilityCatalog
-  /** `services` is the full per-run context the handlers run with (host services, run layers, RunContext). */
-  readonly open: (session: MemorySession, services: Context.Context<never>) => Effect.Effect<RunTools, HarnessError, Scope.Scope>
+  /**
+   * Open the tools of one run. The handlers run with the services of where
+   * it is opened (host services, run layers, RunContext), captured at open;
+   * an IntentMatcher, ActionPolicy and CapabilityGrants there are used.
+   */
+  readonly open: (session: MemorySession) => Effect.Effect<RunTools, HarnessError, RunContext | Scope.Scope>
 }>() {}

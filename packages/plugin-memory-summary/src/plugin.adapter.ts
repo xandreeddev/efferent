@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
   definePlugin,
@@ -83,7 +83,7 @@ const decide = (
 
 const missingUtility = new HarnessError({ code: "memory.summary", message: "The summary strategy needs a UtilityLlm in the turn's services" })
 
-/** The summarizer is read from each turn's services, so it runs under that turn's budget. */
+/** The summarizer is the UtilityLlm of where each session is opened (the turn), so it runs under that turn's budget. */
 export const memorySummaryPlugin = definePlugin({
   id: "@xandreed/plugin-memory-summary", version: "0.6.0-next.1", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
@@ -93,14 +93,14 @@ export const memorySummaryPlugin = definePlugin({
     const log = yield* MemoryLog
     return ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,
-      open: ({ conversation, runId, io, services }) => Effect.gen(function* () {
-        const utility = yield* Option.match(Context.getOption(services, UtilityLlm), { onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })
+      open: ({ conversation, runId, io }) => Effect.gen(function* () {
+        const utility = yield* Effect.serviceOption(UtilityLlm).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })))
         const policy = summaryPolicy(config, (prompt) => utility.complete(prompt).pipe(
           Effect.map((completion) => completion.text),
           Effect.mapError((error) => new HarnessError({ code: "memory.summary", message: error.message })),
         ))
         const handle = yield* log.open(conversation, io)
-        return yield* openLogSession(handle, policy, { runId, services })
+        return yield* openLogSession(handle, policy, { runId })
       }),
     })
   })),

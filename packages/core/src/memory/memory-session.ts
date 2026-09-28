@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Option, Ref } from "effect"
+import { Clock, Effect, Option, Ref } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
@@ -55,20 +55,20 @@ const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<User
 /**
  * The shared session over a log handle. It loads the log once, assigns
  * entry ids (`<runId>:<n>`), appends through to storage, runs the tools'
- * digests the strategy asks for (with the turn's `ResultDigester`, when the
- * services carry one, for the latest user message: a log without one digests
- * nothing), and renders with the strategy's own compactions — so
+ * digests the strategy asks for (with the `ResultDigester` of the environment
+ * it is opened in, when there is one, for the latest user message: a log
+ * without one digests nothing), and renders with the strategy's own compactions — so
  * every strategy stores, retrieves and rebuilds the same way and differs only
  * in the decisions it records.
  */
 export const openLogSession = (
   log: LogHandle,
   policy: MemoryPolicy,
-  scope: { readonly runId: string; readonly services: Context.Context<never> },
+  scope: { readonly runId: string },
 ): Effect.Effect<MemorySession, HarnessError> =>
   Effect.gen(function* () {
     const runId = scope.runId
-    const digester = Context.getOption(scope.services, ResultDigester)
+    const digester = yield* Effect.serviceOption(ResultDigester)
     const stored = yield* log.read
     const entries = yield* Ref.make(stored)
     const counter = yield* Ref.make(stored.filter((entry) => entry.runId === runId).length)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationMemory, memoryConformance, MemoryLog, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, inMemoryJournal, memoryConformance, MemoryLog, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
 import { memoryLogPlugin } from "@xandreed/plugin-memory-log"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
@@ -25,7 +25,7 @@ const strategyOf = (plugin: Plugin | "rolling") => Effect.gen(function* () {
     const store = Context.get(log as Context.Context<MemoryLog>, MemoryLog)
     return ConversationMemory.of({
       strategy: rollingPolicy.strategy,
-      open: ({ conversation, runId, io, services }) => store.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, rollingPolicy, { runId, services }))),
+      open: ({ conversation, runId, io }) => store.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, rollingPolicy, { runId }))),
     })
   }
   const built = yield* plugin.build(plugin.defaults, log)
@@ -48,3 +48,14 @@ strategies.map(([name, plugin]) => describe(`the ${name} strategy conforms to Co
     expect(exit._tag === "Left" ? exit.left.message : "ok").toBe("ok")
   }))
 }))
+
+describe("the summary strategy reads its summarizer where the session is opened", () => {
+  test("without a UtilityLlm there, opening fails with memory.summary", async () => {
+    const exit = await Effect.runPromise(Effect.either(Effect.scoped(Effect.gen(function* () {
+      const memory = yield* strategyOf(memorySummaryPlugin)
+      const journal = yield* inMemoryJournal
+      return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", io: journal.io })
+    }))))
+    expect(exit._tag === "Left" ? exit.left.code : "opened").toBe("memory.summary")
+  })
+})

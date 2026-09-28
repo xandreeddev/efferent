@@ -55,14 +55,15 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
  * entry ids, a log that reads back exactly after a reopen, views and
  * artifacts kept, a pure build, the step context only when asked,
  * append-only maintenance and a reference transcript without tool traffic.
- * `services` are the turn services the strategy needs (a summarizer…).
+ * `services` are the turn services the strategy needs (a summarizer…); each
+ * session is opened with them provided.
  */
 export const memoryConformance = (memory: Memory, services: Context.Context<never> = Context.empty()): ReadonlyArray<ConformanceCheck> => {
   const check = (name: string, id: string, body: (open: (io: JournalIO, runId: string) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>, io: JournalIO) => Effect.Effect<void, ConformanceFailure | HarnessError, Scope.Scope>): ConformanceCheck => ({
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const journal = yield* inMemoryJournal
-      yield* body((io, runId) => memory.open({ conversation, runId, io, services }), journal.io)
+      yield* body((io, runId) => memory.open({ conversation, runId, io }).pipe(Effect.provide(services)), journal.io)
     })).pipe(Effect.catchTag("HarnessError", (error) => fail(id)(`${error.code}: ${error.message}`))),
   })
   return [
