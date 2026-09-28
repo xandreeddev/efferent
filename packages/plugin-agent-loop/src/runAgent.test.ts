@@ -5,7 +5,7 @@ import { Failure } from "@xandreed/core"
 import { Checkpoint, ConversationId } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
 import { ConversationStore, StoredMessage } from "@xandreed/core"
-import { CurrentPromptCacheKey } from "@xandreed/core"
+import { CurrentPromptCacheKey, UserMessage } from "@xandreed/core"
 import { runAgent } from "./runAgent.js"
 
 const cid = ConversationId.make("00000000-0000-4000-8000-000000000002")
@@ -106,11 +106,11 @@ const textModel = (text: string) =>
   })
 
 describe("runAgent", () => {
-  test("appends the user prompt + the tail with positions; loads prior history", async () => {
+  test("appends the user message + the tail with positions; loads prior history", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* memoryStore
-        const result = yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "hello").pipe(
+        const result = yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, new UserMessage({ text: "hello" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, textModel("world")),
           Effect.provide(store.layer),
@@ -150,7 +150,7 @@ describe("runAgent", () => {
             ),
           streamText: () => Stream.die("not scripted") as never,
         })
-        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "next").pipe(
+        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, new UserMessage({ text: "next" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, spyModel),
           Effect.provide(store.layer),
@@ -216,7 +216,7 @@ describe("runAgent", () => {
             },
           },
           cid,
-          "the big brief",
+          new UserMessage({ text: "the big brief" }),
         ).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, bigModel),
@@ -224,7 +224,7 @@ describe("runAgent", () => {
         )
         expect(result.finalText).toBe("done")
 
-        // Rows: prompt(0) a(1) t(2) a(3) t(4) a(5). The fold after turn 2
+        // Rows: user message(0) a(1) t(2) a(3) t(4) a(5). The fold after turn 2
         // keeps the last assistant turn: checkpoint at position 2, listActive
         // returns exactly the kept rows.
         const persisted = yield* Effect.gen(function* () {
@@ -292,7 +292,7 @@ describe("runAgent", () => {
             },
           },
           cid,
-          "the big brief",
+          new UserMessage({ text: "the big brief" }),
         ).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, bigModel),
@@ -330,7 +330,7 @@ describe("runAgent", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* memoryStore
-        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "hello").pipe(
+        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, new UserMessage({ text: "hello" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, spyModel),
           Effect.provide(store.layer),
@@ -342,7 +342,7 @@ describe("runAgent", () => {
 })
 
 describe("runAgent — persistence that survives an interrupt", () => {
-  test("a tool turn's assistant call and its results land as ONE write; the prompt alone is its own", async () => {
+  test("a tool turn's assistant call and its results land as ONE write; the user message alone is its own", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* memoryStore
@@ -373,7 +373,7 @@ describe("runAgent — persistence that survives an interrupt", () => {
             ),
           streamText: () => Stream.die("not scripted") as never,
         })
-        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "go").pipe(
+        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, new UserMessage({ text: "go" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, toolThenText),
           Effect.provide(store.layer),
@@ -392,8 +392,8 @@ describe("runAgent — persistence that survives an interrupt", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         // A store whose active window has a HOLE (an undecodable row at 2
-        // was skipped): real positions 0, 1, 3, then the prompt at 4; the old
-        // arithmetic (prompt − length + 1 + index) read them as 1, 2, 3, 4.
+        // was skipped): real positions 0, 1, 3, then the user message at 4; the old
+        // arithmetic (user message − length + 1 + index) read them as 1, 2, 3, 4.
         const rows = yield* Ref.make<ReadonlyArray<{ position: number; message: AgentMessage }>>([
           { position: 0, message: { role: "user", content: "old question" } },
           { position: 1, message: { role: "assistant", content: [{ type: "text", text: "old answer" }] } },
@@ -453,14 +453,14 @@ describe("runAgent — persistence that survives an interrupt", () => {
             compaction: { thresholdTokens: 50_000, keepTurns: 2, summarize: () => Effect.succeed("FOLD") },
           },
           cid,
-          "the prompt",
+          new UserMessage({ text: "the user message" }),
         ).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, bigModel),
           Effect.provide(layer),
         )
         // Buffer after turn 0: old question(0) · old answer(1) · old
-        // follow-up(3) · prompt(4) · a(5) · t(6). keepTurns=2 keeps from
+        // follow-up(3) · user message(4) · a(5) · t(6). keepTurns=2 keeps from
         // "old follow-up" → the fold covers through "old answer" at position
         // 1. Arithmetic would have written 2 — the hole — as the covered
         // position, one row past the truth.
@@ -476,7 +476,7 @@ describe("runAgent — the outcome goes beside the trail", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* memoryStore
-        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, "hello").pipe(
+        yield* runAgent({ system: "sys", toolkit: emptyKit }, cid, new UserMessage({ text: "hello" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, textModel("world")),
           Effect.provide(store.layer),
@@ -489,7 +489,7 @@ describe("runAgent — the outcome goes beside the trail", () => {
             ] as never),
           streamText: () => Stream.die("not scripted") as never,
         })
-        yield* runAgent({ system: "sys", toolkit: emptyKit, maxSteps: 2 }, cid, "loop").pipe(
+        yield* runAgent({ system: "sys", toolkit: emptyKit, maxSteps: 2 }, cid, new UserMessage({ text: "loop" })).pipe(
           Effect.provide(emptyHandlers),
           Effect.provideServiceEffect(LanguageModel.LanguageModel, alwaysTools),
           Effect.provide(store.layer),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, renderLog, ToolCallId } from "@xandreed/core"
+import { entryId, estimateMessageTokens, renderLog, ToolCallId, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, ToolViews } from "@xandreed/core"
 import { WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
@@ -19,9 +19,9 @@ const result = (seq: number, turn: number, view: string): LogEntry => at(seq, tu
 })
 const call = (seq: number, turn: number, id: number): LogEntry => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(`c${id}`), toolName: "lookup", input: {} }] } })
 const log = (big: string): ReadonlyArray<LogEntry> => [
-  at(0, 1, { _tag: "TurnStarted", prompt: "first question" }), call(1, 1, 2), result(2, 1, big),
+  at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "first question" }) }), call(1, 1, 2), result(2, 1, big),
   at(3, 1, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("first answer") }),
-  at(4, 2, { _tag: "TurnStarted", prompt: "second question" }), call(5, 2, 6), result(6, 2, big),
+  at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second question" }) }), call(5, 2, 6), result(6, 2, big),
 ]
 const policy = windowPolicy(config)
 const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: "run-2" })

@@ -26,7 +26,7 @@ export default definePlugin({
   provides: [AgentLoop],
   layer: ({ prefix }) => Layer.succeed(AgentLoop, {
     run: (input) => Effect.succeed({
-      text: prefix + input.prompt,
+      text: prefix + input.userMessage.text,
       outcome: "completed",
     }),
   }),
@@ -289,12 +289,17 @@ const agent = yield* Agent.define({
 ```
 
 **One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
-turn and hands `use` a `Turn`: `prompt`, `memory` (read-only), `events`,
+turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
 `context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
 turn is scoped: subscriptions and tasks end with it. Tasks and background
 subscriptions are drained before `turn.ended`, which is recorded exactly once,
 with a `failed` outcome when `use` fails or is interrupted.
+
+A prompt is text sent to a model; the user's message is a `UserMessage` value
+(`new UserMessage({ text })`, never blank), and every field or parameter holding
+it is named `userMessage`. The memory log stores it as text under its original
+`prompt` key, so existing logs decode and their fingerprints do not change.
 
 **Per-turn host services.** `input.layer` is a layer the turn builds inside
 its scope, after `RunContext`, `TurnEvents` and `TurnTasks` exist, so it may
@@ -307,8 +312,9 @@ turn provides from `use`'s requirements.
 class AnswerState extends Context.Tag("app/AnswerState")<AnswerState, AnswerStateService>() {}
 const answerStateLayer = Layer.effect(AnswerState, RunContext.pipe(Effect.flatMap(makeAnswerState)))
 
-yield* agent.turn({ conversation, runId, prompt, services, journal, layer: answerStateLayer }, (turn) => Effect.gen(function* () {
-  const quick = yield* quickReply(turn.prompt)                   // no loop, still a recorded turn
+const userMessage = new UserMessage({ text })
+yield* agent.turn({ conversation, runId, userMessage, services, journal, layer: answerStateLayer }, (turn) => Effect.gen(function* () {
+  const quick = yield* quickReply(turn.userMessage)              // no loop, still a recorded turn
   if (Option.isSome(quick)) return yield* turn.reply(quick.value)
 
   const state = yield* AnswerState                               // the same instance the tools see
@@ -316,7 +322,7 @@ yield* agent.turn({ conversation, runId, prompt, services, journal, layer: answe
     onTool(Search, ({ result }) => state.remember(result)),     // typed by the tool's own schemas
     onTool(Deliver, ({ input }) => state.deliver(input.text)),
   ])
-  yield* turn.tools.select(turn.prompt)                          // always-on skills + the matcher's choice
+  yield* turn.tools.select(turn.userMessage)                     // always-on skills + the matcher's choice
   const result = yield* turn.run({
     step: (step) => state.directive(step),                       // step context and tool choice
     completion: () => state.verdict,                             // { complete, awaiting, facts }
@@ -394,7 +400,8 @@ an optional `digest`. A `Select` digest keeps whole items by key and
 re-renders them, so every identifier an answer may cite survives. A
 `Summarize` digest is accepted only when every `preserve`d identifier appears
 in the summary. The strategy decides when (on write above a size, or at
-compaction); the `ResultDigester` runs the tool's own prompt; the outcome is
+compaction); the `ResultDigester` runs the tool's own prompt for the latest
+`userMessage` (a log without one digests nothing); the outcome is
 logged once as a `ToolDigest` entry and never recomputed on replay.
 
 `memoryConformance(memory, services)` and `stepLoopConformance(loop)` (from
@@ -412,12 +419,13 @@ grow-only active set in memory:
 3. Tier 3: `read_skill_reference` serves a loaded skill's references. It is
    registered only when some skill has references.
 
-`turn.tools.select(message)` activates the `always` skills and, when the
-turn's services carry an `IntentMatcher`, the skills it selects. The choice is
+`turn.tools.select(userMessage)` activates the `always` skills and, when the
+turn's services carry an `IntentMatcher`, the skills it selects (the matcher
+receives `{ userMessage, skills, active, history }`). The choice is
 recorded with `recordDecision` as a `skill-selection` decision; timeouts and
 abstentions keep the always-on set. `select` is `match` then `apply`:
-`turn.tools.match(message)` only asks the matcher and returns a `SkillMatch`
-(`skills`, `probabilities`, a provisional `record`) without writing or
+`turn.tools.match(userMessage)` only asks the matcher and returns a `SkillMatch`
+(`userMessage`, `skills`, `probabilities`, a provisional `record`) without writing or
 publishing anything. `turn.tools.apply(match)` activates the skills, records
 and publishes the decision, and records the synthetic `load_skill` exchange.
 A host can run the match alongside other work and apply it later, or drop

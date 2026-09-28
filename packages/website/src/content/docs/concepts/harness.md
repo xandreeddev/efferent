@@ -31,7 +31,7 @@ export default definePlugin({
   provides: [AgentLoop],
   layer: ({ prefix }) => Layer.succeed(AgentLoop, {
     run: (input) => Effect.succeed({
-      text: prefix + input.prompt,
+      text: prefix + input.userMessage.text,
       outcome: "completed",
     }),
   }),

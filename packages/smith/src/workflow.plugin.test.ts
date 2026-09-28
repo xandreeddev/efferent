@@ -16,7 +16,7 @@ describe("composable Smith workflows", () => {
     const worker = definePlugin({ id: "test/repair-worker", version: "1", config: Schema.Struct({}), defaults: {}, provides: [DelegateLoop], layer: () => Layer.succeed(DelegateLoop, {
       run: (input) => Effect.sync(() => {
         if (input.system.includes("Draft a concrete implementation specification")) return { text: "Write result.txt containing accepted", outcome: "completed" as const }
-        attempts.push(input.prompt)
+        attempts.push(input.userMessage.text)
         writeFileSync(join(directory, "result.txt"), attempts.length === 1 ? "rejected" : "accepted")
         return { text: "Implemented", outcome: "completed" as const }
       }),
@@ -49,7 +49,7 @@ describe("composable Smith workflows", () => {
     const directory = mkdtempSync(join(tmpdir(), "efferent-workflow-"))
     const calls: string[] = []
     const worker = definePlugin({ id: "test/worker", version: "1", config: Schema.Struct({}), defaults: {}, provides: [DelegateLoop], layer: () => Layer.succeed(DelegateLoop, {
-      run: (input) => Effect.sync(() => { calls.push(input.prompt); return { text: `Specification for ${input.prompt}`, outcome: "completed" as const } }),
+      run: (input) => Effect.sync(() => { calls.push(input.userMessage.text); return { text: `Specification for ${input.userMessage.text}`, outcome: "completed" as const } }),
     }) })
     const config = (mode: "spec" | "lock" | "forge"): HarnessConfig => ({ version: 1, plugins: [
       { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } },
