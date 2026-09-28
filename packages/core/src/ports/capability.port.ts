@@ -4,6 +4,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import type { SkillDefinition } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 
 export class Capabilities extends Context.Tag("efferent/Capabilities")<Capabilities, {
   readonly catalog: CapabilityCatalog
@@ -21,10 +22,10 @@ export class IntentMatcher extends Context.Tag("efferent/IntentMatcher")<IntentM
   readonly id: string
   readonly version: string
   readonly match: (input: {
-    readonly message: string
+    readonly userMessage: UserMessage
     readonly skills: ReadonlyArray<SkillDefinition>
     readonly active: ReadonlyArray<string>
-    /** A reference transcript: prompts and replies only. */
+    /** A reference transcript: user messages and replies only. */
     readonly history: ReadonlyArray<AgentMessage>
   }) => Effect.Effect<IntentMatch, HarnessError>
 }>() {}

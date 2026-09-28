@@ -3,6 +3,7 @@ import { DecisionRecord } from "../decision-record.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { ActivationSource, EntryId } from "../memory/memory-log.entity.js"
+import { UserMessage } from "./user-message.entity.js"
 
 /**
  * The typed events of one turn — the single vocabulary plugins publish and
@@ -26,7 +27,7 @@ export type CompletionVerdict = typeof CompletionVerdict.Type
 export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   runId: Schema.String,
   turn: Schema.Int,
-  prompt: Schema.String,
+  userMessage: UserMessage,
 })
 
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {

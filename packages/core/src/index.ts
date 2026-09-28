@@ -11,7 +11,7 @@ export {
   ToolCallPart,
   ToolMessage,
   ToolResultPart,
-  UserMessage,
+  UserRoleMessage,
 } from "./domain/message.entity.js"
 export { Failure } from "./domain/failure.entity.js"
 export { toFailure } from "./domain/failure.entity.functions.js"
@@ -138,7 +138,8 @@ export * from "./ports/contribution.port.js"
 export * from "./ports/run-context.port.js"
 export * from "./ports/tool-registry.port.js"
 
-// the host-composed turn: typed events, background tasks, the step loop and the turn
+// the host-composed turn: the user's message, typed events, background tasks, the step loop and the turn
+export * from "./turn/user-message.entity.js"
 export * from "./turn/turn-event.entity.js"
 export * from "./turn/turn-event.entity.functions.js"
 export * from "./turn/turn-bus.js"
