@@ -1,4 +1,4 @@
-import type { Context, Effect, Layer, Option } from "effect"
+import type { Context, Effect, Layer, Option, Scope } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { SkillDefinition } from "../harness/contribution.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -93,4 +93,16 @@ export interface TurnInput<A = never, E = never> {
   readonly steering?: Effect.Effect<Option.Option<string>, HarnessError>
   /** The host's per-turn services; its requirements are met by the turn's services. */
   readonly layer?: Layer.Layer<A, E, unknown>
+}
+
+/**
+ * Anything that runs one admitted turn the way `Agent.turn` does: an
+ * agent, or a host's own composition of the turn's steps (see
+ * `turnConformance`).
+ */
+export interface TurnRunner {
+  readonly turn: <A = never, E = never, R = never>(
+    input: TurnInput<A, E>,
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
+  ) => Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }

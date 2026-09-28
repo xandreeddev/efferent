@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Context, Effect, Layer, Stream } from "effect"
 import type { Scope } from "effect"
+import { LanguageModel } from "@effect/ai"
 import {
   cacheKeyOf,
   ContributionsLive,
@@ -8,8 +9,11 @@ import {
   openTurnTools,
   stackPlugins,
   TurnLive,
+  turnConformance,
   TurnMemory,
   turnOf,
+  UtilityCompletion,
+  UtilityLlm,
 } from "@xandreed/core"
 import type { HarnessError, Turn, TurnInput, TurnOutcome, TurnServices } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"
@@ -59,3 +63,24 @@ describe("a turn composed by hand", () => {
     expect(JSON.parse(JSON.stringify(byHand))).toEqual(JSON.parse(JSON.stringify(byAgent)))
   })
 })
+
+/** The turn services the golden agent requires; the conformance turns never call them. */
+const unused = Context.make(UtilityLlm, UtilityLlm.of({
+  complete: () => Effect.succeed(new UtilityCompletion({ text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 } })),
+}))
+const services = Effect.map(LanguageModel.make({
+  generateText: () => Effect.die("not called") as never,
+  streamText: () => Stream.die("not called") as never,
+}), (model) => Context.merge(Context.make(LanguageModel.LanguageModel, model), unused))
+
+const runners: ReadonlyArray<readonly [string, Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope>]> = [
+  ["Agent.turn", Agent.define(goldenConfig)],
+  ["the composition by hand", composed],
+]
+runners.map(([name, runner]) => describe(`${name} conforms to the turn contract`, () => {
+  const checks = turnConformance(runner, Effect.runSync(services))
+  checks.map((check) => test(check.name, async () => {
+    const exit = await Effect.runPromise(Effect.either(check.run))
+    expect(exit._tag === "Left" ? exit.left.message : "ok").toBe("ok")
+  }))
+}))
