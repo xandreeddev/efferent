@@ -85,7 +85,7 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 
 /** The summarizer is read from each turn's services, so it runs under that turn's budget. */
 export const memorySummaryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-summary", version: "0.6.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-summary", version: "0.6.0-next.1", scope: "runtime",
   config: Config, defaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],
