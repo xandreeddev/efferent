@@ -290,17 +290,28 @@ const agent = yield* Agent.define({
 
 **One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
 turn and hands `use` a `Turn`: `prompt`, `memory` (read-only), `events`,
-`tasks`, `tools` (`select`, `activate`, `active`), `context(entry)`,
-`reply(text)` and `run(policy)`. The turn is scoped: subscriptions and tasks
-end with it. Tasks are joined before `turn.ended`, which is recorded exactly
-once, with a `failed` outcome when `use` fails or is interrupted.
+`tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
+`context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
+turn is scoped: subscriptions and tasks end with it. Tasks and background
+subscriptions are drained before `turn.ended`, which is recorded exactly once,
+with a `failed` outcome when `use` fails or is interrupted.
+
+**Per-turn host services.** `input.layer` is a layer the turn builds inside
+its scope, after `RunContext`, `TurnEvents` and `TurnTasks` exist, so it may
+require them. The turn provides the result to `use`, tool handlers, policy
+callbacks, subscriptions and tasks: `yield* AnswerState` anywhere in the turn
+gets the same per-turn instance. The type of `agent.turn` removes what the
+turn provides from `use`'s requirements.
 
 ```ts
-yield* agent.turn({ conversation, runId, prompt, services, journal }, (turn) => Effect.gen(function* () {
+class AnswerState extends Context.Tag("app/AnswerState")<AnswerState, AnswerStateService>() {}
+const answerStateLayer = Layer.effect(AnswerState, RunContext.pipe(Effect.flatMap(makeAnswerState)))
+
+yield* agent.turn({ conversation, runId, prompt, services, journal, layer: answerStateLayer }, (turn) => Effect.gen(function* () {
   const quick = yield* quickReply(turn.prompt)                   // no loop, still a recorded turn
   if (Option.isSome(quick)) return yield* turn.reply(quick.value)
 
-  const state = yield* AnswerState.make
+  const state = yield* AnswerState                               // the same instance the tools see
   yield* subscribeAll(turn.events, [
     onTool(Search, ({ result }) => state.remember(result)),     // typed by the tool's own schemas
     onTool(Deliver, ({ input }) => state.deliver(input.text)),
@@ -332,9 +343,30 @@ and ordered, depth-first up to a cap: every subscriber runs before `publish`
 returns, so state a subscriber changes is visible to the next step, and a
 subscriber failure fails the turn. Within a step the order is `step.started`
 < `tool.*` < `step.ended` < `completion.evaluated`. Background work goes to
-`turn.tasks.fork(tag, effect)`. The journal is the first subscriber: every
-event except transient deltas is appended with its name, and
-`tool.completed` keeps only the encoded result.
+`turn.tasks.fork(tag, effect)`.
+
+A subscription can instead run in the background:
+`subscribe(select, handle, { mode: "background" })`, or the same option on
+`onEvent`, `onTool` and a host event's `on`. It gets its own bounded queue and
+fiber. `publish` returns once the event is queued, and the handler sees events
+in publication order. A failed background handler is latched: the next
+delivery to it fails, and so does the drain before `turn.ended`, which fails
+the turn. Use it for reactions whose effects the next step does not need.
+
+**The journal.** The journal is the first subscriber: every event except
+transient deltas is appended with its name, and `tool.completed` keeps only
+the encoded result. Events and memory entries go through one ordered
+write-behind writer (`makeJournalWriter`). Producers queue and go on. One
+writer fiber stores items strictly in queue order, and writes consecutive
+appends together when the journal offers `appendAll` (`AgentConfig.journal`
+sets the queue capacity and batch size). The turn waits only at flushes:
+`turn.flush` returns once everything queued before it is stored, and
+`turn.write(op)` runs a host write in the same order and returns its result.
+The turn flushes before it returns; reading the journal through the writer
+flushes first. The first failed write is latched, so the turn fails at its
+next journal touch. Closing the turn's scope drains the queue before the
+writer stops, also on interruption. Memory builds every request from its
+in-process log, never by reading the journal back mid-turn.
 
 **Memory.** Every message, tool result, turn context, step context, skill
 activation, digest and compaction decision is an entry in an append-only log
@@ -352,6 +384,9 @@ a new strategy rebuilds from the full-fidelity entries.
 - The summary strategy folds the oldest turns into one recorded summary once
   the render passes its trigger. It reads the `UtilityLlm` from the turn's
   services, so summaries run under the turn's budget.
+
+Digests of several results run concurrently (`MemoryPolicy.digestConcurrency`,
+four by default) and are recorded in the order of their results.
 
 A tool owns how its result appears: `render`, `compact`, `subjects`,
 `artifacts` (image and file references, rendered as references for now) and
@@ -380,7 +415,13 @@ grow-only active set in memory:
 `turn.tools.select(message)` activates the `always` skills and, when the
 turn's services carry an `IntentMatcher`, the skills it selects. The choice is
 recorded with `recordDecision` as a `skill-selection` decision; timeouts and
-abstentions keep the always-on set. Probabilistic selection never
+abstentions keep the always-on set. `select` is `match` then `apply`:
+`turn.tools.match(message)` only asks the matcher and returns a `SkillMatch`
+(`skills`, `probabilities`, a provisional `record`) without writing or
+publishing anything. `turn.tools.apply(match)` activates the skills, records
+and publishes the decision, and records the synthetic `load_skill` exchange.
+A host can run the match alongside other work and apply it later, or drop
+it. Probabilistic selection never
 authorizes: `resolveCapabilities` checks every activation against the turn's
 `CapabilityGrants` (or the configured grants). Every call passes one wrapper
 (active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes) that
@@ -392,9 +433,9 @@ schema: removing one rewrites the cached prefix.
 
 **Contributions and the system prompt.** `definePlugin({ contributes:
 [Contributions] })` marks a multi-provider key: the runtime concatenates every
-contributor's array in graph order. A contribution carries tools, skills,
-prompt sections and a per-run layer (host run state, built after
-`RunContext`). The system prompt is the configured prefix, then the `static`
+contributor's array in graph order. A contribution carries tools, skills and
+prompt sections; per-turn host state comes from the turn's `layer`. The
+system prompt is the configured prefix, then the `static`
 sections, then the `session` sections, each tier by `order`. `turn` sections
 are recorded as turn context when the first run starts. The `Harness` remains
 the self-contained session host for applications that do not compose turns.
