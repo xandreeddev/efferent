@@ -3,6 +3,10 @@ import { definePlugin, encodeAppend, entriesOfPayload, HarnessError, MemoryLog }
 
 const storage = (message: string) => new HarnessError({ code: "memory.log", message })
 
+export const MemoryLogConfig = Schema.Struct({ event: Schema.NonEmptyString })
+export type MemoryLogConfig = typeof MemoryLogConfig.Type
+export const memoryLogDefaults: MemoryLogConfig = { event: "memory.entries" }
+
 /**
  * The memory log stored in the conversation's own journal: one
  * `memory.entries` event per append, entries as canonical JSON with their
@@ -10,7 +14,7 @@ const storage = (message: string) => new HarnessError({ code: "memory.log", mess
  */
 export const memoryLogPlugin = definePlugin({
   id: "@xandreed/plugin-memory-log", version: "0.6.0-next.1", scope: "runtime",
-  config: Schema.Struct({ event: Schema.NonEmptyString }), defaults: { event: "memory.entries" },
+  config: MemoryLogConfig, defaults: memoryLogDefaults,
   provides: [MemoryLog],
   layer: ({ event }) => Layer.succeed(MemoryLog, MemoryLog.of({
     open: (_conversation, io) => Effect.succeed({
@@ -27,4 +31,6 @@ export const memoryLogPlugin = definePlugin({
     }),
   })),
 })
+/** The memory log as a typed layer: provides MemoryLog. */
+export const MemoryLogLive = memoryLogPlugin.live
 export default memoryLogPlugin

@@ -108,6 +108,7 @@ export {
 export { parseFrontmatter } from "./spec/frontmatter.js"
 export * from "./harness/plugin.entity.js"
 export * from "./harness/plugin.adapter.js"
+export * from "./harness/plugin-stack.adapter.js"
 export * from "./harness/config.entity.js"
 export * from "./harness/session.entity.js"
 export * from "./ports/harness.port.js"

@@ -21,7 +21,7 @@ import {
 } from "@xandreed/core"
 import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 
-const Config = Schema.Struct({
+export const MemoryWindowConfig = Schema.Struct({
   /** At turn start, show earlier turns' tool results through their compact views. */
   compactPreviousTurn: Schema.Boolean,
   turnContext: Schema.Literal("current", "all"),
@@ -37,8 +37,8 @@ const Config = Schema.Struct({
   media: Schema.Literal("none", "inline"),
   maxImages: Schema.Int.pipe(Schema.nonNegative()),
 })
-type Config = typeof Config.Type
-const defaults: Config = {
+export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
+export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
   digestOnWriteChars: 0, digests: true, media: "none", maxImages: 8,
@@ -50,14 +50,14 @@ const preview = (entry: LogEntry, view: string, chars: number): string =>
   `${view.slice(0, chars)}\n[… ${view.length - chars} more characters kept out of context; call recall_context with locator "${entry.id}" for the full result]`
 
 /** The window policy: compact older turns, spill oversized results, then drop the oldest turns. */
-export const windowPolicy = (config: Config): MemoryPolicy => ({
+export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
   strategy: WINDOW_STRATEGY,
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
   digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
   maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
-const decide = (config: Config, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
+const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
     const rewritten = rewrittenBy(entries, WINDOW_STRATEGY.id)
     const inputs = toolInputsOf(entries, [])
     const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body }] : [])
@@ -123,7 +123,7 @@ export const recallContribution = defineContributions({
  */
 export const memoryWindowPlugin = definePlugin({
   id: "@xandreed/plugin-memory-window", version: "0.6.0-next.1", scope: "runtime",
-  config: Config, defaults,
+  config: MemoryWindowConfig, defaults: memoryWindowDefaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],
   contributes: [Contributions],
@@ -139,4 +139,6 @@ export const memoryWindowPlugin = definePlugin({
     Layer.succeed(Contributions, [recallContribution]),
   ),
 })
+/** Windowed memory as a typed layer: provides ConversationMemory and contributes the recall tool; requires MemoryLog. */
+export const MemoryWindowLive = memoryWindowPlugin.live
 export default memoryWindowPlugin

@@ -11,7 +11,7 @@ import {
 } from "@xandreed/core"
 import type { AgentMessage, CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 
-const Config = Schema.Struct({
+export const MemorySummaryConfig = Schema.Struct({
   /** Summarize once the rendered messages pass this share of the budget. */
   triggerRatio: Schema.Number.pipe(Schema.between(0.1, 1)),
   /** Keep at least this share of the budget verbatim (the newest turns). */
@@ -27,8 +27,8 @@ const Config = Schema.Struct({
   /** Instructions for the summarizer; the transcript and any earlier summary follow. */
   instructions: Schema.String,
 })
-type Config = typeof Config.Type
-const defaults: Config = {
+export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
+export const memorySummaryDefaults: MemorySummaryConfig = {
   triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "none", maxImages: 8,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
 }
@@ -52,7 +52,7 @@ const keepFrom = (entries: ReadonlyArray<LogEntry>, turn: number, keepTokens: nu
  * the window strategy, but when context grows past the trigger the oldest
  * turns are folded into one recorded summary (previous summary included).
  */
-export const summaryPolicy = (config: Config, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
+export const summaryPolicy = (config: MemorySummaryConfig, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
   digestOnWrite: Option.none(),
@@ -60,7 +60,7 @@ export const summaryPolicy = (config: Config, summarize: (prompt: string) => Eff
 })
 
 const decide = (
-  config: Config,
+  config: MemorySummaryConfig,
   summarize: (prompt: string) => Effect.Effect<string, HarnessError>,
   { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0],
 ): Effect.Effect<ReadonlyArray<CompactionAction>, HarnessError> => Effect.gen(function* () {
@@ -86,7 +86,7 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 /** The summarizer is read from each turn's services, so it runs under that turn's budget. */
 export const memorySummaryPlugin = definePlugin({
   id: "@xandreed/plugin-memory-summary", version: "0.6.0-next.1", scope: "runtime",
-  config: Config, defaults,
+  config: MemorySummaryConfig, defaults: memorySummaryDefaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],
   layer: (config) => Layer.effect(ConversationMemory, Effect.gen(function* () {
@@ -105,4 +105,6 @@ export const memorySummaryPlugin = definePlugin({
     })
   })),
 })
+/** Summarizing memory as a typed layer: provides ConversationMemory; requires MemoryLog (and a UtilityLlm per turn). */
+export const MemorySummaryLive = memorySummaryPlugin.live
 export default memorySummaryPlugin

@@ -10,7 +10,7 @@ export { makeMemoryRenderStore, MemoryRenderStoreLive } from "./render-store.mem
 export type { MemoryAnnotation } from "./render-store.memory.adapter.js"
 export { makeRenderFeed, RenderFeedLive } from "./render-feed.adapter.js"
 export { SseTransport, sseHeaders, sseNodePeer, WebSocketTransport } from "./render-transport.adapter.js"
-export { renderFeedPlugin, renderSurfacePlugin } from "./plugin.adapter.js"
+export { renderFeedDefaults, renderFeedPlugin, renderSurfaceDefaults, renderSurfacePlugin } from "./plugin.adapter.js"
 export { renderSurfaceConformance } from "./render-surface.conformance.js"
 export type { ConformanceCheck, SurfaceSubject } from "./render-surface.conformance.js"
 export { makeMemoryJournal, renderFeedConformance, renderTransportConformance } from "./render-transport.conformance.js"
