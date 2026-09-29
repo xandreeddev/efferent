@@ -34,7 +34,7 @@ test("a session's events are the feed's records, read as the feed's principal", 
   const asked: Array<SessionAddress> = []
   const tail = tailOver("owner-1", asked)
   const records = await Effect.runPromise(tail.read({ threadId: id, principalId: "owner-1" }, 1))
-  expect(records).toEqual([{ sequence: 2, kind: "canvas.planned", data: { page: "p" } }])
+  expect(records).toEqual([{ sequence: 2, kind: "canvas.planned", data: { page: "p" }, turn: 1 }])
   expect(asked).toEqual([{ id, owner: "owner-1" }])
 })
 

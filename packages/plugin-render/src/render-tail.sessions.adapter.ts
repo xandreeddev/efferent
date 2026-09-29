@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema, Stream } from "effect"
+import { Effect, Layer, Option, Schema, Stream } from "effect"
 import { ConversationId, Sessions } from "@xandreed/core"
 import type { FeedScope } from "./domain/feed-frame.entity.js"
 import { RenderError } from "./domain/render-surface.entity.js"
@@ -8,7 +8,7 @@ const decodeId = Schema.decodeUnknownEffect(ConversationId)
 
 /**
  * The feed's journal is a session: `threadId` names it and `principalId` is
- * its owner (another owner reads nothing). Reads never write, so following
+ * its owner (another owner reads nothing); each record carries its turn. Reads never write, so following
  * a session runs nothing. `changes` wakes the feed after each commit this
  * instance makes; polling covers the others.
  */
@@ -26,7 +26,7 @@ export const SessionsJournalTailLive = (options: { readonly page: number } = { p
             ? new RenderError({ code: "forbidden", message: "no such session" })
             : new RenderError({ code: "storage", message: error.message })),
         )),
-        Effect.map((events) => events.map((event) => ({ sequence: event.seq, kind: event.kind, data: event.data }))),
+        Effect.map((events) => events.map((event) => ({ sequence: event.seq, kind: event.kind, data: event.data, turn: Option.getOrNull(event.turn) }))),
       ),
       changes: (feed) => Stream.unwrap(Effect.match(address(feed), {
         onFailure: () => Stream.empty,
