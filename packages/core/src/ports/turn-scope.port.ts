@@ -1,10 +1,8 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { JournalWriterOptions } from "../turn/journal-writer.js"
-import type { UserMessage } from "../turn/user-message.entity.js"
-import type { JournalIO, MemoryReader, MemorySession } from "./memory.port.js"
+import type { MemoryReader, MemorySession } from "./memory.port.js"
+import type { TurnWriter } from "./sessions.port.js"
 import type { LoopLimits } from "./step-loop.port.js"
 import type { RunTools } from "./tool-registry.port.js"
 import type { TurnOutcome } from "./turn.port.js"
@@ -64,15 +62,10 @@ export class TurnPrompt extends Context.Service<TurnPrompt, {
 
 /** What `TurnLive` builds one turn from. */
 export interface TurnLiveInput {
-  readonly conversation: ConversationId
-  readonly runId: string
-  readonly userMessage: UserMessage
-  /** The conversation's journal: memory storage, and where every event is persisted. */
-  readonly journal: JournalIO
+  /** The admitted turn's writer (see `Sessions.begin`): the session, the message, and where everything is stored. */
+  readonly turn: TurnWriter
   /** The system prompt prefix, before the contributed sections. */
   readonly system?: string
-  /** The write-behind journal: queued items before appends wait (1024), items written per batch (64). */
-  readonly writer?: Partial<JournalWriterOptions>
   /** How deep event reactions may nest before the bus fails the publisher (8). */
   readonly maxEventDepth?: number
 }

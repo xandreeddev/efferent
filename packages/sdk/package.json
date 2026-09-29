@@ -19,6 +19,7 @@
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",
-    "@xandreed/plugin-memory-digest": "workspace:*"
+    "@xandreed/plugin-memory-digest": "workspace:*",
+    "@xandreed/plugin-sessions": "workspace:*"
   }
 }

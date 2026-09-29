@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationId, ConversationMemory, inMemoryJournal, memoryConformance, MemoryLog, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, inMemoryLog, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
-import { memoryLogPlugin } from "@xandreed/plugin-memory-log"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 
@@ -18,17 +17,15 @@ const utility = Context.make(UtilityLlm, UtilityLlm.of({
   complete: () => Effect.succeed(new UtilityCompletion({ text: "SUMMARY", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 } })),
 }))
 
-/** Build the log plugin, then the strategy on top of it, the way the graph does. */
+/** Build the strategy the way the graph does (it opens over the log it is given). */
 const strategyOf = (plugin: Plugin | "rolling") => Effect.gen(function* () {
-  const log = yield* memoryLogPlugin.build(memoryLogPlugin.defaults, Context.empty())
   if (plugin === "rolling") {
-    const store = Context.get(log as Context.Context<MemoryLog>, MemoryLog)
     return ConversationMemory.of({
       strategy: rollingPolicy.strategy,
-      open: ({ conversation, runId, io }) => store.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, rollingPolicy, { runId }))),
+      open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }),
     })
   }
-  const built = yield* plugin.build(plugin.defaults, log)
+  const built = yield* plugin.build(plugin.defaults, Context.empty())
   return Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
 })
 
@@ -53,8 +50,8 @@ describe("the summary strategy reads its summarizer where the session is opened"
   test("without a UtilityLlm there, opening fails with memory.summary", async () => {
     const exit = await Effect.runPromise(Effect.result(Effect.scoped(Effect.gen(function* () {
       const memory = yield* strategyOf(memorySummaryPlugin)
-      const journal = yield* inMemoryJournal
-      return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", io: journal.io })
+      const stored = yield* inMemoryLog
+      return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", log: stored.log })
     }))))
     expect(exit._tag === "Failure" ? exit.failure.code : "opened").toBe("memory.summary")
   })

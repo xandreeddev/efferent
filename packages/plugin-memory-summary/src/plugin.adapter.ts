@@ -5,7 +5,6 @@ import {
   digestTranscript,
   estimateMessageTokens,
   HarnessError,
-  MemoryLog,
   openLogSession,
   UtilityLlm,
 } from "@xandreed/core"
@@ -87,24 +86,19 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 export const memorySummaryPlugin = definePlugin({
   id: "@xandreed/plugin-memory-summary", version: "0.7.0-next.1", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
-  requires: [MemoryLog],
   provides: [ConversationMemory],
-  layer: (config) => Layer.effect(ConversationMemory, Effect.gen(function* () {
-    const log = yield* MemoryLog
-    return ConversationMemory.of({
+  layer: (config) => Layer.succeed(ConversationMemory, ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,
-      open: ({ conversation, runId, io }) => Effect.gen(function* () {
+      open: ({ runId, log }) => Effect.gen(function* () {
         const utility = yield* Effect.serviceOption(UtilityLlm).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })))
         const policy = summaryPolicy(config, (prompt) => utility.complete(prompt).pipe(
           Effect.map((completion) => completion.text),
           Effect.mapError((error) => new HarnessError({ code: "memory.summary", message: error.message })),
         ))
-        const handle = yield* log.open(conversation, io)
-        return yield* openLogSession(handle, policy, { runId })
+        return yield* openLogSession(log, policy, { runId })
       }),
-    })
-  })),
+    })),
 })
-/** Summarizing memory as a typed layer: provides ConversationMemory; requires MemoryLog (and a UtilityLlm per turn). */
+/** Summarizing memory as a typed layer: provides ConversationMemory (and needs a UtilityLlm per turn). */
 export const MemorySummaryLive = memorySummaryPlugin.live
 export default memorySummaryPlugin

@@ -127,13 +127,14 @@ export interface MemorySession extends MemoryReader {
 export class ConversationMemory extends Context.Service<ConversationMemory, {
   readonly strategy: { readonly id: string; readonly version: string }
   /**
-   * Open the conversation's session for one run. A strategy reads what it
-   * needs per turn (a ResultDigester, a summarizer's UtilityLlm) with
-   * `Effect.serviceOption` from the environment it is opened in.
+   * Open the conversation's session for one run over its log (the turn's
+   * memory events). A strategy reads what it needs per turn (a
+   * ResultDigester, a summarizer's UtilityLlm) with `Effect.serviceOption`
+   * from the environment it is opened in.
    */
   readonly open: (scope: {
     readonly conversation: ConversationId
     readonly runId: string
-    readonly io: JournalIO
+    readonly log: LogHandle
   }) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>
 }>()("efferent/ConversationMemory") {}

@@ -5,8 +5,11 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { InitialBatch, ModelChoice, StepDirective, StepInfo } from "./capability.port.js"
-import type { JournalIO, MemoryReader } from "./memory.port.js"
+import type { MemoryReader } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
+import type { TurnWriter } from "./sessions.port.js"
+import type { JsonObject } from "../session/session-log.entity.js"
+import type { SessionAddress } from "../session/sessions.entity.js"
 import type { Correctives, LoopLimits, RunResult } from "./step-loop.port.js"
 import type { SkillMatch } from "./tool-registry.port.js"
 import type { TurnEvents, TurnEventsService, TurnTasks, TurnTasksService } from "./turn-events.port.js"
@@ -72,19 +75,28 @@ export interface Turn {
 /** What every turn provides to the host's code, its per-turn layer and its tools. */
 export type TurnServices = RunContext | TurnEvents | TurnTasks
 
+/** A turn to begin: the session (through the `Sessions` in the turn's services), the message and the run. */
+export interface NewTurn {
+  readonly session: SessionAddress
+  readonly userMessage: UserMessage
+  readonly runId: string
+  /** The idempotency key; the run id by default. */
+  readonly key?: string
+  /** The host's input beside the message, part of the key's fingerprint. */
+  readonly command?: JsonObject
+}
+
 /**
- * One admitted turn's input. `layer` is the host's per-turn services (state
- * stores, adapters for this user message…): built after RunContext, it is provided to
- * the host's `use`, to the tools, the policy, subscriptions and tasks alike.
+ * One turn's input. `turn` is either a turn the host already began (its
+ * writer: the host ends it) or one to begin and end here. `layer` is the
+ * host's per-turn services (state stores, adapters for this user
+ * message…): built after RunContext, it is provided to the host's `use`, to
+ * the tools, the policy, subscriptions and tasks alike.
  */
 export interface TurnInput<A = never, E = never> {
-  readonly conversation: ConversationId
-  readonly runId: string
-  readonly userMessage: UserMessage
+  readonly turn: TurnWriter | NewTurn
   /** This turn's services: the model, per-turn budgets, data ports… */
   readonly services: Context.Context<never>
-  /** The conversation's journal: memory storage, and where every event is persisted. */
-  readonly journal: JournalIO
   /** A system prompt prefix before the contributed sections. */
   readonly system?: string
   /** Per-conversation prompt-cache key for providers that support one. */
