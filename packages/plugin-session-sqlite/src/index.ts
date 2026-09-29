@@ -72,3 +72,4 @@ export const sessionSqlitePlugin = definePlugin({
 export default sessionSqlitePlugin
 
 export { SqliteConversationStoreLive } from "./store/sqliteStore.js"
+export { SessionLogSqliteLive, sessionLogSqlitePlugin } from "./session-log.adapter.js"
