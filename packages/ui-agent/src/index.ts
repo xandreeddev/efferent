@@ -18,7 +18,7 @@ export type { UiAgentProfile as UiAgentProfileType, UiModelStage as UiModelStage
 export { validateUiAgentProfile } from "./domain/ui-agent-profile.entity.functions.js"
 export { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 export { UiHost } from "./ports/ui-host.port.js"
-export type { UiActionResult, UiCapability, UiHostService, UiRequestContext } from "./ports/ui-host.port.js"
+export type { UiActionResult, UiAction, UiHostService, UiRequestContext } from "./ports/ui-host.port.js"
 export { UiPageStore } from "./ports/ui-page-store.port.js"
 export type { UiPageStoreService } from "./ports/ui-page-store.port.js"
 export { UiComponentCatalog } from "./ports/ui-component-catalog.port.js"

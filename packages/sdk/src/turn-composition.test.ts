@@ -4,7 +4,7 @@ import type { Scope } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   cacheKeyOf,
-  ContributionsLive,
+  CapabilitiesLive,
   guardTurn,
   openTurnTools,
   stackPlugins,
@@ -31,7 +31,7 @@ import { goldenConfig, goldenHost, runGolden } from "./agent.golden.test.js"
  * services, then TurnLive, the host's layer and the body.
  */
 const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = Effect.gen(function* () {
-  const runtime = yield* Layer.build(ContributionsLive(goldenHost).pipe(
+  const runtime = yield* Layer.build(CapabilitiesLive(goldenHost).pipe(
     stackPlugins(MemoryLogLive()),
     stackPlugins(MemoryWindowLive({ digestOnWriteChars: 1 })),
     stackPlugins(ToolDiscoveryLive()),

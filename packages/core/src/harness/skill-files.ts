@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { parseFrontmatter } from "../spec/frontmatter.js"
 import type { Frontmatter } from "../spec/frontmatter.js"
-import { SkillDefinition } from "./contribution.entity.js"
+import { SkillDefinition } from "./capability.entity.js"
 import { HarnessError } from "./plugin.entity.js"
 
 /** One file of a skills tree, as the host read it. */

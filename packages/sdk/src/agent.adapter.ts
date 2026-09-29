@@ -2,8 +2,8 @@ import { Context, Effect, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
-  ContributionsLive,
-  Contributions,
+  CapabilitiesLive,
+  Capabilities,
   ConversationMemory,
   definePlugin,
   guardTurn,
@@ -18,7 +18,7 @@ import {
   turnOf,
 } from "@xandreed/core"
 import type {
-  Contribution,
+  Capability,
   HarnessConfig,
   LoopLimits,
   Plugin,
@@ -46,7 +46,7 @@ export interface AgentConfig {
   /** Which instance provides a service several plugins provide. */
   readonly bindings?: Readonly<Record<string, string>>
   /** The host's own tools, views, skills and prompt sections. */
-  readonly contributions?: ReadonlyArray<Contribution>
+  readonly capabilities?: ReadonlyArray<Capability>
   /** Process-lifetime host services plugins may require. */
   readonly services?: Context.Context<never>
   /** Keys every turn's services must carry; session plugins may require them. */
@@ -101,24 +101,24 @@ const provideHostLayer = <A, E>(layer: Option.Option<Layer.Layer<A, E, unknown>>
   <B, F, R>(effect: Effect.Effect<B, F, R>): Effect.Effect<B, F | E, unknown> =>
     Option.match(layer, { onNone: () => effect, onSome: (hostLayer) => effect.pipe(Effect.provide(hostLayer, { local: true })) })
 
-const hostContributions = (contributions: ReadonlyArray<Contribution>) => definePlugin({
+const hostCapabilities = (capabilities: ReadonlyArray<Capability>) => definePlugin({
   id: "@xandreed/sdk/host-contributions", version: "1", scope: "runtime",
   config: Schema.Struct({}), defaults: {},
-  provides: [], contributes: [Contributions],
-  layer: () => ContributionsLive(...contributions),
+  provides: [], contributes: [Capabilities],
+  layer: () => CapabilitiesLive(...capabilities),
 })
 
 /**
  * Build the agent's plugin graph once. Runtime plugins are activated here,
  * in the caller's scope; session plugins (if any) are activated per turn with
- * that turn's services. Host contributions join the graph as one more
+ * that turn's services. Host capabilities join the graph as one more
  * contributor.
  */
 const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> => Effect.gen(function* () {
   const parent = yield* Effect.scope
   const entries = config.plugins.map(entryOf)
-  const hosted = config.contributions ?? []
-  const host = hostContributions(hosted)
+  const hosted = config.capabilities ?? []
+  const host = hostCapabilities(hosted)
   const withHost = hosted.length > 0
   const plugins = [...entries.map((entry) => entry.plugin), ...(withHost ? [host] : [])]
   const harness: HarnessConfig = {

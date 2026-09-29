@@ -3,7 +3,7 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineContributions, defineHostEvent, defineSkill, defineTool, entriesOfPayload, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, subscribeAll, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfPayload, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, subscribeAll, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
 import type { EventBody, JournalIO, Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -51,7 +51,7 @@ const Note = Tool.make("note", {
 
 const found = (items: ReadonlyArray<typeof Item.Type>) => items.map((item) => `FOUND ${item.id}: ${item.detail}`).join("\n")
 
-export const goldenHost = defineContributions({
+export const goldenHost = defineCapability({
   id: "golden-host", version: "1",
   tools: [
     defineTool({
@@ -78,7 +78,7 @@ export const goldenHost = defineContributions({
     defineSkill({ id: "delivery", summary: "Deliver a final answer.", instructions: "Deliver once, with the record id.", tools: ["deliver"] }),
     defineSkill({ id: "notes", summary: "Take notes.", instructions: "Note what the user asks to keep.", tools: ["note"] }),
   ],
-  sections: [
+  promptSections: [
     { id: "persona", version: "1", tier: "session", order: 0, render: () => Effect.succeed(Option.some("SESSION persona: a golden agent.")) },
     { id: "rules", version: "1", tier: "static", order: 5, render: () => Effect.succeed(Option.some("STATIC rules.")) },
     {
@@ -95,7 +95,7 @@ export const goldenHost = defineContributions({
 /** The agent every composition of the golden conversation reproduces. */
 export const goldenConfig: AgentConfig = {
   plugins: [memoryLogPlugin, { plugin: memoryWindowPlugin, options: { digestOnWriteChars: 1 } }, toolDiscoveryPlugin, stepLoopPlugin, memoryDigestPlugin],
-  contributions: [goldenHost],
+  capabilities: [goldenHost],
   turnServices: [LanguageModel.LanguageModel, UtilityLlm],
   limits: { streaming: false, maxSteps: 6 },
   cacheKeyPrefix: "golden",

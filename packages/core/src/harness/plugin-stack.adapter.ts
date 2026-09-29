@@ -1,29 +1,29 @@
 import { Context, Effect, Layer, Option } from "effect"
-import { Contributions } from "../ports/contribution.port.js"
-import type { Contribution } from "../ports/contribution.port.js"
+import { Capabilities } from "../ports/capability.port.js"
+import type { Capability } from "../ports/capability.port.js"
 
 /** The host's own bundles as a layer: the bottom of a plugin stack (see `stackPlugins`). */
-export const ContributionsLive = (...bundles: ReadonlyArray<Contribution>): Layer.Layer<Contributions> =>
-  Layer.succeed(Contributions, bundles)
+export const CapabilitiesLive = (...bundles: ReadonlyArray<Capability>): Layer.Layer<Capabilities> =>
+  Layer.succeed(Capabilities, bundles)
 
-const contributionsOf = (context: Context.Context<never>): ReadonlyArray<Contribution> =>
-  Option.getOrElse(Context.getOption(context, Contributions), (): ReadonlyArray<Contribution> => [])
+const capabilitiesOf = (context: Context.Context<never>): ReadonlyArray<Capability> =>
+  Option.getOrElse(Context.getOption(context, Capabilities), (): ReadonlyArray<Capability> => [])
 
 /**
  * Stack one plugin layer on the layers below it, as the plugin graph
  * activates them: `next` is built over everything `base` provides; the two
- * Contributions arrays concatenate, base first (activateGraph's order); any
+ * Capabilities arrays concatenate, base first (activateGraph's order); any
  * other service of `next` wins.
  *
  * ```ts
- * const plugins = ContributionsLive(host).pipe(
+ * const plugins = CapabilitiesLive(host).pipe(
  *   stackPlugins(MemoryLogLive()),
  *   stackPlugins(MemoryWindowLive()),   // + the recall tool
  *   stackPlugins(ToolDiscoveryLive()),  // registry over [host, recall]; + the catalogue
  * )
  * ```
  *
- * Contributions is a multi-provider key. `Layer.merge`/`Layer.mergeAll`
+ * Capabilities is a multi-provider key. `Layer.merge`/`Layer.mergeAll`
  * keep one array and silently drop the other layer's tools, skills and
  * sections, and a layer merged beside another cannot see what it
  * contributes: never merge layers that contribute; stack them.
@@ -35,8 +35,8 @@ export const stackPlugins = <A2, E2, R2>(next: Layer.Layer<A2, E2, R2>) =>
       const lower = yield* Layer.buildWithScope(base, scope)
       const upper = yield* Layer.buildWithScope(next, scope).pipe(Effect.provide(lower))
       const merged = Context.merge(lower, upper)
-      const contributes = lower.mapUnsafe.has(Contributions.key) || upper.mapUnsafe.has(Contributions.key)
+      const contributes = lower.mapUnsafe.has(Capabilities.key) || upper.mapUnsafe.has(Capabilities.key)
       return contributes
-        ? Context.makeUnsafe<A1 | A2>(new Map([...merged.mapUnsafe, [Contributions.key, [...contributionsOf(lower), ...contributionsOf(upper)]]]))
+        ? Context.makeUnsafe<A1 | A2>(new Map([...merged.mapUnsafe, [Capabilities.key, [...capabilitiesOf(lower), ...capabilitiesOf(upper)]]]))
         : merged
     }))

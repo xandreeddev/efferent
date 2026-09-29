@@ -4,11 +4,11 @@ import {
   ActionPolicy,
   activationsOf,
   canonicalJson,
-  CapabilityGrants,
+  PermissionGrants,
   catalogOf,
   CurrentAgentStep,
   DecisionId,
-  defineContributions,
+  defineCapability,
   defineTool,
   Failure,
   fingerprintOf,
@@ -22,7 +22,7 @@ import {
 import type {
   ActivationSource,
   CapabilityCatalog,
-  Contribution,
+  Capability,
   DecisionRecord,
   DigestTask,
   MemorySession,
@@ -36,7 +36,7 @@ import type {
 } from "@xandreed/core"
 
 export interface DiscoveryConfig {
-  /** Granted permissions when the turn's services carry no CapabilityGrants. */
+  /** Granted permissions when the turn's services carry no PermissionGrants. */
   readonly grants: ReadonlyArray<string>
   readonly loadSkill: boolean
   readonly maxCallsPerRun: number
@@ -89,27 +89,27 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
 }
 
 /**
- * The registry over every contribution. Built once; each turn opens it
+ * The registry over every capability. Built once; each turn opens it
  * where its services are, which the handlers then run with: the RunContext
- * (events, memory), and the optional IntentMatcher, CapabilityGrants and
+ * (events, memory), and the optional IntentMatcher, PermissionGrants and
  * ActionPolicy of that turn.
  */
-export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArray<Contribution>) => Effect.gen(function* () {
+export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArray<Capability>) => Effect.gen(function* () {
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
-  const hasReferences = contributions.some((contribution) => contribution.skills.some((skill) => skill.references.length > 0))
+  const hasReferences = capabilities.some((capability) => capability.skills.some((skill) => skill.references.length > 0))
   const own: ReadonlyArray<RegisteredTool> = config.loadSkill ? [
     defineTool({ tool: LoadSkill, handler: () => Effect.die("bound per run"), annotations: { readOnly: true, pinned: true } }),
     ...(hasReferences ? [defineTool({ tool: ReadSkillReference, handler: () => Effect.die("bound per run"), annotations: { readOnly: true } })] : []),
   ] : []
-  const registered = [...contributions.flatMap((contribution) => contribution.tools), ...own]
+  const registered = [...capabilities.flatMap((capability) => capability.tools), ...own]
   const duplicateTool = registered.find((entry, index) => registered.findIndex((other) => other.tool.name === entry.tool.name) !== index)
-  if (duplicateTool !== undefined) return yield* Effect.fail(harness("tools.duplicate", `Two contributions define the tool ${duplicateTool.tool.name}`))
-  const skills = contributions.flatMap((contribution) => contribution.skills)
+  if (duplicateTool !== undefined) return yield* Effect.fail(harness("tools.duplicate", `Two capabilities define the tool ${duplicateTool.tool.name}`))
+  const skills = capabilities.flatMap((capability) => capability.skills)
   const duplicateSkill = skills.find((skill, index) => skills.findIndex((other) => other.id === skill.id) !== index)
-  if (duplicateSkill !== undefined) return yield* Effect.fail(harness("skills.duplicate", `Two contributions define the skill ${duplicateSkill.id}`))
+  if (duplicateSkill !== undefined) return yield* Effect.fail(harness("skills.duplicate", `Two capabilities define the skill ${duplicateSkill.id}`))
   const unknownTool = skills.flatMap((skill) => skill.tools.filter((tool) => !registered.some((entry) => entry.tool.name === tool)).map((tool) => `${skill.id} → ${tool}`))
   if (unknownTool.length > 0) return yield* Effect.fail(harness("skills.tools", `Skills reference unregistered tools: ${unknownTool.join(", ")}`))
-  const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...contributions, defineContributions({ id: "tool-discovery", version: "1", tools: own })])
+  const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...capabilities, defineCapability({ id: "tool-discovery", version: "1", tools: own })])
   const byName = new Map(registered.map((entry) => [entry.tool.name, entry] as const))
   const skillsForTool = (tool: string) => skills.filter((skill) => skill.tools.includes(tool)).map((skill) => skill.id)
   const decoded = (name: string, encoded: unknown): Effect.Effect<Option.Option<{ readonly entry: RegisteredTool; readonly result: unknown }>> =>
@@ -174,7 +174,7 @@ export const makeRegistry = (config: DiscoveryConfig, contributions: ReadonlyArr
     const runServices = yield* Effect.context<never>()
     const matcher = yield* Effect.serviceOption(IntentMatcher)
     const policy = yield* Effect.serviceOption(ActionPolicy)
-    const grants = yield* Option.match(yield* Effect.serviceOption(CapabilityGrants), {
+    const grants = yield* Option.match(yield* Effect.serviceOption(PermissionGrants), {
       onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
       onSome: (service) => service.grants,
     })

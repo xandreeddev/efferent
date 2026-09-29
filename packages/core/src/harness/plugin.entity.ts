@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { Context, Effect, Layer, Scope } from "effect"
 
 export const PLUGIN_API_VERSION = 2
-/** Version 1 plugins (no contributions, no optional services) still load. */
+/** Version 1 plugins (no capabilities, no optional services) still load. */
 export const SUPPORTED_PLUGIN_API_VERSIONS: ReadonlyArray<number> = [1, 2]
 
 export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessError", {

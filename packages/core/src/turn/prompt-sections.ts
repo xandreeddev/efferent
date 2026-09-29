@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { PromptContext, PromptSection } from "../ports/contribution.port.js"
+import type { PromptContext, PromptSection } from "../ports/capability.port.js"
 
 const tierRank = (section: PromptSection): number => section.tier === "static" ? 0 : section.tier === "session" ? 1 : 2
 

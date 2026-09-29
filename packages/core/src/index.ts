@@ -115,9 +115,6 @@ export * from "./harness/session.entity.js"
 export * from "./ports/harness.port.js"
 
 export { defineAgent, defineConfig } from "./harness/config.entity.functions.js"
-export * from "./harness/capability.entity.js"
-export * from "./harness/capability.entity.functions.js"
-export * from "./ports/capability.port.js"
 
 export * from "./domain/prompt-provenance.entity.js"
 
@@ -133,10 +130,11 @@ export * from "./memory/memory-log.entity.functions.js"
 export * from "./memory/memory-session.js"
 export * from "./ports/memory.port.js"
 
-// contributions: host-defined tools, skills and prompt sections for capability plugins
-export * from "./harness/contribution.entity.js"
-export * from "./harness/contribution.entity.functions.js"
-export * from "./ports/contribution.port.js"
+// capabilities: host-defined tools, skills and prompt sections, and the permissions a run holds
+export * from "./harness/capability.entity.js"
+export * from "./harness/capability.entity.functions.js"
+export * from "./ports/capability.port.js"
+export * from "./ports/permission.port.js"
 export * from "./ports/run-context.port.js"
 export * from "./ports/tool-registry.port.js"
 

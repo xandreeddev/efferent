@@ -115,7 +115,7 @@ remains available as `bun run smith:workflow` for old specs.
 ## Terminal host
 
 `runTui` consumes an SDK harness and session, an approval channel, and optional
-command and event-renderer contributions. Smith-specific commands belong in the CLI. The terminal
+commands and event renderers. Smith-specific commands belong in the CLI. The terminal
 supports multiline input, bracketed paste, session switching, transcript search,
 explicit follow mode, expandable tool details, and dark/light/mono themes.
 Credential input stays outside the text renderer; only mask characters render.

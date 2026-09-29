@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/plugin-render",
-  "version": "0.7.0-next.0",
+  "version": "0.7.0-next.1",
   "type": "module",
   "description": "Render surfaces, a journal feed and SSE/WebSocket transports for agent output.",
   "main": "./src/index.ts",

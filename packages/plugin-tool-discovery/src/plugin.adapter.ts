@@ -1,9 +1,9 @@
 import { Effect, Layer, Schema } from "effect"
-import { Contributions, defineContributions, definePlugin, ToolRegistry } from "@xandreed/core"
+import { Capabilities, defineCapability, definePlugin, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 
 export const ToolDiscoveryConfig = Schema.Struct({
-  /** Granted permissions when the turn's services carry no CapabilityGrants. */
+  /** Granted permissions when the turn's services carry no PermissionGrants. */
   grants: Schema.Array(Schema.String),
   /** Expose the skill catalogue, load_skill and read_skill_reference. */
   loadSkill: Schema.Boolean,
@@ -23,7 +23,7 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
 
 /**
  * Tool registry and discovery. Hosts DEFINE tools and skills as
- * contributions; this plugin registers them once, keeps the grow-only active
+ * capabilities; this plugin registers them once, keeps the grow-only active
  * set in memory, runs the optional pre-turn matcher, serves load_skill
  * (tier 2) and references (tier 3), checks every call centrally (active set,
  * grants, action policy, budgets and concurrency lanes) and publishes
@@ -32,28 +32,28 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
  * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.7.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-tool-discovery", version: "0.7.0-next.1", scope: "runtime",
   config: ToolDiscoveryConfig, defaults: toolDiscoveryDefaults,
-  requires: [Contributions],
+  requires: [Capabilities],
   provides: [ToolRegistry],
-  contributes: [Contributions],
+  contributes: [Capabilities],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {
-    const contributions = yield* Contributions
-    const registry = yield* makeRegistry(config, contributions)
-    const catalogue = defineContributions({
+    const capabilities = yield* Capabilities
+    const registry = yield* makeRegistry(config, capabilities)
+    const catalogue = defineCapability({
       id: "@xandreed/plugin-tool-discovery/catalogue",
       version: "1",
-      sections: config.loadSkill ? [{
+      promptSections: config.loadSkill ? [{
         id: "tool-discovery.catalogue", version: "1", tier: "static", order: config.catalogOrder,
         render: () => Effect.succeed(catalogText(registry.skills)),
       }] : [],
     })
     return Layer.mergeAll(
       Layer.succeed(ToolRegistry, ToolRegistry.of({ catalog: registry.catalog, open: registry.open })),
-      Layer.succeed(Contributions, [catalogue]),
+      Layer.succeed(Capabilities, [catalogue]),
     )
   })),
 })
-/** Tool discovery as a typed layer: provides ToolRegistry and contributes the catalogue; requires the Contributions below it. */
+/** Tool discovery as a typed layer: provides ToolRegistry and contributes the catalogue; requires the Capabilities below it. */
 export const ToolDiscoveryLive = toolDiscoveryPlugin.live
 export default toolDiscoveryPlugin

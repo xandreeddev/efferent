@@ -4,7 +4,7 @@ import { McpServerSpec } from "./mcp/config.js"
 import { McpClientLive } from "./mcp/mcpClientLive.js"
 
 export const mcpPlugin = definePlugin({
-  id: "@xandreed/plugin-mcp", version: "0.7.0-next.0", config: Schema.Struct({ servers: Schema.Record(Schema.String, McpServerSpec) }),
+  id: "@xandreed/plugin-mcp", version: "0.7.0-next.1", config: Schema.Struct({ servers: Schema.Record(Schema.String, McpServerSpec) }),
   defaults: { servers: {} }, requires: [SessionEnvironment, ActionPolicy], provides: [McpClient],
   layer: ({ servers }) => Layer.effect(McpClient, Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment

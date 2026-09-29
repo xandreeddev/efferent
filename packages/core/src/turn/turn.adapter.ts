@@ -3,8 +3,8 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import { readerOf } from "../memory/memory-session.js"
-import { Contributions } from "../ports/contribution.port.js"
-import type { Contribution, PromptContext, PromptSection } from "../ports/contribution.port.js"
+import { Capabilities } from "../ports/capability.port.js"
+import type { Capability, PromptContext, PromptSection } from "../ports/capability.port.js"
 import { ConversationMemory } from "../ports/memory.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import { ToolRegistry } from "../ports/tool-registry.port.js"
@@ -41,8 +41,8 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const scope = yield* Effect.scope
   const memory = yield* ConversationMemory
   const registry = yield* ToolRegistry
-  const contributions = Option.getOrElse(yield* Effect.serviceOption(Contributions), (): ReadonlyArray<Contribution> => [])
-  const sections = contributions.flatMap((contribution) => contribution.sections)
+  const capabilities = Option.getOrElse(yield* Effect.serviceOption(Capabilities), (): ReadonlyArray<Capability> => [])
+  const sections = capabilities.flatMap((capability) => capability.promptSections)
 
   const events = yield* makeTurnEvents({ maxDepth: input.maxEventDepth ?? 8 })
   const tasks = yield* makeTurnTasks(scope)

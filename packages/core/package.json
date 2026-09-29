@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/core",
-  "version": "0.7.0-next.0",
+  "version": "0.7.0-next.1",
   "private": true,
   "type": "module",
   "description": "The agent kernel of the new line: entities, ports, the provider-agnostic agent loop, and the session chassis — pure Effect, no IO, no provider SDKs.",

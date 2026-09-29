@@ -111,7 +111,7 @@ remains available as `bun run smith:workflow` for old specs.
 ## Terminal host
 
 `runTui` consumes an SDK harness and session, an approval channel, and optional
-command and event-renderer contributions. Smith-specific commands belong in the CLI. The terminal
+commands and event renderers. Smith-specific commands belong in the CLI. The terminal
 supports multiline input, bracketed paste, session switching, transcript search,
 explicit follow mode, expandable tool details, and dark/light/mono themes.
 Typing `/` opens inline suggestions without moving focus out of the composer.
@@ -265,7 +265,7 @@ skills, step context, completion) is the host's.
 | Tool digests | `ResultDigester` (optional) | `@xandreed/plugin-memory-digest` |
 | Tool registry and discovery | `ToolRegistry` | `@xandreed/plugin-tool-discovery` |
 | Step iteration | `StepLoop` | `stepLoopPlugin` from `@xandreed/plugin-agent-loop` |
-| Host definitions | `Contributions` (multi-provider) | `AgentConfig.contributions`, or any plugin that `contributes` |
+| Host definitions | `Capabilities` (multi-provider) | `AgentConfig.capabilities`, or any plugin that `contributes` |
 | Pre-turn skill selection | `IntentMatcher` (optional, per turn) | any matcher service |
 
 **Defining the agent.** `Agent.define(config)` (from `@xandreed/sdk`) resolves
@@ -282,7 +282,7 @@ const agent = yield* Agent.define({
     stepLoopPlugin,
     memoryDigestPlugin,                      // session scope: digests on the turn's UtilityLlm
   ],
-  contributions: [appTools],               // tools + views + skills + sections
+  capabilities: [appTools],               // tools + views + skills + prompt sections
   turnServices: [LanguageModel.LanguageModel, UtilityLlm],
   cacheKeyPrefix: "app",                   // prompt-cache key `app:<conversation>`
   budgetTokens: 24_000,
@@ -412,7 +412,7 @@ needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
 the open, not as an argument. `ToolRegistry.open(session)` requires
 `RunContext` and a scope, and its handlers run with the services of where it
 is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
-`CapabilityGrants` there are used when present.
+`PermissionGrants` there are used when present.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)` and
 `turnConformance(runner, services)` (from `@xandreed/core`) are the port
@@ -442,7 +442,7 @@ and publishes the decision, and records the synthetic `load_skill` exchange.
 A host can run the match alongside other work and apply it later, or drop
 it. Probabilistic selection never
 authorizes: `resolveCapabilities` checks every activation against the turn's
-`CapabilityGrants` (or the configured grants). Every call passes one wrapper
+`PermissionGrants` (or the configured grants). Every call passes one wrapper
 (active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes) that
 publishes `tool.started` and `tool.completed` before it returns.
 
@@ -450,9 +450,9 @@ Tools only grow within a conversation and are sent in activation order.
 Restrict a step with a tool choice or a handler failure, never by removing a
 schema: removing one rewrites the cached prefix.
 
-**Contributions and the system prompt.** `definePlugin({ contributes:
-[Contributions] })` marks a multi-provider key: the runtime concatenates every
-contributor's array in graph order. A contribution carries tools, skills and
+**Capabilities and the system prompt.** `definePlugin({ contributes:
+[Capabilities] })` marks a multi-provider key: the runtime concatenates every
+contributor's array in graph order. A capability carries tools, skills and
 prompt sections; per-turn host state comes from the turn's `layer`. The
 system prompt is the configured prefix, then the `static`
 sections, then the `session` sections, each tier by `order`. `turn` sections
@@ -471,10 +471,10 @@ defaults and its layer:
 | Package | Layer | Provides | Requires |
 | --- | --- | --- | --- |
 | `@xandreed/plugin-memory-log` | `MemoryLogLive` | `MemoryLog` | — |
-| `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Contributions` (recall) | `MemoryLog` |
+| `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | `MemoryLog` |
 | `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory` | `MemoryLog` |
 | `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
-| `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Contributions` (catalogue) | `Contributions` |
+| `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
 
 The schemas are `MemoryLogConfig`, `MemoryWindowConfig`, `MemorySummaryConfig`,
@@ -482,13 +482,13 @@ The schemas are `MemoryLogConfig`, `MemoryWindowConfig`, `MemorySummaryConfig`,
 on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
-`next` is built over everything `base` provides, the two `Contributions`
+`next` is built over everything `base` provides, the two `Capabilities`
 arrays concatenate base first, and any other service of `next` wins.
-`ContributionsLive(...bundles)` is the host's own bundle at the bottom of the
+`CapabilitiesLive(...bundles)` is the host's own bundle at the bottom of the
 stack.
 
 ```ts
-const plugins = ContributionsLive(appTools).pipe(
+const plugins = CapabilitiesLive(appTools).pipe(
   stackPlugins(MemoryLogLive()),
   stackPlugins(MemoryWindowLive({ digestOnWriteChars: 4_000 })), // + the recall tool
   stackPlugins(ToolDiscoveryLive({ grants: ["public"] })),       // registry over [app, recall]; + the catalogue
@@ -497,10 +497,10 @@ const plugins = ContributionsLive(appTools).pipe(
 ```
 
 The order is load-bearing, as in the graph: the registry is built over the
-contributions below it (the host's tools, then recall), while the system
+capabilities below it (the host's tools, then recall), while the system
 prompt sees all three bundles, and that order is the order of the tools sent
 to the model. Never combine layers that contribute with `Layer.merge` or
-`Layer.mergeAll`: a merge keeps one `Contributions` array and silently drops
+`Layer.mergeAll`: a merge keeps one `Capabilities` array and silently drops
 the other's tools, skills and sections, and neither layer sees the other's.
 
 ### The turn as services
