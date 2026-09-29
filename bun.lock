@@ -211,6 +211,17 @@
         "effect": "4.0.0-rc.118",
       },
     },
+    "packages/plugin-tasks": {
+      "name": "@xandreed/plugin-tasks",
+      "version": "0.7.0-next.1",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.0-rc.118",
+      },
+      "devDependencies": {
+        "@xandreed/plugin-sessions": "workspace:*",
+      },
+    },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
       "version": "0.7.0-next.1",
@@ -785,6 +796,8 @@
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
 
     "@xandreed/plugin-sessions": ["@xandreed/plugin-sessions@workspace:packages/plugin-sessions"],
+
+    "@xandreed/plugin-tasks": ["@xandreed/plugin-tasks@workspace:packages/plugin-tasks"],
 
     "@xandreed/plugin-telemetry": ["@xandreed/plugin-telemetry@workspace:packages/plugin-telemetry"],
 

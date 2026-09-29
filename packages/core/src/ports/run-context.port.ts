@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
+import type { SessionAddress } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryReader } from "./memory.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
@@ -9,6 +10,8 @@ import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
 /** The current run, as tools, sections and run layers see it. Provided by the turn. */
 export class RunContext extends Context.Service<RunContext, {
   readonly conversation: ConversationId
+  /** The session the turn runs in, as its owner names it. */
+  readonly session: SessionAddress
   readonly runId: string
   readonly userMessage: UserMessage
   readonly memory: MemoryReader

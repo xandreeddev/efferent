@@ -87,6 +87,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   })))
   const run = RunContext.of({
     conversation: admitted.session.id,
+    session: admitted.session,
     runId: admitted.runId,
     userMessage: admitted.userMessage,
     memory: reader,
