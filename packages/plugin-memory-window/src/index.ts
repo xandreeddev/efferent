@@ -3,7 +3,7 @@ export {
   memoryWindowDefaults,
   MemoryWindowLive,
   memoryWindowPlugin,
-  recallContribution,
+  recallCapability,
   WINDOW_STRATEGY,
   windowPolicy,
   default,

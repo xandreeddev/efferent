@@ -44,7 +44,7 @@ describe("plugin graph", () => {
     const graph = await Effect.runPromise(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }, { id: "b", use: "provider" }], bindings: { [Value.key]: "b" } }, [provider]))
     expect(graph.providers[Value.key]).toBe("b")
   })
-  test("contributions concatenate in graph order; consumers wait for every other contributor", async () => {
+  test("capabilities concatenate in graph order; consumers wait for every other contributor", async () => {
     const contributor = (id: string, items: ReadonlyArray<string>) => definePlugin({ id, version: "1", config: Schema.Struct({}), defaults: {}, provides: [], contributes: [Items], layer: () => Layer.succeed(Items, items) })
     const collector = definePlugin({ id: "collector", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Items], provides: [Consumer], contributes: [Items],
       layer: () => Layer.mergeAll(Layer.effect(Consumer, Items.pipe(Effect.map((items) => items.length))), Layer.succeed(Items, ["collector"])) })

@@ -13,7 +13,7 @@ export interface UiActionResult {
   readonly notice: string | undefined
 }
 
-export interface UiCapability {
+export interface UiAction {
   readonly decode: (input: unknown) => Effect.Effect<unknown, string>
   readonly authorize: (input: unknown, context: UiRequestContext) => Effect.Effect<void, string>
   readonly run: (input: unknown, context: UiRequestContext) => Effect.Effect<UiActionResult, string>
@@ -23,8 +23,8 @@ export interface UiHostService {
   readonly tokens: DesignTokens
   readonly recipes: ReadonlySet<string>
   readonly assets: ReadonlyMap<string, RegisteredAsset>
-  readonly actions: ReadonlyMap<string, UiCapability>
-  readonly queries: ReadonlyMap<string, UiCapability>
+  readonly actions: ReadonlyMap<string, UiAction>
+  readonly queries: ReadonlyMap<string, UiAction>
 }
 
 export class UiHost extends Context.Service<UiHost, UiHostService>()("@xandreed/ui-agent/UiHost") {}

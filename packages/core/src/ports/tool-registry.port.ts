@@ -3,7 +3,7 @@ import type { Effect, Option, Scope } from "effect"
 import type { Tool, Toolkit } from "effect/ai"
 import type { DecisionRecord } from "../decision-record.entity.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
-import type { SkillDefinition } from "../harness/contribution.entity.js"
+import type { SkillDefinition } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ActivationSource } from "../memory/memory-log.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
@@ -47,7 +47,7 @@ export class ToolRegistry extends Context.Service<ToolRegistry, {
   /**
    * Open the tools of one run. The handlers run with the services of where
    * it is opened (host services, run layers, RunContext), captured at open;
-   * an IntentMatcher, ActionPolicy and CapabilityGrants there are used.
+   * an IntentMatcher, ActionPolicy and PermissionGrants there are used.
    */
   readonly open: (session: MemorySession) => Effect.Effect<RunTools, HarnessError, RunContext | Scope.Scope>
 }>()("efferent/ToolRegistry") {}

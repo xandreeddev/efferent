@@ -16,7 +16,7 @@ export interface PluginGraph {
 }
 
 const invalid = (message: string) => Effect.fail(new HarnessError({ code: "config.graph", message }))
-/** Version 1 plugins predate contributions and optional services. */
+/** Version 1 plugins predate capabilities and optional services. */
 const contributes = (node: PluginNode): ReadonlyArray<string> => node.plugin.contributes ?? []
 const optional = (node: PluginNode): ReadonlyArray<string> => node.plugin.optional ?? []
 
@@ -59,12 +59,12 @@ export const resolveGraph = (
   const contributed = new Set(nodes.flatMap(contributes))
   yield* Effect.forEach(nodes, (node) => Effect.forEach([...node.plugin.requires, ...optional(node)], (key) => {
     const provider = nodes.find((candidate) => candidate.entry.id === providers[key])
-    const isContribution = contributed.has(key)
-    if (provider !== undefined && isContribution) return invalid(`${key} is both provided and contributed`)
-    if (provider === undefined && !isContribution && !external.includes(key) && node.plugin.requires.includes(key)) {
+    const isCapability = contributed.has(key)
+    if (provider !== undefined && isCapability) return invalid(`${key} is both provided and contributed`)
+    if (provider === undefined && !isCapability && !external.includes(key) && node.plugin.requires.includes(key)) {
       return invalid(`${node.entry.id} requires missing service ${key}`)
     }
-    const sources = isContribution ? contributors(key, node) : provider === undefined ? [] : [provider]
+    const sources = isCapability ? contributors(key, node) : provider === undefined ? [] : [provider]
     if (node.plugin.scope === "runtime" && sources.some((source) => source.plugin.scope === "session")) {
       return invalid(`${node.entry.id}: runtime plugins cannot depend on session service ${key}`)
     }
@@ -101,8 +101,8 @@ export const activateGraph = (
     const built = yield* Scope.provide(node.plugin.build(node.options, dependencies), scope)
     const missing = [...node.plugin.provides, ...contributes(node)].filter((key) => !built.mapUnsafe.has(key))
     if (missing.length > 0) return yield* invalid(`${node.entry.id} did not provide declared services: ${missing.join(", ")}`)
-    const invalidContribution = contributes(node).find((key) => !Array.isArray(built.mapUnsafe.get(key)))
-    if (invalidContribution !== undefined) return yield* invalid(`${node.entry.id} contributed a non-array value to ${invalidContribution}`)
+    const invalidCapability = contributes(node).find((key) => !Array.isArray(built.mapUnsafe.get(key)))
+    if (invalidCapability !== undefined) return yield* invalid(`${node.entry.id} contributed a non-array value to ${invalidCapability}`)
     const selected = new Map([
       ...node.plugin.provides.flatMap((key) => graph.providers[key] === node.entry.id ? [[key, built.mapUnsafe.get(key)] as const] : []),
       ...contributes(node).map((key) => [key, [...asArray(context.mapUnsafe.get(key)), ...asArray(built.mapUnsafe.get(key))]] as const),

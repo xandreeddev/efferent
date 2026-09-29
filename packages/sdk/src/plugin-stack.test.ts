@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
-  Contributions,
-  ContributionsLive,
+  Capabilities,
+  CapabilitiesLive,
   ConversationMemory,
-  defineContributions,
+  defineCapability,
   definePlugin,
   defineSkill,
   defineTool,
@@ -24,22 +24,22 @@ import { activateGraph, resolveGraph } from "@xandreed/runtime"
 const Lookup = Tool.make("lookup", {
   description: "Look records up.", parameters: Schema.Struct({ query: Schema.String }), success: Schema.String, failure: Failure, failureMode: "return",
 })
-const host = defineContributions({
+const host = defineCapability({
   id: "stack-host", version: "1",
   tools: [defineTool({ tool: Lookup, handler: ({ query }) => Effect.succeed(query) })],
   skills: [defineSkill({ id: "records", summary: "Look records up.", tools: ["lookup"] })],
-  sections: [{ id: "persona", version: "1", tier: "session", order: 0, render: () => Effect.succeed(Option.some("persona")) }],
+  promptSections: [{ id: "persona", version: "1", tier: "session", order: 0, render: () => Effect.succeed(Option.some("persona")) }],
 })
 const hostPlugin = definePlugin({
   id: "test/host", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {},
-  provides: [], contributes: [Contributions], layer: () => ContributionsLive(host),
+  provides: [], contributes: [Capabilities], layer: () => CapabilitiesLive(host),
 })
 
-/** What a composition provides: its service keys, the contributions in order, and what the services are. */
+/** What a composition provides: its service keys, the capabilities in order, and what the services are. */
 const shapeOf = (context: Context.Context<never>) => ({
   keys: [...context.mapUnsafe.keys()].sort(),
-  contributions: Context.getUnsafe(context, Contributions).map((bundle) => bundle.id),
-  sections: Context.getUnsafe(context, Contributions).flatMap((bundle) => bundle.sections.map((section) => section.id)),
+  capabilities: Context.getUnsafe(context, Capabilities).map((bundle) => bundle.id),
+  sections: Context.getUnsafe(context, Capabilities).flatMap((bundle) => bundle.promptSections.map((section) => section.id)),
   catalog: Context.getUnsafe(context, ToolRegistry).catalog,
   strategy: Context.getUnsafe(context, ConversationMemory).strategy,
   loop: Context.getUnsafe(context, StepLoop).id,
@@ -52,7 +52,7 @@ describe("plugin stacks", () => {
       const config: HarnessConfig = { version: 1, plugins: plugins.map((plugin) => ({ id: plugin.id, use: plugin.id, options: {} })), system: "" }
       const resolved = yield* resolveGraph(config, plugins)
       const graph = yield* activateGraph(resolved, "runtime", Context.empty(), yield* Effect.scope)
-      const stack = yield* Layer.build(ContributionsLive(host).pipe(
+      const stack = yield* Layer.build(CapabilitiesLive(host).pipe(
         stackPlugins(MemoryLogLive()),
         stackPlugins(MemoryWindowLive()),
         stackPlugins(ToolDiscoveryLive()),
@@ -62,7 +62,7 @@ describe("plugin stacks", () => {
       return { graph: shapeOf(graph), stack: shapeOf(Context.makeUnsafe<never>(Context.omit(Layer.CurrentMemoMap)(stack).mapUnsafe)) }
     })))
     expect(stack).toEqual(graph)
-    expect(stack.contributions).toEqual(["stack-host", "@xandreed/plugin-memory-window/recall", "@xandreed/plugin-tool-discovery/catalogue"])
+    expect(stack.capabilities).toEqual(["stack-host", "@xandreed/plugin-memory-window/recall", "@xandreed/plugin-tool-discovery/catalogue"])
     expect(stack.catalog.tools.map((tool) => tool.id)).toEqual(["lookup", "recall_context", "load_skill"])
   })
 })

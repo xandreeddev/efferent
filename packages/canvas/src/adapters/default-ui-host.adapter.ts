@@ -1,13 +1,13 @@
 import { Effect, Layer, Schema } from "effect"
 import { DesignTokens, UiHost } from "@xandreed/ui-agent"
-import type { UiActionResult, UiCapability, UiRequestContext } from "@xandreed/ui-agent"
+import type { UiActionResult, UiAction, UiRequestContext } from "@xandreed/ui-agent"
 import tokensJson from "../../design-system.json"
 
 const decodeEmpty = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.String))
 
 const capability = (
   run: (input: unknown, context: UiRequestContext) => Effect.Effect<UiActionResult, string>,
-): UiCapability => ({
+): UiAction => ({
   decode: (input) => decodeEmpty(input).pipe(Effect.mapError((issue) => String(issue))),
   authorize: (_input, context) => context.sessionId.length > 0 ? Effect.void : Effect.fail("missing session"),
   run,
@@ -21,7 +21,7 @@ export const DefaultUiHostLive = Layer.effect(
       tokens,
       recipes: new Set(["landing.hero-grid", "app.workspace", "doc.architecture"]),
       assets: new Map(),
-      actions: new Map<string, UiCapability>([
+      actions: new Map<string, UiAction>([
         [
           "canvas.acknowledge",
           capability(() => Effect.succeed({ blocks: [], notice: "Done." })),
@@ -36,7 +36,7 @@ export const DefaultUiHostLive = Layer.effect(
           ),
         ],
       ]),
-      queries: new Map<string, UiCapability>(),
+      queries: new Map<string, UiAction>(),
     })),
   ),
 )

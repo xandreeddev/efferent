@@ -5,7 +5,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
-import type { InitialBatch, StepInfo, ToolChoice } from "./contribution.port.js"
+import type { InitialBatch, StepInfo, ToolChoice } from "./capability.port.js"
 import type { RunTools } from "./tool-registry.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
 

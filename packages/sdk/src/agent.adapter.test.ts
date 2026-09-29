@@ -6,7 +6,7 @@ import {
   ConversationId,
   CurrentPromptCacheKey,
   DecisionRecord,
-  defineContributions,
+  defineCapability,
   defineHostEvent,
   definePlugin,
   defineSkill,
@@ -52,7 +52,7 @@ const Deliver = Tool.make("deliver", {
 })
 
 const found = (items: ReadonlyArray<typeof Item.Type>) => items.map((item) => `FOUND ${item.id}: ${item.detail}`).join("\n")
-const host = defineContributions({
+const host = defineCapability({
   id: "test-host", version: "1",
   tools: [
     defineTool({
@@ -77,7 +77,7 @@ const host = defineContributions({
     defineSkill({ id: "core", summary: "Look records up.", tools: ["lookup"], always: true }),
     defineSkill({ id: "delivery", summary: "Deliver a final answer.", instructions: "Deliver once, with the record id.", tools: ["deliver"] }),
   ],
-  sections: [
+  promptSections: [
     { id: "persona", version: "1", tier: "session", order: 0, render: () => Effect.succeed(Option.some("SESSION persona: a test agent.")) },
     { id: "rules", version: "1", tier: "static", order: 5, render: () => Effect.succeed(Option.some("STATIC rules.")) },
   ],
@@ -120,7 +120,7 @@ const utilityText = (text: string) => Context.make(UtilityLlm, UtilityLlm.of({
 
 const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> = {}) => Agent.define({
   plugins: [memoryLogPlugin, memory, toolDiscoveryPlugin, stepLoopPlugin, ...(extra.plugins ?? [])],
-  contributions: [host, ...(extra.contributions ?? [])],
+  capabilities: [host, ...(extra.capabilities ?? [])],
   turnServices: [LanguageModel.LanguageModel, ...(extra.turnServices ?? [])],
   limits: { streaming: false, maxSteps: 6 },
   cacheKeyPrefix: "agent",
@@ -162,7 +162,7 @@ const Note = Tool.make("note", {
   failure: Failure,
   failureMode: "return",
 })
-const noting = defineContributions({
+const noting = defineCapability({
   id: "test-noting", version: "1",
   tools: [defineTool({ tool: Note, handler: ({ text }) => Tally.pipe(Effect.flatMap((tally) => tallied(tally, `tool:${text}`)), Effect.as(true)) })],
   skills: [defineSkill({ id: "noting", summary: "Take notes.", tools: ["note"], always: true })],
@@ -357,7 +357,7 @@ describe("Agent.turn", () => {
 
   test("the turn's layer is built per turn and provided to use, tools and subscriptions alike", async () => {
     const replies = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const agent = yield* define(memoryWindowPlugin, { contributions: [noting] })
+      const agent = yield* define(memoryWindowPlugin, { capabilities: [noting] })
       const journal = yield* inMemoryJournal
       const turnWith = (runId: string) => Effect.gen(function* () {
         const { model } = yield* scripted([call("c1", "note", { text: "x" }), stop("done")])

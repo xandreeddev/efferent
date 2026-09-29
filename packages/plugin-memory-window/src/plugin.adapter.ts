@@ -2,8 +2,8 @@ import { Tool } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
-  Contributions,
-  defineContributions,
+  Capabilities,
+  defineCapability,
   defineSkill,
   defineTool,
   definePlugin,
@@ -96,7 +96,7 @@ const RecallContext = Tool.make("recall_context", {
 })
 
 /** The memory-owned tool that makes spills lossless for the model. */
-export const recallContribution = defineContributions({
+export const recallCapability = defineCapability({
   id: "@xandreed/plugin-memory-window/recall",
   version: "1",
   tools: [defineTool({
@@ -122,11 +122,11 @@ export const recallContribution = defineContributions({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.7.0-next.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-window", version: "0.7.0-next.1", scope: "runtime",
   config: MemoryWindowConfig, defaults: memoryWindowDefaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],
-  contributes: [Contributions],
+  contributes: [Capabilities],
   layer: (config) => Layer.mergeAll(
     Layer.effect(ConversationMemory, Effect.gen(function* () {
       const log = yield* MemoryLog
@@ -136,7 +136,7 @@ export const memoryWindowPlugin = definePlugin({
         open: ({ conversation, runId, io }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, { runId }))),
       })
     })),
-    Layer.succeed(Contributions, [recallContribution]),
+    Layer.succeed(Capabilities, [recallCapability]),
   ),
 })
 /** Windowed memory as a typed layer: provides ConversationMemory and contributes the recall tool; requires MemoryLog. */
