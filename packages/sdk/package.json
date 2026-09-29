@@ -15,7 +15,6 @@
   },
   "devDependencies": {
     "@xandreed/plugin-agent-loop": "workspace:*",
-    "@xandreed/plugin-memory-log": "workspace:*",
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",

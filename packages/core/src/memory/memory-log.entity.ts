@@ -117,17 +117,6 @@ export const LogEntry = Schema.Struct({
 })
 export type LogEntry = typeof LogEntry.Type
 
-/** The journal payload one append writes. Entries are canonical JSON, so their
- *  bytes survive any store (jsonb reorders keys); ids travel with them. */
-export const LogAppendPayload = Schema.Struct({
-  v: Schema.Literal(2),
-  entries: Schema.String,
-})
-export type LogAppendPayload = typeof LogAppendPayload.Type
-
-/** The journal event name the log is stored under. */
-export const MemoryEntriesEvent = Schema.Literal("memory.entries")
-
 /** The model-visible rebuild of the log for one request. */
 export const BuiltContext = Schema.Struct({
   messages: Schema.Array(AgentMessage),

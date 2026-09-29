@@ -4,7 +4,7 @@ import { Deferred, Effect, Option, Ref, Schema } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
-import { defineHostEvent, journalBodyOf, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
+import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 
 const started = (step: number): TurnEvent => ({ _tag: "step.started", step, planned: false, activeTools: [] })
@@ -129,16 +129,6 @@ describe("the turn event bus", () => {
       }
     })))
     expect(outcome).toEqual({ drained: "reaction.failed", next: "reaction.failed", seen: [0] })
-  })
-
-  test("the journal form drops transient events and decoded results", () => {
-    expect(Option.isNone(journalBodyOf("run-1", { _tag: "assistant.delta", step: 0, channel: "text", id: "t", delta: "hi" }))).toBe(true)
-    const body = Option.getOrThrow(journalBodyOf("run-1", completed("lookup", { query: "alpha" }, { id: "r1" })))
-    expect(body.name).toBe("tool.completed")
-    expect(body.runId).toBe("run-1")
-    expect("result" in body.data).toBe(false)
-    expect(body.data.encoded).toEqual({ id: "r1" })
-    expect(body.data.stage).toBeNull()
   })
 })
 
