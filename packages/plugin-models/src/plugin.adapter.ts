@@ -10,7 +10,7 @@ import { LocalSettingsStoreLive } from "./settings/localSettings.js"
 
 const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean })
 export const modelsPlugin = definePlugin({
-  id: "@xandreed/plugin-models", version: "0.7.0-next.1", config: Config,
+  id: "@xandreed/plugin-models", version: "0.8.0-next.0", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true }, requires: [SessionEnvironment],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {

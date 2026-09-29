@@ -8,7 +8,7 @@ import { SessionsLive } from "./sessions.adapter.js"
  * host admits every turn (TurnAdmissionOpen admits all).
  */
 export const sessionsPlugin = definePlugin({
-  id: "@xandreed/plugin-sessions", version: "0.7.0-next.1", scope: "runtime",
+  id: "@xandreed/plugin-sessions", version: "0.8.0-next.0", scope: "runtime",
   config: SessionsConfig, defaults: sessionsDefaults,
   requires: [SessionLog, TurnAdmission],
   provides: [Sessions],

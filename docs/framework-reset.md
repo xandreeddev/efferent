@@ -39,6 +39,43 @@ Bun/Linux agent SDK, a validated plugin graph, and a new terminal client.
   sessions, persistence, fork, custom eval, CLI help, and the packed TUI in a PTY.
 - Website inspected at desktop and mobile widths, with no horizontal overflow.
 
+## Sessions: one log per session (2026-09-29, 0.8.0-next.0)
+
+Composable agents now keep each conversation as one append-only session log.
+Nothing is published; the packages build and verify as 0.8.0-next.0.
+
+- [x] `SessionLog`, the storage a host provides: heads and events written by
+  compare-and-swap with a storage-clock `notAfter`; `sessionLogConformance`;
+  an in-memory log (core) and a SQLite log (`plugin-session-sqlite`)
+- [x] `@xandreed/plugin-sessions`: one open turn per session, idempotency keys
+  found in the log, ownership by lease (fixed, renewed on commit, or kept
+  alive) or by process, reaping only on writing paths, cancel of exactly one
+  turn, check-then-append inside and outside turns, the inbox and drain,
+  forks cut at the parent's last closed turn
+- [x] `TurnAdmission` around every turn's opening commit (`TurnAdmissionOpen`)
+- [x] `Agent.turn` over a host-begun `TurnWriter` or a `NewTurn`; the turn
+  journal, `JournalIO`, `MemoryLog` and `plugin-memory-log` are removed
+- [x] `@xandreed/plugin-tasks`: background tasks as child-session turns,
+  delivered to the parent's inbox once and answered after the turn in flight;
+  `reconcile`, cancel, deadlines, admission refusals; `start_task` and
+  `task_status` behind `tools`
+- [x] plugin-render's feed over a session (`SessionsJournalTailLive`)
+
+Verification:
+
+- The model half of the SDK golden (the serialized requests, in order) is
+  unchanged, and equal over the in-memory, SQLite and key-reordering stores.
+- Full suite: 1,102 passed, 0 failed. Every commit passed typecheck, tests,
+  the Foundry demo, the scenario packs, the package build and the packed
+  consumer, which now also runs Sessions over SQLite with a background task.
+- The canvas scenario "follow-up replaces an in-flight enrichment" waits a
+  fixed 75 ms for the follow-up run; under load it failed in one gate run of
+  the tasks commit and passed in the six runs and the gate that followed. The
+  wait predates this work; it is a timing flake, not a measured regression.
+- Not yet done: the Harness, CLI, TUI and reference applications still use
+  `SessionStore`; moving them onto `Sessions` (process ownership) and
+  deleting `SessionStore` and `ConversationStore` is a follow-up.
+
 ## Command, streaming, and setup follow-up
 
 A later user report exposed gaps the previous acceptance test did not cover:
