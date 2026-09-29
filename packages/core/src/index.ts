@@ -97,6 +97,8 @@ export * from "./session/session-event.entity.js"
 export * from "./session/session-event.entity.functions.js"
 export * from "./session/sessions.entity.js"
 export * from "./ports/sessions.port.js"
+export * from "./ports/turn-admission.port.js"
+export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"
 
 // spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
 export {

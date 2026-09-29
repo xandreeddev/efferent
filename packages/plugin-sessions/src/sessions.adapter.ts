@@ -13,6 +13,7 @@ import {
   SessionLogError,
   SessionMissing,
   Sessions,
+  TurnAdmission,
   TurnDuplicate,
   turnEndedDraft,
   turnStartedDraft,
@@ -62,8 +63,9 @@ const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraf
  * Turns are written by their `TurnWriter`; everything else here is one
  * compare-and-swap loop that plans again after a conflict.
  */
-export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, never, SessionLog> => Layer.effect(Sessions, Effect.gen(function* () {
+export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, never, SessionLog | TurnAdmission> => Layer.effect(Sessions, Effect.gen(function* () {
   const log = yield* SessionLog
+  const admission = yield* TurnAdmission
   const ownership = config.ownership
   const instance = yield* Effect.sync(() => crypto.randomUUID())
   const signals = yield* PubSub.unbounded<string>()
@@ -131,7 +133,9 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
   const begin = (address: SessionAddress, input: BeginTurn) => Effect.gen(function* () {
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
-    const begun = yield* guarded(address, (head, stored) => Effect.gen(function* () {
+    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId }
+    // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
+    const begun = yield* admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
       const reap = yield* reaped(head, stored)
       const state = reap.state
       if (input._tag === "User") {
@@ -171,7 +175,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
         command: input._tag === "User" ? input.command : {}, claimed,
       }
       return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
-    }))
+    })))
     const committed = yield* Option.match(begun.committed, {
       onNone: () => Effect.fail(new SessionLogError({ code: "session.begin", message: "the turn was not committed" })),
       onSome: Effect.succeed,
@@ -214,6 +218,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
         SessionBusy: () => Effect.succeed(false),
         TurnDuplicate: () => Effect.succeed(false),
         KeyConflict: () => Effect.succeed(false),
+        TurnRefused: (refused) => Effect.logWarning(`inbox turn of ${address.id} refused: ${refused.message}`).pipe(Effect.as(false)),
       }),
     )
     const loop = (turns: number): Effect.Effect<{ readonly turns: number }, SessionMissing | SessionLogError, R> =>

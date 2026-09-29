@@ -21,6 +21,7 @@ import {
   SessionLogMemoryLive,
   Sessions,
   subscribeAll,
+  TurnAdmissionOpen,
   UserMessage,
   UtilityCompletion,
   UtilityLlm,
@@ -132,7 +133,7 @@ const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> =
 
 /** One session over a session log (in memory unless given), and its stored events. */
 const sessionOver = (log: Layer.Layer<SessionLog> = SessionLogMemoryLive) => Effect.gen(function* () {
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(log))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(log, TurnAdmissionOpen)))), Sessions)
   yield* sessions.create({ owner: "test", id: conversation })
   const address = { id: conversation, owner: "test" }
   return { sessions, address, stored: sessions.read(address).pipe(Effect.orDie) }

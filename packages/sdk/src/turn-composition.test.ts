@@ -15,6 +15,7 @@ import {
   TurnMemory,
   turnOf,
   SessionLogMemoryLive,
+  TurnAdmissionOpen,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
@@ -81,7 +82,7 @@ const services = Effect.gen(function* () {
     generateText: () => Effect.die("not called") as never,
     streamText: () => Stream.die("not called") as never,
   })
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(SessionLogMemoryLive))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
   return Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), unused), Context.make(Sessions, sessions))
 })
 

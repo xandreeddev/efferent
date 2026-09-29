@@ -101,6 +101,7 @@ const beginCodes = {
   TurnDuplicate: "turn.duplicate",
   KeyConflict: "turn.key-conflict",
   NothingPending: "session.nothing-pending",
+  TurnRefused: "turn.refused",
   SessionMissing: "session.missing",
   SessionLogError: "session.log",
 } as const

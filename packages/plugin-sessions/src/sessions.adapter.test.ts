@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, SessionLogMemoryLive, Sessions, UserMessage } from "@xandreed/core"
+import { SessionLog, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, SessionAddress, SessionLogEvent } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -16,7 +16,7 @@ const say = (text: string, key = text, command: Record<string, unknown> = {}): B
 
 /** Sessions instances over one shared log: as if on several servers. */
 const instancesOver = (log: Log, ...configs: ReadonlyArray<SessionsConfig>) => Effect.forEach(configs, (config) =>
-  Effect.service(Sessions).pipe(Effect.provide(SessionsLive(config).pipe(Layer.provide(Layer.succeed(SessionLog, log))))))
+  Effect.service(Sessions).pipe(Effect.provide(SessionsLive(config).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))))
 
 const withLog = <A, E>(body: (log: Log) => Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive), Effect.flatMap(body))).pipe(Effect.provide(TestClock.layer())))
@@ -360,5 +360,38 @@ describe("forks", () => {
     const children = yield* sessions!.list({ owner, parent: address.id })
     expect(children.sessions.length).toBe(2)
     yield* Scope.close(openScope, Exit.void)
+  })))
+})
+
+describe("admission", () => {
+  test("the host admits each opening commit, not the turn's writes; a refusal opens nothing and a duplicate counts nothing", () => withLog((log) => Effect.gen(function* () {
+    const admitted = yield* Ref.make<ReadonlyArray<string>>([])
+    const refusing = yield* Ref.make(false)
+    const counting = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Effect.gen(function* () {
+        if (yield* Ref.get(refusing)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "budget", message: "no turns left today" }))
+        const opened = yield* open
+        yield* Ref.update(admitted, (all) => [...all, `${turn.origin}:${turn.key}`])
+        return opened
+      }),
+    }))
+    const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), counting)))))
+    const address = yield* created(sessions)
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* sessions.begin(address, say("one", "k1"))
+      yield* writer.append([{ kind: "answer.published", data: {} }])
+      yield* writer.end({ reason: "completed", failure: Option.none() })
+    }))
+    expect((yield* Effect.flip(Effect.scoped(sessions.begin(address, say("one", "k1")))))._tag).toBe("TurnDuplicate")
+    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* Ref.set(refusing, true)
+    expect((yield* Effect.flip(Effect.scoped(sessions.begin(address, say("two", "k2")))))._tag).toBe("TurnRefused")
+    expect((yield* sessions.drain(address, () => Effect.void)).turns).toBe(0)
+    expect(yield* Ref.get(admitted)).toEqual(["user:k1"])
+    expect(yield* all(sessions, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1", "inbox.queued"])
+    expect((yield* sessions.get(address)).pending).toBe(1)
+    yield* Ref.set(refusing, false)
+    expect((yield* sessions.drain(address, () => Effect.void)).turns).toBe(1)
+    expect((yield* Ref.get(admitted)).map((entry) => entry.split(":")[0])).toEqual(["user", "inbox"])
   })))
 })

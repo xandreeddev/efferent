@@ -3,7 +3,7 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
 import type { Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -194,7 +194,7 @@ export const runGolden = (
   log: Layer.Layer<SessionLog, unknown> = SessionLogMemoryLive,
 ) => Effect.scoped(Effect.gen(function* () {
   const agent = yield* runner
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(log))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(log, TurnAdmissionOpen)))), Sessions)
   const address = { id: conversation, owner: "golden" }
   yield* sessions.create({ owner: address.owner, id: conversation })
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])

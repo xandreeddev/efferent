@@ -18,6 +18,7 @@ import type {
   TurnClosed,
   TurnDuplicate,
   TurnEnding,
+  TurnRefused,
 } from "../session/sessions.entity.js"
 
 /** One event to record; the writer stamps the turn (or none, outside a turn). */
@@ -118,13 +119,16 @@ export class Sessions extends Context.Service<Sessions, {
   /** End exactly `turn` as cancelled, if it is the open one. */
   readonly cancel: (address: SessionAddress, turn: number) =>
     Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionLogError>
-  /** Open a turn. Its writer lives in the scope; a writer the scope closes unended ends as failed (or interrupted). */
+  /**
+   * Open a turn, through the host's TurnAdmission. Its writer lives in the
+   * scope; a writer the scope closes unended ends as failed (or interrupted).
+   */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
-    Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | SessionMissing | SessionLogError, Scope.Scope>
+    Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>
-  /** Run inbox turns while items wait and the session is free, at most `maxTurns` (3). */
+  /** Run inbox turns while items wait, the session is free and the host admits them, at most `maxTurns` (3). */
   readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number }) =>
     Effect.Effect<{ readonly turns: number }, SessionMissing | SessionLogError, R>
 }>()("efferent/Sessions") {}
