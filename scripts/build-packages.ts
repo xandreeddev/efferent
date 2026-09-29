@@ -8,7 +8,7 @@ const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
 const names = ["core", "ai", "runtime", "sdk", "evals", "foundry", "smith", "tui", "cli",
   "plugin-agent-loop", "plugin-context", "plugin-memory", "plugin-memory-log", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models", "plugin-tools-local",
-  "plugin-policy-workspace", "plugin-session-sqlite", "plugin-telemetry", "plugin-mcp", "plugin-render", "ui-agent", "surface"]
+  "plugin-policy-workspace", "plugin-session-sqlite", "plugin-sessions", "plugin-telemetry", "plugin-mcp", "plugin-render", "ui-agent", "surface"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
 )))

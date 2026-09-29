@@ -95,6 +95,8 @@ export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
 export { sessionLogConformance } from "./session/session-log.conformance.js"
 export * from "./session/session-event.entity.js"
 export * from "./session/session-event.entity.functions.js"
+export * from "./session/sessions.entity.js"
+export * from "./ports/sessions.port.js"
 
 // spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
 export {

@@ -46,6 +46,7 @@ const CHECKED = [
   "packages/plugin-tools-local/src/**",
   "packages/plugin-policy-workspace/src/**",
   "packages/plugin-session-sqlite/src/**",
+  "packages/plugin-sessions/src/**",
   "packages/plugin-telemetry/src/**",
   "packages/plugin-mcp/src/**",
   "packages/surface/src/**",
@@ -422,6 +423,20 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:",
                   "@xandreed/core",
                   "ws"
+            ]
+      },
+      {
+            "name": "plugin-sessions",
+            "path": "packages/plugin-sessions/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "@xandreed/core",
+                  "bun:test"
             ]
       },
       {
