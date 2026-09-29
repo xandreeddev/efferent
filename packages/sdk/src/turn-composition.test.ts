@@ -22,7 +22,7 @@ import { MemoryLogLive } from "@xandreed/plugin-memory-log"
 import { MemoryWindowLive } from "@xandreed/plugin-memory-window"
 import { ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "./agent.adapter.js"
-import { goldenConfig, goldenHost, runGolden } from "./agent.golden.test.js"
+import { expectGolden, goldenConfig, goldenHost, goldenTexts, runGolden } from "./agent.golden.test.js"
 
 /**
  * The golden agent composed by hand from the typed plugin layers and the
@@ -58,9 +58,8 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
 describe("a turn composed by hand", () => {
   test("from the typed layers and the turn's steps, it reproduces the golden conversation", async () => {
     const [byHand, byAgent] = await Effect.runPromise(Effect.all([runGolden(composed), runGolden(Agent.define(goldenConfig))]))
-    const golden = await Bun.file(`${import.meta.dir}/../golden/agent-turn.json`).json()
-    expect(JSON.parse(JSON.stringify(byHand))).toEqual(golden)
-    expect(JSON.parse(JSON.stringify(byHand))).toEqual(JSON.parse(JSON.stringify(byAgent)))
+    await expectGolden(byHand)
+    expect(goldenTexts(byHand)).toEqual(goldenTexts(byAgent))
   })
 })
 

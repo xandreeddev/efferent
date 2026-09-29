@@ -18,10 +18,14 @@ import { Tally } from "./testing.port.js"
  * The golden pin of `Agent.turn`: one conversation of four turns (a tool call
  * with a digest, a skill activation and a system-prompt variant; a quick
  * reply with a host layer and a task; a failure; a matcher-seeded skill, a
- * planned batch and a forced tool choice) under a fixed clock. The journal
- * bytes, the memory log, the event order, the `context.built` fingerprints
- * and every model request are compared with `golden/agent-turn.json`.
- * Any composition of the turn must reproduce the file exactly.
+ * planned batch and a forced tool choice) under a fixed clock. Two files pin it:
+ * - `golden/agent-turn.model.json`: what the model and the host see — the turns
+ *   (outcomes, event order, `context.built` fingerprints), the memory log and
+ *   every model request — compared as text, so even key order is fixed. It
+ *   changes only with `EFFERENT_UPDATE_MODEL_GOLDEN=1`.
+ * - `golden/agent-turn.journal.json`: the stored bytes, rewritten with
+ *   `EFFERENT_UPDATE_GOLDEN=1` when the storage format changes on purpose.
+ * Any composition of the turn must reproduce both exactly.
  */
 
 /* ── the host's definitions ── */
@@ -284,11 +288,29 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
   }
 })).pipe(Effect.provideService(Clock.Clock, fixedClock))
 
-const goldenPath = join(import.meta.dir, "../golden/agent-turn.json")
+const modelPath = join(import.meta.dir, "../golden/agent-turn.model.json")
+const journalPath = join(import.meta.dir, "../golden/agent-turn.journal.json")
+
+const pinned = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`
+
+/** The golden conversation's two halves, each as the exact text of its file. */
+export const goldenTexts = (result: Effect.Success<ReturnType<typeof runGolden>>) => {
+  const actual = JSON.parse(JSON.stringify(result))
+  return {
+    model: pinned({ turns: actual.turns, requests: actual.requests, log: actual.log }),
+    journal: pinned({ journal: actual.journal }),
+  }
+}
+
+/** Compare a run with both golden files (and rewrite the ones the environment asks for). */
+export const expectGolden = async (result: Effect.Success<ReturnType<typeof runGolden>>) => {
+  const actual = goldenTexts(result)
+  if (process.env.EFFERENT_UPDATE_MODEL_GOLDEN === "1") await Bun.write(modelPath, actual.model)
+  if (process.env.EFFERENT_UPDATE_GOLDEN === "1") await Bun.write(journalPath, actual.journal)
+  expect(actual.model).toBe(await Bun.file(modelPath).text())
+  expect(actual.journal).toBe(await Bun.file(journalPath).text())
+}
 
 test("Agent.turn reproduces the golden conversation byte for byte", async () => {
-  const actual = JSON.parse(JSON.stringify(await Effect.runPromise(runGolden(Agent.define(goldenConfig)))))
-  if (process.env.EFFERENT_UPDATE_GOLDEN === "1") await Bun.write(goldenPath, `${JSON.stringify(actual, null, 2)}\n`)
-  const golden = await Bun.file(goldenPath).json()
-  expect(actual).toEqual(golden)
+  await expectGolden(await Effect.runPromise(runGolden(Agent.define(goldenConfig))))
 })
