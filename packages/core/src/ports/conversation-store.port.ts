@@ -14,8 +14,8 @@ export class RunOutcomeRecord extends Schema.Class<RunOutcomeRecord>("RunOutcome
   conversationId: ConversationId,
   /** Epoch millis. */
   at: Schema.Number,
-  outcome: Schema.Literal("ok", "partial"),
-  reason: Schema.Literal("completed", "step-cap", "degenerate-loop"),
+  outcome: Schema.Literals(["ok", "partial"]),
+  reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
 }) {}
 
 export class ConversationSummary extends Schema.Class<ConversationSummary>(
@@ -23,15 +23,14 @@ export class ConversationSummary extends Schema.Class<ConversationSummary>(
 )({
   id: ConversationId,
   createdAt: Schema.Number,
-  firstPrompt: Schema.optionalWith(Schema.String, { as: "Option" }),
-  title: Schema.optionalWith(Schema.String, { as: "Option" }),
+  firstPrompt: Schema.OptionFromOptional(Schema.String),
+  title: Schema.OptionFromOptional(Schema.String),
   /** The latest recorded run outcome, when a run has finished in it. */
-  lastOutcome: Schema.optionalWith(
+  lastOutcome: Schema.OptionFromOptional(
     Schema.Struct({
-      outcome: Schema.Literal("ok", "partial"),
-      reason: Schema.Literal("completed", "step-cap", "degenerate-loop"),
+      outcome: Schema.Literals(["ok", "partial"]),
+      reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
     }),
-    { as: "Option" },
   ),
 }) {}
 
@@ -54,9 +53,7 @@ export class StoredMessage extends Schema.Class<StoredMessage>("StoredMessage")(
  * The loop prepends the fold's summary itself (domain logic stays here,
  * not in the adapter).
  */
-export class ConversationStore extends Context.Tag("@xandreed/core/ConversationStore")<
-  ConversationStore,
-  {
+export class ConversationStore extends Context.Service<ConversationStore, {
     readonly create: (workspaceDir?: string) => Effect.Effect<ConversationId, StoreError>
     readonly append: (
       id: ConversationId,
@@ -121,5 +118,4 @@ export class ConversationStore extends Context.Tag("@xandreed/core/ConversationS
      *  human-initiated act on an otherwise append-only store. Returns the
      *  number of conversations removed. */
     readonly prune: (beforeEpochMs: number) => Effect.Effect<number, StoreError>
-  }
->() {}
+  }>()("@xandreed/core/ConversationStore") {}

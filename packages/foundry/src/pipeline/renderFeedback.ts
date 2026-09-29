@@ -7,13 +7,13 @@ import type { GateReport } from "../domain/Verdict.js"
 const MAX_FINDINGS_PER_GATE = 20
 
 const byLocation: Order.Order<Finding> = Order.combineAll([
-  Order.mapInput(Order.string, (f: Finding) =>
+  Order.mapInput(Order.String, (f: Finding) =>
     Option.match(f.location, { onNone: () => "", onSome: (l) => l.file }),
   ),
-  Order.mapInput(Order.number, (f: Finding) =>
+  Order.mapInput(Order.Number, (f: Finding) =>
     Option.match(f.location, { onNone: () => 0, onSome: (l) => l.line }),
   ),
-  Order.mapInput(Order.string, (f: Finding) => f.rule),
+  Order.mapInput(Order.String, (f: Finding) => f.rule),
 ])
 
 const renderFinding = (finding: Finding): string => {

@@ -35,7 +35,7 @@ test("dataset rejects duplicate IDs and cross-split case families", async () => 
 test("one judge call emits several independently selected metrics", async () => {
   const program = Effect.gen(function* () {
     const count = yield* Ref.make(0)
-    const bound = { ...judge, run: (input: { output: string; reference: boolean }) => Ref.update(count, (n) => n + 1).pipe(Effect.zipRight(judge.run(input))) }
+    const bound = { ...judge, run: (input: { output: string; reference: boolean }) => Ref.update(count, (n) => n + 1).pipe(Effect.andThen(judge.run(input))) }
     const result = yield* assessAll([{ evaluator: bound, select: ["supported"] }], { output: "supported", reference: true })
     expect(yield* Ref.get(count)).toBe(1)
     expect(result[0]?.metrics.map((m) => m.name)).toEqual(["supported"])
@@ -96,8 +96,8 @@ test("cancellation during judging persists a terminal trial and evidence", async
     const store = Layer.succeed(EvaluationStore, {
       writeTrial: (trial) => Ref.update(saved, (prior) => [...prior, trial]), writeAssessment: () => Effect.void,
     })
-    const blocking = { ...benchmark, evaluators: [{ evaluator: { ...judge, run: () => Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Effect.never)) }, select: ["supported"] }] }
-    const fiber = yield* runBenchmark(blocking, options).pipe(Effect.provide(store), Effect.fork)
+    const blocking = { ...benchmark, evaluators: [{ evaluator: { ...judge, run: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) }, select: ["supported"] }] }
+    const fiber = yield* runBenchmark(blocking, options).pipe(Effect.provide(store), Effect.forkChild)
     yield* Deferred.await(entered)
     yield* Fiber.interrupt(fiber)
     const trials = yield* Ref.get(saved)

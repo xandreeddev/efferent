@@ -1,4 +1,4 @@
-import { Chunk, Effect, Queue } from "effect"
+import { Effect, Queue } from "effect"
 import type { SmithEvent } from "../../domain/SmithEvent.js"
 
 /**
@@ -54,6 +54,6 @@ export const runEventPump = (
 ): Effect.Effect<never> =>
   Effect.forever(
     Effect.flatMap(Queue.takeBetween(queue, 1, 64), (events) =>
-      Effect.sync(() => reduceBatch(coalesceDeltas(Chunk.toReadonlyArray(events)))),
+      Effect.sync(() => reduceBatch(coalesceDeltas(events))),
     ),
   )

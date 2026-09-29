@@ -66,7 +66,7 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
   Effect.onExit(Exit.match({
     onSuccess: () => Effect.void,
     // The turn already failed; recording that must not replace its cause.
-    onFailure: () => finishTurn(failed).pipe(Effect.catchAllCause(() => Effect.void)),
+    onFailure: () => finishTurn(failed).pipe(Effect.catchCause(() => Effect.void)),
   })),
   Effect.tap(finishTurn),
 )

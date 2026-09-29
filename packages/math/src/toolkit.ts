@@ -1,4 +1,4 @@
-import { Tool, Toolkit } from "@effect/ai"
+import { Tool, Toolkit } from "effect/ai"
 import { Effect, Layer, Ref, Schema } from "effect"
 import type { AgentConfig } from "@xandreed/plugin-agent-loop"
 import { parseMathItems, servedPromptKey, type MathItem } from "./domain/MathContent.js"
@@ -16,11 +16,11 @@ import { mathAgentPrompt } from "./prompt.js"
 const RenderMath = Tool.make("render_math", {
   description:
     "Present a batch of math exercises (and at most one coach note) to the student. Each item is validated server-side; rejected items come back with the reason — fix exactly what the rejection says and re-send ONLY the fixed items.",
-  parameters: {
-    items: Schema.Array(Schema.Unknown).annotations({
+  parameters: Schema.Struct({
+    items: Schema.Array(Schema.Unknown).annotate({
       description: "The batch: exercise items and at most one note item.",
     }),
-  },
+  }),
   success: Schema.Struct({
     accepted: Schema.Number,
     rejected: Schema.Array(

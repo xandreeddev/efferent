@@ -8,7 +8,7 @@
  * browser even opens; without, the student lands on the setup form and no
  * agent turn runs until they start.
  */
-import { HttpServer } from "@effect/platform"
+import { HttpRouter, HttpServer } from "effect/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import { Cause, Deferred, Effect, Exit, Layer } from "effect"
 import type { AgentMessage } from "@xandreed/core"
@@ -34,9 +34,9 @@ export interface MathModeInput {
   readonly theme?: string
 }
 
-const boundPort = (server: HttpServer.HttpServer, fallback: number): number => {
+const boundPort = (server: HttpServer.HttpServer["Service"], fallback: number): number => {
   const addr = server.address
-  return addr._tag === "TcpAddress" ? addr.port : fallback
+  return addr._tag === "UnixPathAddress" ? fallback : addr.port
 }
 
 export const runMathMode = (
@@ -81,8 +81,8 @@ export const runMathHost = (input: MathModeInput, session: MathSession, history:
 
     const serve = Effect.gen(function* () {
       const shutdown = yield* Deferred.make<void>()
-      const onShutdown = Effect.forkDaemon(
-        Effect.sleep("100 millis").pipe(Effect.zipRight(Deferred.succeed(shutdown, undefined))),
+      const onShutdown = Effect.forkDetach(
+        Effect.sleep("100 millis").pipe(Effect.andThen(Deferred.succeed(shutdown, undefined))),
       ).pipe(Effect.asVoid)
 
       const meta = { title: "efferent math", wsUrl: WS_PATH }
@@ -96,7 +96,7 @@ export const runMathHost = (input: MathModeInput, session: MathSession, history:
           model: setGenerating(applyTopic(m, startScope.grade, startScope.theme), true),
           patches: [],
         }))
-        yield* Effect.forkDaemon(
+        yield* Effect.forkDetach(
           session.send(composeAgentMessage([], { kind: "start", ...startScope })),
         )
       }
@@ -125,8 +125,12 @@ export const runMathHost = (input: MathModeInput, session: MathSession, history:
         }
         yield* Deferred.await(shutdown)
       }).pipe(
-        Effect.provide(HttpServer.serve()(router)),
-        Effect.provide(BunHttpServer.layer({ port: input.port ?? 0, hostname: "127.0.0.1" })),
+        // Quiet like before: the URL line above is the only listen log, and no per-request logging.
+        Effect.provide(
+          HttpRouter.serve(router, { disableLogger: true, disableListenLog: true }).pipe(
+            Layer.provideMerge(BunHttpServer.layer({ port: input.port ?? 0, hostname: "127.0.0.1" })),
+          ),
+        ),
       )
     }).pipe(Effect.scoped)
 
@@ -137,7 +141,7 @@ export const runMathHost = (input: MathModeInput, session: MathSession, history:
     const outcome = yield* serve.pipe(
       Effect.ensuring(
         Effect.sync(() => process.stderr.write("efferent math: server closed, finalizing…\n")).pipe(
-          Effect.zipRight(session.shutdown),
+          Effect.andThen(session.shutdown),
         ),
       ),
       Effect.exit,
@@ -155,7 +159,7 @@ export const runMathHost = (input: MathModeInput, session: MathSession, history:
         }),
     })
   }).pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.sync(() => {
         process.stderr.write(`efferent math: FAILED\n${Cause.pretty(cause)}\n`)
         process.exit(1)

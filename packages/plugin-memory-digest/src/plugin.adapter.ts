@@ -4,7 +4,7 @@ import type { DigestOutcome, DigestTask } from "@xandreed/core"
 
 export const MemoryDigestConfig = Schema.Struct({
   /** The digester's source text is clipped to this many characters. */
-  maxSourceChars: Schema.Int.pipe(Schema.between(1_000, 400_000)),
+  maxSourceChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1_000, maximum: 400_000 }))),
 })
 export type MemoryDigestConfig = typeof MemoryDigestConfig.Type
 export const memoryDigestDefaults: MemoryDigestConfig = { maxSourceChars: 48_000 }
@@ -47,7 +47,7 @@ export const outcomeOf = (task: DigestTask, reply: string): DigestOutcome => tas
  * decides how; this plugin only asks.
  */
 export const memoryDigestPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-digest", version: "0.6.0-next.2", scope: "session",
+  id: "@xandreed/plugin-memory-digest", version: "0.7.0-next.0", scope: "session",
   config: MemoryDigestConfig, defaults: memoryDigestDefaults,
   requires: [UtilityLlm],
   provides: [ResultDigester],

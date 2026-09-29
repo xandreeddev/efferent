@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Schema, Effect } from "effect"
 import { RuleId } from "./Brands.js"
 import { Severity } from "./Finding.js"
 
@@ -11,12 +11,10 @@ import { Severity } from "./Finding.js"
 export class RuleConfig extends Schema.Class<RuleConfig>("RuleConfig")({
   rule: RuleId,
   /** Overrides the rule's default severity. */
-  severity: Schema.optionalWith(Severity, { as: "Option" }),
+  severity: Schema.OptionFromOptional(Severity),
   /** Globs relative to the workspace root. */
-  include: Schema.optionalWith(Schema.Array(Schema.NonEmptyString), {
-    default: () => ["**/*.ts"],
-  }),
-  exclude: Schema.optionalWith(Schema.Array(Schema.NonEmptyString), { default: () => [] }),
+  include: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => ["**/*.ts"])), Schema.withConstructorDefault(Effect.sync(() => ["**/*.ts"]))),
+  exclude: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 }) {}
 
 export class LayerSpec extends Schema.Class<LayerSpec>("LayerSpec")({
@@ -43,11 +41,9 @@ export class CheckConfig extends Schema.Class<CheckConfig>("CheckConfig")({
   /** One line of shell, run through `bash -c` from the workspace root. */
   command: Schema.NonEmptyString,
   /** Cost rank for a standing command. Existing profiles decode as `test`. */
-  kind: Schema.optionalWith(Schema.Literal("test", "eval"), { default: () => "test" }),
+  kind: Schema.Literals(["test", "eval"]).pipe(Schema.withDecodingDefaultType(Effect.sync(() => "test" as const)), Schema.withConstructorDefault(Effect.sync(() => "test" as const))),
   /** Per-command wall-clock bound. */
-  timeoutMs: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
-    default: () => 300_000,
-  }),
+  timeoutMs: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))).pipe(Schema.withDecodingDefaultType(Effect.sync(() => 300_000)), Schema.withConstructorDefault(Effect.sync(() => 300_000))),
 }) {}
 
 /** One gate-suite target: a tsconfig + the rule/boundary/eval policy over it. */
@@ -55,9 +51,9 @@ export class GateSuiteConfig extends Schema.Class<GateSuiteConfig>("GateSuiteCon
   /** Workspace-relative path to the tsconfig the shared `ts.Program` builds from. */
   tsconfig: Schema.NonEmptyString,
   rules: Schema.Array(RuleConfig),
-  boundaries: Schema.optionalWith(LayerConfig, { as: "Option" }),
-  checks: Schema.optionalWith(Schema.Array(CheckConfig), { default: () => [] }),
+  boundaries: Schema.OptionFromOptional(LayerConfig),
+  checks: Schema.Array(CheckConfig).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
   /** Run the typecheck gate too. Set false when `tsc` already runs beside
    *  this check (e.g. the repo's `bun run typecheck`) — no double program check. */
-  typecheck: Schema.optionalWith(Schema.Boolean, { default: () => true }),
+  typecheck: Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => true)), Schema.withConstructorDefault(Effect.sync(() => true))),
 }) {}

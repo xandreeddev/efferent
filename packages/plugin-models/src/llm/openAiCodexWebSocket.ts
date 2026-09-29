@@ -1,10 +1,5 @@
-import {
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "@effect/platform"
-import { Effect, Either } from "effect"
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { Effect, Result } from "effect"
 import { release } from "node:os"
 import WebSocket from "ws"
 
@@ -129,7 +124,7 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
         signal.addEventListener("abort", abort, { once: true })
 
         socket.addEventListener("open", () => {
-          Either.match(Either.try(() => {
+          Result.match(Result.try(() => {
             socket.send(JSON.stringify({ type: "response.create", ...body }))
             state.settled = true
             return (
@@ -141,10 +136,10 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
                 }),
               )
             )
-          }), { onLeft: fail, onRight: resolve })
+          }), { onFailure: fail, onSuccess: resolve })
         })
         socket.addEventListener("message", (event) => {
-          Either.match(Either.try(() => {
+          Result.match(Result.try(() => {
             const text = eventText(event.data)
             if (text === undefined) return
             const parsed = normalizeOpenAiCodexWebSocketEvent(JSON.parse(text)) as Json
@@ -163,7 +158,7 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
               signal.removeEventListener("abort", abort)
               socket.close(1000, "done")
             }
-          }), { onLeft: fail, onRight: () => undefined })
+          }), { onFailure: fail, onSuccess: () => undefined })
         })
         socket.addEventListener("error", (event) =>
           fail(event.error ?? new Error(event.message || "WebSocket handshake failed")),
@@ -172,16 +167,17 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
           if (event.code !== 1000) fail(new Error(`OpenAI subscription WebSocket closed ${event.code}: ${event.reason}`))
         })
       }),
-      catch: (cause) => new HttpClientError.RequestError({
-        request: request.pipe(
-          HttpClientRequest.setHeader("authorization", "[redacted]"),
-          HttpClientRequest.setHeader("chatgpt-account-id", "[redacted]"),
-        ),
-        reason: "Transport",
-        description: `OpenAI subscription WebSocket failed: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        cause,
+      catch: (cause) => new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request: request.pipe(
+            HttpClientRequest.setHeader("authorization", "[redacted]"),
+            HttpClientRequest.setHeader("chatgpt-account-id", "[redacted]"),
+          ),
+          description: `OpenAI subscription WebSocket failed: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+          cause,
+        }),
       }),
     }),
 )

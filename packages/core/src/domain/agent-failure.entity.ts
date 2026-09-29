@@ -1,8 +1,8 @@
 import { Schema } from "effect"
 
 /** Stable, serializable failure context shared by products and evaluations. */
-export const AgentFailureCategory = Schema.Literal(
-  "authentication",
+export const AgentFailureCategory = Schema.Literals(
+  ["authentication",
   "authorization",
   "rate-limit",
   "timeout",
@@ -11,7 +11,7 @@ export const AgentFailureCategory = Schema.Literal(
   "validation",
   "tool",
   "persistence",
-  "unknown",
+  "unknown"],
 )
 export type AgentFailureCategory = typeof AgentFailureCategory.Type
 

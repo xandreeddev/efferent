@@ -1,7 +1,7 @@
-import { AiError, LanguageModel, Tool } from "@effect/ai"
-import type { Prompt } from "@effect/ai"
-import { Effect, Either, FiberRef, JSONSchema, Option, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/core"
+import { AiError, LanguageModel, Tool } from "effect/ai"
+import type { Prompt } from "effect/ai"
+import { Effect, Result, Option, Stream } from "effect"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage } from "./sse.js"
 
@@ -31,23 +31,25 @@ const semanticGatewayError = (
   body: string,
 ): Option.Option<AiError.AiError> =>
   Option.flatMap(
-    Option.fromNullable(Either.getOrUndefined(Either.try(() => JSON.parse(body) as unknown))),
+    Option.fromNullishOr(Result.getOrUndefined(Result.try(() => JSON.parse(body) as unknown))),
     (decoded) => {
       const error = record(record(decoded)["error"])
       const type = typeof error["type"] === "string" ? error["type"] : ""
       const message = typeof error["message"] === "string" ? error["message"] : ""
       if (type === "ModelError" || /model .*not supported/i.test(message)) {
-        return Option.some(new AiError.MalformedInput({
+        return Option.some(AiError.make({
           module: moduleName,
           method,
-          description: message.length > 0 ? message : "the selected model is not supported",
+          reason: new AiError.InvalidRequestError({
+            description: message.length > 0 ? message : "the selected model is not supported",
+          }),
         }))
       }
       if (type === "CreditsError" || /insufficient (?:balance|credits)|usage limit|quota/i.test(message)) {
-        return Option.some(new AiError.UnknownError({
+        return Option.some(AiError.make({
           module: moduleName,
           method,
-          description: `CreditsError: ${message || "provider quota exhausted"}`,
+          reason: new AiError.UnknownError({ description: `CreditsError: ${message || "provider quota exhausted"}` }),
         }))
       }
       return Option.none()
@@ -68,6 +70,10 @@ export interface CompatConfig {
   /** Gateway reasoning vocabulary, independent of provider-native thinking. */
   readonly reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   readonly temperature?: number
+  /** Send standard chat-completions fields only — no prompt-cache key,
+   *  thinking defaults or call policy — for endpoints that reject the
+   *  gateway extensions (Gemini's OpenAI-compatible API). */
+  readonly standardOnly?: boolean
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
@@ -77,19 +83,16 @@ export interface CompatConfig {
   readonly aroundRequest?: (body: Readonly<Record<string, unknown>>, request: Effect.Effect<Response, AiError.AiError>) => Effect.Effect<Response, AiError.AiError>
 }
 
-const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.UnknownError =>
-  new AiError.UnknownError({
-    module: moduleName,
-    method,
-    description: String(e),
-    cause: e,
-  })
+const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.AiError =>
+  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: String(e) }) })
+
+const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
+  AiError.make({ module: moduleName, method, reason: new AiError.InvalidOutputError({ description }) })
 
 const requestInfo = (chatUrl: string) => ({
   method: "POST" as const,
   url: chatUrl,
   urlParams: [] as Array<[string, string]>,
-  hash: Option.none<string>(),
   headers: { "content-type": "application/json" },
 })
 
@@ -154,7 +157,7 @@ export const toChatTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray<Json>
             function: {
               name: tool.name,
               description: Tool.getDescription(tool as never),
-              parameters: Tool.getJsonSchema(tool as never),
+              parameters: toolParametersSchema(tool as never),
             },
           },
         ]
@@ -221,13 +224,7 @@ export const fromChatCompletion = (
   Effect.gen(function* () {
     const choice = body.choices?.[0]
     if (choice === undefined) {
-      return yield* Effect.fail(
-        new AiError.MalformedOutput({
-          module: moduleName,
-          method: "generateText",
-          description: "the completion carried no choices",
-        }),
-      )
+      return yield* Effect.fail(invalidOutput(moduleName, "generateText", "the completion carried no choices"))
     }
     const message = choice.message ?? {}
     // The gateway fronts multiple upstreams with two reasoning vocabularies —
@@ -244,11 +241,7 @@ export const fromChatCompletion = (
           params: JSON.parse(tc.function?.arguments ?? "{}") as unknown,
         }),
         catch: () =>
-          new AiError.MalformedOutput({
-            module: moduleName,
-            method: "generateText",
-            description: `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`,
-          }),
+          invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
       }),
     )
     return [
@@ -278,7 +271,7 @@ const chatRequestBody = (
   options: LanguageModel.ProviderOptions,
   streaming: boolean,
 ): Effect.Effect<Json> =>
-  Effect.all({ cacheKey: FiberRef.get(CurrentPromptCacheKey), policy: FiberRef.get(CurrentModelCallPolicy) }).pipe(
+  Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
     Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
       return {
@@ -287,20 +280,22 @@ const chatRequestBody = (
         messages: toChatMessages(options.prompt),
         stream: streaming,
         ...(options.responseFormat.type === "json" ? { response_format: {
-          type: "json_schema", json_schema: { name: options.responseFormat.objectName, strict: true, schema: JSONSchema.make(options.responseFormat.schema) },
+          type: "json_schema", json_schema: { name: options.responseFormat.objectName, strict: true, schema: strictJsonSchema(options.responseFormat.schema) },
         } } : {}),
         ...(streaming ? { stream_options: { include_usage: true } } : {}),
-        ...Option.match(cacheKey, {
-          onNone: () => ({}),
-          onSome: (key) => ({ prompt_cache_key: key }),
-        }),
-        ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
-        ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
-        ...Option.match(policy, {
-          onNone: () => ({}),
-          onSome: (value) => ({
-            ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
-            ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
+        ...(config.standardOnly === true ? {} : {
+          ...Option.match(cacheKey, {
+            onNone: () => ({}),
+            onSome: (key) => ({ prompt_cache_key: key }),
+          }),
+          ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
+          ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
+          ...Option.match(policy, {
+            onNone: () => ({}),
+            onSome: (value) => ({
+              ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
+              ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
+            }),
           }),
         }),
         ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
@@ -314,7 +309,7 @@ const postChat = (
   body: Json,
   buffered = false,
 ): Effect.Effect<Response, AiError.AiError> => {
-  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.zipRight(Effect.tryPromise({
+  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(Effect.tryPromise({
     try: async (signal) => {
       const response = await (config.fetchImpl ?? fetch)(config.chatUrl, {
         signal,
@@ -333,8 +328,9 @@ const postChat = (
   return config.aroundRequest === undefined ? request : config.aroundRequest(body, request)
 }
 
-/** A non-OK status → `HttpResponseError` with the status + a body excerpt —
- *  identical taxonomy on both paths (the retry classifier reads it). */
+/** A non-OK status → an `AiError` whose reason follows the status and keeps
+ *  the response (status, headers) and a body excerpt — identical taxonomy on
+ *  both paths (the retry classifier reads it). */
 const failStatus = (
   config: CompatConfig,
   method: string,
@@ -354,20 +350,21 @@ const failStatus = (
       headers[headerName] = value
     })
     return yield* Effect.fail(
-      new AiError.HttpResponseError({
+      AiError.make({
         module: config.moduleName,
         method,
-        reason: "StatusCode",
-        request: requestInfo(config.chatUrl),
-        response: { status: res.status, headers },
-        description: text.slice(0, 500),
+        reason: AiError.reasonFromHttpStatus({
+          status: res.status,
+          http: { request: requestInfo(config.chatUrl), response: { status: res.status, headers }, body: text.slice(0, 500) },
+          description: text.slice(0, 500),
+        }),
       }),
     )
   })
 
 export const makeCompatLanguageModel = (
   config: CompatConfig,
-): Effect.Effect<LanguageModel.Service> =>
+): Effect.Effect<LanguageModel.LanguageModel> =>
   LanguageModel.make({
     generateText: (options) =>
       Effect.gen(function* () {
@@ -387,11 +384,7 @@ export const makeCompatLanguageModel = (
         const parsed = yield* Effect.try({
           try: () => JSON.parse(text) as ChatCompletion,
           catch: () =>
-            new AiError.MalformedOutput({
-              module: config.moduleName,
-              method: "generateText",
-              description: `the completion body was not JSON: ${text.slice(0, 200)}`,
-            }),
+            invalidOutput(config.moduleName, "generateText", `the completion body was not JSON: ${text.slice(0, 200)}`),
         })
         return (yield* fromChatCompletion(config.moduleName, parsed)) as never
       }),
@@ -408,13 +401,7 @@ export const makeCompatLanguageModel = (
           }
           const body = res.body
           if (body === null) {
-            return yield* Effect.fail(
-              new AiError.MalformedOutput({
-                module: config.moduleName,
-                method: "streamText",
-                description: "the streaming response carried no body",
-              }),
-            )
+            return yield* Effect.fail(invalidOutput(config.moduleName, "streamText", "the streaming response carried no body"))
           }
           return sseStreamParts({ moduleName: config.moduleName, body })
         }),

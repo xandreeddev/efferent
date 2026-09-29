@@ -65,15 +65,15 @@ const runCommand = (
 /** The `path:line` findings in the output — one per distinct location. */
 const locatedFindings = (output: string, rule: RuleId): ReadonlyArray<Finding> => {
   const lines = output.split("\n")
-  const hits = Arr.filterMap(lines, (line) =>
-    Option.fromNullable(FILE_LINE.exec(line)).pipe(
+  const hits = Arr.getSomes(lines.map((line) =>
+    Option.fromNullishOr(FILE_LINE.exec(line)).pipe(
       Option.map((m) => ({
         file: m[1] ?? "",
         line: Number(m[2] ?? "1"),
         text: line.trim(),
       })),
     ),
-  )
+  ))
   const distinct = hits.filter(
     (hit, index) =>
       hits.findIndex((h) => h.file === hit.file && h.line === hit.line) === index,

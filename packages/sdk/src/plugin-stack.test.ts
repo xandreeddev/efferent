@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "@effect/ai"
+import { Tool } from "effect/ai"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
   Contributions,
@@ -22,7 +22,7 @@ import { ToolDiscoveryLive, toolDiscoveryPlugin } from "@xandreed/plugin-tool-di
 import { activateGraph, resolveGraph } from "@xandreed/runtime"
 
 const Lookup = Tool.make("lookup", {
-  description: "Look records up.", parameters: { query: Schema.String }, success: Schema.String, failure: Failure, failureMode: "return",
+  description: "Look records up.", parameters: Schema.Struct({ query: Schema.String }), success: Schema.String, failure: Failure, failureMode: "return",
 })
 const host = defineContributions({
   id: "stack-host", version: "1",
@@ -37,12 +37,12 @@ const hostPlugin = definePlugin({
 
 /** What a composition provides: its service keys, the contributions in order, and what the services are. */
 const shapeOf = (context: Context.Context<never>) => ({
-  keys: [...context.unsafeMap.keys()].sort(),
-  contributions: Context.unsafeGet(context, Contributions).map((bundle) => bundle.id),
-  sections: Context.unsafeGet(context, Contributions).flatMap((bundle) => bundle.sections.map((section) => section.id)),
-  catalog: Context.unsafeGet(context, ToolRegistry).catalog,
-  strategy: Context.unsafeGet(context, ConversationMemory).strategy,
-  loop: Context.unsafeGet(context, StepLoop).id,
+  keys: [...context.mapUnsafe.keys()].sort(),
+  contributions: Context.getUnsafe(context, Contributions).map((bundle) => bundle.id),
+  sections: Context.getUnsafe(context, Contributions).flatMap((bundle) => bundle.sections.map((section) => section.id)),
+  catalog: Context.getUnsafe(context, ToolRegistry).catalog,
+  strategy: Context.getUnsafe(context, ConversationMemory).strategy,
+  loop: Context.getUnsafe(context, StepLoop).id,
 })
 
 describe("plugin stacks", () => {
@@ -58,7 +58,8 @@ describe("plugin stacks", () => {
         stackPlugins(ToolDiscoveryLive()),
         stackPlugins(StepLoopLive),
       ))
-      return { graph: shapeOf(graph), stack: shapeOf(Context.unsafeMake<never>(stack.unsafeMap)) }
+      // A built layer's context also carries the memo map it was built with: not a service of the stack.
+      return { graph: shapeOf(graph), stack: shapeOf(Context.makeUnsafe<never>(Context.omit(Layer.CurrentMemoMap)(stack).mapUnsafe)) }
     })))
     expect(stack).toEqual(graph)
     expect(stack.contributions).toEqual(["stack-host", "@xandreed/plugin-memory-window/recall", "@xandreed/plugin-tool-discovery/catalogue"])

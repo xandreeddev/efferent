@@ -19,7 +19,7 @@ export const startDaemon = () =>
     // Jittered (±~20%): a metronome cadence reads as a bot — the OPSEC
     // roadmap (docs/agents/social.md) mandates jitter on every scan cycle.
     yield* findOpportunitiesAndDraft(TARGET_QUERIES).pipe(
-      Effect.catchAllCause((cause) => Effect.logError(`Scan failed: ${cause}`)),
+      Effect.catchCause((cause) => Effect.logError(`Scan failed: ${cause}`)),
       Effect.repeat(Schedule.fixed("2 hours").pipe(Schedule.jittered)),
     )
   })

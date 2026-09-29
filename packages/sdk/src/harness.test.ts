@@ -25,10 +25,10 @@ describe("durable SDK sessions", () => {
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
-      const held = loop("held", () => Deferred.succeed(entered, undefined).pipe(Effect.zipRight(Deferred.await(release)), Effect.as({ text: "old", outcome: "completed" as const })))
+      const held = loop("held", () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as({ text: "old", outcome: "completed" as const })))
       const harness = yield* Harness.make({ workspace: directory, config: config(directory, "held"), plugins: [sessionSqlitePlugin, held, echo] })
       const session = yield* harness.create()
-      const running = yield* Effect.fork(session.send("first"))
+      const running = yield* Effect.forkChild(session.send("first"))
       yield* Deferred.await(entered)
       expect(yield* harness.reconfigure({ ...config(directory), profile: "updated" })).toBe("applied")
       yield* Deferred.succeed(release, undefined)
@@ -47,8 +47,8 @@ describe("durable SDK sessions", () => {
       yield* original.send("private workspace")
       const through = (yield* original.history).at(-1)!.seq
       const second = yield* Harness.make({ workspace: other, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
-      expect((yield* Effect.either(second.resume(original.record.id)))._tag).toBe("Left")
-      expect((yield* Effect.either(second.fork(original.record.id, through)))._tag).toBe("Left")
+      expect((yield* Effect.result(second.resume(original.record.id)))._tag).toBe("Failure")
+      expect((yield* Effect.result(second.fork(original.record.id, through)))._tag).toBe("Failure")
       expect(yield* second.list).toHaveLength(0)
     })))
   })
@@ -80,7 +80,7 @@ describe("durable SDK sessions", () => {
     const id = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const harness = yield* Harness.make({ workspace: directory, config: config(directory, "slow"), plugins: [sessionSqlitePlugin, slow] })
       const session = yield* harness.create()
-      const sending = yield* Effect.fork(session.send("first"))
+      const sending = yield* Effect.forkChild(session.send("first"))
       yield* Effect.repeat(session.busy, { until: (busy) => busy })
       yield* session.steer("keep this")
       yield* session.interrupt
@@ -103,7 +103,7 @@ describe("durable SDK sessions", () => {
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const harness = yield* Harness.make({ workspace: directory, config: config(directory, "flood"), plugins: [sessionSqlitePlugin, flood] })
       const session = yield* harness.create()
-      const collector = yield* Effect.fork(session.events().pipe(Stream.filter((event) => event.name === "item"), Stream.take(1200), Stream.runCollect))
+      const collector = yield* Effect.forkChild(session.events().pipe(Stream.filter((event) => event.name === "item"), Stream.take(1200), Stream.runCollect))
       yield* session.send("go")
       const events = yield* Fiber.join(collector)
       expect(events.length).toBe(1200)
@@ -127,7 +127,7 @@ describe("durable SDK sessions", () => {
       expect(yield* harness.reconfigure({ ...first, plugins: [...first.plugins!.filter((entry) => entry.id !== "loop"), { id: "loop", use: customLoop.id }, { id: "memory", use: customMemory.id }] }, [sessionSqlitePlugin, echo, customLoop, customMemory, memoryPlugin])).toBe("applied")
       yield* session.send("after")
       expect((yield* session.history).filter((event) => event.name === "run.completed").at(-1)?.data.text).toBe("custom memory")
-      expect((yield* Effect.either(harness.reconfigure({ version: 1, plugins: [{ id: "bad", use: "missing" }] })))._tag).toBe("Left")
+      expect((yield* Effect.result(harness.reconfigure({ version: 1, plugins: [{ id: "bad", use: "missing" }] })))._tag).toBe("Failure")
       expect(yield* harness.reconfigure((yield* harness.graph).config)).toBe("applied")
       yield* session.send("still works")
     })))

@@ -1,5 +1,5 @@
-import { AiError } from "@effect/ai"
-import { Duration, Effect, FiberRef, Ref, Schedule, Stream } from "effect"
+import { AiError } from "effect/ai"
+import { Duration, Effect, Ref, Schedule, Stream } from "effect"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 
 /**
@@ -47,55 +47,53 @@ const retryAfterMillis = (
   return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
 }
 
+/** A 429 whose wait exceeds the honored cap is a daily quota, not an outage. */
+const rateLimited = (waitMs: number | undefined): ErrorClass =>
+  waitMs !== undefined && waitMs > MAX_HONORED_RETRY_AFTER_MS ? "permanent" : "transient"
+
 export const classifyLlmError = (error: unknown): ErrorClass => {
-  const e = error as
-    | {
-        readonly _tag?: string
-        readonly response?: {
-          readonly status?: number
-          readonly headers?: Record<string, string>
-        }
-        readonly description?: string
-      }
-    | null
-  if (e === null || typeof e !== "object") return "permanent"
-  if (e._tag === "HttpResponseError") {
-    const status = e.response?.status ?? 0
-    if (status === 429) {
-      const wait = retryAfterMillis(e.response?.headers)
+  if (!AiError.isAiError(error)) {
+    // A raw HTTP client's transport failure (the codex socket path).
+    const e = error as { readonly _tag?: string; readonly reason?: { readonly _tag?: string } } | null
+    return e?._tag === "HttpClientError" && e.reason?._tag === "TransportError" ? "transient" : "permanent"
+  }
+  const reason = error.reason
+  const response = "http" in reason ? reason.http?.response : undefined
+  if (response !== undefined) {
+    if (response.status === 429) {
       // Beyond the honored cap this is a daily quota — retrying in seconds
       // hits the same wall; fail fast and let the caller change model.
-      return wait !== undefined && wait > MAX_HONORED_RETRY_AFTER_MS
-        ? "permanent"
-        : "transient"
+      return rateLimited(retryAfterMillis(response.headers as Record<string, string>))
     }
-    return status >= 500 ? "transient" : "permanent"
+    return response.status >= 500 ? "transient" : "permanent"
   }
   // Transport/timeout/empty-body failures arrive as UnknownError (fetch
-  // rejection, our timeout, the empty-response rejection below).
-  if (e._tag === "UnknownError" || e._tag === "HttpRequestError") return "transient"
-  return "permanent"
+  // rejection, our timeout, the empty-response rejection below); Effect's
+  // providers report transport as NetworkError and 429/5xx by reason.
+  if (reason._tag === "RateLimitError")
+    return rateLimited(reason.retryAfter === undefined ? undefined : Duration.toMillis(reason.retryAfter))
+  return reason._tag === "InternalProviderError" || reason._tag === "NetworkError" || reason._tag === "UnknownError"
+    ? "transient"
+    : "permanent"
 }
 
 /** 3 fast retries: exponential 1s → 2s → 4s with ±25% jitter. */
-const fastRetries = Schedule.exponential(Duration.seconds(1)).pipe(
-  Schedule.jittered,
-  Schedule.intersect(Schedule.recurs(3)),
-)
+const fastRetries = Schedule.max([
+  Schedule.exponential(Duration.seconds(1)).pipe(Schedule.jittered),
+  Schedule.recurs(3),
+])
 
-const timeoutError = (label: string, method: string, timeoutMs: number): AiError.UnknownError =>
-  new AiError.UnknownError({
-    module: "Router",
-    method,
-    description: `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`,
-  })
+const routerError = (method: string, description: string): AiError.AiError =>
+  AiError.make({ module: "Router", method, reason: new AiError.UnknownError({ description }) })
 
-const emptyError = (label: string, method: string): AiError.UnknownError =>
-  new AiError.UnknownError({
-    module: "Router",
+const timeoutError = (label: string, method: string, timeoutMs: number): AiError.AiError =>
+  routerError(method, `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`)
+
+const emptyError = (label: string, method: string): AiError.AiError =>
+  routerError(
     method,
-    description: `${label} returned an empty response (no text, tool call, or reasoning) — treated as a transient provider failure`,
-  })
+    `${label} returned an empty response (no text, tool call, or reasoning) — treated as a transient provider failure`,
+  )
 
 const isContentPart = (part: unknown): boolean => {
   const t = (part as { readonly type?: string } | null)?.type
@@ -111,8 +109,8 @@ export const rejectEmptyResponse =
   (label: string) =>
   <A extends { readonly content: ReadonlyArray<unknown> }, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E | AiError.UnknownError, R> =>
-    FiberRef.get(CurrentEmptyResponseTolerance).pipe(
+  ): Effect.Effect<A, E | AiError.AiError, R> =>
+    Effect.service(CurrentEmptyResponseTolerance).pipe(
       Effect.flatMap((tolerant) =>
         tolerant
           ? effect
@@ -128,11 +126,11 @@ export const rejectEmptyResponse =
 /** Timeout + transient-only retries around one routed LLM connect. */
 export const retryableLlm =
   (label: string) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | AiError.UnknownError, R> =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | AiError.AiError, R> =>
     effect.pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
-        onTimeout: () => timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS),
+        orElse: () => Effect.fail(timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS)),
       }),
       Effect.retry({
         schedule: fastRetries,
@@ -180,7 +178,7 @@ const isFinishPartEncoded = (part: unknown): boolean =>
  */
 export const retryableLlmStream =
   (label: string, timeoutMs: number = LLM_REQUEST_TIMEOUT_MS) =>
-  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E | AiError.UnknownError, R> =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E | AiError.AiError, R> =>
     Stream.unwrap(
       Effect.gen(function* () {
         const contentSeen = yield* Ref.make(false)
@@ -196,15 +194,15 @@ export const retryableLlmStream =
                   )
                 : Effect.succeed(part),
           ),
-          Stream.timeoutFail(
-            () => timeoutError(label, "streamText", timeoutMs),
-            Duration.millis(timeoutMs),
-          ),
+          Stream.timeoutOrElse({
+            duration: Duration.millis(timeoutMs),
+            orElse: () => Stream.fail(timeoutError(label, "streamText", timeoutMs)),
+          }),
           Stream.retry(
             fastRetries.pipe(
-              Schedule.whileInputEffect((error: E | AiError.UnknownError) =>
+              Schedule.while(({ input }: { readonly input: E | AiError.AiError }) =>
                 Ref.get(contentSeen).pipe(
-                  Effect.map((seen) => !seen && classifyLlmError(error) === "transient"),
+                  Effect.map((seen) => !seen && classifyLlmError(input) === "transient"),
                 ),
               ),
             ),

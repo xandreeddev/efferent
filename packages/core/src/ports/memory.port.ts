@@ -42,9 +42,9 @@ export interface LogHandle {
 }
 
 /** STORAGE: where log entries live. Strategies never know the store. */
-export class MemoryLog extends Context.Tag("efferent/MemoryLog")<MemoryLog, {
+export class MemoryLog extends Context.Service<MemoryLog, {
   readonly open: (conversation: ConversationId, io: JournalIO) => Effect.Effect<LogHandle, HarnessError>
-}>() {}
+}>()("efferent/MemoryLog") {}
 
 /** One tool result as the model sees it, supplied by whoever owns the tools. */
 export interface ToolView {
@@ -88,11 +88,11 @@ export interface ToolViews {
 }
 
 /** Runs a tool's digest prompt (see `DigestDefinition`). Read, when present, from where the session is opened. */
-export class ResultDigester extends Context.Tag("efferent/ResultDigester")<ResultDigester, {
+export class ResultDigester extends Context.Service<ResultDigester, {
   readonly id: string
   readonly version: string
   readonly digest: (task: DigestTask) => Effect.Effect<DigestOutcome, HarnessError>
-}>() {}
+}>()("efferent/ResultDigester") {}
 
 /** Read-only memory for tools, sections, matchers and reactions. */
 export interface MemoryReader {
@@ -124,7 +124,7 @@ export interface MemorySession extends MemoryReader {
 }
 
 /** STRATEGY: how memory is kept, compacted and rebuilt. Swap this plugin to swap memory. */
-export class ConversationMemory extends Context.Tag("efferent/ConversationMemory")<ConversationMemory, {
+export class ConversationMemory extends Context.Service<ConversationMemory, {
   readonly strategy: { readonly id: string; readonly version: string }
   /**
    * Open the conversation's session for one run. A strategy reads what it
@@ -136,4 +136,4 @@ export class ConversationMemory extends Context.Tag("efferent/ConversationMemory
     readonly runId: string
     readonly io: JournalIO
   }) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>
-}>() {}
+}>()("efferent/ConversationMemory") {}

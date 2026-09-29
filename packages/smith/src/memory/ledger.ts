@@ -21,7 +21,7 @@ export class MemoryLedgerError extends Schema.TaggedError<MemoryLedgerError>()(
 ) {}
 
 const encodeEvent = Schema.encodeSync(MemoryEvent)
-const decodeEvent = Schema.decodeUnknownEither(MemoryEvent)
+const decodeEvent = Schema.decodeUnknownResult(MemoryEvent)
 
 /** Append a batch of verb rows (creates the file + parents on first write). */
 export const appendMemoryEvents = (

@@ -1,9 +1,9 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { argValue, fileStamp, persistJson, positiveInt, runMatrixMain } from "@xandreed/evals/campaign"
-import { LanguageModel, Prompt, Toolkit } from "@effect/ai"
-import { HttpClientRequest } from "@effect/platform"
-import { Cause, Duration, Effect, Either, Option, Redacted, Ref, Stream } from "effect"
+import { LanguageModel, Prompt, Toolkit } from "effect/ai"
+import { HttpClientRequest } from "effect/http"
+import { Cause, Duration, Effect, Result, Option, Redacted, Ref, Stream } from "effect"
 import { AuthStore, CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 import { LanguageModelSelectionLive, LocalAuthStoreLive, OPENAI_CODEX_API_URL, OpenAiCodexWebSocketHttpClient } from "@xandreed/plugin-models"
 import { StartUi, uiPlannerPrompt } from "@xandreed/ui-agent"
@@ -113,7 +113,7 @@ const summarizeParts = (sample: number, outcome: string, totalMs: number, parts:
   parts,
 })
 
-const partsSample = (service: LanguageModel.Service, sample: number) => Effect.gen(function* () {
+const partsSample = (service: LanguageModel.LanguageModel, sample: number) => Effect.gen(function* () {
   const toolkit = yield* probeToolkit
   const startedAt = Date.now()
   const collected = yield* Ref.make<ReadonlyArray<ProbePart>>([])
@@ -122,28 +122,28 @@ const partsSample = (service: LanguageModel.Service, sample: number) => Effect.g
     Effect.provideService(LanguageModel.LanguageModel, service),
     Effect.timeout(Duration.seconds(120)),
     Effect.as("ok"),
-    Effect.catchAllCause((cause) => Effect.succeed(`stream failed: ${Cause.pretty(cause).slice(0, 500)}`)),
+    Effect.catchCause((cause) => Effect.succeed(`stream failed: ${Cause.pretty(cause).slice(0, 500)}`)),
   )
   const parts = yield* Ref.get(collected)
   return summarizeParts(sample, outcome, Date.now() - startedAt, parts)
 }).pipe(
   Effect.provide(probeHandlers),
-  Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2400 })),
+  Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2400 })),
 )
 
-const generateControl = (service: LanguageModel.Service) => Effect.gen(function* () {
+const generateControl = (service: LanguageModel.LanguageModel) => Effect.gen(function* () {
   const toolkit = yield* probeToolkit
   const startedAt = Date.now()
   const outcome = yield* LanguageModel.generateText({ prompt: probePrompt, toolkit, concurrency: 1 }).pipe(
     Effect.provideService(LanguageModel.LanguageModel, service),
     Effect.timeout(Duration.seconds(120)),
     Effect.as("ok"),
-    Effect.catchAllCause((cause) => Effect.succeed(`generateText failed: ${Cause.pretty(cause).slice(0, 500)}`)),
+    Effect.catchCause((cause) => Effect.succeed(`generateText failed: ${Cause.pretty(cause).slice(0, 500)}`)),
   )
   return { outcome, wallMs: Date.now() - startedAt }
 }).pipe(
   Effect.provide(probeHandlers),
-  Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2400 })),
+  Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "medium" as const, maxOutputTokens: 2400 })),
 )
 
 const probeParts = (model: string, samples: number) => Effect.gen(function* () {
@@ -182,7 +182,7 @@ const effortSample = (
       "chatgpt-account-id": accountId,
       originator: "pi",
     }),
-    HttpClientRequest.bodyUnsafeJson({
+    HttpClientRequest.bodyJsonUnsafe({
       model: modelId,
       store: false,
       stream: true,
@@ -203,7 +203,7 @@ const effortSample = (
     Stream.filter((line) => line.startsWith("data: ")),
     Stream.map((line) => ({
       tMs: Date.now() - startedAt,
-      event: Either.getOrElse(Either.try(() => JSON.parse(line.slice(6)) as Record<string, unknown>), () => ({} as Record<string, unknown>)),
+      event: Result.getOrElse(Result.try(() => JSON.parse(line.slice(6)) as Record<string, unknown>), () => ({} as Record<string, unknown>)),
     })),
     Stream.runCollect,
     Effect.map((chunk) => [...chunk]),
@@ -224,7 +224,7 @@ const effortSample = (
     reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? null,
   }
 })).pipe(
-  Effect.catchAllCause((cause) => Effect.succeed({
+  Effect.catchCause((cause) => Effect.succeed({
     effort,
     sample,
     outcome: `rejected: ${Cause.pretty(cause).slice(0, 400)}`,
@@ -241,7 +241,7 @@ const probeEfforts = (model: string, samples: number) => Effect.gen(function* ()
   const key = yield* auth.resolveKey(selection.provider)
   const credential = yield* auth.get(selection.provider)
   const accountId = Option.flatMap(credential, (value) =>
-    value.type === "oauth" ? Option.fromNullable(value.accountId) : Option.none())
+    value.type === "oauth" ? Option.fromNullishOr(value.accountId) : Option.none())
   const material = Option.all({ key, accountId })
   if (Option.isNone(material)) return yield* Effect.fail(`no ${selection.provider} oauth credential with an account id`)
   const efforts = Option.match(argValue("--efforts"), {

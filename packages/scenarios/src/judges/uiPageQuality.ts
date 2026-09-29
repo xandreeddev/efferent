@@ -4,7 +4,7 @@ import type { Judge } from "@xandreed/evals/model"
 
 export const UI_PAGE_QUALITY_RUBRIC_VERSION = "2.0.0"
 
-const Grades = Schema.parseJson(Schema.Struct({
+const Grades = Schema.fromJsonString(Schema.Struct({
   hierarchy: Schema.Number,
   informationArchitecture: Schema.Number,
   specificity: Schema.Number,
@@ -43,7 +43,7 @@ export const makeUiPageQualityJudge = <W>(options: {
     const request = yield* options.request(world)
     const response = yield* options.call(prompt(page, request))
     const start = response.lastIndexOf('{"hierarchy"')
-    const grades = yield* Schema.decodeUnknown(Grades)(start >= 0 ? response.slice(start).trim() : response.trim())
+    const grades = yield* Schema.decodeUnknownEffect(Grades)(start >= 0 ? response.slice(start).trim() : response.trim())
     const score = (grades.hierarchy + grades.informationArchitecture + grades.specificity + grades.designSystem + grades.composition + grades.interaction) / 30
     return { score, reason: `${grades.summary} — hierarchy ${grades.hierarchy}/5 · IA ${grades.informationArchitecture}/5 · specificity ${grades.specificity}/5 · design system ${grades.designSystem}/5 · composition ${grades.composition}/5 · interaction ${grades.interaction}/5` }
   }),

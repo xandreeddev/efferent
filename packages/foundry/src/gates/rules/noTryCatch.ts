@@ -1,7 +1,7 @@
 import * as ts from "typescript"
 import { RuleId } from "../../domain/Brands.js"
 import type { IdiomRule, RuleMatch } from "../idiomGate.js"
-import { walk } from "../astWalk.js"
+import { isEffectExport, walk } from "../astWalk.js"
 
 /** The `banTryCatch.ts` rule, generalized: errors are values, never control
  *  flow. (`Effect.try`/`Effect.tryPromise` never trip this — the WRAPPED api
@@ -10,8 +10,8 @@ export const noTryCatch: IdiomRule = {
   id: RuleId.make("effect/no-try-catch"),
   defaultSeverity: "error",
   description: "try/catch, throw, and .catch() are banned",
-  fixHint: "create errors with Effect.fail / Effect.die; handle them with Effect.catchAll / Effect.catchTag",
-  check: ({ sourceFile }) => {
+  fixHint: "create errors with Effect.fail / Effect.die; handle them with Effect.catch / Effect.catchTag",
+  check: ({ sourceFile, checker }) => {
     const matches: Array<RuleMatch> = []
     walk(sourceFile, (node) => {
       if (ts.isTryStatement(node)) {
@@ -23,7 +23,8 @@ export const noTryCatch: IdiomRule = {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "catch"
+        node.expression.name.text === "catch" &&
+        !isEffectExport(checker, node.expression)
       ) {
         matches.push({ node, message: ".catch() is banned" })
       }

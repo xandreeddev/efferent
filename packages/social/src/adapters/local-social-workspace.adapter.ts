@@ -1,14 +1,14 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Effect, Layer, Option, Schema, Struct } from "effect"
 import { decodeJsonLines, parseJsonWarn } from "@xandreed/core"
 import { LedgerEntry } from "../domain/ledger.entity.js"
 import type { LedgerError } from "../domain/ledger.entity.js"
 import { DEFAULT_POLICY, SocialPolicy } from "../domain/social-policy.entity.js"
 import { SocialWorkspace } from "../ports/social-workspace.port.js"
 
-const decodeEntry = Schema.decodeUnknownEither(LedgerEntry)
-const decodePartialPolicy = Schema.decodeUnknownEither(Schema.partial(SocialPolicy))
+const decodeEntry = Schema.decodeUnknownResult(LedgerEntry)
+const decodePartialPolicy = Schema.decodeUnknownResult(SocialPolicy.mapFields(Struct.map(Schema.optional)))
 const failure = (message: string): LedgerError => ({ _tag: "LedgerError", message })
 
 export const readLedger = (path: string): Effect.Effect<ReadonlyArray<LedgerEntry>> =>
@@ -37,12 +37,12 @@ export const loadPolicy = (path: string): Effect.Effect<SocialPolicy> =>
         onNone: () => DEFAULT_POLICY,
         onSome: (parsed) => {
           const overlay = decodePartialPolicy(parsed)
-          return overlay._tag === "Left"
+          return overlay._tag === "Failure"
             ? DEFAULT_POLICY
             : {
                 ...DEFAULT_POLICY,
                 ...Object.fromEntries(
-                  Object.entries(overlay.right).filter(([, value]) => value !== undefined),
+                  Object.entries(overlay.success).filter(([, value]) => value !== undefined),
                 ),
               }
         },

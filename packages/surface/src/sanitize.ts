@@ -2,7 +2,7 @@
  * Allowlist sanitizer for agent-authored (`render_ui`) HTML — the security
  * boundary between model output and the browser DOM. Single-pass tolerant
  * tokenizer (no DOM, no deps), re-authored from the proven previous-line
- * spec as a PURE state machine driven by `Effect.iterate` (no `let`, no
+ * spec as a PURE state machine driven by `iterate` below (no `let`, no
  * loop statements — the same fold discipline as foundry's forge).
  *
  * Everything not explicitly allowed is dropped:
@@ -297,6 +297,14 @@ interface WalkState {
 const TAG_CLOSE_RE = /^<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>/
 const TAG_OPEN_RE = /^<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/
 
+/** Applies `body` from `initial` while `while` holds. Each step suspends, so
+ *  the fiber loop (not the JS stack) carries the fold however long the input. */
+const iterate = <S>(initial: S, options: { readonly while: (state: S) => boolean; readonly body: (state: S) => S }): S => {
+  const fold = (state: S): Effect.Effect<S> =>
+    options.while(state) ? Effect.suspend(() => fold(options.body(state))) : Effect.succeed(state)
+  return Effect.runSync(fold(initial))
+}
+
 const escText = (text: string): string => text.replace(/</g, "&lt;").replace(/>/g, "&gt;")
 
 /** Index AFTER a drop-with-contents element's close (depth-counted for
@@ -309,24 +317,21 @@ const skipDropped = (input: string, from: number, name: string): number => {
     const gt = input.indexOf(">", close)
     return gt === -1 ? input.length : gt + 1
   }
-  const end = Effect.runSync(
-    Effect.iterate(
-      { i: from, depth: 1 },
-      {
-        while: (st) => st.depth > 0 && st.i < input.length,
-        body: (st) =>
-          Effect.sync(() => {
-            const nextOpen = lower.indexOf(`<${name}`, st.i)
-            const nextClose = lower.indexOf(`</${name}`, st.i)
-            if (nextClose === -1) return { i: input.length, depth: 0 }
-            if (nextOpen !== -1 && nextOpen < nextClose) {
-              return { i: nextOpen + name.length + 1, depth: st.depth + 1 }
-            }
-            const gt = input.indexOf(">", nextClose)
-            return { i: gt === -1 ? input.length : gt + 1, depth: st.depth - 1 }
-          }),
+  const end = iterate(
+    { i: from, depth: 1 },
+    {
+      while: (st) => st.depth > 0 && st.i < input.length,
+      body: (st) => {
+        const nextOpen = lower.indexOf(`<${name}`, st.i)
+        const nextClose = lower.indexOf(`</${name}`, st.i)
+        if (nextClose === -1) return { i: input.length, depth: 0 }
+        if (nextOpen !== -1 && nextOpen < nextClose) {
+          return { i: nextOpen + name.length + 1, depth: st.depth + 1 }
+        }
+        const gt = input.indexOf(">", nextClose)
+        return { i: gt === -1 ? input.length : gt + 1, depth: st.depth - 1 }
       },
-    ),
+    },
   )
   return end.i
 }
@@ -422,19 +427,17 @@ export const sanitizeHtml = (input: string, options: SanitizeOptions = {}): Sani
   const truncated = input.length > SANITIZE_MAX_BYTES
   const src = truncated ? input.slice(0, SANITIZE_MAX_BYTES) : input
 
-  const final = Effect.runSync(
-    Effect.iterate(
-      {
-        i: 0,
-        out: "",
-        stack: [],
-        dropped: truncated ? ["(truncated: input over 256KB)"] : [],
-      } as WalkState,
-      {
-        while: (st) => st.i < src.length,
-        body: (st) => Effect.sync(() => step(src, st, alpine)),
-      },
-    ),
+  const final = iterate<WalkState>(
+    {
+      i: 0,
+      out: "",
+      stack: [],
+      dropped: truncated ? ["(truncated: input over 256KB)"] : [],
+    },
+    {
+      while: (st) => st.i < src.length,
+      body: (st) => step(src, st, alpine),
+    },
   )
 
   // Close anything left open so the fragment can't swallow siblings.

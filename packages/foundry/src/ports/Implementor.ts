@@ -28,11 +28,8 @@ export interface ImplementReceipt {
  * a `claude -p` subprocess, or a deterministic script (tests/CI). Foundry
  * never talks to an LLM directly; this port is the seam.
  */
-export class Implementor extends Context.Tag("@xandreed/foundry/Implementor")<
-  Implementor,
-  {
+export class Implementor extends Context.Service<Implementor, {
     readonly implement: (
       input: ImplementInput,
     ) => Effect.Effect<ImplementReceipt, ImplementorError>
-  }
->() {}
+  }>()("@xandreed/foundry/Implementor") {}

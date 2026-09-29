@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, FiberRef, Option, Ref } from "effect"
+import { Effect, Option, Ref } from "effect"
 import { CurrentPromptProvenance, PromptId } from "@xandreed/core"
 import { defineDecisionPrompt, evaluateDecision, rawDecision, renderDecision, validateAnswers } from "./decision.entity.functions.js"
 import type { EvaluationWire } from "./evaluation-model.adapter.js"
@@ -56,24 +56,24 @@ describe("decision prompts", () => {
       variants: { baseline: { shared: { tone: { criteria: { rude: "Rude." } } } }, extra: { shared: { other: { instructions: "Another?" } } } },
     })
     const [choice, question] = await Effect.runPromise(Effect.all([
-      Effect.either(renderDecision(adding, undefined)),
-      Effect.either(renderDecision(adding, undefined, { model: "unknown", variant: "extra" })),
+      Effect.result(renderDecision(adding, undefined)),
+      Effect.result(renderDecision(adding, undefined, { model: "unknown", variant: "extra" })),
     ]))
-    expect(choice).toMatchObject({ _tag: "Left", left: { code: "variant.invalid" } })
-    expect(question).toMatchObject({ _tag: "Left", left: { code: "variant.invalid" } })
+    expect(choice).toMatchObject({ _tag: "Failure", failure: { code: "variant.invalid" } })
+    expect(question).toMatchObject({ _tag: "Failure", failure: { code: "variant.invalid" } })
   })
 
   test("answers must answer every question asked, nothing else, with offered choices only", async () => {
     const asked = review.questions({ reply: "" })
-    const check = (raw: unknown) => Effect.runPromise(Effect.either(validateAnswers(asked, raw)))
+    const check = (raw: unknown) => Effect.runPromise(Effect.result(validateAnswers(asked, raw)))
     expect(await check({ grounded: { type: "boolean", probability: 0.9 }, tone: { type: "choice", choice: "warm", confidence: 0.7 } })).toMatchObject({
-      _tag: "Right", right: { grounded: { _tag: "boolean", probability: 0.9 }, tone: { _tag: "choice", choice: "warm", confidence: Option.some(0.7) } },
+      _tag: "Success", success: { grounded: { _tag: "boolean", probability: 0.9 }, tone: { _tag: "choice", choice: "warm", confidence: Option.some(0.7) } },
     })
-    expect(await check({ grounded: { type: "boolean", probability: 0.9 }, tone: { type: "choice", choice: "angry" } })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
-    expect(await check({ grounded: { type: "boolean", probability: 0.9 } })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
-    expect(await check({ grounded: { type: "boolean", probability: 0.9 }, tone: { type: "choice", choice: "warm" }, extra: { type: "boolean", probability: 1 } })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
-    expect(await check({ grounded: { type: "choice", choice: "neutral" }, tone: { type: "choice", choice: "warm" } })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
-    expect(await check({ grounded: { type: "boolean", probability: 1.5 }, tone: { type: "choice", choice: "warm" } })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
+    expect(await check({ grounded: { type: "boolean", probability: 0.9 }, tone: { type: "choice", choice: "angry" } })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
+    expect(await check({ grounded: { type: "boolean", probability: 0.9 } })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
+    expect(await check({ grounded: { type: "boolean", probability: 0.9 }, tone: { type: "choice", choice: "warm" }, extra: { type: "boolean", probability: 1 } })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
+    expect(await check({ grounded: { type: "choice", choice: "neutral" }, tone: { type: "choice", choice: "warm" } })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
+    expect(await check({ grounded: { type: "boolean", probability: 1.5 }, tone: { type: "choice", choice: "warm" } })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
   })
 
   test("the evaluation model sends the rendered decision, under its provenance, and checks what comes back", async () => {
@@ -89,9 +89,9 @@ describe("decision prompts", () => {
       })
       const observed = EvaluationModel.of({
         model: model.model,
-        evaluate: (rendered) => FiberRef.get(CurrentPromptProvenance).pipe(
+        evaluate: (rendered) => Effect.service(CurrentPromptProvenance).pipe(
           Effect.flatMap((current) => Ref.set(provenance, Option.map(current, (value) => value.hash))),
-          Effect.zipRight(model.evaluate(rendered)),
+          Effect.andThen(model.evaluate(rendered)),
         ),
       })
       const answers = yield* evaluateDecision(review, { reply: "It opens at nine." }).pipe(Effect.provideService(EvaluationModel, observed))
@@ -108,15 +108,15 @@ describe("decision prompts", () => {
     const decision = rawDecision({ id: "test.raw", version: "1", family: "test" }, "state", {
       tone: { type: "choice", instructions: "Which tone?", criteria: { neutral: "Plain." } },
     })
-    const evaluate = (options: Partial<Parameters<typeof makeEvaluationModel>[0]>) => Effect.runPromise(Effect.either(Effect.gen(function* () {
+    const evaluate = (options: Partial<Parameters<typeof makeEvaluationModel>[0]>) => Effect.runPromise(Effect.result(Effect.gen(function* () {
       const model = yield* makeEvaluationModel({ model: "eval/judge", transport: () => Promise.resolve({ answers: { tone: { type: "choice", choice: "rude" } } }), ...options })
       return yield* model.evaluate(yield* decision)
     })))
-    expect(await evaluate({})).toMatchObject({ _tag: "Left", left: { _tag: "EvaluationError", code: "invalid" } })
-    expect(await evaluate({ timeoutMs: 5, transport: () => new Promise(() => undefined) })).toMatchObject({ _tag: "Left", left: { code: "timeout" } })
-    expect(await evaluate({ maxInputBytes: 10 })).toMatchObject({ _tag: "Left", left: { code: "budget" } })
-    expect(await evaluate({ transport: () => Promise.reject(new Error("down")) })).toMatchObject({ _tag: "Left", left: { code: "unavailable" } })
-    expect(await evaluate({ timeoutMs: 0 })).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
+    expect(await evaluate({})).toMatchObject({ _tag: "Failure", failure: { _tag: "EvaluationError", code: "invalid" } })
+    expect(await evaluate({ timeoutMs: 5, transport: () => new Promise(() => undefined) })).toMatchObject({ _tag: "Failure", failure: { code: "timeout" } })
+    expect(await evaluate({ maxInputBytes: 10 })).toMatchObject({ _tag: "Failure", failure: { code: "budget" } })
+    expect(await evaluate({ transport: () => Promise.reject(new Error("down")) })).toMatchObject({ _tag: "Failure", failure: { code: "unavailable" } })
+    expect(await evaluate({ timeoutMs: 0 })).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
   })
 
   test("a scripted model is checked like any other", async () => {
@@ -124,7 +124,7 @@ describe("decision prompts", () => {
     const answers = await Effect.runPromise(evaluateDecision(review, { reply: "hi" }).pipe(Effect.provideService(EvaluationModel, scripted)))
     expect(answers.tone).toEqual({ _tag: "choice", choice: "warm", confidence: Option.none() })
     const offKey = scriptedEvaluationModel(() => ({ grounded: { type: "boolean", probability: 1 }, tone: { type: "choice", choice: "cold" } }))
-    const exit = await Effect.runPromise(Effect.either(evaluateDecision(review, { reply: "hi" }).pipe(Effect.provideService(EvaluationModel, offKey))))
-    expect(exit).toMatchObject({ _tag: "Left", left: { code: "invalid" } })
+    const exit = await Effect.runPromise(Effect.result(evaluateDecision(review, { reply: "hi" }).pipe(Effect.provideService(EvaluationModel, offKey))))
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } })
   })
 })

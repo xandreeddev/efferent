@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Cause, Duration, Effect, Layer, Option } from "effect"
 import { CurrentModelCallPolicy, parseModelSelection, toAgentFailure } from "@xandreed/core"
 import { runLoop } from "@xandreed/plugin-agent-loop"
@@ -196,7 +196,7 @@ Score STRICTLY as JSON on one line, no other text:
       Effect.orElseSucceed(() => null),
     )
   }),
-  Effect.catchAll(() => Effect.succeed(null)),
+  Effect.catch(() => Effect.succeed(null)),
 )
 
 const runTrial = (
@@ -236,10 +236,10 @@ const runTrial = (
       }).pipe(
         Effect.provide(socialToolkit.toLayer(handlers)),
         Effect.provideService(LanguageModel.LanguageModel, model),
-        Effect.locally(CurrentModelCallPolicy, Option.some({ effort: candidate.effort, maxOutputTokens: 2000 })),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: candidate.effort, maxOutputTokens: 2000 })),
         Effect.timeout(Duration.millis(turnTimeoutMs)),
         Effect.map(Option.some),
-        Effect.catchAll((error) => Effect.logWarning(`social-matrix turn gave up: ${String(error)}`).pipe(Effect.as(Option.none<{ readonly finalText: string }>()))),
+        Effect.catch((error) => Effect.logWarning(`social-matrix turn gave up: ${String(error)}`).pipe(Effect.as(Option.none<{ readonly finalText: string }>()))),
       )
       const turnMs = Date.now() - startedAt
 
@@ -273,7 +273,7 @@ const runTrial = (
     (dir) => Effect.try({
       try: () => rmSync(dir, { recursive: true, force: true }),
       catch: (error) => error,
-    }).pipe(Effect.catchAll((error) => Effect.logWarning(`social-matrix could not remove ${dir}: ${String(error)}`))),
+    }).pipe(Effect.catch((error) => Effect.logWarning(`social-matrix could not remove ${dir}: ${String(error)}`))),
   )
 
 const failedTrial = (candidate: Candidate, task: MatrixTask, sample: number, error: unknown): Trial => {

@@ -20,7 +20,7 @@ export const runHeadlessRefine = (
     const publish = (event: SmithEvent) =>
       Queue.offer(queue, Option.some(event)).pipe(Effect.asVoid)
 
-    const printer = yield* Effect.fork(
+    const printer = yield* Effect.forkChild(
       Effect.gen(function* () {
         const next = yield* Queue.take(queue)
         return Option.match(next, {
@@ -53,7 +53,7 @@ export const runHeadlessRefine = (
       // stdout carries the ARTIFACT; the event narration rides stderr.
       console.log(encodeSpecDocText(final))
       return 0
-    }).pipe(Effect.catchAll(() => Effect.succeed(2)))
+    }).pipe(Effect.catch(() => Effect.succeed(2)))
 
     yield* Queue.offer(queue, Option.none())
     yield* Fiber.join(printer)

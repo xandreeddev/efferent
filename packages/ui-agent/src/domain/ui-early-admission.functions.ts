@@ -1,4 +1,4 @@
-import { Either, Option, Schema } from "effect"
+import { Result, Option, Schema } from "effect"
 import { PageManifestInput, UiBlock } from "./ui-page.entity.js"
 
 /**
@@ -47,11 +47,11 @@ const scanValueEnd = (source: string, from: number): Option.Option<number> =>
     { depth: 0, inString: false, escaped: false, end: Option.none() },
   ).end
 
-const decodePage = Schema.decodeUnknownEither(PageManifestInput)
-const decodeBlock = Schema.decodeUnknownEither(UiBlock)
+const decodePage = Schema.decodeUnknownResult(PageManifestInput)
+const decodeBlock = Schema.decodeUnknownResult(UiBlock)
 
 const parseJson = (source: string): Option.Option<unknown> =>
-  Option.getRight(Either.try(() => JSON.parse(source) as unknown))
+  Option.getSuccess(Result.try(() => JSON.parse(source) as unknown))
 
 /** The start (index of the opening brace/bracket) of the JSON value that
  * follows `"<key>"\s*:` at or after `from` — none if the key or its value
@@ -68,14 +68,14 @@ export const extractEarlyStart = (argsPrefix: string): Option.Option<EarlyStart>
     const pageStart = yield* valueStart(argsPrefix, "page", "{", 0)
     const pageEnd = yield* scanValueEnd(argsPrefix, pageStart)
     const page = yield* parseJson(argsPrefix.slice(pageStart, pageStart + pageEnd)).pipe(
-      Option.flatMap((value) => Option.getRight(decodePage(value))),
+      Option.flatMap((value) => Option.getSuccess(decodePage(value))),
     )
     const blocksStart = yield* valueStart(argsPrefix, "criticalBlocks", "[", pageStart + pageEnd)
     const firstElementAt = argsPrefix.indexOf("{", blocksStart + 1)
     if (firstElementAt < 0) return yield* Option.none()
     const elementEnd = yield* scanValueEnd(argsPrefix, firstElementAt)
     const firstBlock = yield* parseJson(argsPrefix.slice(firstElementAt, firstElementAt + elementEnd)).pipe(
-      Option.flatMap((value) => Option.getRight(decodeBlock(value))),
+      Option.flatMap((value) => Option.getSuccess(decodeBlock(value))),
     )
     return { page, firstBlock }
   })
@@ -94,7 +94,7 @@ const collectBlocks = (source: string, from: number, acc: ReadonlyArray<UiBlock>
   return Option.match(scanValueEnd(source, at), {
     onNone: () => acc,
     onSome: (end) => Option.match(
-      parseJson(source.slice(at, at + end)).pipe(Option.flatMap((value) => Option.getRight(decodeBlock(value)))),
+      parseJson(source.slice(at, at + end)).pipe(Option.flatMap((value) => Option.getSuccess(decodeBlock(value)))),
       {
         onNone: () => acc,
         onSome: (block) => collectBlocks(source, at + end, [...acc, block]),

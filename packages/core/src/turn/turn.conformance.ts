@@ -17,7 +17,7 @@ const conversation = ConversationId.make("00000000-0000-4000-8000-0000000c0f7e")
 const fail = (check: string) => (message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check)(message)
 
-type Journal = Effect.Effect.Success<typeof inMemoryJournal>
+type Journal = Effect.Success<typeof inMemoryJournal>
 const names = (journal: Journal, runId: string) => Ref.get(journal.stored).pipe(
   Effect.map((all) => all.filter((event) => event.runId === runId).map((event) => event.name)),
 )
@@ -71,7 +71,7 @@ export const turnConformance = (
         const journaled = yield* Ref.make(false)
         yield* turn.events.subscribe(
           (event) => event._tag === "host" && event.name === "conformance.probe" ? Option.some(event) : Option.none(),
-          () => turn.flush.pipe(Effect.zipRight(names(journal, "run-1")), Effect.flatMap((stored) => Ref.set(journaled, stored.includes("conformance.probe")))),
+          () => turn.flush.pipe(Effect.andThen(names(journal, "run-1")), Effect.flatMap((stored) => Ref.set(journaled, stored.includes("conformance.probe")))),
         )
         yield* turn.events.publish({ _tag: "host", name: "conformance.probe", data: {} })
         return yield* reply((yield* Ref.get(journaled)) ? "journaled first" : "not journaled")
@@ -79,18 +79,18 @@ export const turnConformance = (
       yield* expect("journal-first", Option.contains(outcome.reply, "journaled first"), "a subscriber ran before the journal stored the event it received")
     })),
     check("the user's message is recorded before the matcher reads the history", "message-first", (turns, journal, history) => Effect.gen(function* () {
-      yield* turns.turn(input(journal, "run-1"), (turn) => turn.tools.match(turn.userMessage).pipe(Effect.zipRight(reply("matched"))))
+      yield* turns.turn(input(journal, "run-1"), (turn) => turn.tools.match(turn.userMessage).pipe(Effect.andThen(reply("matched"))))
       const seen = yield* Ref.get(history)
-      const last = Option.fromNullable(seen.at(-1)?.at(-1))
+      const last = Option.fromNullishOr(seen.at(-1)?.at(-1))
       yield* expect("message-first", seen.length === 1, `the matcher was consulted ${seen.length} times, not once`)
       yield* expect("message-first", Option.exists(last, (message) => message.role === "user" && JSON.stringify(message.content).includes("the message of run-1")),
         "the matcher's history does not end with the turn's own message")
     })),
     check("turn.ended is recorded exactly once, on success, failure and interrupt", "ended-once", (turns, journal) => Effect.gen(function* () {
       yield* turns.turn(input(journal, "run-1"), () => reply("done"))
-      yield* Effect.either(turns.turn(input(journal, "run-2"), () => Effect.fail(new HarnessError({ code: "conformance.host", message: "the host failed" }))))
+      yield* Effect.result(turns.turn(input(journal, "run-2"), () => Effect.fail(new HarnessError({ code: "conformance.host", message: "the host failed" }))))
       const started = yield* Deferred.make<void>()
-      const fiber = yield* Effect.fork(turns.turn(input(journal, "run-3"), () => Deferred.succeed(started, undefined).pipe(Effect.zipRight(Effect.never))))
+      const fiber = yield* Effect.forkChild(turns.turn(input(journal, "run-3"), () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))))
       yield* Deferred.await(started)
       yield* Fiber.interrupt(fiber)
       const ended = (yield* Ref.get(journal.stored)).filter((event: EventBody) => event.name === "turn.ended")
@@ -99,8 +99,8 @@ export const turnConformance = (
     })),
     check("tasks are joined before turn.ended", "tasks-joined", (turns, journal) => Effect.gen(function* () {
       yield* turns.turn(input(journal, "run-1"), (turn) => turn.tasks.fork("late", Effect.sleep("10 millis").pipe(
-        Effect.zipRight(turn.events.publish({ _tag: "host", name: "conformance.task", data: {} })),
-      )).pipe(Effect.zipRight(reply("forked"))))
+        Effect.andThen(turn.events.publish({ _tag: "host", name: "conformance.task", data: {} })),
+      )).pipe(Effect.andThen(reply("forked"))))
       const stored = yield* names(journal, "run-1")
       yield* expect("tasks-joined", stored.includes("conformance.task") && stored.indexOf("conformance.task") < stored.indexOf("turn.ended"),
         `the task's event came ${stored.includes("conformance.task") ? "after turn.ended" : "never"}`)

@@ -1,4 +1,4 @@
-import { Tool, Toolkit } from "@effect/ai"
+import { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Effect, Option, Ref, Schema } from "effect"
 import { snapshotWorkspace } from "@xandreed/foundry"
 import { DEFAULT_SPEC_LIMITS, encodeSpecDocText, Failure, FileSystem, SpecDoc, specSlug, uniqueSlug } from "@xandreed/core"
@@ -33,23 +33,23 @@ const RED_FIRST_TIMEOUT_MS = 30_000
 export const ProposeSpec = Tool.make("propose_spec", {
   description:
     "Propose the spec draft — every call REPLACES the whole draft (same file, same slug, for the entire session). goal: one imperative paragraph. acceptance: verifiable criteria — machine-checkable ones MUST have a matching checks entry. checks: {name, command} pairs where the command is ONE line of shell that exits 0 iff the criterion holds, and must FAIL on the workspace as it is NOW (red-first — ENFORCED: the checks run when you propose, and any that already pass are rejected). Never write a check describing the CURRENT state ('no X yet', 'file absent') — that is a precondition, not acceptance; state it as a constraint instead. constraints: what must not change (unattended assumptions go here, prefixed 'assumption:'). nonGoals: explicit scope fences. Returns {slug, path, status: 'draft'} — only the human can lock it.",
-  parameters: {
-    goal: Schema.String.annotations({ description: "One imperative paragraph." }),
-    acceptance: Schema.Array(Schema.String).annotations({
+  parameters: Schema.Struct({
+    goal: Schema.String.annotate({ description: "One imperative paragraph." }),
+    acceptance: Schema.Array(Schema.String).annotate({
       description: "Verifiable acceptance criteria.",
     }),
-    constraints: Schema.optional(Schema.Array(Schema.String)),
-    nonGoals: Schema.optional(Schema.Array(Schema.String)),
-    checks: Schema.optional(
+    constraints: Schema.optionalKey(Schema.Array(Schema.String)),
+    nonGoals: Schema.optionalKey(Schema.Array(Schema.String)),
+    checks: Schema.optionalKey(
       Schema.Array(Schema.Struct({ name: Schema.String, command: Schema.String })),
     ),
-    maxAttempts: Schema.optional(
-      Schema.Number.annotations({ description: "Forge attempts, 1..10 (default 3)." }),
+    maxAttempts: Schema.optionalKey(
+      Schema.Finite.annotate({ description: "Forge attempts, 1..10 (default 3)." }),
     ),
-    budgetMinutes: Schema.optional(
-      Schema.Number.annotations({ description: "Wall-clock budget (default 15)." }),
+    budgetMinutes: Schema.optionalKey(
+      Schema.Finite.annotate({ description: "Wall-clock budget (default 15)." }),
     ),
-  },
+  }),
   success: Schema.Struct({
     slug: Schema.String,
     path: Schema.String,
@@ -79,7 +79,7 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
   Effect.gen(function* () {
     const coding = yield* makeSmithCodingHandlers(cwd)
     const fs = yield* FileSystem
-    const slugRef = yield* Ref.make(Option.fromNullable(options.slug))
+    const slugRef = yield* Ref.make(Option.fromNullishOr(options.slug))
 
     const mintSlug = (goal: string): Effect.Effect<SpecSlug> =>
       Effect.gen(function* () {
@@ -163,12 +163,12 @@ export const makeSpecRefinerHandlers = (cwd: string, options: SpecRefinerOptions
             },
             gates: {},
           }
-          const doc = yield* Schema.decodeUnknown(SpecDoc)(candidate).pipe(
+          const doc = yield* Schema.decodeUnknownEffect(SpecDoc)(candidate, { reportInput: true }).pipe(
             Effect.mapError((error) => ({ error: "InvalidSpec", message: String(error) })),
           )
           const path = `${cwd}/${SPECS_DIR}/${slug}.md`
           const dir = `${cwd}/${SPECS_DIR}`
-          yield* fs.mkdir(dir).pipe(Effect.catchAll(() => Effect.void))
+          yield* fs.mkdir(dir).pipe(Effect.catch(() => Effect.void))
           yield* fs.write(path, encodeSpecDocText(doc)).pipe(
             Effect.mapError((error) => ({ error: "SpecWriteFailed", message: String(error) })),
           )

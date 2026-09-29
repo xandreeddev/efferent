@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/sdk",
-  "version": "0.6.0-next.2",
+  "version": "0.7.0-next.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@xandreed/core": "workspace:*",
-    "effect": "3.21.4",
+    "effect": "4.0.0-rc.118",
     "@xandreed/runtime": "workspace:*",
     "@xandreed/plugin-memory": "workspace:*",
     "@xandreed/plugin-session-sqlite": "workspace:*"
@@ -19,7 +19,6 @@
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",
-    "@effect/ai": "0.35.0",
     "@xandreed/plugin-memory-digest": "workspace:*"
   }
 }

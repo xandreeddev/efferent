@@ -1,15 +1,15 @@
 import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Either, Layer, Schema } from "effect"
+import { Effect, Result, Layer, Schema } from "effect"
 import { CORE_UI_COMPONENTS, UiComponentCatalog, UiComponentDefinition, admitComponent, normalizeComponentDefinition, validateComponentDefinition } from "@xandreed/ui-agent"
 import type { UiComponentAdmissionType, UiComponentDefinitionType, UiComponentUsageType } from "@xandreed/ui-agent"
 
-const decodeDefinition = Schema.decodeUnknownEither(Schema.parseJson(UiComponentDefinition))
+const decodeDefinition = Schema.decodeUnknownResult(Schema.fromJsonString(UiComponentDefinition))
 
-const decodeRows = (rows: ReadonlyArray<{ readonly definition: string }>): ReadonlyArray<UiComponentDefinitionType> => rows.flatMap((row) => Either.match(decodeDefinition(row.definition), {
-  onLeft: () => [],
-  onRight: (definition) => [definition],
+const decodeRows = (rows: ReadonlyArray<{ readonly definition: string }>): ReadonlyArray<UiComponentDefinitionType> => rows.flatMap((row) => Result.match(decodeDefinition(row.definition), {
+  onFailure: () => [],
+  onSuccess: (definition) => [definition],
 }))
 
 const uniqueAdmission = (
@@ -21,7 +21,7 @@ const uniqueAdmission = (
   return { ...admission, canonicalId: id, definition: { ...admission.definition, id } }
 }
 
-export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
+export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.effect(
   UiComponentCatalog,
   Effect.gen(function* () {
     const db = yield* Effect.try({
@@ -52,7 +52,7 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
       try: () => db.close(),
       catch: (error) => error,
     }).pipe(
-      Effect.catchAll((error) => Effect.logWarning(`UI component database cleanup failed: ${String(error)}`)),
+      Effect.catch((error) => Effect.logWarning(`UI component database cleanup failed: ${String(error)}`)),
     ))
 
     const workspace = Effect.try({
@@ -63,7 +63,7 @@ export const SqliteUiComponentCatalogLive = (dbPath: string) => Layer.scoped(
       // list on the admission path, one bad handle turned every component
       // block into "not registered" and voided entire sessions (#118). The
       // core catalog is static — serve it and keep the corruption observable.
-      Effect.catchAll((message) => Effect.logWarning(`${message} — serving CORE components only`).pipe(Effect.as([] as ReadonlyArray<UiComponentDefinitionType>))),
+      Effect.catch((message) => Effect.logWarning(`${message} — serving CORE components only`).pipe(Effect.as([] as ReadonlyArray<UiComponentDefinitionType>))),
     )
     const list = workspace.pipe(Effect.map((definitions) => [...CORE_UI_COMPONENTS.map(normalizeComponentDefinition), ...definitions]))
 

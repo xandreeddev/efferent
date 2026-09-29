@@ -1,6 +1,6 @@
 # @xandreed/ai
 
-Versioned prompts on @effect/ai. Runtime dependencies are Effect, @effect/ai
+Versioned prompts on effect/ai. Runtime dependencies are Effect (effect/ai included)
 and @xandreed/core only: no provider SDKs, no host imports.
 
 - Model prompts (`prompt.entity.ts` + `.functions.ts`): `definePrompt` gives

@@ -1,15 +1,14 @@
 {
   "name": "@xandreed/core",
-  "version": "0.6.0-next.2",
+  "version": "0.7.0-next.0",
   "private": true,
   "type": "module",
-  "description": "The agent kernel of the new line: entities, ports, the provider-agnostic agent loop, and the session chassis \u2014 pure Effect, no IO, no provider SDKs.",
+  "description": "The agent kernel of the new line: entities, ports, the provider-agnostic agent loop, and the session chassis — pure Effect, no IO, no provider SDKs.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@effect/ai": "0.35.0",
-    "effect": "3.21.4"
+    "effect": "4.0.0-rc.118"
   }
 }

@@ -26,21 +26,21 @@ const log = (big: string): ReadonlyArray<LogEntry> => [
 const policy = windowPolicy(config)
 const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: "run-2" })
 const maintain = (entries: ReadonlyArray<LogEntry>, budgetTokens: number, phase: "turn-start" | "step" = "turn-start") =>
-  Effect.runPromise(Effect.either(policy.maintain({ entries, signal: { phase, lastUsage: Option.none(), budgetTokens, views }, turn: 2, runId: "run-2", render })))
+  Effect.runPromise(Effect.result(policy.maintain({ entries, signal: { phase, lastUsage: Option.none(), budgetTokens, views }, turn: 2, runId: "run-2", render })))
 
 describe("window memory policy", () => {
   test("at turn start, earlier tool results switch to their compact views", async () => {
     const decided = await maintain(log("x".repeat(500)), 100_000)
-    expect(decided).toMatchObject({ _tag: "Right", right: { actions: [{ _tag: "CompactViews", entries: ["run-1:2"], texts: ["(compact 500)"] }], digest: [] } })
+    expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "CompactViews", entries: ["run-1:2"], texts: ["(compact 500)"] }], digest: [] } })
   })
   test("under pressure it spills the current turn's largest result, then drops old turns, then fails", async () => {
     const entries = log("x".repeat(3_000))
     const tokens = estimateMessageTokens(render(entries))
     const spilled = await maintain(entries, tokens - 500, "step")
-    expect(spilled).toMatchObject({ _tag: "Right", right: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
+    expect(spilled).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
     const dropped = await maintain(entries, 400, "step")
-    expect(dropped).toMatchObject({ _tag: "Right", right: { actions: [{ _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
+    expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
     const impossible = await maintain(entries, 5, "step")
-    expect(impossible).toMatchObject({ _tag: "Left", left: { code: "context.budget" } })
+    expect(impossible).toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
   })
 })

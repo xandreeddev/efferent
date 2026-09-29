@@ -3,7 +3,7 @@ import { DesignTokens, UiHost } from "@xandreed/ui-agent"
 import type { UiActionResult, UiCapability, UiRequestContext } from "@xandreed/ui-agent"
 import tokensJson from "../../design-system.json"
 
-const decodeEmpty = Schema.decodeUnknown(Schema.Record({ key: Schema.String, value: Schema.String }))
+const decodeEmpty = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.String))
 
 const capability = (
   run: (input: unknown, context: UiRequestContext) => Effect.Effect<UiActionResult, string>,
@@ -15,7 +15,7 @@ const capability = (
 
 export const DefaultUiHostLive = Layer.effect(
   UiHost,
-  Schema.decodeUnknown(DesignTokens)(tokensJson).pipe(
+  Schema.decodeUnknownEffect(DesignTokens)(tokensJson, { reportInput: true }).pipe(
     Effect.mapError((issue) => new Error(`invalid Canvas design tokens: ${String(issue)}`)),
     Effect.map((tokens) => ({
       tokens,

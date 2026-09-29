@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { CORE_UI_COMPONENTS, architectureReference, applicationReference, landingReference, normalizeComponentDefinition } from "@xandreed/ui-agent"
 import { compileDesignTokenCss, compileThemeCss } from "./designTokens.js"
 import { renderUiPage } from "./uiCompiler.js"
-import { Either } from "effect"
+import { Result } from "effect"
 
 const context = {
   pageId: "reference",
@@ -33,13 +33,13 @@ describe("the trusted structured UI compiler", () => {
       colors: { page: "#000000", surface: "#111111", raised: "#222222", line: "#333333", text: "#ffffff", muted: "#aaaaaa", accent: "#ff7700", success: "#00aa66", warning: "#ddaa00", danger: "#dd3344" },
       typography: { display: "geometric", body: "system", mono: "mono", scale: "standard" }, density: "standard", radius: "soft", shadow: "subtle", motion: "standard",
     })
-    expect(Either.isRight(valid)).toBe(true)
+    expect(Result.isSuccess(valid)).toBe(true)
     const invalid = compileDesignTokenCss({
       schemaVersion: 1, id: "test-theme", version: "1.0.0",
       colors: { page: "url(https://evil.example)", surface: "#111111", raised: "#222222", line: "#333333", text: "#ffffff", muted: "#aaaaaa", accent: "#ff7700", success: "#00aa66", warning: "#ddaa00", danger: "#dd3344" },
       typography: { display: "geometric", body: "system", mono: "mono", scale: "standard" }, density: "standard", radius: "soft", shadow: "subtle", motion: "standard",
     })
-    expect(Either.isLeft(invalid)).toBe(true)
+    expect(Result.isFailure(invalid)).toBe(true)
   })
 
   test("renders a progressive component graph and scoped semantic theme", () => {
@@ -62,7 +62,7 @@ describe("the trusted structured UI compiler", () => {
       mode: "light", accent: "#356dd0", neutral: "#667085", positive: "#228b55", warning: "#b7791f", danger: "#c53030",
       contrast: "high", surface: "flat", border: "strong", radius: "sharp", shadow: "none", typography: "editorial", typeScale: "spacious", density: "comfortable", motion: "reduced",
     }, '[data-ui-theme="theme-1234"]')
-    expect(Either.isRight(theme)).toBe(true)
-    expect(Either.getOrElse(theme, () => "")).toContain("--ui-border-width:2px")
+    expect(Result.isSuccess(theme)).toBe(true)
+    expect(Result.getOrElse(theme, () => "")).toContain("--ui-border-width:2px")
   })
 })

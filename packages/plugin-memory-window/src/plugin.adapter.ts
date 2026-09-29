@@ -1,4 +1,4 @@
-import { Tool } from "@effect/ai"
+import { Tool } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   ConversationMemory,
@@ -24,18 +24,18 @@ import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 export const MemoryWindowConfig = Schema.Struct({
   /** At turn start, show earlier turns' tool results through their compact views. */
   compactPreviousTurn: Schema.Boolean,
-  turnContext: Schema.Literal("current", "all"),
+  turnContext: Schema.Literals(["current", "all"]),
   replies: Schema.Boolean,
   /** Results shorter than this are never spilled. */
-  spillMinChars: Schema.Int.pipe(Schema.positive()),
-  previewChars: Schema.Int.pipe(Schema.positive()),
-  ledgerTurnChars: Schema.Int.pipe(Schema.positive()),
+  spillMinChars: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  previewChars: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  ledgerTurnChars: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
   /** Digest a result on write once its view reaches this many characters (0: never). */
-  digestOnWriteChars: Schema.Int.pipe(Schema.nonNegative()),
+  digestOnWriteChars: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Show recorded digests in place of the results they digest. */
   digests: Schema.Boolean,
-  media: Schema.Literal("none", "inline"),
-  maxImages: Schema.Int.pipe(Schema.nonNegative()),
+  media: Schema.Literals(["none", "inline"]),
+  maxImages: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 export const memoryWindowDefaults: MemoryWindowConfig = {
@@ -89,7 +89,7 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
 
 const RecallContext = Tool.make("recall_context", {
   description: "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
-  parameters: { locator: Schema.String },
+  parameters: Schema.Struct({ locator: Schema.String }),
   success: Schema.String,
   failure: Failure,
   failureMode: "return",
@@ -122,7 +122,7 @@ export const recallContribution = defineContributions({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-memory-window", version: "0.7.0-next.0", scope: "runtime",
   config: MemoryWindowConfig, defaults: memoryWindowDefaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],

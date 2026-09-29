@@ -117,7 +117,7 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
         // Local overrides global: read in order, later files win.
         const files = yield* Effect.forEach(paths, readAuthFile)
         const merged = new Map(files.flatMap((f) => [...f.entries]))
-        return Option.fromNullable(merged.get(provider))
+        return Option.fromNullishOr(merged.get(provider))
       }),
     resolveKey: (provider: ProviderId) =>
       Effect.gen(function* () {

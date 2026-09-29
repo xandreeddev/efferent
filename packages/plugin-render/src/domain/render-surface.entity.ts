@@ -1,9 +1,9 @@
-import { Schema } from "effect"
+import { Schema, Effect } from "effect"
 import { UiOutputReceipt, UiOutputScope, UiRelease } from "./render-output.entity.js"
 
-const Id = Schema.NonEmptyTrimmedString
-const Json = Schema.Record({ key: Schema.String, value: Schema.Unknown })
-const Generation = Schema.Int.pipe(Schema.positive())
+const Id = Schema.Trimmed.check(Schema.isNonEmpty())
+const Json = Schema.Record(Schema.String, Schema.Unknown)
+const Generation = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /** One addressable visual region a host renders into (a page, a canvas, a panel). */
 export const SurfaceScope = Schema.Struct({
@@ -24,15 +24,15 @@ export type RenderNode = typeof RenderNode.Type
  * are node ids a later `fill` may commit even after the surface is frozen.
  */
 export const RenderSnapshot = Schema.Struct({
-  phase: Schema.Literal("partial", "complete"),
+  phase: Schema.Literals(["partial", "complete"]),
   spec: Json,
   nodes: Schema.Array(RenderNode),
-  placeholders: Schema.optionalWith(Schema.Array(Id), { default: () => [] }),
+  placeholders: Schema.Array(Id).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 })
 export type RenderSnapshot = typeof RenderSnapshot.Type
 export type RenderSnapshotInput = typeof RenderSnapshot.Encoded
 
-export const FreezeReason = Schema.Literal("interaction", "completion")
+export const FreezeReason = Schema.Literals(["interaction", "completion"])
 export type FreezeReason = typeof FreezeReason.Type
 
 /** What a store persists and hydrates. Every record names its surface and the message it was rendered for. */
@@ -42,7 +42,7 @@ export const SurfacePlanned = Schema.TaggedStruct("SurfacePlanned", {
   versionId: Id,
   generation: Generation,
   baseVersionId: Schema.OptionFromNullOr(Schema.String),
-  phase: Schema.Literal("partial", "complete"),
+  phase: Schema.Literals(["partial", "complete"]),
   spec: Json,
   nodes: Schema.Array(Id),
   placeholders: Schema.Array(Id),
@@ -65,7 +65,7 @@ export const SurfaceCompleted = Schema.TaggedStruct("SurfaceCompleted", {
   messageId: Id,
   versionId: Id,
   generation: Generation,
-  phase: Schema.Literal("partial", "complete"),
+  phase: Schema.Literals(["partial", "complete"]),
   frozen: Schema.Boolean,
 })
 export type SurfaceCompleted = typeof SurfaceCompleted.Type
@@ -78,14 +78,14 @@ export const SurfaceFrozen = Schema.TaggedStruct("SurfaceFrozen", {
 })
 export type SurfaceFrozen = typeof SurfaceFrozen.Type
 
-export const SurfaceRecord = Schema.Union(SurfacePlanned, SurfaceCommitted, SurfaceCompleted, SurfaceFrozen)
+export const SurfaceRecord = Schema.Union([SurfacePlanned, SurfaceCommitted, SurfaceCompleted, SurfaceFrozen])
 export type SurfaceRecord = typeof SurfaceRecord.Type
 
 /** The current message's view of a surface. `frozen` is advisory: the store's guard is authoritative. */
 export const SurfaceState = Schema.Struct({
   surfaceId: Id,
   version: Schema.OptionFromNullOr(Schema.String),
-  generation: Schema.Int.pipe(Schema.nonNegative()),
+  generation: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   frozen: Schema.Boolean,
   completed: Schema.Boolean,
   components: Schema.Array(Schema.String),
@@ -96,13 +96,13 @@ export type SurfaceState = typeof SurfaceState.Type
 
 export const PublishResult = Schema.Struct({
   version: Schema.OptionFromNullOr(Schema.String),
-  generation: Schema.Int.pipe(Schema.nonNegative()),
+  generation: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   changed: Schema.Boolean,
   frozen: Schema.Boolean,
 })
 export type PublishResult = typeof PublishResult.Type
 
 export class RenderError extends Schema.TaggedError<RenderError>()("RenderError", {
-  code: Schema.Literal("invalid", "frozen", "conflict", "forbidden", "storage", "unavailable"),
+  code: Schema.Literals(["invalid", "frozen", "conflict", "forbidden", "storage", "unavailable"]),
   message: Schema.String,
 }) {}

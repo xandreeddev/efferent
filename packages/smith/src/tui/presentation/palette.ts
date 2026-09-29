@@ -50,7 +50,7 @@ export const resolveCommand = (word: string): Option.Option<string> => {
   if (exact !== undefined) return Option.some(exact.name)
   const prefixed = PALETTE_COMMANDS.filter((c) => c.name.startsWith(token))
   return prefixed.length === 1
-    ? Option.map(Option.fromNullable(prefixed[0]), (c) => c.name)
+    ? Option.map(Option.fromNullishOr(prefixed[0]), (c) => c.name)
     : Option.none()
 }
 

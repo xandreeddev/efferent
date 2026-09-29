@@ -27,7 +27,7 @@ import { generalTierCall, utilityTier } from "../live/llm.js"
 const EXTRACT_FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "memory-golden")
 const CONSOLIDATE_FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "consolidate-golden")
 
-const ExpectedFile = Schema.parseJson(
+const ExpectedFile = Schema.fromJsonString(
   Schema.Struct({
     expected: Schema.Array(CandidateFact),
     distractors: Schema.Array(Schema.String),
@@ -43,7 +43,7 @@ export const readExtractCase = (
     const transcript = yield* Effect.try(() =>
       readFileSync(join(dir, name, "transcript.txt"), "utf-8"),
     )
-    const expected = yield* Schema.decodeUnknown(ExpectedFile)(
+    const expected = yield* Schema.decodeUnknownEffect(ExpectedFile)(
       readFileSync(join(dir, name, "expected.json"), "utf-8"),
     )
     return { transcript, expected }
@@ -138,7 +138,7 @@ const extractScenario = (name: string) =>
         act: (world) =>
           Effect.gen(function* () {
             const reply = yield* world.generate(extractPrompt(world.transcript))
-            const decoded = yield* Schema.decodeUnknown(ExtractOutput)(stripFences(reply)).pipe(
+            const decoded = yield* Schema.decodeUnknownEffect(ExtractOutput)(stripFences(reply)).pipe(
               Effect.option,
             )
             yield* Ref.set(world.extracted, decoded)
@@ -188,19 +188,19 @@ const extractScenario = (name: string) =>
 /* Consolidation — deterministic op-matching                           */
 /* ------------------------------------------------------------------ */
 
-const ConsolidateCase = Schema.parseJson(
+const ConsolidateCase = Schema.fromJsonString(
   Schema.Struct({
     actives: Schema.Array(CandidateFact),
     candidates: Schema.Array(CandidateFact),
     /** Expected op per candidate (1-based index), memory = 1-based active. */
     expected: Schema.Array(
       Schema.Union(
-        Schema.Struct({ candidate: Schema.Number, op: Schema.Literal("create") }),
+        [Schema.Struct({ candidate: Schema.Number, op: Schema.Literal("create") }),
         Schema.Struct({
           candidate: Schema.Number,
-          op: Schema.Literal("corroborate", "update"),
+          op: Schema.Literals(["corroborate", "update"]),
           memory: Schema.Number,
-        }),
+        })],
       ),
     ),
   }),
@@ -212,7 +212,7 @@ export const readConsolidateCase = (
   name: string,
 ): Effect.Effect<ConsolidateCaseData, unknown> =>
   Effect.try(() => readFileSync(join(dir, name, "case.json"), "utf-8")).pipe(
-    Effect.flatMap((text) => Schema.decodeUnknown(ConsolidateCase)(text)),
+    Effect.flatMap((text) => Schema.decodeUnknownEffect(ConsolidateCase)(text)),
   )
 
 type Verbs = ReadonlyArray<typeof ConsolidateOutput.Type[number]>
@@ -275,7 +275,7 @@ const consolidateScenario = (name: string) =>
             const reply = yield* world.complete(
               consolidatePrompt(toRecords(world.data.actives), world.data.candidates),
             )
-            const decoded = yield* Schema.decodeUnknown(ConsolidateOutput)(stripFences(reply)).pipe(
+            const decoded = yield* Schema.decodeUnknownEffect(ConsolidateOutput)(stripFences(reply)).pipe(
               Effect.option,
             )
             yield* Ref.set(world.verbs, decoded)

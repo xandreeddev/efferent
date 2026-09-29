@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Schema, SchemaTransformation } from "effect"
 import type { FactoryRun } from "@xandreed/foundry"
 import { ConversationId, ConversationStore, FileSystem, UtilityLlm } from "@xandreed/core"
 import { distillSkillsFromMemory } from "../skills/distill.js"
@@ -40,27 +40,28 @@ const CURATE_TIMEOUT_MS = 45_000
 
 export const CandidateFact = Schema.Struct({ topic: MemoryTopic, statement: Schema.String })
 export type CandidateFact = typeof CandidateFact.Type
-export const ExtractOutput = Schema.parseJson(Schema.Array(CandidateFact))
+export const ExtractOutput = Schema.fromJsonString(Schema.Array(CandidateFact))
 
 /** The consolidation prompt presents actives as "M1" / candidates as "C1",
  *  and the model often ECHOES that label instead of the bare index — both
  *  must decode (live-caught by the memory battery: every update/corroborate
  *  with "memory": "M1" was silently dropped). */
 const IndexRef = Schema.Union(
-  Schema.Number,
-  Schema.transform(
-    Schema.String.pipe(Schema.pattern(/^[CMcm]?\d+$/)),
-    Schema.Number,
-    {
-      strict: true,
-      decode: (text) => Number(text.replace(/^[CMcm]/, "")),
-      encode: (index) => String(index),
-    },
-  ),
+  [Schema.Number,
+  Schema.String.pipe(
+    Schema.check(Schema.isPattern(/^[CMcm]?\d+$/)),
+    Schema.decodeTo(
+      Schema.Number,
+      SchemaTransformation.transform({
+        decode: (text) => Number(text.replace(/^[CMcm]/, "")),
+        encode: (index) => String(index),
+      }),
+    ),
+  )],
 )
 
 export const VerbOut = Schema.Union(
-  Schema.Struct({ op: Schema.Literal("create"), candidate: IndexRef }),
+  [Schema.Struct({ op: Schema.Literal("create"), candidate: IndexRef }),
   Schema.Struct({ op: Schema.Literal("corroborate"), memory: IndexRef }),
   Schema.Struct({
     op: Schema.Literal("update"),
@@ -71,9 +72,9 @@ export const VerbOut = Schema.Union(
     op: Schema.Literal("invalidate"),
     memory: IndexRef,
     reason: Schema.String,
-  }),
+  })],
 )
-export const ConsolidateOutput = Schema.parseJson(Schema.Array(VerbOut))
+export const ConsolidateOutput = Schema.fromJsonString(Schema.Array(VerbOut))
 
 /** Models fence JSON; the parse must not care. */
 export const stripFences = (text: string): string => {
@@ -226,7 +227,7 @@ export const curateWorkspaceMemory = (options: {
     const actives = foldMemory(yield* readMemoryLedger(path))
 
     const extracted = yield* utility.complete(extractPrompt(transcript))
-    const candidates = (yield* Schema.decodeUnknown(ExtractOutput)(
+    const candidates = (yield* Schema.decodeUnknownEffect(ExtractOutput)(
       stripFences(extracted.text),
     )).slice(0, MAX_CREATES_PER_RUN)
     if (candidates.length === 0) return
@@ -245,7 +246,7 @@ export const curateWorkspaceMemory = (options: {
             .complete(consolidatePrompt(actives, candidates))
             .pipe(
               Effect.flatMap((response) =>
-                Schema.decodeUnknown(ConsolidateOutput)(stripFences(response.text)),
+                Schema.decodeUnknownEffect(ConsolidateOutput)(stripFences(response.text)),
               ),
             )
 
@@ -273,5 +274,5 @@ export const curateWorkspaceMemory = (options: {
   }).pipe(
     Effect.timeout(CURATE_TIMEOUT_MS),
     Effect.withSpan("smith.memory"),
-    Effect.catchAll(() => Effect.void),
+    Effect.catch(() => Effect.void),
   )

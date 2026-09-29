@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Option, Ref, Schema, TestClock, TestContext } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
+import { TestClock } from "effect/testing"
 import { JourneyError, JourneyTrial, type Journey } from "./journey.entity.js"
 import { scoreJourneyTurn, scoreSelection } from "./journey.entity.functions.js"
 import { JourneyDriver, JourneyEvidence } from "./ports/journey.port.js"
@@ -53,15 +54,15 @@ test("stalled driver is interrupted and its failing trial is persisted", async (
     const saved = yield* Ref.make(false)
     const fiber = yield* runJourney(journey, { id: "timeout", mode: "scripted", candidate: {} }).pipe(
       Effect.provide(Layer.mergeAll(
-        Layer.succeed(JourneyDriver, { open: () => Effect.succeed({ perform: () => Deferred.succeed(started, undefined).pipe(Effect.zipRight(Effect.never), Effect.ensuring(Ref.set(released, true))) }) }),
+        Layer.succeed(JourneyDriver, { open: () => Effect.succeed({ perform: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Ref.set(released, true))) }) }),
         Layer.succeed(JourneyEvidence, { write: () => Ref.set(saved, true) }),
-      )), Effect.fork,
+      )), Effect.forkChild,
     )
     yield* Deferred.await(started)
     yield* TestClock.adjust("91 seconds")
     const trial = yield* Fiber.join(fiber)
     return { trial, released: yield* Ref.get(released), saved: yield* Ref.get(saved) }
-  }).pipe(Effect.provide(TestContext.TestContext)))
+  }).pipe(Effect.provide(TestClock.layer())))
   expect(result.trial.passed).toBe(false)
   expect(result.released).toBe(true)
   expect(result.saved).toBe(true)

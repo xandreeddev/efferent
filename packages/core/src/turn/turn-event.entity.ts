@@ -11,14 +11,14 @@ import { UserMessage } from "./user-message.entity.js"
  * `TurnEvents`), so a subscriber's state is visible to whatever runs next.
  */
 
-const Labels = Schema.Record({ key: Schema.String, value: Schema.String })
-const Data = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+const Labels = Schema.Record(Schema.String, Schema.String)
+const Data = Schema.Record(Schema.String, Schema.Unknown)
 
 /** What the host's completion policy decided after one step. */
 export const CompletionVerdict = Schema.Struct({
   complete: Schema.Boolean,
   /** Task tags to await before the verdict is evaluated once more. */
-  awaiting: Schema.Array(Schema.NonEmptyTrimmedString),
+  awaiting: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
   /** Host facts behind the verdict, journaled with it. */
   facts: Data,
 })
@@ -71,7 +71,7 @@ export type StepResult = typeof StepResult.Type
 
 export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   step: Schema.Int,
-  status: Schema.Literal("completed", "failed", "cancelled"),
+  status: Schema.Literals(["completed", "failed", "cancelled"]),
   /** The step's recorded tool results, in log order. */
   results: Schema.Array(StepResult),
 })
@@ -116,7 +116,7 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
 /** A streamed increment — transient: never journaled, restated by assistant.message. */
 export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   step: Schema.Int,
-  channel: Schema.Literal("text", "reasoning", "tool-params"),
+  channel: Schema.Literals(["text", "reasoning", "tool-params"]),
   id: Schema.String,
   delta: Schema.String,
 })
@@ -124,18 +124,18 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   runId: Schema.String,
   turn: Schema.Int,
-  outcome: Schema.Literal("completed", "partial", "failed"),
+  outcome: Schema.Literals(["completed", "partial", "failed"]),
   reply: Schema.OptionFromNullOr(Schema.String),
 })
 
 /** An application's own event (see `defineHostEvent`); `name` is the host's namespace. */
 export const HostEvent = Schema.TaggedStruct("host", {
-  name: Schema.NonEmptyTrimmedString,
+  name: Schema.Trimmed.check(Schema.isNonEmpty()),
   data: Data,
 })
 
 export const TurnEvent = Schema.Union(
-  TurnStartedEvent,
+  [TurnStartedEvent,
   StepStartedEvent,
   ToolStartedEvent,
   ToolCompletedEvent,
@@ -147,7 +147,7 @@ export const TurnEvent = Schema.Union(
   AssistantMessageEvent,
   AssistantDeltaEvent,
   TurnEndedEvent,
-  HostEvent,
+  HostEvent],
 )
 export type TurnEvent = typeof TurnEvent.Type
 export type TurnEventName = TurnEvent["_tag"]

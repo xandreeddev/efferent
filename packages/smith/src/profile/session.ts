@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { Effect, Either, Option, Ref, Schema } from "effect"
-import type { LanguageModel } from "@effect/ai"
+import { Effect, Result, Option, Ref, Schema } from "effect"
+import type { LanguageModel } from "effect/ai"
 import {
   BaselineFile,
   fingerprintFindings,
@@ -256,7 +256,7 @@ export const makeProfileSession = (
 
     const propose = (params: typeof ProfileProposal.Encoded) =>
       Effect.gen(function* () {
-        const proposal = yield* Schema.decodeUnknown(ProfileProposal)(params).pipe(
+        const proposal = yield* Schema.decodeUnknownEffect(ProfileProposal)(params, { reportInput: true }).pipe(
           Effect.mapError((e) => ({ error: "InvalidProposal", message: String(e) })),
         )
         yield* writeDraftFiles(draftDir, proposal)
@@ -352,7 +352,7 @@ export const lockProfile = (
     }
     const fs = yield* FileSystem
     const proposal = yield* fs.read(join(draftDir, "draft.json")).pipe(
-      Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(ProfileProposal))),
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ProfileProposal))),
       Effect.mapError((e) => ({ error: "CorruptDraft", message: String(e) })),
     )
     const hasModules = proposal.packs.length > 0 || proposal.customRules.length > 0
@@ -401,7 +401,7 @@ export const lockProfile = (
       Effect.mapError((e) => ({ error: "LockFailed", message: e.message })),
     )
     const fingerprints = [...new Set(fingerprinted.map((entry) => entry.fingerprint))]
-    const baseline = yield* Schema.encode(Schema.parseJson(BaselineFile))({
+    const baseline = yield* Schema.encodeEffect(Schema.fromJsonString(BaselineFile))({
       version: 1,
       fingerprints,
     }).pipe(Effect.mapError((e) => ({ error: "LockFailed", message: String(e) })))
@@ -442,7 +442,7 @@ export const runHeadlessProfile = (
       .send(
         "Analyze this workspace and propose its quality profile — rules, boundaries where the layering is unambiguous, the project's own authoritative scripts as checks, and doctrine prose.",
       )
-      .pipe(Effect.catchAll(() => Effect.succeed(Option.none<ProfileDryRun>())))
+      .pipe(Effect.catch(() => Effect.succeed(Option.none<ProfileDryRun>())))
     if (Option.isNone(draft)) {
       console.error("the profiler produced no draft (no propose_profile call)")
       return 2
@@ -467,13 +467,13 @@ export const runHeadlessProfile = (
       console.log(`draft: ${summary.draftDir} — review it, then lock the SAME draft with: bun run smith profile lock -p`)
       return 0
     }
-    const outcome = yield* Effect.either(session.lock)
-    return Either.match(outcome, {
-      onLeft: (failure) => {
+    const outcome = yield* Effect.result(session.lock)
+    return Result.match(outcome, {
+      onFailure: (failure) => {
         console.error(`lock failed: ${failure.message}`)
         return 2
       },
-      onRight: (report) => {
+      onSuccess: (report) => {
         console.log(
           `✓ profile ARMED: ${report.rules} rule(s) · ${report.grandfathered} grandfathered · ${report.checks} check(s) → ${report.configPath}`,
         )
@@ -487,14 +487,14 @@ export const runHeadlessProfile = (
 export const runHeadlessProfileLock = (
   cwd: string,
 ): Effect.Effect<number, never, FileSystem> =>
-  Effect.either(lockProfile(cwd)).pipe(
+  Effect.result(lockProfile(cwd)).pipe(
     Effect.map(
-      Either.match({
-        onLeft: (failure) => {
+      Result.match({
+        onFailure: (failure) => {
           console.error(`lock failed: ${failure.message}`)
           return 2
         },
-        onRight: (report) => {
+        onSuccess: (report) => {
           console.log(
             `✓ profile ARMED from reviewed draft: ${report.rules} rule(s) · ${report.grandfathered} grandfathered · ${report.checks} check(s) → ${report.configPath}`,
           )

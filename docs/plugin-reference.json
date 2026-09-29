@@ -1,7 +1,7 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -11,20 +11,14 @@
     "defaults": {},
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$id": "/schemas/%7B%7D",
-      "anyOf": [
-        {
-          "type": "object"
-        },
-        {
-          "type": "array"
-        }
-      ]
+      "not": {
+        "type": "null"
+      }
     }
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -37,27 +31,27 @@
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
-      "required": [
-        "path"
-      ],
       "properties": {
         "path": {
           "type": "string"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "path"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
       "efferent/SessionEnvironment"
     ],
     "provides": [
-      "@effect/ai/LanguageModel",
+      "effect/ai/LanguageModel",
       "@xandreed/core/UtilityLlm",
       "@xandreed/core/AuthStore",
       "@xandreed/core/SettingsStore",
@@ -72,12 +66,6 @@
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
-      "required": [
-        "model",
-        "fastModel",
-        "fallbackModel",
-        "inheritPrevious"
-      ],
       "properties": {
         "model": {
           "type": "string"
@@ -92,12 +80,18 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "model",
+        "fastModel",
+        "fallbackModel",
+        "inheritPrevious"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -112,36 +106,27 @@
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$defs": {
-        "Int": {
-          "type": "integer",
-          "description": "an integer",
-          "title": "int"
-        }
-      },
       "type": "object",
-      "required": [
-        "file",
-        "limit"
-      ],
       "properties": {
         "file": {
           "type": "string"
         },
         "limit": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 100",
-          "title": "between(1, 100)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 100
         }
       },
-      "additionalProperties": false
+      "required": [
+        "file",
+        "limit"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-context",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -156,38 +141,27 @@
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$defs": {
-        "Int": {
+      "type": "object",
+      "properties": {
+        "thresholdTokens": {
           "type": "integer",
-          "description": "an integer",
-          "title": "int"
+          "exclusiveMinimum": 0
+        },
+        "keepTurns": {
+          "type": "integer",
+          "exclusiveMinimum": 0
         }
       },
-      "type": "object",
       "required": [
         "thresholdTokens",
         "keepTurns"
       ],
-      "properties": {
-        "thresholdTokens": {
-          "$ref": "#/$defs/Int",
-          "description": "a positive number",
-          "title": "positive",
-          "exclusiveMinimum": 0
-        },
-        "keepTurns": {
-          "$ref": "#/$defs/Int",
-          "description": "a positive number",
-          "title": "positive",
-          "exclusiveMinimum": 0
-        }
-      },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-policy-workspace",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -200,20 +174,14 @@
     "defaults": {},
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$id": "/schemas/%7B%7D",
-      "anyOf": [
-        {
-          "type": "object"
-        },
-        {
-          "type": "array"
-        }
-      ]
+      "not": {
+        "type": "null"
+      }
     }
   },
   {
     "id": "@xandreed/plugin-mcp",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -229,48 +197,58 @@
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
-      "required": [
-        "servers"
-      ],
       "properties": {
         "servers": {
           "type": "object",
-          "required": [],
-          "properties": {},
           "additionalProperties": {
             "type": "object",
-            "required": [
-              "command"
-            ],
             "properties": {
               "command": {
                 "type": "string"
               },
               "args": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "env": {
-                "type": "object",
-                "required": [],
-                "properties": {},
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
-            "additionalProperties": false
+            "required": [
+              "command"
+            ],
+            "additionalProperties": true
           }
         }
       },
-      "additionalProperties": false
+      "required": [
+        "servers"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-tools-local",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -288,24 +266,24 @@
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
-      "required": [
-        "readOnly"
-      ],
       "properties": {
         "readOnly": {
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "readOnly"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-agent-loop",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
-      "@effect/ai/LanguageModel",
+      "effect/ai/LanguageModel",
       "efferent/AgentTools",
       "efferent/SessionStore",
       "efferent/Memory",
@@ -321,31 +299,15 @@
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$defs": {
-        "Int": {
-          "type": "integer",
-          "description": "an integer",
-          "title": "int"
-        }
-      },
       "type": "object",
-      "required": [
-        "maxSteps",
-        "toolConcurrency",
-        "streaming"
-      ],
       "properties": {
         "maxSteps": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 1000",
-          "title": "between(1, 1000)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 1000
         },
         "toolConcurrency": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 32",
-          "title": "between(1, 32)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 32
         },
@@ -353,12 +315,17 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "maxSteps",
+        "toolConcurrency",
+        "streaming"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-telemetry",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [],
@@ -372,10 +339,6 @@
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
-      "required": [
-        "enabled",
-        "serviceName"
-      ],
       "properties": {
         "enabled": {
           "type": "boolean"
@@ -384,16 +347,20 @@
           "type": "string"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "enabled",
+        "serviceName"
+      ],
+      "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-agent-loop/delegate",
-    "version": "0.6.0-next.2",
+    "version": "0.7.0-next.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
-      "@effect/ai/LanguageModel",
+      "effect/ai/LanguageModel",
       "efferent/AgentTools",
       "efferent/SessionStore",
       "efferent/Memory",
@@ -409,31 +376,15 @@
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$defs": {
-        "Int": {
-          "type": "integer",
-          "description": "an integer",
-          "title": "int"
-        }
-      },
       "type": "object",
-      "required": [
-        "maxSteps",
-        "toolConcurrency",
-        "streaming"
-      ],
       "properties": {
         "maxSteps": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 1000",
-          "title": "between(1, 1000)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 1000
         },
         "toolConcurrency": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 32",
-          "title": "between(1, 32)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 32
         },
@@ -441,7 +392,12 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "maxSteps",
+        "toolConcurrency",
+        "streaming"
+      ],
+      "additionalProperties": true
     }
   },
   {
@@ -466,27 +422,7 @@
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "$defs": {
-        "Int": {
-          "type": "integer",
-          "description": "an integer",
-          "title": "int"
-        },
-        "Positive": {
-          "type": "number",
-          "description": "a positive number",
-          "title": "positive",
-          "exclusiveMinimum": 0
-        }
-      },
       "type": "object",
-      "required": [
-        "mode",
-        "maxAttempts",
-        "budgetMillis",
-        "testCommand",
-        "configPath"
-      ],
       "properties": {
         "mode": {
           "type": "string",
@@ -497,14 +433,24 @@
           ]
         },
         "maxAttempts": {
-          "$ref": "#/$defs/Int",
-          "description": "a number between 1 and 10",
-          "title": "between(1, 10)",
+          "type": "integer",
           "minimum": 1,
           "maximum": 10
         },
         "budgetMillis": {
-          "$ref": "#/$defs/Positive"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "Infinity",
+                "-Infinity",
+                "NaN"
+              ]
+            }
+          ]
         },
         "testCommand": {
           "type": "string"
@@ -513,7 +459,14 @@
           "type": "string"
         }
       },
-      "additionalProperties": false
+      "required": [
+        "mode",
+        "maxAttempts",
+        "budgetMillis",
+        "testCommand",
+        "configPath"
+      ],
+      "additionalProperties": true
     }
   }
 ]

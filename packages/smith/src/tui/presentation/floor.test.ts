@@ -6,7 +6,7 @@ import type { GateCell, GateCellState } from "./floor.js"
 import { initialFloor, reduceFloor, attemptRowView } from "./floor.js"
 
 const spec = Effect.runSync(
-  Schema.decodeUnknown(Spec)({
+  Schema.decodeUnknownEffect(Spec)({
     goal: "fix the sum",
     acceptance: [],
     limits: { maxAttempts: 3, budgetMillis: 60_000 },

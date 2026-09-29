@@ -1,4 +1,4 @@
-import type { Prompt, Tool, Toolkit } from "@effect/ai"
+import type { Prompt, Tool, Toolkit } from "effect/ai"
 import { Effect, Option, Ref } from "effect"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, ConversationId } from "@xandreed/core"
@@ -157,7 +157,7 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
           return Option.some<CompactionPlan>({ summary, keepFrom: cut.value })
         }).pipe(
           Effect.withSpan("engine.compact"),
-          Effect.catchAll(() => Effect.succeed(Option.none<CompactionPlan>())),
+          Effect.catch(() => Effect.succeed(Option.none<CompactionPlan>())),
         )
 
     const result = yield* runLoop({
@@ -176,12 +176,12 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
       // One cache lane per conversation by default; agents with a shared
       // cacheable prompt prefix override the lane so cross-conversation
       // prefill hits fire.
-      Effect.locally(CurrentPromptCacheKey, Option.some(config.promptCacheKey ?? String(conversationId))),
+      Effect.provideService(CurrentPromptCacheKey, Option.some(config.promptCacheKey ?? String(conversationId))),
     )
     // How the run ended goes beside the trail — bookkeeping, so a store that
     // refuses the row is a warning, never a failed run.
     yield* store.recordOutcome(conversationId, result.outcome, result.reason).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.logWarning(`the run's outcome was not recorded: ${error.message}`),
       ),
     )
@@ -195,5 +195,5 @@ export const runAgent = <Tools extends Record<string, Tool.Any>, R = never>(
         "agent.userMessage_chars": userMessage.text.length,
       },
     }),
-    Effect.locally(CurrentModelCallPolicy, Option.fromNullable(config.modelPolicy)),
+    Effect.provideService(CurrentModelCallPolicy, Option.fromNullishOr(config.modelPolicy)),
   )

@@ -10,7 +10,7 @@ import { RunSink } from "../ports/RunSink.js"
 export const makeFileRunSink = (dir: string): Layer.Layer<RunSink> =>
   Layer.succeed(RunSink, {
     persist: (run) =>
-      Schema.encode(FactoryRun)(run).pipe(
+      Schema.encodeEffect(FactoryRun)(run).pipe(
         Effect.mapError(
           (parseError) => new WorkspaceError({ message: `artifact encode failed: ${parseError.message}` }),
         ),

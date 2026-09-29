@@ -6,7 +6,7 @@ import { runLine, workspaceView } from "./workspace.js"
 
 const doc = (slug: string, status: "draft" | "locked") =>
   Effect.runSync(
-    Schema.decodeUnknown(SpecDoc)({
+    Schema.decodeUnknownEffect(SpecDoc)({
       version: 1,
       slug,
       status,

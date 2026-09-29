@@ -1,4 +1,4 @@
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { parseModelSelection } from "@xandreed/core"
 import { LanguageModelSelectionLive } from "@xandreed/plugin-models"
@@ -14,7 +14,7 @@ const expectedPrompts = {
 
 export const uiAgentExecutionProfileLive = (input: unknown) => Layer.effect(
   UiAgentExecutionProfile,
-  Schema.decodeUnknown(UiAgentProfile)(input).pipe(
+  Schema.decodeUnknownEffect(UiAgentProfile)(input, { reportInput: true }).pipe(
     Effect.mapError((issue) => new Error(`invalid UI-agent profile: ${String(issue)}`)),
     Effect.flatMap((profile) => {
       const findings = validateUiAgentProfile(profile, expectedPrompts)

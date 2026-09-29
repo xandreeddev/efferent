@@ -7,10 +7,10 @@ export const ToolDiscoveryConfig = Schema.Struct({
   grants: Schema.Array(Schema.String),
   /** Expose the skill catalogue, load_skill and read_skill_reference. */
   loadSkill: Schema.Boolean,
-  maxCallsPerRun: Schema.Int.pipe(Schema.between(1, 1000)),
-  maxSkillLoadsPerRun: Schema.Int.pipe(Schema.between(0, 100)),
-  readConcurrency: Schema.Int.pipe(Schema.between(1, 32)),
-  matcherTimeoutMs: Schema.Int.pipe(Schema.between(50, 60_000)),
+  maxCallsPerRun: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
+  maxSkillLoadsPerRun: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+  readConcurrency: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 32 }))),
+  matcherTimeoutMs: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 50, maximum: 60_000 }))),
   catalogVersion: Schema.NonEmptyString,
   /** Order of the catalogue section within the system prompt. */
   catalogOrder: Schema.Int,
@@ -32,12 +32,12 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
  * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({
-  id: "@xandreed/plugin-tool-discovery", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-tool-discovery", version: "0.7.0-next.0", scope: "runtime",
   config: ToolDiscoveryConfig, defaults: toolDiscoveryDefaults,
   requires: [Contributions],
   provides: [ToolRegistry],
   contributes: [Contributions],
-  layer: (config) => Layer.unwrapEffect(Effect.gen(function* () {
+  layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const contributions = yield* Contributions
     const registry = yield* makeRegistry(config, contributions)
     const catalogue = defineContributions({

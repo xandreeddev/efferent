@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Deferred, Effect, Layer, Option, Ref, Schema, Stream, Semaphore } from "effect"
 import { UiOutputProposal } from "./domain/render-output.entity.js"
 import type { UiOutputReceipt } from "./domain/render-output.entity.js"
 import { RenderError, RenderNode, RenderSnapshot, SurfaceCompleted, SurfaceFrozen, SurfacePlanned } from "./domain/render-surface.entity.js"
@@ -36,8 +36,8 @@ export const openSurface = (
 ) => (scope: SurfaceScope, options: RenderOpenOptions): Effect.Effect<RenderSurface, RenderError> => Effect.gen(function* () {
   const records = yield* store.hydrate(scope)
   const progress = yield* Ref.make<SurfaceProgress>(progressOf(scope.surfaceId, scope.messageId, records))
-  const writer = yield* Effect.makeSemaphore(1)
-  const preparer = yield* Effect.makeSemaphore(1)
+  const writer = yield* Semaphore.make(1)
+  const preparer = yield* Semaphore.make(1)
   const preparations = yield* Ref.make<ReadonlyArray<Deferred.Deferred<void>>>([])
   const output = outputScopeOf(scope)
   const identity = { surfaceId: scope.surfaceId, messageId: scope.messageId }
@@ -46,7 +46,7 @@ export const openSurface = (
 
   const commitNode = (versionId: string, operationId: string, node: RenderNode): Effect.Effect<UiOutputReceipt, RenderError> => Effect.gen(function* () {
     const proposal = proposalOf(operationId, node)
-    const json = yield* Schema.encode(Schema.parseJson(UiOutputProposal))(proposal).pipe(
+    const json = yield* Schema.encodeEffect(Schema.fromJsonString(UiOutputProposal))(proposal).pipe(
       Effect.mapError(() => invalid("A component must be serializable")),
     )
     if (new TextEncoder().encode(json).byteLength > maxBytes) return yield* Effect.fail(invalid("A component exceeds the configured size limit"))
@@ -73,14 +73,14 @@ export const openSurface = (
 
   const markComplete = (versionId: string, generation: number) => store.complete(scope, SurfaceCompleted.make({
     ...identity, versionId, generation, phase: "complete", frozen: false,
-  })).pipe(Effect.zipRight(updateState((state) => ({ ...state, completed: true }))))
+  })).pipe(Effect.andThen(updateState((state) => ({ ...state, completed: true }))))
 
   const publishNow = (input: RenderSnapshotInput): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
-    const snapshot = yield* Schema.decodeUnknown(RenderSnapshot)(input, { onExcessProperty: "error" }).pipe(
+    const snapshot = yield* Schema.decodeUnknownEffect(RenderSnapshot)(input, { onExcessProperty: "error", reportInput: true }).pipe(
       Effect.mapError((error) => invalid(`Invalid snapshot: ${error.message}`)),
     )
     const current = yield* Ref.get(progress)
-    if (current.state.frozen) return yield* recordFrozenCompletion.pipe(Effect.zipRight(snapshotResult(true)))
+    if (current.state.frozen) return yield* recordFrozenCompletion.pipe(Effect.andThen(snapshotResult(true)))
     const signature = signatureOf(snapshot)
     if (Option.contains(current.signature, signature)) {
       if (snapshot.phase === "complete" && !current.state.completed) {
@@ -106,7 +106,7 @@ export const openSurface = (
     )
     if (!planned) {
       yield* updateState((state) => ({ ...state, frozen: true }))
-      return yield* recordFrozenCompletion.pipe(Effect.zipRight(snapshotResult(true)))
+      return yield* recordFrozenCompletion.pipe(Effect.andThen(snapshotResult(true)))
     }
     yield* Ref.update(progress, (value) => ({
       ...value,
@@ -122,7 +122,7 @@ export const openSurface = (
   const publish = (input: RenderSnapshotInput) => writer.withPermits(1)(publishNow(input))
 
   const fill = (placeholder: string, input: RenderNode) => writer.withPermits(1)(Effect.gen(function* () {
-    const node = yield* Schema.decodeUnknown(RenderNode)(input, { onExcessProperty: "error" }).pipe(
+    const node = yield* Schema.decodeUnknownEffect(RenderNode)(input, { onExcessProperty: "error", reportInput: true }).pipe(
       Effect.mapError((error) => invalid(`Invalid node: ${error.message}`)),
     )
     const current = yield* Ref.get(progress)
@@ -142,9 +142,9 @@ export const openSurface = (
     const done = yield* Deferred.make<void>()
     yield* Ref.update(preparations, (all) => [...all, done])
     const run = preparer.withPermits(1)(Stream.runForEach(work, publish)).pipe(
-      Effect.catchAll((error: E | RenderError) => store.annotate(scope, "render.preparation-failed", { message: describeError(error) }).pipe(
+      Effect.catch((error: E | RenderError) => store.annotate(scope, "render.preparation-failed", { message: describeError(error) }).pipe(
         Effect.ignore,
-        Effect.zipRight(recover(error)),
+        Effect.andThen(recover(error)),
       )),
       Effect.ensuring(Deferred.succeed(done, undefined)),
     )
@@ -164,7 +164,7 @@ export const openSurface = (
     yield* Option.match(current.state.version, {
       onNone: () => Effect.void,
       onSome: (versionId) => store.freeze(scope, SurfaceFrozen.make({ ...identity, versionId, reason })).pipe(
-        Effect.zipRight(updateState((value) => ({ ...value, frozen: true }))),
+        Effect.andThen(updateState((value) => ({ ...value, frozen: true }))),
       ),
     })
   }))

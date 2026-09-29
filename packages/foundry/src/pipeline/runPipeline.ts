@@ -66,8 +66,8 @@ const runGate = <R>(gate: Gate<R>, workspace: Workspace): Effect.Effect<GateVerd
     Effect.map(([elapsed, findings]) =>
       toVerdict(gate.name, Duration.toMillis(elapsed), findings),
     ),
-    Effect.catchAll((crash) => Effect.succeed(crashVerdict(gate.name, gate.kind, crash.message))),
-    Effect.catchAllDefect((defect) => Effect.succeed(crashVerdict(gate.name, gate.kind, String(defect)))),
+    Effect.catch((crash) => Effect.succeed(crashVerdict(gate.name, gate.kind, crash.message))),
+    Effect.catchDefect((defect) => Effect.succeed(crashVerdict(gate.name, gate.kind, String(defect)))),
     Effect.withSpan("foundry.gate", {
       attributes: { "gate.name": gate.name, "gate.kind": gate.kind },
     }),
@@ -78,7 +78,7 @@ const stagesFor = <R>(pipeline: Pipeline<R>): ReadonlyArray<Arr.NonEmptyReadonly
   Match.value(pipeline.policy).pipe(
     Match.when("staged", () =>
       Arr.groupWith(
-        Arr.sortWith(pipeline.gates, (g) => kindRank[g.kind], Order.number),
+        Arr.sortWith(pipeline.gates, (g) => kindRank[g.kind], Order.Number),
         (a, b) => kindRank[a.kind] === kindRank[b.kind],
       ),
     ),
@@ -114,7 +114,7 @@ const runStage = <R>(
       const failed = verdicts.filter((v): v is typeof FailVerdict.Type => v._tag === "fail")
       return {
         verdicts: [...fold.verdicts, ...verdicts],
-        blockedBy: Arr.isNonEmptyReadonlyArray(failed)
+        blockedBy: Arr.isReadonlyArrayNonEmpty(failed)
           ? Option.some(Arr.map(failed, (v) => v.gate))
           : Option.none<ReadonlyArray<GateName>>(),
       }
@@ -132,8 +132,8 @@ export const runPipeline = <R>(
 ): Effect.Effect<GateReport, never, R> =>
   Effect.reduce(
     stagesFor(pipeline),
-    { verdicts: [], blockedBy: Option.none<ReadonlyArray<GateName>>() } as Fold,
-    (fold, stage) =>
+    (): Fold => ({ verdicts: [], blockedBy: Option.none<ReadonlyArray<GateName>>() }),
+    (fold: Fold, stage) =>
       Option.match(fold.blockedBy, {
         onNone: () => runStage(stage, workspace, fold),
         onSome: (blockedBy) =>
@@ -144,9 +144,9 @@ export const runPipeline = <R>(
       }),
   ).pipe(
     Effect.flatMap((fold) =>
-      Arr.isNonEmptyReadonlyArray(fold.verdicts)
+      Arr.isReadonlyArrayNonEmpty(fold.verdicts)
         ? Effect.succeed(new GateReport({ verdicts: fold.verdicts }))
-        : Effect.dieMessage("unreachable: a non-empty pipeline produced no verdicts"),
+        : Effect.die(new Error("unreachable: a non-empty pipeline produced no verdicts")),
     ),
     Effect.withSpan("foundry.pipeline", {
       attributes: { "pipeline.gates": pipeline.gates.length, "pipeline.policy": pipeline.policy },

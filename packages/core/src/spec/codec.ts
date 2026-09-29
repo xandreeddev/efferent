@@ -164,7 +164,8 @@ export const decodeSpecDocText = (
         ...(fields["judge"] !== undefined ? { judge: fields["judge"] === "true" } : {}),
       },
     }
-    return yield* Schema.decodeUnknown(SpecDoc)(candidate).pipe(
+    // The message names the rejected value, so a bad spec says what it holds.
+    return yield* Schema.decodeUnknownEffect(SpecDoc)(candidate, { reportInput: true }).pipe(
       Effect.mapError((error) => new SpecDocParseError({ message: String(error) })),
     )
   })

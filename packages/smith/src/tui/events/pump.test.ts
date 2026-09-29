@@ -57,7 +57,7 @@ describe("runEventPump", () => {
           delta(0, "text", "b"),
           delta(0, "text", "c"),
         ])
-        const pump = yield* Effect.fork(
+        const pump = yield* Effect.forkChild(
           runEventPump(queue, (events) => void flushes.push(events)),
         )
         yield* Effect.sleep("20 millis")

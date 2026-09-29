@@ -7,11 +7,11 @@ export class AttemptRecord extends Schema.Class<AttemptRecord>("AttemptRecord")(
   attempt: AttemptNumber,
   report: GateReport,
   /** The brief fed into the NEXT attempt; `None` on an accepted/final attempt. */
-  feedback: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
+  feedback: Schema.OptionFromOptional(Schema.NonEmptyString),
   filesTouched: Schema.Array(WorkspacePath),
-  durationMs: Schema.NonNegative,
+  durationMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
   /** The implementor's opaque provenance ref (e.g. `"conversation:<uuid>"`). */
-  implementorRef: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
+  implementorRef: Schema.OptionFromOptional(Schema.NonEmptyString),
 }) {}
 
 /**
@@ -28,10 +28,10 @@ export const RejectedOutcome = Schema.TaggedStruct("rejected", {
   /** `stalled`: an attempt changed nothing and reproduced the previous
    *  attempt's exact findings — the loop stops rather than burning the
    *  remaining attempts on a verdict no retry can move. */
-  reason: Schema.Literal("attempts-exhausted", "budget-exhausted", "stalled"),
+  reason: Schema.Literals(["attempts-exhausted", "budget-exhausted", "stalled"]),
 })
 export const InFlightOutcome = Schema.TaggedStruct("in-flight", {})
-export const RunOutcome = Schema.Union(AcceptedOutcome, RejectedOutcome, InFlightOutcome)
+export const RunOutcome = Schema.Union([AcceptedOutcome, RejectedOutcome, InFlightOutcome])
 export type RunOutcome = typeof RunOutcome.Type
 
 /** The durable, self-describing artifact one `forge` produces. */
@@ -41,6 +41,6 @@ export class FactoryRun extends Schema.Class<FactoryRun>("FactoryRun")({
   attempts: Schema.NonEmptyArray(AttemptRecord),
   outcome: RunOutcome,
   /** Epoch millis, from `Clock`. */
-  startedAt: Schema.NonNegative,
-  endedAt: Schema.NonNegative,
+  startedAt: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  endedAt: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
 }) {}

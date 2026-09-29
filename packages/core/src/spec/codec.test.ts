@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, FastCheck as fc, Option } from "effect"
+import * as fc from "fast-check"
+import { Effect, Option } from "effect"
 import {
   DEFAULT_SPEC_LIMITS,
   renderSpecSection,

@@ -1,4 +1,4 @@
-import { Effect, Either, Option } from "effect"
+import { Effect, Result, Option } from "effect"
 
 /**
  * Parse JSON with CORRUPT ≠ ABSENT semantics: malformed text logs a warning
@@ -11,14 +11,14 @@ export const parseJsonWarn = (
   text: string,
   where: string,
 ): Effect.Effect<Option.Option<unknown>> =>
-  Either.match(
-    Either.try(() => JSON.parse(text) as unknown),
+  Result.match(
+    Result.try(() => JSON.parse(text) as unknown),
     {
-      onLeft: (error) =>
+      onFailure: (error) =>
         Effect.logWarning(
           `${where}: unreadable JSON — treating as empty: ${String(error)}`,
         ).pipe(Effect.as(Option.none<unknown>())),
-      onRight: (value) => Effect.succeed(Option.some(value)),
+      onSuccess: (value) => Effect.succeed(Option.some(value)),
     },
   )
 
@@ -35,7 +35,7 @@ export const asJsonRecord = (value: Option.Option<unknown>): Record<string, unkn
 /** SILENT parse-to-Option — for wire noise (a garbage WS frame) where
  *  dropping without a log is the design; configs use {@link parseJsonWarn}. */
 export const parseJsonOption = (text: string): Option.Option<unknown> =>
-  Either.getRight(Either.try(() => JSON.parse(text) as unknown))
+  Result.getSuccess(Result.try(() => JSON.parse(text) as unknown))
 
 /** Decode append-only JSONL text: one JSON value per line, each decoded by
  *  `decode`; a corrupt or undecodable LINE is skipped (append-only files
@@ -43,19 +43,19 @@ export const parseJsonOption = (text: string): Option.Option<unknown> =>
  *  The shared machinery of the smith memory ledger and the social ledger. */
 export const decodeJsonLines = <A, E>(
   text: string,
-  decode: (value: unknown) => Either.Either<A, E>,
+  decode: (value: unknown) => Result.Result<A, E>,
 ): ReadonlyArray<A> =>
   text
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .flatMap((line) =>
-      Either.try(() => JSON.parse(line) as unknown).pipe(
-        Either.match({
-          onLeft: () => [] as ReadonlyArray<A>,
-          onRight: (parsed) =>
-            Either.match(decode(parsed), {
-              onLeft: () => [] as ReadonlyArray<A>,
-              onRight: (decoded) => [decoded],
+      Result.try(() => JSON.parse(line) as unknown).pipe(
+        Result.match({
+          onFailure: () => [] as ReadonlyArray<A>,
+          onSuccess: (parsed) =>
+            Result.match(decode(parsed), {
+              onFailure: () => [] as ReadonlyArray<A>,
+              onSuccess: (decoded) => [decoded],
             }),
         }),
       ),

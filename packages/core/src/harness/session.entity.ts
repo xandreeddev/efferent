@@ -13,7 +13,7 @@ export type SessionRecord = typeof SessionRecord.Type
 export const EventBody = Schema.Struct({
   name: Schema.NonEmptyString,
   runId: Schema.optional(Schema.String),
-  data: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  data: Schema.Record(Schema.String, Schema.Unknown),
 })
 export type EventBody = typeof EventBody.Type
 

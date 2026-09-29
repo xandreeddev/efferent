@@ -14,7 +14,7 @@ import type { Judge } from "@xandreed/evals/model"
  *  a score delta is attributable. */
 export const CRITIC_RUBRIC_VERSION = "1.0.0"
 
-export const Grades = Schema.parseJson(
+export const Grades = Schema.fromJsonString(
   Schema.Struct({
     planning: Schema.Number,
     tool_selection: Schema.Number,
@@ -70,7 +70,7 @@ export const makeTrajectoryCritic = <W>(options: {
       const transcript = yield* options.transcript(world)
       const outcome = yield* options.outcome(world)
       const reply = yield* options.call(criticRubric(transcript, outcome))
-      const grades = yield* Schema.decodeUnknown(Grades)(lastGradesJson(reply))
+      const grades = yield* Schema.decodeUnknownEffect(Grades)(lastGradesJson(reply))
       return { score: gradesToScore(grades), reason: gradesToReason(grades) }
     }),
 })

@@ -1,15 +1,15 @@
 import { Schema } from "effect"
 import type { Option } from "effect"
-import type { Prompt } from "@effect/ai"
+import type { Prompt } from "effect/ai"
 import type { PromptId, PromptProvenance } from "@xandreed/core"
 
 /** A variant's name: no `@` (it separates an encoded target) and no whitespace. */
-export const VariantName = Schema.String.pipe(Schema.pattern(/^[^@\s]+$/))
+export const VariantName = Schema.String.pipe(Schema.check(Schema.isPattern(/^[^@\s]+$/)))
 
 /** Which model a prompt is rendered for, and which of its variants. */
 export const ModelTarget = Schema.Struct({
   /** `provider/model`, or `unknown`. */
-  model: Schema.NonEmptyTrimmedString,
+  model: Schema.Trimmed.check(Schema.isNonEmpty()),
   variant: VariantName,
 })
 export type ModelTarget = typeof ModelTarget.Type
@@ -37,7 +37,7 @@ export interface SelectedVariant<F> {
 /** A structured output a prompt asks for. */
 export interface PromptOutput<O, OI> {
   readonly name: Option.Option<string>
-  readonly schema: Schema.Schema<O, OI>
+  readonly schema: Schema.Codec<O, OI>
 }
 
 /**
@@ -62,6 +62,6 @@ export interface RenderedPrompt<O = never, OI = never> {
 }
 
 export class PromptError extends Schema.TaggedError<PromptError>()("PromptError", {
-  code: Schema.Literal("variant.unknown", "variant.invalid", "output.missing", "hash.failed"),
+  code: Schema.Literals(["variant.unknown", "variant.invalid", "output.missing", "hash.failed"]),
   message: Schema.String,
 }) {}

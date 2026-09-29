@@ -6,4 +6,4 @@ export interface UiThemeStoreService {
   readonly put: (theme: ThemeDefinition) => Effect.Effect<void, string>
 }
 
-export class UiThemeStore extends Context.Tag("@xandreed/ui-agent/UiThemeStore")<UiThemeStore, UiThemeStoreService>() {}
+export class UiThemeStore extends Context.Service<UiThemeStore, UiThemeStoreService>()("@xandreed/ui-agent/UiThemeStore") {}

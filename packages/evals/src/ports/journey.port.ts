@@ -4,11 +4,11 @@ import type { Journey, JourneyError, JourneyObservation, JourneyTrial, JourneyTu
 
 /** Drivers use the same browser/socket boundary as a real user. Opening a
  * trial acquires a scoped isolated identity and fixture, never shared state. */
-export class JourneyDriver extends Context.Tag("efferent/evals/JourneyDriver")<JourneyDriver, {
+export class JourneyDriver extends Context.Service<JourneyDriver, {
   readonly open: (journey: Journey) => Effect.Effect<{
     readonly perform: (turn: JourneyTurn) => Effect.Effect<JourneyObservation, JourneyError>
   }, JourneyError, Scope.Scope>
-}>() {}
-export class JourneyEvidence extends Context.Tag("efferent/evals/JourneyEvidence")<JourneyEvidence, {
+}>()("efferent/evals/JourneyDriver") {}
+export class JourneyEvidence extends Context.Service<JourneyEvidence, {
   readonly write: (trial: JourneyTrial) => Effect.Effect<void, JourneyError>
-}>() {}
+}>()("efferent/evals/JourneyEvidence") {}

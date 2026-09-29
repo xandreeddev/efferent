@@ -3,7 +3,4 @@ import type { Effect } from "effect"
 import type { ModelCatalogEntry } from "../domain/model-catalog.entity.js"
 
 /** Provider-neutral discovery of models usable by configured adapters. */
-export class ModelCatalog extends Context.Tag("@xandreed/core/ModelCatalog")<
-  ModelCatalog,
-  { readonly list: Effect.Effect<ReadonlyArray<ModelCatalogEntry>> }
->() {}
+export class ModelCatalog extends Context.Service<ModelCatalog, { readonly list: Effect.Effect<ReadonlyArray<ModelCatalogEntry>> }>()("@xandreed/core/ModelCatalog") {}

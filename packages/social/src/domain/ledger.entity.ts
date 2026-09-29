@@ -6,17 +6,17 @@ export const LedgerEntry = Schema.Struct({
    *  no row, no post) — a crash mid-post still leaves a trace and still
    *  counts as engaged; `post_failed` records a refused post and frees the
    *  target for a retry. */
-  event: Schema.Literal(
-    "drafted",
+  event: Schema.Literals(
+    ["drafted",
     "gate_rejected",
     "queued",
     "posting",
     "posted",
     "post_failed",
     "discarded",
-    "skipped",
+    "skipped"],
   ),
-  kind: Schema.Literal("reply", "post"),
+  kind: Schema.Literals(["reply", "post"]),
   targetTweetId: Schema.optional(Schema.String),
   targetAuthor: Schema.optional(Schema.String),
   referenceBlogSlug: Schema.optional(Schema.String),

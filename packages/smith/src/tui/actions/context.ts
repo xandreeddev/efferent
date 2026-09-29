@@ -117,7 +117,7 @@ export const submitContextPin = (ctx: SmithTuiContext, index: number, value: Opt
 /** ⏎ on the budget picker. */
 export const submitContextBudget = (ctx: SmithTuiContext, value: Option.Option<string>): void => {
   ctx.store.closeOverlay()
-  Option.match(Option.fromNullable(ctx.context), {
+  Option.match(Option.fromNullishOr(ctx.context), {
     onNone: () => ctx.store.setNotice("the context set only applies in the workspace session"),
     onSome: (actions) =>
       Option.match(Option.map(value, Number), {

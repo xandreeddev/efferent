@@ -1,6 +1,6 @@
-import { AiError } from "@effect/ai"
-import type { Response } from "@effect/ai"
-import { Effect, Option, Stream } from "effect"
+import { AiError } from "effect/ai"
+import type { Response } from "effect/ai"
+import { Effect, Option, Result, Stream } from "effect"
 
 /**
  * The OpenAI-compatible SSE wire → `@effect/ai` `StreamPartEncoded`s, as a
@@ -31,17 +31,20 @@ export interface CompletionUsage {
 }
 
 /** The vendor cached-token fallback chain, shared with the non-streaming
- *  parser — the gateway fronts upstreams with three cache vocabularies. */
-export const usageFromCompletion = (usage: CompletionUsage | undefined) => ({
-  inputTokens: usage?.prompt_tokens ?? 0,
-  outputTokens: usage?.completion_tokens ?? 0,
-  totalTokens: usage?.total_tokens ?? 0,
-  cachedInputTokens:
+ *  parser — the gateway fronts upstreams with three cache vocabularies.
+ *  `prompt_tokens` already counts the cached tokens: it is the full input. */
+export const usageFromCompletion = (usage: CompletionUsage | undefined) => {
+  const input = usage?.prompt_tokens ?? 0
+  const cached =
     usage?.prompt_cache_hit_tokens ??
     usage?.cached_tokens ??
     usage?.prompt_tokens_details?.cached_tokens ??
-    0,
-})
+    0
+  return {
+    inputTokens: { total: input, uncached: Math.max(0, input - cached), cacheRead: cached },
+    outputTokens: { total: usage?.completion_tokens ?? 0 },
+  }
+}
 
 export const finishReasonFromWire = (
   raw: string | undefined,
@@ -187,8 +190,8 @@ const mergeToolFragment = (
   )
 }
 
-const malformed = (moduleName: string, description: string): AiError.MalformedOutput =>
-  new AiError.MalformedOutput({ module: moduleName, method: "streamText", description })
+const malformed = (moduleName: string, description: string): AiError.AiError =>
+  AiError.make({ module: moduleName, method: "streamText", reason: new AiError.InvalidOutputError({ description }) })
 
 const applyChunk = (
   moduleName: string,
@@ -197,10 +200,12 @@ const applyChunk = (
 ): Effect.Effect<Emit, AiError.AiError> => {
   if (chunk.error !== undefined && chunk.error !== null) {
     return Effect.fail(
-      new AiError.UnknownError({
+      AiError.make({
         module: moduleName,
         method: "streamText",
-        description: `the stream carried an error chunk: ${JSON.stringify(chunk.error).slice(0, 500)}`,
+        reason: new AiError.UnknownError({
+          description: `the stream carried an error chunk: ${JSON.stringify(chunk.error).slice(0, 500)}`,
+        }),
       }),
     )
   }
@@ -229,7 +234,7 @@ const applyChunk = (
 }
 
 /** The end-of-stream flush: close open chunks, emit the accumulated tool
- *  calls (unparseable arguments are a MalformedOutput — the loop's
+ *  calls (unparseable arguments are an invalid output — the loop's
  *  corrective path), then the finish with the folded usage. */
 const flush = (moduleName: string, state: SseState): Effect.Effect<Emit, AiError.AiError> =>
   state.flushed
@@ -289,24 +294,23 @@ export const sseStreamParts = (options: {
   Stream.fromReadableStream({
     evaluate: () => options.body,
     onError: (cause) =>
-      new AiError.UnknownError({
+      AiError.make({
         module: options.moduleName,
         method: "streamText",
-        description: `the response body stream failed: ${String(cause)}`,
-        cause,
+        reason: new AiError.UnknownError({ description: `the response body stream failed: ${String(cause)}` }),
       }),
   }).pipe(
     Stream.decodeText(),
     Stream.splitLines,
-    Stream.filterMap((line) => {
+    Stream.filterMap((line: string) => {
       const trimmed = line.trim()
       return trimmed.startsWith("data:")
-        ? Option.some(trimmed.slice("data:".length).trim())
-        : Option.none()
+        ? Result.succeed(trimmed.slice("data:".length).trim())
+        : Result.fail(line)
     }),
     Stream.concat(Stream.succeed(DONE)),
-    Stream.mapAccumEffect(initialState, (state, payload) =>
+    // Each step's parts are emitted one by one.
+    Stream.mapAccumEffect(() => initialState, (state, payload: string) =>
       step(options.moduleName, state, payload),
     ),
-    Stream.flattenIterables,
   )

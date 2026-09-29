@@ -79,7 +79,7 @@ export const findRow = (
   rows: ReadonlyArray<DashboardRow>,
   key: string,
 ): Option.Option<DashboardRow> =>
-  Option.fromNullable(rows.find((row, index) => rowKey(row, index) === key))
+  Option.fromNullishOr(rows.find((row, index) => rowKey(row, index) === key))
 
 /** ↑/↓ over `count` rows, clamped at the ends (the list is short and both
  *  ends are on screen — wrapping reads as a jump). Entering from nowhere

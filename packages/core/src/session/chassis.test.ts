@@ -39,13 +39,13 @@ describe("makeSession", () => {
           conversationId: cid,
           runTurn: (text, publish) =>
             publish({ type: "note", text: `${text}:start` }).pipe(
-              Effect.zipRight(Effect.sleep("10 millis")),
-              Effect.zipRight(publish({ type: "note", text: `${text}:end` })),
+              Effect.andThen(Effect.sleep("10 millis")),
+              Effect.andThen(publish({ type: "note", text: `${text}:end` })),
             ),
           onError: (message) => ({ type: "error", message }),
         })
-        const f1 = yield* Effect.fork(session.send("one"))
-        const f2 = yield* Effect.fork(session.send("two"))
+        const f1 = yield* Effect.forkChild(session.send("one"))
+        const f2 = yield* Effect.forkChild(session.send("two"))
         yield* Fiber.join(f1)
         yield* Fiber.join(f2)
         const { log } = yield* session.state
@@ -102,7 +102,7 @@ describe("makeSession", () => {
         yield* session.send("a")
         yield* session.send("b")
         // Subscribe from 1: replay skips seq 0, then the live tail follows.
-        const taker = yield* Effect.fork(
+        const taker = yield* Effect.forkChild(
           Stream.runCollect(Stream.take(session.subscribe(1), 2)),
         )
         yield* Effect.sleep("5 millis")
@@ -121,13 +121,13 @@ describe("makeSession", () => {
           conversationId: cid,
           runTurn: (text, publish) =>
             publish({ type: "delta", text: `${text}:d1` }).pipe(
-              Effect.zipRight(publish({ type: "delta", text: `${text}:d2` })),
-              Effect.zipRight(publish({ type: "note", text })),
+              Effect.andThen(publish({ type: "delta", text: `${text}:d2` })),
+              Effect.andThen(publish({ type: "note", text })),
             ),
           onError: (message) => ({ type: "error", message }),
           isTransient: (event) => event.type === "delta",
         })
-        const taker = yield* Effect.fork(
+        const taker = yield* Effect.forkChild(
           Stream.runCollect(Stream.take(session.transient, 2)),
         )
         yield* Effect.sleep("5 millis")
@@ -158,7 +158,7 @@ describe("makeSession — an interrupted turn leaves a trace", () => {
           conversationId: cid,
           runTurn: (text, publish) =>
             text === "slow"
-              ? publish({ type: "note", text: "started" }).pipe(Effect.zipRight(Effect.never))
+              ? publish({ type: "note", text: "started" }).pipe(Effect.andThen(Effect.never))
               : publish({ type: "note", text }),
           onError: (message) => ({ type: "error", message }),
           onInterrupt: () => ({ type: "error", message: "interrupted" }),
@@ -166,7 +166,7 @@ describe("makeSession — an interrupted turn leaves a trace", () => {
         // A finished turn: interrupt is a no-op, no phantom event.
         yield* session.send("quick")
         yield* session.interrupt
-        const fiber = yield* Effect.fork(session.send("slow"))
+        const fiber = yield* Effect.forkChild(session.send("slow"))
         yield* Effect.sleep("20 millis")
         yield* session.interrupt
         yield* Fiber.join(fiber)

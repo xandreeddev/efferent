@@ -16,9 +16,7 @@ export class ShellResult extends Schema.Class<ShellResult>("ShellResult")({
  * code + stderr and adapts), never an error — the error channel carries only
  * spawn/timeout infrastructure failures.
  */
-export class Shell extends Context.Tag("@xandreed/core/Shell")<
-  Shell,
-  {
+export class Shell extends Context.Service<Shell, {
     readonly exec: (
       command: string,
       options?: {
@@ -30,5 +28,4 @@ export class Shell extends Context.Tag("@xandreed/core/Shell")<
         readonly onChunk?: (chunk: string) => void
       },
     ) => Effect.Effect<ShellResult, ShellError>
-  }
->() {}
+  }>()("@xandreed/core/Shell") {}

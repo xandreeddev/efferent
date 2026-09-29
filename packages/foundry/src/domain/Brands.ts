@@ -9,12 +9,12 @@ import { Schema } from "effect"
  */
 
 /** A quality score. The invariant IS the brand: 0..1, always. */
-export const Score = Schema.Number.pipe(Schema.between(0, 1), Schema.brand("Score"))
+export const Score = Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 })), Schema.brand("Score"))
 export type Score = typeof Score.Type
 
 /** `<namespace>/<name>` — e.g. `effect/no-let`, `ts/2322`, `evals/nonempty-scorers`. */
 export const RuleId = Schema.String.pipe(
-  Schema.pattern(/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/),
+  Schema.check(Schema.isPattern(/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/)),
   Schema.brand("RuleId"),
 )
 export type RuleId = typeof RuleId.Type
@@ -23,11 +23,11 @@ export const GateName = Schema.NonEmptyString.pipe(Schema.brand("GateName"))
 export type GateName = typeof GateName.Type
 
 /** Matches the house id precedent (`ConversationId`, `ContextNodeId`). */
-export const RunId = Schema.UUID.pipe(Schema.brand("RunId"))
+export const RunId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand("RunId"))
 export type RunId = typeof RunId.Type
 
 /** 1-based attempt counter inside a forge run. */
-export const AttemptNumber = Schema.Int.pipe(Schema.positive(), Schema.brand("AttemptNumber"))
+export const AttemptNumber = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand("AttemptNumber"))
 export type AttemptNumber = typeof AttemptNumber.Type
 
 /**

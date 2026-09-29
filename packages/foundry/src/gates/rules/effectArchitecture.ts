@@ -1,7 +1,7 @@
 import * as ts from "typescript"
 import { RuleId } from "../../domain/Brands.js"
 import type { IdiomRule, RuleMatch } from "../idiomGate.js"
-import { walk } from "../astWalk.js"
+import { isEffectExport, walk } from "../astWalk.js"
 
 const fileName = (sourceFile: ts.SourceFile): string => sourceFile.fileName.replaceAll("\\", "/")
 
@@ -19,7 +19,7 @@ export const noRawPromiseCore: IdiomRule = {
   description: "entity and use-case code is Effect-native; Promise orchestration belongs at adapters",
   fixHint:
     "return and compose Effect values; expose Effect-returning ports and wrap foreign promises in an adapter with Effect.tryPromise",
-  check: ({ sourceFile }) => {
+  check: ({ sourceFile, checker }) => {
     if (!isCore(sourceFile)) return []
     const matches: Array<RuleMatch> = []
     walk(sourceFile, (node) => {
@@ -49,7 +49,7 @@ export const noRawPromiseCore: IdiomRule = {
         if (ts.isIdentifier(owner) && owner.text === "Promise") {
           matches.push({ node, message: `Promise.${method} is banned; use Effect concurrency` })
         }
-        if (method === "then" || method === "catch") {
+        if (method === "then" || (method === "catch" && !isEffectExport(checker, node.expression))) {
           matches.push({ node, message: `.${method}() is banned in the Effect core` })
         }
         if (
@@ -69,7 +69,7 @@ export const noRuntimeImportsCore: IdiomRule = {
   id: RuleId.make("architecture/no-runtime-imports-core"),
   defaultSeverity: "error",
   description: "the inner core does not import runtimes, providers, UI frameworks, or concrete SDKs",
-  fixHint: "move the integration behind a Context.Tag port and implement it in a .adapter.ts file",
+  fixHint: "move the integration behind a Context.Service port and implement it in a .adapter.ts file",
   check: ({ sourceFile }) => {
     if (!isCore(sourceFile)) return []
     const banned = ["node:", "bun", "@xandreed/providers", "playwright", "@opentui/", "solid-js"]
@@ -110,7 +110,7 @@ export const contractsContainNoBehavior: IdiomRule = {
 export const contextTagsLiveInPorts: IdiomRule = {
   id: RuleId.make("architecture/context-tags-live-in-ports"),
   defaultSeverity: "error",
-  description: "Context.Tag service contracts live in .port.ts files",
+  description: "Context.Service contracts live in .port.ts files",
   fixHint: "move the service contract to a .port.ts file; keep implementations in adapters",
   check: ({ sourceFile }) => {
     if (/\.port\.ts$/.test(fileName(sourceFile)) || fileName(sourceFile).includes("/ports/")) return []
@@ -120,7 +120,8 @@ export const contextTagsLiveInPorts: IdiomRule = {
         ts.isPropertyAccessExpression(node) &&
         ts.isIdentifier(node.expression) &&
         node.expression.text === "Context" &&
-        (node.name.text === "Tag" || node.name.text === "GenericTag")
+        // Effect v4 declares contracts with Service; v3's Tag and GenericTag still count.
+        (node.name.text === "Service" || node.name.text === "Tag" || node.name.text === "GenericTag")
       ) {
         matches.push({ node, message: `Context.${node.name.text} declared outside a .port.ts file` })
       }

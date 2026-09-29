@@ -8,4 +8,4 @@ export interface UiComponentCatalogService {
   readonly usages: (componentId: string) => Effect.Effect<ReadonlyArray<UiComponentUsage>, string>
 }
 
-export class UiComponentCatalog extends Context.Tag("@xandreed/ui-agent/UiComponentCatalog")<UiComponentCatalog, UiComponentCatalogService>() {}
+export class UiComponentCatalog extends Context.Service<UiComponentCatalog, UiComponentCatalogService>()("@xandreed/ui-agent/UiComponentCatalog") {}

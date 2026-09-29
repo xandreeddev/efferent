@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "@effect/ai"
+import { Tool } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "../ports/mcp-client.port.js"
 import { buildMcpBridge, McpCall } from "./bridge.js"
@@ -29,7 +29,7 @@ const scriptedClient = Layer.succeed(McpClient, {
 
 const handlerOf = async (name: string) => {
   const bridge = await Effect.runPromise(buildMcpBridge.pipe(Effect.provide(scriptedClient)))
-  return bridge.handlers.unsafeMap.get(`@effect/ai/Tool/${name}`) as {
+  return bridge.handlers.mapUnsafe.get(`effect/ai/Tool/${name}`) as {
     readonly handler: (args: unknown) => Effect.Effect<unknown, unknown>
   }
 }
@@ -54,9 +54,9 @@ describe("the MCP bridge — progressive disclosure", () => {
     })
     expect(JSON.stringify(ok)).toContain('"required"')
     const miss = await Effect.runPromise(
-      describe.handler({ server: "files", tool: "nope" }).pipe(Effect.either),
+      describe.handler({ server: "files", tool: "nope" }).pipe(Effect.result),
     )
-    expect(miss._tag).toBe("Left")
+    expect(miss._tag).toBe("Failure")
     expect(JSON.stringify(miss)).toContain("UnknownMcpTool")
   })
 
@@ -67,22 +67,22 @@ describe("the MCP bridge — progressive disclosure", () => {
     )
     expect(ok).toEqual({ hits: ["hi"] })
     const isError = await Effect.runPromise(
-      call.handler({ server: "files", tool: "search", args: { query: "boom" } }).pipe(Effect.either),
+      call.handler({ server: "files", tool: "search", args: { query: "boom" } }).pipe(Effect.result),
     )
     expect(JSON.stringify(isError)).toContain("McpToolError")
     const transport = await Effect.runPromise(
-      call.handler({ server: "files", tool: "search", args: { query: "dead" } }).pipe(Effect.either),
+      call.handler({ server: "files", tool: "search", args: { query: "dead" } }).pipe(Effect.result),
     )
     expect(JSON.stringify(transport)).toContain("McpTransportError")
     const unknown = await Effect.runPromise(
-      call.handler({ server: "files", tool: "ghost", args: {} }).pipe(Effect.either),
+      call.handler({ server: "files", tool: "ghost", args: {} }).pipe(Effect.result),
     )
     expect(JSON.stringify(unknown)).toContain("UnknownMcpTool")
   })
 
   test("mcp_call's args decode PRESERVES nested keys — the server gets them verbatim", async () => {
     const decoded = await Effect.runPromise(
-      Schema.decodeUnknown(McpCall.parametersSchema)({
+      Schema.decodeUnknownEffect(McpCall.parametersSchema)({
         server: "files",
         tool: "search",
         args: { query: "x", nested: { deep: true } },

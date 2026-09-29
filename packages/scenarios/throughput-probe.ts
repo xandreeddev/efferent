@@ -4,7 +4,7 @@
 // Untracked experiment harness — not part of the battery.
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
 import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
@@ -23,22 +23,22 @@ const probe = (model: string) =>
     const t0 = Date.now()
     const done = yield* LanguageModel.generateText({ prompt: PROMPT }).pipe(
       Effect.provideService(LanguageModel.LanguageModel, service),
-      Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "low" as const, maxOutputTokens: 3000 })),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low" as const, maxOutputTokens: 3000 })),
       Effect.timeout(Duration.seconds(TIMEOUT_S)),
-      Effect.either,
+      Effect.result,
     )
     const wall = Date.now() - t0
-    if (done._tag === "Left") {
-      console.log(`${model.padEnd(34)} FAILED/TIMEOUT after ${wall}ms: ${String(done.left).slice(0, 80)}`)
+    if (done._tag === "Failure") {
+      console.log(`${model.padEnd(34)} FAILED/TIMEOUT after ${wall}ms: ${String(done.failure).slice(0, 80)}`)
       return
     }
-    const text = done.right.text
+    const text = done.success.text
     const valid = Effect.try({ try: () => Array.isArray(JSON.parse(text.trim())), catch: () => false })
     const parsed = yield* valid.pipe(Effect.orElseSucceed(() => false))
     console.log(
       `${model.padEnd(34)} total ${String(wall).padStart(6)}ms · ${String(text.length).padStart(5)} chars · ${String(Math.round((text.length / wall) * 1000)).padStart(5)} chars/s · valid-json=${parsed}`,
     )
-  }).pipe(Effect.catchAll((e) => Effect.sync(() => console.log(`${model.padEnd(34)} ERROR: ${String(e).slice(0, 110)}`))))
+  }).pipe(Effect.catch((e) => Effect.sync(() => console.log(`${model.padEnd(34)} ERROR: ${String(e).slice(0, 110)}`))))
 
 await Effect.runPromise(
   Effect.forEach(MODELS, probe, { concurrency: 2 }).pipe(Effect.asVoid),

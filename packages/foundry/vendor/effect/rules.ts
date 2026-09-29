@@ -28,6 +28,18 @@ const walk = (root: ts.Node, visit: (node: ts.Node) => void): void => {
   ts.forEachChild(root, (child) => walk(child, visit))
 }
 
+/**
+ * Whether `access` (`X.name`) resolves to a function the `effect` package
+ * exports. Effect v4 names its handler `Effect.catch` (`Stream.catch`…),
+ * which is not Promise#catch. Unresolved names count as foreign.
+ */
+const isEffectExport = (checker: ts.TypeChecker, access: ts.PropertyAccessExpression): boolean => {
+  const symbol = checker.getSymbolAtLocation(access.name)
+  const resolved = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  return (resolved?.declarations ?? []).some((declaration) =>
+    /[\\/]node_modules[\\/]effect[\\/]/.test(declaration.getSourceFile().fileName))
+}
+
 const BLOCK_SCOPED =
   ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing
 
@@ -36,7 +48,7 @@ export const noLet = {
   defaultSeverity: "error",
   description: "`let` and `var` are banned",
   fixHint:
-    "model evolving state as an immutable fold (Effect.iterate / Effect.reduce / Array combinators) or a Ref",
+    "model evolving state as an immutable fold (Effect.reduce / a recursive Effect step / Array combinators) or a Ref",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
     const matches: Array<VendoredMatch> = []
     walk(sourceFile, (node) => {
@@ -58,8 +70,8 @@ export const noTryCatch = {
   defaultSeverity: "error",
   description: "try/catch, throw, and .catch() are banned",
   fixHint:
-    "create errors with Effect.fail / Effect.die; handle them with Effect.catchAll / Effect.catchTag",
-  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
+    "create errors with Effect.fail / Effect.die; handle them with Effect.catch / Effect.catchTag",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
     const matches: Array<VendoredMatch> = []
     walk(sourceFile, (node) => {
       if (ts.isTryStatement(node)) {
@@ -71,7 +83,8 @@ export const noTryCatch = {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "catch"
+        node.expression.name.text === "catch" &&
+        !isEffectExport(checker, node.expression)
       ) {
         matches.push({ node, message: ".catch() is banned" })
       }
@@ -96,7 +109,7 @@ export const noLoopStatements = {
   defaultSeverity: "error",
   description: "loop statements are banned; iteration is a fold",
   fixHint:
-    "Effect.iterate / Effect.loop for effectful loops; Effect.forEach for effectful iteration; Array combinators (map/filter/reduce/flatMap) for pure iteration",
+    "a recursive Effect step or Effect.repeat for effectful loops; Effect.forEach for effectful iteration; Array combinators (map/filter/reduce/flatMap) for pure iteration",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
     const matches: Array<VendoredMatch> = []
     walk(sourceFile, (node) => {
@@ -143,7 +156,7 @@ export const noNullableReturn = {
   defaultSeverity: "error",
   description: "exported functions must not return `A | undefined` / `A | null`",
   fixHint:
-    "return Option<A> (Option.fromNullable at the boundary); keep nullable unions for wire schemas only",
+    "return Option<A> (Option.fromNullishOr at the boundary); keep nullable unions for wire schemas only",
   check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     exportedFunctions(sourceFile).flatMap((fn): ReadonlyArray<VendoredMatch> => {
       const signature = checker.getSignatureFromDeclaration(fn)
@@ -191,7 +204,7 @@ export const matchOverTagSwitch = {
   description:
     "discriminated unions are branched with Match, not `switch (x._tag)` / else-if ladders",
   fixHint:
-    "Match.value(x).pipe(Match.tag(…), Match.exhaustive) — or Option.match / Either.match / Exit.match",
+    "Match.value(x).pipe(Match.tag(…), Match.exhaustive) — or Option.match / Result.match / Exit.match",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
     const matches: Array<VendoredMatch> = []
     walk(sourceFile, (node) => {

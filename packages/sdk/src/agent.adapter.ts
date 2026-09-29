@@ -89,13 +89,17 @@ const missing = (key: string) => failure("service.missing", `The agent's plugins
 
 const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" in item ? item : { plugin: item }
 
-const required = <I, S>(context: Context.Context<never>, tag: Context.Tag<I, S>): Effect.Effect<S, HarnessError> =>
+const required = <I, S>(context: Context.Context<never>, tag: Context.Service<I, S>): Effect.Effect<S, HarnessError> =>
   Option.match(Context.getOption(context, tag), { onNone: () => Effect.fail(missing(tag.key)), onSome: Effect.succeed })
 
-/** The host's per-turn layer, when it has one. Its requirements are erased: the turn's services meet them. */
+/**
+ * The host's per-turn layer, when it has one, built afresh for the turn
+ * (`local`: nothing memoized outside the turn is reused). Its requirements
+ * are erased: the turn's services meet them.
+ */
 const provideHostLayer = <A, E>(layer: Option.Option<Layer.Layer<A, E, unknown>>) =>
   <B, F, R>(effect: Effect.Effect<B, F, R>): Effect.Effect<B, F | E, unknown> =>
-    Option.match(layer, { onNone: () => effect, onSome: (hostLayer) => effect.pipe(Effect.provide(hostLayer)) })
+    Option.match(layer, { onNone: () => effect, onSome: (hostLayer) => effect.pipe(Effect.provide(hostLayer, { local: true })) })
 
 const hostContributions = (contributions: ReadonlyArray<Contribution>) => definePlugin({
   id: "@xandreed/sdk/host-contributions", version: "1", scope: "runtime",
@@ -128,11 +132,11 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   }
   const services = config.services ?? Context.empty()
   const turnKeys = (config.turnServices ?? []).map((tag) => tag.key)
-  const external = [SessionEnvironment.key, ...services.unsafeMap.keys(), ...turnKeys]
+  const external = [SessionEnvironment.key, ...services.mapUnsafe.keys(), ...turnKeys]
   const graph = yield* resolveGraph(harness, plugins, external)
   const workspace = config.workspace ?? "."
   const seed = Context.add(services, SessionEnvironment, { workspace })
-  const runtime = yield* activateGraph(graph, "runtime", Context.unsafeMake<never>(seed.unsafeMap), parent)
+  const runtime = yield* activateGraph(graph, "runtime", Context.makeUnsafe<never>(seed.mapUnsafe), parent)
   const perTurn = graph.nodes.some((node) => node.plugin.scope === "session")
 
   /**
@@ -151,7 +155,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
   ): Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
-    const absent = turnKeys.filter((key) => !input.services.unsafeMap.has(key))
+    const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
     const merged = Context.merge(runtime, input.services)
     const context = perTurn ? yield* activateGraph(graph, "session", merged, scope) : merged
@@ -172,7 +176,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const runOptions: TurnRunOptions = {
       ...(config.limits === undefined ? {} : { limits: config.limits }),
       ...(config.budgetTokens === undefined ? {} : { budgetTokens: config.budgetTokens }),
-      cacheKey: Option.orElse(Option.fromNullable(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", input.conversation)),
+      cacheKey: Option.orElse(Option.fromNullishOr(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", input.conversation)),
       ...(input.steering === undefined ? {} : { steering: input.steering }),
     }
 
@@ -185,8 +189,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     return yield* body.pipe(
       guardTurn,
       Effect.scoped,
-      provideHostLayer(Option.fromNullable(input.layer)),
-      Effect.provide(TurnLive(live)),
+      provideHostLayer(Option.fromNullishOr(input.layer)),
+      Effect.provide(TurnLive(live), { local: true }),
       Effect.provideService(ConversationMemory, memory),
       Effect.provideService(ToolRegistry, registry),
       Effect.provideService(StepLoop, loop),

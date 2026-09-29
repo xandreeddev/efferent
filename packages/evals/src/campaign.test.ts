@@ -29,7 +29,7 @@ describe("the campaign chassis", () => {
   test("failures and deadlines settle as failed rows after bounded cleanup", async () => {
     const failed = (cause: string): Trial => ({ id: "?", ok: false, error: cause })
     const cleaned = await Effect.runPromise(Ref.make(false))
-    const wedged = Effect.never.pipe(Effect.ensuring(Effect.sleep("20 millis").pipe(Effect.zipRight(Ref.set(cleaned, true))))) as Effect.Effect<Trial, unknown>
+    const wedged = Effect.never.pipe(Effect.ensuring(Effect.sleep("20 millis").pipe(Effect.andThen(Ref.set(cleaned, true))))) as Effect.Effect<Trial, unknown>
     const startedAt = Date.now()
     const trials = await Effect.runPromise(
       Effect.forEach(

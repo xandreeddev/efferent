@@ -14,7 +14,7 @@ export interface EvaluatorRegistration<I, R = never> {
 export interface PromptFamily<I, O, Ref, R = never> {
   readonly id: string
   readonly version: string
-  readonly output: Schema.Schema<O>
+  readonly output: Schema.Codec<O>
   readonly dataset: Dataset<I, Ref>
   readonly evaluate: (input: I) => Effect.Effect<O, AssessmentError, R>
   readonly comparator: Benchmark<I, O, O, Ref, R>["evaluators"]

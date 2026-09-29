@@ -16,9 +16,6 @@ export class UtilityCompletion extends Schema.Class<UtilityCompletion>("UtilityC
  * quick judgments) — backed by the fast-role model so a helper call is cheap
  * and can never park a turn. Never a substitute for the loop's LanguageModel.
  */
-export class UtilityLlm extends Context.Tag("@xandreed/core/UtilityLlm")<
-  UtilityLlm,
-  {
+export class UtilityLlm extends Context.Service<UtilityLlm, {
     readonly complete: (prompt: string) => Effect.Effect<UtilityCompletion, UtilityError>
-  }
->() {}
+  }>()("@xandreed/core/UtilityLlm") {}

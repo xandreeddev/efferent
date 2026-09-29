@@ -24,22 +24,22 @@ describe("plugin graph", () => {
       { plugins: [{ id: "a", use: "provider", options: { typo: 1 } }] },
       { plugins: [{ id: "a", use: "missing" }] },
     ]
-    await Promise.all(cases.map(async (config) => expect(await Effect.runPromise(Effect.either(resolveGraph({ version: 1, ...config }, [provider, consumer])))).toHaveProperty("_tag", "Left")))
+    await Promise.all(cases.map(async (config) => expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, ...config }, [provider, consumer])))).toHaveProperty("_tag", "Failure")))
     const self = { ...provider, requires: [Value.key] }
-    expect(await Effect.runPromise(Effect.either(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [self])))).toHaveProperty("_tag", "Left")
-    expect(await Effect.runPromise(Effect.either(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion: 99 }])))).toHaveProperty("_tag", "Left")
+    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [self])))).toHaveProperty("_tag", "Failure")
+    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion: 99 }])))).toHaveProperty("_tag", "Failure")
   })
   test("bindings select providers and failed activation disposes acquired resources", async () => {
     const released: string[] = []
     const tracked = definePlugin({ ...{
       id: "tracked", version: "1", config: Schema.Struct({}), defaults: {}, provides: [Value],
-      layer: () => Layer.scoped(Value, Effect.acquireRelease(Effect.succeed(1), () => Effect.sync(() => { released.push("closed") }))),
+      layer: () => Layer.effect(Value, Effect.acquireRelease(Effect.succeed(1), () => Effect.sync(() => { released.push("closed") }))),
     } })
     const broken = definePlugin({ id: "broken", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Value], provides: [Consumer], layer: () => Layer.effect(Consumer, Effect.fail(new HarnessError({ code: "test", message: "broken" }))) })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "t", use: "tracked" }, { id: "b", use: "broken" }] }, [tracked, broken])
       yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope)
-    })).pipe(Effect.either))
+    })).pipe(Effect.result))
     expect(released).toEqual(["closed"])
     const graph = await Effect.runPromise(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }, { id: "b", use: "provider" }], bindings: { [Value.key]: "b" } }, [provider]))
     expect(graph.providers[Value.key]).toBe("b")
@@ -57,7 +57,7 @@ describe("plugin graph", () => {
       return { seen: Context.getOption(context, Consumer).pipe(Option.getOrThrow), all: Context.getOption(context, Items).pipe(Option.getOrThrow) }
     })))
     expect(result).toEqual({ seen: 3, all: ["one", "two", "three", "collector"] })
-    const alone = await Effect.runPromise(Effect.either(resolveGraph({ version: 1, plugins: [{ id: "o", use: "optional" }] }, [optionalValue])))
-    expect(alone._tag).toBe("Right")
+    const alone = await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "o", use: "optional" }] }, [optionalValue])))
+    expect(alone._tag).toBe("Success")
   })
 })

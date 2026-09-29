@@ -64,7 +64,7 @@ export const parseLiveArgs = (
   )
   const samplesAt = argv.indexOf("--samples")
   /** A --samples override applies to EVERY selected pack (cheap smoke). */
-  const samplesOverride = Option.fromNullable(
+  const samplesOverride = Option.fromNullishOr(
     samplesAt >= 0 ? argv[samplesAt + 1] : undefined,
   ).pipe(
     Option.map(Number),

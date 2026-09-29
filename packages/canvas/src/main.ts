@@ -9,7 +9,7 @@ import type { UiAgentEvent } from "@xandreed/ui-agent"
 import { canvasAgent } from "./agent.js"
 import { serveCanvas } from "./web/server.js"
 
-const argValue = (flag: string) => Option.fromNullable(process.argv[process.argv.indexOf(flag) + 1]).pipe(Option.filter(() => process.argv.includes(flag)))
+const argValue = (flag: string) => Option.fromNullishOr(process.argv[process.argv.indexOf(flag) + 1]).pipe(Option.filter(() => process.argv.includes(flag)))
 const cwd = process.cwd()
 const program = Effect.gen(function* () {
   const preset = canvasAgent(cwd)

@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Schema, Effect } from "effect"
 
 /**
  * The CONTEXT SET — what the human chose for the model to see on top of the
@@ -14,7 +14,7 @@ import { Schema } from "effect"
  * deterministic and bounded.
  */
 
-export const StandingSource = Schema.Literal("rules", "lessons", "memory", "doctrine")
+export const StandingSource = Schema.Literals(["rules", "lessons", "memory", "doctrine"])
 export type StandingSource = typeof StandingSource.Type
 export const STANDING_SOURCES: ReadonlyArray<StandingSource> = [
   "rules",
@@ -24,7 +24,7 @@ export const STANDING_SOURCES: ReadonlyArray<StandingSource> = [
 ]
 
 /** Every pin can be switched off without being dropped. */
-const On = Schema.optionalWith(Schema.Boolean, { default: () => true })
+const On = Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => true)), Schema.withConstructorDefault(Effect.sync(() => true)))
 
 export const FilePin = Schema.TaggedStruct("file", { path: Schema.NonEmptyString, on: On })
 export const DirPin = Schema.TaggedStruct("dir", { path: Schema.NonEmptyString, on: On })
@@ -34,12 +34,12 @@ export const SpecPin = Schema.TaggedStruct("spec", { slug: Schema.NonEmptyString
 export const RunPin = Schema.TaggedStruct("run", { id: Schema.NonEmptyString, on: On })
 export const DiffPin = Schema.TaggedStruct("diff", {
   /** The git ref to diff against; absent = the working tree vs HEAD. */
-  ref: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
+  ref: Schema.OptionFromOptional(Schema.NonEmptyString),
   on: On,
 })
 export const CmdPin = Schema.TaggedStruct("cmd", { command: Schema.NonEmptyString, on: On })
 
-export const ContextPin = Schema.Union(FilePin, DirPin, GlobPin, NotePin, SpecPin, RunPin, DiffPin, CmdPin)
+export const ContextPin = Schema.Union([FilePin, DirPin, GlobPin, NotePin, SpecPin, RunPin, DiffPin, CmdPin])
 export type ContextPin = typeof ContextPin.Type
 
 export class ContextSet extends Schema.Class<ContextSet>("ContextSet")({
@@ -48,5 +48,5 @@ export class ContextSet extends Schema.Class<ContextSet>("ContextSet")({
   off: Schema.Array(StandingSource),
   pins: Schema.Array(ContextPin),
   /** The assembled block's cap, in characters (tokens ≈ chars / 4). */
-  budgetChars: Schema.Int.pipe(Schema.between(1_000, 200_000)),
+  budgetChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1_000, maximum: 200_000 }))),
 }) {}

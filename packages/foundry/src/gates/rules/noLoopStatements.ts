@@ -20,7 +20,7 @@ export const noLoopStatements: IdiomRule = {
   id: RuleId.make("effect/no-loop-statements"),
   defaultSeverity: "error",
   description: "loop statements are banned; iteration is a fold",
-  fixHint: "Effect.iterate / Effect.loop for effectful loops; Effect.forEach for effectful iteration; Array combinators (map/filter/reduce/flatMap) for pure iteration",
+  fixHint: "a recursive Effect step or Effect.repeat for effectful loops; Effect.forEach for effectful iteration; Array combinators (map/filter/reduce/flatMap) for pure iteration",
   check: ({ sourceFile }) => {
     const matches: Array<RuleMatch> = []
     walk(sourceFile, (node) => {

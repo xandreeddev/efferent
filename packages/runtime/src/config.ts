@@ -28,7 +28,7 @@ export const mergeConfig = (base: HarnessConfig, overlay: HarnessConfig): Harnes
 })
 
 export const decodeConfig = (input: unknown, source: string): Effect.Effect<HarnessConfig, HarnessError> =>
-  Schema.decodeUnknown(HarnessConfig)(input, { onExcessProperty: "error" }).pipe(
+  Schema.decodeUnknownEffect(HarnessConfig)(input, { onExcessProperty: "error", reportInput: true }).pipe(
     Effect.mapError((error) => new HarnessError({ code: "config.invalid", message: `${source}: ${String(error)}` })),
   )
 
@@ -41,7 +41,7 @@ const exists = (path: string) => Effect.tryPromise({ try: () => access(path), ca
 )
 
 const readJson = (path: string) => io(() => readFile(path, "utf8"), path).pipe(
-  Effect.flatMap((text) => Schema.decodeUnknown(Schema.parseJson(HarnessConfig))(text, { onExcessProperty: "error" })),
+  Effect.flatMap((text) => Schema.decodeUnknownEffect(Schema.fromJsonString(HarnessConfig))(text, { onExcessProperty: "error", reportInput: true })),
   Effect.mapError((error) => new HarnessError({ code: "config.invalid", message: `${path}: ${String(error)}` })),
 )
 

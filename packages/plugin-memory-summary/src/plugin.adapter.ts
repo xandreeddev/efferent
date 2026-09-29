@@ -13,17 +13,17 @@ import type { AgentMessage, CompactionAction, LogEntry, MemoryPolicy } from "@xa
 
 export const MemorySummaryConfig = Schema.Struct({
   /** Summarize once the rendered messages pass this share of the budget. */
-  triggerRatio: Schema.Number.pipe(Schema.between(0.1, 1)),
+  triggerRatio: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0.1, maximum: 1 }))),
   /** Keep at least this share of the budget verbatim (the newest turns). */
-  keepRatio: Schema.Number.pipe(Schema.between(0.05, 0.9)),
+  keepRatio: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0.05, maximum: 0.9 }))),
   /** Turns between two summaries (a summary is not revisited every step). */
-  cooldownTurns: Schema.Int.pipe(Schema.nonNegative()),
-  turnContext: Schema.Literal("current", "all"),
+  cooldownTurns: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  turnContext: Schema.Literals(["current", "all"]),
   replies: Schema.Boolean,
   /** Show recorded tool digests in place of the results they digest. */
   digests: Schema.Boolean,
-  media: Schema.Literal("none", "inline"),
-  maxImages: Schema.Int.pipe(Schema.nonNegative()),
+  media: Schema.Literals(["none", "inline"]),
+  maxImages: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Instructions for the summarizer; the transcript and any earlier summary follow. */
   instructions: Schema.String,
 })
@@ -35,7 +35,7 @@ export const memorySummaryDefaults: MemorySummaryConfig = {
 
 export const SUMMARY_STRATEGY = { id: "summary", version: "1" } as const
 
-const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullable(entries.flatMap((entry) =>
+const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullishOr(entries.flatMap((entry) =>
   entry.body._tag === "Compaction" && entry.body.strategy === SUMMARY_STRATEGY.id && entry.body.action._tag === "Summarize"
     ? [{ turn: entry.turn, keepFromTurn: entry.body.action.keepFromTurn, summary: entry.body.action.summary }] : []).at(-1))
 
@@ -85,7 +85,7 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 
 /** The summarizer is the UtilityLlm of where each session is opened (the turn), so it runs under that turn's budget. */
 export const memorySummaryPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-summary", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-memory-summary", version: "0.7.0-next.0", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
   requires: [MemoryLog],
   provides: [ConversationMemory],

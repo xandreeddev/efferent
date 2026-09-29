@@ -74,7 +74,7 @@ candidates by live-session friction: **tool-output expand** (agy's
 the turn. Trivial parse; decide globs/binary policy.
 
 ### MCP — expose
-`@effect/ai`'s `McpServer.toolkit()` bridges our toolkits to an MCP server:
+`effect/ai`'s `McpServer.toolkit()` bridges our toolkits to an MCP server:
 other agents (Claude Desktop/Code, Cursor) could drive smith's tools. Low
 effort, good build-in-public artifact.
 
@@ -97,13 +97,14 @@ Wilson intervals, judge-backed live packs, and raw-evidence baselines ship.
 
 ### Provider-level cache tightening
 Per-conversation OpenAI `prompt_cache_key`; explicit Gemini `cachedContent`
-when `@effect/ai-google` exposes it. Cost, not correctness.
+once Gemini is reachable beyond its OpenAI-compatible endpoint (Effect v4
+ships no Google provider). Cost, not correctness.
 
 ## Tier 3 — later
 
 - **Session branching** — fork a conversation from any message; the
   checkpoint model already supports the data shape, the UI is the work.
-- **Image attachments** — `FilePart`s exist in `@effect/ai`; needs input
+- **Image attachments** — `FilePart`s exist in `effect/ai`; needs input
   syntax + encoding.
 - **Live bash streaming** — `Shell.spawn` variant returning a stream so the
   model reacts to long builds mid-run.

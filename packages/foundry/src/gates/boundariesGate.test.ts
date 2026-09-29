@@ -52,4 +52,18 @@ describe("boundaries gate", () => {
     expect(findings.map((f) => String(f.rule))).toEqual(["boundaries/illegal-external"])
     expect(findings[0]!.message).toContain("node:path")
   })
+
+  test("an Effect barrel (effect/ai, formerly @effect/ai) needs its own allowance; core modules ride on effect", async () => {
+    const barrelLayers = (externals: ReadonlyArray<string>) => Schema.decodeUnknownSync(LayerConfig)({
+      layers: [{ name: "barrels", path: "src/barrels/**", canImport: [], externals }],
+    })
+    const run = (externals: ReadonlyArray<string>) => Effect.runPromise(
+      makeBoundariesGate(barrelLayers(externals), "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    const refused = await run(["effect"])
+    expect(refused.map((f) => String(f.rule))).toEqual(["boundaries/illegal-external"])
+    expect(refused[0]!.message).toContain("effect/ai")
+    expect(await run(["effect", "effect/ai"])).toEqual([])
+    expect(await run(["effect", "effect/"])).toEqual([])
+  })
 })

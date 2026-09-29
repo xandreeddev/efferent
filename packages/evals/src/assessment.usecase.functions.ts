@@ -12,12 +12,12 @@ export const assess = <I, R>(binding: EvaluatorBinding<I, R>, input: I): Effect.
     const evaluator = binding.evaluator
     const result = yield* evaluator.run(input).pipe(
       Effect.tap((value) => validateMetrics(value.metrics, evaluator.metrics)),
-      Effect.timeoutFail({ duration: binding.timeoutMs ?? 90_000, onTimeout: () => new AssessmentError({ code: "timeout", message: "Evaluator exceeded its deadline" }) }),
+      Effect.timeoutOrElse({ duration: binding.timeoutMs ?? 90_000, orElse: () => Effect.fail((() => new AssessmentError({ code: "timeout", message: "Evaluator exceeded its deadline" }))()) }),
       Effect.exit,
     )
     const common = { version: 2 as const, evaluator: evaluator.id, evaluatorVersion: evaluator.version, startedAt, endedAt: yield* Clock.currentTimeMillis }
     if (Exit.isFailure(result)) {
-      const error = Cause.failureOption(result.cause)
+      const error = Cause.findErrorOption(result.cause)
       return { ...common, status: Option.isSome(error) && error.value.code === "unavailable" ? "unavailable" as const : "error" as const, metrics: [], references: [], reason: Option.some(Cause.pretty(result.cause)), usage: unknownEvaluationUsage, metadata: {} }
     }
     return { ...common, status: "scored" as const, metrics: result.value.metrics.filter((metric) => binding.select.includes(metric.name)), reason: Option.some(result.value.reason), references: result.value.references ?? [], usage: result.value.usage ?? unknownEvaluationUsage, metadata: result.value.metadata ?? {} }
@@ -32,7 +32,7 @@ export const validateBindings = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<
 
 /** Also used to rescore saved evidence; no task execution or export is involved. */
 export const assessAll = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<I, R>>, input: I) =>
-  validateBindings(bindings).pipe(Effect.zipRight(Effect.forEach(bindings, (binding) => assess(binding, input))))
+  validateBindings(bindings).pipe(Effect.andThen(Effect.forEach(bindings, (binding) => assess(binding, input))))
 
 export const runBenchmark = <I, O, E, Ref, R>(benchmark: Benchmark<I, O, E, Ref, R>, options: BenchmarkOptions) => Effect.gen(function* () {
   yield* validateDataset(benchmark.dataset)
@@ -46,14 +46,14 @@ export const runBenchmark = <I, O, E, Ref, R>(benchmark: Benchmark<I, O, E, Ref,
     const startedAt = yield* Clock.currentTimeMillis
     const id = EvaluationId.make(`${options.runId}/${benchmark.id}/${entry.id}/${sample}`)
     const execution = yield* restore(Effect.scoped(benchmark.task(entry.input).pipe(
-      Effect.tap(({ output, evidence }) => Effect.all([Schema.validate(benchmark.output)(output), Schema.validate(benchmark.evidence)(evidence)])),
-      Effect.timeoutFail({ duration: options.timeoutMs ?? 90_000, onTimeout: () => new AssessmentError({ code: "timeout", message: "Task execution exceeded its deadline" }) }),
+      Effect.tap(({ output, evidence }) => Effect.all([Schema.decodeEffect(Schema.toType(benchmark.output))(output), Schema.decodeEffect(Schema.toType(benchmark.evidence))(evidence)])),
+      Effect.timeoutOrElse({ duration: options.timeoutMs ?? 90_000, orElse: () => Effect.fail((() => new AssessmentError({ code: "timeout", message: "Task execution exceeded its deadline" }))()) }),
     ))).pipe(Effect.exit)
     const trial: EvaluationTrial = {
       version: 2, id, target: benchmark.id, kind: benchmark.kind, dataset: benchmark.dataset.id, datasetVersion: benchmark.dataset.version,
       caseId: entry.id, split: entry.split, review: entry.review, candidate: options.candidate, sample,
       startedAt, endedAt: yield* Clock.currentTimeMillis,
-      status: Exit.isSuccess(execution) ? "completed" : Cause.isInterruptedOnly(execution.cause) ? "cancelled" : "error",
+      status: Exit.isSuccess(execution) ? "completed" : Cause.hasInterruptsOnly(execution.cause) ? "cancelled" : "error",
       output: Exit.isSuccess(execution) ? Option.some(execution.value.output) : Option.none(),
       evidence: Exit.isSuccess(execution) ? Option.some(execution.value.evidence) : Option.none(),
       reason: Exit.isSuccess(execution) ? Option.none() : Option.some(Cause.pretty(execution.cause)), evaluations: [],
@@ -64,12 +64,12 @@ export const runBenchmark = <I, O, E, Ref, R>(benchmark: Benchmark<I, O, E, Ref,
     const recorded = yield* Ref.make<ReadonlyArray<EvaluationResult>>([])
     const assessmentExit = yield* restore(Effect.forEach(benchmark.evaluators, (binding) => assess(binding, input).pipe(
       Effect.flatMap((result) => Effect.uninterruptible(store.writeAssessment(id, result).pipe(
-        Effect.zipRight(Ref.update(recorded, (prior) => [...prior, result])),
+        Effect.andThen(Ref.update(recorded, (prior) => [...prior, result])),
       ))),
     ))).pipe(Effect.exit)
     const evaluations = yield* Ref.get(recorded)
     if (Exit.isFailure(assessmentExit)) {
-      yield* store.writeTrial({ ...trial, evaluations, status: Cause.isInterruptedOnly(assessmentExit.cause) ? "cancelled" : "error", reason: Option.some(Cause.pretty(assessmentExit.cause)), endedAt: yield* Clock.currentTimeMillis })
+      yield* store.writeTrial({ ...trial, evaluations, status: Cause.hasInterruptsOnly(assessmentExit.cause) ? "cancelled" : "error", reason: Option.some(Cause.pretty(assessmentExit.cause)), endedAt: yield* Clock.currentTimeMillis })
       return yield* Effect.failCause(assessmentExit.cause)
     }
     const settled = { ...trial, evaluations, endedAt: yield* Clock.currentTimeMillis }

@@ -12,7 +12,7 @@ import { Match, Option, Schema } from "effect"
 export const MemoryId = Schema.String.pipe(Schema.brand("MemoryId"))
 export type MemoryId = typeof MemoryId.Type
 
-export const MemoryTopic = Schema.Literal("convention", "build-quirk", "dependency", "gotcha")
+export const MemoryTopic = Schema.Literals(["convention", "build-quirk", "dependency", "gotcha"])
 export type MemoryTopic = typeof MemoryTopic.Type
 
 export class MemoryProvenance extends Schema.Class<MemoryProvenance>("MemoryProvenance")({
@@ -45,10 +45,10 @@ export const InvalidateMemory = Schema.TaggedStruct("invalidate", {
   provenance: MemoryProvenance,
 })
 export const MemoryEvent = Schema.Union(
-  CreateMemory,
+  [CreateMemory,
   UpdateMemory,
   CorroborateMemory,
-  InvalidateMemory,
+  InvalidateMemory],
 )
 export type MemoryEvent = typeof MemoryEvent.Type
 
@@ -103,7 +103,7 @@ export const foldMemory = (
             ]),
           ),
           Match.tag("update", (e) =>
-            Option.match(Option.fromNullable(active.get(e.id)), {
+            Option.match(Option.fromNullishOr(active.get(e.id)), {
               onNone: () => active,
               onSome: (record) =>
                 new Map([
@@ -121,7 +121,7 @@ export const foldMemory = (
             }),
           ),
           Match.tag("corroborate", (e) =>
-            Option.match(Option.fromNullable(active.get(e.id)), {
+            Option.match(Option.fromNullishOr(active.get(e.id)), {
               onNone: () => active,
               onSome: (record) =>
                 new Map([

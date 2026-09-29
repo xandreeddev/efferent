@@ -70,8 +70,8 @@ export const nativeGrep = (
     const files = yield* walk(dir)
     const collected = yield* Effect.reduce(
       files,
-      [] as ReadonlyArray<string>,
-      (acc, file) =>
+      (): ReadonlyArray<string> => [],
+      (acc: ReadonlyArray<string>, file) =>
         acc.length >= MATCH_CAP
           ? Effect.succeed(acc)
           : fileMatches(dir, file, regex, MATCH_CAP - acc.length).pipe(

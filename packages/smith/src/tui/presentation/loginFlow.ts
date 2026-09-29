@@ -100,7 +100,7 @@ export const homeStep = (statuses: ReadonlyArray<ProviderStatus>): LoginFlow => 
   const options: ReadonlyArray<SelectOption<LoginHomeItem>> = [
     ...HOME_PROVIDERS.map((p) => {
       const configured = Option.flatMap(
-        Option.fromNullable(statuses.find((s) => s.provider === p)),
+        Option.fromNullishOr(statuses.find((s) => s.provider === p)),
         (s) => s.configured,
       )
       return {

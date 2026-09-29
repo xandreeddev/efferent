@@ -1,10 +1,7 @@
-import { FiberRef, GlobalValue, Option } from "effect"
+import { Context, Option } from "effect"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 
-export const CurrentModelCallPolicy = GlobalValue.globalValue(
-  "@xandreed/core/CurrentModelCallPolicy",
-  () => FiberRef.unsafeMake<Option.Option<ModelCallPolicy>>(Option.none()),
-)
+export const CurrentModelCallPolicy = Context.Reference<Option.Option<ModelCallPolicy>>("@xandreed/core/CurrentModelCallPolicy", { defaultValue: () => Option.none() })
 
 /**
  * Whether the CURRENT model call may legitimately return an empty response.
@@ -18,10 +15,7 @@ export const CurrentModelCallPolicy = GlobalValue.globalValue(
  * deadlines, for work that finished in seconds).
  *
  * The LOOP sets this once the run has tool calls; adapters' empty-response
- * rejection consults it at call time. A FiberRef, not a port: ambient call
+ * rejection consults it at call time. A context reference, not a port: ambient call
  * metadata, exactly like {@link CurrentModelCallPolicy}.
  */
-export const CurrentEmptyResponseTolerance = GlobalValue.globalValue(
-  "@xandreed/core/CurrentEmptyResponseTolerance",
-  () => FiberRef.unsafeMake<boolean>(false),
-)
+export const CurrentEmptyResponseTolerance = Context.Reference<boolean>("@xandreed/core/CurrentEmptyResponseTolerance", { defaultValue: () => false })

@@ -4,7 +4,7 @@ import { Schema } from "effect"
  * subscription dialect (accepted, reasoning_tokens 0); `minimal` was
  * REJECTED there and stays out of the vocabulary. Non-codex adapters clamp
  * `none` to their nearest supported value. */
-export const ReasoningEffort = Schema.Literal("none", "low", "medium", "high", "xhigh", "max")
+export const ReasoningEffort = Schema.Literals(["none", "low", "medium", "high", "xhigh", "max"])
 export type ReasoningEffort = typeof ReasoningEffort.Type
 
 export const ModelCallPolicy = Schema.Struct({

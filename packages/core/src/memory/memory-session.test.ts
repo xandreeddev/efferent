@@ -43,8 +43,8 @@ describe("the log session", () => {
         id: "slow", version: "1",
         digest: (task) => Ref.updateAndGet(running, (n) => n + 1).pipe(
           Effect.flatMap((now) => Ref.update(peak, (max) => Math.max(max, now))),
-          Effect.zipRight(Effect.sleep(`${delays[task.source] ?? 0} millis`)),
-          Effect.zipRight(Ref.update(running, (n) => n - 1)),
+          Effect.andThen(Effect.sleep(`${delays[task.source] ?? 0} millis`)),
+          Effect.andThen(Ref.update(running, (n) => n - 1)),
           Effect.as({ keep: [], summary: Option.some(`DIGEST ${task.source}`) }),
         ),
       })

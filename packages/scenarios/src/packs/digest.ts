@@ -19,11 +19,11 @@ import { generalTierCall, utilityTier } from "../live/llm.js"
 
 const FIXTURES = join(import.meta.dir, "..", "..", "..", "smith", "fixtures", "digest-golden")
 
-const ExpectedFile = Schema.parseJson(
+const ExpectedFile = Schema.fromJsonString(
   Schema.Struct({
     mustRetain: Schema.Array(
       Schema.Struct({
-        axis: Schema.Literal("task", "state", "verification", "dead-end"),
+        axis: Schema.Literals(["task", "state", "verification", "dead-end"]),
         fact: Schema.NonEmptyString,
       }),
     ),
@@ -46,7 +46,7 @@ export const readDigestCase = (
     const prior = existsSync(join(dir, name, "prior.txt"))
       ? Option.some(readFileSync(join(dir, name, "prior.txt"), "utf-8"))
       : Option.none<string>()
-    const expected = yield* Schema.decodeUnknown(ExpectedFile)(
+    const expected = yield* Schema.decodeUnknownEffect(ExpectedFile)(
       readFileSync(join(dir, name, "expected.json"), "utf-8"),
     )
     return { transcript, prior, expected }

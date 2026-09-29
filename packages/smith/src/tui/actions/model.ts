@@ -54,7 +54,7 @@ export const submitModel = (
       return store.setRole(role, selection).pipe(
         Effect.flatMap(() =>
           efforts.length === 0
-            ? store.set(effortKey(role), Option.none()).pipe(Effect.zipRight(store.load))
+            ? store.set(effortKey(role), Option.none()).pipe(Effect.andThen(store.load))
             : store.load,
         ),
         Effect.map((settings) => {

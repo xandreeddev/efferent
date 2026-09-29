@@ -1,27 +1,9 @@
 import { expect, test } from "bun:test"
-import { LanguageModel, Prompt, Tool } from "@effect/ai"
-import { Clock, Context, Effect, FiberRef, JSONSchema, Layer, Option, Ref, Schema, Stream } from "effect"
+import { LanguageModel, Prompt, Tool } from "effect/ai"
+import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { join } from "node:path"
-import {
-  ConversationId,
-  CurrentPromptCacheKey,
-  defineContributions,
-  defineHostEvent,
-  defineSkill,
-  defineTool,
-  entriesOfPayload,
-  Failure,
-  HarnessError,
-  IntentMatcher,
-  LogEntry,
-  onTool,
-  RunContext,
-  subscribeAll,
-  UserMessage,
-  UtilityCompletion,
-  UtilityLlm,
-} from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineContributions, defineHostEvent, defineSkill, defineTool, entriesOfPayload, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, subscribeAll, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
 import type { EventBody, JournalIO, Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -47,21 +29,21 @@ import { Tally } from "./testing.port.js"
 const Item = Schema.Struct({ id: Schema.String, detail: Schema.String })
 export const Lookup = Tool.make("lookup", {
   description: "Look records up by query.",
-  parameters: { query: Schema.String },
+  parameters: Schema.Struct({ query: Schema.String }),
   success: Schema.Struct({ items: Schema.Array(Item) }),
   failure: Failure,
   failureMode: "return",
 })
 export const Deliver = Tool.make("deliver", {
   description: "Deliver the final answer.",
-  parameters: { text: Schema.String },
+  parameters: Schema.Struct({ text: Schema.String }),
   success: Schema.Boolean,
   failure: Failure,
   failureMode: "return",
 })
 const Note = Tool.make("note", {
   description: "Take a note.",
-  parameters: { text: Schema.String },
+  parameters: Schema.Struct({ text: Schema.String }),
   success: Schema.Boolean,
   failure: Failure,
   failureMode: "return",
@@ -122,7 +104,7 @@ export const goldenConfig: AgentConfig = {
 
 /* ── a scripted provider that records every request, whole ── */
 
-const usage = { inputTokens: 100, outputTokens: 10, totalTokens: 110 }
+const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
 type Part = ReadonlyArray<unknown>
 const call = (id: string, name: string, params: unknown): Part => [{ type: "tool-call", id, name, params }, { type: "finish", reason: "tool-calls", usage }]
 const stop = (text: string): Part => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
@@ -133,12 +115,12 @@ const scripted = (requests: Ref.Ref<ReadonlyArray<unknown>>, runId: string, scri
   const served = yield* Ref.make(0)
   return yield* LanguageModel.make({
     generateText: (options) => Effect.gen(function* () {
-      const cacheKey = yield* FiberRef.get(CurrentPromptCacheKey)
+      const cacheKey = yield* Effect.service(CurrentPromptCacheKey)
       const index = yield* Ref.getAndUpdate(served, (value) => value + 1)
       yield* Ref.update(requests, (all) => [...all, {
         runId,
         prompt: encodePrompt(options.prompt),
-        tools: options.tools.map((tool) => ({ name: tool.name, description: tool.description ?? "", parameters: JSONSchema.make(tool.parametersSchema) })),
+        tools: options.tools.map((tool) => ({ name: tool.name, description: tool.description ?? "", parameters: toolParametersSchema(tool) })),
         toolChoice: options.toolChoice,
         responseFormat: options.responseFormat.type,
         cacheKey,
@@ -152,13 +134,14 @@ const scripted = (requests: Ref.Ref<ReadonlyArray<unknown>>, runId: string, scri
 /* ── the fixed clock: every timestamp and duration is the same in every run ── */
 
 const epoch = 1_767_225_600_000
-const realClock = Clock.make()
+const realClock = Clock.Clock.defaultValue()
 const fixedClock: Clock.Clock = {
-  [Clock.ClockTypeId]: Clock.ClockTypeId,
-  unsafeCurrentTimeMillis: () => epoch,
+  currentTimeMillisUnsafe: () => epoch,
   currentTimeMillis: Effect.succeed(epoch),
-  unsafeCurrentTimeNanos: () => BigInt(epoch) * 1_000_000n,
+  currentTimeNanosUnsafe: () => BigInt(epoch) * 1_000_000n,
   currentTimeNanos: Effect.succeed(BigInt(epoch) * 1_000_000n),
+  monotonicTimeNanosUnsafe: () => BigInt(epoch) * 1_000_000n,
+  monotonicTimeNanos: Effect.succeed(BigInt(epoch) * 1_000_000n),
   sleep: (duration) => realClock.sleep(duration),
 }
 
@@ -205,13 +188,13 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
   const stored = yield* Ref.make<ReadonlyArray<EventBody>>([])
   const bytes = yield* Ref.make<ReadonlyArray<string>>([])
   const journal: JournalIO = {
-    append: (event) => Ref.update(bytes, (all) => [...all, JSON.stringify(event)]).pipe(Effect.zipRight(Ref.update(stored, (all) => [...all, event]))),
+    append: (event) => Ref.update(bytes, (all) => [...all, JSON.stringify(event)]).pipe(Effect.andThen(Ref.update(stored, (all) => [...all, event]))),
     read: (names) => Ref.get(stored).pipe(Effect.map((all) => all.filter((event) => names.length === 0 || names.includes(event.name)))),
   }
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])
   const turns = yield* Ref.make<ReadonlyArray<Observed>>([])
 
-  const input = (runId: string, text: string, model: LanguageModel.Service) => ({
+  const input = (runId: string, text: string, model: LanguageModel.LanguageModel) => ({
     conversation, runId, userMessage: new UserMessage({ text }), journal,
     services: Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher),
   })
@@ -228,10 +211,10 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
       }))
       return yield* use(turn).pipe(Effect.ensuring(turn.memory.entries.pipe(Effect.flatMap((all) => Ref.set(entries, all.length)))))
     })
-    const exit = yield* Effect.either(agent.turn(turnInput, observed))
+    const exit = yield* Effect.result(agent.turn(turnInput, observed))
     const recorded: Observed = {
       runId: turnInput.runId,
-      outcome: exit._tag === "Right" ? exit.right : { failed: exit.left instanceof HarnessError ? exit.left.code : String(exit.left) },
+      outcome: exit._tag === "Success" ? exit.success : { failed: exit.failure instanceof HarnessError ? exit.failure.code : String(exit.failure) },
       events: yield* Ref.get(events),
       contextBuilt: yield* Ref.get(built),
       entries: yield* Ref.get(entries),
@@ -299,7 +282,7 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
     log: Schema.encodeSync(Schema.Array(LogEntry))(log.flat()),
     requests: yield* Ref.get(requests),
   }
-})).pipe(Effect.withClock(fixedClock))
+})).pipe(Effect.provideService(Clock.Clock, fixedClock))
 
 const goldenPath = join(import.meta.dir, "../golden/agent-turn.json")
 

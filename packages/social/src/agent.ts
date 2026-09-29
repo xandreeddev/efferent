@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { AgentLoop, AgentMessage, CurrentModelCallPolicy, defineAgent, definePlugin, HarnessError, SessionStore } from "@xandreed/core"
 import { runLoop } from "@xandreed/plugin-agent-loop"
@@ -19,20 +19,20 @@ export const socialHostPlugin = definePlugin({
   layer: () => Layer.mergeAll(PlaywrightXPlatformLive, AstroBlogReaderLive, LocalSocialWorkspaceLive),
 })
 export const socialLoopPlugin = definePlugin({
-  id: "social/loop", version: "1", config: Schema.Struct({ maxSteps: Schema.Int.pipe(Schema.between(1, 100)), effort: Schema.Literal("low", "medium", "high"), maxOutputTokens: Schema.Int.pipe(Schema.between(128, 16384)) }), defaults: { maxSteps: 8, effort: "medium" as const, maxOutputTokens: 2000 },
+  id: "social/loop", version: "1", config: Schema.Struct({ maxSteps: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 100 }))), effort: Schema.Literals(["low", "medium", "high"]), maxOutputTokens: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 128, maximum: 16384 }))) }), defaults: { maxSteps: 8, effort: "medium" as const, maxOutputTokens: 2000 },
   requires: [LanguageModel.LanguageModel, XPlatform, BlogReader, SocialWorkspace, SessionStore], provides: [AgentLoop],
   layer: (config) => Layer.effect(AgentLoop, Effect.gen(function* () {
     const context = yield* Effect.context<LanguageModel.LanguageModel | XPlatform | BlogReader | SocialWorkspace>()
     const store = yield* SessionStore
     return AgentLoop.of({ run: (input) => Effect.gen(function* () {
       const prior = (yield* store.read(input.session.id, -1)).filter((event) => event.name === "messages")
-      const messages = (yield* Effect.forEach(prior, (event) => Schema.decodeUnknown(Schema.Array(AgentMessage))(event.data.messages))).flat()
+      const messages = (yield* Effect.forEach(prior, (event) => Schema.decodeUnknownEffect(Schema.Array(AgentMessage))(event.data.messages))).flat()
       const user = { role: "user" as const, content: input.userMessage.text }
       yield* input.publish({ name: "messages", runId: input.runId, data: { messages: [user] } })
       const result = yield* runLoop({ system: input.system, messages: [...messages, user], toolkit: socialToolkit, maxSteps: config.maxSteps,
         onTail: (tail) => input.publish({ name: "messages", runId: input.runId, data: { messages: tail } }).pipe(Effect.as([] as ReadonlyArray<number>), Effect.orDie),
         onEvent: (event) => input.publish({ name: "loop.event", runId: input.runId, data: { ...event } }).pipe(Effect.asVoid, Effect.orDie),
-      }).pipe(Effect.provide(SocialToolkitLive), Effect.provide(context), Effect.locally(CurrentModelCallPolicy, Option.some({ effort: config.effort, maxOutputTokens: config.maxOutputTokens })))
+      }).pipe(Effect.provide(SocialToolkitLive), Effect.provide(context), Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: config.effort, maxOutputTokens: config.maxOutputTokens })))
       return { text: result.finalText, outcome: result.outcome === "ok" ? "completed" as const : "partial" as const }
     }).pipe(Effect.mapError((error) => new HarnessError({ code: "social.run", message: String(error) }))) })
   })),

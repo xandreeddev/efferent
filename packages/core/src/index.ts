@@ -78,6 +78,7 @@ export {
 export type { ToolResultSummary } from "./loop/mapping.js"
 export { CurrentPromptCacheKey } from "./loop/cacheKey.js"
 export { foldStreamParts } from "./loop/streamFold.js"
+export { strictJsonSchema, toolParametersSchema } from "./loop/toolSchema.js"
 export type { FoldedTurn, StreamDelta } from "./loop/streamFold.js"
 export { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "./ports/mcp-client.port.js"
 export { buildMcpBridge, emptyMcpBridge, McpCall, McpDescribe } from "./mcp/bridge.js"

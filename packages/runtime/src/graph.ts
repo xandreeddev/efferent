@@ -35,7 +35,7 @@ export const resolveGraph = (
     if (plugin === undefined) return yield* invalid(`plugin ${entry.use} is not installed (instance ${entry.id})`)
     if (!SUPPORTED_PLUGIN_API_VERSIONS.includes(plugin.apiVersion)) return yield* invalid(`${entry.id}: plugin API ${plugin.apiVersion} is incompatible with ${PLUGIN_API_VERSION}`)
     const options = { ...plugin.defaults, ...entry.options }
-    yield* Schema.decodeUnknown(plugin.schema)(options, { onExcessProperty: "error" }).pipe(
+    yield* Schema.decodeUnknownEffect(plugin.schema)(options, { onExcessProperty: "error", reportInput: true }).pipe(
       Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: entry.id, message: String(error) })),
     )
     return { entry, plugin, options }
@@ -93,21 +93,21 @@ export const activateGraph = (
   services: Context.Context<never>,
   scope: Scope.Scope,
 ): Effect.Effect<Context.Context<never>, HarnessError> => Effect.reduce(
-  graph.nodes.filter((node) => node.plugin.scope === lifetime), services,
+  graph.nodes.filter((node) => node.plugin.scope === lifetime), () => services,
   (context, node) => Effect.gen(function* () {
-    const dependencies = Context.unsafeMake<never>(new Map([...node.plugin.requires, ...optional(node)].flatMap((key) =>
-      context.unsafeMap.has(key) ? [[key, context.unsafeMap.get(key)] as const]
+    const dependencies = Context.makeUnsafe<never>(new Map([...node.plugin.requires, ...optional(node)].flatMap((key) =>
+      context.mapUnsafe.has(key) ? [[key, context.mapUnsafe.get(key)] as const]
         : contributedKeys(graph).has(key) ? [[key, []] as const] : [])))
-    const built = yield* Scope.extend(node.plugin.build(node.options, dependencies), scope)
-    const missing = [...node.plugin.provides, ...contributes(node)].filter((key) => !built.unsafeMap.has(key))
+    const built = yield* Scope.provide(node.plugin.build(node.options, dependencies), scope)
+    const missing = [...node.plugin.provides, ...contributes(node)].filter((key) => !built.mapUnsafe.has(key))
     if (missing.length > 0) return yield* invalid(`${node.entry.id} did not provide declared services: ${missing.join(", ")}`)
-    const invalidContribution = contributes(node).find((key) => !Array.isArray(built.unsafeMap.get(key)))
+    const invalidContribution = contributes(node).find((key) => !Array.isArray(built.mapUnsafe.get(key)))
     if (invalidContribution !== undefined) return yield* invalid(`${node.entry.id} contributed a non-array value to ${invalidContribution}`)
     const selected = new Map([
-      ...node.plugin.provides.flatMap((key) => graph.providers[key] === node.entry.id ? [[key, built.unsafeMap.get(key)] as const] : []),
-      ...contributes(node).map((key) => [key, [...asArray(context.unsafeMap.get(key)), ...asArray(built.unsafeMap.get(key))]] as const),
+      ...node.plugin.provides.flatMap((key) => graph.providers[key] === node.entry.id ? [[key, built.mapUnsafe.get(key)] as const] : []),
+      ...contributes(node).map((key) => [key, [...asArray(context.mapUnsafe.get(key)), ...asArray(built.mapUnsafe.get(key))]] as const),
     ])
-    return Context.merge(context, Context.unsafeMake<never>(selected))
+    return Context.merge(context, Context.makeUnsafe<never>(selected))
   }),
 )
 

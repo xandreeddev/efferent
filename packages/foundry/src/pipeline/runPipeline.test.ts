@@ -40,7 +40,7 @@ const pipelineOf = (
   gates: ReadonlyArray<Gate<never>>,
   policy: Pipeline<never>["policy"] = "staged",
 ): Pipeline<never> => {
-  expect(Arr.isNonEmptyReadonlyArray(gates)).toBe(true)
+  expect(Arr.isReadonlyArrayNonEmpty(gates)).toBe(true)
   return { gates: gates as Arr.NonEmptyReadonlyArray<Gate<never>>, policy }
 }
 
@@ -126,7 +126,7 @@ describe("runPipeline — staged policy", () => {
       name: GateName.make("idioms"),
       kind: "static",
       deterministic: true,
-      run: () => Effect.dieMessage("unexpected"),
+      run: () => Effect.die(new Error("unexpected")),
     }
     const report = await Effect.runPromise(runPipeline(pipelineOf([dying]), ws))
     expect(report.ok).toBe(false)

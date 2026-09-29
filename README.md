@@ -98,7 +98,7 @@ Set `inheritPrevious: false` for an independent setup.
 | Package | Responsibility |
 | --- | --- |
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
-| `@xandreed/ai` | Versioned prompts and decision prompts on `@effect/ai`, with their provenance |
+| `@xandreed/ai` | Versioned prompts and decision prompts on `effect/ai`, with their provenance |
 | `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
 | `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
 | `@xandreed/plugin-*` | Replaceable first-party capabilities |

@@ -277,7 +277,7 @@ export const attemptRowView = (row: AttemptRow): AttemptRowView => {
     (acc, cell) => ({ ...acc, [cell.state]: (acc[cell.state] ?? 0) + 1 }),
     { pass: 0, fail: 0, running: 0, pending: 0, skip: 0 } as Record<GateCellState, number>,
   )
-  const active = Option.fromNullable(
+  const active = Option.fromNullishOr(
     row.gates.find((c) => c.state === "running") ??
       row.gates.find((c) => c.state === "fail") ??
       row.gates.find((c) => c.state === "pending"),

@@ -5,7 +5,7 @@ import { effectPack, qualityPack } from "./rules/packs.js"
 import { renderQualityBar } from "./renderQualityBar.js"
 
 const decode = (raw: unknown): GateSuiteConfig =>
-  Effect.runSync(Schema.decodeUnknown(GateSuiteConfig)(raw))
+  Effect.runSync(Schema.decodeUnknownEffect(GateSuiteConfig)(raw))
 
 const registry = [...effectPack.rules, ...qualityPack.rules]
 

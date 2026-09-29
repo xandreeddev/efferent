@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { LanguageModel, Prompt } from "@effect/ai"
+import { LanguageModel, Prompt } from "effect/ai"
 import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import { assessAll, unknownEvaluationUsage } from "./assessment.usecase.functions.js"
 import { SemanticJudge } from "./ports/semantic-judge.port.js"
@@ -17,7 +17,7 @@ const input: SemanticInput = { state: "Answer: open at 09:00. Evidence: hours 09
 const answers = { groundedness: { type: "boolean" as const, probability: 0.9 }, completeness: { type: "score" as const, score: 1.5 }, preference: { type: "choice" as const, choice: "A" } }
 const evaluator = semanticEvaluator({ id: "quality", version: "rubric-v1", questions: input.questions, state: (value: { state: string }) => value.state })
 const bindings = [{ evaluator, select: ["groundedness", "completeness", "preference"] }]
-const finish = { type: "finish" as const, reason: "stop" as const, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+const finish = { type: "finish" as const, reason: "stop" as const, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } }
 const model = (prompts: Ref.Ref<ReadonlyArray<string>>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
   generateText: (request) => Ref.update(prompts, (prior) => [...prior, JSON.stringify(request.prompt)]).pipe(Effect.as([{ type: "text" as const, text: JSON.stringify({ answers }) }, finish])),
   streamText: () => Stream.die("unused"),
@@ -87,7 +87,7 @@ test("invalid rubrics fail before invoking transport", async () => {
 test("response schema constrains offered choices and fractional score bounds", () => {
   const schema = semanticResponseSchema(input.questions)
   expect(Schema.is(schema)({ answers })).toBe(true)
-  expect(Schema.decodeUnknownEither(schema)({ answers: { ...answers, unexpected: answers.groundedness } })._tag).toBe("Left")
+  expect(Schema.decodeUnknownResult(schema)({ answers: { ...answers, unexpected: answers.groundedness } })._tag).toBe("Failure")
   expect(Schema.is(schema)({ answers: { ...answers, preference: { type: "choice", choice: "C" } } })).toBe(false)
   expect(Schema.is(schema)({ answers: { ...answers, completeness: { type: "score", score: 3 } } })).toBe(false)
 })
@@ -153,7 +153,7 @@ test("interrupting a judge aborts the pending SDK request", async () => {
     started.resolve()
   }) })
   await Effect.runPromise(Effect.gen(function* () {
-    const fiber = yield* Effect.flatMap(SemanticJudge, (judge) => judge.evaluate(input)).pipe(Effect.provide(layer), Effect.fork)
+    const fiber = yield* Effect.flatMap(SemanticJudge, (judge) => judge.evaluate(input)).pipe(Effect.provide(layer), Effect.forkChild)
     yield* Effect.promise(() => started.promise)
     yield* Fiber.interrupt(fiber)
   }))

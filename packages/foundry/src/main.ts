@@ -14,7 +14,7 @@ import { TsProjectCachedLive } from "./gates/TsProject.port.js"
 
 const flagValue = (argv: ReadonlyArray<string>, flag: string): Option.Option<string> => {
   const index = argv.indexOf(flag)
-  return index >= 0 ? Option.fromNullable(argv[index + 1]) : Option.none()
+  return index >= 0 ? Option.fromNullishOr(argv[index + 1]) : Option.none()
 }
 
 const USAGE = [

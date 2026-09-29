@@ -1,4 +1,4 @@
-import { Option, Schema } from "effect"
+import { Option, Schema, Effect } from "effect"
 
 /**
  * The SPEC artifact of the spec-driven pipeline: a rough idea becomes a
@@ -17,35 +17,35 @@ import { Option, Schema } from "effect"
 
 /** Kebab-case spec identity — the file's basename, minted once. */
 export const SpecSlug = Schema.String.pipe(
-  Schema.pattern(/^[a-z0-9][a-z0-9-]*$/),
+  Schema.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/)),
   Schema.brand("SpecSlug"),
 )
 export type SpecSlug = typeof SpecSlug.Type
 
-export const SpecStatus = Schema.Literal("draft", "locked")
+export const SpecStatus = Schema.Literals(["draft", "locked"])
 export type SpecStatus = typeof SpecStatus.Type
 
 /** A machine-checkable acceptance criterion: a named shell command that must
  *  exit 0. Drivers append one rank-2 command gate per check (`accept:<name>`). */
 export class SpecCheck extends Schema.Class<SpecCheck>("SpecCheck")({
-  name: Schema.String.pipe(Schema.pattern(/^[a-z0-9][a-z0-9-]*$/)),
+  name: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/))),
   command: Schema.NonEmptyString,
 }) {}
 
 /** Forge-loop bounds (mirrors foundry's ForgeLimits, in human units). */
 export class SpecLimits extends Schema.Class<SpecLimits>("SpecLimits")({
-  maxAttempts: Schema.Int.pipe(Schema.between(1, 10)),
-  budgetMinutes: Schema.Positive,
+  maxAttempts: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 }))),
+  budgetMinutes: Schema.Number.check(Schema.isGreaterThan(0)),
 }) {}
 
 /** Gate-suite selection overrides; absent fields fall through to the driver's
  *  workspace discovery (precedence: CLI flags > these > discovery). */
 export class SpecGates extends Schema.Class<SpecGates>("SpecGates")({
-  config: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
-  testCommand: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
-  noTest: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  config: Schema.OptionFromOptional(Schema.NonEmptyString),
+  testCommand: Schema.OptionFromOptional(Schema.NonEmptyString),
+  noTest: Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => false)), Schema.withConstructorDefault(Effect.sync(() => false))),
   /** The rank-4 LLM judge — ON by default; a spec opts out with `judge: false`. */
-  judge: Schema.optionalWith(Schema.Boolean, { default: () => true }),
+  judge: Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => true)), Schema.withConstructorDefault(Effect.sync(() => true))),
 }) {}
 
 export class SpecDoc extends Schema.Class<SpecDoc>("SpecDoc")({
@@ -53,7 +53,7 @@ export class SpecDoc extends Schema.Class<SpecDoc>("SpecDoc")({
   status: SpecStatus,
   /** ISO timestamps — strings on purpose (stable round-trip, no Date drift). */
   created: Schema.NonEmptyString,
-  locked: Schema.optionalWith(Schema.NonEmptyString, { as: "Option" }),
+  locked: Schema.OptionFromOptional(Schema.NonEmptyString),
   /** One imperative paragraph — becomes foundry `Spec.goal`. */
   goal: Schema.NonEmptyString,
   /** Rendered verbatim into the implementor brief; also foundry `Spec.acceptance`. */

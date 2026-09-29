@@ -17,27 +17,27 @@ export const ToolAnnotations = Schema.Struct({
   permissions: Schema.Array(Schema.String),
   maxCallsPerRun: Schema.OptionFromNullOr(Schema.Int),
   /** Host display metadata, carried on invocation events. */
-  labels: Schema.Record({ key: Schema.String, value: Schema.String }),
+  labels: Schema.Record(Schema.String, Schema.String),
   stage: Schema.OptionFromNullOr(Schema.String),
 })
 export type ToolAnnotations = typeof ToolAnnotations.Type
 
 /** Tier 3: reference material a loaded skill may read on demand. */
 export const SkillReference = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  title: Schema.NonEmptyTrimmedString,
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  title: Schema.Trimmed.check(Schema.isNonEmpty()),
   text: Schema.String,
 })
 export type SkillReference = typeof SkillReference.Type
 
 export const SkillDefinition = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  version: Schema.NonEmptyTrimmedString,
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  version: Schema.Trimmed.check(Schema.isNonEmpty()),
   /** Tier 1: one line in the catalogue, always in context. */
-  summary: Schema.NonEmptyTrimmedString,
+  summary: Schema.Trimmed.check(Schema.isNonEmpty()),
   /** Tier 2: returned by load_skill together with the skill's tools. */
   instructions: Schema.String,
-  tools: Schema.Array(Schema.NonEmptyTrimmedString),
+  tools: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
   /** Active from the first step of every turn. */
   always: Schema.Boolean,
   permissions: Schema.Array(Schema.String),
@@ -45,5 +45,5 @@ export const SkillDefinition = Schema.Struct({
 })
 export type SkillDefinition = typeof SkillDefinition.Type
 
-export const PromptTier = Schema.Literal("static", "session", "turn")
+export const PromptTier = Schema.Literals(["static", "session", "turn"])
 export type PromptTier = typeof PromptTier.Type

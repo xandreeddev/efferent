@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Either, Layer, Schema } from "effect"
+import { Effect, Result, Layer, Schema } from "effect"
 import { ThemeDefinition, UiThemeStore } from "@xandreed/ui-agent"
 import type { ThemeDefinitionType } from "@xandreed/ui-agent"
 
-const decodeTheme = Schema.decodeUnknownEither(Schema.parseJson(ThemeDefinition))
+const decodeTheme = Schema.decodeUnknownResult(Schema.fromJsonString(ThemeDefinition))
 
-export const SqliteUiThemeStoreLive = (dbPath: string) => Layer.scoped(
+export const SqliteUiThemeStoreLive = (dbPath: string) => Layer.effect(
   UiThemeStore,
   Effect.gen(function* () {
     const db = yield* Effect.try({
@@ -32,11 +32,11 @@ export const SqliteUiThemeStoreLive = (dbPath: string) => Layer.scoped(
       try: () => db.close(),
       catch: (error) => error,
     }).pipe(
-      Effect.catchAll((error) => Effect.logWarning(`UI theme database cleanup failed: ${String(error)}`)),
+      Effect.catch((error) => Effect.logWarning(`UI theme database cleanup failed: ${String(error)}`)),
     ))
     return {
       list: Effect.try({
-        try: () => (db.query("SELECT definition FROM ui_themes WHERE status != 'deprecated' ORDER BY id").all() as ReadonlyArray<{ readonly definition: string }>).flatMap((row) => Either.match(decodeTheme(row.definition), { onLeft: () => [], onRight: (theme) => [theme] })),
+        try: () => (db.query("SELECT definition FROM ui_themes WHERE status != 'deprecated' ORDER BY id").all() as ReadonlyArray<{ readonly definition: string }>).flatMap((row) => Result.match(decodeTheme(row.definition), { onFailure: () => [], onSuccess: (theme) => [theme] })),
         catch: (error) => `ui-theme-store: ${String(error)}`,
       }),
       put: (theme: ThemeDefinitionType) => Effect.try({

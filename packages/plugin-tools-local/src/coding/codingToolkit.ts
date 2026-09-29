@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, join, normalize, relative } from "node:path"
-import { Tool, Toolkit } from "@effect/ai"
-import { Effect, Option, Runtime, Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+import { Context, Effect, Option, Schema } from "effect"
 import { Failure, FileSystem, Shell } from "@xandreed/core"
 type SmithEvent = { readonly type: "bash_progress"; readonly line: string }
 import { discoverSkills, readSkill } from "../skills/skills.js"
@@ -22,11 +22,11 @@ const DEFAULT_BASH_TIMEOUT_MS = 5 * 60_000
 export const ReadFile = Tool.make("read_file", {
   description:
     "Read one file inside the workspace. Returns {content, truncated} — content over 48k chars is clipped with a marker; page big files with offset/limit. Symlinks that resolve outside the workspace are refused.",
-  parameters: {
-    path: Schema.String.annotations({ description: "Workspace-relative or absolute path." }),
-    offset: Schema.optional(Schema.Number.annotations({ description: "1-based first line (default 1)." })),
-    limit: Schema.optional(Schema.Number.annotations({ description: "Max lines from offset (default: to end)." })),
-  },
+  parameters: Schema.Struct({
+    path: Schema.String.annotate({ description: "Workspace-relative or absolute path." }),
+    offset: Schema.optionalKey(Schema.Finite.annotate({ description: "1-based first line (default 1)." })),
+    limit: Schema.optionalKey(Schema.Finite.annotate({ description: "Max lines from offset (default: to end)." })),
+  }),
   success: Schema.Struct({ content: Schema.String, truncated: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
@@ -35,10 +35,10 @@ export const ReadFile = Tool.make("read_file", {
 export const WriteFile = Tool.make("write_file", {
   description:
     "Create or overwrite ONE file inside the workspace (writes outside it are refused). Provide the FULL file body — empty content is refused; use edit_file to blank a file intentionally. Side effect: missing parent directories are created. Returns {written, path}.",
-  parameters: {
-    path: Schema.String.annotations({ description: "Workspace-relative (or absolute inside the workspace)." }),
-    content: Schema.String.annotations({ description: "The complete file body." }),
-  },
+  parameters: Schema.Struct({
+    path: Schema.String.annotate({ description: "Workspace-relative (or absolute inside the workspace)." }),
+    content: Schema.String.annotate({ description: "The complete file body." }),
+  }),
   success: Schema.Struct({ written: Schema.Boolean, path: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -47,14 +47,14 @@ export const WriteFile = Tool.make("write_file", {
 export const EditFile = Tool.make("edit_file", {
   description:
     'Replace exact text in one workspace file. Provide edits: [{oldText, newText}] (or a single flat oldText/newText pair). Each oldText must match EXACTLY once, whitespace included — include surrounding lines to make it unique. Example: {path: "src/a.ts", oldText: "const x = 1", newText: "const x = 2"}. Returns {edited, path, applied: number of edits applied}.',
-  parameters: {
-    path: Schema.String.annotations({ description: "Workspace-relative (or absolute inside the workspace)." }),
-    edits: Schema.optional(
+  parameters: Schema.Struct({
+    path: Schema.String.annotate({ description: "Workspace-relative (or absolute inside the workspace)." }),
+    edits: Schema.optionalKey(
       Schema.Array(Schema.Struct({ oldText: Schema.String, newText: Schema.String })),
     ),
-    oldText: Schema.optional(Schema.String.annotations({ description: "Flat single-edit form: the exact text to replace." })),
-    newText: Schema.optional(Schema.String.annotations({ description: "Flat single-edit form: the replacement." })),
-  },
+    oldText: Schema.optionalKey(Schema.String.annotate({ description: "Flat single-edit form: the exact text to replace." })),
+    newText: Schema.optionalKey(Schema.String.annotate({ description: "Flat single-edit form: the replacement." })),
+  }),
   success: Schema.Struct({ edited: Schema.Boolean, path: Schema.String, applied: Schema.Number }),
   failure: Failure,
   failureMode: "return",
@@ -63,12 +63,12 @@ export const EditFile = Tool.make("edit_file", {
 export const Bash = Tool.make("Bash", {
   description:
     "Run one shell command (bash -c) with cwd = the workspace root. A non-zero exit is a RESULT, not an error: returns {stdout, stderr, exitCode} — read stderr and adapt. Output over 16k chars is clipped with a marker.",
-  parameters: {
-    command: Schema.String.annotations({ description: "The command line to run." }),
-    timeout: Schema.optional(
-      Schema.Number.annotations({ description: "Timeout in ms (default 300000 = 5 minutes)." }),
+  parameters: Schema.Struct({
+    command: Schema.String.annotate({ description: "The command line to run." }),
+    timeout: Schema.optionalKey(
+      Schema.Finite.annotate({ description: "Timeout in ms (default 300000 = 5 minutes)." }),
     ),
-  },
+  }),
   success: Schema.Struct({
     stdout: Schema.String,
     stderr: Schema.String,
@@ -81,10 +81,10 @@ export const Bash = Tool.make("Bash", {
 export const Grep = Tool.make("grep", {
   description:
     'Search file contents with an extended regex (grep -rnE; node_modules and .git excluded). Returns {matches: "path:line:text" lines (first 200), truncated}.',
-  parameters: {
-    pattern: Schema.String.annotations({ description: "Extended (ERE) regex matched against file contents." }),
-    dir: Schema.optional(Schema.String.annotations({ description: 'Directory to search, workspace-relative (default ".").' })),
-  },
+  parameters: Schema.Struct({
+    pattern: Schema.String.annotate({ description: "Extended (ERE) regex matched against file contents." }),
+    dir: Schema.optionalKey(Schema.String.annotate({ description: 'Directory to search, workspace-relative (default ".").' })),
+  }),
   success: Schema.Struct({ matches: Schema.String, truncated: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
@@ -93,10 +93,10 @@ export const Grep = Tool.make("grep", {
 export const Glob = Tool.make("glob", {
   description:
     "Find files by NAME pattern (find -name) — matches file names, not full paths. Returns {paths (first 200), truncated}.",
-  parameters: {
-    pattern: Schema.String.annotations({ description: 'A file-name pattern, e.g. "*.ts" or "store*.md".' }),
-    dir: Schema.optional(Schema.String.annotations({ description: 'Directory to search under, workspace-relative (default ".").' })),
-  },
+  parameters: Schema.Struct({
+    pattern: Schema.String.annotate({ description: 'A file-name pattern, e.g. "*.ts" or "store*.md".' }),
+    dir: Schema.optionalKey(Schema.String.annotate({ description: 'Directory to search under, workspace-relative (default ".").' })),
+  }),
   success: Schema.Struct({ paths: Schema.Array(Schema.String), truncated: Schema.Boolean }),
   failure: Failure,
   failureMode: "return",
@@ -105,9 +105,9 @@ export const Glob = Tool.make("glob", {
 export const Ls = Tool.make("ls", {
   description:
     "List one directory's entries (names only, not recursive). Returns {entries}.",
-  parameters: {
-    path: Schema.optional(Schema.String.annotations({ description: 'Directory, workspace-relative (default ".").' })),
-  },
+  parameters: Schema.Struct({
+    path: Schema.optionalKey(Schema.String.annotate({ description: 'Directory, workspace-relative (default ".").' })),
+  }),
   success: Schema.Struct({ entries: Schema.Array(Schema.String) }),
   failure: Failure,
   failureMode: "return",
@@ -116,9 +116,9 @@ export const Ls = Tool.make("ls", {
 export const LoadSkill = Tool.make("load_skill", {
   description:
     "Load the FULL instructions of a workspace skill listed under 'Skills available'. Call this BEFORE doing work a skill covers. Returns {name, instructions}.",
-  parameters: {
-    name: Schema.String.annotations({ description: "The skill's name exactly as listed." }),
-  },
+  parameters: Schema.Struct({
+    name: Schema.String.annotate({ description: "The skill's name exactly as listed." }),
+  }),
   success: Schema.Struct({ name: Schema.String, instructions: Schema.String }),
   failure: Failure,
   failureMode: "return",
@@ -127,14 +127,14 @@ export const LoadSkill = Tool.make("load_skill", {
 export const TodoWrite = Tool.make("todo_write", {
   description:
     "Replace your WHOLE task plan for this run (the human watches it live). Send EVERY item each time — this replaces the list, never appends. Statuses: pending | in_progress | done; keep exactly ONE item in_progress. Use it at the start (the plan) and whenever an item's status changes. Returns {count}.",
-  parameters: {
+  parameters: Schema.Struct({
     todos: Schema.Array(
       Schema.Struct({
-        text: Schema.String.annotations({ description: "One short imperative item." }),
-        status: Schema.Literal("pending", "in_progress", "done"),
+        text: Schema.String.annotate({ description: "One short imperative item." }),
+        status: Schema.Literals(["pending", "in_progress", "done"]),
       }),
     ),
-  },
+  }),
   success: Schema.Struct({ count: Schema.Number }),
   failure: Failure,
   failureMode: "return",
@@ -198,7 +198,7 @@ export interface CodingHandlerHooks {
  *  publish is runSync-safe — it offers to a queue). */
 export const bashProgressTap =
   (
-    runtime: Runtime.Runtime<never>,
+    context: Context.Context<never>,
     publish: (event: SmithEvent) => Effect.Effect<void>,
   ) =>
   (chunk: string): void => {
@@ -208,7 +208,7 @@ export const bashProgressTap =
       .filter((piece) => piece.length > 0)
       .pop()
     if (line === undefined) return
-    Runtime.runSync(runtime)(publish({ type: "bash_progress", line: line.slice(0, 160) }))
+    Effect.runSyncWith(context)(publish({ type: "bash_progress", line: line.slice(0, 160) }))
   }
 
 export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks = {}) =>
@@ -255,7 +255,7 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
     const nearestExisting = (path: string) =>
       Effect.reduce(
         ancestors(path),
-        Option.none<{ readonly lexical: string; readonly canonical: string }>(),
+        () => Option.none<{ readonly lexical: string; readonly canonical: string }>(),
         (found, candidate) =>
           Option.isSome(found)
             ? Effect.succeed(found)
@@ -267,7 +267,7 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
                       )
                     : Effect.succeed(Option.none()),
                 ),
-                Effect.catchAll(() => Effect.succeed(Option.none())),
+                Effect.catch(() => Effect.succeed(Option.none())),
               ),
       )
 
@@ -358,7 +358,7 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
           }
           const target = resolve(params.path)
           const dir = target.split("/").slice(0, -1).join("/")
-          yield* fs.mkdir(dir).pipe(Effect.catchAll(() => Effect.void))
+          yield* fs.mkdir(dir).pipe(Effect.catch(() => Effect.void))
           yield* fs
             .write(target, params.content)
             .pipe(Effect.mapError((e) => ({ error: "WriteFailed", message: e.message })))
@@ -384,7 +384,7 @@ export const makeSmithCodingHandlers = (cwd: string, hooks: CodingHandlerHooks =
           const original = yield* fs
             .read(target)
             .pipe(Effect.mapError((e) => ({ error: "ReadFailed", message: e.message })))
-          const final = yield* Effect.reduce(edits, original, (content, edit, index) => {
+          const final = yield* Effect.reduce(edits, () => original, (content: string, edit, index) => {
             const count = occurrences(content, edit.oldText)
             if (count === 0) {
               return Effect.fail({

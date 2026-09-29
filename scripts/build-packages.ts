@@ -42,7 +42,7 @@ await Promise.all(names.map(async (name) => {
     const bundle = await Bun.build({
       entrypoints: [join(source, "src/index.ts")],
       outdir: join(target, "dist"), target: "bun", splitting: true,
-      external: ["effect", "@xandreed/*", "@opentui/core", "@opentui/core/*", "bun", "node:*"],
+      external: ["effect", "effect/*", "@xandreed/*", "@opentui/core", "@opentui/core/*", "bun", "node:*"],
       plugins: [{ name: "solid-client-runtime", setup(builder) {
         builder.onResolve({ filter: /^solid-js$/ }, () => ({ path: require.resolve("solid-js/dist/solid.js") }))
         builder.onResolve({ filter: /^solid-js\/store$/ }, () => ({ path: require.resolve("solid-js/store/dist/store.js") }))

@@ -1,4 +1,4 @@
-import { Effect, Either, Match, Option, Schema } from "effect"
+import { Effect, Result, Match, Option, Schema } from "effect"
 import { readdir, readFile, rename, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { spawn } from "node:child_process"
@@ -208,27 +208,27 @@ export const approveDraft = (
 
     const intent = yield* workspace
       .appendLedger(ledgerPath, ledgerRow(draft, kind, "posting"))
-      .pipe(Effect.either)
-    if (Either.isLeft(intent)) {
-      return { _tag: "ledger-refused", message: intent.left.message } as const
+      .pipe(Effect.result)
+    if (Result.isFailure(intent)) {
+      return { _tag: "ledger-refused", message: intent.failure.message } as const
     }
 
     const sent = yield* x
       .postTweet(draft.content, Option.getOrUndefined(draft.targetTweetId))
-      .pipe(Effect.either)
-    if (Either.isLeft(sent)) {
+      .pipe(Effect.result)
+    if (Result.isFailure(sent)) {
       yield* workspace
-        .appendLedger(ledgerPath, ledgerRow(draft, kind, "post_failed", [sent.left.message]))
+        .appendLedger(ledgerPath, ledgerRow(draft, kind, "post_failed", [sent.failure.message]))
         .pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning(`the ledger refused the post_failed row: ${error.message}`),
           ),
         )
-      return { _tag: "post-failed", message: sent.left.message } as const
+      return { _tag: "post-failed", message: sent.failure.message } as const
     }
 
     yield* workspace.appendLedger(ledgerPath, ledgerRow(draft, kind, "posted")).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.logWarning(
           `POSTED, but the ledger refused the posted row (${error.message}) — the posting intent stands; add the row by hand`,
         ),
@@ -236,7 +236,7 @@ export const approveDraft = (
     )
     const archived = yield* (args.archive ?? archiveToPosted)(draft).pipe(
       Effect.as(true),
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.logWarning(`posted, but archiving the draft failed: ${error.message}`).pipe(
           Effect.as(false),
         ),
@@ -355,14 +355,14 @@ export const runReviewQueue = () =>
                 console.log(
                   "⛔ This draft has no `type:` in its frontmatter — nothing leaves unlabeled. Edit it ([e]) and set type: reply | post.\n",
                 )
-              }).pipe(Effect.zipRight(reviewOne(file))),
+              }).pipe(Effect.andThen(reviewOne(file))),
             ),
             Match.tag("blocked", (blocked) =>
               Effect.sync(() => {
                 console.log("⛔ Gate B blocked this draft:")
                 console.log(renderFindings(blocked.findings))
                 console.log("Edit it ([e]) or discard it ([d]).\n")
-              }).pipe(Effect.zipRight(reviewOne(file))),
+              }).pipe(Effect.andThen(reviewOne(file))),
             ),
             Match.tag("ledger-refused", (refused) =>
               Effect.sync(() => {
@@ -395,7 +395,7 @@ export const runReviewQueue = () =>
         return yield* reviewOne(file)
       })
 
-    yield* Effect.reduce(pendingDrafts, "continue" as "continue" | "quit", (state, file) =>
+    yield* Effect.reduce(pendingDrafts, (): "continue" | "quit" => "continue", (state, file) =>
       state === "quit" ? Effect.succeed(state) : reviewOne(file),
     )
 

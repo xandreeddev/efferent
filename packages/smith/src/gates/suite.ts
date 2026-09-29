@@ -89,7 +89,7 @@ export const withGateEvents = <R>(
   ...gate,
   run: (workspace) =>
     publish({ type: "gate_start", gate: String(gate.name) }).pipe(
-      Effect.zipRight(gate.run(workspace)),
+      Effect.andThen(gate.run(workspace)),
     ),
 })
 
@@ -118,7 +118,7 @@ export const discoverGateSuite = (
   Effect.gen(function* () {
     const fs = yield* FileSystem
     const exists = (rel: string) =>
-      fs.exists(join(request.cwd, rel)).pipe(Effect.catchAll(() => Effect.succeed(false)))
+      fs.exists(join(request.cwd, rel)).pipe(Effect.catch(() => Effect.succeed(false)))
 
     const workspaceConfig = join(request.cwd, "foundry.config.ts")
     const configPath = yield* Option.match(request.configPath, {
@@ -148,9 +148,9 @@ export const discoverGateSuite = (
           const { config, registry } = yield* loadConfig(path)
           const baselinePath = join(dirname(path), ".foundry", "baseline.json")
           const baseline = yield* fs.read(baselinePath).pipe(
-            Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(BaselineFile))),
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(BaselineFile))),
             Effect.map((file) => new Set(file.fingerprints) as ReadonlySet<string>),
-            Effect.catchAll(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
+            Effect.catch(() => Effect.succeed(new Set<string>() as ReadonlySet<string>)),
           )
           // Static gates ride the ratchet; the profile's STANDING checks
           // (the project's own lint/format scripts) are binary — green or
@@ -212,7 +212,7 @@ export const discoverGateSuite = (
       ...acceptGates,
       ...extraGates,
     ]
-    if (!Arr.isNonEmptyReadonlyArray(gates)) {
+    if (!Arr.isReadonlyArrayNonEmpty(gates)) {
       return yield* Effect.fail(
         new ConfigError({
           path: request.cwd,

@@ -44,18 +44,18 @@ strategies.map(([name, plugin]) => describe(`the ${name} strategy conforms to Co
     open: (scope) => strategyOf(plugin).pipe(Effect.flatMap((memory) => memory.open(scope))),
   }), utility)
   checks.map((check) => test(check.name, async () => {
-    const exit = await Effect.runPromise(Effect.either(check.run))
-    expect(exit._tag === "Left" ? exit.left.message : "ok").toBe("ok")
+    const exit = await Effect.runPromise(Effect.result(check.run))
+    expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
 }))
 
 describe("the summary strategy reads its summarizer where the session is opened", () => {
   test("without a UtilityLlm there, opening fails with memory.summary", async () => {
-    const exit = await Effect.runPromise(Effect.either(Effect.scoped(Effect.gen(function* () {
+    const exit = await Effect.runPromise(Effect.result(Effect.scoped(Effect.gen(function* () {
       const memory = yield* strategyOf(memorySummaryPlugin)
       const journal = yield* inMemoryJournal
       return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", io: journal.io })
     }))))
-    expect(exit._tag === "Left" ? exit.left.code : "opened").toBe("memory.summary")
+    expect(exit._tag === "Failure" ? exit.failure.code : "opened").toBe("memory.summary")
   })
 })

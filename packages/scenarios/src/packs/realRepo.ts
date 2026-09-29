@@ -119,7 +119,7 @@ const liveScenario = scenario<RealRepoWorld>({
       Effect.flatMap((store) =>
         Effect.gen(function* () {
           const sessions = yield* store.listByWorkspace(dir)
-          const newest = Option.fromNullable(sessions[0])
+          const newest = Option.fromNullishOr(sessions[0])
           if (Option.isNone(newest)) return "no conversation persisted"
           const messages = yield* store.list(newest.value.id)
           return renderTrailForDigest(messages)

@@ -1,6 +1,6 @@
 # Service generations and durable UI output
 
-Capability modules expose domain schemas and Context.Tag ports. Live/test
+Capability modules expose domain schemas and Context.Service ports. Live/test
 adapters are Layers, selected at the composition edge. A running agent must pin
 its selected service generation: replacing a module must not change the meaning
 of a tool halfway through a run.

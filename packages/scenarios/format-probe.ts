@@ -5,7 +5,7 @@
 // Untracked experiment harness — not part of the battery.
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
 import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
@@ -81,23 +81,23 @@ const probe = (model: string, fmt: Fmt, sample: number) =>
     const t0 = Date.now()
     const done = yield* LanguageModel.generateText({ prompt: `${fmt.instruction}\n\nContent: ${CONTENT}` }).pipe(
       Effect.provideService(LanguageModel.LanguageModel, service),
-      Effect.locally(CurrentModelCallPolicy, Option.some({ effort: "low" as const, maxOutputTokens: 2600 })),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low" as const, maxOutputTokens: 2600 })),
       Effect.timeout(Duration.seconds(60)),
-      Effect.either,
+      Effect.result,
     )
     const wall = Date.now() - t0
-    if (done._tag === "Left") {
+    if (done._tag === "Failure") {
       console.log(`${model.padEnd(28)} ${fmt.name.padEnd(7)} s${sample} FAILED after ${wall}ms`)
       return { model, fmt: fmt.name, wall, chars: 0, ok: false }
     }
-    const text = done.right.text
+    const text = done.success.text
     const ok = fmt.valid(text)
     console.log(
       `${model.padEnd(28)} ${fmt.name.padEnd(7)} s${sample} ${String(wall).padStart(6)}ms · ${String(text.length).padStart(5)} chars · ${String(Math.round((text.length / wall) * 1000)).padStart(4)} c/s · valid=${ok}`,
     )
     return { model, fmt: fmt.name, wall, chars: text.length, ok }
   }).pipe(
-    Effect.catchAll((e) =>
+    Effect.catch((e) =>
       Effect.sync(() => {
         console.log(`${model} ${fmt.name} s${sample} ERROR: ${String(e).slice(0, 80)}`)
         return { model, fmt: fmt.name, wall: 0, chars: 0, ok: false }

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Either, Layer, Option, Schema } from "effect"
+import { Effect, Result, Layer, Option, Schema } from "effect"
 import { AgentMessage, Checkpoint, ConversationId, ConversationStore, ConversationSummary, RunOutcomeRecord, StoredMessage, StoreError } from "@xandreed/core"
 
 /**
@@ -67,7 +67,7 @@ const migrate = (db: Database): void => {
 }
 
 /** Parse + validate in one step — reads never cast a blob into the entity. */
-const decodeMessage = Schema.decodeUnknownEither(Schema.parseJson(AgentMessage))
+const decodeMessage = Schema.decodeUnknownResult(Schema.fromJsonString(AgentMessage))
 
 const tryDb = <A>(run: () => A): Effect.Effect<A, StoreError> =>
   Effect.try({
@@ -82,12 +82,12 @@ const salvageRows = (
   where: string,
 ): Effect.Effect<ReadonlyArray<AgentMessage>> =>
   Effect.forEach(rows, (row) =>
-    Either.match(decodeMessage(row.content), {
-      onLeft: (issue) =>
+    Result.match(decodeMessage(row.content), {
+      onFailure: (issue) =>
         Effect.logWarning(`${where}: skipping undecodable message row: ${String(issue)}`).pipe(
           Effect.as(Option.none<AgentMessage>()),
         ),
-      onRight: (message) => Effect.succeed(Option.some(message)),
+      onSuccess: (message) => Effect.succeed(Option.some(message)),
     }),
   ).pipe(Effect.map((decoded) => decoded.filter(Option.isSome).map((some) => some.value)))
 
@@ -98,18 +98,18 @@ const salvagePositioned = (
   where: string,
 ): Effect.Effect<ReadonlyArray<StoredMessage>> =>
   Effect.forEach(rows, (row) =>
-    Either.match(decodeMessage(row.content), {
-      onLeft: (issue) =>
+    Result.match(decodeMessage(row.content), {
+      onFailure: (issue) =>
         Effect.logWarning(
           `${where}: skipping undecodable message row at ${row.position}: ${String(issue)}`,
         ).pipe(Effect.as(Option.none<StoredMessage>())),
-      onRight: (message) =>
+      onSuccess: (message) =>
         Effect.succeed(Option.some(new StoredMessage({ position: row.position, message }))),
     }),
   ).pipe(Effect.map((decoded) => decoded.filter(Option.isSome).map((some) => some.value)))
 
 export const SqliteConversationStoreLive = (dbPath: string) =>
-  Layer.scoped(
+  Layer.effect(
     ConversationStore,
     Effect.gen(function* () {
       const db = yield* tryDb(() => {
@@ -126,13 +126,13 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
         return database
       })
       yield* Effect.addFinalizer(() => tryDb(() => db.close()).pipe(
-        Effect.catchAll((error) => Effect.logWarning(`conversation database cleanup failed: ${error.message}`)),
+        Effect.catch((error) => Effect.logWarning(`conversation database cleanup failed: ${error.message}`)),
       ))
 
       const latestCheckpointRow = (
         id: ConversationId,
       ): Option.Option<{ message_position: number; summary: string; created_at: number }> =>
-        Option.fromNullable(
+        Option.fromNullishOr(
           db
             .query(
               `SELECT message_position, summary, created_at FROM checkpoints
@@ -260,7 +260,7 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
 
         latestOutcome: (id: ConversationId) =>
           tryDb(() =>
-            Option.fromNullable(
+            Option.fromNullishOr(
               db
                 .query(
                   `SELECT at, outcome, reason FROM run_outcomes
@@ -273,7 +273,7 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
               Option.match(row, {
                 onNone: () => Effect.succeed(Option.none<RunOutcomeRecord>()),
                 onSome: (r) =>
-                  Schema.decodeUnknown(RunOutcomeRecord)({ conversationId: id, ...r }).pipe(
+                  Schema.decodeUnknownEffect(RunOutcomeRecord)({ conversationId: id, ...r }).pipe(
                     Effect.map(Option.some),
                     Effect.mapError((issue) => new StoreError({ message: String(issue) })),
                   ),
@@ -304,7 +304,7 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
 
         fork: (id: ConversationId, upToPosition?: number) =>
           tryDb(() =>
-            Option.fromNullable(
+            Option.fromNullishOr(
               db
                 .query(`SELECT workspace_dir, title FROM conversations WHERE id = ?`)
                 .get(id) as { workspace_dir: string | null; title: string | null } | null,
@@ -377,8 +377,8 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
                 last_reason: string | null
               }>
             ).map((row) => {
-              const first = Option.fromNullable(row.first_content).pipe(
-                Option.flatMap((content) => Either.getRight(decodeMessage(content))),
+              const first = Option.fromNullishOr(row.first_content).pipe(
+                Option.flatMap((content) => Result.getSuccess(decodeMessage(content))),
                 Option.flatMap((parsed) =>
                   parsed.role === "user"
                     ? Option.some(parsed.content.slice(0, 120))
@@ -388,13 +388,13 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
               // The outcome columns decode through the summary's own schema
               // — an unknown literal (a future outcome kind) reads as none.
               const lastOutcome = Option.flatMap(
-                Option.all([Option.fromNullable(row.last_outcome), Option.fromNullable(row.last_reason)]),
+                Option.all([Option.fromNullishOr(row.last_outcome), Option.fromNullishOr(row.last_reason)]),
                 ([outcome, reason]) =>
-                  Either.getRight(
-                    Schema.decodeUnknownEither(
+                  Result.getSuccess(
+                    Schema.decodeUnknownResult(
                       Schema.Struct({
-                        outcome: Schema.Literal("ok", "partial"),
-                        reason: Schema.Literal("completed", "step-cap", "degenerate-loop"),
+                        outcome: Schema.Literals(["ok", "partial"]),
+                        reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
                       }),
                     )({ outcome, reason }),
                   ),
@@ -403,7 +403,7 @@ export const SqliteConversationStoreLive = (dbPath: string) =>
                 id: ConversationId.make(row.id),
                 createdAt: row.created_at,
                 firstPrompt: first,
-                title: Option.fromNullable(row.title),
+                title: Option.fromNullishOr(row.title),
                 lastOutcome,
               })
             }),

@@ -6,4 +6,4 @@ import type { ModelTarget } from "../prompt.entity.js"
  * target read it (with `serviceOption`); without one they render for
  * `{ model: "unknown", variant: "baseline" }`.
  */
-export class CurrentModelTarget extends Context.Tag("efferent/ai/CurrentModelTarget")<CurrentModelTarget, ModelTarget>() {}
+export class CurrentModelTarget extends Context.Service<CurrentModelTarget, ModelTarget>()("efferent/ai/CurrentModelTarget") {}

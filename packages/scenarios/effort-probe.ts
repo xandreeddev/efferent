@@ -3,7 +3,7 @@
 // buys little; if high >> low, sub-low reasoning is worth plumbing.
 import { homedir } from "node:os"
 import { Duration, Effect, Option } from "effect"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { LanguageModelSelectionLive, LocalAuthStoreLive } from "@xandreed/plugin-models"
 import { CurrentModelCallPolicy, parseModelSelection } from "@xandreed/core"
 
@@ -22,17 +22,17 @@ const probe = (model: string, effort: (typeof EFFORTS)[number]) =>
     const t0 = Date.now()
     const done = yield* LanguageModel.generateText({ prompt: PROMPT }).pipe(
       Effect.provideService(LanguageModel.LanguageModel, service),
-      Effect.locally(CurrentModelCallPolicy, Option.some({ effort, maxOutputTokens: 900 })),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort, maxOutputTokens: 900 })),
       Effect.timeout(Duration.seconds(45)),
-      Effect.either,
+      Effect.result,
     )
     const wall = Date.now() - t0
     console.log(
-      done._tag === "Right"
-        ? `${model.padEnd(28)} effort=${effort.padEnd(6)} ${String(wall).padStart(6)}ms · ${done.right.text.length} chars`
+      done._tag === "Success"
+        ? `${model.padEnd(28)} effort=${effort.padEnd(6)} ${String(wall).padStart(6)}ms · ${done.success.text.length} chars`
         : `${model.padEnd(28)} effort=${effort.padEnd(6)} FAILED after ${wall}ms`,
     )
-  }).pipe(Effect.catchAll((e) => Effect.sync(() => console.log(`${model} ${effort} ERROR: ${String(e).slice(0, 90)}`))))
+  }).pipe(Effect.catch((e) => Effect.sync(() => console.log(`${model} ${effort} ERROR: ${String(e).slice(0, 90)}`))))
 
 await Effect.runPromise(
   Effect.forEach(

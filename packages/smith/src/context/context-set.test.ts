@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Either, Option } from "effect"
+import { Effect, Result, Option } from "effect"
 import { LocalFileSystemLive } from "@xandreed/plugin-tools-local"
 import {
   clearPins,
@@ -19,7 +19,7 @@ import {
 } from "./context-set.entity.functions.js"
 import { contextSetPath, loadContextSet, saveContextSet } from "./store.js"
 
-const pin = (raw: string) => Either.getOrThrow(parsePinRef(raw))
+const pin = (raw: string) => Result.getOrThrow(parsePinRef(raw))
 
 describe("the context set — selection is the human's", () => {
   test("the :context add grammar covers every pin kind and round-trips through its ref", () => {
@@ -42,10 +42,10 @@ describe("the context set — selection is the human's", () => {
     expect(refs.filter((r) => !r.startsWith("@")).map((r) => renderPinRef(pin(r)))).toEqual(
       refs.filter((r) => !r.startsWith("@")),
     )
-    expect(Either.isLeft(parsePinRef(""))).toBe(true)
-    expect(Either.isLeft(parsePinRef("note:"))).toBe(true)
-    expect(Either.isLeft(parsePinRef("cmd:   "))).toBe(true)
-    expect(Either.isLeft(parsePinRef("spec:"))).toBe(true)
+    expect(Result.isFailure(parsePinRef(""))).toBe(true)
+    expect(Result.isFailure(parsePinRef("note:"))).toBe(true)
+    expect(Result.isFailure(parsePinRef("cmd:   "))).toBe(true)
+    expect(Result.isFailure(parsePinRef("spec:"))).toBe(true)
   })
 
   test("pins dedupe by ref, toggle in place, drop by index or ref; standing sources toggle; budget clamps", () => {

@@ -56,7 +56,7 @@ export const cycleSearch = (state: SearchState, direction: 1 | -1): SearchState 
 
 /** The current hit's block index, when a search is live. */
 export const currentHit = (search: Option.Option<SearchState>): Option.Option<number> =>
-  Option.flatMap(search, (s) => Option.fromNullable(s.hits[s.at]))
+  Option.flatMap(search, (s) => Option.fromNullishOr(s.hits[s.at]))
 
 /** "hit 2/5 — ctrl+n/ctrl+p cycle · / clears" — the notice line. */
 export const searchNotice = (state: SearchState): string =>

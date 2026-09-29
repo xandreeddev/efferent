@@ -25,7 +25,7 @@ export interface TurnContextEntry {
 }
 
 /** The turn's memory session, and the records that open and close the turn. */
-export class TurnMemory extends Context.Tag("efferent/TurnMemory")<TurnMemory, MemoryReader & {
+export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly strategy: { readonly id: string; readonly version: string }
   readonly session: MemorySession
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */
@@ -40,18 +40,18 @@ export class TurnMemory extends Context.Tag("efferent/TurnMemory")<TurnMemory, M
   readonly context: (entry: TurnContextEntry) => Effect.Effect<void, HarnessError>
   /** Record TurnEnded, then publish `turn.ended`. Once; a no-op when the message was never persisted. */
   readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, HarnessError>
-}>() {}
+}>()("efferent/TurnMemory") {}
 
 /** The turn's tools: registry-opened once, then shared by the loop, the host and RunContext.activate. */
-export class TurnToolbox extends Context.Tag("efferent/TurnToolbox")<TurnToolbox, {
+export class TurnToolbox extends Context.Service<TurnToolbox, {
   /** Open the tools. Once: a second call fails. The handlers run with the services of the opener. */
   readonly open: Effect.Effect<RunTools, HarnessError>
   /** The open tools; fails with `tools.unavailable` before `open`. */
   readonly tools: Effect.Effect<RunTools, HarnessError>
-}>() {}
+}>()("efferent/TurnToolbox") {}
 
 /** The turn's prompt assembly: the system prompt per variant, and the turn-tier sections. */
-export class TurnPrompt extends Context.Tag("efferent/TurnPrompt")<TurnPrompt, {
+export class TurnPrompt extends Context.Service<TurnPrompt, {
   /**
    * The system prompt of one variant: the prefix and the static and session
    * sections, rendered once per turn in the caller's services and recorded
@@ -60,7 +60,7 @@ export class TurnPrompt extends Context.Tag("efferent/TurnPrompt")<TurnPrompt, {
   readonly system: (variant: Option.Option<string>) => Effect.Effect<string, HarnessError>
   /** Render the turn-tier sections once, as TurnContext entries (later calls do nothing). */
   readonly turnSections: Effect.Effect<void, HarnessError>
-}>() {}
+}>()("efferent/TurnPrompt") {}
 
 /** What `TurnLive` builds one turn from. */
 export interface TurnLiveInput {

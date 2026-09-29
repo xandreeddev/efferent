@@ -13,7 +13,7 @@ describe("models plugin setup continuity", () => {
     writeFileSync(join(workspace, ".efferent/config.json"), JSON.stringify({ model: "fixture:existing", fastModel: "fixture:fast" }))
     const load = (options: Record<string, unknown>) => Effect.scoped(Effect.gen(function* () {
       const seed = Context.make(SessionEnvironment, { workspace })
-      const services = yield* modelsPlugin.build({ ...modelsPlugin.defaults, ...options }, Context.unsafeMake<never>(seed.unsafeMap))
+      const services = yield* modelsPlugin.build({ ...modelsPlugin.defaults, ...options }, Context.makeUnsafe<never>(seed.mapUnsafe))
       return yield* Option.getOrThrow(Context.getOption(services, SettingsStore)).load
     }))
     await Effect.runPromise(Effect.gen(function* () {

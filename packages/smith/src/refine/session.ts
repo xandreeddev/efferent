@@ -1,4 +1,4 @@
-import type { LanguageModel } from "@effect/ai"
+import type { LanguageModel } from "effect/ai"
 import { Effect, Option, Ref } from "effect"
 import { ConfigError } from "@xandreed/foundry"
 import { ConversationStore, FileSystem, SpecSlug, UserMessage } from "@xandreed/core"
@@ -49,7 +49,7 @@ export interface RefineSession {
  *  The session hands over ITS handler record, so both paths share the same
  *  slug identity and draft tracking. */
 export interface RefineTools {
-  readonly propose: Effect.Effect.Success<
+  readonly propose: Effect.Success<
     ReturnType<typeof makeSpecRefinerHandlers>
   >["propose_spec"]
 }
@@ -82,7 +82,7 @@ export interface RefineSessionOptions {
 export const lastProposedDraft = (
   messages: ReadonlyArray<AgentMessage>,
 ): Option.Option<{ slug: SpecSlug; path: string }> =>
-  Option.fromNullable(
+  Option.fromNullishOr(
     messages.reduce<{ slug: SpecSlug; path: string } | undefined>((latest, message) => {
       if (message.role !== "tool" || !Array.isArray(message.content)) return latest
       return message.content.reduce((acc, part) => {
@@ -117,7 +117,7 @@ export const makeRefineSession = (
     // in-memory, so without this a resumed session says "nothing to lock"
     // while the spec sits on disk and the model — which remembers proposing
     // — refuses to re-propose. A live DEADLOCK.
-    const recovered = yield* Option.match(Option.fromNullable(options.resume), {
+    const recovered = yield* Option.match(Option.fromNullishOr(options.resume), {
       onNone: () => Effect.succeed(Option.none<{ slug: SpecSlug; path: string }>()),
       onSome: (cid) =>
         store.list(cid).pipe(
@@ -128,7 +128,7 @@ export const makeRefineSession = (
     // An OPENED spec (`slug` without `resume`) is the draft from the first
     // turn — `:lock` and `:forge` work before any re-propose. Only when the
     // file is really there: `smith spec` mints slugs ahead of the first draft.
-    const opened = yield* Option.match(Option.fromNullable(options.slug), {
+    const opened = yield* Option.match(Option.fromNullishOr(options.slug), {
       onNone: () => Effect.succeed(Option.none<{ slug: SpecSlug; path: string }>()),
       onSome: (slug) =>
         Effect.flatMap(FileSystem, (fs) =>
@@ -175,10 +175,10 @@ export const makeRefineSession = (
         Effect.provide(refinerLayer),
         Effect.provide(context),
         Effect.asVoid,
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.fail(new ConfigError({ path: cwd, message: `refiner: ${String(error)}` })),
         ),
-        Effect.catchAllDefect((defect) =>
+        Effect.catchDefect((defect) =>
           Effect.fail(new ConfigError({ path: cwd, message: `refiner: ${String(defect)}` })),
         ),
       )
@@ -193,7 +193,7 @@ export const makeRefineSession = (
       if (Option.isNone(current)) return Option.none<DraftRef>()
       return yield* loadSpecDoc(cwd, String(current.value.slug)).pipe(
         Effect.map((doc) => Option.some({ doc, path: current.value.path })),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           publish({
             type: "refine_error",
             message: `draft file no longer decodes: ${error.message}`,

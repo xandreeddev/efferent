@@ -28,17 +28,17 @@ test("render output cannot be observed before admission and durable commit", asy
 test("failed exact-release admission never persists a substitute", async () => {
   const writes: unknown[] = []
   const result = await Effect.runPromise(Effect.gen(function* () { return yield* (yield* UiOutput).emit(proposal) }).pipe(
-    Effect.provide(provide(() => Effect.fail(new UiOutputError({ code: "unavailable", message: "Release revoked" })), () => Effect.sync(() => { writes.push(proposal); return receipt }))), Effect.either,
+    Effect.provide(provide(() => Effect.fail(new UiOutputError({ code: "unavailable", message: "Release revoked" })), () => Effect.sync(() => { writes.push(proposal); return receipt }))), Effect.result,
   ))
-  expect(result._tag).toBe("Left")
+  expect(result._tag).toBe("Failure")
   expect(writes).toEqual([])
 })
 
 test("interruption during admission prevents a component commit", async () => {
   const writes: unknown[] = []
   await Effect.runPromise(Effect.gen(function* () {
-    const fiber = yield* Effect.fork((yield* UiOutput).emit(proposal))
-    yield* Effect.yieldNow()
+    const fiber = yield* Effect.forkChild((yield* UiOutput).emit(proposal))
+    yield* Effect.yieldNow
     yield* Fiber.interrupt(fiber)
   }).pipe(Effect.provide(provide(() => Effect.never, () => Effect.sync(() => { writes.push(proposal); return receipt })))))
   expect(writes).toEqual([])
@@ -46,7 +46,7 @@ test("interruption during admission prevents a component commit", async () => {
 
 test("storage failure cannot produce a successful tool receipt", async () => {
   const result = await Effect.runPromise(Effect.gen(function* () { return yield* (yield* UiOutput).emit(proposal) }).pipe(
-    Effect.provide(provide(() => Effect.void, () => Effect.fail(new UiOutputError({ code: "storage", message: "Unavailable" })))), Effect.either,
+    Effect.provide(provide(() => Effect.void, () => Effect.fail(new UiOutputError({ code: "storage", message: "Unavailable" })))), Effect.result,
   ))
-  expect(result._tag).toBe("Left")
+  expect(result._tag).toBe("Failure")
 })

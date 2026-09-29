@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "@effect/ai"
+import { Tool } from "effect/ai"
 import { Effect } from "effect"
 import { ConversationId } from "@xandreed/core"
 import { applicationReference, architectureReference, landingReference } from "./reference-pages.functions.js"
 import { foldPageEvents } from "./domain/ui-page.entity.functions.js"
 import { isUiProtocolPayload, normalizeInitialUiAdmission, uiPlannerPrompt, uiRepairPrompt, validateBlocks, validateManifest, validatePageCompleteness, validateUiAgentProfile } from "./index.js"
-import { makeUiAgentHandlers, StartUi, uiAgentToolkit } from "./toolkit.js"
+import { makeUiAgentHandlers, settledResult, StartUi, uiAgentToolkit } from "./toolkit.js"
 import type { UiHostService } from "./ports/ui-host.port.js"
 import type { UiPageStoreService } from "./ports/ui-page-store.port.js"
 import type { UiPageEvent } from "./domain/ui-page.entity.js"
@@ -142,8 +142,8 @@ describe("the structured UI-agent contract", () => {
       yield* toolkit.handle("start_ui", {
         page: malformedPage,
         criticalBlocks: [{ ...hero, assetId: "hallucinated-asset" }],
-      })
-      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: landingReference.blocks.slice(1), complete: true })
+      }).pipe(Effect.flatMap(settledResult))
+      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: landingReference.blocks.slice(1), complete: true }).pipe(Effect.flatMap(settledResult))
     }).pipe(Effect.provide(layer)))
     expect(outcome.isFailure).toBe(false)
     expect(order).toEqual([
@@ -169,15 +169,15 @@ describe("the structured UI-agent contract", () => {
     )
     const accepted = await Effect.runPromise(Effect.gen(function* () {
       const toolkit = yield* uiAgentToolkit
-      yield* toolkit.handle("start_ui", { page: landingReference.page, criticalBlocks: [landingReference.blocks[0]!] })
+      yield* toolkit.handle("start_ui", { page: landingReference.page, criticalBlocks: [landingReference.blocks[0]!] }).pipe(Effect.flatMap(settledResult))
       const hero = landingReference.blocks[0]!
       if (hero.kind !== "hero") return yield* Effect.die("landing reference must start with hero")
-      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: [{ ...hero, title: "A sharper promise" }] })
+      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: [{ ...hero, title: "A sharper promise" }] }).pipe(Effect.flatMap(settledResult))
     }).pipe(Effect.provide(layer)))
     expect(accepted.isFailure).toBe(false)
     const rejected = await Effect.runPromise(Effect.gen(function* () {
       const toolkit = yield* uiAgentToolkit
-      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: [{ kind: "prose", id: "hero", paragraphs: ["wrong kind"] }] })
+      return yield* toolkit.handle("patch_ui", { pageId: landingReference.page.id, blocks: [{ kind: "prose", id: "hero", paragraphs: ["wrong kind"] }] }).pipe(Effect.flatMap(settledResult))
     }).pipe(Effect.provide(layer)))
     expect(rejected.isFailure).toBe(true)
     expect(JSON.stringify(rejected.result)).toContain("conflicts with its declared hero slot")
@@ -201,8 +201,8 @@ describe("the structured UI-agent contract", () => {
       yield* toolkit.handle("start_ui", {
         page,
         criticalBlocks: [{ kind: "component", id: "headline", component: "primitive.heading", variant: "display", props: { text: "Initial heading" }, children: [] }],
-      })
-      return yield* toolkit.handle("patch_ui_prop", { pageId: page.id, nodeId: "headline", key: "text", value: "A better heading" })
+      }).pipe(Effect.flatMap(settledResult))
+      return yield* toolkit.handle("patch_ui_prop", { pageId: page.id, nodeId: "headline", key: "text", value: "A better heading" }).pipe(Effect.flatMap(settledResult))
     }).pipe(Effect.provide(layer)))
     expect(outcome.isFailure).toBe(false)
     const accepted = foldPageEvents(events)[0]?.blocks[0]

@@ -47,7 +47,7 @@
           "fingerprint": "9c48f5e0cc",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 68,
-          "reservedTokens": 354,
+          "reservedTokens": 303,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -64,7 +64,7 @@
           "fingerprint": "33c046762af",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 229,
-          "reservedTokens": 354,
+          "reservedTokens": 303,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -81,7 +81,7 @@
           "fingerprint": "cee0018c482",
           "systemFingerprint": "3f61f4eeed",
           "estimatedTokens": 385,
-          "reservedTokens": 415,
+          "reservedTokens": 347,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -166,7 +166,7 @@
           "fingerprint": "7ad37a04a8a",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 899,
-          "reservedTokens": 472,
+          "reservedTokens": 387,
           "compactions": 1,
           "activeTools": [
             "load_skill",
@@ -185,7 +185,7 @@
           "fingerprint": "dc5b606abf6",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1021,
-          "reservedTokens": 472,
+          "reservedTokens": 387,
           "compactions": 1,
           "activeTools": [
             "load_skill",
@@ -210,7 +210,7 @@
     "{\"name\":\"step.started\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"planned\":false,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"SystemPrepared\\\",\\\"fingerprint\\\":\\\"eb326f7eed\\\",\\\"sections\\\":[{\\\"fingerprint\\\":\\\"cf9524e6d\\\",\\\"id\\\":\\\"rules\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"6b08a668c\\\",\\\"id\\\":\\\"style\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"e984ef9197\\\",\\\"id\\\":\\\"tool-discovery.catalogue\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"3433199e20\\\",\\\"id\\\":\\\"persona\\\",\\\"version\\\":\\\"1\\\"}],\\\"text\\\":\\\"GOLDEN system prefix.\\\\n\\\\nSTATIC rules.\\\\n\\\\nSTYLE plain.\\\\n\\\\n## Skills (call load_skill before doing work one covers; its tools become available next step)\\\\n- delivery: Deliver a final answer.\\\\n- notes: Take notes.\\\\n\\\\nSESSION persona: a golden agent.\\\"},\\\"id\\\":\\\"run-1:4\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1}]\"}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"StepContext\\\",\\\"step\\\":0,\\\"text\\\":\\\"STEP 0\\\"},\\\"id\\\":\\\"run-1:5\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1}]\"}}",
-    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"9c48f5e0cc\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":68,\"reservedTokens\":354,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
+    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"9c48f5e0cc\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":68,\"reservedTokens\":303,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
     "{\"name\":\"tool.started\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"invocationId\":\"run-1:call:0\",\"tool\":\"lookup\",\"input\":{\"query\":\"alpha\"},\"labels\":{},\"stage\":null}}",
     "{\"name\":\"tool.completed\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"invocationId\":\"run-1:call:0\",\"tool\":\"lookup\",\"input\":{\"query\":\"alpha\"},\"ok\":true,\"encoded\":{\"items\":[{\"id\":\"record-alpha-a\",\"detail\":\"alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \"},{\"id\":\"record-alpha-b\",\"detail\":\"alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \"},{\"id\":\"record-alpha-c\",\"detail\":\"alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c \"}]},\"durationMs\":0,\"labels\":{},\"stage\":null}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"Message\\\",\\\"message\\\":{\\\"content\\\":[{\\\"input\\\":{\\\"query\\\":\\\"alpha\\\"},\\\"providerExecuted\\\":false,\\\"toolCallId\\\":\\\"c1\\\",\\\"toolName\\\":\\\"lookup\\\",\\\"type\\\":\\\"tool-call\\\"}],\\\"providerOptions\\\":{\\\"engine\\\":{\\\"cacheReadTokens\\\":0,\\\"inputTokens\\\":100,\\\"outputTokens\\\":10,\\\"totalTokens\\\":110}},\\\"role\\\":\\\"assistant\\\"}},\\\"id\\\":\\\"run-1:6\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1},{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"ToolResult\\\",\\\"artifacts\\\":[],\\\"encoded\\\":{\\\"items\\\":[{\\\"detail\\\":\\\"alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \\\",\\\"id\\\":\\\"record-alpha-a\\\"},{\\\"detail\\\":\\\"alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \\\",\\\"id\\\":\\\"record-alpha-b\\\"},{\\\"detail\\\":\\\"alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c \\\",\\\"id\\\":\\\"record-alpha-c\\\"}]},\\\"isError\\\":false,\\\"pinned\\\":false,\\\"subjects\\\":[{\\\"data\\\":null,\\\"id\\\":\\\"record-alpha-a\\\",\\\"kind\\\":\\\"record\\\",\\\"label\\\":null},{\\\"data\\\":null,\\\"id\\\":\\\"record-alpha-b\\\",\\\"kind\\\":\\\"record\\\",\\\"label\\\":null},{\\\"data\\\":null,\\\"id\\\":\\\"record-alpha-c\\\",\\\"kind\\\":\\\"record\\\",\\\"label\\\":null}],\\\"toolCallId\\\":\\\"c1\\\",\\\"toolName\\\":\\\"lookup\\\",\\\"view\\\":\\\"FOUND record-alpha-a: alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \\\\nFOUND record-alpha-b: alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \\\\nFOUND record-alpha-c: alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c \\\",\\\"viewVersion\\\":\\\"1\\\"},\\\"id\\\":\\\"run-1:7\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1}]\"}}",
@@ -220,7 +220,7 @@
     "{\"name\":\"completion.evaluated\",\"runId\":\"run-1\",\"data\":{\"step\":0,\"verdict\":{\"complete\":false,\"awaiting\":[],\"facts\":{}}}}",
     "{\"name\":\"step.started\",\"runId\":\"run-1\",\"data\":{\"step\":1,\"planned\":false,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"StepContext\\\",\\\"step\\\":1,\\\"text\\\":\\\"STEP 1\\\"},\\\"id\\\":\\\"run-1:9\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":1,\\\"turn\\\":1}]\"}}",
-    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":1,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"33c046762af\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":229,\"reservedTokens\":354,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
+    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":1,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"33c046762af\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":229,\"reservedTokens\":303,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\"]}}",
     "{\"name\":\"tool.started\",\"runId\":\"run-1\",\"data\":{\"step\":1,\"invocationId\":\"run-1:call:1\",\"tool\":\"load_skill\",\"input\":{\"skills\":[\"delivery\"]},\"labels\":{},\"stage\":null}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"ToolsActivated\\\",\\\"decision\\\":null,\\\"skills\\\":[\\\"delivery\\\"],\\\"source\\\":\\\"load_skill\\\",\\\"tools\\\":[\\\"deliver\\\"]},\\\"id\\\":\\\"run-1:10\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1}]\"}}",
     "{\"name\":\"skills.activated\",\"runId\":\"run-1\",\"data\":{\"skills\":[\"delivery\"],\"tools\":[\"deliver\"],\"source\":\"load_skill\"}}",
@@ -232,7 +232,7 @@
     "{\"name\":\"step.started\",\"runId\":\"run-1\",\"data\":{\"step\":2,\"planned\":false,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\"]}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"SystemPrepared\\\",\\\"fingerprint\\\":\\\"3f61f4eeed\\\",\\\"sections\\\":[{\\\"fingerprint\\\":\\\"cf9524e6d\\\",\\\"id\\\":\\\"rules\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"21880e7cc\\\",\\\"id\\\":\\\"style\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"e984ef9197\\\",\\\"id\\\":\\\"tool-discovery.catalogue\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"3433199e20\\\",\\\"id\\\":\\\"persona\\\",\\\"version\\\":\\\"1\\\"}],\\\"text\\\":\\\"GOLDEN system prefix.\\\\n\\\\nSTATIC rules.\\\\n\\\\nSTYLE brief.\\\\n\\\\n## Skills (call load_skill before doing work one covers; its tools become available next step)\\\\n- delivery: Deliver a final answer.\\\\n- notes: Take notes.\\\\n\\\\nSESSION persona: a golden agent.\\\"},\\\"id\\\":\\\"run-1:13\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":0,\\\"turn\\\":1}]\"}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"StepContext\\\",\\\"step\\\":2,\\\"text\\\":\\\"STEP 2\\\"},\\\"id\\\":\\\"run-1:14\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":2,\\\"turn\\\":1}]\"}}",
-    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":2,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"cee0018c482\",\"systemFingerprint\":\"3f61f4eeed\",\"estimatedTokens\":385,\"reservedTokens\":415,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\"]}}",
+    "{\"name\":\"context.built\",\"runId\":\"run-1\",\"data\":{\"step\":2,\"turn\":1,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"cee0018c482\",\"systemFingerprint\":\"3f61f4eeed\",\"estimatedTokens\":385,\"reservedTokens\":347,\"compactions\":0,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\"]}}",
     "{\"name\":\"tool.started\",\"runId\":\"run-1\",\"data\":{\"step\":2,\"invocationId\":\"run-1:call:2\",\"tool\":\"deliver\",\"input\":{\"text\":\"record-alpha-b\"},\"labels\":{},\"stage\":null}}",
     "{\"name\":\"tool.completed\",\"runId\":\"run-1\",\"data\":{\"step\":2,\"invocationId\":\"run-1:call:2\",\"tool\":\"deliver\",\"input\":{\"text\":\"record-alpha-b\"},\"ok\":true,\"encoded\":true,\"durationMs\":0,\"labels\":{},\"stage\":null}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-1\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"Message\\\",\\\"message\\\":{\\\"content\\\":[{\\\"input\\\":{\\\"text\\\":\\\"record-alpha-b\\\"},\\\"providerExecuted\\\":false,\\\"toolCallId\\\":\\\"c3\\\",\\\"toolName\\\":\\\"deliver\\\",\\\"type\\\":\\\"tool-call\\\"}],\\\"providerOptions\\\":{\\\"engine\\\":{\\\"cacheReadTokens\\\":0,\\\"inputTokens\\\":100,\\\"outputTokens\\\":10,\\\"totalTokens\\\":110}},\\\"role\\\":\\\"assistant\\\"}},\\\"id\\\":\\\"run-1:15\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":2,\\\"turn\\\":1},{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"ToolResult\\\",\\\"artifacts\\\":[],\\\"encoded\\\":true,\\\"isError\\\":false,\\\"pinned\\\":false,\\\"subjects\\\":[],\\\"toolCallId\\\":\\\"c3\\\",\\\"toolName\\\":\\\"deliver\\\",\\\"view\\\":\\\"true\\\",\\\"viewVersion\\\":\\\"raw\\\"},\\\"id\\\":\\\"run-1:16\\\",\\\"runId\\\":\\\"run-1\\\",\\\"step\\\":2,\\\"turn\\\":1}]\"}}",
@@ -268,7 +268,7 @@
     "{\"name\":\"completion.evaluated\",\"runId\":\"run-4\",\"data\":{\"step\":0,\"verdict\":{\"complete\":false,\"awaiting\":[],\"facts\":{}}}}",
     "{\"name\":\"step.started\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"planned\":false,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-4\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"SystemPrepared\\\",\\\"fingerprint\\\":\\\"eb326f7eed\\\",\\\"sections\\\":[{\\\"fingerprint\\\":\\\"cf9524e6d\\\",\\\"id\\\":\\\"rules\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"6b08a668c\\\",\\\"id\\\":\\\"style\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"e984ef9197\\\",\\\"id\\\":\\\"tool-discovery.catalogue\\\",\\\"version\\\":\\\"1\\\"},{\\\"fingerprint\\\":\\\"3433199e20\\\",\\\"id\\\":\\\"persona\\\",\\\"version\\\":\\\"1\\\"}],\\\"text\\\":\\\"GOLDEN system prefix.\\\\n\\\\nSTATIC rules.\\\\n\\\\nSTYLE plain.\\\\n\\\\n## Skills (call load_skill before doing work one covers; its tools become available next step)\\\\n- delivery: Deliver a final answer.\\\\n- notes: Take notes.\\\\n\\\\nSESSION persona: a golden agent.\\\"},\\\"id\\\":\\\"run-4:8\\\",\\\"runId\\\":\\\"run-4\\\",\\\"step\\\":0,\\\"turn\\\":4}]\"}}",
-    "{\"name\":\"context.built\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"turn\":4,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"7ad37a04a8a\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":899,\"reservedTokens\":472,\"compactions\":1,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
+    "{\"name\":\"context.built\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"turn\":4,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"7ad37a04a8a\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":899,\"reservedTokens\":387,\"compactions\":1,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
     "{\"name\":\"tool.started\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"invocationId\":\"run-4:call:1\",\"tool\":\"note\",\"input\":{\"text\":\"gamma\"},\"labels\":{},\"stage\":null}}",
     "{\"name\":\"tool.completed\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"invocationId\":\"run-4:call:1\",\"tool\":\"note\",\"input\":{\"text\":\"gamma\"},\"ok\":true,\"encoded\":true,\"durationMs\":0,\"labels\":{},\"stage\":null}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-4\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"Message\\\",\\\"message\\\":{\\\"content\\\":[{\\\"input\\\":{\\\"text\\\":\\\"gamma\\\"},\\\"providerExecuted\\\":false,\\\"toolCallId\\\":\\\"e1\\\",\\\"toolName\\\":\\\"note\\\",\\\"type\\\":\\\"tool-call\\\"}],\\\"providerOptions\\\":{\\\"engine\\\":{\\\"cacheReadTokens\\\":0,\\\"inputTokens\\\":100,\\\"outputTokens\\\":10,\\\"totalTokens\\\":110}},\\\"role\\\":\\\"assistant\\\"}},\\\"id\\\":\\\"run-4:9\\\",\\\"runId\\\":\\\"run-4\\\",\\\"step\\\":1,\\\"turn\\\":4},{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"ToolResult\\\",\\\"artifacts\\\":[],\\\"encoded\\\":true,\\\"isError\\\":false,\\\"pinned\\\":false,\\\"subjects\\\":[],\\\"toolCallId\\\":\\\"e1\\\",\\\"toolName\\\":\\\"note\\\",\\\"view\\\":\\\"true\\\",\\\"viewVersion\\\":\\\"raw\\\"},\\\"id\\\":\\\"run-4:10\\\",\\\"runId\\\":\\\"run-4\\\",\\\"step\\\":1,\\\"turn\\\":4}]\"}}",
@@ -276,7 +276,7 @@
     "{\"name\":\"step.ended\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"status\":\"completed\",\"results\":[{\"entry\":\"run-4:10\",\"toolCallId\":\"e1\",\"tool\":\"note\",\"ok\":true}]}}",
     "{\"name\":\"completion.evaluated\",\"runId\":\"run-4\",\"data\":{\"step\":1,\"verdict\":{\"complete\":false,\"awaiting\":[],\"facts\":{}}}}",
     "{\"name\":\"step.started\",\"runId\":\"run-4\",\"data\":{\"step\":2,\"planned\":false,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
-    "{\"name\":\"context.built\",\"runId\":\"run-4\",\"data\":{\"step\":2,\"turn\":4,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"dc5b606abf6\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":1021,\"reservedTokens\":472,\"compactions\":1,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
+    "{\"name\":\"context.built\",\"runId\":\"run-4\",\"data\":{\"step\":2,\"turn\":4,\"strategy\":\"window\",\"strategyVersion\":\"1\",\"fingerprint\":\"dc5b606abf6\",\"systemFingerprint\":\"eb326f7eed\",\"estimatedTokens\":1021,\"reservedTokens\":387,\"compactions\":1,\"activeTools\":[\"load_skill\",\"lookup\",\"recall_context\",\"deliver\",\"note\"]}}",
     "{\"name\":\"tool.started\",\"runId\":\"run-4\",\"data\":{\"step\":2,\"invocationId\":\"run-4:call:2\",\"tool\":\"deliver\",\"input\":{\"text\":\"record-gamma-a\"},\"labels\":{},\"stage\":null}}",
     "{\"name\":\"tool.completed\",\"runId\":\"run-4\",\"data\":{\"step\":2,\"invocationId\":\"run-4:call:2\",\"tool\":\"deliver\",\"input\":{\"text\":\"record-gamma-a\"},\"ok\":true,\"encoded\":true,\"durationMs\":0,\"labels\":{},\"stage\":null}}",
     "{\"name\":\"memory.entries\",\"runId\":\"run-4\",\"data\":{\"v\":2,\"entries\":\"[{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"Message\\\",\\\"message\\\":{\\\"content\\\":[{\\\"input\\\":{\\\"text\\\":\\\"record-gamma-a\\\"},\\\"providerExecuted\\\":false,\\\"toolCallId\\\":\\\"e2\\\",\\\"toolName\\\":\\\"deliver\\\",\\\"type\\\":\\\"tool-call\\\"}],\\\"providerOptions\\\":{\\\"engine\\\":{\\\"cacheReadTokens\\\":0,\\\"inputTokens\\\":100,\\\"outputTokens\\\":10,\\\"totalTokens\\\":110}},\\\"role\\\":\\\"assistant\\\"}},\\\"id\\\":\\\"run-4:11\\\",\\\"runId\\\":\\\"run-4\\\",\\\"step\\\":2,\\\"turn\\\":4},{\\\"at\\\":1767225600000,\\\"body\\\":{\\\"_tag\\\":\\\"ToolResult\\\",\\\"artifacts\\\":[],\\\"encoded\\\":true,\\\"isError\\\":false,\\\"pinned\\\":false,\\\"subjects\\\":[],\\\"toolCallId\\\":\\\"e2\\\",\\\"toolName\\\":\\\"deliver\\\",\\\"view\\\":\\\"true\\\",\\\"viewVersion\\\":\\\"raw\\\"},\\\"id\\\":\\\"run-4:12\\\",\\\"runId\\\":\\\"run-4\\\",\\\"step\\\":2,\\\"turn\\\":4}]\"}}",
@@ -1084,29 +1084,29 @@
       "prompt": {
         "content": [
           {
+            "options": {},
             "role": "system",
-            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent.",
-            "options": {}
+            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent."
           },
           {
+            "options": {},
             "role": "user",
-            "content": "find alpha",
-            "options": {}
+            "content": "find alpha"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "INTENT: look a record up",
-            "options": {}
+            "content": "INTENT: look a record up"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "TURN active: load_skill, lookup, recall_context",
-            "options": {}
+            "content": "TURN active: load_skill, lookup, recall_context"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "STEP 0",
-            "options": {}
+            "content": "STEP 0"
           }
         ]
       },
@@ -1115,11 +1115,7 @@
           "name": "load_skill",
           "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "skills"
-            ],
             "properties": {
               "skills": {
                 "type": "array",
@@ -1128,6 +1124,9 @@
                 }
               }
             },
+            "required": [
+              "skills"
+            ],
             "additionalProperties": false
           }
         },
@@ -1135,16 +1134,15 @@
           "name": "lookup",
           "description": "Look records up by query.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "query"
-            ],
             "properties": {
               "query": {
                 "type": "string"
               }
             },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           }
         },
@@ -1152,16 +1150,15 @@
           "name": "recall_context",
           "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "locator"
-            ],
             "properties": {
               "locator": {
                 "type": "string"
               }
             },
+            "required": [
+              "locator"
+            ],
             "additionalProperties": false
           }
         }
@@ -1179,60 +1176,60 @@
       "prompt": {
         "content": [
           {
+            "options": {},
             "role": "system",
-            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent.",
-            "options": {}
+            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent."
           },
           {
+            "options": {},
             "role": "user",
-            "content": "find alpha",
-            "options": {}
+            "content": "find alpha"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "INTENT: look a record up",
-            "options": {}
+            "content": "INTENT: look a record up"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "TURN active: load_skill, lookup, recall_context",
-            "options": {}
+            "content": "TURN active: load_skill, lookup, recall_context"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c1",
                 "name": "lookup",
                 "params": {
                   "query": "alpha"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c1",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-alpha-b: alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b ",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "user",
-            "content": "STEP 1",
-            "options": {}
+            "content": "STEP 1"
           }
         ]
       },
@@ -1241,11 +1238,7 @@
           "name": "load_skill",
           "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "skills"
-            ],
             "properties": {
               "skills": {
                 "type": "array",
@@ -1254,6 +1247,9 @@
                 }
               }
             },
+            "required": [
+              "skills"
+            ],
             "additionalProperties": false
           }
         },
@@ -1261,16 +1257,15 @@
           "name": "lookup",
           "description": "Look records up by query.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "query"
-            ],
             "properties": {
               "query": {
                 "type": "string"
               }
             },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           }
         },
@@ -1278,16 +1273,15 @@
           "name": "recall_context",
           "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "locator"
-            ],
             "properties": {
               "locator": {
                 "type": "string"
               }
             },
+            "required": [
+              "locator"
+            ],
             "additionalProperties": false
           }
         }
@@ -1305,60 +1299,62 @@
       "prompt": {
         "content": [
           {
+            "options": {},
             "role": "system",
-            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE brief.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent.",
-            "options": {}
+            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE brief.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent."
           },
           {
+            "options": {},
             "role": "user",
-            "content": "find alpha",
-            "options": {}
+            "content": "find alpha"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "INTENT: look a record up",
-            "options": {}
+            "content": "INTENT: look a record up"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "TURN active: load_skill, lookup, recall_context",
-            "options": {}
+            "content": "TURN active: load_skill, lookup, recall_context"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c1",
                 "name": "lookup",
                 "params": {
                   "query": "alpha"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c1",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-alpha-b: alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b ",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c2",
                 "name": "load_skill",
@@ -1367,31 +1363,29 @@
                     "delivery"
                   ]
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c2",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "user",
-            "content": "STEP 2",
-            "options": {}
+            "content": "STEP 2"
           }
         ]
       },
@@ -1400,11 +1394,7 @@
           "name": "load_skill",
           "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "skills"
-            ],
             "properties": {
               "skills": {
                 "type": "array",
@@ -1413,6 +1403,9 @@
                 }
               }
             },
+            "required": [
+              "skills"
+            ],
             "additionalProperties": false
           }
         },
@@ -1420,16 +1413,15 @@
           "name": "lookup",
           "description": "Look records up by query.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "query"
-            ],
             "properties": {
               "query": {
                 "type": "string"
               }
             },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           }
         },
@@ -1437,16 +1429,15 @@
           "name": "recall_context",
           "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "locator"
-            ],
             "properties": {
               "locator": {
                 "type": "string"
               }
             },
+            "required": [
+              "locator"
+            ],
             "additionalProperties": false
           }
         },
@@ -1454,16 +1445,15 @@
           "name": "deliver",
           "description": "Deliver the final answer.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "text"
-            ],
             "properties": {
               "text": {
                 "type": "string"
               }
             },
+            "required": [
+              "text"
+            ],
             "additionalProperties": false
           }
         }
@@ -1481,50 +1471,52 @@
       "prompt": {
         "content": [
           {
+            "options": {},
             "role": "system",
-            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent.",
-            "options": {}
+            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent."
           },
           {
+            "options": {},
             "role": "user",
-            "content": "find alpha",
-            "options": {}
+            "content": "find alpha"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c1",
                 "name": "lookup",
                 "params": {
                   "query": "alpha"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c1",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "(earlier lookup found record-alpha-a, record-alpha-b, record-alpha-c)",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c2",
                 "name": "load_skill",
@@ -1533,87 +1525,87 @@
                     "delivery"
                   ]
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c2",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c3",
                 "name": "deliver",
                 "params": {
                   "text": "record-alpha-b"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c3",
                 "name": "deliver",
                 "isFailure": false,
                 "result": "true",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
-            "content": "record-alpha-b",
-            "options": {}
+            "content": "record-alpha-b"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "hello again",
-            "options": {}
+            "content": "hello again"
           },
           {
+            "options": {},
             "role": "assistant",
-            "content": "layer saw turn 1 with 18 entries | written in order | turn 2",
-            "options": {}
+            "content": "layer saw turn 1 with 18 entries | written in order | turn 2"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "fail please",
-            "options": {}
+            "content": "fail please"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "note gamma, then deliver it",
-            "options": {}
+            "content": "note gamma, then deliver it"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "run-4:matcher",
                 "name": "load_skill",
@@ -1622,62 +1614,60 @@
                     "notes"
                   ]
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "run-4:matcher",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## notes\nNote what the user asks to keep.\nTools: note",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "user",
-            "content": "TURN active: load_skill, lookup, recall_context, deliver, note",
-            "options": {}
+            "content": "TURN active: load_skill, lookup, recall_context, deliver, note"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "planned:0:0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "planned:0:0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           }
         ]
       },
@@ -1686,11 +1676,7 @@
           "name": "load_skill",
           "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "skills"
-            ],
             "properties": {
               "skills": {
                 "type": "array",
@@ -1699,6 +1685,9 @@
                 }
               }
             },
+            "required": [
+              "skills"
+            ],
             "additionalProperties": false
           }
         },
@@ -1706,16 +1695,15 @@
           "name": "lookup",
           "description": "Look records up by query.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "query"
-            ],
             "properties": {
               "query": {
                 "type": "string"
               }
             },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           }
         },
@@ -1723,16 +1711,15 @@
           "name": "recall_context",
           "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "locator"
-            ],
             "properties": {
               "locator": {
                 "type": "string"
               }
             },
+            "required": [
+              "locator"
+            ],
             "additionalProperties": false
           }
         },
@@ -1740,16 +1727,15 @@
           "name": "deliver",
           "description": "Deliver the final answer.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "text"
-            ],
             "properties": {
               "text": {
                 "type": "string"
               }
             },
+            "required": [
+              "text"
+            ],
             "additionalProperties": false
           }
         },
@@ -1757,16 +1743,15 @@
           "name": "note",
           "description": "Take a note.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "text"
-            ],
             "properties": {
               "text": {
                 "type": "string"
               }
             },
+            "required": [
+              "text"
+            ],
             "additionalProperties": false
           }
         }
@@ -1786,50 +1771,52 @@
       "prompt": {
         "content": [
           {
+            "options": {},
             "role": "system",
-            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent.",
-            "options": {}
+            "content": "GOLDEN system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a golden agent."
           },
           {
+            "options": {},
             "role": "user",
-            "content": "find alpha",
-            "options": {}
+            "content": "find alpha"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c1",
                 "name": "lookup",
                 "params": {
                   "query": "alpha"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c1",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "(earlier lookup found record-alpha-a, record-alpha-b, record-alpha-c)",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c2",
                 "name": "load_skill",
@@ -1838,87 +1825,87 @@
                     "delivery"
                   ]
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c2",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "c3",
                 "name": "deliver",
                 "params": {
                   "text": "record-alpha-b"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "c3",
                 "name": "deliver",
                 "isFailure": false,
                 "result": "true",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
-            "content": "record-alpha-b",
-            "options": {}
+            "content": "record-alpha-b"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "hello again",
-            "options": {}
+            "content": "hello again"
           },
           {
+            "options": {},
             "role": "assistant",
-            "content": "layer saw turn 1 with 18 entries | written in order | turn 2",
-            "options": {}
+            "content": "layer saw turn 1 with 18 entries | written in order | turn 2"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "fail please",
-            "options": {}
+            "content": "fail please"
           },
           {
+            "options": {},
             "role": "user",
-            "content": "note gamma, then deliver it",
-            "options": {}
+            "content": "note gamma, then deliver it"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "run-4:matcher",
                 "name": "load_skill",
@@ -1927,93 +1914,91 @@
                     "notes"
                   ]
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "run-4:matcher",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## notes\nNote what the user asks to keep.\nTools: note",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "user",
-            "content": "TURN active: load_skill, lookup, recall_context, deliver, note",
-            "options": {}
+            "content": "TURN active: load_skill, lookup, recall_context, deliver, note"
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "planned:0:0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "planned:0:0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "assistant",
             "content": [
               {
+                "options": {},
                 "type": "tool-call",
                 "id": "e1",
                 "name": "note",
                 "params": {
                   "text": "gamma"
                 },
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           },
           {
+            "options": {},
             "role": "tool",
             "content": [
               {
+                "options": {},
                 "type": "tool-result",
                 "id": "e1",
                 "name": "note",
                 "isFailure": false,
                 "result": "true",
-                "providerExecuted": false,
-                "options": {}
+                "providerExecuted": false
               }
-            ],
-            "options": {}
+            ]
           }
         ]
       },
@@ -2022,11 +2007,7 @@
           "name": "load_skill",
           "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "skills"
-            ],
             "properties": {
               "skills": {
                 "type": "array",
@@ -2035,6 +2016,9 @@
                 }
               }
             },
+            "required": [
+              "skills"
+            ],
             "additionalProperties": false
           }
         },
@@ -2042,16 +2026,15 @@
           "name": "lookup",
           "description": "Look records up by query.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "query"
-            ],
             "properties": {
               "query": {
                 "type": "string"
               }
             },
+            "required": [
+              "query"
+            ],
             "additionalProperties": false
           }
         },
@@ -2059,16 +2042,15 @@
           "name": "recall_context",
           "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "locator"
-            ],
             "properties": {
               "locator": {
                 "type": "string"
               }
             },
+            "required": [
+              "locator"
+            ],
             "additionalProperties": false
           }
         },
@@ -2076,16 +2058,15 @@
           "name": "deliver",
           "description": "Deliver the final answer.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "text"
-            ],
             "properties": {
               "text": {
                 "type": "string"
               }
             },
+            "required": [
+              "text"
+            ],
             "additionalProperties": false
           }
         },
@@ -2093,16 +2074,15 @@
           "name": "note",
           "description": "Take a note.",
           "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "required": [
-              "text"
-            ],
             "properties": {
               "text": {
                 "type": "string"
               }
             },
+            "required": [
+              "text"
+            ],
             "additionalProperties": false
           }
         }

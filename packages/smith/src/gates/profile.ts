@@ -26,7 +26,7 @@ export const loadQualityBar = (
           .exists(conventional)
           .pipe(
             Effect.map((has) => (has ? Option.some(conventional) : Option.none<string>())),
-            Effect.catchAll(() => Effect.succeed(Option.none<string>())),
+            Effect.catch(() => Effect.succeed(Option.none<string>())),
           ),
     })
     return yield* Option.match(resolved, {
@@ -34,7 +34,7 @@ export const loadQualityBar = (
       onSome: (path) =>
         loadConfig(path).pipe(
           Effect.map(({ config, registry }) => renderQualityBar(config, registry)),
-          Effect.catchAll(() => Effect.succeed(Option.none<QualityBar>())),
+          Effect.catch(() => Effect.succeed(Option.none<QualityBar>())),
         ),
     })
   })

@@ -31,7 +31,7 @@ const snapshot = (nodes: ReadonlyArray<RenderNode>, phase: "partial" | "complete
 const scopeOf = (messageId = "message-1"): SurfaceScope => ({
   threadId: "thread", runId: `run-${messageId}`, messageId, principalId: "guest", fence: 1, surfaceId: "page", baseVersion: Option.none(),
 })
-const detached: RenderOpenOptions = { fork: (_tag, work) => Effect.forkDaemon(work).pipe(Effect.asVoid) }
+const detached: RenderOpenOptions = { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) }
 const allow: typeof UiOutputAdmission.Service = { validate: () => Effect.void }
 
 const holds = (check: string) => (condition: boolean, message: string) =>
@@ -213,8 +213,8 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const other = yield* store.plan(scopeOf("message-2"), SurfacePlanned.make({
         surfaceId: "page", messageId: "message-2", versionId: "message-2:v1", generation: 1, baseVersionId: Option.none(),
         phase: "partial", spec: {}, nodes: [], placeholders: [], signature: "y",
-      })).pipe(Effect.either)
-      yield* expect(other._tag === "Right", "a freeze only binds its own message")
+      })).pipe(Effect.result)
+      yield* expect(other._tag === "Success", "a freeze only binds its own message")
     }),
   },
 ]

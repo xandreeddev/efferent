@@ -1,4 +1,4 @@
-import { Tool, Toolkit } from "@effect/ai"
+import { Tool, Toolkit } from "effect/ai"
 import { Context, Effect, Option, Schema } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { McpClient } from "../ports/mcp-client.port.js"
@@ -30,7 +30,7 @@ import type { McpToolDescriptor } from "../ports/mcp-client.port.js"
 const OUTPUT_CAP_CHARS = 16_000
 /** A single tool's arguments — an open object; the model shapes it from the
  *  schema `mcp_describe` handed back. */
-const McpArgs = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+const McpArgs = Schema.Record(Schema.String, Schema.Unknown)
 
 const clipResult = (value: unknown): unknown => {
   const text = typeof value === "string" ? value : JSON.stringify(value) ?? ""
@@ -42,10 +42,10 @@ const clipResult = (value: unknown): unknown => {
 export const McpDescribe = Tool.make("mcp_describe", {
   description:
     "Reveal ONE external MCP tool's parameters. Pass the server + tool exactly as listed under 'External MCP tools'. Returns {server, tool, description, inputSchema} — the JSON Schema of the arguments mcp_call expects. Call this BEFORE mcp_call the first time you use a tool.",
-  parameters: {
-    server: Schema.String.annotations({ description: "The server name, as listed." }),
-    tool: Schema.String.annotations({ description: "The tool name, as listed." }),
-  },
+  parameters: Schema.Struct({
+    server: Schema.String.annotate({ description: "The server name, as listed." }),
+    tool: Schema.String.annotate({ description: "The tool name, as listed." }),
+  }),
   success: Schema.Struct({
     server: Schema.String,
     tool: Schema.String,
@@ -59,13 +59,13 @@ export const McpDescribe = Tool.make("mcp_describe", {
 export const McpCall = Tool.make("mcp_call", {
   description:
     "Invoke an external MCP tool. Pass server + tool (as listed) and args as a JSON object matching the schema mcp_describe returned. A tool-level failure comes back as data (read it and adapt), not a dead turn. Returns the tool's result (clipped past 16k chars).",
-  parameters: {
-    server: Schema.String.annotations({ description: "The server name, as listed." }),
-    tool: Schema.String.annotations({ description: "The tool name, as listed." }),
-    args: McpArgs.annotations({
+  parameters: Schema.Struct({
+    server: Schema.String.annotate({ description: "The server name, as listed." }),
+    tool: Schema.String.annotate({ description: "The tool name, as listed." }),
+    args: McpArgs.annotate({
       description: "The tool's arguments as a JSON object (see mcp_describe); {} if it takes none.",
     }),
-  },
+  }),
   success: Schema.Unknown,
   failure: Failure,
   failureMode: "return",
@@ -101,7 +101,7 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
     if (descriptors.length === 0) return emptyMcpBridge
 
     const find = (server: string, tool: string): Option.Option<McpToolDescriptor> =>
-      Option.fromNullable(
+      Option.fromNullishOr(
         descriptors.find((d) => d.server === server && d.name === tool),
       )
 
@@ -152,7 +152,7 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
               ),
             ),
     }
-    const handlers = yield* toolkit.toContext(handlerRecord as never)
+    const handlers = yield* toolkit.toHandlers(handlerRecord as never)
     return {
       toolkit,
       handlers: handlers as Context.Context<Tool.Handler<string>>,
@@ -163,7 +163,7 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
     // silently: a misconfigured server otherwise reads as "my tools
     // vanished" with zero signal (the sandboxedShell contract: the warning
     // IS the contract).
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.logWarning(`MCP bridge unavailable — continuing without MCP tools: ${cause}`).pipe(
         Effect.as(emptyMcpBridge),
       ),

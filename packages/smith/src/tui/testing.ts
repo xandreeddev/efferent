@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { LanguageModel } from "@effect/ai"
+import { LanguageModel } from "effect/ai"
 import { createComponent } from "solid-js"
 import { testRender } from "@opentui/solid"
 import type { TestRendererSetup } from "@opentui/core/testing"
@@ -156,7 +156,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
     }),
     Layer.succeed(AuthStore, {
       all: Effect.succeed(credentials),
-      get: (p: string) => Effect.succeed(Option.fromNullable(credentials.get(p))),
+      get: (p: string) => Effect.succeed(Option.fromNullishOr(credentials.get(p))),
       resolveKey: () => Effect.succeed(Option.none()),
       set: () => Effect.void,
       remove: () => Effect.void,
@@ -186,7 +186,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
       yield* seeded
     const queue = yield* Queue.unbounded<SmithEvent>()
     const publish = (event: SmithEvent) => Queue.offer(queue, event).pipe(Effect.asVoid)
-    const rt = yield* Effect.runtime<TuiServices>()
+    const rt = yield* Effect.context<TuiServices>()
     const store = createSmithStore(run, { general: "g", code: "c", fast: "f" }, "idle")
     const exitDeferred = yield* Deferred.make<number>()
     yield* Effect.forkScoped(runEventPump(queue, store.reduceBatch))
@@ -201,7 +201,7 @@ export const bootTestTui = async (options: TestTuiOptions = {}): Promise<TestTui
   })
 
   const scope = Effect.runSync(Scope.make())
-  const { ctx, store, exitDeferred } = await Effect.runPromise(Scope.extend(boot, scope))
+  const { ctx, store, exitDeferred } = await Effect.runPromise(Scope.provide(boot, scope))
 
   const setup = await testRender(() => createComponent(App, { ctx }), {
     width: options.width ?? 170,

@@ -26,16 +26,16 @@ describe("foldStreamParts", () => {
       { type: "text-delta", id: "t1", delta: "a" },
       { type: "tool-call", id: "c1", name: "echo", params: { value: "x" } },
       { type: "text-delta", id: "t1", delta: "b" },
-      { type: "finish", reason: "tool-calls", usage: { inputTokens: 10, outputTokens: 5 } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } },
     ])
     expect(turn.content).toEqual([
       { type: "reasoning", text: "thinking" },
       { type: "text", text: "ab" },
       { type: "tool-call", id: "c1", name: "echo", params: { value: "x" } },
-      { type: "finish", reason: "tool-calls", usage: { inputTokens: 10, outputTokens: 5 } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } },
     ])
     expect(turn.finishReason).toBe("tool-calls")
-    expect(turn.usage).toEqual({ inputTokens: 10, outputTokens: 5 })
+    expect(turn.usage).toEqual({ inputTokens: { total: 10 }, outputTokens: { total: 5 } })
     expect(deltas).toEqual([
       { channel: "reasoning", id: "r1", delta: "thin" },
       { channel: "reasoning", id: "r1", delta: "king" },
@@ -51,7 +51,7 @@ describe("foldStreamParts", () => {
       { type: "tool-params-delta", id: "c1", delta: '{"id":"x"}}' },
       { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "start_ui", params: { page: { id: "x" } } },
-      { type: "finish", reason: "tool-calls", usage: { inputTokens: 4, outputTokens: 2 } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 4 }, outputTokens: { total: 2 } } },
     ])
     // The settled content is byte-identical to the non-streamed path: the
     // params parts stay in place, no synthetic chunk appears.
@@ -61,7 +61,7 @@ describe("foldStreamParts", () => {
       { type: "tool-params-delta", id: "c1", delta: '{"id":"x"}}' },
       { type: "tool-params-end", id: "c1" },
       { type: "tool-call", id: "c1", name: "start_ui", params: { page: { id: "x" } } },
-      { type: "finish", reason: "tool-calls", usage: { inputTokens: 4, outputTokens: 2 } },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 4 }, outputTokens: { total: 2 } } },
     ])
     expect(deltas).toEqual([
       { channel: "tool-params", id: "c1", delta: "", toolName: "start_ui" },
@@ -74,10 +74,10 @@ describe("foldStreamParts", () => {
     const { turn, deltas } = await fold([
       { type: "text-start", id: "t1" },
       { type: "text-end", id: "t1" },
-      { type: "finish", reason: "stop", usage: { inputTokens: 1, outputTokens: 0 } },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 0 } } },
     ])
     expect(turn.content).toEqual([
-      { type: "finish", reason: "stop", usage: { inputTokens: 1, outputTokens: 0 } },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 0 } } },
     ])
     expect(deltas).toEqual([])
   })
@@ -85,7 +85,7 @@ describe("foldStreamParts", () => {
   test("a delta with an unseen id opens its own chunk (robustness)", async () => {
     const { turn } = await fold([
       { type: "text-delta", id: "loose", delta: "hi" },
-      { type: "finish", reason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } },
     ])
     expect(turn.content[0]).toEqual({ type: "text", text: "hi" })
   })
@@ -94,10 +94,10 @@ describe("foldStreamParts", () => {
     const { turn } = await fold([
       { type: "text-delta", id: "t1", delta: "x" },
       { type: "finish", reason: "tool-calls", usage: {} },
-      { type: "finish", reason: "unknown", usage: { inputTokens: 7, outputTokens: 3 } },
+      { type: "finish", reason: "unknown", usage: { inputTokens: { total: 7 }, outputTokens: { total: 3 } } },
     ])
     expect(turn.finishReason).toBe("tool-calls")
-    expect(turn.usage).toEqual({ inputTokens: 7, outputTokens: 3 })
+    expect(turn.usage).toEqual({ inputTokens: { total: 7 }, outputTokens: { total: 3 } })
   })
 
   test("tool-result and unknown part types pass through untouched", async () => {

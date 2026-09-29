@@ -10,10 +10,10 @@ export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect
   const scope = yield* UiOutputContext
   return UiOutput.of({
     emit: (input) => Effect.gen(function* () {
-      const proposal = yield* Schema.decodeUnknown(UiOutputProposal)(input, { onExcessProperty: "error" }).pipe(
+      const proposal = yield* Schema.decodeUnknownEffect(UiOutputProposal)(input, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => new UiOutputError({ code: "invalid", message: "Invalid component proposal" })),
       )
-      const json = yield* Schema.encode(Schema.parseJson(UiOutputProposal))(proposal).pipe(
+      const json = yield* Schema.encodeEffect(Schema.fromJsonString(UiOutputProposal))(proposal).pipe(
         Effect.mapError(() => new UiOutputError({ code: "invalid", message: "Component must be serializable" })),
       )
       if (new TextEncoder().encode(json).byteLength > maxBytes) return yield* Effect.fail(new UiOutputError({ code: "invalid", message: "Component exceeds the configured size limit" }))
@@ -32,10 +32,10 @@ export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function*
 
 /** Transport-independent: WebSocket/SSE hosts consume the committed journal. */
 export const uiOutputPlugin = definePlugin({
-  id: "@xandreed/plugin-render/output", version: "0.6.0-next.2",
+  id: "@xandreed/plugin-render/output", version: "0.7.0-next.0",
   requires: [UiOutputAdmission, UiOutputJournal, UiOutputContext],
   provides: [UiOutput, UiOutputTools],
-  config: Schema.Struct({ maxBytes: Schema.Int.pipe(Schema.between(1024, 131_072)) }),
+  config: Schema.Struct({ maxBytes: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1024, maximum: 131_072 }))) }),
   defaults: { maxBytes: 32_768 },
   layer: ({ maxBytes }) => Layer.merge(UiOutputLive(maxBytes), Layer.succeed(UiOutputTools, { toolkit: uiOutputToolkit })),
 })

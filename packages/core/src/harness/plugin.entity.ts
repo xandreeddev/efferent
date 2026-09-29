@@ -23,7 +23,7 @@ export interface Plugin {
   readonly contributes: ReadonlyArray<string>
   /** Used when present (ordering and dependencies), never required. */
   readonly optional: ReadonlyArray<string>
-  readonly schema: Schema.Schema.AnyNoContext
+  readonly schema: Schema.Codec<any, any>
   readonly defaults: Readonly<Record<string, unknown>>
   readonly build: (
     options: unknown,
@@ -38,7 +38,7 @@ export interface Plugin {
  * hosts that compose layers themselves (see `stackPlugins`).
  */
 export interface TypedPlugin<A extends Readonly<Record<string, unknown>>, I, Out, E, In> extends Plugin {
-  readonly config: Schema.Schema<A, I>
+  readonly config: Schema.Codec<A, I>
   readonly defaults: A
   /** Options merged over the defaults and decoded (extra keys fail with config.options). */
   readonly live: (options?: Partial<I>) => Layer.Layer<Out, E | HarnessError, In>

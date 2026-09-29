@@ -1,12 +1,12 @@
 import { dirname } from "node:path"
-import { NodeSdk } from "@effect/opentelemetry"
+// The Node SDK module alone: the package index also loads the web SDK.
+import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import { FileSystem, PlatformLogger } from "@effect/platform"
 import { BunFileSystem } from "@effect/platform-bun"
-import { Effect, Layer, Logger } from "effect"
+import { Effect, FileSystem, Layer, Logger } from "effect"
 
 /**
  * The observability edge — two layers every agent main composes:
@@ -42,17 +42,18 @@ const fileLogger = (path: string) =>
     yield* fs
       .makeDirectory(dirname(path), { recursive: true })
       .pipe(Effect.orElseSucceed(() => undefined))
-    return yield* PlatformLogger.toFile(Logger.logfmtLogger, path, { flag: "a" })
+    return yield* Logger.toFile(Logger.formatLogFmt, path, { flag: "a" })
     // An unopenable log file must never fail the boot — fall back to silent
     // (the pre-file behavior), the session is more important than its log.
-  }).pipe(Effect.orElseSucceed(() => Logger.none))
+  }).pipe(Effect.orElseSucceed(() => Logger.make(() => undefined)))
 
+/** The file sink instead of the console logger; spans keep their log events. */
 export const FileLoggerLive = (path: string): Layer.Layer<never> =>
-  Logger.replaceScoped(Logger.defaultLogger, fileLogger(path)).pipe(
+  Logger.layer([fileLogger(path), Logger.tracerLogger]).pipe(
     Layer.provide(BunFileSystem.layer),
   )
 
 /** Add the file sink while retaining the driver's console logger (headless
  *  mode needs both a live stderr narrative and crash-forensics on disk). */
 export const FileLoggerAddLive = (path: string): Layer.Layer<never> =>
-  Logger.addScoped(fileLogger(path)).pipe(Layer.provide(BunFileSystem.layer))
+  Logger.layer([fileLogger(path)], { mergeWithExisting: true }).pipe(Layer.provide(BunFileSystem.layer))

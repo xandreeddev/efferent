@@ -15,7 +15,7 @@ const invalid = (path: string, message: string) => new HarnessError({ code: "ski
 const list = (value: string | undefined): ReadonlyArray<string> =>
   (value ?? "").split(",").map((item) => item.trim()).filter((item) => item.length > 0)
 const headingOf = (body: string): Option.Option<string> =>
-  Option.fromNullable(body.split("\n").find((line) => line.startsWith("# "))).pipe(Option.map((line) => line.slice(2).trim()))
+  Option.fromNullishOr(body.split("\n").find((line) => line.startsWith("# "))).pipe(Option.map((line) => line.slice(2).trim()))
 
 /**
  * Skills from markdown files. `<skill>/SKILL.md` carries flat frontmatter —
@@ -36,12 +36,12 @@ export const skillsFromFiles = (files: ReadonlyArray<SkillFile>): Effect.Effect<
       (reference) => {
         const id = reference.path.slice(`${directory}/references/`.length, -".md".length)
         const document = Option.getOrElse(parseFrontmatter(reference.text), (): Frontmatter => ({ fields: {}, body: reference.text }))
-        const title = Option.getOrElse(Option.orElse(Option.fromNullable(document.fields["title"]), () => headingOf(document.body)), () => id)
+        const title = Option.getOrElse(Option.orElse(Option.fromNullishOr(document.fields["title"]), () => headingOf(document.body)), () => id)
         return Effect.succeed({ id, title, text: document.body.trim() })
       },
     )
     const fields = parsed.fields
-    return yield* Schema.decodeUnknown(SkillDefinition)({
+    return yield* Schema.decodeUnknownEffect(SkillDefinition)({
       id: fields["id"] ?? directory,
       version: fields["version"] ?? "1",
       summary: fields["summary"] ?? "",

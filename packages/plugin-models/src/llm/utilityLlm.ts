@@ -1,7 +1,7 @@
-import { Prompt } from "@effect/ai"
-import { FetchHttpClient, HttpClient } from "@effect/platform"
+import { Prompt } from "effect/ai"
+import { FetchHttpClient, HttpClient } from "effect/http"
 import { Effect, Layer, Option } from "effect"
-import { AuthStore, parseModelSelection, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
+import { AuthStore, extractUsage, parseModelSelection, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
 import { generateWith } from "./router.js"
 
 /**
@@ -47,23 +47,8 @@ export const UtilityLlmLive = Layer.effect(
               return part.type === "text" ? [part.text ?? ""] : []
             })
             .join("")
-          const usage = res.usage as
-            | {
-                readonly inputTokens?: number
-                readonly outputTokens?: number
-                readonly totalTokens?: number
-                readonly cachedInputTokens?: number
-              }
-            | undefined
-          return {
-            text,
-            usage: {
-              inputTokens: usage?.inputTokens ?? 0,
-              outputTokens: usage?.outputTokens ?? 0,
-              totalTokens: usage?.totalTokens ?? 0,
-              cacheReadTokens: usage?.cachedInputTokens ?? 0,
-            },
-          }
+          // The loop's own reading of provider usage, so both count alike.
+          return { text, usage: extractUsage(res.usage, res.content) }
         }),
     }
   }),

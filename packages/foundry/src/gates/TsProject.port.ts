@@ -15,12 +15,9 @@ export interface LoadedProject {
  * gates — parse once, and rank 0 + rank 1 become nearly free relative to a
  * per-gate `tsc` subprocess.
  */
-export class TsProject extends Context.Tag("@xandreed/foundry/TsProject")<
-  TsProject,
-  {
+export class TsProject extends Context.Service<TsProject, {
     readonly load: (tsconfigAbsPath: string) => Effect.Effect<LoadedProject, ProjectLoadError>
-  }
->() {}
+  }>()("@xandreed/foundry/TsProject") {}
 
 const buildProject = (tsconfigAbsPath: string): Effect.Effect<LoadedProject, ProjectLoadError> =>
   Effect.suspend(() => {

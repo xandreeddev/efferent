@@ -104,16 +104,14 @@ interface LoopState {
 }
 
 /** Transient implementor failures get 2 quick retries; a third failure is real. */
-const implementorRetry = Schedule.exponential(Duration.seconds(1)).pipe(
-  Schedule.intersect(Schedule.recurs(2)),
-)
+const implementorRetry = Schedule.max([Schedule.exponential(Duration.seconds(1)), Schedule.recurs(2)])
 
 const FIRST_ATTEMPT = AttemptNumber.make(1)
 
 /**
  * The factory loop: implement → snapshot → run the gate pipeline → accept, or
  * feed the findings back and try again — bounded by `spec.limits`. State is
- * an immutable fold through `Effect.iterate`: no `let`, no `while`.
+ * an immutable fold through a recursive step: no `let`, no `while`.
  *
  * A rejected run RETURNS (the report is the deliverable); the error channel
  * carries only infrastructure failures. The wall-clock budget is a soft
@@ -145,7 +143,7 @@ export const forge = <R>(
       records: ReadonlyArray<AttemptRecord>,
       endedAt: number,
     ): Effect.Effect<void> =>
-      Arr.isNonEmptyReadonlyArray(records)
+      Arr.isReadonlyArrayNonEmpty(records)
         ? sink
             .persist(
               new FactoryRun({
@@ -157,7 +155,7 @@ export const forge = <R>(
                 endedAt,
               }),
             )
-            .pipe(Effect.asVoid, Effect.catchAll(() => Effect.void))
+            .pipe(Effect.asVoid, Effect.catch(() => Effect.void))
         : Effect.void
 
     const attemptOnce = (state: LoopState): Effect.Effect<LoopState, ImplementorError | WorkspaceError, R | Implementor> =>
@@ -239,15 +237,14 @@ export const forge = <R>(
         Effect.withSpan("foundry.attempt", { attributes: { "attempt.n": state.attempt } }),
       )
 
-    const final = yield* Effect.iterate(
-      {
-        attempt: FIRST_ATTEMPT,
-        feedback: Option.none<string>(),
-        records: [],
-        phase: "continue",
-      } as LoopState,
-      { while: (state) => state.phase === "continue", body: attemptOnce },
-    )
+    const iterate = (state: LoopState): Effect.Effect<LoopState, ImplementorError | WorkspaceError, R | Implementor> =>
+      state.phase === "continue" ? Effect.flatMap(attemptOnce(state), iterate) : Effect.succeed(state)
+    const final = yield* iterate({
+      attempt: FIRST_ATTEMPT,
+      feedback: Option.none<string>(),
+      records: [],
+      phase: "continue",
+    })
 
     const outcome: RunOutcome = yield* Match.value(final.phase).pipe(
       Match.when("accepted", () =>
@@ -263,13 +260,13 @@ export const forge = <R>(
         Effect.succeed(RejectedOutcome.make({ reason: "stalled" })),
       ),
       Match.when("continue", () =>
-        Effect.dieMessage("unreachable: the iterate loop exited while phase === continue"),
+        Effect.die(new Error("unreachable: the iterate loop exited while phase === continue")),
       ),
       Match.exhaustive,
     )
 
     const records = final.records
-    const run = yield* Arr.isNonEmptyReadonlyArray(records)
+    const run = yield* Arr.isReadonlyArrayNonEmpty(records)
       ? Effect.map(Clock.currentTimeMillis, (endedAt) =>
           new FactoryRun({
             id: runId,
@@ -280,7 +277,7 @@ export const forge = <R>(
             endedAt,
           }),
         )
-      : Effect.dieMessage("unreachable: the first attempt always records")
+      : Effect.die(new Error("unreachable: the first attempt always records"))
 
     // The strict, authoritative persist — overwrites the in-flight marker.
     const artifact = yield* sink.persist(run)

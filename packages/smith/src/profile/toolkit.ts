@@ -1,5 +1,5 @@
-import { Tool, Toolkit } from "@effect/ai"
-import { Schema } from "effect"
+import { Tool, Toolkit } from "effect/ai"
+import { Schema, Effect } from "effect"
 import { Failure } from "@xandreed/core"
 import { Glob, Grep, LoadSkill, Ls, ReadFile } from "../implementor/codingToolkit.js"
 
@@ -7,11 +7,8 @@ import { Glob, Grep, LoadSkill, Ls, ReadFile } from "../implementor/codingToolki
  *  codec are the same schema, so a locked draft is exactly what was
  *  proposed. */
 export const ProfileProposal = Schema.Struct({
-  packs: Schema.optionalWith(Schema.Array(Schema.NonEmptyString), { default: () => [] }),
-  customRules: Schema.optionalWith(
-    Schema.Array(Schema.Struct({ filename: Schema.NonEmptyString, source: Schema.String })),
-    { default: () => [] },
-  ),
+  packs: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  customRules: Schema.Array(Schema.Struct({ filename: Schema.NonEmptyString, source: Schema.String })).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
   rules: Schema.Array(
     Schema.Struct({
       rule: Schema.NonEmptyString,
@@ -19,31 +16,23 @@ export const ProfileProposal = Schema.Struct({
       exclude: Schema.optional(Schema.Array(Schema.NonEmptyString)),
     }),
   ),
-  checks: Schema.optionalWith(
-    Schema.Array(
+  checks: Schema.Array(
       Schema.Struct({
         name: Schema.NonEmptyString,
         command: Schema.NonEmptyString,
-        kind: Schema.optionalWith(Schema.Literal("test", "eval"), { default: () => "test" }),
-        timeoutMs: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
-          default: () => 300_000,
-        }),
+        kind: Schema.Literals(["test", "eval"]).pipe(Schema.withDecodingDefaultType(Effect.sync(() => "test" as const)), Schema.withConstructorDefault(Effect.sync(() => "test" as const))),
+        timeoutMs: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))).pipe(Schema.withDecodingDefaultType(Effect.sync(() => 300_000)), Schema.withConstructorDefault(Effect.sync(() => 300_000))),
       }),
-    ),
-    { default: () => [] },
-  ),
-  boundaries: Schema.optionalWith(
-    Schema.Array(
+    ).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  boundaries: Schema.Array(
       Schema.Struct({
         name: Schema.NonEmptyString,
         path: Schema.NonEmptyString,
         canImport: Schema.Array(Schema.String),
         externals: Schema.Array(Schema.String),
       }),
-    ),
-    { default: () => [] },
-  ),
-  doctrine: Schema.optionalWith(Schema.String, { default: () => "" }),
+    ).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  doctrine: Schema.String.pipe(Schema.withDecodingDefaultType(Effect.sync(() => "")), Schema.withConstructorDefault(Effect.sync(() => ""))),
 })
 export type ProfileProposal = typeof ProfileProposal.Type
 
@@ -62,19 +51,19 @@ export interface ProfileDryRun {
 export const ProposeProfile = Tool.make("propose_profile", {
   description:
     "Propose the workspace quality profile — every call REPLACES the whole draft. packs: shipped rule packs to vendor into the project ('effect' for Effect.ts idioms, 'effect-architecture' for Schema entities/use cases + Context.Tag ports + Layer adapters, 'quality' for paradigm-neutral anti-gate-gaming). customRules: additional rule modules as {filename, source} — plain TS exporting `rules` (load the gate-rule-authoring skill first). rules: which rule ids to ARM and where (ids must come from the chosen packs/custom modules). checks: the project's own authoritative scripts as {name, command, kind?, timeoutMs?} (bash -c, exit 0 = clean; kind 'eval' runs after tests). boundaries: dependency-direction layers. doctrine: the prose rules file body (markdown, no heading needed). The proposal is DRY-RUN against the workspace: the result carries per-rule finding counts (grandfathered at lock), boundary violations, and check statuses. Only the human locks.",
-  parameters: {
-    packs: Schema.optional(
-      Schema.Array(Schema.String).annotations({
+  parameters: Schema.Struct({
+    packs: Schema.optionalKey(
+      Schema.Array(Schema.String).annotate({
         description: 'Shipped packs to vendor: "effect", "quality", and/or "effect-architecture".',
       }),
     ),
-    customRules: Schema.optional(
+    customRules: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
-          filename: Schema.String.annotations({
+          filename: Schema.String.annotate({
             description: "Module filename, e.g. my-rules.ts (written under .efferent/gates/).",
           }),
-          source: Schema.String.annotations({
+          source: Schema.String.annotate({
             description: "Full TS module source exporting `rules` (plain structural rule objects).",
           }),
         }),
@@ -82,22 +71,22 @@ export const ProposeProfile = Tool.make("propose_profile", {
     ),
     rules: Schema.Array(
       Schema.Struct({
-        rule: Schema.String.annotations({ description: 'Rule id, e.g. "effect/no-let".' }),
-        include: Schema.optional(Schema.Array(Schema.String)),
-        exclude: Schema.optional(Schema.Array(Schema.String)),
+        rule: Schema.String.annotate({ description: 'Rule id, e.g. "effect/no-let".' }),
+        include: Schema.optionalKey(Schema.Array(Schema.String)),
+        exclude: Schema.optionalKey(Schema.Array(Schema.String)),
       }),
     ),
-    checks: Schema.optional(
+    checks: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
           name: Schema.String,
           command: Schema.String,
-          kind: Schema.optional(Schema.Literal("test", "eval")),
-          timeoutMs: Schema.optional(Schema.Number),
+          kind: Schema.optionalKey(Schema.Literals(["test", "eval"])),
+          timeoutMs: Schema.optionalKey(Schema.Finite),
         }),
       ),
     ),
-    boundaries: Schema.optional(
+    boundaries: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
           name: Schema.String,
@@ -107,12 +96,12 @@ export const ProposeProfile = Tool.make("propose_profile", {
         }),
       ),
     ),
-    doctrine: Schema.optional(
-      Schema.String.annotations({
+    doctrine: Schema.optionalKey(
+      Schema.String.annotate({
         description: "The prose rules-file body — what static analysis can't express.",
       }),
     ),
-  },
+  }),
   success: Schema.Struct({
     draftDir: Schema.String,
     rules: Schema.Array(
@@ -122,7 +111,7 @@ export const ProposeProfile = Tool.make("propose_profile", {
     checks: Schema.Array(
       Schema.Struct({
         name: Schema.String,
-        status: Schema.Literal("green", "red"),
+        status: Schema.Literals(["green", "red"]),
       }),
     ),
     note: Schema.String,

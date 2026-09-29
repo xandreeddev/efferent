@@ -1,10 +1,10 @@
-import { Deferred, Effect, PubSub, Stream } from "effect"
+import { Deferred, Effect, PubSub, Stream, Semaphore } from "effect"
 import type { HarnessError } from "@xandreed/core"
 
 export interface ApprovalNotice { readonly id: string; readonly description: string; readonly answer: (allowed: boolean) => Effect.Effect<void>; readonly cancelled: boolean }
 export const makeApprovalChannel = Effect.gen(function* () {
   const hub = yield* PubSub.unbounded<ApprovalNotice>()
-  const gate = yield* Effect.makeSemaphore(1)
+  const gate = yield* Semaphore.make(1)
   return {
     events: Stream.fromPubSub(hub),
     request: (description: string): Effect.Effect<boolean, HarnessError> => gate.withPermits(1)(Effect.gen(function* () {
@@ -15,4 +15,4 @@ export const makeApprovalChannel = Effect.gen(function* () {
     })),
   }
 })
-export type ApprovalChannel = Effect.Effect.Success<typeof makeApprovalChannel>
+export type ApprovalChannel = Effect.Success<typeof makeApprovalChannel>

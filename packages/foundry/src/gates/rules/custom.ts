@@ -1,4 +1,4 @@
-import { Effect, Either, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import { RuleId } from "../../domain/Brands.js"
 import { ConfigError } from "../../domain/Errors.js"
 import { Severity } from "../../domain/Finding.js"
@@ -29,13 +29,13 @@ const failClosed = (
   check: (ctx: RuleContext) => unknown,
 ): ((ctx: RuleContext) => ReadonlyArray<RuleMatch>) =>
   (ctx) =>
-    Either.match(
-      Either.try(() => check(ctx)),
+    Result.match(
+      Result.try(() => check(ctx)),
       {
-        onLeft: (error) => [
+        onFailure: (error) => [
           { node: ctx.sourceFile, message: `rule ${id} crashed: ${String(error)}` },
         ],
-        onRight: (result) =>
+        onSuccess: (result) =>
           Array.isArray(result)
             ? (result as ReadonlyArray<RuleMatch>)
             : [
@@ -59,7 +59,7 @@ const decodeOne = (
   entry: unknown,
 ): Effect.Effect<IdiomRule, ConfigError> =>
   Effect.gen(function* () {
-    const meta = yield* Schema.decodeUnknown(PluggedRuleMeta)(entry).pipe(
+    const meta = yield* Schema.decodeUnknownEffect(PluggedRuleMeta)(entry).pipe(
       Effect.mapError(
         (parseError) =>
           new ConfigError({ path: configPath, message: `${label}: ${parseError.message}` }),

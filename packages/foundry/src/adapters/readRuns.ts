@@ -27,7 +27,7 @@ export const readRuns = (dir: string): Effect.Effect<ReadonlyArray<FactoryRun>> 
             Effect.flatMap((text) =>
               Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => "not-json" as const }),
             ),
-            Effect.flatMap(Schema.decodeUnknown(FactoryRun)),
+            Effect.flatMap(Schema.decodeUnknownEffect(FactoryRun)),
             Effect.map((run) => [run] as ReadonlyArray<FactoryRun>),
             Effect.orElseSucceed(() => [] as ReadonlyArray<FactoryRun>),
           ),

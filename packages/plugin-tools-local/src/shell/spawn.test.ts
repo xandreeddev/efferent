@@ -35,7 +35,7 @@ describe("spawnBounded", () => {
       Effect.flatMap((alive) => alive ? Effect.fail("sleeper still alive") : Effect.succeed(false)),
     )
     const alive = await Effect.runPromise(probe.pipe(
-      Effect.retry(Schedule.spaced(Duration.millis(50)).pipe(Schedule.upTo(Duration.seconds(5)))),
+      Effect.retry(Schedule.spaced(Duration.millis(50)).pipe(Schedule.upTo({ duration: Duration.seconds(5) }))),
       Effect.orElseSucceed(() => true),
     ))
     expect(alive).toBe(false)
@@ -81,7 +81,7 @@ describe("spawnBounded", () => {
     const marker = join(dir, "late-write")
     await Effect.runPromise(Effect.gen(function* () {
       const ready = yield* Deferred.make<void>()
-      const child = yield* Effect.fork(spawnBounded(["bash", "-c", `echo ready; (sleep .4; touch ${marker}) & wait`], dir, 5000,
+      const child = yield* Effect.forkChild(spawnBounded(["bash", "-c", `echo ready; (sleep .4; touch ${marker}) & wait`], dir, 5000,
         () => { Effect.runSync(Deferred.succeed(ready, undefined)) }))
       yield* Deferred.await(ready)
       yield* Fiber.interrupt(child)

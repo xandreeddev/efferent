@@ -1,10 +1,10 @@
-import type { LanguageModel } from "@effect/ai"
+import type { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Ref } from "effect"
 import { Implementor, ImplementorError } from "@xandreed/foundry"
 import type { QualityBar, WorkspacePath } from "@xandreed/foundry"
 import { buildMcpBridge, ConversationStore, FileSystem, McpClient, Shell, UserMessage, UtilityLlm } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
-import { Toolkit } from "@effect/ai"
+import { Toolkit } from "effect/ai"
 import type { AgentMessage, ConversationId, LoopEvent, SpecDoc } from "@xandreed/core"
 import type { SmithEvent } from "../domain/SmithEvent.js"
 import { capturePath } from "./filesTouched.js"
@@ -165,7 +165,7 @@ export const foldConversation = (options: {
     })
   }).pipe(
     Effect.withSpan("smith.fold", { attributes: { "context.tokens": options.contextTokens } }),
-    Effect.catchAll(() => Effect.void),
+    Effect.catch(() => Effect.void),
   )
 
 export interface EfferentImplementorOptions {
@@ -202,7 +202,7 @@ export interface EfferentImplementorOptions {
 export const makeEfferentImplementorLive = (
   options: EfferentImplementorOptions,
 ): Layer.Layer<Implementor, never, ImplementorServices> =>
-  Layer.scoped(
+  Layer.effect(
     Implementor,
     Effect.gen(function* () {
       const context = yield* Effect.context<ImplementorServices>()
@@ -212,8 +212,7 @@ export const makeEfferentImplementorLive = (
       // byte-stable across turns (prompt-cache friendly).
       const skillMetas = yield* discoverSkills(options.cwd)
       const skills = renderSkillsBlock(skillMetas)
-      const runtime = yield* Effect.runtime<never>()
-      const onBashChunk = bashProgressTap(runtime, options.publish)
+      const onBashChunk = bashProgressTap(context, options.publish)
       const protectedPaths = Option.toArray(options.armedConfigPath ?? Option.none())
       const handlers = yield* Layer.build(
         smithCodingToolkit.toLayer(makeSmithCodingHandlers(options.cwd, { onBashChunk, protectedPaths })),
@@ -280,7 +279,7 @@ export const makeEfferentImplementorLive = (
                   ? Ref.set(contextRef, event.usage.inputTokens)
                   : Effect.void
               ).pipe(
-                Effect.zipRight(
+                Effect.andThen(
                   // A mid-run fold rides the SAME pane vocabulary as the
                   // attempt-boundary fold — one notice, one meaning.
                   event.type === "compaction"
@@ -313,7 +312,7 @@ export const makeEfferentImplementorLive = (
                   attempt: input.attempt,
                   contextTokens: grown,
                   publish: options.publish,
-                }).pipe(Effect.zipRight(Ref.set(contextRef, 0)), Effect.provide(context))
+                }).pipe(Effect.andThen(Ref.set(contextRef, 0)), Effect.provide(context))
               : Effect.void
 
             const brief = Option.match(input.feedback, {
@@ -382,7 +381,7 @@ export const makeEfferentImplementorLive = (
                     message: String(cause),
                   }),
               ),
-              Effect.catchAllDefect((defect) =>
+              Effect.catchDefect((defect) =>
                 Effect.fail(
                   new ImplementorError({
                     attempt: input.attempt,

@@ -32,10 +32,10 @@ export const managePlugin = (args: ReadonlyArray<string>, options: { readonly wo
   yield* resolveGraph(next, plugins, ["efferent/SessionEnvironment"])
   const path = join(options.workspace, ".efferent/overrides.json")
   const previous = yield* Effect.tryPromise({ try: () => readFile(path, "utf8"), catch: (error) => error }).pipe(
-    Effect.catchAll((error) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
+    Effect.catch((error) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
       ? Effect.succeed('{"version":1}') : Effect.fail(new HarnessError({ code: "config.io", message: String(error) }))),
   )
-  const old = yield* Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(previous).pipe(
+  const old = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(previous).pipe(
     Effect.mapError((error) => new HarnessError({ code: "config.invalid", message: String(error) })),
     Effect.flatMap((value) => decodeConfig(value, path)),
   )

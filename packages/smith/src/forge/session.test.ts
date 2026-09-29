@@ -143,7 +143,7 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
       })
 
     const doc = Effect.runSync(
-      Schema.decodeUnknown(SpecDoc)({
+      Schema.decodeUnknownEffect(SpecDoc)({
         slug: "make-out-file",
         status: "locked",
         created: "2026-07-07T10:00:00Z",
@@ -222,7 +222,7 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
     }
 
     const doc = Effect.runSync(
-      Schema.decodeUnknown(SpecDoc)({
+      Schema.decodeUnknownEffect(SpecDoc)({
         slug: "judge-loop",
         status: "locked",
         created: "2026-07-09T10:00:00Z",
@@ -276,7 +276,7 @@ describe("runForgeSessionWith — scripted E2E (no keys, no LLM)", () => {
       })
 
     const doc = Effect.runSync(
-      Schema.decodeUnknown(SpecDoc)({
+      Schema.decodeUnknownEffect(SpecDoc)({
         slug: "make-out-file-vacuous",
         status: "locked",
         created: "2026-07-09T10:00:00Z",

@@ -60,7 +60,7 @@ export const makeMathPump = (
         ),
         // The ledger stream ends only on shutdown; a transport error must not
         // kill the pump silently — tabs full-render on their next reconnect.
-        Effect.catchAll(() => Effect.void),
+        Effect.catch(() => Effect.void),
       ),
     )
 

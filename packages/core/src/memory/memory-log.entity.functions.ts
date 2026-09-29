@@ -1,4 +1,4 @@
-import { Effect, Option, ParseResult, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
 import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
@@ -31,17 +31,17 @@ export const estimateMessageTokens = (messages: ReadonlyArray<AgentMessage>): nu
 
 export const entryId = (runId: string, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
 
-const EntriesJson = Schema.parseJson(Schema.Array(LogEntrySchema))
+const EntriesJson = Schema.fromJsonString(Schema.Array(LogEntrySchema))
 
 /** One append's entries → the canonical journal payload. */
-export const encodeAppend = (entries: ReadonlyArray<LogEntry>): Effect.Effect<LogAppendPayload, ParseResult.ParseError> =>
-  Schema.encode(Schema.Array(LogEntrySchema))(entries).pipe(
+export const encodeAppend = (entries: ReadonlyArray<LogEntry>): Effect.Effect<LogAppendPayload, Schema.SchemaError> =>
+  Schema.encodeEffect(Schema.Array(LogEntrySchema))(entries).pipe(
     Effect.map((encoded) => ({ v: 2 as const, entries: canonicalJson(encoded) })),
   )
 
 /** A stored journal payload → its log entries (ids travel inside). */
-export const entriesOfPayload = (data: unknown): Effect.Effect<ReadonlyArray<LogEntry>, ParseResult.ParseError> =>
-  Schema.decodeUnknown(LogAppendPayload)(data).pipe(Effect.flatMap((payload) => Schema.decodeUnknown(EntriesJson)(payload.entries)))
+export const entriesOfPayload = (data: unknown): Effect.Effect<ReadonlyArray<LogEntry>, Schema.SchemaError> =>
+  Schema.decodeUnknownEffect(LogAppendPayload)(data).pipe(Effect.flatMap((payload) => Schema.decodeUnknownEffect(EntriesJson)(payload.entries)))
 
 /** Recorded digests by result entry; the latest digest of an entry wins. */
 const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
@@ -198,7 +198,7 @@ export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOp
 
 /** The latest step context recorded by this run, if any. */
 export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: string): Option.Option<string> =>
-  Option.fromNullable(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId ? [entry.body.text] : []).at(-1))
+  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId ? [entry.body.text] : []).at(-1))
 
 /** The number of the latest started turn (turns count from 1). */
 export const currentTurnOf = (entries: ReadonlyArray<LogEntry>): number =>

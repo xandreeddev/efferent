@@ -1,4 +1,4 @@
-import { Tool, Toolkit } from "@effect/ai"
+import { Tool, Toolkit } from "effect/ai"
 import { Effect, Ref, Schema } from "effect"
 import { Failure } from "@xandreed/core"
 import { XPlatform } from "../ports/x-platform.port.js"
@@ -17,11 +17,11 @@ import type { XSearchResult } from "../ports/x-platform.port.js"
 
 export const SearchX = Tool.make("search_x", {
   description: "Search X (Twitter) for recent technical discussions or developer queries.",
-  parameters: {
-    query: Schema.String.annotations({
+  parameters: Schema.Struct({
+    query: Schema.String.annotate({
       description: "Search query, e.g., 'EffectTS' or 'typescript agent concurrency'.",
     }),
-  },
+  }),
   success: Schema.Struct({
     results: Schema.Array(
       Schema.Struct({
@@ -38,11 +38,11 @@ export const SearchX = Tool.make("search_x", {
 
 export const GetXNotifications = Tool.make("get_x_notifications", {
   description: "Retrieve recent mentions, replies, or direct notifications on your account.",
-  parameters: {
-    limit: Schema.optional(
-      Schema.Number.annotations({ description: "Maximum number of notifications to return. Defaults to 10." })
+  parameters: Schema.Struct({
+    limit: Schema.optionalKey(
+      Schema.Finite.annotate({ description: "Maximum number of notifications to return. Defaults to 10." })
     ),
-  },
+  }),
   success: Schema.Struct({
     notifications: Schema.Array(
       Schema.Struct({
@@ -59,11 +59,11 @@ export const GetXNotifications = Tool.make("get_x_notifications", {
 export const ReadThread = Tool.make("read_thread", {
   description:
     "Read a tweet and its visible conversation context BEFORE drafting a reply. Required: a reply that hasn't read its thread is rejected by the thread-context gate.",
-  parameters: {
-    tweetId: Schema.String.annotations({
+  parameters: Schema.Struct({
+    tweetId: Schema.String.annotate({
       description: "The status ID of the tweet to read in context.",
     }),
-  },
+  }),
   success: Schema.Struct({
     thread: Schema.Array(
       Schema.Struct({
@@ -80,11 +80,11 @@ export const ReadThread = Tool.make("read_thread", {
 
 export const ReadBlogPosts = Tool.make("read_blog_posts", {
   description: "Retrieve summaries (slug, title, description, tags) of your published blog posts.",
-  parameters: {
-    limit: Schema.optional(
-      Schema.Number.annotations({ description: "Maximum posts to return." })
+  parameters: Schema.Struct({
+    limit: Schema.optionalKey(
+      Schema.Finite.annotate({ description: "Maximum posts to return." })
     ),
-  },
+  }),
   success: Schema.Struct({
     posts: Schema.Array(
       Schema.Struct({
@@ -101,11 +101,11 @@ export const ReadBlogPosts = Tool.make("read_blog_posts", {
 
 export const ReadBlogPostContent = Tool.make("read_blog_post_content", {
   description: "Read the full markdown body content of a specific blog post by its slug.",
-  parameters: {
-    slug: Schema.String.annotations({
+  parameters: Schema.Struct({
+    slug: Schema.String.annotate({
       description: "Slug of the blog post (e.g. 'effect-for-ai').",
     }),
-  },
+  }),
   success: Schema.Struct({
     slug: Schema.String,
     content: Schema.String,
@@ -117,23 +117,23 @@ export const ReadBlogPostContent = Tool.make("read_blog_post_content", {
 export const WriteDraft = Tool.make("write_draft", {
   description:
     "Save a synthesized tweet or thread reply as a draft in the human review queue. The draft passes the DETERMINISTIC POLICY GATES first (dedup, caps, banned content, length, links, thread-context…) — a rejection returns every finding; fix exactly what the findings say or drop the candidate. For a reply, call read_thread first.",
-  parameters: {
-    type: Schema.Literal("reply", "post").annotations({
+  parameters: Schema.Struct({
+    type: Schema.Literals(["reply", "post"]).annotate({
       description: "Whether this is a reply to an existing tweet or a standalone post.",
     }),
-    content: Schema.String.annotations({
+    content: Schema.String.annotate({
       description: "The draft post/reply content (under 280 characters; links count as 23).",
     }),
-    targetTweetId: Schema.optional(
-      Schema.String.annotations({ description: "For replies, the status ID we are replying to." })
+    targetTweetId: Schema.optionalKey(
+      Schema.String.annotate({ description: "For replies, the status ID we are replying to." })
     ),
-    targetAuthor: Schema.optional(
-      Schema.String.annotations({ description: "For replies, the author of the target tweet (e.g. '@dan_abramov')." })
+    targetAuthor: Schema.optionalKey(
+      Schema.String.annotate({ description: "For replies, the author of the target tweet (e.g. '@dan_abramov')." })
     ),
-    referenceBlogSlug: Schema.optional(
-      Schema.String.annotations({ description: "Slug of the blog post this reply/post aims to drive traffic to." })
+    referenceBlogSlug: Schema.optionalKey(
+      Schema.String.annotate({ description: "Slug of the blog post this reply/post aims to drive traffic to." })
     ),
-  },
+  }),
   success: Schema.Struct({
     path: Schema.String,
     filename: Schema.String,
@@ -192,21 +192,21 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
         Effect.gen(function* () {
           const results = yield* x.search(query)
           return { results }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        }).pipe(Effect.catch((e) => Effect.fail(toFailure(e)))),
 
       get_x_notifications: ({ limit }) =>
         Effect.gen(function* () {
           const notifications = yield* x.getNotifications()
           const max = limit ?? 10
           return { notifications: notifications.slice(0, max) }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        }).pipe(Effect.catch((e) => Effect.fail(toFailure(e)))),
 
       read_thread: ({ tweetId }) =>
         Effect.gen(function* () {
           const thread = yield* x.readThread(tweetId)
           yield* Ref.update(threadsRead, (m) => new Map(m).set(tweetId, thread))
           return { thread }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        }).pipe(Effect.catch((e) => Effect.fail(toFailure(e)))),
 
       read_blog_posts: ({ limit }) =>
         Effect.gen(function* () {
@@ -219,13 +219,13 @@ export const makeSocialHandlers = (options: SocialHandlerOptions = {}) =>
             tags: p.tags,
           }))
           return { posts }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        }).pipe(Effect.catch((e) => Effect.fail(toFailure(e)))),
 
       read_blog_post_content: ({ slug }) =>
         Effect.gen(function* () {
           const content = yield* blog.getPostContent(slug)
           return { slug, content }
-        }).pipe(Effect.catchAll((e) => Effect.fail(toFailure(e)))),
+        }).pipe(Effect.catch((e) => Effect.fail(toFailure(e)))),
 
       write_draft: ({ type, content, targetTweetId, targetAuthor, referenceBlogSlug }) =>
         Effect.gen(function* () {

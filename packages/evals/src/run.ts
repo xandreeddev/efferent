@@ -59,8 +59,8 @@ const failedOutcomes = <W>(step: Step<W>, detail: string): ReadonlyArray<CheckOu
 const runSteps = <W>(world: W, steps: ReadonlyArray<Step<W>>): Effect.Effect<StepFold> =>
   Effect.reduce(
     steps,
-    { outcomes: [], stopped: false, crashed: false, detail: Option.none() } as StepFold,
-    (state, step) => {
+    (): StepFold => ({ outcomes: [], stopped: false, crashed: false, detail: Option.none() }),
+    (state: StepFold, step) => {
       if (state.stopped) {
         return Effect.succeed({
           ...state,
@@ -173,7 +173,7 @@ export const runScenario = <W>(
       }
     }),
   ).pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.succeed({
         name: raw.name,
         status: "error" as const,

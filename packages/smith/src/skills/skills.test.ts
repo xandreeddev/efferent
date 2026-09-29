@@ -87,8 +87,8 @@ describe("agent skills — progressive disclosure", () => {
           Effect.gen(function* () {
             const loaded = yield* h.load_skill({ name: "effect-idioms" })
             expect(loaded.instructions).toContain("errors are values")
-            const unknown = yield* h.load_skill({ name: "nope" }).pipe(Effect.either)
-            expect(unknown._tag).toBe("Left")
+            const unknown = yield* h.load_skill({ name: "nope" }).pipe(Effect.result)
+            expect(unknown._tag).toBe("Failure")
             expect(JSON.stringify(unknown)).toContain("effect-idioms")
           }),
         ),

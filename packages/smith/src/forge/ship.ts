@@ -117,7 +117,7 @@ export const runShip = (
                 ? result.stderr.trim()
                 : result.stdout.trim(),
         })),
-        Effect.catchAll((error) => Effect.succeed({ ok: false, detail: error.message })),
+        Effect.catch((error) => Effect.succeed({ ok: false, detail: error.message })),
       )
 
     const report = (step: string, result: StepResult): Effect.Effect<StepResult> =>

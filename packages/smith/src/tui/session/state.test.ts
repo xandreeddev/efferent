@@ -21,7 +21,7 @@ import {
   turnStarted,
 } from "./state.js"
 
-const fiber = () => Effect.runSync(Effect.forkDaemon(Effect.never))
+const fiber = () => Effect.runSync(Effect.forkDetach(Effect.never))
 const session = { conversationId: ConversationId.make("00000000-0000-4000-8000-000000000001") } as never
 const doc = { slug: "x", status: "locked", goal: "g" } as never
 const cid = ConversationId.make("00000000-0000-4000-8000-000000000002")

@@ -1,4 +1,4 @@
-import { Toolkit } from "@effect/ai"
+import { Toolkit } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
 import { buildMcpBridge, UtilityLlm } from "@xandreed/core"
 import { runAgent } from "@xandreed/plugin-agent-loop"
@@ -47,7 +47,7 @@ export const followUpTarget = (
       }),
     undefined,
   )
-  return Option.fromNullable(last).pipe(Option.map((ref) => ref.slice("conversation:".length)))
+  return Option.fromNullishOr(last).pipe(Option.map((ref) => ref.slice("conversation:".length)))
 }
 
 /** The follow-up turn edited the armed gate profile — reported, never absorbed. */
@@ -70,8 +70,8 @@ export const runFollowUpTurn = (
     const services = yield* Effect.context<ImplementorServices | SettingsStore | AuthStore>()
     const utility = yield* UtilityLlm
     const skills = renderSkillsBlock(yield* discoverSkills(run.cwd))
-    const runtime = yield* Effect.runtime<never>()
-    const onBashChunk = bashProgressTap(runtime, publish)
+    const context = yield* Effect.context<never>()
+    const onBashChunk = bashProgressTap(context, publish)
     // The same protected paths the forge armed: the conventional profile
     // plus the run's explicit `--config`, refused by the file tools AND
     // fingerprinted against Bash.

@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { sanitizeMathml } from "@xandreed/surface"
 
 /**
@@ -12,10 +12,10 @@ import { sanitizeMathml } from "@xandreed/surface"
 
 /** One step of a worked solution. */
 export const MathStep = Schema.Struct({
-  text: Schema.String.annotations({
+  text: Schema.String.annotate({
     description: "One step of the worked solution, in plain student-facing language.",
   }),
-  mathml: Schema.optional(Schema.String).annotations({
+  mathml: Schema.optional(Schema.String).annotate({
     description: "Optional presentation MathML for this step (a single <math> element).",
   }),
 })
@@ -23,13 +23,13 @@ export type MathStep = typeof MathStep.Type
 
 /** One option of a multiple-choice exercise. */
 export const MathChoice = Schema.Struct({
-  id: Schema.String.annotations({
+  id: Schema.String.annotate({
     description: "Short stable id for this option (e.g. 'a', 'b').",
   }),
-  label: Schema.String.annotations({
+  label: Schema.String.annotate({
     description: "The option's text (plain text / unicode math).",
   }),
-  mathml: Schema.optional(Schema.String).annotations({
+  mathml: Schema.optional(Schema.String).annotate({
     description: "Optional presentation MathML shown instead of the plain label.",
   }),
 })
@@ -42,20 +42,20 @@ export type MathChoice = typeof MathChoice.Type
  * contradict each other.
  */
 export const MathAnswer = Schema.Struct({
-  kind: Schema.Literal("integer", "decimal", "fraction", "text", "choice").annotations({
+  kind: Schema.Literals(["integer", "decimal", "fraction", "text", "choice"]).annotate({
     description:
       "What the student types: integer / decimal / fraction get a number-ish field, " +
       "text a free field, choice a tap-one option group.",
   }),
-  value: Schema.String.annotations({
+  value: Schema.String.annotate({
     description:
       "The correct answer, as a string: '42', '3.5', '3/4', 'isosceles', or the correct " +
       "choice id. MUST be arithmetically correct — the server grades with it verbatim.",
   }),
-  tolerance: Schema.optional(Schema.Number).annotations({
+  tolerance: Schema.optional(Schema.Number).annotate({
     description: "decimal only: accept answers within this absolute distance (default 0).",
   }),
-  accept: Schema.optional(Schema.Array(Schema.String)).annotations({
+  accept: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "Extra accepted forms of the same answer (e.g. ['0.75'] for value '3/4').",
   }),
 })
@@ -63,45 +63,45 @@ export type MathAnswer = typeof MathAnswer.Type
 
 export const MathExercise = Schema.Struct({
   kind: Schema.Literal("exercise"),
-  id: Schema.String.annotations({
+  id: Schema.String.annotate({
     description: "Unique in this session, e.g. 'ex-7'. Never reuse an id for a new exercise.",
   }),
-  prompt: Schema.String.annotations({
+  prompt: Schema.String.annotate({
     description:
       "The question, in student-facing words (unicode inline math ok). Always complete and " +
       "answerable on its own — never a placeholder.",
   }),
-  mathml: Schema.optional(Schema.String).annotations({
+  mathml: Schema.optional(Schema.String).annotate({
     description:
       "The display equation as ONE presentation-MathML <math> element (mfrac/msup/msqrt/mtable…). " +
       "No LaTeX, no HTML, no SVG.",
   }),
-  choices: Schema.optional(Schema.Array(MathChoice)).annotations({
+  choices: Schema.optional(Schema.Array(MathChoice)).annotate({
     description: "Required when answer.kind is 'choice': 2-5 options; exactly one is correct.",
   }),
   answer: MathAnswer,
-  hint: Schema.String.annotations({
+  hint: Schema.String.annotate({
     description: "Shown after the first wrong attempt: a nudge toward the method, NOT the answer.",
   }),
-  solution: Schema.Array(MathStep).annotations({
+  solution: Schema.Array(MathStep).annotate({
     description: "The complete worked solution, step by step (shown after the second wrong attempt).",
   }),
   difficulty: Schema.optional(
-    Schema.Literal("intro", "easy", "medium", "hard", "challenge"),
-  ).annotations({ description: "Relative difficulty tag — used to show progression." }),
+    Schema.Literals(["intro", "easy", "medium", "hard", "challenge"]),
+  ).annotate({ description: "Relative difficulty tag — used to show progression." }),
 })
 export type MathExercise = typeof MathExercise.Type
 
 /** A one-line coach note shown above the exercise card (replaces the previous note). */
 export const MathNote = Schema.Struct({
   kind: Schema.Literal("note"),
-  text: Schema.String.annotations({
+  text: Schema.String.annotate({
     description: "One short line from the tutor (an encouragement, a correction after a report).",
   }),
 })
 export type MathNote = typeof MathNote.Type
 
-export const MathItem = Schema.Union(MathExercise, MathNote)
+export const MathItem = Schema.Union([MathExercise, MathNote])
 export type MathItem = typeof MathItem.Type
 
 // ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ export interface ParsedMathItems {
   readonly rejected: ReadonlyArray<RejectedMathItem>
 }
 
-const decodeItem = Schema.decodeUnknownEither(MathItem)
+const decodeItem = Schema.decodeUnknownResult(MathItem)
 
 const firstLine = (s: string): string => {
   const line = s.split("\n").find((l) => l.trim().length > 0) ?? s
@@ -172,15 +172,15 @@ export const parseMathItems = (
   const noteSeen = (): boolean => accepted.some((a) => a.kind === "note")
   items.forEach((raw, index) => {
     const decoded = decodeItem(hoistAnswerChoices(raw))
-    if (Either.isLeft(decoded)) {
+    if (Result.isFailure(decoded)) {
       const id =
         typeof raw === "object" && raw !== null && typeof (raw as { id?: unknown }).id === "string"
           ? { id: (raw as { id: string }).id }
           : {}
-      rejected.push({ index, ...id, reason: firstLine(String(decoded.left)) })
+      rejected.push({ index, ...id, reason: firstLine(String(decoded.failure)) })
       return
     }
-    const item = decoded.right
+    const item = decoded.success
     if (item.kind === "note") {
       if (noteSeen()) {
         rejected.push({ index, reason: "only one note per call — merge them into one line" })

@@ -21,7 +21,7 @@ import type { SmithMode } from "../state/store.js"
  * `ensuring`, so the parent never holds a handle that may already be dead.
  */
 
-export type Turn = Fiber.RuntimeFiber<unknown, unknown>
+export type Turn = Fiber.Fiber<unknown, unknown>
 
 export type SessionState =
   | { readonly _tag: "Idle" }

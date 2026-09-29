@@ -1,15 +1,15 @@
 import { createRequire } from "node:module"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import { Effect, JSONSchema } from "effect"
+import { Effect, Schema } from "effect"
 import { HarnessError } from "@xandreed/core"
 import type { HarnessConfig, Plugin } from "@xandreed/core"
 
 export const loadPlugins = (config: HarnessConfig, builtins: ReadonlyArray<Plugin>, workspace: string, home: string): Effect.Effect<ReadonlyArray<Plugin>, HarnessError> =>
-  Effect.reduce([...new Set((config.plugins ?? []).filter((entry) => entry.enabled !== false).map((entry) => entry.use))], builtins, (loaded, use) => {
+  Effect.reduce([...new Set((config.plugins ?? []).filter((entry) => entry.enabled !== false).map((entry) => entry.use))], () => builtins, (loaded, use) => {
     if (loaded.some((plugin) => plugin.id === use)) return Effect.succeed(loaded)
     const locate = use.startsWith(".") || use.startsWith("/") ? Effect.succeed(resolve(workspace, use)) : Effect.try(() => createRequire(join(workspace, "package.json")).resolve(use)).pipe(
-          Effect.orElse(() => Effect.try(() => createRequire(join(home, ".efferent/plugins/package.json")).resolve(use))),
+          Effect.catch(() => Effect.try(() => createRequire(join(home, ".efferent/plugins/package.json")).resolve(use))),
         )
     return locate.pipe(
       Effect.flatMap((path) => Effect.tryPromise(() => import(pathToFileURL(path).href))),
@@ -23,4 +23,8 @@ export const loadPlugins = (config: HarnessConfig, builtins: ReadonlyArray<Plugi
     )
   })
 
-export const pluginSchema = (plugin: Plugin) => JSONSchema.make(plugin.schema)
+/** A plugin's options as one JSON Schema, its definitions inline under `$defs`. */
+export const pluginSchema = (plugin: Plugin) => {
+  const document = Schema.toJsonSchemaDocument(plugin.schema)
+  return Object.keys(document.definitions).length > 0 ? { ...document.schema, $defs: document.definitions } : document.schema
+}

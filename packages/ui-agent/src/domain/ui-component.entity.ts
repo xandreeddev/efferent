@@ -1,12 +1,12 @@
 import { Schema } from "effect"
 
-export const UiPropKind = Schema.Literal(
-  "string",
+export const UiPropKind = Schema.Literals(
+  ["string",
   "number",
   "boolean",
   "string-array",
   "item-array",
-  "record",
+  "record"],
 )
 export type UiPropKind = typeof UiPropKind.Type
 
@@ -19,15 +19,15 @@ export const UiPropDefinition = Schema.Struct({
 export type UiPropDefinition = typeof UiPropDefinition.Type
 
 export const UiTemplateBinding = Schema.Union(
-  Schema.Struct({ source: Schema.Literal("literal"), value: Schema.String }),
-  Schema.Struct({ source: Schema.Literal("prop"), value: Schema.String }),
+  [Schema.Struct({ source: Schema.Literal("literal"), value: Schema.String }),
+  Schema.Struct({ source: Schema.Literal("prop"), value: Schema.String })],
 )
 export type UiTemplateBinding = typeof UiTemplateBinding.Type
 
 export const UiTemplateElement = Schema.Struct({
   id: Schema.String,
-  tag: Schema.Literal("article", "aside", "div", "header", "li", "nav", "p", "section", "small", "span", "strong", "ul"),
-  role: Schema.Literal("root", "header", "body", "items", "item", "meta", "actions", "media", "footer"),
+  tag: Schema.Literals(["article", "aside", "div", "header", "li", "nav", "p", "section", "small", "span", "strong", "ul"]),
+  role: Schema.Literals(["root", "header", "body", "items", "item", "meta", "actions", "media", "footer"]),
   text: Schema.optional(UiTemplateBinding),
   children: Schema.Array(Schema.String),
 })
@@ -41,8 +41,8 @@ export const UiTemplateAst = Schema.Struct({
 })
 export type UiTemplateAst = typeof UiTemplateAst.Type
 
-export const UiComponentRenderer = Schema.Literal(
-  "layout",
+export const UiComponentRenderer = Schema.Literals(
+  ["layout",
   "navigation",
   "hero",
   "text",
@@ -58,21 +58,21 @@ export const UiComponentRenderer = Schema.Literal(
   "cta",
   "media",
   "feedback",
-  "template",
+  "template"],
 )
 export type UiComponentRenderer = typeof UiComponentRenderer.Type
 
 export const UiComponentDefinition = Schema.Struct({
   id: Schema.String,
   version: Schema.String,
-  category: Schema.Literal("layout", "navigation", "form", "application", "marketing", "document", "feedback", "primitive"),
+  category: Schema.Literals(["layout", "navigation", "form", "application", "marketing", "document", "feedback", "primitive"]),
   description: Schema.String,
   renderer: UiComponentRenderer,
   variants: Schema.Array(Schema.String),
   props: Schema.Array(UiPropDefinition),
   slots: Schema.Array(Schema.String),
   template: Schema.optional(UiTemplateAst),
-  status: Schema.Literal("core", "workspace", "candidate", "deprecated"),
+  status: Schema.Literals(["core", "workspace", "candidate", "deprecated"]),
   fingerprint: Schema.optional(Schema.String),
   replacedBy: Schema.optional(Schema.String),
   createdAt: Schema.Number,
@@ -80,10 +80,10 @@ export const UiComponentDefinition = Schema.Struct({
 export type UiComponentDefinition = typeof UiComponentDefinition.Type
 
 export const UiBehavior = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("action"), capability: Schema.String, label: Schema.String, variant: Schema.optional(Schema.Literal("primary", "secondary", "danger")) }),
+  [Schema.Struct({ type: Schema.Literal("action"), capability: Schema.String, label: Schema.String, variant: Schema.optional(Schema.Literals(["primary", "secondary", "danger"])) }),
   Schema.Struct({ type: Schema.Literal("toggle"), target: Schema.String, label: Schema.String }),
   Schema.Struct({ type: Schema.Literal("select"), state: Schema.String, initial: Schema.Number }),
-  Schema.Struct({ type: Schema.Literal("disclosure"), target: Schema.String, expanded: Schema.optional(Schema.Boolean) }),
+  Schema.Struct({ type: Schema.Literal("disclosure"), target: Schema.String, expanded: Schema.optional(Schema.Boolean) })],
 )
 export type UiBehavior = typeof UiBehavior.Type
 
@@ -94,7 +94,7 @@ export const UiComponentNode = Schema.Struct({
   id: Schema.String,
   component: Schema.String,
   variant: Schema.optional(Schema.String),
-  props: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  props: Schema.Record(Schema.String, Schema.Unknown),
   children: Schema.Array(Schema.String),
   behaviors: Schema.optional(Schema.Array(UiBehavior)),
 })
@@ -110,7 +110,7 @@ export type UiComponentUsage = typeof UiComponentUsage.Type
 
 export const UiComponentAdmission = Schema.Struct({
   definition: UiComponentDefinition,
-  disposition: Schema.Literal("reused", "variant", "admitted"),
+  disposition: Schema.Literals(["reused", "variant", "admitted"]),
   canonicalId: Schema.String,
   similarity: Schema.Number,
 })
@@ -118,19 +118,19 @@ export type UiComponentAdmission = typeof UiComponentAdmission.Type
 
 export const UiSurfaceBlueprint = Schema.Struct({
   pageId: Schema.String,
-  archetype: Schema.Literal("landing", "application", "document"),
+  archetype: Schema.Literals(["landing", "application", "document"]),
   designDirection: Schema.String,
   catalogVersion: Schema.String,
-  sections: Schema.Array(Schema.Struct({ id: Schema.String, purpose: Schema.String, priority: Schema.Literal("critical", "standard", "supporting") })),
+  sections: Schema.Array(Schema.Struct({ id: Schema.String, purpose: Schema.String, priority: Schema.Literals(["critical", "standard", "supporting"]) })),
 })
 export type UiSurfaceBlueprint = typeof UiSurfaceBlueprint.Type
 
 export const UiStreamRecord = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("surface"), surface: UiSurfaceBlueprint, at: Schema.Number }),
+  [Schema.Struct({ type: Schema.Literal("surface"), surface: UiSurfaceBlueprint, at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("node"), pageId: Schema.String, node: UiComponentNode, at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("prop"), pageId: Schema.String, nodeId: Schema.String, key: Schema.String, value: Schema.Unknown, at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("commit"), pageId: Schema.String, nodeIds: Schema.Array(Schema.String), at: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("complete"), pageId: Schema.String, at: Schema.Number }),
-  Schema.Struct({ type: Schema.Literal("error"), pageId: Schema.optional(Schema.String), stage: Schema.String, code: Schema.String, message: Schema.String, at: Schema.Number }),
+  Schema.Struct({ type: Schema.Literal("error"), pageId: Schema.optional(Schema.String), stage: Schema.String, code: Schema.String, message: Schema.String, at: Schema.Number })],
 )
 export type UiStreamRecord = typeof UiStreamRecord.Type

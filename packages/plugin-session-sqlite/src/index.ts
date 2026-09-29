@@ -5,10 +5,10 @@ import { Effect, Layer, Schema } from "effect"
 import { ConversationId, definePlugin, HarnessError, SessionEvent, SessionRecord, SessionStore } from "@xandreed/core"
 
 const Config = Schema.Struct({ path: Schema.String })
-const decodeRecord = Schema.decodeUnknownSync(Schema.parseJson(SessionRecord))
-const decodeEvent = Schema.decodeUnknownSync(Schema.parseJson(SessionEvent))
+const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(SessionRecord))
+const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SessionEvent))
 
-export const SessionStoreLive = (path: string) => Layer.scoped(SessionStore, Effect.gen(function* () {
+export const SessionStoreLive = (path: string) => Layer.effect(SessionStore, Effect.gen(function* () {
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: (error) => new HarnessError({ code: "store.open", message: String(error) }) })
   const db = yield* Effect.acquireRelease(
     Effect.try({ try: () => new Database(path, { create: true, strict: true }), catch: (error) => new HarnessError({ code: "store.open", message: String(error) }) }),
@@ -31,7 +31,7 @@ export const SessionStoreLive = (path: string) => Layer.scoped(SessionStore, Eff
       ? Effect.fail(new HarnessError({ code: "session.missing", message: `Session ${id} does not exist` }))
       : operation(() => decodeRecord(row.body))),
   )
-  const read = (id: ConversationId, after: number) => get(id).pipe(Effect.zipRight(operation(() =>
+  const read = (id: ConversationId, after: number) => get(id).pipe(Effect.andThen(operation(() =>
     db.query<{ body: string }, [string, number]>("SELECT body FROM harness_events WHERE session_id = ? AND seq > ? ORDER BY seq").all(id, after).map((row) => decodeEvent(row.body)),
   )))
   return SessionStore.of({
@@ -39,7 +39,7 @@ export const SessionStoreLive = (path: string) => Layer.scoped(SessionStore, Eff
     get,
     list: (workspace) => operation(() => db.query<{ body: string }, [string]>("SELECT body FROM harness_sessions WHERE workspace = ? ORDER BY rowid DESC").all(workspace).map((row) => decodeRecord(row.body))),
     read,
-    append: (id, body) => get(id).pipe(Effect.zipRight(operation(() => db.transaction(() => {
+    append: (id, body) => get(id).pipe(Effect.andThen(operation(() => db.transaction(() => {
       const row = db.query<{ seq: number }, [string]>("SELECT COALESCE(MAX(seq), -1) + 1 AS seq FROM harness_events WHERE session_id = ?").get(id)
       const event: SessionEvent = { ...body, version: 1, id: crypto.randomUUID(), sessionId: id, seq: row?.seq ?? 0, at: Date.now() }
       db.query("INSERT INTO harness_events VALUES (?, ?, ?)").run(id, event.seq, JSON.stringify(event))
@@ -65,7 +65,7 @@ export const SessionStoreLive = (path: string) => Layer.scoped(SessionStore, Eff
 }))
 
 export const sessionSqlitePlugin = definePlugin({
-  id: "@xandreed/plugin-session-sqlite", version: "0.6.0-next.2", scope: "runtime",
+  id: "@xandreed/plugin-session-sqlite", version: "0.7.0-next.0", scope: "runtime",
   config: Config, defaults: { path: ".efferent/runtime/sessions.db" }, provides: [SessionStore],
   layer: ({ path }) => SessionStoreLive(path),
 })

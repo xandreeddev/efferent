@@ -7,7 +7,7 @@ import type { MemoryReader } from "./memory.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
 
 /** The current run, as tools, sections and run layers see it. Provided by the turn. */
-export class RunContext extends Context.Tag("efferent/RunContext")<RunContext, {
+export class RunContext extends Context.Service<RunContext, {
   readonly conversation: ConversationId
   readonly runId: string
   readonly userMessage: UserMessage
@@ -20,4 +20,4 @@ export class RunContext extends Context.Tag("efferent/RunContext")<RunContext, {
   readonly flush: Effect.Effect<void, HarnessError>
   /** Run a host store write in journal order (after everything queued before it). */
   readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
-}>() {}
+}>()("efferent/RunContext") {}

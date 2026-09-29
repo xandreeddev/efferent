@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Either, Layer, Schema } from "effect"
+import { Effect, Result, Layer, Schema } from "effect"
 import { UiPageEvent, UiPageStore } from "@xandreed/ui-agent"
 import type { ConversationId } from "@xandreed/core"
 
-const decodeEvent = Schema.decodeUnknownEither(Schema.parseJson(UiPageEvent))
+const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(UiPageEvent))
 
-export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
+export const SqliteUiPageStoreLive = (dbPath: string) => Layer.effect(
   UiPageStore,
   Effect.gen(function* () {
     const db = yield* Effect.try({
@@ -32,7 +32,7 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
       try: () => db.close(),
       catch: (error) => error,
     }).pipe(
-      Effect.catchAll((error) => Effect.logWarning(`UI page database cleanup failed: ${String(error)}`)),
+      Effect.catch((error) => Effect.logWarning(`UI page database cleanup failed: ${String(error)}`)),
     ))
     return {
       append: (conversationId: ConversationId, event: typeof UiPageEvent.Type) => Effect.try({
@@ -52,9 +52,9 @@ export const SqliteUiPageStoreLive = (dbPath: string) => Layer.scoped(
         try: () => db.query("SELECT event FROM ui_page_events WHERE conversation_id = ? ORDER BY position").all(conversationId) as ReadonlyArray<{ readonly event: string }>,
         catch: (error) => `ui-page-store: ${String(error)}`,
       }).pipe(
-        Effect.flatMap((rows) => Effect.forEach(rows, (row) => Either.match(decodeEvent(row.event), {
-          onLeft: (issue) => Effect.logWarning(`skipping invalid UI event: ${String(issue)}`).pipe(Effect.as([])),
-          onRight: (event) => Effect.succeed([event]),
+        Effect.flatMap((rows) => Effect.forEach(rows, (row) => Result.match(decodeEvent(row.event), {
+          onFailure: (issue) => Effect.logWarning(`skipping invalid UI event: ${String(issue)}`).pipe(Effect.as([])),
+          onSuccess: (event) => Effect.succeed([event]),
         }))),
         Effect.map((events) => events.flat()),
       ),

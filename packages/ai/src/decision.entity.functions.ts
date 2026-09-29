@@ -37,7 +37,7 @@ export const defineDecisionPrompt = <I, Q extends DecisionQuestions>(definition:
   family: definition.family,
   state: definition.state,
   questions: definition.questions,
-  variants: Option.fromNullable(definition.variants),
+  variants: Option.fromNullishOr(definition.variants),
 })
 
 /** A variant's wording applied: instructions, and descriptions of choices already offered. It never adds a question or a choice. */
@@ -110,7 +110,7 @@ const answerOf = (id: string, question: DecisionQuestion, answer: WireAnswer): E
     Match.when({ type: "choice" }, (choice): Effect.Effect<readonly [string, DecisionAnswer], EvaluationError> => {
       if (answer.type !== "choice") return Effect.fail(invalid(`${id} asks for a choice, not a probability`))
       if (!Object.hasOwn(choice.criteria, answer.choice)) return Effect.fail(invalid(`${id}: ${answer.choice} was not offered (${Object.keys(choice.criteria).join(", ")})`))
-      return Effect.succeed([id, { _tag: "choice", choice: answer.choice, confidence: Option.fromNullable(answer.confidence) }] as const)
+      return Effect.succeed([id, { _tag: "choice", choice: answer.choice, confidence: Option.fromNullishOr(answer.confidence) }] as const)
     }),
     Match.exhaustive,
   )
@@ -121,7 +121,7 @@ const answerOf = (id: string, question: DecisionQuestion, answer: WireAnswer): E
  * offered choice for each choice question.
  */
 export const validateAnswers = <Q extends DecisionQuestions>(questions: Q, raw: unknown): Effect.Effect<AnswersOf<Q>, EvaluationError> => Effect.gen(function* () {
-  const answers = yield* Schema.decodeUnknown(WireAnswers)(raw).pipe(Effect.mapError((error) => invalid(error.message)))
+  const answers = yield* Schema.decodeUnknownEffect(WireAnswers)(raw, { reportInput: true }).pipe(Effect.mapError((error) => invalid(error.message)))
   const extra = Object.keys(answers).filter((id) => !Object.hasOwn(questions, id))
   if (extra.length > 0) return yield* Effect.fail(invalid(`Answers to questions not asked: ${extra.join(", ")}`))
   const unanswered = Object.keys(questions).filter((id) => !Object.hasOwn(answers, id))

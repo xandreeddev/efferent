@@ -1,2 +1,2 @@
 import { Context } from "effect"
-export class Version extends Context.Tag("test/Version")<Version, { readonly value: number }>() {}
+export class Version extends Context.Service<Version, { readonly value: number }>()("test/Version") {}
