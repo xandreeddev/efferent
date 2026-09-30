@@ -9,12 +9,23 @@ export const ModelRequestDescriptor = Schema.Struct({
 })
 export type ModelRequestDescriptor = typeof ModelRequestDescriptor.Type
 
-/** The model-visible declaration, including provider-defined tools' configuration. */
+/**
+ * The model-visible declaration. A provider-defined tool (one the provider
+ * runs) keeps its id and name, and its args only as their key names and the
+ * SHA-256 of their canonical JSON: args can carry credentials (a remote tool
+ * server's authorization), so their values are never stored. A dispatch
+ * compares the digests, so any change of a value still diverges.
+ */
 export const ModelRequestTool = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   parameters: Schema.Unknown,
-  provider: Schema.OptionFromNullOr(Schema.Struct({ id: Schema.String, name: Schema.String, args: Schema.Unknown })),
+  provider: Schema.OptionFromNullOr(Schema.Struct({
+    id: Schema.String,
+    name: Schema.String,
+    argKeys: Schema.Array(Schema.String),
+    argsDigest: Schema.String,
+  })),
 })
 export type ModelRequestTool = typeof ModelRequestTool.Type
 

@@ -457,13 +457,16 @@ logged once as a `ToolDigest` entry and never recomputed on replay.
 and flushes `request.prepared`. This protocol record carries the complete
 active tool declarations, tool choice, system text, public requested model
 configuration, prompt cache key, call policy and the memory strategy's render
-recipe/version. Messages remain in their original memory events. A dispatch
-reads a fresh durable snapshot, folds those memory facts with the saved
-recipe, and compares the resulting prompt and header with the actual Effect
-AI request. Changes to messages, schemas, tool choice or described model
-settings fail with `request.diverged` before the provider runs. Prompt data
-is frozen; a stream fallback checks the same contract again. Host-planned
-batches make no provider request and create no request header.
+recipe/version. Messages remain in their original memory events. A
+provider-defined tool's args are kept only as their key names and the SHA-256
+of their canonical JSON, since they can carry credentials; a change of any
+value still diverges. A dispatch reads a fresh durable snapshot, folds those
+memory facts with the saved recipe, and compares the resulting prompt and
+header with the actual Effect AI request. Changes to messages, schemas, tool
+choice or described model settings fail with `request.diverged` before the
+provider runs. Prompt data is frozen; a stream fallback checks the same
+contract again. Host-planned batches make no provider request and create no
+request header.
 
 `replayModelRequest(events, runId, step)` reconstructs one historical request
 at its header's position, excluding later responses. It uses recorded tool
