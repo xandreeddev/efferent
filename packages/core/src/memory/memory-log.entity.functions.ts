@@ -181,6 +181,7 @@ export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOp
     fingerprint: fingerprintOf(canonicalJson(messages)),
     estimatedTokens: estimateMessageTokens(messages),
     compactions: appliedCompactions(entries, options.strategy).ids,
+    through: Option.fromNullishOr(entries.at(-1)?.id),
   }
 }
 

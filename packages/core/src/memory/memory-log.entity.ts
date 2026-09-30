@@ -123,5 +123,7 @@ export const BuiltContext = Schema.Struct({
   fingerprint: Schema.String,
   estimatedTokens: Schema.Int,
   compactions: Schema.Array(EntryId),
+  /** The last entry folded: what a rebuild must stop at. */
+  through: Schema.OptionFromNullOr(EntryId),
 })
 export type BuiltContext = typeof BuiltContext.Type

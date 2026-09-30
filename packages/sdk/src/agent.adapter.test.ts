@@ -26,6 +26,7 @@ import {
   subscribeAll,
   TurnAdmissionOpen,
   TurnEvents,
+  TurnMemory,
   UserMessage,
   UtilityCompletion,
   UtilityLlm,
@@ -568,7 +569,7 @@ describe("Agent.turn", () => {
     expect(requests[0]?.prompt.content.some((message) => JSON.stringify(message).includes("later response"))).toBe(false)
   })
 
-  test.each(["messages", "tools", "model", "tool-choice"] as const)("a changed %s request fails before the provider dispatch", async (changed) => {
+  test.each(["system", "messages", "tools", "model", "toolChoice"] as const)("a changed %s request fails before the provider dispatch, naming it", async (changed) => {
     const { result, calls } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { seen, model } = yield* scripted([stop("should not run")])
       const original = describeModel(model, { provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } })
@@ -584,7 +585,8 @@ describe("Agent.turn", () => {
               ...plan,
               ...(changed === "messages" ? { messages: [{ role: "user" as const, content: "unrecorded input" }] } : {}),
               ...(changed === "model" ? { model: Option.some(changedModel) } : {}),
-              ...(changed === "tool-choice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
+              ...(changed === "system" ? { system: "unrecorded system" } : {}),
+              ...(changed === "toolChoice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
             }))),
           }),
         }),
@@ -598,7 +600,51 @@ describe("Agent.turn", () => {
       return { result, calls: (yield* Ref.get(seen)).length }
     })))
     expect(result._tag).toBe("Failure")
-    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("request.diverged")
+    expect(result._tag === "Failure" ? [result.failure.code, result.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", changed])
     expect(calls).toBe(0)
+  })
+
+  test("a memory write reacting to context.built reaches the next step instead of failing this one", async () => {
+    const { outcome, seen } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const noteOnBuild = definePlugin({
+        id: "test/note-on-build", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [TurnMemory, TurnEvents], provides: [],
+        layer: () => Layer.effectDiscard(Effect.gen(function* () {
+          const memory = yield* TurnMemory
+          const events = yield* TurnEvents
+          yield* events.subscribe((event) => event._tag === "context.built" ? Option.some(event) : Option.none(),
+            (event) => memory.context({ id: `built-${event.step}`, version: "1", text: `BUILT NOTE ${event.step}` }))
+        })),
+      })
+      const agent = yield* define(memoryWindowPlugin, { plugins: [noteOnBuild] })
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted(lookupThenDeliver)
+      const outcome = yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
+      return { outcome, seen: yield* Ref.get(seen) }
+    })))
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("record-alpha-a") })
+    expect(seen).toHaveLength(3)
+    expect(seen[0]!.prompt).not.toContain("BUILT NOTE 0")
+    expect(seen[1]!.prompt).toContain("BUILT NOTE 0")
+  })
+
+  test("durable request replay refuses events that do not rebuild the request's context", async () => {
+    const { complete, partial } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([...lookupThenDeliver, stop("later")])
+      yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
+      yield* agent.turn(inputFor(journal, "run-2", "later", model), (turn) =>
+        turn.run({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+      const events = yield* journal.stored
+      // A fork's own log without its parent's history: the second turn's events alone.
+      const own = events.filter((event) => Option.contains(event.turn, 2))
+      return {
+        complete: yield* Effect.result(replayModelRequest(events, "run-2", 0)),
+        partial: yield* Effect.result(replayModelRequest(own, "run-2", 0)),
+      }
+    })))
+    expect(complete._tag).toBe("Success")
+    expect(partial._tag === "Failure" ? [partial.failure.code, partial.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", "context"])
   })
 })

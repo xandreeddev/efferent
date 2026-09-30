@@ -1,11 +1,12 @@
 import { Effect, Option, Schema } from "effect"
 import { Prompt, Tool } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
+import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { toPromptMessages } from "../loop/mapping.js"
 import { toolParametersSchema } from "../loop/toolSchema.js"
 import { canonicalJson, buildContext } from "../memory/memory-log.entity.functions.js"
-import type { LogEntry } from "../memory/memory-log.entity.js"
+import type { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { entriesOfEvents } from "../session/session-event.entity.functions.js"
 import { ModelRequestDescriptor, ModelRequestHeader } from "./model-request.entity.js"
@@ -100,7 +101,6 @@ export const modelRequestTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray
     : Option.none(),
 }))
 
-
 /** Last header for this run and step, decoded from a fresh durable snapshot. */
 export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number): Effect.Effect<ModelRequestHeader, HarnessError> => {
   const header = events.filter((event) => event.kind === "request.prepared" && event.data.runId === runId && event.data.step === step).at(-1)
@@ -111,21 +111,57 @@ export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, run
     )
 }
 
-/** Replay reconstructs messages from memory facts and the saved render recipe, never from current plugin definitions. */
-export const reconstructModelRequest = (header: ModelRequestHeader, entries: ReadonlyArray<LogEntry>) => {
-  const context = buildContext(entries, header.render)
-  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(context.messages) as Prompt.RawInput))
-  return { prompt, contextFingerprint: context.fingerprint, tools: header.tools, toolChoice: header.toolChoice, model: header.model, cacheKey: header.cacheKey, callPolicy: header.callPolicy }
+/** A model request as a dispatch check compares it: the Effect AI prompt, and the parts the header declares. */
+export interface ComparedModelRequest {
+  readonly prompt: Prompt.Prompt
+  readonly tools: ReadonlyArray<ModelRequestTool>
+  readonly toolChoice: unknown
+  readonly model: Option.Option<ModelRequestDescriptor>
+  readonly cacheKey: Option.Option<string>
+  readonly callPolicy: Option.Option<ModelCallPolicy>
 }
 
-/** Reconstruct one historical request at its recorded log position, excluding later responses and turns. */
+const diverged = (part: string, detail: string) => new HarnessError({ code: "request.diverged", message: `${part}: ${detail}` })
+
+/** The entries a build folded: the log up to and including its cut. */
+const entriesThrough = (entries: ReadonlyArray<LogEntry>, through: Option.Option<EntryId>): Effect.Effect<ReadonlyArray<LogEntry>, HarnessError> =>
+  Option.match(through, {
+    onNone: () => Effect.succeed([]),
+    onSome: (id) => {
+      const cut = entries.findIndex((entry) => entry.id === id)
+      return cut < 0
+        ? Effect.fail(diverged("context", `the memory entry ${id} the request was built through is not in the events`))
+        : Effect.succeed(entries.slice(0, cut + 1))
+    },
+  })
+
+/**
+ * Rebuild a request from its header and memory facts: the entries up to the
+ * header's cut, folded with its saved render recipe, never with current
+ * plugin definitions. Fails with `request.diverged` (`context`) when they do
+ * not rebuild the context the header was prepared from (a fork's own log
+ * without its parent's history, say).
+ */
+export const reconstructModelRequest = (header: ModelRequestHeader, entries: ReadonlyArray<LogEntry>) => Effect.gen(function* () {
+  const context = buildContext(yield* entriesThrough(entries, header.through), header.render)
+  if (context.fingerprint !== header.contextFingerprint) {
+    return yield* Effect.fail(diverged("context", `the memory events rebuild context ${context.fingerprint}, the request was prepared from ${header.contextFingerprint}`))
+  }
+  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(context.messages) as Prompt.RawInput))
+  return {
+    prompt, contextFingerprint: context.fingerprint, tools: header.tools, toolChoice: header.toolChoice,
+    model: header.model, cacheKey: header.cacheKey, callPolicy: header.callPolicy,
+  }
+})
+
+/** Reconstruct one historical request from the events up to its header, excluding later responses and turns. */
 export const replayModelRequest = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number) => Effect.gen(function* () {
   const header = yield* modelRequestHeaderOf(events, runId, step)
   const position = events.findLastIndex((event) => event.kind === "request.prepared" && event.data.runId === runId && event.data.step === step)
   const entries = yield* entriesOfEvents(events.slice(0, position + 1)).pipe(
     Effect.mapError((error) => new HarnessError({ code: "request.memory", message: error.message })),
   )
-  return reconstructModelRequest(header, entries)
+  return yield* reconstructModelRequest(header, entries)
 })
 
 /** Freeze JSON message data before handing it to a model wrapper. */
@@ -135,7 +171,27 @@ export const freezeModelRequest = <A>(value: A): A => {
   return Object.freeze(value)
 }
 
-/** Compare canonical model-visible bytes, not object identity or hashes alone. */
-export const checkModelRequest = (expected: unknown, actual: unknown): Effect.Effect<void, HarnessError> => canonicalJson(expected) === canonicalJson(actual)
-  ? Effect.void
-  : Effect.fail(new HarnessError({ code: "request.diverged", message: "The model request diverges from its durable memory derivation or saved header" }))
+/** The parts of a request, in the order a divergence is named. */
+const requestParts = (request: ComparedModelRequest): ReadonlyArray<readonly [string, unknown]> => [
+  ["system", request.prompt.content.slice(0, 1)],
+  ["messages", request.prompt.content.slice(1)],
+  ["tools", request.tools],
+  ["toolChoice", request.toolChoice],
+  ["model", request.model],
+  ["cacheKey", request.cacheKey],
+  ["callPolicy", request.callPolicy],
+]
+
+/**
+ * Compare canonical model-visible bytes, part by part, not object identity or
+ * hashes alone. A divergence fails with `request.diverged`, its message
+ * starting with the first part that differs (`system`, `messages`, `tools`,
+ * `toolChoice`, `model`, `cacheKey` or `callPolicy`).
+ */
+export const checkModelRequest = (expected: ComparedModelRequest, actual: ComparedModelRequest): Effect.Effect<void, HarnessError> => {
+  const dispatched = requestParts(actual)
+  const differing = requestParts(expected).find(([, value], index) => canonicalJson(value) !== canonicalJson(dispatched[index]?.[1]))
+  return differing === undefined
+    ? Effect.void
+    : Effect.fail(diverged(differing[0], "the dispatched request differs from its saved header and memory events"))
+}

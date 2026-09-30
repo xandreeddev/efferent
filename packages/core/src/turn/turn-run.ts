@@ -54,6 +54,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     const tasks = yield* TurnTasks
     const tools = yield* (yield* TurnToolbox).tools
     const session = memory.session
+    const runId = (yield* session.renderRecipe("none")).currentRun
     const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
     const number = yield* memory.number
     const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
@@ -77,6 +78,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
       yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: Math.max(1, budget - reserved), views: tools.views })
       const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
+      const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
+      // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
       yield* events.publish({
         _tag: "context.built", step: info.stepIndex, turn: number,
         strategy: session.strategy.id, strategyVersion: session.strategy.version,
@@ -88,10 +91,11 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
       const model = Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel)
       yield* memory.prepareRequest({
-        version: 1, runId: (yield* session.renderRecipe("none")).currentRun, step: info.stepIndex,
+        version: 1, runId, step: info.stepIndex,
         strategyVersion: session.strategy.version,
         system: finalSystem,
-        render: yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none"),
+        render,
+        through: built.through,
         contextFingerprint: built.fingerprint,
         tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
         toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
@@ -114,17 +118,14 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       initial: Option.fromNullishOr(policy.initial),
       plan,
       dispatch: (step, actual) => Effect.gen(function* () {
-        const runId = (yield* session.renderRecipe("none")).currentRun
         const stored = yield* memory.requestSnapshot
         const header = yield* modelRequestHeaderOf(stored, runId, step)
         const entries = yield* entriesOfEvents(stored.filter((event) => MEMORY_KINDS.includes(event.kind))).pipe(
           Effect.mapError((error) => new HarnessError({ code: "request.memory", message: error.message })),
         )
-        const expected = reconstructModelRequest(header, entries)
-        yield* checkModelRequest(header.contextFingerprint, expected.contextFingerprint)
+        const expected = yield* reconstructModelRequest(header, entries)
         yield* checkModelRequest(expected, {
           prompt: actual.prompt,
-          contextFingerprint: expected.contextFingerprint,
           tools: modelRequestTools(actual.tools),
           toolChoice: actual.toolChoice,
           model: yield* modelRequestDescriptorOf(actual.model),

@@ -70,5 +70,11 @@ export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
 /** The inbox and the session's own records. */
 export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped"]
 
-/** Kinds only Efferent writes: a host record under one of these names is refused. */
+/**
+ * Kinds only Efferent writes: a host record under one of these names is refused.
+ * `request.prepared` holds each request's full system text and tool
+ * declarations (and step context in "system" mode), next to the memory
+ * events: a host that redacts memory, or exports or streams session events,
+ * handles it the same way.
+ */
 export const RESERVED_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS]

@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import { EntryId } from "../memory/memory-log.entity.js"
 
 /** Public provider options only. Credentials and endpoint authorization never belong here. */
 export const ModelRequestDescriptor = Schema.Struct({
@@ -42,7 +43,16 @@ export const MemoryRenderRecipe = Schema.Struct({
 })
 export type MemoryRenderRecipe = typeof MemoryRenderRecipe.Type
 
-/** Durable protocol, separate from diagnostic context/model events. Messages remain in memory events. */
+/**
+ * Durable protocol, separate from diagnostic context/model events. Messages
+ * remain in memory events: the request is rebuilt from the memory entries up
+ * to `through`, the last one its build folded, with the saved `render`
+ * recipe, so a memory write recorded after the build (a reaction to
+ * `context.built`) is not part of it. Each header is self-contained: it
+ * repeats the full system text and every active tool's declaration, a
+ * deliberate storage trade-off so one event (and the memory before it)
+ * rebuilds a request without reading other headers.
+ */
 export const ModelRequestHeader = Schema.Struct({
   version: Schema.Literal(1),
   runId: Schema.String,
@@ -50,6 +60,8 @@ export const ModelRequestHeader = Schema.Struct({
   strategyVersion: Schema.String,
   system: Schema.String,
   render: MemoryRenderRecipe,
+  /** The last memory entry the build included (its cut); none for an empty log. */
+  through: Schema.OptionFromNullOr(EntryId),
   contextFingerprint: Schema.String,
   tools: Schema.Array(ModelRequestTool),
   toolChoice: Schema.Unknown,

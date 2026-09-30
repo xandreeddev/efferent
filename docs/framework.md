@@ -456,25 +456,39 @@ logged once as a `ToolDigest` entry and never recomputed on replay.
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. This protocol record carries the complete
 active tool declarations, tool choice, system text, public requested model
-configuration, prompt cache key, call policy and the memory strategy's render
-recipe/version. Messages remain in their original memory events. A
-provider-defined tool's args are kept only as their key names and the SHA-256
-of their canonical JSON, since they can carry credentials; a change of any
-value still diverges. A dispatch reads a fresh durable snapshot, folds those
-memory facts with the saved recipe, and compares the resulting prompt and
-header with the actual Effect AI request. Changes to messages, schemas, tool
-choice or described model settings fail with `request.diverged` before the
-provider runs. Prompt data is frozen; a stream fallback checks the same
-contract again. Host-planned batches make no provider request and create no
-request header.
+configuration, prompt cache key, call policy, the memory strategy's render
+recipe/version and the build's memory cut (`through`, the last memory entry
+the build folded). Messages remain in their original memory events. Each
+header is self-contained, repeating the full system text and every active
+tool's declaration at every step: a deliberate storage trade-off, so that one
+header and the memory before it rebuild a request. A provider-defined tool's
+args are kept only as their key names and the SHA-256 of their canonical
+JSON, since they can carry credentials; a change of any value still
+diverges. A dispatch reads a fresh durable snapshot, folds the memory entries
+up to the cut with the saved recipe, and compares the resulting prompt and
+header with the actual Effect AI request. A memory write after the build (a
+reaction to `context.built`) is outside the cut: the next step sends it.
+Changes to the system text, messages, schemas, tool choice or described model
+settings fail with `request.diverged` before the provider runs; its message
+starts with the first part that differs (`context`, `system`, `messages`,
+`tools`, `toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is
+frozen; a stream fallback checks the same contract again. Host-planned
+batches make no provider request and create no request header.
 
 `replayModelRequest(events, runId, step)` reconstructs one historical request
-at its header's position, excluding later responses. It uses recorded tool
-schemas and render options, so changing installed plugins does not rewrite
-historical requests. Retention must preserve `request.prepared` and the
-memory facts it references; removing optional `context.built`, trace content
-or usage diagnostics does not affect this contract. Earlier logs without a
-header remain readable but cannot reconstruct this additional metadata.
+from the memory up to its header's cut, excluding later responses. It uses
+recorded tool schemas and render options, so changing installed plugins does
+not rewrite historical requests, and fails with `request.diverged`
+(`context`) when the events do not rebuild the context the header was
+prepared from (a fork's own log without its parent's history). Retention must
+preserve `request.prepared` and the memory facts it references; removing
+optional `context.built`, trace content or usage diagnostics does not affect
+this contract. A host that redacts memory, or exports or streams session
+events, handles `request.prepared` the same way: it holds the full system
+text (step context included in `"system"` mode) and the tool declarations.
+Earlier logs without a header remain readable but cannot reconstruct this
+additional metadata.
+
 
 Effect AI models hide provider configuration inside adapters. Efferent's
 provider adapters and routers describe their public options with
@@ -729,7 +743,9 @@ later end tries again) and `closed` (completes when someone else closed the
 turn). A writer whose scope closes unended ends the turn as failed, or
 interrupted, and so does a begin interrupted after its opening commit. Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); kinds only
-the framework writes are refused there (`RESERVED_KINDS`).
+the framework writes are refused there (`RESERVED_KINDS`; among them
+`request.prepared` holds each request's full system text and tool
+declarations, see durable model requests).
 
 **Ownership** is configured:
 
